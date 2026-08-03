@@ -507,7 +507,7 @@ async function handleGateway(request, env, url) {
     return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
   }
   const openaiReq = toOpenAIRequest(body, upstreamModel);
-  const upstream = await fetch(route.upstream, {
+  const upstream = await fetchZenWithRetry(route.upstream, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${opencodeGoKey}`,
@@ -534,6 +534,31 @@ async function handleGateway(request, env, url) {
   }
   const anthropicRes = toAnthropicResponse(await upstream.json(), upstreamModel);
   return jsonOk(anthropicRes);
+}
+
+/**
+ * Fetch zen with retry on transient upstream failures (5xx / 429).
+ *
+ * opencode zen/go intermittently returns 500 ("Internal server error") for a
+ * fraction of requests (observed ~50% on 2026-08-03). Retrying the identical
+ * request a couple of times makes the gateway transparently absorb those
+ * failures instead of surfacing "API error" to the client. Only retries before
+ * any response body has started (a streaming response that dies mid-stream
+ * cannot be replayed).
+ */
+async function fetchZenWithRetry(url, init, { attempts = 3, backoffMs = 750 } = {}) {
+  let last = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    last = await fetch(url, { ...init, body: init.body });
+    if (last.ok || !(last.status >= 500 || last.status === 429)) {
+      return last;
+    }
+    console.error(`[og] zen upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
+    if (attempt < attempts) {
+      await new Promise((r) => setTimeout(r, backoffMs * attempt));
+    }
+  }
+  return last;
 }
 
 /* ---------------- Device module helpers ---------------- */
@@ -1149,7 +1174,7 @@ class AnthropicStreamEncoder {
     for (const tc of delta.tool_calls || []) {
       const idx = tc.index ?? 0;
       const fn = tc.function || {};
-      this.ensureToolBlock(idx, fn.name, fn.arguments || "");
+      this.ensureToolBlock(idx, tc.id, fn.name, fn.arguments || "");
     }
   }
 
@@ -1247,7 +1272,7 @@ class AnthropicStreamEncoder {
     }
   }
 
-  ensureToolBlock(idx, name, argsDelta) {
+  ensureToolBlock(idx, id, name, argsDelta) {
     if (!this.started) this.emitStart();
     // Tools always open their own block; close any text/thinking block first.
     if (this.blockIndex >= 0 && this.blockType !== "tool_use") this.closeBlock();
@@ -1257,7 +1282,7 @@ class AnthropicStreamEncoder {
       this.pending.push(sse("content_block_start", {
         type: "content_block_start",
         index: this.blockIndex,
-        content_block: { type: "tool_use", id: "", name: name || "unknown", input: {} },
+        content_block: { type: "tool_use", id: id || "", name: name || "unknown", input: {} },
       }));
     }
     if (name) {
