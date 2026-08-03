@@ -416,6 +416,17 @@ async function handleGateway(request, env, url) {
   const route = pickRoute(prefix, env);
   const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
 
+  // ---- Gateway-side vision pre-processing ----
+  // Text-only models (deepseek, minimax, ...) can't see images. When a request
+  // carries image blocks and the target model isn't on the vision-capable
+  // allowlist, describe each image with the configured vision model (default
+  // og/mimo-v2.5) and swap the image blocks for that text, so any model can
+  // answer image questions. count_tokens skips this.
+  if (isMessages) {
+    const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
+    if (prep.changed) body.messages = prep.messages;
+  }
+
   // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
   if (route.kind === "openrouter" && !openRouterKey) {
     return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
@@ -706,18 +717,32 @@ function toOpenAIRequest(req, model) {
   for (const m of req.messages || []) {
     if (m.role === "user") {
       const content = typeof m.content === "string" ? m.content : m.content || [];
-      let textParts = [];
-      if (typeof content === "string") textParts.push(content);
-      else {
+      if (typeof content === "string") {
+        if (content) messages.push({ role: "user", content });
+      } else {
+        // Keep text and image parts together as an OpenAI content array, so the
+        // og/ translation forwards images (vision models) instead of dropping them.
+        const parts = [];
+        let textBuf = [];
+        const flush = () => { if (textBuf.length) { parts.push({ type: "text", text: textBuf.join("\n") }); textBuf = []; } };
         for (const b of content) {
           if (b.type === "tool_result") {
+            flush();
             const toolText =
               typeof b.content === "string" ? b.content : (b.content || []).map((c) => c.text || c.thinking || "").join("\n");
             messages.push({ role: "tool", tool_call_id: b.tool_use_id, content: toolText });
-          } else if (b.type === "text") textParts.push(b.text);
+          } else if (b.type === "text") {
+            textBuf.push(b.text);
+          } else if (b.type === "image") {
+            flush();
+            const mediaType = b.source?.media_type || "image/png";
+            const data = b.source?.data || "";
+            if (data) parts.push({ type: "image_url", image_url: { url: `data:${mediaType};base64,${data}` } });
+          }
         }
+        flush();
+        if (parts.length) messages.push({ role: "user", content: parts });
       }
-      if (textParts.length) messages.push({ role: "user", content: textParts.join("\n") });
     } else if (m.role === "assistant") {
       const msg = { role: "assistant", content: null };
       const content = typeof m.content === "string" ? m.content : m.content || [];
@@ -758,6 +783,103 @@ function toOpenAIRequest(req, model) {
     }
   }
   return out;
+}
+
+/* ---------------- Gateway-side vision pre-processing ---------------- */
+// The gateway's own models (deepseek, minimax, ...) are text-only. If an incoming
+// request carries Anthropic image blocks and the target model isn't on the
+// vision-capable allowlist, describe each image with a vision model (default
+// og/mimo-v2.5, configurable via env VISION_MODEL) and replace the image blocks
+// with the returned text so every model can "see" the picture.
+
+function isVisionCapable(model, upstreamModel, env) {
+  const list = String(env.VISION_CAPABLE_MODELS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  return list.includes(model) || list.includes(upstreamModel);
+}
+
+async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
+  if (!Array.isArray(messages)) return { messages, changed: false };
+  if (isVisionCapable(model, upstreamModel, env)) return { messages, changed: false };
+  const visionModel = env.VISION_MODEL || "og/mimo-v2.5";
+  let changed = false;
+  const out = [];
+  for (const m of messages) {
+    if (m.role !== "user" || typeof m.content !== "object" || !Array.isArray(m.content)) {
+      out.push(m);
+      continue;
+    }
+    if (!m.content.some((b) => b.type === "image")) {
+      out.push(m);
+      continue;
+    }
+    const newContent = [];
+    for (const b of m.content) {
+      if (b.type === "image") {
+        const desc = await describeImage(env, ukeys, b.source, visionModel);
+        newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
+        changed = true;
+      } else {
+        newContent.push(b);
+      }
+    }
+    out.push({ ...m, content: newContent });
+  }
+  return { messages: out, changed };
+}
+
+async function describeImage(env, ukeys, source, visionModel) {
+  const mediaType = source?.media_type || "image/png";
+  const data = source?.data || "";
+  if (!data) return "(图片数据为空)";
+  const prefix = visionModel.split("/")[0];
+  const route = pickRoute(prefix, env);
+  const upstreamModel = stripBracket(route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel);
+  const content = [
+    { type: "image", source: { type: "base64", media_type: mediaType, data } },
+    { type: "text", text: "请用中文详细描述这张图片的内容，包括所有可见文字（OCR）、界面元素、布局。若是截图或表格，请逐行说明关键内容。只输出描述，不要额外说明。" },
+  ];
+  const miniReq = { model: visionModel, max_tokens: 1500, messages: [{ role: "user", content }] };
+
+  if (route.type === "passthrough") {
+    // or/ (openrouter) or ds/ (deepseek) vision model — Anthropic passthrough
+    const bearerKey = route.kind === "openrouter" ? ukeys.OPENROUTER_API_KEY : ukeys.DEEPSEEK_API_KEY;
+    if (!bearerKey) return "(图片描述失败：视觉模型后端未配置)";
+    let resp;
+    try {
+      resp = await fetch(route.upstream, {
+        method: "POST",
+        headers: passthroughHeaders(bearerKey),
+        body: JSON.stringify({ ...miniReq, model: upstreamModel }),
+      });
+    } catch (e) {
+      return `(图片描述失败：${e.message})`;
+    }
+    if (!resp.ok) return `(图片描述失败：${resp.status})`;
+    let json;
+    try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
+    const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+    return text || "(图片描述为空)";
+  }
+
+  // og/ vision model (opencode zen) — needs the Anthropic→OpenAI translation,
+  // which now forwards image_url parts (see toOpenAIRequest).
+  if (!ukeys.OPENCODE_GO_API_KEY) return "(图片描述失败：OPENCODE_GO_API_KEY 未配置)";
+  const openaiReq = toOpenAIRequest(miniReq, upstreamModel);
+  let resp;
+  try {
+    resp = await fetch(route.upstream, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(openaiReq),
+    });
+  } catch (e) {
+    return `(图片描述失败：${e.message})`;
+  }
+  if (!resp.ok) return `(图片描述失败：${resp.status})`;
+  let json;
+  try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
+  return (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
 }
 
 /* ---------------- OpenAI → Anthropic (for og translation) ---------------- */
