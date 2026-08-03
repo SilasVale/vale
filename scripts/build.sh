@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Vale 平台统一构建脚本（从 monorepo 顶层跑通 command / gateway / index）
+# Vale unified build script (command / gateway / index from the monorepo root)
 #
-#   ./scripts/build.sh                 # 构建 command（Windows 交叉编译，release）
-#   ./scripts/build.sh command [debug] # 构建 vale-command + vale-tray
-#   ./scripts/build.sh gateway         # 部署 Vale Gate worker（ai.saisi.online）
-#   ./scripts/build.sh index           # 部署 Vale Index worker（command.saisi.online）
-#   ./scripts/build.sh deploy          # command 构建 + gateway/index 部署
+#   ./scripts/build.sh                 # build command (Windows cross-compile, release)
+#   ./scripts/build.sh command [debug] # build vale-command + vale-tray
+#   ./scripts/build.sh gateway         # deploy the Vale Gate worker
+#   ./scripts/build.sh index           # deploy the Vale Index worker
+#   ./scripts/build.sh deploy          # build command + deploy gateway/index
 #
-# 依赖：cargo-xwin、wrangler（全局 v4）、CLOUDFLARE_API_TOKEN（仅部署，
-#       或 ~/.cloudflare-token 文件）。
+# Dependencies: cargo-xwin, wrangler (global v4), CLOUDFLARE_API_TOKEN (deploy
+# only, or a ~/.cloudflare-token file).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="x86_64-pc-windows-msvc"
 FEATURES="terminal,browser"   # serial/SSH/PTY + headless Edge/Chrome
 
-# --- token: $CLOUDFLARE_API_TOKEN 优先，否则 ~/.cloudflare-token ---
+# --- token: prefer $CLOUDFLARE_API_TOKEN, else ~/.cloudflare-token ---
 cf_token() {
   if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "$CLOUDFLARE_API_TOKEN";
   elif [[ -f "$HOME/.cloudflare-token" ]]; then cat "$HOME/.cloudflare-token";
@@ -45,7 +45,7 @@ deploy_worker() {
   local dir="$1" name="$2"
   local token; token="$(cf_token)"
   if [[ -z "$token" ]]; then
-    echo "  !! 缺 CLOUDFLARE_API_TOKEN（或 ~/.cloudflare-token），跳过部署 $name"
+    echo "  !! CLOUDFLARE_API_TOKEN (or ~/.cloudflare-token) missing — skipping $name deploy"
     return 1
   fi
   echo "=== [deploy] ${name} (${dir}/) ==="

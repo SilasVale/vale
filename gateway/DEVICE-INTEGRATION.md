@@ -1,72 +1,72 @@
-# vale-command 集成进 valegate（设备控制 = 管理员专属）
+# Vale Command → Vale Gate integration (device control, admin-only)
 
-> 状态：**已实施**（monorepo `gateway/`，2026-08-02 上线）
-> 日期：2026-08-02
+> Status: **implemented** (monorepo `gateway/`)
+> Date: 2026-08-02
 
-## 背景与目标
+## Background & goal
 
-用户已有两个 Vale 品牌产品：
-- **valegate**（`ai.saisi.online`）—— AI 网关控制台（登录 + 管理员/用户角色 + 邀请码）
-- **vale-command** —— 设备命令中心（headless MCP 服务器 + 网页面板），跑在各 Windows 机器上，通过 Cloudflare 隧道暴露到 `dN.command.saisi.online`
+Two parts of the Vale platform:
+- **Vale Gate** — AI gateway console (login + admin/user roles + invite codes), runs on a Cloudflare Worker
+- **Vale Command** — device command center (headless MCP server + web panel), runs on Windows machines, exposed via Cloudflare Tunnels, one subdomain per machine
 
-**目标**：把 vale-command 的设备控制集成进 valegate 控制台，作为**管理员登录后独有的「设备」模块** —— 用户在一个控制台里登录一次即可操作所有设备，无需再贴 vale-command 的 token。
+**Goal**: bring Vale Command device control into the Vale Gate console as an **admin-only「Devices」module** — one console, one login to operate every device, no need to paste a Vale Command token.
 
-## 关键架构结论（讨论过的坑，别再绕）
+## Key architecture conclusions
 
-1. **vale-command 不能作为代码插件跑在 valegate 里**：valegate 是 Cloudflare Worker（边缘、无状态），而 vale-command 必须跑在 Windows 机器上（要碰串口/终端/真实浏览器）。"插件"只能是**前门集成模块**，不是代码嵌入。
-2. **token 存 Cloudflare，但仅 admin 可见**：token 存进 valegate 的 KV（`devices:v1`，每设备 `{name, hostname, token}`），只有 `role.admin` 登录后才能增删改/查看（设备列表 masked，MCP 配置接口返回完整值）。**绝不对公网自动下发** —— 没有任何匿名 URL 能拿到 token。
-3. **Claude Code（MCP）不受影响**：它直接用 vale-command 的 Bearer token（MCP 配置里配一次，可经控制台「复制 MCP 配置」取），与 valegate 无关。
+1. **Vale Command cannot run as a code plugin inside Vale Gate**: Vale Gate is a Cloudflare Worker (edge, stateless); Vale Command must run on Windows (serial/terminal/real browser). The "plugin" is a **front-door integration module**, not embedded code.
+2. **Token lives on Cloudflare, visible to admin only**: stored in Vale Gate KV (`devices:v1`, per device `{name, hostname, token}`), only `role.admin` can add/edit/delete/view (list masks the token; the MCP-config endpoint returns the full value). **Never auto-dispensed publicly** — no anonymous URL yields a token.
+3. **Claude Code (MCP) unaffected**: it uses the Vale Command Bearer token directly (configured once; can be copied from the console), independent of Vale Gate.
 
-## 架构
+## Architecture
 
 ```
-浏览器 ──登录 ai.saisi.online（valegate）──► [管理员] 设备模块
-                                              │ 列出 d1/d2...
-                                              ▼
-                                       反向代理到 dN.command.saisi.online
-                                       注入 Authorization: Bearer <设备token>
-                                              ▼
-                                     Windows 上的 vale-command（面板/MCP）
-Claude Code ──► https://dN.command.saisi.online/mcp（直接用 token，不经过 valegate）
+browser ──login to Vale console──► [admin] Devices module
+                                        │ lists d1/d2…
+                                        ▼
+                                  reverse-proxy to device subdomain (dN)
+                                  inject Authorization: Bearer <device token>
+                                        ▼
+                               Vale Command on Windows (panel/MCP)
+Claude Code ──► https://<device-host>/mcp (direct token, not via Vale Gate)
 ```
 
-## 需求
+## Requirements
 
-### 必须
-- valegate 控制台新增**「设备」区块**，仅 `role.admin` 可见/可用（普通用户 403）
-- 设备列表（从配置/存储读：设备名 → `dN.command.saisi.online` → token）
-- 反向代理到设备面板，服务端注入 Bearer token（token 只在 valegate 侧，用户浏览器不接触）
-- 代理要正确处理：HTTP/HTTPS、SSE/MCP 的流式响应、长连接
-- 设备 token 由管理员在控制台配置（一次）
+### Must
+- Vale Gate console gains a **「Devices」** section, `role.admin` only (normal users 403)
+- Device list (from storage: name → host → token)
+- Reverse proxy to the device panel, Bearer token injected server-side (browser never touches the token)
+- Proxy handles: HTTP/HTTPS, SSE/MCP streaming, long-lived connections
+- Device token configured in the console by admin (or auto-registered at install)
 
-### 非目标
-- 不把 vale-command 代码跑进 valegate
-- 不替换 Claude Code 用的 vale-command token
+### Non-goals
+- Do not run Vale Command code inside Vale Gate
+- Do not replace the Claude Code Vale Command token
 
-### 后续可选
-- `command.saisi.online/dN` 路径包装（友好 URL，底下还是子域名隧道）
-- vale-command 托盘「打开面板」自动带 token（本机浏览器免输入）
+## Implemented
 
-## 已实施（2026-08-02）
-
-- **store.js**：`listDevices / saveDevices / getDevice / upsertDevice / deleteDevice`，KV key `devices:v1`。
-- **index.js**（`handleConsole`，`role.admin` 段）：
-  - `GET /api/devices` — 列表（token masked）
-  - `POST /api/devices` — 添加/更新 `{name, hostname, token}`（校验 name/hostname/token）
+- **store.js**: `listDevices / saveDevices / getDevice / upsertDevice / deleteDevice`, KV key `devices:v1`; registration keys `regkey:<code>`.
+- **index.js** (`handleConsole`, `role.admin` section):
+  - `GET /api/devices` — list (token masked)
+  - `POST /api/devices` — add/update `{name, hostname, token}`
+  - `POST /api/devices/register-key` — generate a one-time install key
   - `DELETE /api/devices/<name>`
-  - `GET /api/devices/<name>/mcp` — 返回现成 MCP 配置 JSON（唯一返回完整 token 的接口）
-  - `<any> /api/devices/<name>/proxy/<rest>` — 反向代理：注入 `Authorization: Bearer <token>`（服务端），`text/event-stream`/octet-stream 直通不缓冲，HTML/JS/CSS 文本把面板绝对路径重写到代理挂载点（`/api/devices/<name>/proxy`），避免 SPA 的 `/api/*`、`/app.js` 等断链。
-- **public/app.js + index.html + style.css**：管理员「设备管理」面板（列表 / 添加 / 删除 / 复制 MCP 配置 / 打开面板）。
+  - `GET /api/devices/<name>/mcp` — ready-made MCP config JSON (the only endpoint returning the full token)
+  - `<any> /api/devices/<name>/proxy/<rest>` — reverse proxy: injects `Authorization: Bearer <token>` (server-side), passes `text/event-stream`/octet-stream through without buffering, rewrites panel HTML/JS/CSS absolute paths to the proxy mount so the SPA's `/api/*`, `/app.js` etc. keep working.
+  - `POST /api/register` (public, key-gated) — the install script auto-registers a device
+  - `POST /api/install/tunnel-token` (public, key-gated) — the install script fetches the Cloudflare tunnel credential
+- **public/app.js + index.html + style.css**: admin「Devices」panel (list / add / delete / copy MCP config / open panel / auto-register).
+- **vale-command-setup.ps1**: registration-key auto-registration + fetching the tunnel credential from the console (no browser auth needed).
 
-## 验证
+## Verification
 
-- ✅ 普通用户登录 → 看不到「设备」导航（`data-admin-only` 门控）；未登录 `GET /api/devices` → 401
-- ✅ 管理员：设备增删查、token masked、MCP 配置取回（14 项 Node API 测试 + 6 项路径重写单测）
-- ✅ 反向代理端到端：代理真实 `d1.command.saisi.online` 面板根 → 200，HTML 正确重写为 `/api/devices/d1/proxy/*`；错误 token → 设备返回 401 被透传；不可达设备 → 502
-- ⏳ 待人工确认：管理员用真实 token 配置设备后，从控制台点进面板操作（串口/终端/浏览器）、SSE 流式不卡顿
-- ⏳ 待人工确认：Claude Code 直连 `dN.command.saisi.online/mcp` 不受影响
+- ✅ Normal user cannot see the「Devices」nav; unauthenticated `GET /api/devices` → 401
+- ✅ Admin: add/remove/list devices, masked tokens, MCP config retrieval (API tests + path-rewrite unit tests)
+- ✅ Reverse proxy end-to-end: proxying a real device panel root → 200 with rewritten HTML; wrong token → device 401 passed through; unreachable device → 502
+- ✅ Auto-registration: one-time key, invalid key → 403, device appears in the list after install (verified live)
+- ⏳ Manual check pending: operate the panel from the console (serial/terminal/browser), SSE streaming stays smooth, Claude Code direct MCP unaffected
 
-## 后续可选
+## Future options
 
-- `command.saisi.online/dN` 路径包装（友好 URL，底下还是子域名隧道）
-- vale-command 托盘「打开面板」自动带 token（本机浏览器免输入）
+- Path wrapper (friendly URLs, still subdomain tunnels underneath)
+- Vale Command tray「open panel」carries the token automatically (local browser, no login)
