@@ -40,5 +40,5 @@ for group, names in specs:
         files.append({"name": n, "path": f"files/{group}/{n}", "group": group})
 with open(f"{dest}/../manifest.json", "w") as f:
     json.dump({"files": files}, f, indent=2, ensure_ascii=False)
-print(f"manifest 已生成: {len(files)} 个文件 → public/code/")
+print(f"generated manifest: {len(files)} files → public/code/")
 EOF

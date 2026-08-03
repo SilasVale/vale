@@ -1,12 +1,13 @@
 // Vale Command — install / download landing page (Cloudflare Worker).
 //
-// command.saisi.online → this Worker: the download site for vale-command.
-// Device management (registry + MCP config + panel proxy) moved to the Vale
-// console (ai.saisi.online, admin-only). This page only distributes the
-// installer + setup scripts and points users to the console.
+// This Worker is the download site for vale-command. Device management
+// (registry + MCP config + panel proxy) lives in the Vale console
+// (admin-only). This page only distributes the installer + setup scripts and
+// points users to the console. The console URL is set per-deployment via the
+// CONSOLE_URL var (no production domain is hardcoded here).
 
-const PAGE = `<!doctype html>
-<html lang="zh">
+const PAGE = (consoleUrl) => `<!doctype html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -36,6 +37,7 @@ const PAGE = `<!doctype html>
   .brand .tag { font: 12px/1 var(--mono); color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; }
   .led-head { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-right: 2px; vertical-align: 1px; }
   .lede { color: var(--dim); margin-top: 8px; font-size: 14px; max-width: 640px; }
+  .lede a { color: var(--accent); }
 
   .install { display: flex; align-items: center; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
   .install-btn { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff;
@@ -55,7 +57,6 @@ const PAGE = `<!doctype html>
 
   footer { max-width: 760px; margin: 0 auto; padding: 0 24px 44px; color: var(--dim); font-size: 12px;
            display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  footer a { color: var(--accent); text-decoration: none; }
 </style>
 </head>
 <body>
@@ -65,17 +66,17 @@ const PAGE = `<!doctype html>
     <span class="name"><span class="led-head"></span>Vale Command</span>
     <span class="tag">device agent</span>
   </div>
-  <p class="lede">Vale Command 是跑在 Windows 机器上的设备命令中心（串口 / 终端 / 浏览器 + MCP）。每台设备经 Cloudflare 隧道暴露到 <code>dN.command.saisi.online</code>，在 <a href="https://ai.saisi.online" style="color:var(--accent)">Vale 控制台</a>（ai.saisi.online，管理员）统一管理设备与 MCP 配置。</p>
+  <p class="lede">Vale Command is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel at its own subdomain and is managed from the <a href="${consoleUrl}">Vale console</a> (admin login).</p>
 
   <div class="install">
-    <a class="install-btn" href="/vale-command/ValeCommand-Setup.exe" download>下载安装程序 ↓</a>
-    <span class="install-note">在接设备的那台 Windows 上，下载后双击安装（可自选目录，装完带托盘图标）。</span>
+    <a class="install-btn" href="/vale-command/ValeCommand-Setup.exe" download>Download installer ↓</a>
+    <span class="install-note">On the Windows machine connected to the device, download and run the installer (pick a directory; it installs a tray icon).</span>
   </div>
 
   <div class="steps">
-    <div class="step"><div class="n">1</div><div class="body">下载安装程序，在 Windows 上双击安装（需管理员权限）。</div></div>
-    <div class="step"><div class="n">2</div><div class="body">安装时自动完成 Cloudflare 授权、创建隧道并注册开机自启，完成后显示面板地址与 token。</div></div>
-    <div class="step"><div class="n">3</div><div class="body">登录 <a href="https://ai.saisi.online" style="color:var(--accent)">ai.saisi.online</a> 控制台 →「设备管理」，添加这台设备（名 / 主机 / token），即可复制 MCP 配置或从控制台代理进入面板。</div></div>
+    <div class="step"><div class="n">1</div><div class="body">Download the installer and double-click it on Windows (admin rights required).</div></div>
+    <div class="step"><div class="n">2</div><div class="body">The install automates Cloudflare auth, creates a tunnel and registers auto-start; it finishes by showing the panel URL and token.</div></div>
+    <div class="step"><div class="n">3</div><div class="body">Log in to the <a href="${consoleUrl}">Vale console</a> → Devices, add this device (name / host / token) — or use a registration key to auto-register — then copy the MCP config or open the panel through the console.</div></div>
   </div>
 </div>
 <footer>
@@ -89,8 +90,9 @@ document.getElementById('foot-time').textContent = new Date().toISOString().repl
 </html>`;
 
 export default {
-  async fetch(request) {
-    return new Response(PAGE, {
+  async fetch(request, env) {
+    const consoleUrl = (env && env.CONSOLE_URL) || "https://<console-host>";
+    return new Response(PAGE(consoleUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   },

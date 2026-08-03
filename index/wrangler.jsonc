@@ -8,8 +8,9 @@
   // /vale-command/vale-command-setup.ps1 and /vale-command/vale-command.exe are
   // served straight from ./public; everything else hits the Worker.
   "assets": { "directory": "./public", "binding": "ASSETS" },
-  // Custom domain (added in the Cloudflare dashboard, like the other saisi.online
-  // workers — wrangler 4.x ignores the custom_domains field): command.saisi.online
-  // Bindings: none required (DEVICES is static in src/index.js).
+  // Custom domain (added in the Cloudflare dashboard, like the other Vale
+  // workers — wrangler 4.x ignores the custom_domains field): <download-host>
+  // Vars (set via `wrangler var put`, NOT committed): CONSOLE_URL (the Vale
+  // console URL rendered on the download page).
   "observability": { "enabled": false }
 }
