@@ -523,12 +523,16 @@ async function handleGateway(request, env, url) {
     } catch {}
     return jsonError(upstream.status, message, "api_error");
   }
-  const anthropicRes = toAnthropicResponse(await upstream.json(), upstreamModel);
+  // True streaming: when the client asked for a stream, forward zen's OpenAI SSE
+  // chunks to Anthropic SSE increments as they arrive (instead of buffering the
+  // whole response and flushing it at once — that made thinking look frozen and
+  // could time out long generations).
   if (body.stream) {
-    return new Response(toSSE(anthropicRes), {
+    return new Response(streamOgToAnthropic(upstream.body, body.model, upstreamModel), {
       headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
     });
   }
+  const anthropicRes = toAnthropicResponse(await upstream.json(), upstreamModel);
   return jsonOk(anthropicRes);
 }
 
@@ -791,7 +795,7 @@ function toOpenAIRequest(req, model) {
     }
   }
 
-  const out = { model, messages, stream: false };
+  const out = { model, messages, stream: !!req.stream };
   if (req.max_tokens) out.max_tokens = req.max_tokens;
   if (req.temperature !== undefined) out.temperature = req.temperature;
   if (req.top_p !== undefined) out.top_p = req.top_p;
@@ -1038,6 +1042,247 @@ function toAnthropicResponse(up, model) {
       cache_read_input_tokens: up.usage?.prompt_cache_hit_tokens || 0,
     },
   };
+}
+
+/* ---------------- True streaming: OpenAI SSE chunks → Anthropic SSE ---------------- */
+// The og/ route used to request zen with stream:false, buffer the entire response,
+// then flush it as one Anthropic SSE blob. That made long thinking look frozen and
+// could time out on big generations. Instead we stream:true upstream and translate
+// each OpenAI chunk to an Anthropic incremental event as it arrives.
+
+const STREAM_STOP_MAP = { stop: "end_turn", tool_calls: "tool_use", function_call: "tool_use", length: "max_tokens" };
+
+/**
+ * Convert an OpenAI chat.completion.chunk stream into an Anthropic message event
+ * stream. `upstreamBody` is a ReadableStream of OpenAI SSE (`data: {...}\n\n`,
+ * terminated by `data: [DONE]`). Returns a ReadableStream emitting Anthropic SSE.
+ */
+function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
+  const encoder = new TextEncoder();
+  const encoderStream = new AnthropicStreamEncoder(clientModel, upstreamModel);
+
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const readStream = new ReadableStream({
+    async pull(controller) {
+      while (true) {
+        // Emit any pending Anthropic events already queued by the last chunk.
+        const pending = encoderStream.take();
+        if (pending.length) {
+          controller.enqueue(encoder.encode(pending));
+          return;
+        }
+        // Otherwise pull the next upstream bytes.
+        const { done, value } = await reader.read();
+        if (done) {
+          const tail = encoderStream.finish(buffer);
+          if (tail) controller.enqueue(encoder.encode(tail));
+          controller.close();
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        // SSE events are separated by blank lines; a data line may be split across
+        // read chunks, so only consume complete events.
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
+          if (!dataLine) continue;
+          const payload = dataLine.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          let chunk;
+          try { chunk = JSON.parse(payload); } catch { continue; }
+          encoderStream.push(chunk);
+          const events = encoderStream.take();
+          if (events.length) {
+            controller.enqueue(encoder.encode(events));
+            return;
+          }
+        }
+      }
+    },
+  });
+  return readStream;
+}
+
+/**
+ * Stateful translator from OpenAI stream deltas to Anthropic SSE events.
+ * Accumulates tool-call arguments by index and tracks which content block is open.
+ */
+class AnthropicStreamEncoder {
+  constructor(clientModel, upstreamModel) {
+    this.clientModel = clientModel;
+    this.upstreamModel = upstreamModel;
+    this.started = false;
+    this.finished = false;
+    this.blockIndex = -1;
+    this.blockType = null;      // "thinking" | "text" | "tool_use"
+    this.openToolInputs = {};   // tool index → accumulated arguments string
+    this.pending = [];
+    this.lastStopReason = "end_turn";
+    this.id = "";
+    this.usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  }
+
+  push(chunk) {
+    if (this.finished) return;
+    const choice = chunk.choices?.[0];
+    if (!choice) return;
+    const delta = choice.delta || {};
+    if (!this.id && chunk.id) this.id = chunk.id;
+    if (chunk.usage) {
+      this.usage.input_tokens = chunk.usage.prompt_tokens || 0;
+      this.usage.output_tokens = chunk.usage.completion_tokens || 0;
+      this.usage.cache_read_input_tokens = chunk.usage.prompt_cache_hit_tokens || 0;
+    }
+    if (choice.finish_reason) this.lastStopReason = STREAM_STOP_MAP[choice.finish_reason] || "end_turn";
+
+    if (delta.reasoning_content) {
+      this.ensureBlock("thinking", { thinking: delta.reasoning_content, signature: "" });
+    }
+    if (delta.content) {
+      this.ensureBlock("text", { text: delta.content });
+    }
+    for (const tc of delta.tool_calls || []) {
+      const idx = tc.index ?? 0;
+      const fn = tc.function || {};
+      this.ensureToolBlock(idx, fn.name, fn.arguments || "");
+    }
+  }
+
+  /** Close all open blocks and append message_delta + message_stop. Call once on stream end. */
+  finish(tailBuffer = "") {
+    if (this.finished) return null;
+    this.finished = true;
+    if (tailBuffer.trim()) {
+      // A trailing partial event (no blank line yet) — best-effort parse.
+      const dataLine = tailBuffer.split("\n").find((l) => l.startsWith("data:"));
+      if (dataLine) {
+        const payload = dataLine.slice(5).trim();
+        if (payload && payload !== "[DONE]") {
+          try { this.push(JSON.parse(payload)); } catch {}
+        }
+      }
+    }
+    // The client expects message_start to be the first event.
+    if (!this.started) this.emitStart();
+    if (this.blockIndex >= 0) this.closeBlock();
+    this.pending.push(sse("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: this.lastStopReason, stop_sequence: null },
+      usage: { output_tokens: this.usage.output_tokens },
+    }));
+    this.pending.push(sse("message_stop", { type: "message_stop" }));
+    return this.take();
+  }
+
+  /** Drain queued Anthropic SSE text. */
+  take() {
+    if (this.pending.length) {
+      const out = this.pending.join("");
+      this.pending = [];
+      return out;
+    }
+    return "";
+  }
+
+  emitStart() {
+    if (this.started) return;
+    this.started = true;
+    this.pending.push(sse("message_start", {
+      type: "message_start",
+      message: {
+        id: this.id,
+        type: "message",
+        role: "assistant",
+        model: this.upstreamModel,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { ...this.usage },
+      },
+    }));
+  }
+
+  ensureBlock(type, block) {
+    if (!this.started) this.emitStart();
+    if (this.blockType !== type) {
+      this.closeBlock();
+      this.blockIndex += 1;
+      this.blockType = type;
+      const contentBlock = type === "thinking" ? { ...block, signature: "" } : { ...block };
+      this.pending.push(sse("content_block_start", {
+        type: "content_block_start",
+        index: this.blockIndex,
+        content_block: contentBlock,
+      }));
+      if (type === "thinking") {
+        this.pending.push(sse("content_block_delta", {
+          type: "content_block_delta",
+          index: this.blockIndex,
+          delta: { type: "thinking_delta", thinking: block.thinking },
+        }));
+      } else if (type === "text") {
+        this.pending.push(sse("content_block_delta", {
+          type: "content_block_delta",
+          index: this.blockIndex,
+          delta: { type: "text_delta", text: block.text },
+        }));
+      }
+    } else if (type === "thinking") {
+      this.pending.push(sse("content_block_delta", {
+        type: "content_block_delta",
+        index: this.blockIndex,
+        delta: { type: "thinking_delta", thinking: block.thinking },
+      }));
+    } else if (type === "text") {
+      this.pending.push(sse("content_block_delta", {
+        type: "content_block_delta",
+        index: this.blockIndex,
+        delta: { type: "text_delta", text: block.text },
+      }));
+    }
+  }
+
+  ensureToolBlock(idx, name, argsDelta) {
+    if (!this.started) this.emitStart();
+    // Tools always open their own block; close any text/thinking block first.
+    if (this.blockIndex >= 0 && this.blockType !== "tool_use") this.closeBlock();
+    if (this.blockType !== "tool_use") {
+      this.blockIndex += 1;
+      this.blockType = "tool_use";
+      this.pending.push(sse("content_block_start", {
+        type: "content_block_start",
+        index: this.blockIndex,
+        content_block: { type: "tool_use", id: "", name: name || "unknown", input: {} },
+      }));
+    }
+    if (name) {
+      // zen may repeat the name on later chunks; emit a partial_json delta only for args.
+      this.toolName = name;
+    }
+    if (argsDelta) {
+      const cur = this.openToolInputs[idx] || "";
+      const next = cur + argsDelta;
+      this.openToolInputs[idx] = next;
+      this.pending.push(sse("content_block_delta", {
+        type: "content_block_delta",
+        index: this.blockIndex,
+        delta: { type: "input_json_delta", partial_json: argsDelta },
+      }));
+    }
+  }
+
+  closeBlock() {
+    if (this.blockIndex >= 0) {
+      this.pending.push(sse("content_block_stop", { type: "content_block_stop", index: this.blockIndex }));
+      this.blockIndex = -1;
+      this.blockType = null;
+    }
+  }
 }
 
 /* ---------------- Anthropic SSE event stream ---------------- */
