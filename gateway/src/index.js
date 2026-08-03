@@ -427,6 +427,31 @@ async function handleGateway(request, env, url) {
     if (prep.changed) body.messages = prep.messages;
   }
 
+  // ---- Gateway web search (og/ model answers, DeepSeek executes the search) ----
+  // Claude Code's WebSearch is executed server-side via Anthropic's web_search
+  // server tool. opencode zen (og/) doesn't implement it, but DeepSeek official's
+  // Anthropic endpoint does. So for og/ models, run the search through DeepSeek
+  // official and let the requested og/ model answer from the results — the model
+  // stays og/, DeepSeek is only the search backend. Requires this user's
+  // DEEPSEEK_API_KEY. ds/ and or/ requests pass through untouched (ds/ handles
+  // web_search natively).
+  const isWebSearch = isMessages && route.type === "translate" && (
+    (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
+    (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
+  );
+  if (isWebSearch) {
+    if (!deepseekKey) {
+      return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
+    }
+    const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
+    if (body.stream) {
+      return new Response(toSSE(res), {
+        headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+      });
+    }
+    return jsonOk(res);
+  }
+
   // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
   if (route.kind === "openrouter" && !openRouterKey) {
     return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
@@ -886,6 +911,98 @@ async function describeImage(env, ukeys, source, visionModel) {
   return (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
 }
 
+/* ---------------- Gateway web search (og model answers, DeepSeek searches) ---------------- */
+
+/** Pull the search query out of the nested web-search request Claude Code sends. */
+function extractWebSearchQuery(messages) {
+  const last = [...(messages || [])].reverse().find((m) => m.role === "user");
+  let text = "";
+  if (last) {
+    if (typeof last.content === "string") text = last.content;
+    else text = (last.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ");
+  }
+  const m = text.match(/query:?\s*([\s\S]*)/i);
+  return (m ? m[1].trim() : text.trim()) || "latest news";
+}
+
+/**
+ * Execute the search via DeepSeek official (its Anthropic endpoint implements
+ * Anthropic's web_search server tool server-side), then have the requested og/
+ * model answer from the results. Returns an Anthropic-format message whose content
+ * carries the server_tool_use + web_search_tool_result blocks (so Claude Code's
+ * parser sees real results) plus the og/ model's text answer.
+ */
+async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey) {
+  const query = extractWebSearchQuery(body.messages);
+  const searchUrl = "https://api.deepseek.com/anthropic" + VERIFY_PATH;
+
+  let searchJson = {};
+  try {
+    const sr = await fetch(searchUrl, {
+      method: "POST",
+      headers: passthroughHeaders(deepseekKey),
+      body: JSON.stringify({
+        model: "deepseek-v4-flash",
+        max_tokens: 500,
+        tools: [{ name: "web_search", type: "web_search_20250305" }],
+        tool_choice: { type: "tool", name: "web_search" },
+        messages: [{ role: "user", content: query }],
+      }),
+    });
+    if (sr.ok) searchJson = await sr.json();
+  } catch {}
+
+  const serverToolUses = (searchJson.content || []).filter((b) => b.type === "server_tool_use");
+  const resultBlocks = (searchJson.content || []).filter((b) => b.type === "web_search_tool_result");
+
+  const answer = await ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks);
+
+  return {
+    id: crypto.randomUUID(),
+    type: "message",
+    role: "assistant",
+    model: body.model,
+    content: [...serverToolUses, ...resultBlocks, { type: "text", text: answer }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: {
+      input_tokens: searchJson.usage?.input_tokens || 0,
+      output_tokens: (searchJson.usage?.output_tokens || 0) + Math.ceil(answer.length / 4),
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      server_tool_use: { web_search_requests: serverToolUses.length },
+    },
+  };
+}
+
+/** Ask the requested og/ model to answer the query from the search result titles/URLs. */
+async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks) {
+  if (!opencodeGoKey) return "";
+  const resultsText = resultBlocks
+    .map((rb) => (rb.content || []).map((r) => `- ${r.title}\n  ${r.url}`).join("\n"))
+    .join("\n");
+  const req = {
+    model: upstreamModel,
+    max_tokens: 500,
+    messages: [{
+      role: "user",
+      content: `用户查询：${query}\n\n以下是网络搜索结果：\n${resultsText || "(无结果)"}\n\n请根据这些搜索结果，用中文简要、准确地回答用户的问题。如果信息不足，请说明。`,
+    }],
+  };
+  try {
+    const resp = await fetch(route.upstream, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
+    });
+    if (!resp.ok) return "";
+    const json = await resp.json();
+    return (json.choices?.[0]?.message?.content || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 /* ---------------- OpenAI → Anthropic (for og translation) ---------------- */
 
 function toAnthropicResponse(up, model) {
@@ -923,17 +1040,25 @@ function toSSE(res) {
   let out = "";
   out += sse("message_start", { type: "message_start", message: { ...res, content: [], stop_reason: null, stop_sequence: null } });
   res.content.forEach((block, i) => {
-    out += sse("content_block_start", { type: "content_block_start", index: i, content_block: { ...block } });
+    // server_tool_use starts with empty input in Anthropic's wire format; the query
+    // arrives via input_json_delta. web_search_tool_result carries its full content
+    // array inside content_block_start (matches DeepSeek's stream).
+    let startBlock = block;
+    if (block.type === "server_tool_use") startBlock = { ...block, input: {} };
+    out += sse("content_block_start", { type: "content_block_start", index: i, content_block: startBlock });
     if (block.type === "thinking") {
       out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "thinking_delta", thinking: block.thinking } });
+      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "signature_delta", signature: block.signature || "" } });
     } else if (block.type === "text") {
       out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "text_delta", text: block.text } });
     } else if (block.type === "tool_use") {
       out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) } });
+    } else if (block.type === "server_tool_use") {
+      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input || {}) } });
     }
     out += sse("content_block_stop", { type: "content_block_stop", index: i });
   });
-  out += sse("message_delta", { type: "message_delta", delta: { stop_reason: res.stop_reason, stop_sequence: null }, usage: { output_tokens: res.usage.output_tokens } });
+  out += sse("message_delta", { type: "message_delta", delta: { stop_reason: res.stop_reason, stop_sequence: null }, usage: { output_tokens: res.usage?.output_tokens || 0 } });
   out += sse("message_stop", { type: "message_stop" });
   return out;
 }
