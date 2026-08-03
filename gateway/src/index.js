@@ -771,10 +771,14 @@ function toOpenAIRequest(req, model) {
   if (req.temperature !== undefined) out.temperature = req.temperature;
   if (req.top_p !== undefined) out.top_p = req.top_p;
   if (req.tools?.length) {
-    out.tools = req.tools.map((t) => ({
-      type: "function",
-      function: { name: t.name, description: t.description || "", parameters: t.input_schema || {} },
-    }));
+    out.tools = req.tools.map((t) => {
+      // OpenAI function tools require parameters to be a JSON Schema object.
+      // Claude Code may send an empty/absent input_schema for server-side tools
+      // like web_search, which some backends (opencode zen) reject. Normalize it.
+      const raw = t.input_schema && typeof t.input_schema === "object" ? t.input_schema : {};
+      const parameters = raw.type ? raw : { type: "object", properties: raw.properties || {} };
+      return { type: "function", function: { name: t.name, description: t.description || "", parameters } };
+    });
     if (req.tool_choice) {
       const tc = req.tool_choice;
       if (tc.type === "tool") out.tool_choice = { type: "function", function: { name: tc.name } };
