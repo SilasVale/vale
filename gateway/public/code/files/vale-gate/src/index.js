@@ -416,6 +416,42 @@ async function handleGateway(request, env, url) {
   const route = pickRoute(prefix, env);
   const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
 
+  // ---- Gateway-side vision pre-processing ----
+  // Text-only models (deepseek, minimax, ...) can't see images. When a request
+  // carries image blocks and the target model isn't on the vision-capable
+  // allowlist, describe each image with the configured vision model (default
+  // og/mimo-v2.5) and swap the image blocks for that text, so any model can
+  // answer image questions. count_tokens skips this.
+  if (isMessages) {
+    const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
+    if (prep.changed) body.messages = prep.messages;
+  }
+
+  // ---- Gateway web search (og/ model answers, DeepSeek executes the search) ----
+  // Claude Code's WebSearch is executed server-side via Anthropic's web_search
+  // server tool. opencode zen (og/) doesn't implement it, but DeepSeek official's
+  // Anthropic endpoint does. So for og/ models, run the search through DeepSeek
+  // official and let the requested og/ model answer from the results — the model
+  // stays og/, DeepSeek is only the search backend. Requires this user's
+  // DEEPSEEK_API_KEY. ds/ and or/ requests pass through untouched (ds/ handles
+  // web_search natively).
+  const isWebSearch = isMessages && route.type === "translate" && (
+    (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
+    (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
+  );
+  if (isWebSearch) {
+    if (!deepseekKey) {
+      return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
+    }
+    const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
+    if (body.stream) {
+      return new Response(toSSE(res), {
+        headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+      });
+    }
+    return jsonOk(res);
+  }
+
   // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
   if (route.kind === "openrouter" && !openRouterKey) {
     return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
@@ -487,12 +523,16 @@ async function handleGateway(request, env, url) {
     } catch {}
     return jsonError(upstream.status, message, "api_error");
   }
-  const anthropicRes = toAnthropicResponse(await upstream.json(), upstreamModel);
+  // True streaming: when the client asked for a stream, forward zen's OpenAI SSE
+  // chunks to Anthropic SSE increments as they arrive (instead of buffering the
+  // whole response and flushing it at once — that made thinking look frozen and
+  // could time out long generations).
   if (body.stream) {
-    return new Response(toSSE(anthropicRes), {
+    return new Response(streamOgToAnthropic(upstream.body, body.model, upstreamModel), {
       headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
     });
   }
+  const anthropicRes = toAnthropicResponse(await upstream.json(), upstreamModel);
   return jsonOk(anthropicRes);
 }
 
@@ -706,18 +746,32 @@ function toOpenAIRequest(req, model) {
   for (const m of req.messages || []) {
     if (m.role === "user") {
       const content = typeof m.content === "string" ? m.content : m.content || [];
-      let textParts = [];
-      if (typeof content === "string") textParts.push(content);
-      else {
+      if (typeof content === "string") {
+        if (content) messages.push({ role: "user", content });
+      } else {
+        // Keep text and image parts together as an OpenAI content array, so the
+        // og/ translation forwards images (vision models) instead of dropping them.
+        const parts = [];
+        let textBuf = [];
+        const flush = () => { if (textBuf.length) { parts.push({ type: "text", text: textBuf.join("\n") }); textBuf = []; } };
         for (const b of content) {
           if (b.type === "tool_result") {
+            flush();
             const toolText =
               typeof b.content === "string" ? b.content : (b.content || []).map((c) => c.text || c.thinking || "").join("\n");
             messages.push({ role: "tool", tool_call_id: b.tool_use_id, content: toolText });
-          } else if (b.type === "text") textParts.push(b.text);
+          } else if (b.type === "text") {
+            textBuf.push(b.text);
+          } else if (b.type === "image") {
+            flush();
+            const mediaType = b.source?.media_type || "image/png";
+            const data = b.source?.data || "";
+            if (data) parts.push({ type: "image_url", image_url: { url: `data:${mediaType};base64,${data}` } });
+          }
         }
+        flush();
+        if (parts.length) messages.push({ role: "user", content: parts });
       }
-      if (textParts.length) messages.push({ role: "user", content: textParts.join("\n") });
     } else if (m.role === "assistant") {
       const msg = { role: "assistant", content: null };
       const content = typeof m.content === "string" ? m.content : m.content || [];
@@ -741,15 +795,19 @@ function toOpenAIRequest(req, model) {
     }
   }
 
-  const out = { model, messages, stream: false };
+  const out = { model, messages, stream: !!req.stream };
   if (req.max_tokens) out.max_tokens = req.max_tokens;
   if (req.temperature !== undefined) out.temperature = req.temperature;
   if (req.top_p !== undefined) out.top_p = req.top_p;
   if (req.tools?.length) {
-    out.tools = req.tools.map((t) => ({
-      type: "function",
-      function: { name: t.name, description: t.description || "", parameters: t.input_schema || {} },
-    }));
+    out.tools = req.tools.map((t) => {
+      // OpenAI function tools require parameters to be a JSON Schema object.
+      // Claude Code may send an empty/absent input_schema for server-side tools
+      // like web_search, which some backends (opencode zen) reject. Normalize it.
+      const raw = t.input_schema && typeof t.input_schema === "object" ? t.input_schema : {};
+      const parameters = raw.type ? raw : { type: "object", properties: raw.properties || {} };
+      return { type: "function", function: { name: t.name, description: t.description || "", parameters } };
+    });
     if (req.tool_choice) {
       const tc = req.tool_choice;
       if (tc.type === "tool") out.tool_choice = { type: "function", function: { name: tc.name } };
@@ -758,6 +816,205 @@ function toOpenAIRequest(req, model) {
     }
   }
   return out;
+}
+
+/* ---------------- Gateway-side vision pre-processing ---------------- */
+// The gateway's own models (deepseek, minimax, ...) are text-only. If an incoming
+// request carries Anthropic image blocks and the target model isn't on the
+// vision-capable allowlist, describe each image with a vision model (default
+// og/mimo-v2.5, configurable via env VISION_MODEL) and replace the image blocks
+// with the returned text so every model can "see" the picture.
+
+function isVisionCapable(model, upstreamModel, env) {
+  const list = String(env.VISION_CAPABLE_MODELS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  return list.includes(model) || list.includes(upstreamModel);
+}
+
+async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
+  if (!Array.isArray(messages)) return { messages, changed: false };
+  if (isVisionCapable(model, upstreamModel, env)) return { messages, changed: false };
+  const visionModel = env.VISION_MODEL || "og/mimo-v2.5";
+  let changed = false;
+  const out = [];
+  for (const m of messages) {
+    if (m.role !== "user" || typeof m.content !== "object" || !Array.isArray(m.content)) {
+      out.push(m);
+      continue;
+    }
+    if (!m.content.some((b) => b.type === "image")) {
+      out.push(m);
+      continue;
+    }
+    const newContent = [];
+    for (const b of m.content) {
+      if (b.type === "image") {
+        const desc = await describeImage(env, ukeys, b.source, visionModel);
+        newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
+        changed = true;
+      } else {
+        newContent.push(b);
+      }
+    }
+    out.push({ ...m, content: newContent });
+  }
+  return { messages: out, changed };
+}
+
+async function describeImage(env, ukeys, source, visionModel) {
+  const mediaType = source?.media_type || "image/png";
+  const data = source?.data || "";
+  if (!data) return "(图片数据为空)";
+  const prefix = visionModel.split("/")[0];
+  const route = pickRoute(prefix, env);
+  const upstreamModel = stripBracket(route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel);
+  const content = [
+    { type: "image", source: { type: "base64", media_type: mediaType, data } },
+    { type: "text", text: "请用中文详细描述这张图片的内容，包括所有可见文字（OCR）、界面元素、布局。若是截图或表格，请逐行说明关键内容。只输出描述，不要额外说明。" },
+  ];
+  const miniReq = { model: visionModel, max_tokens: 1500, messages: [{ role: "user", content }] };
+
+  if (route.type === "passthrough") {
+    // or/ (openrouter) or ds/ (deepseek) vision model — Anthropic passthrough
+    const bearerKey = route.kind === "openrouter" ? ukeys.OPENROUTER_API_KEY : ukeys.DEEPSEEK_API_KEY;
+    if (!bearerKey) return "(图片描述失败：视觉模型后端未配置)";
+    let resp;
+    try {
+      resp = await fetch(route.upstream, {
+        method: "POST",
+        headers: passthroughHeaders(bearerKey),
+        body: JSON.stringify({ ...miniReq, model: upstreamModel }),
+      });
+    } catch (e) {
+      return `(图片描述失败：${e.message})`;
+    }
+    if (!resp.ok) return `(图片描述失败：${resp.status})`;
+    let json;
+    try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
+    const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+    return text || "(图片描述为空)";
+  }
+
+  // og/ vision model (opencode zen) — needs the Anthropic→OpenAI translation,
+  // which now forwards image_url parts (see toOpenAIRequest).
+  if (!ukeys.OPENCODE_GO_API_KEY) return "(图片描述失败：OPENCODE_GO_API_KEY 未配置)";
+  const openaiReq = toOpenAIRequest(miniReq, upstreamModel);
+  let resp;
+  try {
+    resp = await fetch(route.upstream, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(openaiReq),
+    });
+  } catch (e) {
+    return `(图片描述失败：${e.message})`;
+  }
+  if (!resp.ok) return `(图片描述失败：${resp.status})`;
+  let json;
+  try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
+  return (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
+}
+
+/* ---------------- Gateway web search (og model answers, DeepSeek searches) ---------------- */
+
+/** Pull the search query out of the nested web-search request Claude Code sends. */
+function extractWebSearchQuery(messages) {
+  const last = [...(messages || [])].reverse().find((m) => m.role === "user");
+  let text = "";
+  if (last) {
+    if (typeof last.content === "string") text = last.content;
+    else text = (last.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ");
+  }
+  const m = text.match(/query:?\s*([\s\S]*)/i);
+  return (m ? m[1].trim() : text.trim()) || "latest news";
+}
+
+/**
+ * Execute the search via DeepSeek official (its Anthropic endpoint implements
+ * Anthropic's web_search server tool server-side), then have the requested og/
+ * model answer from the results. Returns an Anthropic-format message whose content
+ * carries the server_tool_use + web_search_tool_result blocks (so Claude Code's
+ * parser sees real results) plus the og/ model's text answer.
+ */
+async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey) {
+  const query = extractWebSearchQuery(body.messages);
+  const searchUrl = "https://api.deepseek.com/anthropic" + VERIFY_PATH;
+
+  let searchJson = {};
+  try {
+    const sr = await fetch(searchUrl, {
+      method: "POST",
+      headers: passthroughHeaders(deepseekKey),
+      body: JSON.stringify({
+        model: "deepseek-v4-flash",
+        max_tokens: 500,
+        tools: [{ name: "web_search", type: "web_search_20250305" }],
+        tool_choice: { type: "tool", name: "web_search" },
+        messages: [{ role: "user", content: query }],
+      }),
+    });
+    if (sr.ok) searchJson = await sr.json();
+  } catch {}
+
+  const serverToolUses = (searchJson.content || []).filter((b) => b.type === "server_tool_use");
+  const resultBlocks = (searchJson.content || []).filter((b) => b.type === "web_search_tool_result");
+
+  let answer = await ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks);
+  if (!answer) {
+    // Fall back to DeepSeek's own summary if the og/ model didn't produce one.
+    answer = (searchJson.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    type: "message",
+    role: "assistant",
+    model: body.model,
+    content: [...serverToolUses, ...resultBlocks, { type: "text", text: answer }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: {
+      input_tokens: searchJson.usage?.input_tokens || 0,
+      output_tokens: (searchJson.usage?.output_tokens || 0) + Math.ceil(answer.length / 4),
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      server_tool_use: { web_search_requests: serverToolUses.length },
+    },
+  };
+}
+
+/** Ask the requested og/ model to answer the query from the search result titles/URLs. */
+async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks) {
+  if (!opencodeGoKey) return "";
+  const resultsText = resultBlocks
+    .map((rb) => (rb.content || []).map((r) => `- ${r.title}\n  ${r.url}`).join("\n"))
+    .join("\n");
+  const req = {
+    model: upstreamModel,
+    max_tokens: 500,
+    messages: [{
+      role: "user",
+      content: `用户查询：${query}\n\n以下是网络搜索结果：\n${resultsText || "(无结果)"}\n\n请根据这些搜索结果，用中文简要、准确地回答用户的问题。如果信息不足，请说明。`,
+    }],
+  };
+  try {
+    const resp = await fetch(route.upstream, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
+    });
+    if (!resp.ok) {
+      console.error(`ogWebSearchAnswer: zen ${resp.status}`);
+      return "";
+    }
+    const json = await resp.json();
+    const text = (json.choices?.[0]?.message?.content || "").trim();
+    if (!text) console.error("ogWebSearchAnswer: empty content from zen");
+    return text;
+  } catch (e) {
+    console.error("ogWebSearchAnswer error:", e.message);
+    return "";
+  }
 }
 
 /* ---------------- OpenAI → Anthropic (for og translation) ---------------- */
@@ -787,6 +1044,247 @@ function toAnthropicResponse(up, model) {
   };
 }
 
+/* ---------------- True streaming: OpenAI SSE chunks → Anthropic SSE ---------------- */
+// The og/ route used to request zen with stream:false, buffer the entire response,
+// then flush it as one Anthropic SSE blob. That made long thinking look frozen and
+// could time out on big generations. Instead we stream:true upstream and translate
+// each OpenAI chunk to an Anthropic incremental event as it arrives.
+
+const STREAM_STOP_MAP = { stop: "end_turn", tool_calls: "tool_use", function_call: "tool_use", length: "max_tokens" };
+
+/**
+ * Convert an OpenAI chat.completion.chunk stream into an Anthropic message event
+ * stream. `upstreamBody` is a ReadableStream of OpenAI SSE (`data: {...}\n\n`,
+ * terminated by `data: [DONE]`). Returns a ReadableStream emitting Anthropic SSE.
+ */
+function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
+  const encoder = new TextEncoder();
+  const encoderStream = new AnthropicStreamEncoder(clientModel, upstreamModel);
+
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const readStream = new ReadableStream({
+    async pull(controller) {
+      while (true) {
+        // Emit any pending Anthropic events already queued by the last chunk.
+        const pending = encoderStream.take();
+        if (pending.length) {
+          controller.enqueue(encoder.encode(pending));
+          return;
+        }
+        // Otherwise pull the next upstream bytes.
+        const { done, value } = await reader.read();
+        if (done) {
+          const tail = encoderStream.finish(buffer);
+          if (tail) controller.enqueue(encoder.encode(tail));
+          controller.close();
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        // SSE events are separated by blank lines; a data line may be split across
+        // read chunks, so only consume complete events.
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
+          if (!dataLine) continue;
+          const payload = dataLine.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          let chunk;
+          try { chunk = JSON.parse(payload); } catch { continue; }
+          encoderStream.push(chunk);
+          const events = encoderStream.take();
+          if (events.length) {
+            controller.enqueue(encoder.encode(events));
+            return;
+          }
+        }
+      }
+    },
+  });
+  return readStream;
+}
+
+/**
+ * Stateful translator from OpenAI stream deltas to Anthropic SSE events.
+ * Accumulates tool-call arguments by index and tracks which content block is open.
+ */
+class AnthropicStreamEncoder {
+  constructor(clientModel, upstreamModel) {
+    this.clientModel = clientModel;
+    this.upstreamModel = upstreamModel;
+    this.started = false;
+    this.finished = false;
+    this.blockIndex = -1;
+    this.blockType = null;      // "thinking" | "text" | "tool_use"
+    this.openToolInputs = {};   // tool index → accumulated arguments string
+    this.pending = [];
+    this.lastStopReason = "end_turn";
+    this.id = "";
+    this.usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  }
+
+  push(chunk) {
+    if (this.finished) return;
+    const choice = chunk.choices?.[0];
+    if (!choice) return;
+    const delta = choice.delta || {};
+    if (!this.id && chunk.id) this.id = chunk.id;
+    if (chunk.usage) {
+      this.usage.input_tokens = chunk.usage.prompt_tokens || 0;
+      this.usage.output_tokens = chunk.usage.completion_tokens || 0;
+      this.usage.cache_read_input_tokens = chunk.usage.prompt_cache_hit_tokens || 0;
+    }
+    if (choice.finish_reason) this.lastStopReason = STREAM_STOP_MAP[choice.finish_reason] || "end_turn";
+
+    if (delta.reasoning_content) {
+      this.ensureBlock("thinking", { thinking: delta.reasoning_content, signature: "" });
+    }
+    if (delta.content) {
+      this.ensureBlock("text", { text: delta.content });
+    }
+    for (const tc of delta.tool_calls || []) {
+      const idx = tc.index ?? 0;
+      const fn = tc.function || {};
+      this.ensureToolBlock(idx, fn.name, fn.arguments || "");
+    }
+  }
+
+  /** Close all open blocks and append message_delta + message_stop. Call once on stream end. */
+  finish(tailBuffer = "") {
+    if (this.finished) return null;
+    this.finished = true;
+    if (tailBuffer.trim()) {
+      // A trailing partial event (no blank line yet) — best-effort parse.
+      const dataLine = tailBuffer.split("\n").find((l) => l.startsWith("data:"));
+      if (dataLine) {
+        const payload = dataLine.slice(5).trim();
+        if (payload && payload !== "[DONE]") {
+          try { this.push(JSON.parse(payload)); } catch {}
+        }
+      }
+    }
+    // The client expects message_start to be the first event.
+    if (!this.started) this.emitStart();
+    if (this.blockIndex >= 0) this.closeBlock();
+    this.pending.push(sse("message_delta", {
+      type: "message_delta",
+      delta: { stop_reason: this.lastStopReason, stop_sequence: null },
+      usage: { output_tokens: this.usage.output_tokens },
+    }));
+    this.pending.push(sse("message_stop", { type: "message_stop" }));
+    return this.take();
+  }
+
+  /** Drain queued Anthropic SSE text. */
+  take() {
+    if (this.pending.length) {
+      const out = this.pending.join("");
+      this.pending = [];
+      return out;
+    }
+    return "";
+  }
+
+  emitStart() {
+    if (this.started) return;
+    this.started = true;
+    this.pending.push(sse("message_start", {
+      type: "message_start",
+      message: {
+        id: this.id,
+        type: "message",
+        role: "assistant",
+        model: this.upstreamModel,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { ...this.usage },
+      },
+    }));
+  }
+
+  ensureBlock(type, block) {
+    if (!this.started) this.emitStart();
+    if (this.blockType !== type) {
+      this.closeBlock();
+      this.blockIndex += 1;
+      this.blockType = type;
+      const contentBlock = type === "thinking" ? { ...block, signature: "" } : { ...block };
+      this.pending.push(sse("content_block_start", {
+        type: "content_block_start",
+        index: this.blockIndex,
+        content_block: contentBlock,
+      }));
+      if (type === "thinking") {
+        this.pending.push(sse("content_block_delta", {
+          type: "content_block_delta",
+          index: this.blockIndex,
+          delta: { type: "thinking_delta", thinking: block.thinking },
+        }));
+      } else if (type === "text") {
+        this.pending.push(sse("content_block_delta", {
+          type: "content_block_delta",
+          index: this.blockIndex,
+          delta: { type: "text_delta", text: block.text },
+        }));
+      }
+    } else if (type === "thinking") {
+      this.pending.push(sse("content_block_delta", {
+        type: "content_block_delta",
+        index: this.blockIndex,
+        delta: { type: "thinking_delta", thinking: block.thinking },
+      }));
+    } else if (type === "text") {
+      this.pending.push(sse("content_block_delta", {
+        type: "content_block_delta",
+        index: this.blockIndex,
+        delta: { type: "text_delta", text: block.text },
+      }));
+    }
+  }
+
+  ensureToolBlock(idx, name, argsDelta) {
+    if (!this.started) this.emitStart();
+    // Tools always open their own block; close any text/thinking block first.
+    if (this.blockIndex >= 0 && this.blockType !== "tool_use") this.closeBlock();
+    if (this.blockType !== "tool_use") {
+      this.blockIndex += 1;
+      this.blockType = "tool_use";
+      this.pending.push(sse("content_block_start", {
+        type: "content_block_start",
+        index: this.blockIndex,
+        content_block: { type: "tool_use", id: "", name: name || "unknown", input: {} },
+      }));
+    }
+    if (name) {
+      // zen may repeat the name on later chunks; emit a partial_json delta only for args.
+      this.toolName = name;
+    }
+    if (argsDelta) {
+      const cur = this.openToolInputs[idx] || "";
+      const next = cur + argsDelta;
+      this.openToolInputs[idx] = next;
+      this.pending.push(sse("content_block_delta", {
+        type: "content_block_delta",
+        index: this.blockIndex,
+        delta: { type: "input_json_delta", partial_json: argsDelta },
+      }));
+    }
+  }
+
+  closeBlock() {
+    if (this.blockIndex >= 0) {
+      this.pending.push(sse("content_block_stop", { type: "content_block_stop", index: this.blockIndex }));
+      this.blockIndex = -1;
+      this.blockType = null;
+    }
+  }
+}
+
 /* ---------------- Anthropic SSE event stream ---------------- */
 
 function sse(name, data) {
@@ -797,17 +1295,25 @@ function toSSE(res) {
   let out = "";
   out += sse("message_start", { type: "message_start", message: { ...res, content: [], stop_reason: null, stop_sequence: null } });
   res.content.forEach((block, i) => {
-    out += sse("content_block_start", { type: "content_block_start", index: i, content_block: { ...block } });
+    // server_tool_use starts with empty input in Anthropic's wire format; the query
+    // arrives via input_json_delta. web_search_tool_result carries its full content
+    // array inside content_block_start (matches DeepSeek's stream).
+    let startBlock = block;
+    if (block.type === "server_tool_use") startBlock = { ...block, input: {} };
+    out += sse("content_block_start", { type: "content_block_start", index: i, content_block: startBlock });
     if (block.type === "thinking") {
       out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "thinking_delta", thinking: block.thinking } });
+      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "signature_delta", signature: block.signature || "" } });
     } else if (block.type === "text") {
       out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "text_delta", text: block.text } });
     } else if (block.type === "tool_use") {
       out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) } });
+    } else if (block.type === "server_tool_use") {
+      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input || {}) } });
     }
     out += sse("content_block_stop", { type: "content_block_stop", index: i });
   });
-  out += sse("message_delta", { type: "message_delta", delta: { stop_reason: res.stop_reason, stop_sequence: null }, usage: { output_tokens: res.usage.output_tokens } });
+  out += sse("message_delta", { type: "message_delta", delta: { stop_reason: res.stop_reason, stop_sequence: null }, usage: { output_tokens: res.usage?.output_tokens || 0 } });
   out += sse("message_stop", { type: "message_stop" });
   return out;
 }
