@@ -955,7 +955,11 @@ async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey,
   const serverToolUses = (searchJson.content || []).filter((b) => b.type === "server_tool_use");
   const resultBlocks = (searchJson.content || []).filter((b) => b.type === "web_search_tool_result");
 
-  const answer = await ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks);
+  let answer = await ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks);
+  if (!answer) {
+    // Fall back to DeepSeek's own summary if the og/ model didn't produce one.
+    answer = (searchJson.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+  }
 
   return {
     id: crypto.randomUUID(),
@@ -995,10 +999,16 @@ async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, res
       headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
     });
-    if (!resp.ok) return "";
+    if (!resp.ok) {
+      console.error(`ogWebSearchAnswer: zen ${resp.status}`);
+      return "";
+    }
     const json = await resp.json();
-    return (json.choices?.[0]?.message?.content || "").trim();
-  } catch {
+    const text = (json.choices?.[0]?.message?.content || "").trim();
+    if (!text) console.error("ogWebSearchAnswer: empty content from zen");
+    return text;
+  } catch (e) {
+    console.error("ogWebSearchAnswer error:", e.message);
     return "";
   }
 }
