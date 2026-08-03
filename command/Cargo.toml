@@ -1,0 +1,78 @@
+[workspace]
+members = [".", "vale-command-core", "src-tauri"]
+default-members = ["."]
+resolver = "2"
+
+[workspace.package]
+version = "0.7.0"
+
+[package]
+name = "vale-command"
+version.workspace = true
+edition = "2021"
+
+[lib]
+crate-type = ["rlib"]
+
+[[bin]]
+name = "vale-command"
+path = "src/main.rs"
+
+[dependencies]
+vale-command-core = { path = "vale-command-core" }
+rmcp = { version = "2", features = ["server", "transport-streamable-http-server", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "process", "signal"] }
+tokio-util = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serialport = { version = "4", default-features = false }
+axum = "0.8"
+bytes = "1"
+http-body-util = "0.1"
+tower = "0.5"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+
+# Optional deps — gated behind features; headless builds skip them entirely.
+# CDP talks only to ws://localhost and http://localhost, so tokio-tungstenite
+# needs no TLS (drops native-tls/openssl) and reqwest needs no default-tls.
+russh = { version = "0.55", default-features = false, features = ["ring"], optional = true }
+tokio-tungstenite = { version = "0.24", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
+url = { version = "2", optional = true }
+tauri = { version = "2", features = ["unstable"], optional = true }
+portable-pty = { version = "0.8", optional = true }
+keyring = { version = "2", optional = true }
+
+serde_yaml = "0.9"
+
+# Windows-only: lets the headless binary register itself as the `ValeCommand`
+# Windows service (SCM protocol). Ignored entirely on Linux/macOS builds.
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.7"
+
+[dev-dependencies]
+rmcp = { version = "2", features = ["client", "transport-streamable-http-client-reqwest"] }
+reqwest = "0.12"
+
+[features]
+default = []
+# Real terminal backends (PTY/SSH/Serial) — no GUI required.
+terminal = ["dep:portable-pty", "dep:russh"]
+# Browser automation via CDP (headless Chrome/Edge) — no GUI required.
+browser = ["dep:tokio-tungstenite", "dep:reqwest", "dep:url"]
+# OS keychain secrets for SSH passwords.
+keyring = ["dep:keyring"]
+# Tauri UI implies the CDP machinery, so any tauri build also gets browser.
+tauri = ["dep:tauri", "browser"]
+# Desktop app composition — Tauri UI plus everything else.
+desktop = ["tauri", "terminal", "browser", "keyring"]
+
+# ProcessPrng workaround: use CPU RDRAND instruction instead of Windows API
+# This avoids the ProcessPrng/BCryptGenRandom dependency.
+# All crates (ring, uuid) share this single getrandom instance.
+[dependencies.getrandom]
+version = "0.2"
+features = ["rdrand"]

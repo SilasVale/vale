@@ -1,0 +1,5 @@
+/target
+/vale-tray/target
+
+# worktree pointer from the original repo - not part of the monorepo
+/.claude/worktrees

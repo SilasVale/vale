@@ -1,0 +1,19 @@
+[package]
+name = "vale-command-desktop"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+vale-command = { path = "..", default-features = false, features = ["desktop"] }
+tauri = { version = "2", features = ["unstable"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "process", "signal"] }
+tokio-util = "0.7"
+serde_json = "1"
+serde_yaml = "0.9"
+url = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+tauri-build = { version = "2" }
+getrandom = { version = "0.2", features = ["rdrand"] }

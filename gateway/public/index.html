@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vale Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- ========== Not logged in: auth page ========== -->
+  <div id="view-auth" class="auth-wrap">
+    <div class="auth-card">
+      <div class="lang-toggle" data-lang-toggle></div>
+      <div class="brand-lg">
+        <span class="brand-mark">V</span>
+        <div>
+          <div class="brand-name">Vale</div>
+          <div class="brand-sub" data-i18n="app.sub">统一中转 · 自带密钥</div>
+        </div>
+      </div>
+
+      <div class="auth-tabs" role="tablist">
+        <button id="tab-login" class="auth-tab active" data-tab="login" data-i18n="auth.login">登录</button>
+        <button id="tab-register" class="auth-tab" data-tab="register" data-i18n="auth.register">注册</button>
+      </div>
+
+      <form id="form-login" class="auth-form" autocomplete="off">
+        <label><span data-i18n="auth.username">用户名</span>
+          <input name="username" placeholder="Username" required autocomplete="username">
+        </label>
+        <label><span data-i18n="auth.password">密码</span>
+          <input name="password" type="password" placeholder="Password" required autocomplete="current-password">
+        </label>
+        <p id="login-msg" class="form-msg" hidden></p>
+        <button type="submit" class="btn-primary btn-block" data-i18n="auth.loginBtn">登录</button>
+      </form>
+
+      <form id="form-register" class="auth-form" hidden autocomplete="off">
+        <label><span data-i18n="auth.username">用户名</span>
+          <input name="username" placeholder="Username" required autocomplete="username">
+        </label>
+        <label><span data-i18n="auth.password">密码</span>
+          <input name="password" type="password" placeholder="Password" required autocomplete="new-password">
+        </label>
+        <label><span data-i18n="auth.inviteCode">邀请码</span>
+          <input name="inviteCode" placeholder="Invite code" required>
+        </label>
+        <p id="register-msg" class="form-msg" hidden></p>
+        <button type="submit" class="btn-primary btn-block" data-i18n="auth.registerBtn">注册并登录</button>
+      </form>
+    </div>
+    <p class="auth-foot" data-i18n="auth.foot">注册后带上自己的 DeepSeek / OpenCode Go 密钥即可通过本网关转发。</p>
+  </div>
+
+  <!-- ========== Logged in: console ========== -->
+  <div id="view-app" class="app" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-mark sm">V</span>
+        <span class="brand-name">Vale</span>
+      </div>
+      <nav class="side-nav" id="side-nav">
+        <button class="nav-item active" data-panel="overview" data-i18n="nav.overview">概览</button>
+        <button class="nav-item" data-panel="keys" data-i18n="nav.keys">密钥管理</button>
+        <button class="nav-item" data-panel="routes" data-i18n="nav.routes">模型路由</button>
+        <button class="nav-item" data-panel="users" data-admin-only hidden data-i18n="nav.users">用户管理</button>
+        <button class="nav-item" data-panel="devices" data-admin-only hidden data-i18n="nav.devices">设备管理</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="side-user" id="side-user"></div>
+        <button id="btn-logout" class="btn-ghost btn-block" data-i18n="btn.logout">退出登录</button>
+        <div class="lang-toggle" data-lang-toggle></div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section id="panel-overview" class="panel">
+        <h1 data-i18n="overview.title">概览</h1>
+        <p class="lede" data-i18n="overview.lede">你的网关凭证与后端密钥状态。</p>
+
+        <div class="card">
+          <div class="card-head">
+            <h2 data-i18n="token.title">网关 Token</h2>
+            <span id="role-badge" class="badge"></span>
+          </div>
+          <p class="muted" data-i18n="token.desc">客户端 <code>x-api-key</code> 填这个值；模型名用 <code>og/…</code>、<code>ds/…</code> 前缀路由。</p>
+          <div class="token-row">
+            <code id="token-value" class="token mono"></code>
+            <button id="btn-copy" class="btn-primary" data-i18n="btn.copy">复制</button>
+            <button id="btn-reveal" class="btn-ghost" data-i18n="btn.show">显示</button>
+          </div>
+          <div class="token-actions">
+            <button id="btn-regenerate" class="btn-ghost danger-text" data-i18n="btn.regenerate">重新生成 Token</button>
+          </div>
+          <p id="token-note" class="note" hidden></p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2 data-i18n="routes.title">路由状态</h2></div>
+          <div class="switchboard" id="overview-switchboard"></div>
+        </div>
+      </section>
+
+      <section id="panel-keys" class="panel" hidden>
+        <h1 data-i18n="keys.title">密钥管理</h1>
+        <p class="lede" data-i18n="keys.lede">填入你自己在对应服务商申请的 API key，网关转发时只使用你自己的 key，各算各的额度。</p>
+        <div id="keys-cards" class="cards"></div>
+      </section>
+
+      <section id="panel-routes" class="panel" hidden>
+        <h1 data-i18n="nav.routes">模型路由</h1>
+        <p class="lede" data-i18n="routes.lede">请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。</p>
+        <div class="card">
+          <div class="switchboard" id="routes-switchboard"></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2 data-i18n="client.title">客户端接入示例（Claude Code）</h2></div>
+          <pre><code id="client-example">{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://&lt;your-api-host&gt;",
+    "ANTHROPIC_API_KEY": "&lt;your gateway token&gt;",
+    "ANTHROPIC_MODEL": "og/deepseek-v4-flash[1m]",
+    "ANTHROPIC_SMALL_FAST_MODEL": "og/deepseek-v4-flash[1m]"
+  }
+}</code></pre>
+          <div class="note" data-i18n="client.note">模型名里的 <code>[1m]</code> 是 Claude Code 的 1M 上下文窗口标记，上行前它自己会剥掉，网关按前缀路由不受影响。curl 手测勿发带 <code>[1m]</code> 的字面模型名。</div>
+        </div>
+      </section>
+
+      <section id="panel-users" class="panel" hidden>
+        <h1 data-i18n="nav.users">用户管理</h1>
+        <p class="lede" data-i18n="users.lede">管理员密码、邀请码与用户列表。</p>
+
+        <div class="card">
+          <div class="card-head"><h2 data-i18n="adminpw.title">管理员密码</h2></div>
+          <p class="muted" data-i18n="adminpw.desc">控制台登录用的密码（也是会话签名钥匙）。改完需用新密码重新登录。</p>
+          <div class="token-row">
+            <code id="admin-pw-value" class="token mono"></code>
+            <button id="btn-pw-copy" class="btn-primary" data-i18n="btn.copy">复制</button>
+            <button id="btn-pw-reveal" class="btn-ghost" data-i18n="btn.show">显示</button>
+          </div>
+          <div class="key-edit-row">
+            <input type="password" id="admin-pw-new" placeholder="New password (min 8 chars)" autocomplete="new-password">
+            <button id="btn-pw-change" class="btn-primary" data-i18n="adminpw.change">修改密码</button>
+          </div>
+          <p id="pw-msg" class="form-msg" hidden></p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2 data-i18n="invite.title">邀请码</h2>
+            <button id="btn-invite" class="btn-primary" data-i18n="invite.gen">生成邀请码</button>
+          </div>
+          <div id="invite-box"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2 data-i18n="users.list">用户列表</h2></div>
+          <div id="users-list" class="users-list"></div>
+        </div>
+      </section>
+
+      <section id="panel-devices" class="panel" hidden>
+        <h1 data-i18n="nav.devices">设备管理</h1>
+        <p class="lede" data-i18n="devices.lede">注册每台 Windows 设备（vale-command）的 token，控制台即可代理到设备面板、复制 MCP 配置。</p>
+
+        <div class="card">
+          <div class="card-head">
+            <h2 data-i18n="devices.regKeyTitle">安装新设备</h2>
+            <div class="install-flow-btns">
+              <a id="btn-dev-download" class="btn-primary" href="https://command.saisi.online/vale-command/ValeCommand-Setup.exe" download data-i18n="devices.downloadInstall">下载安装程序 ↓</a>
+              <button id="btn-dev-regkey" class="btn-ghost" data-i18n="devices.genKey">生成注册码</button>
+            </div>
+          </div>
+          <p class="muted" data-i18n="devices.regKeyDesc">下载安装程序 → 生成注册码 → Windows 上设置 <code>$env:VALE_REG_KEY</code> 后安装，装完自动登记到下方列表（无需手动抄 token）。</p>
+          <div id="regkey-box"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2 data-i18n="devices.addTitle">添加 / 更新设备</h2></div>
+          <div class="device-form">
+            <input id="dev-name" type="text" placeholder="设备名（如 d1）" autocomplete="off">
+            <input id="dev-host" type="text" placeholder="d1.command.saisi.online" autocomplete="off">
+            <input id="dev-token" type="password" placeholder="Bearer token（安装时生成）" autocomplete="off">
+            <button id="btn-dev-add" class="btn-primary" data-i18n="btn.save">保存</button>
+          </div>
+          <p id="dev-msg" class="form-msg" hidden></p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2 data-i18n="cf.title">Cloudflare 隧道凭据</h2>
+            <span id="cf-status" class="badge"></span>
+          </div>
+          <p class="muted" data-i18n="cf.desc">安装时自动配置隧道的账户级 API token（需 Tunnel:Edit + Zone:DNS:Edit 权限）。存这里后，Windows 安装带注册码即可自动取用，无需浏览器授权。</p>
+          <div class="key-edit-row">
+            <input type="password" id="cf-token-input" placeholder="cfat_…（留空保存 = 清除）" autocomplete="off">
+            <button id="btn-cf-save" class="btn-primary" data-i18n="btn.save">保存</button>
+          </div>
+          <p id="cf-msg" class="form-msg" hidden></p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2 data-i18n="devices.listTitle">设备列表</h2></div>
+          <div id="devices-list" class="users-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
