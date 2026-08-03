@@ -1,0 +1,160 @@
+/* Vale Command UI — Linear-inspired light theme. Polished metrics, one icon
+   language, pressed/focus feedback, gentle motion. Tokens are the contract. */
+
+/* Inter variable (vendored, offline-safe) — weight axis makes 425/650 real */
+@font-face{
+  font-family:"Inter";
+  src:url("/vendor/inter-variable.woff2") format("woff2");
+  font-weight:100 900;
+  font-display:swap;
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#fafafa; --card:#fff; --card-hover:#f5f5f7;
+  --border:#e8e8ed; --border-strong:#d5d5db;
+  --accent:#5b6cf0; --accent-hover:#4a5ad4; --accent-bg:#eff0ff;
+  --accent-ring:rgba(91,108,240,.28);
+  --green:#2ea043; --green-bg:#e6f4ea; --red:#cf222e; --red-bg:#ffe9eb;
+  --orange:#bf5b00; --purple:#8250df; --text:#131314; --text2:#6b6b6f; --text3:#94949b;
+  --activity-w:280px;
+  --ctrl-h:28px;                                   /* one control height everywhere */
+  --font:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono","Cascadia Code","SF Mono",Menlo,monospace;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.04);
+}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--font);font-size:14px;line-height:1.5;background:var(--bg);color:var(--text);display:flex;flex-direction:column;-webkit-font-smoothing:antialiased;font-weight:425}
+
+/* ── Shared interaction states ── */
+button{font-family:inherit}
+button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-ring)}
+button:active:not([disabled]){transform:scale(.97)}
+button{transition:background .15s,color .15s,border-color .15s,box-shadow .15s,transform .06s}
+button[disabled]{opacity:.4;cursor:default;transform:none}
+
+/* ── Topbar ── */
+#topbar{display:flex;align-items:center;padding:10px 20px;background:var(--card);border-bottom:1px solid var(--border);gap:14px;flex-shrink:0;height:48px}
+#topbar .logo{font-size:15px;font-weight:650;display:flex;align-items:center;gap:8px;letter-spacing:-.3px}
+#topbar .logo .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+#topbar .sep{width:1px;height:18px;background:var(--border)}
+
+/* Tabs (top-level view switcher) — the base tab idiom */
+#tabs{display:flex;gap:2px;flex:1}
+.tab{padding:6px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text2);white-space:nowrap;transition:background .15s,color .15s;display:inline-flex;align-items:center;gap:6px;border:none;background:none}
+.tab:hover{background:rgba(0,0,0,.04);color:var(--text)}
+.tab:active{transform:scale(.97)}
+.tab.active{background:var(--accent-bg);color:var(--accent);font-weight:600}
+
+#main{flex:1;display:flex;min-height:0;overflow:hidden}
+
+/* ── Activity panel ── */
+#activity-panel{width:var(--activity-w);flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--card)}
+#activity-panel .head{padding:12px 16px;font-size:12px;font-weight:650;color:var(--text2);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;letter-spacing:-.2px}
+#activity-feed{flex:1;overflow-y:auto}
+#activity-feed .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text3);font-size:14px;gap:8px}
+.event-row{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid rgba(0,0,0,.03);cursor:pointer;transition:background .1s;animation:row-in .18s ease-out}
+@keyframes row-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.event-row:hover{background:rgba(0,0,0,.02)}
+.event-row.selected{background:var(--accent-bg)}
+.event-row .icon-circle{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.event-row .icon-circle svg{width:15px;height:15px}
+.event-row .icon-circle.b{background:var(--accent-bg);color:var(--accent)}
+.event-row .icon-circle.t{background:var(--green-bg);color:var(--green)}
+.event-row .icon-circle.s{background:rgba(191,91,0,.08);color:var(--orange)}
+.event-row .icon-circle.d{background:rgba(0,0,0,.05);color:var(--text2)}
+.event-row .time-col{width:46px;flex-shrink:0;font-family:var(--mono);font-size:10px;color:var(--text3)}
+.event-row .msg-col{flex:1;min-width:0}
+.event-row .msg-col .title{font-weight:600;font-size:12px;letter-spacing:-.1px}
+.event-row .msg-col .detail{font-family:var(--mono);font-size:11px;color:var(--text2);margin-top:2px;word-break:break-all}
+
+/* ── Context panel ── */
+#context-panel{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+#context-panel .ctx-toolbar{display:none;align-items:center;gap:6px;padding:6px 12px;flex-shrink:0;background:var(--card);border-bottom:1px solid var(--border)}
+#context-panel .ctx-toolbar.active{display:flex}
+
+/* URL bar + toolbar buttons — one height (28px), borders never change layout */
+#browser-url{flex:1;height:var(--ctrl-h);padding:0 12px;border:1px solid var(--border);border-radius:8px;font-family:var(--font);font-size:13px;outline:none;background:var(--bg);transition:border-color .15s,box-shadow .15s,background .15s;font-weight:425}
+#browser-url:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring);background:var(--card)}
+.ctx-toolbar button{height:var(--ctrl-h);padding:0 14px;background:var(--accent);color:#fff;border:1px solid transparent;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:5px}
+.ctx-toolbar button:hover:not([disabled]){background:var(--accent-hover)}
+.ctx-toolbar button.sec{background:var(--bg);color:var(--text2);border-color:var(--border)}
+.ctx-toolbar button.sec:hover:not([disabled]){background:var(--card-hover);color:var(--text)}
+.ctx-toolbar button svg{width:14px;height:14px}
+
+.ctx-content{display:none;flex:1;overflow:hidden}
+.ctx-content.active{display:flex;flex-direction:column}
+
+/* Browser/terminal tab items — one shared idiom (browser.js/term.js render
+   through tabs.js), derived from the .tab view-switcher idiom + close btn */
+#browser-tab-bar,#term-tab-bar{display:flex;align-items:center;gap:2px;overflow-x:auto;flex:1;min-width:0}
+.tab-item{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:500;color:var(--text2);white-space:nowrap;transition:background .15s,color .15s;flex-shrink:0}
+.tab-item:hover{background:rgba(0,0,0,.04);color:var(--text)}
+.tab-item:active{transform:scale(.97)}
+.tab-item.active{background:var(--accent-bg);color:var(--accent);font-weight:600}
+.tab-title{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab-close{margin-left:2px;font-size:13px;line-height:1;color:var(--text3);border:none;background:none;cursor:pointer;padding:1px 3px;border-radius:4px;transition:color .1s,background .1s}
+.tab-close:hover{color:var(--red);background:var(--red-bg)}
+
+/* Toolbar "+" — quiet icon button, not a primary */
+.ctx-toolbar button.icon-btn{background:var(--bg);color:var(--text3);border-color:var(--border);width:var(--ctrl-h);padding:0;flex-shrink:0}
+.ctx-toolbar button.icon-btn:hover{background:var(--card-hover);color:var(--text)}
+
+#terminal-out,#terminal-out .xterm,#terminal-out .xterm-viewport,#terminal-out .xterm-screen{background:var(--card)!important}
+#terminal-out{flex:1;overflow:hidden;display:flex;flex-direction:column;position:relative;border-radius:8px;margin:4px 8px 8px;box-shadow:var(--shadow-sm)}
+#terminal-out>div{flex:1}
+#browser-area{flex:1;min-height:200px;display:flex;position:relative;margin:4px 8px 8px;border-radius:8px;overflow:hidden;box-shadow:var(--shadow-sm);background:var(--card)}
+#browser-area .hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:14px}
+
+/* ── Status bar ── */
+#statusbar{display:flex;align-items:center;gap:14px;padding:7px 20px;background:var(--card);border-top:1px solid var(--border);font-size:12px;color:var(--text2);flex-shrink:0}
+#statusbar .led{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;transition:background .3s}
+#statusbar .led.off{background:var(--text3)}
+#statusbar .version-text{margin-left:auto}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+
+/* ── Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(19,19,20,.22);z-index:999;display:flex;align-items:center;justify-content:center;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .18s ease,visibility .18s}
+.modal-overlay.show{opacity:1;visibility:visible;pointer-events:auto}
+.modal-card{background:var(--card);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.14);width:440px;max-height:90vh;overflow-y:auto;transform:scale(.97) translateY(4px);transition:transform .18s ease}
+.modal-overlay.show .modal-card{transform:none}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-head h3{font-size:15px;font-weight:650;margin:0;letter-spacing:-.2px}
+.modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3);padding:0;line-height:1;border-radius:6px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;transition:background .1s,color .1s}
+.modal-close:hover{background:rgba(0,0,0,.05);color:var(--text)}
+.modal-body{padding:18px 20px}
+.modal-body label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin-bottom:5px}
+.field-row + .field-row{margin-top:14px}
+.modal-body input,.modal-body select{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;outline:none;font-family:var(--font);background:var(--bg);transition:border-color .15s,box-shadow .15s;font-weight:425}
+.modal-body input:focus,.modal-body select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+.modal-body .check-row{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--text2);cursor:pointer}
+.modal-body .check-row input{width:auto}
+.type-row{display:flex;gap:6px;margin-bottom:16px}
+.type-btn{flex:1;padding:10px 0;text-align:center;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;background:var(--bg);color:var(--text2);transition:background .15s,color .15s,border-color .15s}
+.type-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.type-btn:hover:not(.active){background:var(--card-hover)}
+.modal-foot{display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border)}
+.modal-foot button{height:34px;padding:0 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid transparent;transition:background .15s,color .15s,border-color .15s}
+.btn-connect{background:var(--accent);color:#fff}
+.btn-connect:hover:not([disabled]){background:var(--accent-hover)}
+.btn-cancel{background:var(--bg);color:var(--text2);border-color:var(--border)}
+.btn-cancel:hover{background:var(--card-hover)}
+.saved-list{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.saved-list .saved-title{font-size:12px;font-weight:650;color:var(--text3);margin-bottom:8px}
+.saved-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12px;transition:background .1s}
+.saved-item:hover{background:var(--accent-bg)}
+.saved-item .saved-label{flex:1;font-family:var(--mono);font-size:12px}
+.saved-item .saved-del{color:var(--text3);font-size:16px;cursor:pointer;padding:0 4px;border-radius:6px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:none;background:none;transition:color .1s,background .1s}
+.saved-item .saved-del:hover{color:var(--red);background:var(--red-bg)}
+
+/* Connection dialog inline error */
+.conn-error{color:var(--red);font-size:12px;margin-top:10px;background:var(--red-bg);padding:8px 10px;border-radius:8px}
+.modal-body .muted-label{color:var(--text3)}
+
+/* Token prompt (built by ipc.js) */
+.token-card{width:380px}
+.token-note{font-size:13px;color:var(--text2);margin-bottom:12px}
+.token-input{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:13px;outline:none;background:var(--bg)}

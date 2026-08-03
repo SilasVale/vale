@@ -1,0 +1,39 @@
+{
+  "files": [
+    {
+      "name": "src/index.js",
+      "path": "files/vale-gate/src/index.js",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store.js",
+      "path": "files/vale-gate/src/store.js",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/auth.js",
+      "path": "files/vale-gate/src/auth.js",
+      "group": "vale-gate"
+    },
+    {
+      "name": "public/index.html",
+      "path": "files/vale-gate/public/index.html",
+      "group": "vale-gate"
+    },
+    {
+      "name": "public/app.js",
+      "path": "files/vale-gate/public/app.js",
+      "group": "vale-gate"
+    },
+    {
+      "name": "public/style.css",
+      "path": "files/vale-gate/public/style.css",
+      "group": "vale-gate"
+    },
+    {
+      "name": "wrangler.jsonc",
+      "path": "files/vale-gate/wrangler.jsonc",
+      "group": "vale-gate"
+    }
+  ]
+}

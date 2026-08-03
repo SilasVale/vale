@@ -1,0 +1,19 @@
+# cloudflared config — copy to %USERPROFILE%\.cloudflared\config.yml
+# (or the location from `cloudflared tunnel --help`), fill in YOUR tunnel ID,
+# then `cloudflared service install`.
+
+tunnel: <TUNNEL_ID>                       # from `cloudflared tunnel list`
+credentials-file: C:\Users\<you>\.cloudflared\<TUNNEL_ID>.json
+
+ingress:
+  # Device 1 — points to vale-command headless running on this Windows box.
+  - hostname: d1.command.saisi.online
+    service: http://127.0.0.1:18080
+  # Add one entry per device (each machine has its own vale-command instance):
+  # - hostname: d2.command.saisi.online
+  #   service: http://127.0.0.1:18080
+  # - hostname: d3.command.saisi.online
+  #   service: http://127.0.0.1:18080
+
+  # Catch-all: 404 so unknown hostnames never hit the panel.
+  - service: http_status:404

@@ -1,0 +1,23 @@
+{
+  "name": "vale-gate",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": false,
+  "kv_namespaces": [
+    {
+      "binding": "KEYS",
+      "id": "a1fb10da621b411caeda6d98c060bbea"
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "none",
+    "run_worker_first": true
+  }
+  // Vale Gate — unified AI gateway + device console. Custom domains are added
+  // in the dashboard (custom_domains API is OAuth-only).
+  // Vars (set via `wrangler var put`, NOT committed): CONSOLE_HOST, API_HOST, OPENROUTER_PROXY_URL
+  // Secrets (set via `wrangler secret put`): CLIENT_KEY, DEEPSEEK_API_KEY, OPENCODE_GO_API_KEY,
+  // OPENROUTER_API_KEY, ADMIN_PASSWORD
+}

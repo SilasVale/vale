@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Source Viewer · Vale</title>
+<style>
+  :root { --bg:#f7f7f5; --surface:#fff; --ink:#1c1c1e; --muted:#71717a; --line:#e7e5e4; --accent:#0e9384; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"JetBrains Mono", "SF Mono", Consolas, monospace; background:var(--bg); color:var(--ink); }
+  header { background:var(--ink); color:#fff; padding:14px 22px; display:flex; align-items:baseline; gap:14px; }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  header .sub { font-size:12px; opacity:.65; }
+  .lang { margin-left:auto; }
+  .lang button { background:transparent; border:1px solid #ffffff55; color:#fff; border-radius:99px; padding:2px 12px; font:500 12px monospace; cursor:pointer; }
+  .lang button:hover { border-color:#fff; }
+  .layout { display:flex; height:calc(100vh - 52px); }
+  .sidebar { width:240px; flex-shrink:0; background:var(--surface); border-right:1px solid var(--line); overflow-y:auto; padding:10px 0; }
+  .group { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; padding:10px 16px 4px; }
+  .file { display:block; width:100%; text-align:left; padding:6px 16px; font-size:12.5px; border:none; background:none; cursor:pointer; color:var(--ink); }
+  .file:hover { background:#f1f1ef; }
+  .file.active { background:var(--accent); color:#fff; }
+  .content { flex:1; overflow:auto; background:#0f172a; }
+  .content pre { margin:0; padding:20px 24px; color:#e2e8f0; font-size:12.5px; line-height:1.6; white-space:pre; }
+  .empty { color:#94a3b8; padding:40px; }
+  .meta { background:#1e293b; color:#94a3b8; font-size:11px; padding:8px 22px; border-bottom:1px solid #334155; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Source Viewer · Vale</h1>
+  <span class="sub" id="meta">source snapshot</span>
+  <span class="lang"><button id="lang-btn">中文</button></span>
+</header>
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="content">
+    <div class="meta" id="file-meta"></div>
+    <pre id="viewer"><div class="empty" id="empty-hint">Select a file from the left</div></pre>
+  </main>
+</div>
+<script>
+const I18N = {
+  zh: { title: "代码浏览 · Vale", sub: "源码快照", pick: "从左侧选择一个文件", loadManifest: "manifest 加载失败", loading: "加载中…", loadFail: "加载失败: " },
+  en: { title: "Source Viewer · Vale", sub: "source snapshot", pick: "Select a file from the left", loadManifest: "manifest failed to load", loading: "Loading…", loadFail: "Failed to load: " },
+};
+let lang = "zh";
+try { lang = (localStorage.getItem("valegate-code-lang") || (navigator.language || "zh").startsWith("zh") ? "zh" : "en"); } catch (e) {}
+const t = (k) => (I18N[lang] && I18N[lang][k]) || I18N.en[k] || k;
+const setLang = (l) => { lang = l; try { localStorage.setItem("valegate-code-lang", l); } catch(e){} apply(); };
+
+const $ = (s) => document.querySelector(s);
+const sidebar = $("#sidebar"), viewer = $("#viewer"), meta = $("#meta"), fileMeta = $("#file-meta");
+let files = [];
+
+function apply() {
+  document.title = t("title");
+  $("#empty-hint").textContent = t("pick");
+  $("#lang-btn").textContent = lang === "zh" ? "EN" : "中文";
+  if (viewer.textContent === t("loading") && !viewer.querySelector(".empty")) viewer.textContent = t("loading");
+}
+
+(async () => {
+  meta.textContent = t("sub");
+  apply();
+  try {
+    const m = await fetch('/code/manifest.json');
+    files = (await m.json()).files;
+  } catch (e) {
+    sidebar.innerHTML = '<div class="empty" style="padding:16px">' + t("loadManifest") + '</div>';
+    return;
+  }
+  const groups = {};
+  for (const f of files) (groups[f.group] = groups[f.group] || []).push(f);
+  for (const [g, list] of Object.entries(groups)) {
+    const gEl = document.createElement("div"); gEl.className = "group"; gEl.textContent = g;
+    sidebar.appendChild(gEl);
+    for (const f of list) {
+      const b = document.createElement("button");
+      b.className = "file"; b.textContent = f.name;
+      b.onclick = () => openFile(f, b);
+      sidebar.appendChild(b);
+    }
+  }
+  async function openFile(f, btn) {
+    document.querySelectorAll(".file").forEach(x => x.classList.remove("active"));
+    btn.classList.add("active");
+    fileMeta.textContent = f.group + " · " + f.name;
+    viewer.textContent = t("loading");
+    try {
+      const r = await fetch("/code/" + f.path);
+      viewer.textContent = await r.text();
+    } catch (e) {
+      viewer.textContent = t("loadFail") + e.message;
+    }
+  }
+  if (files.length) openFile(files[0], sidebar.querySelector(".file"));
+})();
+
+$("#lang-btn").addEventListener("click", () => setLang(lang === "zh" ? "en" : "zh"));
+</script>
+</body>
+</html>

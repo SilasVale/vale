@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vale Command</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- Topbar -->
+<div id="topbar">
+  <span class="logo"><span class="dot"></span>Vale Command</span>
+  <span class="sep"></span>
+  <div id="tabs">
+    <span class="tab active" data-action="switchTab" data-tab="browser">Browser</span>
+    <span class="tab" data-action="switchTab" data-tab="terminal">Terminal</span>
+  </div>
+</div>
+
+<div id="main">
+
+  <!-- Activity feed -->
+  <div id="activity-panel">
+    <div class="head">
+      <span id="activity-title">Activity</span>
+      <span id="ev-count">0</span>
+    </div>
+    <div id="activity-feed"><div class="empty">No events yet</div></div>
+  </div>
+
+  <!-- Context panel -->
+  <div id="context-panel">
+
+    <!-- Tab bar -->
+    <div class="ctx-toolbar active" id="toolbar-browser">
+      <div id="browser-tab-bar"></div>
+      <button class="icon-btn" data-action="newTab" title="New tab"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></button>
+    </div>
+    <!-- URL bar -->
+    <div class="ctx-toolbar active" id="toolbar-url">
+      <input id="browser-url" placeholder="https://example.com">
+      <button data-action="browserNav">Go</button>
+      <button id="btn-back" class="sec" data-action="browserBack" title="Back"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+      <button id="btn-forward" class="sec" data-action="browserForward" title="Forward"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 3 5 5-5 5"/></svg></button>
+      <button class="sec" data-action="browserReload" title="Reload"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 1.5v3h-3"/></svg></button>
+    </div>
+
+    <!-- Browser content -->
+    <div class="ctx-content active" id="content-browser">
+      <div id="browser-area"><div class="hint">Vale Command Browser</div></div>
+    </div>
+
+    <!-- Terminal toolbar -->
+    <div class="ctx-toolbar" id="toolbar-terminal">
+      <div id="term-tab-bar"></div>
+      <button class="icon-btn" data-action="showConnDialog" title="New connection"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></button>
+    </div>
+    <div class="ctx-content" id="content-terminal">
+      <div id="terminal-out"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Status bar -->
+<div id="statusbar">
+  <span><span class="led" id="conn-led"></span> <span id="conn-text">Connecting...</span></span>
+  <span id="status-ev">EV:0</span>
+  <span class="version-text" id="version-text">v…</span>
+</div>
+
+<!-- Connection modal -->
+<div class="modal-overlay" id="conn-modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>New Connection</h3>
+      <button class="modal-close" data-action="closeConnDialog">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="type-row">
+        <button class="type-btn active" data-action="switchConnType" data-kind="pty">Local Shell</button>
+        <button class="type-btn" data-action="switchConnType" data-kind="ssh">SSH</button>
+        <button class="type-btn" data-action="switchConnType" data-kind="serial">Serial</button>
+      </div>
+      <div id="conn-fields"></div>
+      <div class="saved-list" id="saved-connections"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-cancel" data-action="closeConnDialog">Cancel</button>
+      <button class="btn-connect" data-action="doConnect">Connect</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

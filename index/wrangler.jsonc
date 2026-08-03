@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vale-command-index",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": false,
+  // Static assets served first (run_worker_first defaults to false), so
+  // /vale-command/vale-command-setup.ps1 and /vale-command/vale-command.exe are
+  // served straight from ./public; everything else hits the Worker.
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  // Custom domain (added in the Cloudflare dashboard, like the other saisi.online
+  // workers — wrangler 4.x ignores the custom_domains field): command.saisi.online
+  // Bindings: none required (DEVICES is static in src/index.js).
+  "observability": { "enabled": false }
+}

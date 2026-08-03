@@ -1,0 +1,21 @@
+{
+  "productName": "ValeCommand",
+  "version": "0.7.0",
+  "identifier": "com.valecommand.app",
+  "build": {
+    "frontendDist": "../src/ui",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [{
+      "title": "Vale Command",
+      "width": 1280,
+      "height": 800,
+      "maximized": true,
+      "additionalBrowserArgs": "--remote-debugging-port=19623"
+    }],
+    "security": { "csp": null },
+    "withGlobalTauri": true
+  }
+}
