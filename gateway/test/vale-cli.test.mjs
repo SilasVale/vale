@@ -94,6 +94,7 @@ test("use qw: 探测通过 → 改写 env + 备份", async () => {
   const { server, port } = await makeGateway({ status: 200 });
   try {
     const { file, data } = makeSettings(`http://127.0.0.1:${port}`);
+    fs.chmodSync(file, 0o600); // settings 含 API key，权限收紧为 0600
     const r = await run(["use", "qw"], file);
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -101,6 +102,7 @@ test("use qw: 探测通过 → 改写 env + 备份", async () => {
     assert.equal(after.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "qw/qwen3.8-max-preview");
     assert.equal(after.env.ANTHROPIC_BASE_URL, "https://api.saisi.online");
     assert.equal(after.permissions.allow[0], "Read"); // 非 env 配置保留
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600); // 重写后权限位不变
     // 备份文件存在
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 1);
@@ -151,4 +153,21 @@ test("未知渠道 → 报错退出", async () => {
   const r = await run(["use", "bogus"], file);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /未知渠道|unknown/i);
+});
+
+test("check: /api/health 接受连接但不响应 → 超时后非0退出（不挂起）", async () => {
+  // 服务器接受 TCP 连接但对 /api/health 永不响应；fetchHealth 应在
+  // PROBE_TIMEOUT_MS 后 abort 并返回 null，vale check 立即非0退出。
+  const server = http.createServer(() => {}); // 不写 res → 连接一直挂着
+  server.on("connection", (s) => s.on("error", () => {})); // 客户端 abort 后吞掉 socket error
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { file } = makeSettings(`http://127.0.0.1:${server.address().port}`);
+    const r = await run(["check"], file);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /无法获取渠道健康/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
