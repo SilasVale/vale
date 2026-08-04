@@ -70,15 +70,18 @@ function tryHeadlessEvents() {
 }
 
 function pollEvents() {
+  // Fallback only (SSE down). Keep it slow: through the console proxy each
+  // poll is a gateway request, and a 1s loop would eat the Workers request
+  // quota all by itself.
   invoke('events_poll', { after: state.lastSeq || 0 }).then(r => {
     if (r && r.ok && r.events) {
       for (const se of r.events) {
         if (se && se.event) addEvent(se.event, se.seq);
       }
     }
-    setTimeout(pollEvents, 1000);
+    setTimeout(pollEvents, 3000);
   }).catch(() => {
-    setTimeout(pollEvents, 2000);
+    setTimeout(pollEvents, 5000);
   });
 }
 
