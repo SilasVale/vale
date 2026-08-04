@@ -9,6 +9,20 @@
       "id": "a1fb10da621b411caeda6d98c060bbea"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BREAKER",
+        "class_name": "BreakerDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-breaker",
+      "new_sqlite_classes": ["BreakerDO"]
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
