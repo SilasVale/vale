@@ -29,6 +29,8 @@
       "token.regenerated": "已生成新 Token，旧 Token 已失效。请同步更新客户端配置。",
       "token.regenerateFail": "重生成失败",
       "routes.title": "路由状态", "routes.lede": "请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。",
+      "routes.valeTitle": "Vale 命令",
+      "routes.valeDesc": "跨平台一键切换网关渠道（探测验证 + 自动备份 + 可回滚）。",
       "keys.title": "密钥管理", "keys.lede": "填入你自己在对应服务商申请的 API key，网关转发时只使用你自己的 key，各算各的额度。",
       "key.configured": "已配置", "key.notConfigured": "未配置",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "api.deepseek.com 申请",
@@ -90,6 +92,8 @@
       "token.regenerated": "New token generated; the old one is invalid. Update your client configs.",
       "token.regenerateFail": "Regenerate failed",
       "routes.title": "Routing status", "routes.lede": "Model names are routed by prefix; no prefix defaults to DeepSeek official.",
+      "routes.valeTitle": "Vale CLI",
+      "routes.valeDesc": "Cross-platform one-command channel switching (probe + backup + rollback).",
       "keys.title": "API Keys", "keys.lede": "Add your own API keys from each provider; the gateway only uses your keys, so each user pays for their own usage.",
       "key.configured": "Configured", "key.notConfigured": "Not configured",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "from api.deepseek.com",
@@ -233,6 +237,18 @@
         </div>`;
       })
       .join("");
+  }
+
+  function valeInstallHTML(apiHost) {
+    const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
+    const posix = `curl -fsSL ${base}/api/vale-install | sh`;
+    const win = `irm ${base}/api/vale-install.ps1 | iex`;
+    return `<p class="muted">${t("routes.valeDesc")}</p>
+      <p><strong>Linux / macOS</strong></p>
+      <pre><code>${esc(posix)}</code></pre>
+      <p><strong>Windows (PowerShell)</strong></p>
+      <pre><code>${esc(win)}</code></pre>
+      <p class="muted">vale check · vale use &lt;ds|qw|og|or|auto&gt; · vale restore</p>`;
   }
 
   async function loadRoutes() {
@@ -406,6 +422,8 @@
   async function loadRoutesPanel() {
     const { routes, apiHost } = await loadRoutes();
     $("#routes-switchboard").innerHTML = switchboardHTML(routes);
+    const box = document.getElementById("vale-install-box");
+    if (box) box.innerHTML = valeInstallHTML(apiHost);
     const ex = $("#client-example");
     if (ex) {
       const base = apiHost ? `https://${apiHost}` : "https://<your-api-host>";
