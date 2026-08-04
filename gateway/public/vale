@@ -41,8 +41,9 @@ function readSettings() {
 }
 function writeAtomic(data) {
   const file = settingsFile();
+  const mode = fs.existsSync(file) ? fs.statSync(file).mode & 0o777 : 0o600;
   const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { encoding: "utf8", mode });
   fs.renameSync(tmp, file);
 }
 function gatewayBase(settings) {
@@ -94,11 +95,13 @@ function switchEnv(settings, channel) {
   return settings;
 }
 async function fetchHealth(base) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const r = await fetch(`${base}/api/health`);
+    const r = await fetch(`${base}/api/health`, { signal: ctrl.signal });
     if (!r.ok) return null;
     return await r.json();
-  } catch { return null; }
+  } catch { return null; } finally { clearTimeout(t); }
 }
 async function probe(base, token, model) {
   const ctrl = new AbortController();
