@@ -78,6 +78,15 @@ const ROUTE_INFO = [
   },
 ];
 
+// ---- Channel health (public /api/health) ----
+const HEALTH_CHANNELS = [
+  { id: "ds", model: "ds/deepseek-v4-flash" },
+  { id: "qw", model: "qw/qwen3.8-max-preview" },
+  { id: "og", model: "og/deepseek-v4-flash" },
+  { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
+];
+const HEALTH_PRIORITY = ["qw", "ds", "og", "or"];
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -102,6 +111,21 @@ export default {
       const isPageHost =
         url.hostname === "localhost" || url.hostname === "127.0.0.1" || consoleHosts.includes(url.hostname);
       const path = url.pathname;
+
+      // ---- Public tooling endpoints (any host) ----
+      if (path === "/api/health") {
+        return jsonOk(await buildHealth(env));
+      }
+      if (path === "/api/vale-cli" || path === "/api/vale-install" || path === "/api/vale-install.ps1") {
+        const cli = await serveAssetText(env, "/vale");
+        if (cli === null) return jsonError(404, "vale CLI not found", "not_found_error");
+        if (path === "/api/vale-cli") {
+          return new Response(cli, { headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS } });
+        }
+        const b64 = btoa(cli);
+        const body = path === "/api/vale-install" ? posixInstaller(b64) : psInstaller(b64);
+        return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS } });
+      }
 
       await seedAdmin(env);
 
@@ -1511,4 +1535,59 @@ function jsonError(status, message, type) {
     status,
     headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+}
+
+/* ---------------- Public endpoints: health / vale-cli / installers ---------------- */
+
+export async function buildHealth(env) {
+  const channels = [];
+  for (const c of HEALTH_CHANNELS) {
+    let ok = true;
+    let reason = "";
+    if (c.id === "og") {
+      ok = !(await isChannelDegraded(env));
+      if (!ok) reason = "circuit open";
+    }
+    channels.push({ id: c.id, ok, model: c.model, ...(reason ? { reason } : {}) });
+  }
+  const recommended = HEALTH_PRIORITY.map((id) => channels.find((c) => c.id === id)).find((c) => c.ok);
+  return {
+    channels,
+    recommended: recommended ? { channel: recommended.id, model: recommended.model } : null,
+  };
+}
+
+// POSIX one-liner installer — embeds the vale CLI as base64 (no quoting issues).
+function posixInstaller(b64) {
+  return `#!/bin/sh
+set -e
+command -v node >/dev/null 2>&1 || { echo "error: Node.js required"; exit 1; }
+DEST="\${VALE_BIN:-\$HOME/.local/bin}"
+mkdir -p "\$DEST"
+echo "${b64}" | base64 -d > "\$DEST/vale"
+chmod +x "\$DEST/vale"
+echo "installed: \$DEST/vale"
+echo "usage: vale check | vale use <ds|qw|og|or> | vale use auto | vale restore"
+`;
+}
+
+// PowerShell one-liner installer (irm | iex) — installs vale + vale.cmd wrapper.
+function psInstaller(b64) {
+  return `$ErrorActionPreference = "Stop"
+try { node --version | Out-Null } catch { Write-Error "Node.js required"; exit 1 }
+$dest = Join-Path $HOME ".local\\bin"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+$script = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${b64}"))
+Set-Content -Path (Join-Path $dest "vale") -Value $script -Encoding UTF8 -NoNewline
+Set-Content -Path (Join-Path $dest "vale.cmd") -Value '@echo off\r\nnode "%~dp0vale" %*' -Encoding ASCII
+Write-Host "installed: $dest\\vale  (command: vale)"
+`;
+}
+
+async function serveAssetText(env, assetPath) {
+  if (!env.ASSETS || typeof env.ASSETS.fetch !== "function") {
+    return null;
+  }
+  const res = await env.ASSETS.fetch(new Request(`https://assets.local${assetPath}`));
+  return res.ok ? await res.text() : null;
 }
