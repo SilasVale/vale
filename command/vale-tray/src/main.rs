@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIconBuilder, TrayIconEvent};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 /// The directory this exe lives in (the install dir).
 fn install_dir() -> PathBuf {
@@ -34,35 +34,54 @@ fn schtasks(args: &[&str]) {
     let _ = Command::new("schtasks").args(args).spawn();
 }
 
+/// Build the tray icon + menu, retrying until Explorer's tray area accepts it.
+///
+/// The `ValeCommandTray` at-logon scheduled task can fire before Explorer's
+/// tray exists (Shell_NotifyIcon then fails). The old `.expect()` on the first
+/// attempt killed the process silently, so the icon never came back after a
+/// reboot. Retry for up to ~60s instead.
+fn create_tray(png: &[u8]) -> Option<TrayIcon> {
+    for attempt in 0..20 {
+        let img = image::load_from_memory(png).expect("decode tray icon").to_rgba8();
+        let (w, h) = img.dimensions();
+        let icon = Icon::from_rgba(img.into_raw(), w, h).expect("build tray icon");
+
+        let menu = Menu::new();
+        let status = MenuItem::new("Vale Command", false, None);
+        let open = MenuItem::with_id("open", "打开面板", true, None);
+        let start = MenuItem::with_id("start", "启动", true, None);
+        let stop = MenuItem::with_id("stop", "停止", true, None);
+        let quit = MenuItem::with_id("quit", "退出", true, None);
+        let sep = PredefinedMenuItem::separator();
+        menu.append(&status).expect("menu status");
+        menu.append(&sep).expect("menu sep1");
+        menu.append(&open).expect("menu open");
+        menu.append(&start).expect("menu start");
+        menu.append(&stop).expect("menu stop");
+        menu.append(&sep).expect("menu sep2");
+        menu.append(&quit).expect("menu quit");
+
+        match TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("Vale Command")
+            .with_icon(icon)
+            .build()
+        {
+            Ok(t) => return Some(t),
+            Err(e) => {
+                eprintln!("[vale-tray] tray icon failed (attempt {}): {e:?}", attempt + 1);
+                if attempt < 19 {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                }
+            }
+        }
+    }
+    None
+}
+
 fn main() {
-    // --- Build the tray icon from the embedded PNG ---
     let png = include_bytes!("tray-icon.png");
-    let img = image::load_from_memory(png).expect("decode tray icon").to_rgba8();
-    let (w, h) = img.dimensions();
-    let icon = Icon::from_rgba(img.into_raw(), w, h).expect("build tray icon");
-
-    // --- Tray menu ---
-    let menu = Menu::new();
-    let status = MenuItem::new("Vale Command", false, None);
-    let open = MenuItem::with_id("open", "打开面板", true, None);
-    let start = MenuItem::with_id("start", "启动", true, None);
-    let stop = MenuItem::with_id("stop", "停止", true, None);
-    let quit = MenuItem::with_id("quit", "退出", true, None);
-    let sep = PredefinedMenuItem::separator();
-    menu.append(&status).expect("menu status");
-    menu.append(&sep).expect("menu sep1");
-    menu.append(&open).expect("menu open");
-    menu.append(&start).expect("menu start");
-    menu.append(&stop).expect("menu stop");
-    menu.append(&sep).expect("menu sep2");
-    menu.append(&quit).expect("menu quit");
-
-    let _tray = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_tooltip("Vale Command")
-        .with_icon(icon)
-        .build()
-        .expect("create tray icon");
+    let _tray = create_tray(png);
 
     // --- Event loop ---
     let event_loop = winit::event_loop::EventLoop::new().expect("create event loop");

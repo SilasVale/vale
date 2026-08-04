@@ -89,6 +89,13 @@ Write-Host "`n[1/7] vale-command binary"
 # instance first so the exe file is not locked by a running process.
 Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
 if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-command.exe" $exe -Force }
+# Tray app: re-download on updates too. The NSIS installer bundles it for fresh
+# installs, but the script path must fetch it so an update also refreshes the
+# tray (and its scheduled-task registration below). Kill strays first — a
+# running exe locks the file.
+$trayExe = Join-Path $InstallDir "vale-tray.exe"
+Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
+if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-tray.exe" $trayExe -Force }
 if (-not (Test-Path $cfg)) {
     Write-Host "  bootstrapping config + auth token"
     & $exe --init $cfg
@@ -230,7 +237,10 @@ sc.exe delete ValeCommand 2>&1 | Out-Null   # remove any old broken service
 $action = New-ScheduledTaskAction -Execute $exe -Argument "`"$cfg`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-Register-ScheduledTask -TaskName "ValeCommand" -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+# ExecutionTimeLimit 0 = never kill the task. Default is 72h — the server
+# (and the tray below) would silently stop after 3 days until a reboot.
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
+Register-ScheduledTask -TaskName "ValeCommand" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 if (-not (Get-ScheduledTask -TaskName "ValeCommand" -ErrorAction SilentlyContinue)) {
     throw "failed to register scheduled task ValeCommand"
 }
@@ -245,7 +255,9 @@ if (Test-Path $trayExe) {
     $trayAction = New-ScheduledTaskAction -Execute $trayExe
     $trayTrigger = New-ScheduledTaskTrigger -AtLogOn
     $trayPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-    Register-ScheduledTask -TaskName "ValeCommandTray" -Action $trayAction -Trigger $trayTrigger -Principal $trayPrincipal -Force | Out-Null
+    # Same unlimited ExecutionTimeLimit as the ValeCommand task — a tray app
+    # must never be killed by the default 72h task limit.
+    Register-ScheduledTask -TaskName "ValeCommandTray" -Action $trayAction -Trigger $trayTrigger -Principal $trayPrincipal -Settings $settings -Force | Out-Null
     Start-ScheduledTask -TaskName "ValeCommandTray" | Out-Null
 }
 
