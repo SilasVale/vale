@@ -462,19 +462,24 @@ async function handleGateway(request, env, url) {
   // count_tokens
   if (isCount) {
     if (route.type === "translate") {
-      return jsonOk({ input_tokens: Math.ceil(JSON.stringify(body.messages || []).length / 4) });
+      return jsonOk({ input_tokens: estimateTokens(JSON.stringify(body.messages || [])) });
     }
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
     }
-    const upstream = await fetch(route.upstream.replace(VERIFY_PATH, COUNT_PATH), {
-      method: "POST",
-      headers: passthroughHeaders(bearerKey),
-      body: JSON.stringify({ ...body, model: upstreamModel }),
-    });
+    let upstream;
+    try {
+      upstream = await fetchWithTimeout(route.upstream.replace(VERIFY_PATH, COUNT_PATH), {
+        method: "POST",
+        headers: passthroughHeaders(bearerKey),
+        body: JSON.stringify({ ...body, model: upstreamModel }),
+      }, upstreamTimeoutMs(env));
+    } catch (e) {
+      return jsonError(502, `count_tokens upstream ${route.kind}: ${e.message}`, "api_error");
+    }
     if (!upstream.ok) return jsonError(upstream.status, "count_tokens upstream failed", "api_error");
     const json = await upstream.json();
-    return jsonOk({ input_tokens: json.input_tokens || Math.ceil(JSON.stringify(body.messages || []).length / 4) });
+    return jsonOk({ input_tokens: json.input_tokens || estimateTokens(JSON.stringify(body.messages || [])) });
   }
 
   // ---- POST /v1/messages ----
@@ -484,11 +489,16 @@ async function handleGateway(request, env, url) {
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
     }
-    const upstream = await fetch(route.upstream, {
-      method: "POST",
-      headers: passthroughHeaders(bearerKey),
-      body: JSON.stringify({ ...body, model: upstreamModel }),
-    });
+    let upstream;
+    try {
+      upstream = await fetchWithTimeout(route.upstream, {
+        method: "POST",
+        headers: passthroughHeaders(bearerKey),
+        body: JSON.stringify({ ...body, model: upstreamModel }),
+      }, upstreamTimeoutMs(env));
+    } catch (e) {
+      return jsonError(502, `upstream ${route.kind}: ${e.message}`, "api_error");
+    }
     if (!upstream.ok) {
       let message = `Upstream ${upstream.status}`;
       try {
@@ -506,22 +516,23 @@ async function handleGateway(request, env, url) {
   if (!opencodeGoKey) {
     return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
   }
+  if (await isChannelDegraded(env)) {
+    // Circuit open: recent slow failure — fail fast instead of waiting on zen again.
+    return jsonError(502, "og: circuit open (recent timeout, try again in ~1 min)", "api_error");
+  }
   const openaiReq = toOpenAIRequest(body, upstreamModel);
-  const upstream = await fetchZenWithRetry(route.upstream, {
+  const { response: upstream, detail } = await fetchZenWithRetry(route.upstream, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${opencodeGoKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(openaiReq),
-  });
-  if (!upstream.ok) {
-    let message = `Upstream ${upstream.status}`;
-    try {
-      const err = await upstream.json();
-      message = err.error?.message || message;
-    } catch {}
-    return jsonError(upstream.status, message, "api_error");
+  }, { timeoutMs: upstreamTimeoutMs(env) });
+  if (!upstream || !upstream.ok) {
+    // Only slow failures trip the breaker; fast 5xx/429 stays with the retries.
+    if (!upstream) await recordChannelFailure(env);
+    return jsonError(502, `og: ${detail || `upstream ${upstream?.status || "error"}`}`, "api_error");
   }
   // True streaming: when the client asked for a stream, forward zen's OpenAI SSE
   // chunks to Anthropic SSE increments as they arrive (instead of buffering the
@@ -545,20 +556,31 @@ async function handleGateway(request, env, url) {
  * failures instead of surfacing "API error" to the client. Only retries before
  * any response body has started (a streaming response that dies mid-stream
  * cannot be replayed).
+ *
+ * Slow failures (timeout / network error) are NOT retried — an upstream that
+ * takes 45s to fail will simply fail again; retries only help fast 5xx/429s.
+ * Returns { response, detail } where detail explains the failure for the 502.
  */
-async function fetchZenWithRetry(url, init, { attempts = 3, backoffMs = 750 } = {}) {
+export async function fetchZenWithRetry(url, init, { attempts = 3, backoffMs = 750, timeoutMs = 30000 } = {}) {
   let last = null;
+  let detail = "";
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    last = await fetch(url, { ...init, body: init.body });
-    if (last.ok || !(last.status >= 500 || last.status === 429)) {
-      return last;
+    try {
+      last = await fetchWithTimeout(url, { ...init, body: init.body }, timeoutMs);
+    } catch (e) {
+      detail = e.name === "TimeoutError" ? `timeout after ${timeoutMs}ms` : `network error: ${e.message}`;
+      break;
     }
+    if (last.ok || !(last.status >= 500 || last.status === 429)) {
+      return { response: last, detail: "" };
+    }
+    detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
     console.error(`[og] zen upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
     if (attempt < attempts) {
       await new Promise((r) => setTimeout(r, backoffMs * attempt));
     }
   }
-  return last;
+  return { response: last, detail };
 }
 
 /* ---------------- Device module helpers ---------------- */
@@ -698,14 +720,109 @@ function userKeysStatus(ukeys) {
   return out;
 }
 
-async function fetchWithTimeout(url, init = {}, ms = 15000) {
+export async function fetchWithTimeout(url, init = {}, ms = 15000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
     return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      const err = new Error(`timeout after ${ms}ms`);
+      err.name = "TimeoutError";
+      throw err;
+    }
+    throw e;
   } finally {
     clearTimeout(t);
   }
+}
+
+/* ---------------- Reliability: upstream timeout, circuit breaker, estimation ---------------- */
+
+/** Effective upstream timeout: env UPSTREAM_TIMEOUT_MS, default 30s. */
+function upstreamTimeoutMs(env) {
+  const v = Number(env?.UPSTREAM_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 30000;
+}
+
+// Circuit breaker for the og channel, backed by a Durable Object so every
+// worker isolate shares one strongly-consistent state. Alternatives were
+// tried and failed on Cloudflare platform semantics:
+//   - in-memory counter: isolates restart the count → never trips
+//   - KV counter: writes can take up to 60s to propagate → every request reads
+//     the pre-write state → never trips
+//   - Cache API: put() is not available on the free plan → silently no-ops
+//
+// Semantics: a slow failure (timeout / network error — a channel that takes
+// 30s+ to fail is broken, not flaky) trips the breaker for 60s. Fast 5xx/429
+// stays handled by fetchZenWithRetry's retries and does NOT trip, so zen's
+// intermittent 500s (~50% observed 2026-08-03) never cut the channel. After
+// the TTL the first request probes zen for real and re-trips on failure.
+const BREAKER_DEGRADE_MS = 60000;
+
+/** Durable Object holding the breaker state (single instance per channel name). */
+export class BreakerDO {
+  constructor(state, env) {
+    this.state = state;
+  }
+
+  async fetch(request) {
+    const action = new URL(request.url).pathname;
+    try {
+      if (action === "/trip") {
+        await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
+        return new Response("ok");
+      }
+      if (action === "/clear") {
+        await this.state.storage.delete("degradedUntil");
+        return new Response("ok");
+      }
+      if (action === "/check") {
+        const degradedUntil = (await this.state.storage.get("degradedUntil")) || 0;
+        return new Response(degradedUntil > Date.now() ? "1" : "0");
+      }
+      return new Response("not found", { status: 404 });
+    } catch (e) {
+      return new Response(`breaker error: ${e.message}`, { status: 500 });
+    }
+  }
+}
+
+function breakerStub(env) {
+  return env.BREAKER.get(env.BREAKER.idFromName("og"));
+}
+
+export async function isChannelDegraded(env) {
+  try {
+    const res = await breakerStub(env).fetch("https://breaker/check");
+    return (await res.text()) === "1";
+  } catch (e) {
+    console.error("[breaker] check failed:", e.message);
+    return false;
+  }
+}
+
+export async function recordChannelFailure(env) {
+  try {
+    await breakerStub(env).fetch("https://breaker/trip");
+  } catch (e) {
+    console.error("[breaker] trip failed:", e.message);
+  }
+}
+
+/**
+ * Rough token estimate. ASCII runs ~4 chars/token, CJK/other script chars are
+ * ~1.8 tokens each — the plain `length / 4` underestimates Chinese-heavy
+ * prompts, which skews the client's context accounting.
+ */
+export function estimateTokens(jsonStr) {
+  let ascii = 0;
+  let other = 0;
+  for (const ch of String(jsonStr)) {
+    if (ch.charCodeAt(0) < 128) ascii += 1;
+    else other += 1;
+  }
+  return Math.ceil(ascii / 4 + other * 1.8);
 }
 
 /* ---------------- Routing ---------------- */
@@ -905,11 +1022,11 @@ async function describeImage(env, ukeys, source, visionModel) {
     if (!bearerKey) return "(图片描述失败：视觉模型后端未配置)";
     let resp;
     try {
-      resp = await fetch(route.upstream, {
+      resp = await fetchWithTimeout(route.upstream, {
         method: "POST",
         headers: passthroughHeaders(bearerKey),
         body: JSON.stringify({ ...miniReq, model: upstreamModel }),
-      });
+      }, upstreamTimeoutMs(env));
     } catch (e) {
       return `(图片描述失败：${e.message})`;
     }
@@ -926,11 +1043,11 @@ async function describeImage(env, ukeys, source, visionModel) {
   const openaiReq = toOpenAIRequest(miniReq, upstreamModel);
   let resp;
   try {
-    resp = await fetch(route.upstream, {
+    resp = await fetchWithTimeout(route.upstream, {
       method: "POST",
       headers: { Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify(openaiReq),
-    });
+    }, upstreamTimeoutMs(env));
   } catch (e) {
     return `(图片描述失败：${e.message})`;
   }
@@ -967,7 +1084,7 @@ async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey,
 
   let searchJson = {};
   try {
-    const sr = await fetch(searchUrl, {
+    const sr = await fetchWithTimeout(searchUrl, {
       method: "POST",
       headers: passthroughHeaders(deepseekKey),
       body: JSON.stringify({
@@ -977,14 +1094,14 @@ async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey,
         tool_choice: { type: "tool", name: "web_search" },
         messages: [{ role: "user", content: query }],
       }),
-    });
+    }, upstreamTimeoutMs(env));
     if (sr.ok) searchJson = await sr.json();
   } catch {}
 
   const serverToolUses = (searchJson.content || []).filter((b) => b.type === "server_tool_use");
   const resultBlocks = (searchJson.content || []).filter((b) => b.type === "web_search_tool_result");
 
-  let answer = await ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks);
+  let answer = await ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks);
   if (!answer) {
     // Fall back to DeepSeek's own summary if the og/ model didn't produce one.
     answer = (searchJson.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
@@ -1009,7 +1126,7 @@ async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey,
 }
 
 /** Ask the requested og/ model to answer the query from the search result titles/URLs. */
-async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks) {
+async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks) {
   if (!opencodeGoKey) return "";
   const resultsText = resultBlocks
     .map((rb) => (rb.content || []).map((r) => `- ${r.title}\n  ${r.url}`).join("\n"))
@@ -1023,11 +1140,11 @@ async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, res
     }],
   };
   try {
-    const resp = await fetch(route.upstream, {
+    const resp = await fetchWithTimeout(route.upstream, {
       method: "POST",
       headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
-    });
+    }, upstreamTimeoutMs(env));
     if (!resp.ok) {
       console.error(`ogWebSearchAnswer: zen ${resp.status}`);
       return "";
@@ -1044,7 +1161,7 @@ async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, res
 
 /* ---------------- OpenAI → Anthropic (for og translation) ---------------- */
 
-function toAnthropicResponse(up, model) {
+export function toAnthropicResponse(up, model) {
   const choice = up.choices?.[0];
   const msg = choice?.message || {};
   const blocks = [];
@@ -1064,7 +1181,11 @@ function toAnthropicResponse(up, model) {
       input_tokens: up.usage?.prompt_tokens || 0,
       output_tokens: up.usage?.completion_tokens || 0,
       cache_creation_input_tokens: 0,
-      cache_read_input_tokens: up.usage?.prompt_cache_hit_tokens || 0,
+      // zen reports prompt cache hits as usage.prompt_tokens_details.cached_tokens
+      // (OpenAI naming), not prompt_cache_hit_tokens — read both so cache hits
+      // surface to the client instead of always showing 0.
+      cache_read_input_tokens:
+        up.usage?.prompt_cache_hit_tokens || up.usage?.prompt_tokens_details?.cached_tokens || 0,
     },
   };
 }
@@ -1137,7 +1258,7 @@ function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
  * Stateful translator from OpenAI stream deltas to Anthropic SSE events.
  * Accumulates tool-call arguments by index and tracks which content block is open.
  */
-class AnthropicStreamEncoder {
+export class AnthropicStreamEncoder {
   constructor(clientModel, upstreamModel) {
     this.clientModel = clientModel;
     this.upstreamModel = upstreamModel;
@@ -1161,7 +1282,10 @@ class AnthropicStreamEncoder {
     if (chunk.usage) {
       this.usage.input_tokens = chunk.usage.prompt_tokens || 0;
       this.usage.output_tokens = chunk.usage.completion_tokens || 0;
-      this.usage.cache_read_input_tokens = chunk.usage.prompt_cache_hit_tokens || 0;
+      // zen reports cache hits as usage.prompt_tokens_details.cached_tokens —
+      // read both names, same as toAnthropicResponse.
+      this.usage.cache_read_input_tokens =
+        chunk.usage.prompt_cache_hit_tokens || chunk.usage.prompt_tokens_details?.cached_tokens || 0;
     }
     if (choice.finish_reason) this.lastStopReason = STREAM_STOP_MAP[choice.finish_reason] || "end_turn";
 
