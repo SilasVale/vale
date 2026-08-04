@@ -9,6 +9,47 @@ import { svgIcons } from './icons.js';
 
 const tabSel = (tid) => `[data-tab="${CSS.escape(tid)}"]`;
 
+const IS_HEADLESS = !window.__TAURI__;
+
+// ── Headless live preview (screenshot polling) ──
+// Desktop shows the browser as a native WebView overlay; headless has no
+// overlay, so the panel polls a screenshot and renders it as a live frame.
+
+let previewTimer = null;
+
+function startPreview() {
+  if (!IS_HEADLESS || previewTimer) return;
+  previewTimer = setInterval(captureFrame, 2000);
+  void captureFrame();            // first frame immediately
+}
+
+function stopPreview() {
+  if (previewTimer) { clearInterval(previewTimer); previewTimer = null; }
+}
+
+async function captureFrame() {
+  const area = document.getElementById('browser-area');
+  if (!area || state.activeTab !== 'browser') return;
+  const r = await invoke('browser_frame');
+  if (!r.ok || typeof r.result !== 'string') return;  // no tab / backend off — retry next tick
+  let img = area.querySelector('img.preview-frame');
+  if (!img) {
+    img = document.createElement('img');
+    img.className = 'preview-frame';
+    img.alt = 'Live browser frame';
+    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff';
+    area.appendChild(img);
+    area.querySelector('.hint')?.remove();
+    if (!area.querySelector('.live-badge')) {
+      const badge = document.createElement('span');
+      badge.className = 'live-badge';
+      badge.textContent = 'LIVE';
+      area.appendChild(badge);
+    }
+  }
+  img.src = 'data:image/png;base64,' + r.result;
+}
+
 // ── Tab management ──
 
 export async function selectTab(tid) {
@@ -83,8 +124,11 @@ export function removeTab(tid) {
 // ── Overlay sync ──
 
 async function doShowBrowser() {
-  const ok = await syncBrowserRect();
-  if (ok) await invoke('browser_cmd_show');
+  if (!IS_HEADLESS) {
+    const ok = await syncBrowserRect();
+    if (ok) await invoke('browser_cmd_show');
+  }
+  startPreview();
 }
 
 export function showBrowser() {
@@ -104,6 +148,8 @@ export function showBrowser() {
 }
 
 export function hideBrowser() {
+  stopPreview();
+  if (IS_HEADLESS) return;
   if (state.showBrowserTimer) {
     clearTimeout(state.showBrowserTimer);
     state.showBrowserTimer = null;

@@ -158,3 +158,24 @@ button[disabled]{opacity:.4;cursor:default;transform:none}
 .token-card{width:380px}
 .token-note{font-size:13px;color:var(--text2);margin-bottom:12px}
 .token-input{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:13px;outline:none;background:var(--bg)}
+
+/* ── Observation topbar: device + AI status + follow toggle ── */
+#ai-status{display:flex;align-items:center;gap:8px;flex:1;min-width:0;color:var(--text2);font-size:13px}
+#ai-status-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+.pulse.flash{animation:pulse-flash .6s ease-out}
+@keyframes pulse-flash{0%{box-shadow:0 0 0 0 rgba(46,160,67,.5)}100%{box-shadow:0 0 0 8px rgba(46,160,67,0)}}
+#btn-follow{height:26px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;transition:background .15s,color .15s,border-color .15s;flex-shrink:0}
+#btn-follow.active{background:var(--accent-bg);color:var(--accent);border-color:transparent}
+#btn-follow:hover{background:var(--card-hover)}
+.dev-badge{font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-bg);padding:3px 10px;border-radius:999px;letter-spacing:-.2px;flex-shrink:0}
+
+/* ── Stage header + manual view switch (auto-follow in observation mode) ── */
+.stage-head{display:flex;align-items:center;justify-content:space-between;padding:0 12px;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0;height:36px}
+#stage-tabs{display:flex;gap:2px}
+.stage-tab{padding:5px 14px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text2);white-space:nowrap;transition:background .15s,color .15s;display:inline-flex;align-items:center;gap:6px;border:none;background:none}
+.stage-tab:hover{background:rgba(0,0,0,.04);color:var(--text)}
+.stage-tab.active{background:var(--accent-bg);color:var(--accent);font-weight:600}
+
+/* ── Headless browser live preview ── */
+#browser-area .live-badge{position:absolute;top:6px;right:8px;z-index:2;padding:2px 8px;border-radius:4px;background:rgba(240,72,72,.92);color:#fff;font-size:10px;font-weight:700;letter-spacing:.08em}

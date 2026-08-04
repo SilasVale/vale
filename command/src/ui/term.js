@@ -1,7 +1,7 @@
 // Vale Command UI — terminal sessions & xterm integration
 
 import state from './state.js';
-import { invoke } from './ipc.js';
+import { invoke, getToken } from './ipc.js';
 import { terminalHandlers, navHandlers } from './events.js';
 import { switchTabUI } from './view.js';
 import { renderTabItem, highlightTabItem, removeTabItem, updateCloseButtons } from './tabs.js';
@@ -271,30 +271,47 @@ navHandlers.terminal = (sid) => termSelect(sid);
 
 // ── Term-output listener ──
 
-export function listenTermOutput() {
-  try {
-    window.__TAURI__?.event?.listen('term-output', (ev) => {
-      const payload = ev.payload;
-      const sid = payload.session_id;
-      if (!sid || state.closedTerms.has(sid)) return;
+// Shared handler for both transport channels (Tauri "term-output" event and
+// headless SSE /api/events/term). payload.data is a number array (Vec<u8>).
+function handleTermOutput(payload) {
+  const sid = payload.session_id;
+  if (!sid || state.closedTerms.has(sid)) return;
 
-      if (!state.terms[sid]) renderTermTab(sid, 'term');
-      const entry = state.terms[sid];
-      if (entry && entry.term) {
-        // Flush buffer first
-        if (state.termBuf[sid]) {
-          for (const chunk of state.termBuf[sid]) {
-            entry.term.write(new Uint8Array(chunk.data));
-          }
-          delete state.termBuf[sid];
-        }
-        entry.term.write(new Uint8Array(payload.data || []));
-      } else {
-        // Buffer until xterm is ready
-        if (!state.termBuf[sid]) state.termBuf[sid] = [];
-        state.termBuf[sid].push(payload);
+  if (!state.terms[sid]) renderTermTab(sid, 'term');
+  const entry = state.terms[sid];
+  if (entry && entry.term) {
+    // Flush buffer first
+    if (state.termBuf[sid]) {
+      for (const chunk of state.termBuf[sid]) {
+        entry.term.write(new Uint8Array(chunk.data));
       }
-      if (state.activeTab !== 'terminal' && !state.pinned) switchTabUI('terminal');
-    });
-  } catch (_) {}
+      delete state.termBuf[sid];
+    }
+    entry.term.write(new Uint8Array(payload.data || []));
+  } else {
+    // Buffer until xterm is ready
+    if (!state.termBuf[sid]) state.termBuf[sid] = [];
+    state.termBuf[sid].push(payload);
+  }
+  if (state.activeTab !== 'terminal' && state.follow && !state.pinned) switchTabUI('terminal');
+}
+
+export function listenTermOutput() {
+  // Desktop: Tauri event channel.
+  if (window.__TAURI__?.event?.listen) {
+    try {
+      window.__TAURI__.event.listen('term-output', (ev) => handleTermOutput(ev.payload));
+      return;
+    } catch (_) {}
+    // Tauri present but event plugin failing → fall through to SSE (which fails
+    // fast under tauri:// and is harmless).
+  }
+  // Headless: SSE stream of TermOutput frames. EventSource can't set headers,
+  // so auth rides the ?token= query (the proxy also injects a Bearer header).
+  const token = getToken();
+  const es = new EventSource('/api/events/term' + (token ? '?token=' + token : ''));
+  es.onmessage = (e) => {
+    try { handleTermOutput(JSON.parse(e.data)); } catch (_) {}
+  };
+  // EventSource auto-reconnects on drop — no explicit close needed.
 }

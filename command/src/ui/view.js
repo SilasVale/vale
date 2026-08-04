@@ -14,7 +14,7 @@ export function autoSwitchView(ev) {
 
 export function switchTabUI(tab) {
   state.activeTab = tab;
-  document.querySelectorAll('#tabs .tab').forEach(el => {
+  document.querySelectorAll('.stage-tab').forEach(el => {
     el.classList.toggle('active', el.dataset.tab === tab);
   });
   document.querySelectorAll('.ctx-toolbar').forEach(el => {
@@ -59,4 +59,56 @@ export function updateActivityTitle() {
 
 export function tabForEvent(ev) {
   return ev.type.startsWith('Browser') ? 'browser' : 'terminal';
+}
+
+// ── Observation follow toggle ──
+
+export function setFollow(on) {
+  state.follow = on;
+  const btn = document.getElementById('btn-follow');
+  if (btn) {
+    btn.classList.toggle('active', on);
+    btn.textContent = on ? 'Follow' : 'Manual';
+    btn.title = on ? 'Automatically follow AI actions' : 'Manually choose the view';
+  }
+}
+
+// ── AI status line (topbar) — humanize the latest agent event ──
+
+export function updateAiStatus(ev) {
+  const el = document.getElementById('ai-status-text');
+  if (!el || !ev || !ev.type) return;
+  el.textContent = humanizeEvent(ev);
+  const pulse = document.getElementById('ai-pulse');
+  if (pulse) {
+    pulse.classList.remove('flash');
+    void pulse.offsetWidth; // restart the CSS animation
+    pulse.classList.add('flash');
+  }
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname; } catch (_) { return url; }
+}
+
+function humanizeEvent(ev) {
+  switch (ev.type) {
+    case 'BrowserNavigate': return 'AI → ' + (ev.url ? hostOf(ev.url) : 'page');
+    case 'BrowserTabNew': return 'AI opened a new tab';
+    case 'BrowserTabSelect': return 'AI switched tab';
+    case 'BrowserTabClose': return 'AI closed a tab';
+    case 'BrowserClick': return 'AI → click ' + (ev.selector || '');
+    case 'BrowserType': return 'AI → type ' + (ev.text || '');
+    case 'BrowserEvaluate': return 'AI ran browser JS';
+    case 'BrowserScreenshot': return 'AI took a screenshot';
+    case 'BrowserScroll': return 'AI scrolled ' + (ev.direction || '');
+    case 'BrowserWaitFor': return 'AI waiting for ' + (ev.selector || '');
+    case 'SshConnect': return 'AI → ssh ' + (ev.host || '');
+    case 'SshDisconnect': return 'AI closed ssh session';
+    case 'SerialOpen': return 'AI → serial ' + (ev.port || '');
+    case 'SerialClose': return 'AI closed serial port';
+    case 'ShellExec': return 'AI → ' + (ev.command || 'command');
+    case 'TermClose': return 'AI closed terminal session';
+    default: return 'AI is working…';
+  }
 }

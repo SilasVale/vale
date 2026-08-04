@@ -20,7 +20,7 @@ export function listenEvents() {
       const p = ev.payload || {};
       const payload = p.event || p; // seq envelope {seq, event}; legacy fallback
       addEvent(payload, p.seq);
-      if (!state.pinned) autoSwitchView(payload);
+      if (state.follow && !state.pinned) autoSwitchView(payload);
     });
     invoke('log_diag', { msg: 'Events: listen OK' });
   } catch (e) {

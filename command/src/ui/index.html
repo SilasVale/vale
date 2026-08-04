@@ -11,16 +11,18 @@
 <!-- Topbar -->
 <div id="topbar">
   <span class="logo"><span class="dot"></span>Vale Command</span>
+  <span class="dev-badge" id="dev-badge" hidden></span>
   <span class="sep"></span>
-  <div id="tabs">
-    <span class="tab active" data-action="switchTab" data-tab="browser">Browser</span>
-    <span class="tab" data-action="switchTab" data-tab="terminal">Terminal</span>
+  <div id="ai-status">
+    <span class="pulse" id="ai-pulse"></span>
+    <span id="ai-status-text">Waiting for AI…</span>
   </div>
+  <button id="btn-follow" class="follow-btn active" data-action="toggleFollow" title="Automatically follow AI actions">Follow</button>
 </div>
 
 <div id="main">
 
-  <!-- Activity feed -->
+  <!-- Timeline -->
   <div id="activity-panel">
     <div class="head">
       <span id="activity-title">Activity</span>
@@ -29,10 +31,16 @@
     <div id="activity-feed"><div class="empty">No events yet</div></div>
   </div>
 
-  <!-- Context panel -->
+  <!-- Main stage -->
   <div id="context-panel">
+    <div class="stage-head">
+      <div id="stage-tabs">
+        <span class="stage-tab active" data-action="switchStage" data-tab="browser">Browser</span>
+        <span class="stage-tab" data-action="switchStage" data-tab="terminal">Terminal</span>
+      </div>
+    </div>
 
-    <!-- Tab bar -->
+    <!-- Browser tab bar -->
     <div class="ctx-toolbar active" id="toolbar-browser">
       <div id="browser-tab-bar"></div>
       <button class="icon-btn" data-action="newTab" title="New tab"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></button>

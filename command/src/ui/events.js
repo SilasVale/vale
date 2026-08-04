@@ -6,7 +6,7 @@
 
 import state from './state.js';
 import { svgIcons } from './icons.js';
-import { filterEvents, tabForEvent, updateActivityTitle } from './view.js';
+import { filterEvents, tabForEvent, updateActivityTitle, updateAiStatus } from './view.js';
 
 const MAX_EVENTS = 50;
 
@@ -35,6 +35,7 @@ export function addEvent(ev, seq) {
   renderRow(ev);
   dispatchBrowser(ev);
   dispatchTerminal(ev);
+  updateAiStatus(ev);
   updateActivityTitle();
   document.getElementById('ev-count').textContent = state.evCount;
   document.getElementById('status-ev').textContent = 'EV:' + state.evCount;

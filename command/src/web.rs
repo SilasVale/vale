@@ -10,6 +10,8 @@
 //!   GET  /vendor/*          → vendored xterm assets
 //!   GET  /api/events        → SSE event stream
 //!   GET  /api/events/poll   → poll events (?after=N)
+//!   GET  /api/events/term   → SSE terminal byte stream (TermOutput JSON frames)
+//!   GET  /api/browser/frame → headless live browser frame (base64 PNG)
 //!   GET  /api/status        → system status
 //!   GET  /api/spec          → plugin spec
 //!   POST /api/tools/{name}  → generic tool dispatch via PluginRegistry
@@ -226,6 +228,12 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         return sse_stream(state).await;
     }
 
+    // SSE terminal byte stream — streamed TermOutput JSON frames.
+    if method == Method::GET && path == "/api/events/term" {
+        if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        return sse_term_stream(state).await;
+    }
+
     // GET non-API — static UI, assets, vendor: public (no token needed)
     if method == Method::GET && !path.starts_with("/api") && path != "/mcp" {
         if let Some((_, bytes, ct)) = ASSETS.iter().find(|(p, _, _)| *p == path) {
@@ -264,6 +272,10 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 .unwrap_or(0);
             api_events_poll(&state, after)
         },
+        // Headless live browser frame (base64 PNG) — used by the web panel's
+        // screenshot preview. Deliberately emits no BrowserScreenshot event so a
+        // 2s polling loop never floods the activity stream.
+        ("GET", "/api/browser/frame") => api_browser_frame(&state).await,
 
         // Generic tool dispatch: POST /api/tools/{name}
         ("POST", p) if p.starts_with("/api/tools/") => {
@@ -354,7 +366,55 @@ async fn sse_stream(state: Arc<AppState>) -> Response {
     resp
 }
 
+/// SSE stream of raw terminal output (TermOutput JSON frames).
+async fn sse_term_stream(state: Arc<AppState>) -> Response {
+    let mut term_rx = state.event_bus.subscribe_term_output();
+    let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
+
+    tokio::spawn(async move {
+        use tokio::sync::broadcast::error::RecvError;
+        loop {
+            match term_rx.recv().await {
+                Ok(output) => {
+                    // {"session_id":"term-0","data":[104,101,...]}
+                    let json = serde_json::to_string(&output).unwrap_or_default();
+                    if tx.send(Ok(Bytes::from(format!("data: {json}\n\n")))).await.is_err() {
+                        break;
+                    }
+                }
+                Err(RecvError::Lagged(_)) => {
+                    // Loss-tolerant stream; a lagged frame is ignored client-side
+                    // (it has no session_id). Keep the connection alive.
+                    let _ = tx.send(Ok(Bytes::from("data: {\"lagged\":true}\n\n"))).await;
+                }
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
+
+    let body = Body::from_stream(MpscStream { rx });
+
+    let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("cache-control"),
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("connection"),
+        axum::http::HeaderValue::from_static("keep-alive"),
+    );
+    resp
+}
+
 // ── Status ────────────────────────────────────────────────────
+
+/// Live browser frame for the headless web panel's screenshot preview.
+async fn api_browser_frame(state: &AppState) -> serde_json::Value {
+    match state.browser_mgr.screenshot(None).await {
+        Ok(b64) => serde_json::json!({"ok": true, "result": b64}),
+        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+    }
+}
 
 async fn api_status(state: &AppState) -> serde_json::Value {
     let tabs = state.browser_mgr.tab_list().await.unwrap_or_default();
@@ -497,5 +557,54 @@ mod tests {
         // UI assets need no token — the panel must render before auth
         let resp = handle_request(req("GET", "/styles.css"), state()).await;
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn term_sse_requires_auth() {
+        let mut cfg = Config::default();
+        cfg.server.auth_token = Some("sekret".into());
+        let st = Arc::new(AppState::new(cfg, None));
+        let resp = handle_request(req("GET", "/api/events/term"), st).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn term_sse_streams_output() {
+        use http_body_util::BodyExt;
+        let st = state();
+        let resp = handle_request(req("GET", "/api/events/term"), st.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        st.event_bus.emit_term_output(
+            serde_json::json!({"session_id": "term-0", "data": [104, 105]}),
+        );
+
+        // Read just the first frame — the SSE stream never closes, so the whole
+        // body can't be drained with to_bytes.
+        let mut body = resp.into_body();
+        let frame = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            body.frame(),
+        )
+        .await
+        .expect("SSE frame within timeout")
+        .expect("stream produced a frame")
+        .expect("frame ok");
+        let bytes = frame.into_data().expect("data frame");
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("term-0"), "SSE frame missing session id: {text}");
+        assert!(text.starts_with("data: "));
+    }
+
+    #[tokio::test]
+    async fn browser_frame_returns_error_without_backend() {
+        // Default state uses the stub browser backend (no browser feature) —
+        // the frame endpoint must answer a clean JSON error, not panic.
+        let st = state();
+        let resp = handle_request(req("GET", "/api/browser/frame"), st).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], false);
+        assert!(v["error"].as_str().is_some_and(|s| !s.is_empty()));
     }
 }

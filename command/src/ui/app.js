@@ -3,7 +3,7 @@
 import state from './state.js';
 import { invoke } from './ipc.js';
 import { listenEvents } from './transport.js';
-import { switchTabUI } from './view.js';
+import { switchTabUI, setFollow } from './view.js';
 import { selectTab, newTab, closeTab, showBrowser, hideBrowser,
          browserNav, browserBack, browserForward, browserReload, syncBrowserRect } from './browser.js';
 
@@ -24,7 +24,8 @@ document.addEventListener('click', async (e) => {
 
   switch (action) {
     // View
-    case 'switchTab': switchTabUI(btn.dataset.tab); break;
+    case 'switchStage': switchTabUI(btn.dataset.tab); setFollow(false); break;
+    case 'toggleFollow': setFollow(!state.follow); break;
     case 'switchConnType': switchConnType(btn.dataset.kind); break;
 
     // Browser
@@ -105,6 +106,12 @@ try {
   listenEvents();
   listenTermOutput();
   document.getElementById('conn-text').textContent = 'Initialized';
+  // Device context from the console proxy URL (/api/devices/<name>/proxy/)
+  const m = window.location.pathname.match(/\/api\/devices\/([^/]+)\/proxy/);
+  if (m) {
+    const badge = document.getElementById('dev-badge');
+    if (badge) { badge.textContent = '● ' + decodeURIComponent(m[1]); badge.hidden = false; }
+  }
   // Ensure webview is positioned over #browser-area at startup
   showBrowser();
 } catch (e) {
