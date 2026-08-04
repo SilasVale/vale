@@ -20,6 +20,29 @@ export const ADMIN_USERNAME = "admin";
 export const ADMIN_ID = "admin"; // user ID = username → readable KV keys
 export const USER_KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY"];
 
+/* ---- Per-isolate TTL cache ----
+ *
+ * Reads go through this cache (24h TTL); every write refreshes the cache
+ * immediately (write-through), so admin changes take effect instantly on the
+ * hot isolate. The TTL only backstops cross-isolate consistency: after 24h a
+ * cached value is re-read from KV even if no write touched this isolate.
+ * KV read volume is thus decoupled from request volume — each key costs at
+ * most one read per day per isolate, instead of one read per request.
+ */
+const CACHE_TTL = 24 * 60 * 60 * 1000;
+const __c = new Map(); // kvKey -> { v, exp }; v may be null (cached "not found")
+function cget(k) {
+  const e = __c.get(k);
+  if (!e) return undefined;
+  if (e.exp <= Date.now()) { __c.delete(k); return undefined; }
+  return e.v;
+}
+function cset(k, v) {
+  if (__c.size >= 512) __c.delete(__c.keys().next().value); // bound cache size
+  __c.set(k, { v, exp: Date.now() + CACHE_TTL });
+}
+function cdel(...ks) { for (const k of ks) __c.delete(k); }
+
 async function getJSON(env, key) {
   if (!env.KEYS) return null;
   const raw = await env.KEYS.get(key);
@@ -45,13 +68,18 @@ export async function seedAdmin(env) {
       const admin = JSON.parse(oldAdmin);
       admin.id = ADMIN_ID;
       await env.KEYS.put(`user:${ADMIN_ID}`, JSON.stringify(admin));
+      cset(`user:${ADMIN_ID}`, admin);
       await env.KEYS.delete("user:u-admin");
       if (admin.token && (await env.KEYS.get(`token:${admin.token}`)) === "u-admin") {
         await env.KEYS.put(`token:${admin.token}`, ADMIN_ID);
+        cset(`token:${admin.token}`, ADMIN_ID);
       }
       const uks = await env.KEYS.get("ukeys:u-admin");
       if (uks) {
         await env.KEYS.put(`ukeys:${ADMIN_ID}`, uks);
+        let parsed = null;
+        try { parsed = JSON.parse(uks); } catch {}
+        cset(`ukeys:${ADMIN_ID}`, parsed || {});
         await env.KEYS.delete("ukeys:u-admin");
       }
       await env.KEYS.delete("username:admin");
@@ -70,7 +98,11 @@ export async function seedAdmin(env) {
     token: legacyToken,
   };
   await env.KEYS.put(`user:${ADMIN_ID}`, JSON.stringify(admin));
-  if (legacyToken) await env.KEYS.put(`token:${legacyToken}`, ADMIN_ID);
+  cset(`user:${ADMIN_ID}`, admin);
+  if (legacyToken) {
+    await env.KEYS.put(`token:${legacyToken}`, ADMIN_ID);
+    cset(`token:${legacyToken}`, ADMIN_ID);
+  }
 
   const ukeys = {};
   for (const n of USER_KEY_NAMES) {
@@ -78,6 +110,7 @@ export async function seedAdmin(env) {
     if (v) ukeys[n] = v;
   }
   await env.KEYS.put(`ukeys:${ADMIN_ID}`, JSON.stringify(ukeys));
+  cset(`ukeys:${ADMIN_ID}`, ukeys);
   await env.KEYS.put("_admin_seeded", "1");
 }
 
@@ -108,11 +141,18 @@ export async function createUser(env, { username, password, inviteCode, role = "
   const user = { id: name, username: name, role, enabled: true, createdAt: Date.now(), passwordHash, salt, token };
   await env.KEYS.put(`user:${name}`, JSON.stringify(user));
   await env.KEYS.put(`token:${token}`, name);
+  cset(`user:${name}`, user);
+  cset(`token:${token}`, name);
   return { id: name, username: name, role, token };
 }
 
 export async function getUser(env, id) {
-  return getJSON(env, `user:${id}`);
+  const key = `user:${id}`;
+  const hit = cget(key);
+  if (hit !== undefined) return hit;
+  const u = await getJSON(env, key);
+  cset(key, u); // caches null too — no zombie lookups
+  return u;
 }
 
 export async function findUserByUsername(env, username) {
@@ -121,7 +161,12 @@ export async function findUserByUsername(env, username) {
 
 export async function findUserByToken(env, token) {
   if (!token) return null;
-  const name = await env.KEYS.get(`token:${String(token)}`);
+  const tkey = `token:${String(token)}`;
+  let name = cget(tkey);
+  if (name === undefined) {
+    name = env.KEYS ? await env.KEYS.get(tkey) : null;
+    cset(tkey, name);
+  }
   if (!name) return null;
   return getUser(env, name);
 }
@@ -138,33 +183,45 @@ export async function listUsers(env) {
 }
 
 export async function setUserEnabled(env, id, enabled) {
-  const u = await getUser(env, id);
+  // read-modify-write: read raw KV (not cache) so the write is based on the
+  // latest value, then refresh the cache with the new object (write-through)
+  const u = await getJSON(env, `user:${id}`);
   if (!u) throw new Error("User not found");
   u.enabled = !!enabled;
   await env.KEYS.put(`user:${id}`, JSON.stringify(u));
+  cset(`user:${id}`, u);
   return u;
 }
 
 export async function regenerateToken(env, id) {
-  const u = await getUser(env, id);
+  const u = await getJSON(env, `user:${id}`);
   if (!u) throw new Error("User not found");
-  if (u.token) await env.KEYS.delete(`token:${u.token}`);
+  if (u.token) {
+    await env.KEYS.delete(`token:${u.token}`);
+    cdel(`token:${u.token}`);
+  }
   u.token = generateGatewayToken();
   await env.KEYS.put(`user:${id}`, JSON.stringify(u));
   await env.KEYS.put(`token:${u.token}`, id);
+  cset(`user:${id}`, u);
+  cset(`token:${u.token}`, id);
   return u.token;
 }
 
 /* ---- Per-user backend keys ---- */
 
 export async function getUserKeys(env, id) {
-  const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
+  const key = `ukeys:${id}`;
+  const hit = cget(key);
+  if (hit !== undefined) return hit;
+  const ukeys = (await getJSON(env, key)) || {};
   // Admin fallback: fall back to Worker secrets when not explicitly configured
   if (id === ADMIN_ID && env.KEYS) {
     for (const n of USER_KEY_NAMES) {
       if (!ukeys[n]) ukeys[n] = (await env.KEYS.get(n)) || env[n] || null;
     }
   }
+  cset(key, ukeys);
   return ukeys;
 }
 
@@ -172,6 +229,7 @@ export async function setUserKey(env, id, name, value) {
   const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
   ukeys[name] = String(value).trim();
   await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
+  cset(`ukeys:${id}`, ukeys);
   return ukeys;
 }
 
@@ -179,6 +237,7 @@ export async function deleteUserKey(env, id, name) {
   const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
   delete ukeys[name];
   await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
+  cset(`ukeys:${id}`, ukeys);
   return ukeys;
 }
 
@@ -186,18 +245,26 @@ export async function deleteUserKey(env, id, name) {
 
 /** Read the admin password: KV is authoritative; migrate from the Worker secret once if absent */
 export async function getAdminPassword(env) {
+  const key = "auth:admin_password";
+  const hit = cget(key);
+  if (hit !== undefined) return hit;
   if (!env.KEYS) return env.ADMIN_PASSWORD || "";
-  let v = await env.KEYS.get("auth:admin_password");
+  let v = await env.KEYS.get(key);
   if (!v && env.ADMIN_PASSWORD) {
+    // one-time migration from the Worker secret — cache the written value
     v = env.ADMIN_PASSWORD;
-    await env.KEYS.put("auth:admin_password", v);
+    await env.KEYS.put(key, v);
   }
-  return v || "";
+  v = v || "";
+  cset(key, v);
+  return v;
 }
 
 export async function setAdminPassword(env, value) {
   if (!env.KEYS) throw new Error("KV not bound");
-  await env.KEYS.put("auth:admin_password", String(value));
+  const v = String(value);
+  await env.KEYS.put("auth:admin_password", v);
+  cset("auth:admin_password", v);
 }
 
 /* ---- Invites ---- */
@@ -220,16 +287,25 @@ export async function createInvite(env) {
 
 const DEVICES_KEY = "devices:v1";
 
-export async function listDevices(env) {
+async function readDevicesRaw(env) {
   if (!env.KEYS) return [];
   const raw = await env.KEYS.get(DEVICES_KEY);
   if (!raw) return [];
   try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; }
 }
 
+export async function listDevices(env) {
+  const hit = cget(DEVICES_KEY);
+  if (hit !== undefined) return hit;
+  const arr = await readDevicesRaw(env);
+  cset(DEVICES_KEY, arr);
+  return arr;
+}
+
 export async function saveDevices(env, devices) {
   if (!env.KEYS) return;
   await env.KEYS.put(DEVICES_KEY, JSON.stringify(devices));
+  cset(DEVICES_KEY, devices); // covers upsertDevice / deleteDevice / /api/register
 }
 
 export async function getDevice(env, name) {
@@ -238,7 +314,9 @@ export async function getDevice(env, name) {
 }
 
 export async function upsertDevice(env, device) {
-  const devs = await listDevices(env);
+  // read-modify-write: merge against raw KV so a stale cache can't drop
+  // devices added by another isolate; saveDevices then refreshs the cache
+  const devs = await readDevicesRaw(env);
   const i = devs.findIndex((d) => d.name === device.name);
   if (i >= 0) devs[i] = device; else devs.push(device);
   await saveDevices(env, devs);
@@ -246,7 +324,7 @@ export async function upsertDevice(env, device) {
 }
 
 export async function deleteDevice(env, name) {
-  const devs = await listDevices(env);
+  const devs = await readDevicesRaw(env);
   const out = devs.filter((d) => d.name !== name);
   await saveDevices(env, out);
   return out.length !== devs.length;
@@ -285,15 +363,24 @@ export async function deleteRegKey(env, code) {
  */
 
 export async function getCfToken(env) {
-  if (!env.KEYS) return "";
-  return (await env.KEYS.get("cf:api_token")) || "";
+  const key = "cf:api_token";
+  const hit = cget(key);
+  if (hit !== undefined) return hit;
+  const v = (env.KEYS ? (await env.KEYS.get(key)) : null) || "";
+  cset(key, v);
+  return v;
 }
 
 export async function setCfToken(env, value) {
   if (!env.KEYS) throw new Error("KV not bound");
   const v = String(value || "").trim();
-  if (v) await env.KEYS.put("cf:api_token", v);
-  else await env.KEYS.delete("cf:api_token");
+  if (v) {
+    await env.KEYS.put("cf:api_token", v);
+    cset("cf:api_token", v);
+  } else {
+    await env.KEYS.delete("cf:api_token");
+    cdel("cf:api_token");
+  }
   return v;
 }
 

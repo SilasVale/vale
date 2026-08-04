@@ -1,7 +1,7 @@
 // Vale Command UI — browser tab management & overlay sync
 
 import state from './state.js';
-import { invoke } from './ipc.js';
+import { invoke, getToken } from './ipc.js';
 import { browserHandlers, toast, navHandlers } from './events.js';
 import { switchTabUI } from './view.js';
 import { renderTabItem, highlightTabItem, updateCloseButtons } from './tabs.js';
@@ -11,27 +11,16 @@ const tabSel = (tid) => `[data-tab="${CSS.escape(tid)}"]`;
 
 const IS_HEADLESS = !window.__TAURI__;
 
-// ── Headless live preview (screenshot polling) ──
+// ── Headless live preview (SSE frame stream) ──
 // Desktop shows the browser as a native WebView overlay; headless has no
-// overlay, so the panel polls a screenshot and renders it as a live frame.
+// overlay, so the panel opens one long-lived SSE connection and renders the
+// pushed frames. Zero polling → zero per-frame gateway requests/KV reads.
 
-let previewTimer = null;
+let frameSource = null;
 
-function startPreview() {
-  if (!IS_HEADLESS || previewTimer) return;
-  previewTimer = setInterval(captureFrame, 2000);
-  void captureFrame();            // first frame immediately
-}
-
-function stopPreview() {
-  if (previewTimer) { clearInterval(previewTimer); previewTimer = null; }
-}
-
-async function captureFrame() {
+function renderFrame(data) {
   const area = document.getElementById('browser-area');
-  if (!area || state.activeTab !== 'browser') return;
-  const r = await invoke('browser_frame');
-  if (!r.ok || typeof r.result !== 'string') return;  // no tab / backend off — retry next tick
+  if (!area || !data || data.ok !== true || typeof data.result !== 'string') return;
   let img = area.querySelector('img.preview-frame');
   if (!img) {
     img = document.createElement('img');
@@ -47,8 +36,34 @@ async function captureFrame() {
       area.appendChild(badge);
     }
   }
-  img.src = 'data:image/png;base64,' + r.result;
+  img.src = 'data:image/png;base64,' + data.result;
 }
+
+function startPreview() {
+  if (!IS_HEADLESS || frameSource || document.hidden) return;
+  const token = getToken();
+  frameSource = new EventSource('/api/browser/frame-stream' + (token ? '?token=' + token : ''));
+  frameSource.onmessage = (e) => {
+    try { renderFrame(JSON.parse(e.data)); } catch (_) {}
+  };
+  // onerror: EventSource auto-reconnects; the server sends the first frame
+  // immediately on connect.
+}
+
+function stopPreview() {
+  if (frameSource) { frameSource.close(); frameSource = null; }
+}
+
+// Background tabs must not keep the frame stream (it costs the device a
+// screenshot every 2s) — pause on hide, resume on show (server pushes the
+// first frame immediately, so resume is lag-free).
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopPreview();
+  } else if (state.activeTab === 'browser') {
+    startPreview();
+  }
+});
 
 // ── Tab management ──
 

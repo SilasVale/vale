@@ -11,7 +11,8 @@
 //!   GET  /api/events        → SSE event stream
 //!   GET  /api/events/poll   → poll events (?after=N)
 //!   GET  /api/events/term   → SSE terminal byte stream (TermOutput JSON frames)
-//!   GET  /api/browser/frame → headless live browser frame (base64 PNG)
+//!   GET  /api/browser/frame → headless live browser frame (base64 PNG, one-shot)
+//!   GET  /api/browser/frame-stream → SSE live browser frames (2s push, no polling)
 //!   GET  /api/status        → system status
 //!   GET  /api/spec          → plugin spec
 //!   POST /api/tools/{name}  → generic tool dispatch via PluginRegistry
@@ -234,6 +235,13 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         return sse_term_stream(state).await;
     }
 
+    // SSE browser frame stream — live preview frames pushed over one long-lived
+    // connection (replaces headless screenshot polling).
+    if method == Method::GET && path == "/api/browser/frame-stream" {
+        if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        return sse_browser_frame_stream(state).await;
+    }
+
     // GET non-API — static UI, assets, vendor: public (no token needed)
     if method == Method::GET && !path.starts_with("/api") && path != "/mcp" {
         if let Some((_, bytes, ct)) = ASSETS.iter().find(|(p, _, _)| *p == path) {
@@ -407,6 +415,51 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
 }
 
 // ── Status ────────────────────────────────────────────────────
+
+/// SSE stream of live browser frames (headless preview). One long-lived
+/// connection per panel; frames are pushed every FRAME_INTERVAL while the
+/// browser has content, with a keep-alive backoff when it doesn't. Replaces
+/// the 2s polling loop, so a proxied panel costs zero gateway requests per
+/// frame.
+const FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+const FRAME_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn sse_browser_frame_stream(state: Arc<AppState>) -> Response {
+    let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
+
+    tokio::spawn(async move {
+        loop {
+            match state.browser_mgr.screenshot(None).await {
+                Ok(b64) => {
+                    // {"ok":true,"result":"<base64 PNG>"}
+                    let json = serde_json::json!({ "ok": true, "result": b64 });
+                    if tx.send(Ok(Bytes::from(format!("data: {json}\n\n")))).await.is_err() {
+                        break;
+                    }
+                    tokio::time::sleep(FRAME_INTERVAL).await;
+                }
+                Err(_) => {
+                    // No tab / backend not enabled — keep the connection alive
+                    // and retry with backoff (a reconnect churn loop is worse).
+                    tokio::time::sleep(FRAME_BACKOFF).await;
+                }
+            }
+        }
+    });
+
+    let body = Body::from_stream(MpscStream { rx });
+
+    let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("cache-control"),
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("connection"),
+        axum::http::HeaderValue::from_static("keep-alive"),
+    );
+    resp
+}
 
 /// Live browser frame for the headless web panel's screenshot preview.
 async fn api_browser_frame(state: &AppState) -> serde_json::Value {
@@ -594,6 +647,28 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes);
         assert!(text.contains("term-0"), "SSE frame missing session id: {text}");
         assert!(text.starts_with("data: "));
+    }
+
+    #[tokio::test]
+    async fn frame_stream_requires_auth() {
+        let mut cfg = Config::default();
+        cfg.server.auth_token = Some("sekret".into());
+        let st = Arc::new(AppState::new(cfg, None));
+        let resp = handle_request(req("GET", "/api/browser/frame-stream"), st).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn frame_stream_ok_with_stub() {
+        // Stub backend has no browser — the connection still opens and stays
+        // alive (keep-alive backoff), and the response is an SSE stream.
+        let resp = handle_request(req("GET", "/api/browser/frame-stream"), state()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(ct.contains("text/event-stream"), "content-type: {ct}");
     }
 
     #[tokio::test]

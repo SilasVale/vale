@@ -166,13 +166,6 @@ async function fetchApi(cmd, args) {
       return r.ok ? await r.json() : { ok: false, events: [] };
     } catch (_) { return { ok: false, events: [] }; }
   }
-  if (cmd === 'browser_frame') {
-    // Headless live browser frame (base64 PNG) — desktop never calls this.
-    try {
-      const r = await apiFetch('/api/browser/frame');
-      return r.ok ? await r.json() : { ok: false, error: 'frame unavailable' };
-    } catch (_) { return { ok: false, error: 'frame unavailable' }; }
-  }
   if (cmd === 'log_diag') {
     if (args && args.msg) console.log('[vale-command]', args.msg);
     return { ok: true };
