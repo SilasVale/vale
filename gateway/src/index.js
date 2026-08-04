@@ -122,7 +122,7 @@ export default {
         if (path === "/api/vale-cli") {
           return new Response(cli, { headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS } });
         }
-        const b64 = btoa(cli);
+        const b64 = encodeBase64Utf8(cli);
         const body = path === "/api/vale-install" ? posixInstaller(b64) : psInstaller(b64);
         return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS } });
       }
@@ -1557,8 +1557,14 @@ export async function buildHealth(env) {
   };
 }
 
+/** UTF-8-safe base64: btoa is Latin1-only and throws on non-ASCII (the vale
+ *  CLI is full of Chinese text). Encode to bytes first. */
+export function encodeBase64Utf8(text) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+}
+
 // POSIX one-liner installer — embeds the vale CLI as base64 (no quoting issues).
-function posixInstaller(b64) {
+export function posixInstaller(b64) {
   return `#!/bin/sh
 set -e
 command -v node >/dev/null 2>&1 || { echo "error: Node.js required"; exit 1; }
@@ -1572,7 +1578,7 @@ echo "usage: vale check | vale use <ds|qw|og|or> | vale use auto | vale restore"
 }
 
 // PowerShell one-liner installer (irm | iex) — installs vale + vale.cmd wrapper.
-function psInstaller(b64) {
+export function psInstaller(b64) {
   return `$ErrorActionPreference = "Stop"
 try { node --version | Out-Null } catch { Write-Error "Node.js required"; exit 1 }
 $dest = Join-Path $HOME ".local\\bin"
