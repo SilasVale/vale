@@ -200,6 +200,17 @@ fn eventbus_term_hook() {
     assert!(called.load(std::sync::atomic::Ordering::SeqCst));
 }
 
+#[test]
+fn eventbus_term_output_broadcasts() {
+    let bus = AppEventBus::new();
+    let mut rx = bus.subscribe_term_output();
+    let output = serde_json::json!({"session_id": "term-0", "data": [104, 105]});
+    bus.emit_term_output(output);
+    let got = rx.try_recv().expect("subscriber must receive term output");
+    assert_eq!(got["session_id"], "term-0");
+    assert_eq!(got["data"], serde_json::json!([104, 105]));
+}
+
 // ═══════════════════════════════════════════════════════════════
 // require_str helper (tests the real pub fn, not a hand copy)
 // ═══════════════════════════════════════════════════════════════

@@ -74,6 +74,8 @@ type TermHook = Mutex<Option<Box<dyn Fn(serde_json::Value) + Send + Sync>>>;
 /// An optional hook callback is invoked on each emit (e.g. for Tauri event forwarding).
 pub struct AppEventBus {
     tx: broadcast::Sender<SeqEvent>,
+    /// Terminal output broadcast (headless web panel streams this via SSE).
+    term_tx: broadcast::Sender<serde_json::Value>,
     /// (ring buffer, next sequence number) — single lock keeps seq assignment atomic.
     log: Mutex<(VecDeque<SeqEvent>, u64)>,
     hook: Hook,
@@ -83,8 +85,10 @@ pub struct AppEventBus {
 impl AppEventBus {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
+        let (term_tx, _) = broadcast::channel(1024);
         Self {
             tx,
+            term_tx,
             log: Mutex::new((VecDeque::with_capacity(RING_CAP + 1), 1)),
             hook: Mutex::new(None),
             term_hook: Mutex::new(None),
@@ -101,6 +105,11 @@ impl AppEventBus {
     pub fn set_term_hook(&self, hook: impl Fn(serde_json::Value) + Send + Sync + 'static) {
         let mut h = self.term_hook.lock().unwrap_or_else(|p| p.into_inner());
         *h = Some(Box::new(hook));
+    }
+
+    /// Subscribe to the terminal-output broadcast (used by the web panel SSE).
+    pub fn subscribe_term_output(&self) -> broadcast::Receiver<serde_json::Value> {
+        self.term_tx.subscribe()
     }
 }
 
@@ -144,6 +153,9 @@ impl EventBus for AppEventBus {
     }
 
     fn emit_term_output(&self, output: serde_json::Value) {
+        // Broadcast to web-panel SSE subscribers first, then the desktop hook —
+        // the hook order is preserved so the Tauri "term-output" event is unchanged.
+        let _ = self.term_tx.send(output.clone());
         let hook = self.term_hook.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(ref f) = *hook {
             f(output);
