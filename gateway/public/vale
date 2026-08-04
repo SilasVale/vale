@@ -1,0 +1,221 @@
+#!/usr/bin/env node
+// vale — switch ~/.claude/settings.json between vale-gate channels.
+// Zero-dependency Node.js (fs/os/path/fetch only). Install from the gateway
+// console: `curl -fsSL https://api.saisi.online/api/vale-install | sh`
+// (POSIX) or `irm https://api.saisi.online/api/vale-install.ps1 | iex` (Win).
+"use strict";
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+
+const GATEWAY_BASE = "https://api.saisi.online";
+const CHANNELS = {
+  ds: { model: "ds/deepseek-v4-flash" },
+  qw: { model: "qw/qwen3.8-max-preview" },
+  og: { model: "og/deepseek-v4-flash" },
+  or: { model: "or/openai/gpt-5.6-luna:floor[1m]" },
+};
+const PRIORITY = ["qw", "ds", "og", "or"];
+const MODEL_ENV_KEYS = [
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_SMALL_FAST_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_MODEL",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+];
+const KEEP_BACKUPS = 5;
+const PROBE_TIMEOUT_MS = 20000;
+
+function settingsFile() {
+  return process.env.VALE_SETTINGS || path.join(os.homedir(), ".claude", "settings.json");
+}
+function readSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+  } catch (e) {
+    console.error(`无法读取 ${settingsFile()}: ${e.message}`);
+    process.exit(1);
+  }
+}
+function writeAtomic(data) {
+  const file = settingsFile();
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf8");
+  fs.renameSync(tmp, file);
+}
+function gatewayBase(settings) {
+  return (settings.env && settings.env.ANTHROPIC_BASE_URL) || GATEWAY_BASE;
+}
+function authToken(settings) {
+  const env = settings.env || {};
+  return env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || "";
+}
+function currentChannel(settings) {
+  const model = (settings.env && settings.env.ANTHROPIC_MODEL) || "";
+  for (const [id, ch] of Object.entries(CHANNELS)) {
+    if (model === ch.model) return id;
+  }
+  for (const id of Object.keys(CHANNELS)) {
+    if (model.startsWith(id + "/")) return id;
+  }
+  return null;
+}
+function backup() {
+  const file = settingsFile();
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const bak = `${file}.bak-vale-${stamp}`;
+  fs.copyFileSync(file, bak);
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  const olds = fs.readdirSync(dir)
+    .filter((f) => f.startsWith(`${base}.bak-vale-`))
+    .sort()
+    .reverse();
+  for (const f of olds.slice(KEEP_BACKUPS)) fs.unlinkSync(path.join(dir, f));
+  return bak;
+}
+function findBackup() {
+  const file = settingsFile();
+  const dir = path.dirname(file);
+  const base = path.basename(file);
+  const list = fs.readdirSync(dir)
+    .filter((f) => f.startsWith(`${base}.bak-vale-`))
+    .sort()
+    .reverse();
+  return list.length ? path.join(dir, list[0]) : null;
+}
+function switchEnv(settings, channel) {
+  const env = settings.env || {};
+  for (const k of MODEL_ENV_KEYS) env[k] = CHANNELS[channel].model;
+  env.ANTHROPIC_BASE_URL = GATEWAY_BASE;
+  settings.env = env;
+  return settings;
+}
+async function fetchHealth(base) {
+  try {
+    const r = await fetch(`${base}/api/health`);
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+async function probe(base, token, model) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const r = await fetch(`${base}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "x-api-key": token,
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "ping" }],
+      }),
+      signal: ctrl.signal,
+    });
+    return r.status === 200;
+  } catch { return false; } finally { clearTimeout(t); }
+}
+function pickRecommended(channels) {
+  for (const id of PRIORITY) {
+    const c = (channels || []).find((x) => x.id === id);
+    if (c && c.ok) return c;
+  }
+  return null;
+}
+
+async function cmdCheck() {
+  const settings = readSettings();
+  const base = gatewayBase(settings);
+  const cur = currentChannel(settings);
+  const health = await fetchHealth(base);
+  console.log(`网关: ${base}`);
+  if (!health || !Array.isArray(health.channels)) {
+    console.error("无法获取渠道健康（/api/health 不可达）");
+    process.exit(1);
+  }
+  for (const c of health.channels) {
+    const marker = c.ok ? "✅ 正常" : `⚠️  ${c.reason || "异常"}`;
+    const curMark = c.id === cur ? "  ← 当前" : "";
+    console.log(`  ${c.id}/ → ${c.model}  ${marker}${curMark}`);
+  }
+  const rec = pickRecommended(health.channels);
+  console.log(rec ? `推荐: ${rec.model}` : "推荐: 无可用渠道");
+  if (cur) console.log(`当前配置: ${cur}（${(settings.env || {}).ANTHROPIC_MODEL}）`);
+}
+
+async function cmdUse(channel) {
+  if (!CHANNELS[channel]) {
+    console.error(`未知渠道: ${channel}（可用: ${Object.keys(CHANNELS).join(" / ")}）`);
+    process.exit(1);
+  }
+  const settings = readSettings();
+  const base = gatewayBase(settings);
+  const token = authToken(settings);
+  if (!token) {
+    console.error("settings.json 里没有 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN");
+    process.exit(1);
+  }
+  const model = CHANNELS[channel].model;
+  const ok = await probe(base, token, model);
+  if (!ok) {
+    console.error(`探测失败: ${base} 上的 ${model} 不可用，未切换`);
+    process.exit(1);
+  }
+  const bak = backup();
+  switchEnv(settings, channel);
+  writeAtomic(settings);
+  console.log(`已切换到 ${model}`);
+  console.log(`备份: ${bak}`);
+  console.log("重启 Claude Code 后生效");
+}
+
+async function cmdAuto() {
+  const settings = readSettings();
+  const base = gatewayBase(settings);
+  const health = await fetchHealth(base);
+  const rec = health && Array.isArray(health.channels) ? pickRecommended(health.channels) : null;
+  if (!rec) {
+    console.error("无健康渠道（/api/health 不可达或全部异常）");
+    process.exit(1);
+  }
+  const token = authToken(settings);
+  if (token && !(await probe(base, token, rec.model))) {
+    console.error(`推荐渠道 ${rec.model} 探测失败，未切换`);
+    process.exit(1);
+  }
+  const bak = backup();
+  switchEnv(settings, rec.id);
+  writeAtomic(settings);
+  console.log(`已自动切换到 ${rec.model}（${rec.id}）`);
+  console.log(`备份: ${bak}`);
+  console.log("重启 Claude Code 后生效");
+}
+
+function cmdRestore() {
+  const bak = findBackup();
+  if (!bak) {
+    console.error("没有可恢复的备份");
+    process.exit(1);
+  }
+  fs.copyFileSync(bak, settingsFile());
+  console.log(`已恢复 ${bak}`);
+  console.log("重启 Claude Code 后生效");
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const cmd = args[0] || "check";
+  if (cmd === "check") return cmdCheck();
+  if (cmd === "use") return args[1] === "auto" ? cmdAuto() : cmdUse(args[1]);
+  if (cmd === "restore") return cmdRestore();
+  console.error(`用法: vale check | vale use <ds|qw|og|or|auto> | vale restore`);
+  process.exit(1);
+}
+
+main().catch((e) => { console.error(e.message); process.exit(1); });
