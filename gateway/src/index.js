@@ -41,6 +41,7 @@ const MODELS = [
   { id: "og/deepseek-v4-flash", owned_by: "opencode" },
   { id: "og/minimax-m3", owned_by: "opencode" },
   { id: "or/openai/gpt-5.6-luna:floor[1m]", owned_by: "openrouter" },
+  { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
 ];
 
 // Route info shown in the console ("model routing" section). Public, no keys.
@@ -62,6 +63,12 @@ const ROUTE_INFO = [
     backend: "OpenRouter",
     desc: "openrouter.ai — user's own key, proxied via openrouter-proxy",
     models: ["openai/gpt-5.6-luna:floor[1m]"],
+  },
+  {
+    prefix: "qw/",
+    backend: "Qwen MaaS (Aliyun)",
+    desc: "token-plan.ap-southeast-1.maas.aliyuncs.com — Anthropic passthrough",
+    models: ["qwen3.8-max-preview"],
   },
   {
     prefix: "none",
@@ -390,6 +397,7 @@ async function handleGateway(request, env, url) {
   const deepseekKey = ukeys.DEEPSEEK_API_KEY || null;
   const opencodeGoKey = ukeys.OPENCODE_GO_API_KEY || null;
   const openRouterKey = ukeys.OPENROUTER_API_KEY || null;
+  const qwenKey = ukeys.QWEN_API_KEY || null;
 
   // GET /v1/models — list of prefixed models this gateway supports
   if (method === "GET" && path.endsWith("/models")) {
@@ -456,8 +464,8 @@ async function handleGateway(request, env, url) {
   if (route.kind === "openrouter" && !openRouterKey) {
     return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
   }
-  // ds / no prefix use this user's DeepSeek key
-  const bearerKey = route.kind === "openrouter" ? openRouterKey : deepseekKey;
+  // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key
+  const bearerKey = route.kind === "openrouter" ? openRouterKey : route.kind === "qwen" ? qwenKey : deepseekKey;
 
   // count_tokens
   if (isCount) {
@@ -466,6 +474,9 @@ async function handleGateway(request, env, url) {
     }
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    if (route.kind === "qwen" && !qwenKey) {
+      return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
     }
     let upstream;
     try {
@@ -488,6 +499,9 @@ async function handleGateway(request, env, url) {
   if (route.type === "passthrough") {
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    if (route.kind === "qwen" && !qwenKey) {
+      return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
     }
     let upstream;
     try {
@@ -705,6 +719,18 @@ async function testKey(name, key) {
       });
       return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "OpenCode Go auth OK" : `Upstream ${res.status}` });
     }
+    if (name === "QWEN_API_KEY") {
+      const res = await fetchWithTimeout("https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: "qwen3.8-max-preview",
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+        }),
+      });
+      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "Qwen MaaS auth OK" : `Upstream ${res.status}` });
+    }
   } catch (e) {
     return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
   }
@@ -848,6 +874,13 @@ function pickRoute(prefix, env) {
         kind: "deepseek",
         stripPrefix: true,
         upstream: "https://api.deepseek.com/anthropic" + VERIFY_PATH,
+      };
+    case "qw":
+      return {
+        type: "passthrough",
+        kind: "qwen",
+        stripPrefix: true,
+        upstream: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
       };
     case "og":
       return {

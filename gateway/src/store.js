@@ -18,7 +18,7 @@ import { hashPassword, randomHex } from "./auth.js";
 
 export const ADMIN_USERNAME = "admin";
 export const ADMIN_ID = "admin"; // user ID = username → readable KV keys
-export const USER_KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY"];
+export const USER_KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY", "QWEN_API_KEY"];
 
 /* ---- Per-isolate TTL cache ----
  *
