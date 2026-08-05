@@ -1607,17 +1607,19 @@ export async function isModelUsable(env, model) {
   return true;
 }
 
+// Default channel when the user hasn't made a selection: the stable,
+// cheapest direct channel (DeepSeek official).
+const DEFAULT_ROUTE_MODEL = "ds/deepseek-v4-flash";
+
 /**
  * Resolve Claude Code's fixed `auto` model name to this user's chosen
- * channel (per-user route selection). Falls back to the recommended
- * healthy channel when unset or unusable.
+ * channel (per-user route selection). Falls back to the default channel
+ * (ds/deepseek-v4-flash) when unset or unusable.
  */
 export async function resolveAutoModel(env, uid) {
   const chosen = await getUserRoute(env, uid);
   if (chosen && (await isModelUsable(env, chosen))) return chosen;
-  const health = await buildHealth(env);
-  const rec = health.recommended;
-  return rec ? rec.model : "ds/deepseek-v4-flash";
+  return DEFAULT_ROUTE_MODEL;
 }
 
 /** UTF-8-safe base64: btoa is Latin1-only and throws on non-ASCII (the vale
