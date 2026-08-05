@@ -33,6 +33,7 @@
       "route.desc": "Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。",
       "route.use": "使用",
       "route.current": "当前",
+      "route.bad": "异常",
       "route.auto": "自动选择健康渠道",
       "route.switched": "已切换，下次请求生效",
       "route.fail": "切换失败",
@@ -102,6 +103,7 @@
       "route.desc": "Set the Claude Code model to <code>auto</code>, then flip channels here — no restart needed.",
       "route.use": "Use",
       "route.current": "Current",
+      "route.bad": "Down",
       "route.auto": "Auto-select healthy channel",
       "route.switched": "Switched — takes effect on the next request",
       "route.fail": "Switch failed",
@@ -422,7 +424,9 @@
   // 渠道切换：/api/health 状态 + /api/me/route 当前选择；点 [使用] → PUT。
   // 卡片复用 key-card 的样式，视觉与密钥管理页一致。
   function routeCardHTML(ch, current) {
-    const status = ch.ok ? `<span class="badge ok">${t("route.use")}</span>` : `<span class="badge bad">${ch.reason || "异常"}</span>`;
+    const status = ch.ok
+      ? `<span class="badge ok">${t("route.use")}</span>`
+      : `<span class="badge off">${esc(ch.reason || t("route.bad"))}</span>`;
     const isCur = current === ch.model;
     return `
       <div class="key-card" data-model="${esc(ch.model)}">
