@@ -23,8 +23,8 @@ const DEFAULT_MODELS = [
   { id: "or/openai/gpt-5.6-luna:floor[1m]", object: "model", owned_by: "openrouter" },
 ];
 
-function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true, probeFailModels = [], models = DEFAULT_MODELS } = {}) {
-  const calls = { health: 0, probes: 0, models: 0 };
+function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true, probeFailModels = [], models = DEFAULT_MODELS, messagesOk = true } = {}) {
+  const calls = { health: 0, probes: 0, models: 0, messages: 0 };
   const server = http.createServer((req, res) => {
     if (req.url === "/api/health") {
       calls.health++;
@@ -57,6 +57,13 @@ function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true
           detail: ok ? "" : "upstream down",
         }));
       });
+      return;
+    }
+    if (req.url === "/v1/messages" && req.method === "POST") {
+      calls.messages++;
+      res.setHeader("content-type", "application/json");
+      res.statusCode = messagesOk ? 200 : 400;
+      res.end(JSON.stringify({ type: "message", id: "m1", role: "assistant", model: "x", content: [], stop_reason: "end_turn", usage: {} }));
       return;
     }
     if (req.url === "/v1/models" && req.method === "GET") {
@@ -94,13 +101,18 @@ function makeSettings(extra = {}) {
   return { dir, file, data };
 }
 
-function run(args, settingsFile, gatewayUrl) {
+function run(args, settingsFile, gatewayUrl, providersFile) {
   // NOTE: async spawn, NOT spawnSync — spawnSync blocks the parent's event
   // loop, so the in-process mock gateway could never respond to the CLI's
   // requests (deadlock). Async spawn lets the mock serve the child.
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
-      env: { ...process.env, VALE_SETTINGS: settingsFile, VALE_GATEWAY: gatewayUrl },
+      env: {
+        ...process.env,
+        VALE_SETTINGS: settingsFile,
+        VALE_GATEWAY: gatewayUrl,
+        ...(providersFile ? { VALE_PROVIDERS: providersFile } : {}),
+      },
     });
     let stdout = "";
     let stderr = "";
@@ -293,6 +305,96 @@ test("use xx/nope: 不在模型列表 → 拒绝切换", async () => {
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 0);
   } finally { server.close(); }
+});
+
+// ── Provider store ─────────────────────────────────────────────
+
+const provFile = (n) => path.join(os.tmpdir(), `vale-prov-${n}-${process.pid}.json`);
+
+test("provider add: 写入仓库（0600）", async () => {
+  const file = provFile("add");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    const r = await run(["provider", "add", "deepseek-direct", "--base", "https://api.deepseek.com/anthropic", "--token", "sk-test123456", "--model", "deepseek-v4-flash"], sf, gw(1), file);
+    assert.equal(r.status, 0, r.stderr);
+    const prov = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.deepEqual(prov["deepseek-direct"], { base: "https://api.deepseek.com/anthropic", token: "sk-test123456", model: "deepseek-v4-flash" });
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  } finally { fs.rmSync(file, { force: true }); }
+});
+
+test("provider list: token 打码", async () => {
+  const file = provFile("list");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    await run(["provider", "add", "p1", "--base", "https://x.example", "--token", "sk-abcdef123456", "--model", "m1"], sf, gw(1), file);
+    const r = await run(["provider", "list"], sf, gw(1), file);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /p1/);
+    assert.ok(!r.stdout.includes("sk-abcdef123456"), "token 必须打码");
+    assert.match(r.stdout, /\*\*\*/);
+  } finally { fs.rmSync(file, { force: true }); }
+});
+
+test("provider rm: 删除提供商", async () => {
+  const file = provFile("rm");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    await run(["provider", "add", "p1", "--base", "https://x.example", "--token", "sk-t", "--model", "m1"], sf, gw(1), file);
+    const r = await run(["provider", "rm", "p1"], sf, gw(1), file);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {});
+  } finally { fs.rmSync(file, { force: true }); }
+});
+
+test("use <provider>: 探测通过 → 整套 env（base/token/model）替换 + 备份", async () => {
+  const { server, port } = await makeGateway();
+  const file = provFile("use");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    await run(["provider", "add", "direct", "--base", gw(port), "--token", "sk-provider-token", "--model", "custom-model"], sf, gw(port), file);
+    const r = await run(["use", "direct"], sf, gw(port), file);
+    assert.equal(r.status, 0, r.stderr);
+    const after = JSON.parse(fs.readFileSync(sf, "utf8"));
+    assert.equal(after.env.ANTHROPIC_BASE_URL, gw(port));
+    assert.equal(after.env.ANTHROPIC_MODEL, "custom-model");
+    assert.equal(after.env.ANTHROPIC_API_KEY, "sk-provider-token");
+    assert.equal(after.env.ANTHROPIC_AUTH_TOKEN, "sk-provider-token");
+    const backups = fs.readdirSync(path.dirname(sf)).filter((f) => f.includes(".bak-vale-"));
+    assert.equal(backups.length, 1);
+  } finally { fs.rmSync(file, { force: true }); server.close(); }
+});
+
+test("use <provider>: 探测失败(400) → 拒绝切换", async () => {
+  const { server, port } = await makeGateway({ messagesOk: false });
+  const file = provFile("usefail");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    await run(["provider", "add", "bad", "--base", gw(port), "--token", "sk-t", "--model", "m"], sf, gw(port), file);
+    const r = await run(["use", "bad"], sf, gw(port), file);
+    assert.notEqual(r.status, 0);
+    const after = JSON.parse(fs.readFileSync(sf, "utf8"));
+    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // 未切换
+  } finally { fs.rmSync(file, { force: true }); server.close(); }
+});
+
+test("provider 名优先于渠道名", async () => {
+  const { server, port } = await makeGateway();
+  const file = provFile("prio");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    await run(["provider", "add", "qw", "--base", gw(port), "--token", "sk-p", "--model", "p-model"], sf, gw(port), file);
+    const r = await run(["use", "qw"], sf, gw(port), file);
+    assert.equal(r.status, 0, r.stderr);
+    const after = JSON.parse(fs.readFileSync(sf, "utf8"));
+    assert.equal(after.env.ANTHROPIC_MODEL, "p-model"); // provider 生效而非 qw 渠道默认模型
+  } finally { fs.rmSync(file, { force: true }); server.close(); }
 });
 
 test("check: /api/health 接受连接但不响应 → 超时后非0退出（不挂起）", async () => {
