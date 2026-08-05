@@ -23,7 +23,7 @@ const DEFAULT_MODELS = [
   { id: "or/openai/gpt-5.6-luna:floor[1m]", object: "model", owned_by: "openrouter" },
 ];
 
-function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true, probeFailModels = [], models = DEFAULT_MODELS, messagesOk = true } = {}) {
+function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true, probeFailModels = [], models = DEFAULT_MODELS, messagesOk = true, authMode = "both" } = {}) {
   const calls = { health: 0, probes: 0, models: 0, messages: 0 };
   const server = http.createServer((req, res) => {
     if (req.url === "/api/health") {
@@ -61,8 +61,15 @@ function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true
     }
     if (req.url === "/v1/messages" && req.method === "POST") {
       calls.messages++;
+      // authMode: which auth header the mock provider accepts — "api-key"
+      // (x-api-key only), "bearer" (Authorization only), or "both".
+      const hasApiKey = !!req.headers["x-api-key"];
+      const hasBearer = !!req.headers["authorization"];
+      const authOk = authMode === "both"
+        || (authMode === "api-key" && hasApiKey)
+        || (authMode === "bearer" && hasBearer);
       res.setHeader("content-type", "application/json");
-      res.statusCode = messagesOk ? 200 : 400;
+      res.statusCode = messagesOk && authOk ? 200 : 400;
       res.end(JSON.stringify({ type: "message", id: "m1", role: "assistant", model: "x", content: [], stop_reason: "end_turn", usage: {} }));
       return;
     }
@@ -351,7 +358,7 @@ test("provider rm: 删除提供商", async () => {
 });
 
 test("use <provider>: 探测通过 → 整套 env（base/token/model）替换 + 备份", async () => {
-  const { server, port } = await makeGateway();
+  const { server, port } = await makeGateway({ authMode: "both" });
   const file = provFile("use");
   try {
     fs.rmSync(file, { force: true });
@@ -362,10 +369,53 @@ test("use <provider>: 探测通过 → 整套 env（base/token/model）替换 + 
     const after = JSON.parse(fs.readFileSync(sf, "utf8"));
     assert.equal(after.env.ANTHROPIC_BASE_URL, gw(port));
     assert.equal(after.env.ANTHROPIC_MODEL, "custom-model");
-    assert.equal(after.env.ANTHROPIC_API_KEY, "sk-provider-token");
+    // authMode both → 探测先试 Bearer 成功 → 只写 AUTH_TOKEN，清除 API_KEY
     assert.equal(after.env.ANTHROPIC_AUTH_TOKEN, "sk-provider-token");
+    assert.equal(after.env.ANTHROPIC_API_KEY, undefined);
     const backups = fs.readdirSync(path.dirname(sf)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 1);
+  } finally { fs.rmSync(file, { force: true }); server.close(); }
+});
+
+test("provider add: 自动探测鉴权（bearer-only 端点 → auth=bearer）", async () => {
+  const { server, port } = await makeGateway({ authMode: "bearer" });
+  const file = provFile("detect-bearer");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    const r = await run(["provider", "add", "b", "--base", gw(port), "--token", "sk-t", "--model", "m"], sf, gw(port), file);
+    assert.equal(r.status, 0, r.stderr);
+    const prov = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(prov.b.auth, "bearer");
+  } finally { fs.rmSync(file, { force: true }); server.close(); }
+});
+
+test("provider add: 自动探测鉴权（api-key-only 端点 → auth=api-key）", async () => {
+  const { server, port } = await makeGateway({ authMode: "api-key" });
+  const file = provFile("detect-apikey");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    const r = await run(["provider", "add", "a", "--base", gw(port), "--token", "sk-t", "--model", "m"], sf, gw(port), file);
+    assert.equal(r.status, 0, r.stderr);
+    const prov = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(prov.a.auth, "api-key");
+  } finally { fs.rmSync(file, { force: true }); server.close(); }
+});
+
+test("use <api-key 型 provider>: 只写 ANTHROPIC_API_KEY，清除 AUTH_TOKEN", async () => {
+  const { server, port } = await makeGateway({ authMode: "api-key" });
+  const file = provFile("usekey");
+  try {
+    fs.rmSync(file, { force: true });
+    const { file: sf } = makeSettings();
+    // 预置一个 AUTH_TOKEN 残留，验证切换时被清除
+    await run(["provider", "add", "gw", "--base", gw(port), "--token", "sk-gw-token", "--model", "m"], sf, gw(port), file);
+    const r = await run(["use", "gw"], sf, gw(port), file);
+    assert.equal(r.status, 0, r.stderr);
+    const after = JSON.parse(fs.readFileSync(sf, "utf8"));
+    assert.equal(after.env.ANTHROPIC_API_KEY, "sk-gw-token");
+    assert.equal(after.env.ANTHROPIC_AUTH_TOKEN, undefined);
   } finally { fs.rmSync(file, { force: true }); server.close(); }
 });
 
