@@ -46,8 +46,11 @@ function writeAtomic(data) {
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { encoding: "utf8", mode });
   fs.renameSync(tmp, file);
 }
-function gatewayBase(settings) {
-  return (settings.env && settings.env.ANTHROPIC_BASE_URL) || GATEWAY_BASE;
+// The vale CLI manages the switch TO the gateway, so it always talks to the
+// gateway base — NOT the settings.json ANTHROPIC_BASE_URL (which may still
+// point at a direct provider). VALE_GATEWAY overrides for tests.
+function gatewayBase() {
+  return process.env.VALE_GATEWAY || GATEWAY_BASE;
 }
 function authToken(settings) {
   const env = settings.env || {};
@@ -94,31 +97,41 @@ function switchEnv(settings, channel) {
   settings.env = env;
   return settings;
 }
-async function fetchHealth(base) {
+async function fetchHealth() {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const r = await fetch(`${base}/api/health`, { signal: ctrl.signal });
+    const r = await fetch(`${gatewayBase()}/api/health`, { signal: ctrl.signal });
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; } finally { clearTimeout(t); }
 }
-async function probe(base, token, model) {
+// Channel probe via the gateway's public /api/vale-probe (the gateway fires
+// the real max_tokens=1 request with its own provider keys — no client token
+// needed, works from any settings state).
+async function probeChannel(model) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const r = await fetch(`${base}/v1/messages`, {
+    const r = await fetch(`${gatewayBase()}/api/vale-probe`, {
       method: "POST",
-      headers: {
-        "x-api-key": token,
-        "content-type": "application/json",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: 1,
-        messages: [{ role: "user", content: "ping" }],
-      }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model }),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) return false;
+    const j = await r.json();
+    return j.ok === true;
+  } catch { return false; } finally { clearTimeout(t); }
+}
+// The settings token must be the gateway's x-api-key AFTER the switch, or
+// Claude Code gets 401. Verify against a cheap authenticated endpoint.
+async function tokenValid(token) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const r = await fetch(`${gatewayBase()}/v1/models`, {
+      headers: { "x-api-key": token },
       signal: ctrl.signal,
     });
     return r.status === 200;
@@ -134,10 +147,9 @@ function pickRecommended(channels) {
 
 async function cmdCheck() {
   const settings = readSettings();
-  const base = gatewayBase(settings);
   const cur = currentChannel(settings);
-  const health = await fetchHealth(base);
-  console.log(`网关: ${base}`);
+  const health = await fetchHealth();
+  console.log(`网关: ${gatewayBase()}`);
   if (!health || !Array.isArray(health.channels)) {
     console.error("无法获取渠道健康（/api/health 不可达）");
     process.exit(1);
@@ -158,16 +170,15 @@ async function cmdUse(channel) {
     process.exit(1);
   }
   const settings = readSettings();
-  const base = gatewayBase(settings);
   const token = authToken(settings);
-  if (!token) {
-    console.error("settings.json 里没有 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN");
+  const model = CHANNELS[channel].model;
+  const ok = await probeChannel(model);
+  if (!ok) {
+    console.error(`探测失败: ${model} 不可用，未切换`);
     process.exit(1);
   }
-  const model = CHANNELS[channel].model;
-  const ok = await probe(base, token, model);
-  if (!ok) {
-    console.error(`探测失败: ${base} 上的 ${model} 不可用，未切换`);
+  if (!token || !(await tokenValid(token))) {
+    console.error("settings.json 里的 token 对网关无效 —— 请在 console 的密钥管理获取网关 token，更新 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 后重试");
     process.exit(1);
   }
   const bak = backup();
@@ -180,16 +191,19 @@ async function cmdUse(channel) {
 
 async function cmdAuto() {
   const settings = readSettings();
-  const base = gatewayBase(settings);
-  const health = await fetchHealth(base);
+  const health = await fetchHealth();
   const rec = health && Array.isArray(health.channels) ? pickRecommended(health.channels) : null;
   if (!rec) {
     console.error("无健康渠道（/api/health 不可达或全部异常）");
     process.exit(1);
   }
   const token = authToken(settings);
-  if (token && !(await probe(base, token, rec.model))) {
+  if (!(await probeChannel(rec.model))) {
     console.error(`推荐渠道 ${rec.model} 探测失败，未切换`);
+    process.exit(1);
+  }
+  if (!token || !(await tokenValid(token))) {
+    console.error("settings.json 里的 token 对网关无效 —— 请在 console 的密钥管理获取网关 token，更新 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 后重试");
     process.exit(1);
   }
   const bak = backup();
