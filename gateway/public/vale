@@ -135,7 +135,7 @@ function parseFlags(argv) {
   }
   return out;
 }
-function cmdProviderAdd(name, opts) {
+async function cmdProviderAdd(name, opts) {
   if (!name || !opts.base || !opts.token || !opts.model) {
     console.error("用法: vale provider add <名称> --base <URL> --token <TOKEN> --model <模型>");
     process.exit(1);
@@ -144,6 +144,15 @@ function cmdProviderAdd(name, opts) {
   providers[name] = { base: opts.base, token: opts.token, model: opts.model };
   writeProviders(providers);
   console.log(`已添加提供商 ${name} → ${opts.base}（${opts.model}）`);
+  // Probe both auth styles so `vale use` writes the right env variable.
+  const auth = await detectAuth(opts.base, opts.token, opts.model);
+  if (auth) {
+    providers[name].auth = auth;
+    writeProviders(providers);
+    console.log(`鉴权: ${auth === "bearer" ? "Bearer → ANTHROPIC_AUTH_TOKEN" : "x-api-key → ANTHROPIC_API_KEY"}`);
+  } else {
+    console.log("⚠️ 两种鉴权探测都未通过 —— 已保存，vale use 时会再次验证");
+  }
 }
 function cmdProviderList() {
   const providers = readProviders();
@@ -154,7 +163,8 @@ function cmdProviderList() {
   }
   for (const n of names) {
     const p = providers[n];
-    console.log(`  ${n} → ${p.base}  model: ${p.model}  token: ${maskKey(p.token)}`);
+    const auth = p.auth === "bearer" ? "Bearer" : p.auth === "api-key" ? "x-api-key" : "双写(未探测)";
+    console.log(`  ${n} → ${p.base}  model: ${p.model}  auth: ${auth}  token: ${maskKey(p.token)}`);
   }
   console.log("用法: vale use <提供商名>");
 }
@@ -168,43 +178,68 @@ function cmdProviderRm(name) {
   writeProviders(providers);
   console.log(`已删除提供商 ${name}`);
 }
+// Which auth header a provider accepts: some gateways only read x-api-key
+// (ANTHROPIC_API_KEY), official Anthropic-compatible endpoints prefer
+// Authorization: Bearer (ANTHROPIC_AUTH_TOKEN). detectAuth() finds the one
+// that works so the user never has to care.
+function probeHeaders(auth, token) {
+  if (auth === "api-key") return { "x-api-key": token };
+  if (auth === "bearer") return { Authorization: `Bearer ${token}` };
+  return { "x-api-key": token, Authorization: `Bearer ${token}` }; // legacy/unknown
+}
 // Generic probe for any provider base: fire a real max_tokens=1 request with
 // that provider's own token (works for the gateway AND direct APIs).
-async function probeTarget(base, token, model) {
+async function probeTarget(base, token, model, auth) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
     const r = await fetch(`${base}/v1/messages`, {
       method: "POST",
-      headers: {
-        "x-api-key": token,
-        "content-type": "application/json",
-        "anthropic-version": "2023-06-01",
-      },
+      headers: { ...probeHeaders(auth, token), "content-type": "application/json", "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
       signal: ctrl.signal,
     });
     return r.status === 200;
   } catch { return false; } finally { clearTimeout(t); }
 }
-// Provider switch: replace the whole env block (base + token + model). Token
-// is written to BOTH ANTHROPIC_API_KEY (x-api-key) and ANTHROPIC_AUTH_TOKEN
-// (Bearer) so it works with gateways and direct APIs alike.
+// Auto-detect the auth header a provider accepts. Bearer first (the official
+// Anthropic-compatible convention), then x-api-key (gateway-style). Returns
+// "bearer" | "api-key" | null (null = neither worked).
+async function detectAuth(base, token, model) {
+  if (await probeTarget(base, token, model, "bearer")) return "bearer";
+  if (await probeTarget(base, token, model, "api-key")) return "api-key";
+  return null;
+}
+// Provider switch: replace the whole env block (base + token + model). The
+// token goes into the env variable matching the provider's detected auth
+// style — x-api-key gateways get ANTHROPIC_API_KEY, Bearer endpoints get
+// ANTHROPIC_AUTH_TOKEN — and the other one is cleared so a stale header
+// never lingers. Legacy providers without an auth field keep the old
+// dual-write for compatibility.
 async function cmdUseProvider(name, settings) {
   const p = readProviders()[name];
   if (!p || !p.base || !p.token || !p.model) {
     console.error(`提供商不存在或配置不完整: ${name}`);
     process.exit(1);
   }
-  if (!(await probeTarget(p.base, p.token, p.model))) {
+  if (!(await probeTarget(p.base, p.token, p.model, p.auth || ""))) {
     console.error(`探测失败: ${p.base} 上的 ${p.model} 不可用，未切换`);
     process.exit(1);
   }
   const env = settings.env || {};
   for (const k of MODEL_ENV_KEYS) env[k] = p.model;
   env.ANTHROPIC_BASE_URL = p.base;
-  env.ANTHROPIC_API_KEY = p.token;
-  env.ANTHROPIC_AUTH_TOKEN = p.token;
+  if (p.auth === "api-key") {
+    env.ANTHROPIC_API_KEY = p.token;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+  } else if (p.auth === "bearer") {
+    env.ANTHROPIC_AUTH_TOKEN = p.token;
+    delete env.ANTHROPIC_API_KEY;
+  } else {
+    // legacy provider (no auth detected): dual-write, works with both styles
+    env.ANTHROPIC_API_KEY = p.token;
+    env.ANTHROPIC_AUTH_TOKEN = p.token;
+  }
   settings.env = env;
   const bak = backup();
   writeAtomic(settings);
