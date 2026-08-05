@@ -241,6 +241,28 @@ export async function deleteUserKey(env, id, name) {
   return ukeys;
 }
 
+/* ---- Per-user route selection (model=auto) ---- */
+
+export async function getUserRoute(env, id) {
+  const key = `route:${id}`;
+  const hit = cget(key);
+  if (hit !== undefined) return hit;
+  const v = (await env.KEYS.get(key)) || null;
+  cset(key, v);
+  return v;
+}
+
+export async function setUserRoute(env, id, model) {
+  const key = `route:${id}`;
+  if (model === null || model === undefined || model === "") {
+    await env.KEYS.delete(key);
+    cdel(key);
+    return;
+  }
+  await env.KEYS.put(key, String(model));
+  cset(key, String(model)); // write-through：切换立即生效（同 isolate 零延迟）
+}
+
 /* ---- Admin password (stored in KV as plaintext so the console can show/change it) ---- */
 
 /** Read the admin password: KV is authoritative; migrate from the Worker secret once if absent */
