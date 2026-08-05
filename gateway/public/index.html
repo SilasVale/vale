@@ -99,22 +99,6 @@
           <p id="token-note" class="note" hidden></p>
         </div>
 
-        <div class="card" id="vale-card">
-          <div class="card-head"><h2 data-i18n="vale.cardTitle">Vale</h2></div>
-          <div class="card-body">
-            <p class="muted" data-i18n="vale.desc">跨平台一键切换网关渠道。配置一次，之后 <code>vale use</code> 一条命令切换。</p>
-            <div class="vale-row">
-              <label for="vale-model-select" data-i18n="vale.defaultModel">默认模型</label>
-              <select id="vale-model-select"></select>
-              <button class="btn-primary" id="btn-vale-setup" data-i18n="vale.setupBtn">⚡ 一键配置 Vale</button>
-            </div>
-            <p class="note" id="vale-setup-note" data-i18n="vale.setupNote" hidden></p>
-            <pre><code id="vale-setup-cmd" hidden></code></pre>
-            <div class="vale-health" id="vale-health-row"></div>
-            <p class="muted" data-i18n="vale.cheat">vale check · vale use &lt;渠道|模型&gt; · vale use auto · vale models · vale restore</p>
-          </div>
-        </div>
-
         <div class="card">
           <div class="card-head"><h2 data-i18n="routes.title">路由状态</h2></div>
           <div class="switchboard" id="overview-switchboard"></div>
@@ -131,7 +115,12 @@
         <h1 data-i18n="nav.routes">模型路由</h1>
         <p class="lede" data-i18n="routes.lede">请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。</p>
         <div class="card">
-          <div class="switchboard" id="routes-switchboard"></div>
+          <div class="card-head"><h2 data-i18n="route.title">渠道切换</h2></div>
+          <div class="card-body">
+            <p class="muted" data-i18n="route.desc">Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。</p>
+            <div class="cards" id="route-cards"></div>
+            <button class="btn-ghost" id="btn-route-auto" data-i18n="route.auto">自动选择健康渠道</button>
+          </div>
         </div>
         <div class="card">
           <div class="card-head"><h2 data-i18n="client.title">客户端接入示例（Claude Code）</h2></div>
