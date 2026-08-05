@@ -158,3 +158,16 @@ test("listUsers reads raw (not cached)", async () => {
   assert.equal(kv.counters.list, 1);
   assert.equal(kv.counters.get, 2); // one get per user, uncached
 });
+
+// ── Per-user route selection (model=auto) ──────────────────────
+
+test("getUserRoute / setUserRoute: cached read, write-through refresh", async () => {
+  const kv = makeKV({});
+  assert.equal(await store.getUserRoute(kv, "admin"), null); // miss → 1 get
+  await store.setUserRoute(kv, "admin", "qw/qwen3.8-max-preview"); // put + cache
+  assert.equal(await store.getUserRoute(kv, "admin"), "qw/qwen3.8-max-preview"); // cache hit
+  assert.equal(kv.counters.get, 1); // 只有首次读 KV
+  await store.setUserRoute(kv, "admin", "ds/deepseek-v4-flash"); // write-through
+  assert.equal(await store.getUserRoute(kv, "admin"), "ds/deepseek-v4-flash");
+  assert.equal(kv.counters.get, 1); // 仍无新 KV 读
+});
