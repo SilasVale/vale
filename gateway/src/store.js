@@ -43,6 +43,22 @@ function cset(k, v) {
 }
 function cdel(...ks) { for (const k of ks) __c.delete(k); }
 
+/* Route selection (model=auto): short-TTL cache — a switch must take effect
+ * fast across isolates; 60s bounds staleness to a minute. */
+const ROUTE_CACHE_TTL = 60 * 1000;
+const __rc = new Map(); // route:<id> -> { v, exp }
+function rcget(k) {
+  const e = __rc.get(k);
+  if (!e) return undefined;
+  if (e.exp <= Date.now()) { __rc.delete(k); return undefined; }
+  return e.v;
+}
+function rcset(k, v) {
+  if (__rc.size >= 512) __rc.delete(__rc.keys().next().value);
+  __rc.set(k, { v, exp: Date.now() + ROUTE_CACHE_TTL });
+}
+function rcdel(k) { __rc.delete(k); }
+
 async function getJSON(env, key) {
   if (!env.KEYS) return null;
   const raw = await env.KEYS.get(key);
@@ -245,10 +261,10 @@ export async function deleteUserKey(env, id, name) {
 
 export async function getUserRoute(env, id) {
   const key = `route:${id}`;
-  const hit = cget(key);
+  const hit = rcget(key);
   if (hit !== undefined) return hit;
   const v = (await env.KEYS.get(key)) || null;
-  cset(key, v);
+  rcset(key, v);
   return v;
 }
 
@@ -256,11 +272,11 @@ export async function setUserRoute(env, id, model) {
   const key = `route:${id}`;
   if (model === null || model === undefined || model === "") {
     await env.KEYS.delete(key);
-    cdel(key);
+    rcdel(key);
     return;
   }
   await env.KEYS.put(key, String(model));
-  cset(key, String(model)); // write-through：切换立即生效（同 isolate 零延迟）
+  rcset(key, String(model)); // write-through：切换立即生效（同 isolate 零延迟）
 }
 
 /* ---- Admin password (stored in KV as plaintext so the console can show/change it) ---- */
