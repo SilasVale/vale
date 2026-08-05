@@ -31,6 +31,11 @@
       "routes.title": "路由状态", "routes.lede": "请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。",
       "routes.valeTitle": "Vale 命令",
       "routes.valeDesc": "跨平台一键切换网关渠道（探测验证 + 自动备份 + 可回滚）。",
+      "valeSetup.title": "Vale 一键配置",
+      "valeSetup.desc": "复制下面的命令到终端执行，把当前账户注册为 vale 提供商（网关 qwen 渠道）。之后在任意设备上 <code>vale use vale-gw</code> 一键切换、<code>vale restore</code> 回滚。",
+      "valeSetup.copy": "复制命令",
+      "valeSetup.copied": "命令已复制，粘贴到终端执行",
+      "valeSetup.copyFail": "复制失败，请手动选择复制",
       "keys.title": "密钥管理", "keys.lede": "填入你自己在对应服务商申请的 API key，网关转发时只使用你自己的 key，各算各的额度。",
       "key.configured": "已配置", "key.notConfigured": "未配置",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "api.deepseek.com 申请",
@@ -94,6 +99,11 @@
       "routes.title": "Routing status", "routes.lede": "Model names are routed by prefix; no prefix defaults to DeepSeek official.",
       "routes.valeTitle": "Vale CLI",
       "routes.valeDesc": "Cross-platform one-command channel switching (probe + backup + rollback).",
+      "valeSetup.title": "Vale one-click setup",
+      "valeSetup.desc": "Copy the command below and run it in a terminal — it registers this account as a vale provider (gateway qwen channel). Then <code>vale use vale-gw</code> switches on any device, <code>vale restore</code> rolls back.",
+      "valeSetup.copy": "Copy command",
+      "valeSetup.copied": "Command copied — paste it into a terminal",
+      "valeSetup.copyFail": "Copy failed — select and copy manually",
       "keys.title": "API Keys", "keys.lede": "Add your own API keys from each provider; the gateway only uses your keys, so each user pays for their own usage.",
       "key.configured": "Configured", "key.notConfigured": "Not configured",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "from api.deepseek.com",
@@ -321,6 +331,21 @@
     if (!res.ok) return;
     me = data;
     $("#keys-cards").innerHTML = KEY_NAMES.map((n) => keyCardHTML(n, me.keys[n])).join("");
+    renderValeSetup();
+  }
+
+  // "Vale 一键配置": a ready-to-paste `vale provider add` command carrying this
+  // account's own gateway token (the only place the raw token is needed).
+  function valeSetupCommand(apiHost, token) {
+    const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
+    return `vale provider add vale-gw --base ${base} --token ${token} --model qw/qwen3.8-max-preview`;
+  }
+
+  async function renderValeSetup() {
+    const box = $("#vale-setup-cmd");
+    if (!box || !me?.token) return;
+    const { routes } = await loadRoutes();
+    box.textContent = valeSetupCommand(routes.apiHost, me.token);
   }
 
   function keyCardHTML(name, info) {
@@ -673,6 +698,12 @@
       if (!me || !me.token) return;
       try { await navigator.clipboard.writeText(me.token); toast(t("token.copied")); }
       catch { toast(t("token.copyFail"), true); }
+    });
+    $("#btn-copy-vale-setup")?.addEventListener("click", async () => {
+      const cmd = $("#vale-setup-cmd")?.textContent;
+      if (!cmd) return;
+      try { await navigator.clipboard.writeText(cmd); toast(t("valeSetup.copied")); }
+      catch { toast(t("valeSetup.copyFail"), true); }
     });
     $("#btn-regenerate").addEventListener("click", async () => {
       const warn = me.role === "admin" ? t("token.regenerateConfirm") : t("token.regenerateConfirm").split("\n")[0];
