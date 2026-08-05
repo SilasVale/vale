@@ -336,10 +336,11 @@
     if (!sel || !btn || !healthRow) return;
     let apiHost = "";
     try { ({ apiHost } = await loadRoutes()); } catch {}
-    // 模型选择器：/v1/models（带 token），失败回退内置列表
+    // 模型选择器：/v1/models 需要 x-api-key（网关鉴权端点）—— 不带会 401，
+    // 而 api() 对 401 会 showAuth() 把用户踢回登录页（"每次都要重新登录"的根因）。
     let models = VALE_FALLBACK_MODELS;
     try {
-      const { res, data } = await api("/v1/models");
+      const { res, data } = await api("/v1/models", { headers: { "x-api-key": me?.token || "" } });
       if (res.ok && Array.isArray(data?.data)) {
         const ids = data.data.map((m) => m.id).filter((x) => typeof x === "string");
         if (ids.length) models = ids;
