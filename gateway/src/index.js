@@ -20,7 +20,7 @@
  * The admin is seeded from the existing CLIENT_KEY, keeping the legacy settings.json working.
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken } from "./store.js";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute } from "./store.js";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "./auth.js";
 
 const VERIFY_PATH = "/v1/messages";
@@ -237,6 +237,20 @@ async function handleConsole(request, env, url) {
       token: user.token,
       keys: userKeysStatus(ukeys),
     });
+  }
+  // Per-user route selection (Claude Code model=auto)
+  if (method === "GET" && path === `${ME_BASE}/route`) {
+    return jsonOk({ model: await getUserRoute(env, user.id) });
+  }
+  if (method === "PUT" && path === `${ME_BASE}/route`) {
+    let body = {};
+    try { body = await request.json(); } catch {}
+    const model = body?.model ?? null;
+    if (model !== null && !MODELS.some((m) => m.id === model)) {
+      return jsonError(400, `Unknown model: ${model}`, "invalid_request");
+    }
+    await setUserRoute(env, user.id, model);
+    return jsonOk({ ok: true, model });
   }
   if (method === "POST" && path === `${ME_BASE}/token/regenerate`) {
     const token = await regenerateToken(env, user.id);
@@ -468,7 +482,11 @@ async function handleGateway(request, env, url) {
   }
 
   const body = await request.json();
-  const model = body.model || "";
+  let model = body.model || "";
+  if (model === "auto") {
+    // Claude Code 固定模型名 auto：按用户网页选择路由
+    model = await resolveAutoModel(env, user.id);
+  }
   const prefix = model.split("/")[0];
   const route = pickRoute(prefix, env);
   const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
@@ -1580,6 +1598,26 @@ export async function buildHealth(env) {
     channels,
     recommended: recommended ? { channel: recommended.id, model: recommended.model } : null,
   };
+}
+
+/** Model usable for routing? In the whitelist and (og) breaker not open. */
+export async function isModelUsable(env, model) {
+  if (!MODELS.some((m) => m.id === model)) return false;
+  if (model.startsWith("og/")) return !(await isChannelDegraded(env));
+  return true;
+}
+
+/**
+ * Resolve Claude Code's fixed `auto` model name to this user's chosen
+ * channel (per-user route selection). Falls back to the recommended
+ * healthy channel when unset or unusable.
+ */
+export async function resolveAutoModel(env, uid) {
+  const chosen = await getUserRoute(env, uid);
+  if (chosen && (await isModelUsable(env, chosen))) return chosen;
+  const health = await buildHealth(env);
+  const rec = health.recommended;
+  return rec ? rec.model : "ds/deepseek-v4-flash";
 }
 
 /** UTF-8-safe base64: btoa is Latin1-only and throws on non-ASCII (the vale

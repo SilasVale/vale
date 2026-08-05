@@ -2,7 +2,7 @@
 // breaker and fetch.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, valeProbe } from "../src/index.js";
+import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, resolveAutoModel, valeProbe } from "../src/index.js";
 
 // Mock env: breaker reports "open" (degraded) when asked.
 const openEnv = {
@@ -187,4 +187,44 @@ test("probeRateLimited: KV 错误时 fail-open（不拦请求）", async () => {
     },
   };
   assert.equal(await probeRateLimited(env), false);
+});
+
+// ── auto route resolution ────────────────────────────
+// env with KV mock: route:<uid> → chosen model
+function routeEnv(routeValue, breakerOpen = false) {
+  const m = new Map();
+  if (routeValue !== null) m.set(`route:admin`, routeValue);
+  return {
+    KEYS: {
+      async get(k) { return m.has(k) ? m.get(k) : null; },
+      async put(k, v) { m.set(k, String(v)); },
+      async delete(k) { m.delete(k); },
+    },
+    BREAKER: {
+      idFromName: () => ({}),
+      get: () => ({ fetch: async () => new Response(breakerOpen ? "1" : "0") }),
+    },
+    DEEPSEEK_API_KEY: "sk-ds", QWEN_API_KEY: "sk-qw",
+    OPENROUTER_API_KEY: "sk-or", OPENCODE_GO_API_KEY: "sk-og",
+  };
+}
+
+test("resolveAutoModel: uses chosen route", async () => {
+  const env = routeEnv("qw/qwen3.8-max-preview");
+  assert.equal(await resolveAutoModel(env, "admin"), "qw/qwen3.8-max-preview");
+});
+
+test("resolveAutoModel: no choice → recommended (qw)", async () => {
+  const env = routeEnv(null);
+  assert.equal(await resolveAutoModel(env, "admin"), "qw/qwen3.8-max-preview");
+});
+
+test("resolveAutoModel: chosen og channel with open breaker → falls back to recommended", async () => {
+  const env = routeEnv("og/deepseek-v4-flash", true);
+  assert.equal(await resolveAutoModel(env, "admin"), "qw/qwen3.8-max-preview");
+});
+
+test("resolveAutoModel: chosen model not in whitelist → falls back", async () => {
+  const env = routeEnv("xx/nope");
+  assert.equal(await resolveAutoModel(env, "admin"), "qw/qwen3.8-max-preview");
 });
