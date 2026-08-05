@@ -90,31 +90,32 @@ PUT  /api/me/route  body { model: "qw/qwen3.8-max-preview" }
   → setUserRoute → { ok: true, model }
 ```
 
-## 前端改动（console 概览页 Vale 卡改造为"控制台"）
+## 前端改动（密钥管理面板新增"渠道切换"，沿用 key-card 风格）
+
+用户指定：模型选择放在**密钥管理面板**，视觉沿用现有 key 卡片风格（卡片网格：名称 + 状态徽章 + 描述 + 操作按钮）。概览页 Vale 卡移除。
 
 ```
-┌─ 概览 ───────────────────────────────────────┐
-│  网关 Token  [复制][显示]                      │
+┌─ 密钥管理 ───────────────────────────────────┐
+│  DEEPSEEK_API_KEY       ✅ [编辑][测试][清除]  │
+│  OPENCODE_GO_API_KEY    ✅ [编辑][测试][清除]  │
+│  QWEN_API_KEY           ✅ [编辑][测试][清除]  │
+│  OPENROUTER_API_KEY     ✅ [编辑][测试][清除]  │
 │                                               │
-│  ┌─ 渠道切换 ──────────────────────────────┐  │
-│  │  当前: qw/qwen3.8-max-preview  [自动]    │  │  ← GET /api/me/route + /api/health
-│  │                                         │  │
-│  │  ds/  deepseek-v4-flash     ✅ [使用]    │  │
-│  │  qw/  qwen3.8-max-preview   ✅ [使用]◀   │  │  ← 点击 → PUT /api/me/route
-│  │  og/  deepseek-v4-flash     ⚠️ degraded  │  │      → 高亮 + "已切换，下次请求生效"
-│  │  or/  gpt-5.6-luna          ✅ [使用]    │  │
-│  │                                         │  │
-│  │  [自动选择健康渠道]（= 清除选择 → 推荐）   │  │
-│  │  提示: 模型名配 auto，切换无需重启         │  │
-│  └─────────────────────────────────────────┘  │
-│                                               │
-│  路由状态（switchboard，保留）                 │
+│  ── 渠道切换（Claude Code 模型 = auto）──     │
+│  ds/  deepseek-v4-flash      ✅  [使用] ◀ 当前 │  ← key-card 同款样式
+│  qw/  qwen3.8-max-preview    ✅  [使用]       │
+│  og/  deepseek-v4-flash      ⚠️ degraded [使用]│
+│  or/  gpt-5.6-luna           ✅  [使用]       │
+│  [自动选择健康渠道]                            │  ← 清除选择 → 网关回退推荐
+│  提示: 模型名配 auto，切换无需重启             │
 └───────────────────────────────────────────────┘
 ```
 
-- 移除：模型选择器下拉、一键配置按钮（vale CLI 安装入口移到"设置"小字/文档，CLI 降级为可选）
-- 渠道卡片数据：/api/health（公开）+ /api/me/route（session）
-- "自动"= PUT route { model: null }（清除选择 → 网关回退推荐渠道）
+- 数据：/api/health（公开渠道状态）+ GET /api/me/route（当前选择）+ PUT /api/me/route（切换）
+- 当前渠道卡片高亮（"当前"徽章）；点击 [使用] → PUT → 高亮更新 + 提示"已切换，下次请求生效"
+- [自动选择健康渠道] → PUT route { model: null }（清除选择 → 网关回退推荐）
+- 移除：概览页 Vale 卡（渠道切换 HTML/JS/i18n 全部迁走）；vale CLI 安装入口保留在模型路由面板的小字链接或文档（CLI 降级为可选）
+- 渠道卡片 DOM 复用 `key-card` 的 CSS class（外观一致）
 
 ## 保留/降级
 
@@ -133,5 +134,5 @@ PUT  /api/me/route  body { model: "qw/qwen3.8-max-preview" }
 
 - `gateway/src/store.js`：getUserRoute/setUserRoute
 - `gateway/src/index.js`：resolveAutoModel + auto 分支 + /api/me/route 端点
-- `gateway/public/index.html` + `public/app.js`：渠道切换卡（替换 Vale 卡）
+- `gateway/public/index.html` + `public/app.js`：密钥管理面板渠道切换卡（key-card 风格）+ 移除概览 Vale 卡
 - `gateway/test/`：新增 route 相关测试
