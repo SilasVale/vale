@@ -29,13 +29,16 @@
       "token.regenerated": "已生成新 Token，旧 Token 已失效。请同步更新客户端配置。",
       "token.regenerateFail": "重生成失败",
       "routes.title": "路由状态", "routes.lede": "请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。",
-      "routes.valeTitle": "Vale 命令",
-      "routes.valeDesc": "跨平台一键切换网关渠道（探测验证 + 自动备份 + 可回滚）。",
-      "valeSetup.title": "Vale 一键配置",
-      "valeSetup.desc": "复制下面的命令到终端执行，把当前账户注册为 vale 提供商（网关 qwen 渠道）。之后在任意设备上 <code>vale use vale-gw</code> 一键切换、<code>vale restore</code> 回滚。",
-      "valeSetup.copy": "复制命令",
-      "valeSetup.copied": "命令已复制，粘贴到终端执行",
-      "valeSetup.copyFail": "复制失败，请手动选择复制",
+      "vale.cardTitle": "Vale",
+      "vale.desc": "跨平台一键切换网关渠道。配置一次，之后 <code>vale use</code> 一条命令切换。",
+      "vale.defaultModel": "默认模型",
+      "vale.setupBtn": "⚡ 一键配置 Vale",
+      "vale.setupNote": "命令已复制 —— 粘贴到终端回车，安装 + 注册一次完成；之后用 <code>vale use &lt;渠道&gt;</code> 切换、<code>vale restore</code> 回滚。",
+      "vale.cheat": "vale check · vale use &lt;渠道|模型&gt; · vale use auto · vale models · vale restore",
+      "vale.healthLoading": "渠道健康加载中…",
+      "vale.healthFail": "渠道健康不可达",
+      "vale.recommend": "推荐",
+      "vale.copyFail": "复制失败，请手动选择复制",
       "keys.title": "密钥管理", "keys.lede": "填入你自己在对应服务商申请的 API key，网关转发时只使用你自己的 key，各算各的额度。",
       "key.configured": "已配置", "key.notConfigured": "未配置",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "api.deepseek.com 申请",
@@ -97,13 +100,16 @@
       "token.regenerated": "New token generated; the old one is invalid. Update your client configs.",
       "token.regenerateFail": "Regenerate failed",
       "routes.title": "Routing status", "routes.lede": "Model names are routed by prefix; no prefix defaults to DeepSeek official.",
-      "routes.valeTitle": "Vale CLI",
-      "routes.valeDesc": "Cross-platform one-command channel switching (probe + backup + rollback).",
-      "valeSetup.title": "Vale one-click setup",
-      "valeSetup.desc": "Copy the command below and run it in a terminal — it registers this account as a vale provider (gateway qwen channel). Then <code>vale use vale-gw</code> switches on any device, <code>vale restore</code> rolls back.",
-      "valeSetup.copy": "Copy command",
-      "valeSetup.copied": "Command copied — paste it into a terminal",
-      "valeSetup.copyFail": "Copy failed — select and copy manually",
+      "vale.cardTitle": "Vale",
+      "vale.desc": "Cross-platform channel switching. Configure once, then <code>vale use</code> switches with one command.",
+      "vale.defaultModel": "Default model",
+      "vale.setupBtn": "⚡ One-click configure Vale",
+      "vale.setupNote": "Command copied — paste into a terminal to install and register in one step; then <code>vale use &lt;channel&gt;</code> switches, <code>vale restore</code> rolls back.",
+      "vale.cheat": "vale check · vale use &lt;channel|model&gt; · vale use auto · vale models · vale restore",
+      "vale.healthLoading": "Loading channel health…",
+      "vale.healthFail": "Channel health unreachable",
+      "vale.recommend": "Recommended",
+      "vale.copyFail": "Copy failed — select and copy manually",
       "keys.title": "API Keys", "keys.lede": "Add your own API keys from each provider; the gateway only uses your keys, so each user pays for their own usage.",
       "key.configured": "Configured", "key.notConfigured": "Not configured",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "from api.deepseek.com",
@@ -249,18 +255,6 @@
       .join("");
   }
 
-  function valeInstallHTML(apiHost) {
-    const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
-    const posix = `curl -fsSL ${base}/api/vale-install | sh`;
-    const win = `irm ${base}/api/vale-install.ps1 | iex`;
-    return `<p class="muted">${t("routes.valeDesc")}</p>
-      <p><strong>Linux / macOS</strong></p>
-      <pre><code>${esc(posix)}</code></pre>
-      <p><strong>Windows (PowerShell)</strong></p>
-      <pre><code>${esc(win)}</code></pre>
-      <p class="muted">vale check · vale use &lt;ds|qw|og|or|auto&gt; · vale restore</p>`;
-  }
-
   async function loadRoutes() {
     const { res, data } = await api("/api/admin/public");
     if (!res.ok) return { routes: [], apiHost: "" };
@@ -317,6 +311,80 @@
     $("#token-note").hidden = true;
     const { routes } = await loadRoutes();
     $("#overview-switchboard").innerHTML = switchboardHTML(routes);
+    await loadValeCard();
+  }
+
+  // ── Vale card (overview) ─────────────────────────────
+  // Info + command generation only: the browser can't touch local files, so
+  // the button copies a combined install+register command for the terminal.
+  const VALE_FALLBACK_MODELS = [
+    "ds/deepseek-v4-flash", "qw/qwen3.8-max-preview",
+    "og/deepseek-v4-flash", "og/minimax-m3", "or/openai/gpt-5.6-luna:floor[1m]",
+  ];
+
+  function valeSetupCommand(apiHost, token, model) {
+    const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
+    return `curl -fsSL ${base}/api/vale-install | sh && vale provider add vale-gw --base ${base} --token ${token} --model ${model}`;
+  }
+
+  async function loadValeCard() {
+    const sel = $("#vale-model-select");
+    const btn = $("#btn-vale-setup");
+    const note = $("#vale-setup-note");
+    const cmd = $("#vale-setup-cmd");
+    const healthRow = $("#vale-health-row");
+    if (!sel || !btn || !healthRow) return;
+    let apiHost = "";
+    try { ({ apiHost } = await loadRoutes()); } catch {}
+    // 模型选择器：/v1/models（带 token），失败回退内置列表
+    let models = VALE_FALLBACK_MODELS;
+    try {
+      const { res, data } = await api("/v1/models");
+      if (res.ok && Array.isArray(data?.data)) {
+        const ids = data.data.map((m) => m.id).filter((x) => typeof x === "string");
+        if (ids.length) models = ids;
+      }
+    } catch {}
+    const groups = {};
+    for (const m of models) {
+      const p = m.split("/")[0];
+      (groups[p] = groups[p] || []).push(m);
+    }
+    sel.innerHTML = Object.entries(groups)
+      .map(([p, ms]) => `<optgroup label="${esc(p + "/")}">${ms.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")}</optgroup>`)
+      .join("");
+    // 默认选中推荐模型
+    try {
+      const health = await api("/api/health");
+      if (health.res.ok && health.data?.recommended?.model && models.includes(health.data.recommended.model)) {
+        sel.value = health.data.recommended.model;
+      }
+    } catch {}
+    const renderCmd = () => {
+      cmd.textContent = valeSetupCommand(apiHost, me?.token || "", sel.value);
+      cmd.hidden = false;
+    };
+    btn.addEventListener("click", async () => {
+      renderCmd();
+      try {
+        await navigator.clipboard.writeText(cmd.textContent);
+        note.hidden = false;
+        toast(t("vale.setupNote"));
+      } catch { toast(t("vale.copyFail"), true); }
+    });
+    // 渠道健康（公开端点，30s 轮询）
+    const renderHealth = async () => {
+      try {
+        const { res, data } = await api("/api/health");
+        if (!res.ok || !Array.isArray(data?.channels)) { healthRow.textContent = t("vale.healthFail"); return; }
+        healthRow.innerHTML = data.channels
+          .map((c) => `<span class="chip ${c.ok ? "ok" : "bad"}">${esc(c.id + "/")} ${c.ok ? "✅" : `⚠️ ${esc(c.reason || "异常")}`}</span>`)
+          .join(" ") + (data.recommended ? ` <span class="muted">${t("vale.recommend")}: ${esc(data.recommended.model)}</span>` : "");
+      } catch { healthRow.textContent = t("vale.healthFail"); }
+    };
+    await renderHealth();
+    if (window.__valeHealthTimer) clearInterval(window.__valeHealthTimer);
+    window.__valeHealthTimer = setInterval(renderHealth, 30000);
   }
 
   function renderToken() {
@@ -331,21 +399,6 @@
     if (!res.ok) return;
     me = data;
     $("#keys-cards").innerHTML = KEY_NAMES.map((n) => keyCardHTML(n, me.keys[n])).join("");
-    renderValeSetup();
-  }
-
-  // "Vale 一键配置": a ready-to-paste `vale provider add` command carrying this
-  // account's own gateway token (the only place the raw token is needed).
-  function valeSetupCommand(apiHost, token) {
-    const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
-    return `vale provider add vale-gw --base ${base} --token ${token} --model qw/qwen3.8-max-preview`;
-  }
-
-  async function renderValeSetup() {
-    const box = $("#vale-setup-cmd");
-    if (!box || !me?.token) return;
-    const { routes } = await loadRoutes();
-    box.textContent = valeSetupCommand(routes.apiHost, me.token);
   }
 
   function keyCardHTML(name, info) {
@@ -447,8 +500,6 @@
   async function loadRoutesPanel() {
     const { routes, apiHost } = await loadRoutes();
     $("#routes-switchboard").innerHTML = switchboardHTML(routes);
-    const box = document.getElementById("vale-install-box");
-    if (box) box.innerHTML = valeInstallHTML(apiHost);
     const ex = $("#client-example");
     if (ex) {
       const base = apiHost ? `https://${apiHost}` : "https://<your-api-host>";
@@ -698,12 +749,6 @@
       if (!me || !me.token) return;
       try { await navigator.clipboard.writeText(me.token); toast(t("token.copied")); }
       catch { toast(t("token.copyFail"), true); }
-    });
-    $("#btn-copy-vale-setup")?.addEventListener("click", async () => {
-      const cmd = $("#vale-setup-cmd")?.textContent;
-      if (!cmd) return;
-      try { await navigator.clipboard.writeText(cmd); toast(t("valeSetup.copied")); }
-      catch { toast(t("valeSetup.copyFail"), true); }
     });
     $("#btn-regenerate").addEventListener("click", async () => {
       const warn = me.role === "admin" ? t("token.regenerateConfirm") : t("token.regenerateConfirm").split("\n")[0];
