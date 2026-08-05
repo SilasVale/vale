@@ -15,7 +15,15 @@ import path from "node:path";
 
 const CLI = path.join(import.meta.dirname, "..", "public", "vale");
 
-function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true, probeFailModels = [] } = {}) {
+const DEFAULT_MODELS = [
+  { id: "ds/deepseek-v4-flash", object: "model", owned_by: "deepseek" },
+  { id: "qw/qwen3.8-max-preview", object: "model", owned_by: "qwen" },
+  { id: "og/deepseek-v4-flash", object: "model", owned_by: "opencode" },
+  { id: "og/minimax-m3", object: "model", owned_by: "opencode" },
+  { id: "or/openai/gpt-5.6-luna:floor[1m]", object: "model", owned_by: "openrouter" },
+];
+
+function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true, probeFailModels = [], models = DEFAULT_MODELS } = {}) {
   const calls = { health: 0, probes: 0, models: 0 };
   const server = http.createServer((req, res) => {
     if (req.url === "/api/health") {
@@ -56,7 +64,7 @@ function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true
       res.setHeader("content-type", "application/json");
       res.statusCode = tokenOk ? 200 : 401;
       res.end(tokenOk
-        ? JSON.stringify({ object: "list", data: [] })
+        ? JSON.stringify({ object: "list", data: models })
         : JSON.stringify({ type: "error", error: { type: "authentication_error", message: "Missing or invalid x-api-key" } }));
       return;
     }
@@ -238,11 +246,53 @@ test("use auto: 所有渠道探测失败 → 无可用渠道, 配置不变", asy
   } finally { server.close(); }
 });
 
-test("未知渠道 → 报错退出", async () => {
-  const { file } = makeSettings();
-  const r = await run(["use", "bogus"], file, gw(1));
-  assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /未知渠道|unknown/i);
+test("未知渠道/模型 → 报错退出", async () => {
+  const { server, port } = await makeGateway();
+  try {
+    const { file } = makeSettings();
+    const r = await run(["use", "bogus"], file, gw(port));
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /未知渠道|未知模型|unknown/i);
+  } finally { server.close(); }
+});
+
+test("models: 列出全部模型（含 og/minimax-m3）", async () => {
+  const { server, port } = await makeGateway();
+  try {
+    const { file } = makeSettings();
+    const r = await run(["models"], file, gw(port));
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /og\/minimax-m3/);
+    assert.match(r.stdout, /qw\/qwen3.8-max-preview/);
+    assert.match(r.stdout, /ds\/deepseek-v4-flash/);
+  } finally { server.close(); }
+});
+
+test("use og/minimax-m3: 白名单内的完整模型名 → 切换", async () => {
+  const { server, port } = await makeGateway();
+  try {
+    const { file } = makeSettings();
+    const r = await run(["use", "og/minimax-m3"], file, gw(port));
+    assert.equal(r.status, 0, r.stderr);
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after.env.ANTHROPIC_MODEL, "og/minimax-m3");
+    assert.equal(after.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "og/minimax-m3");
+    assert.equal(after.env.ANTHROPIC_BASE_URL, "https://api.saisi.online");
+  } finally { server.close(); }
+});
+
+test("use xx/nope: 不在模型列表 → 拒绝切换", async () => {
+  const { server, port } = await makeGateway();
+  try {
+    const { file } = makeSettings();
+    const r = await run(["use", "xx/nope"], file, gw(port));
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /未知渠道|未知模型|不支持/);
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
+    assert.equal(backups.length, 0);
+  } finally { server.close(); }
 });
 
 test("check: /api/health 接受连接但不响应 → 超时后非0退出（不挂起）", async () => {

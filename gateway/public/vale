@@ -101,9 +101,9 @@ function findBackup() {
     .reverse();
   return list.length ? path.join(dir, list[0]) : null;
 }
-function switchEnv(settings, channel) {
+function switchEnv(settings, model) {
   const env = settings.env || {};
-  for (const k of MODEL_ENV_KEYS) env[k] = CHANNELS[channel].model;
+  for (const k of MODEL_ENV_KEYS) env[k] = model;
   env.ANTHROPIC_BASE_URL = GATEWAY_BASE;
   settings.env = env;
   return settings;
@@ -148,6 +148,27 @@ async function tokenValid(token) {
     return r.status === 200;
   } catch { return false; } finally { clearTimeout(t); }
 }
+// Full model list from the gateway (also validates the token).
+async function listModels(token) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const r = await fetch(`${gatewayBase()}/v1/models`, {
+      headers: { "x-api-key": token },
+      signal: ctrl.signal,
+    });
+    if (r.status !== 200) return null;
+    const j = await r.json();
+    return (j.data || []).map((m) => m.id).filter((id) => typeof id === "string");
+  } catch { return null; } finally { clearTimeout(t); }
+}
+// `use <arg>`: a channel name resolves to its default model; anything else
+// must be a full model id present in the gateway's whitelist.
+function resolveModel(arg, models) {
+  if (CHANNELS[arg]) return CHANNELS[arg].model;
+  if ((models || []).includes(arg)) return arg;
+  return null;
+}
 function pickRecommended(channels) {
   for (const id of PRIORITY) {
     const c = (channels || []).find((x) => x.id === id);
@@ -175,25 +196,49 @@ async function cmdCheck() {
   if (cur) console.log(`当前配置: ${cur}（${(settings.env || {}).ANTHROPIC_MODEL}）`);
 }
 
-async function cmdUse(channel) {
-  if (!CHANNELS[channel]) {
-    console.error(`未知渠道: ${channel}（可用: ${Object.keys(CHANNELS).join(" / ")}）`);
-    process.exit(1);
-  }
+async function cmdModels() {
   const settings = readSettings();
   const token = authToken(settings);
   if (!token || !(await tokenValid(token))) {
     console.error("settings.json 里的 token 对网关无效 —— 请在 console 的密钥管理获取网关 token，更新 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 后重试");
     process.exit(1);
   }
-  const model = CHANNELS[channel].model;
+  const models = await listModels(token);
+  if (!models) {
+    console.error("无法获取模型列表（/v1/models 不可达）");
+    process.exit(1);
+  }
+  const byPrefix = {};
+  for (const m of models) {
+    const p = m.split("/")[0];
+    (byPrefix[p] = byPrefix[p] || []).push(m);
+  }
+  for (const [p, ms] of Object.entries(byPrefix)) {
+    console.log(`  ${p}/ → ${ms.join(", ")}`);
+  }
+  console.log(`用法: vale use <${Object.keys(CHANNELS).join("|")}|完整模型名>`);
+}
+
+async function cmdUse(arg) {
+  const settings = readSettings();
+  const token = authToken(settings);
+  if (!token || !(await tokenValid(token))) {
+    console.error("settings.json 里的 token 对网关无效 —— 请在 console 的密钥管理获取网关 token，更新 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 后重试");
+    process.exit(1);
+  }
+  const models = await listModels(token);
+  const model = resolveModel(arg, models);
+  if (!model) {
+    console.error(`未知渠道/模型: ${arg}（渠道: ${Object.keys(CHANNELS).join(" / ")}；完整模型: 用 \`vale models\` 查看）`);
+    process.exit(1);
+  }
   const ok = await probeChannel(model);
   if (!ok) {
     console.error(`探测失败: ${model} 不可用，未切换`);
     process.exit(1);
   }
   const bak = backup();
-  switchEnv(settings, channel);
+  switchEnv(settings, model);
   writeAtomic(settings);
   console.log(`已切换到 ${model}`);
   console.log(`备份: ${bak}`);
@@ -215,7 +260,7 @@ async function cmdAuto() {
     if (!c || !c.ok) continue;
     if (await probeChannel(c.model)) {
       const bak = backup();
-      switchEnv(settings, c.id);
+      switchEnv(settings, c.model);
       writeAtomic(settings);
       console.log(`已自动切换到 ${c.model}（${c.id}）`);
       console.log(`备份: ${bak}`);
@@ -245,9 +290,10 @@ async function main() {
   const args = process.argv.slice(2);
   const cmd = args[0] || "check";
   if (cmd === "check") return cmdCheck();
+  if (cmd === "models") return cmdModels();
   if (cmd === "use") return args[1] === "auto" ? cmdAuto() : cmdUse(args[1]);
   if (cmd === "restore") return cmdRestore();
-  console.error(`用法: vale check | vale use <ds|qw|og|or|auto> | vale restore`);
+  console.error(`用法: vale check | vale models | vale use <ds|qw|og|or|模型名|auto> | vale restore`);
   process.exit(1);
 }
 
