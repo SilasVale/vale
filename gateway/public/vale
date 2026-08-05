@@ -46,6 +46,17 @@ function writeAtomic(data) {
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { encoding: "utf8", mode });
   fs.renameSync(tmp, file);
 }
+// Atomically install an existing file over settingsFile: copy to a tmp file
+// (mode preserved), then rename over the target. A direct copyFileSync over
+// settings.json would leave it truncated if the process died mid-copy.
+function installFile(src) {
+  const file = settingsFile();
+  const mode = fs.existsSync(file) ? fs.statSync(file).mode & 0o777 : 0o600;
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.copyFileSync(src, tmp);
+  fs.chmodSync(tmp, mode);
+  fs.renameSync(tmp, file);
+}
 // The vale CLI manages the switch TO the gateway, so it always talks to the
 // gateway base — NOT the settings.json ANTHROPIC_BASE_URL (which may still
 // point at a direct provider). VALE_GATEWAY overrides for tests.
@@ -171,14 +182,14 @@ async function cmdUse(channel) {
   }
   const settings = readSettings();
   const token = authToken(settings);
+  if (!token || !(await tokenValid(token))) {
+    console.error("settings.json 里的 token 对网关无效 —— 请在 console 的密钥管理获取网关 token，更新 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 后重试");
+    process.exit(1);
+  }
   const model = CHANNELS[channel].model;
   const ok = await probeChannel(model);
   if (!ok) {
     console.error(`探测失败: ${model} 不可用，未切换`);
-    process.exit(1);
-  }
-  if (!token || !(await tokenValid(token))) {
-    console.error("settings.json 里的 token 对网关无效 —— 请在 console 的密钥管理获取网关 token，更新 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 后重试");
     process.exit(1);
   }
   const bak = backup();
@@ -191,36 +202,41 @@ async function cmdUse(channel) {
 
 async function cmdAuto() {
   const settings = readSettings();
-  const health = await fetchHealth();
-  const rec = health && Array.isArray(health.channels) ? pickRecommended(health.channels) : null;
-  if (!rec) {
-    console.error("无健康渠道（/api/health 不可达或全部异常）");
-    process.exit(1);
-  }
   const token = authToken(settings);
-  if (!(await probeChannel(rec.model))) {
-    console.error(`推荐渠道 ${rec.model} 探测失败，未切换`);
-    process.exit(1);
-  }
   if (!token || !(await tokenValid(token))) {
     console.error("settings.json 里的 token 对网关无效 —— 请在 console 的密钥管理获取网关 token，更新 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 后重试");
     process.exit(1);
   }
-  const bak = backup();
-  switchEnv(settings, rec.id);
-  writeAtomic(settings);
-  console.log(`已自动切换到 ${rec.model}（${rec.id}）`);
-  console.log(`备份: ${bak}`);
-  console.log("重启 Claude Code 后生效");
+  const health = await fetchHealth();
+  const channels = health && Array.isArray(health.channels) ? health.channels : [];
+  // 按优先级逐个探测：健康渠道里第一个探测通过的即切换；全失败则报错退出。
+  for (const id of PRIORITY) {
+    const c = channels.find((x) => x.id === id);
+    if (!c || !c.ok) continue;
+    if (await probeChannel(c.model)) {
+      const bak = backup();
+      switchEnv(settings, c.id);
+      writeAtomic(settings);
+      console.log(`已自动切换到 ${c.model}（${c.id}）`);
+      console.log(`备份: ${bak}`);
+      console.log("重启 Claude Code 后生效");
+      return;
+    }
+    console.error(`渠道 ${c.id} 探测失败，尝试下一个…`);
+  }
+  console.error("无可用渠道，未切换");
+  process.exit(1);
 }
 
 function cmdRestore() {
+  // findBackup 必须先于 backup：backup 会新增一个当前状态的备份。
   const bak = findBackup();
   if (!bak) {
     console.error("没有可恢复的备份");
     process.exit(1);
   }
-  fs.copyFileSync(bak, settingsFile());
+  backup(); // 恢复前先把当前状态备份一份（与 use 一致：每次变更前留底）
+  installFile(bak); // tmp + rename 原子恢复，模式位保留
   console.log(`已恢复 ${bak}`);
   console.log("重启 Claude Code 后生效");
 }

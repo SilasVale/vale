@@ -87,6 +87,23 @@ const HEALTH_CHANNELS = [
 ];
 const HEALTH_PRIORITY = ["qw", "ds", "og", "or"];
 
+// Public /api/vale-probe rate limit: each probe costs a real upstream call
+// (real money), so cap probes at 60/min gateway-wide via a KV counter.
+// KV is eventually consistent (~1s) — fine for a rate limiter.
+const PROBE_RATE_LIMIT = 60; // probes per minute, whole gateway
+const PROBE_RATE_WINDOW_MS = 60000;
+
+export async function probeRateLimited(env) {
+  try {
+    const bucket = Math.floor(Date.now() / PROBE_RATE_WINDOW_MS);
+    const key = `probe-rate:${bucket}`;
+    const cur = Number(await env.KEYS.get(key)) || 0;
+    if (cur >= PROBE_RATE_LIMIT) return true;
+    await env.KEYS.put(key, String(cur + 1), { expirationTtl: 120 });
+    return false;
+  } catch { return false; } // fail-open on KV errors, like the breaker
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -117,6 +134,9 @@ export default {
         return jsonOk(await buildHealth(env));
       }
       if (request.method === "POST" && path === "/api/vale-probe") {
+        if (await probeRateLimited(env)) {
+          return jsonError(429, "probe rate limit exceeded", "rate_limited");
+        }
         let body = {};
         try { body = await request.json(); } catch {}
         return await valeProbe(env, String(body.model || ""));
@@ -1640,7 +1660,7 @@ set -e
 command -v node >/dev/null 2>&1 || { echo "error: Node.js required"; exit 1; }
 DEST="\${VALE_BIN:-\$HOME/.local/bin}"
 mkdir -p "\$DEST"
-echo "${b64}" | base64 -d > "\$DEST/vale"
+echo "${b64}" | (base64 -d 2>/dev/null || base64 -D) > "\$DEST/vale"
 chmod +x "\$DEST/vale"
 echo "installed: \$DEST/vale"
 echo "usage: vale check | vale use <ds|qw|og|or> | vale use auto | vale restore"

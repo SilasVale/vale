@@ -33,5 +33,5 @@
   // in the dashboard (custom_domains API is OAuth-only).
   // Vars (set via `wrangler var put`, NOT committed): CONSOLE_HOST, API_HOST, OPENROUTER_PROXY_URL
   // Secrets (set via `wrangler secret put`): CLIENT_KEY, DEEPSEEK_API_KEY, OPENCODE_GO_API_KEY,
-  // OPENROUTER_API_KEY, ADMIN_PASSWORD
+  // OPENROUTER_API_KEY, QWEN_API_KEY, ADMIN_PASSWORD
 }
