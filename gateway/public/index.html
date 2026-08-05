@@ -109,6 +109,14 @@
         <h1 data-i18n="keys.title">密钥管理</h1>
         <p class="lede" data-i18n="keys.lede">填入你自己在对应服务商申请的 API key，网关转发时只使用你自己的 key，各算各的额度。</p>
         <div id="keys-cards" class="cards"></div>
+        <div class="card">
+          <div class="card-head"><h2 data-i18n="valeSetup.title">Vale 一键配置</h2></div>
+          <div class="card-body">
+            <p class="muted" data-i18n="valeSetup.desc">复制下面的命令到终端执行，把当前账户注册为 vale 提供商（网关 qwen 渠道）。之后在任意设备上 <code>vale use vale-gw</code> 一键切换、<code>vale restore</code> 回滚。</p>
+            <pre><code id="vale-setup-cmd"></code></pre>
+            <button class="btn-primary btn-mini" id="btn-copy-vale-setup" data-i18n="valeSetup.copy">复制命令</button>
+          </div>
+        </div>
       </section>
 
       <section id="panel-routes" class="panel" hidden>
