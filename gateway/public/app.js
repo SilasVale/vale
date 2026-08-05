@@ -29,16 +29,14 @@
       "token.regenerated": "已生成新 Token，旧 Token 已失效。请同步更新客户端配置。",
       "token.regenerateFail": "重生成失败",
       "routes.title": "路由状态", "routes.lede": "请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。",
-      "vale.cardTitle": "Vale",
-      "vale.desc": "跨平台一键切换网关渠道。配置一次，之后 <code>vale use</code> 一条命令切换。",
-      "vale.defaultModel": "默认模型",
-      "vale.setupBtn": "⚡ 一键配置 Vale",
-      "vale.setupNote": "命令已复制 —— 粘贴到终端回车，安装 + 注册一次完成；之后用 <code>vale use &lt;渠道&gt;</code> 切换、<code>vale restore</code> 回滚。",
-      "vale.cheat": "vale check · vale use &lt;渠道|模型&gt; · vale use auto · vale models · vale restore",
-      "vale.healthLoading": "渠道健康加载中…",
-      "vale.healthFail": "渠道健康不可达",
-      "vale.recommend": "推荐",
-      "vale.copyFail": "复制失败，请手动选择复制",
+      "route.title": "渠道切换",
+      "route.desc": "Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。",
+      "route.use": "使用",
+      "route.current": "当前",
+      "route.auto": "自动选择健康渠道",
+      "route.switched": "已切换，下次请求生效",
+      "route.fail": "切换失败",
+      "route.loadFail": "渠道状态加载失败",
       "keys.title": "密钥管理", "keys.lede": "填入你自己在对应服务商申请的 API key，网关转发时只使用你自己的 key，各算各的额度。",
       "key.configured": "已配置", "key.notConfigured": "未配置",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "api.deepseek.com 申请",
@@ -100,16 +98,14 @@
       "token.regenerated": "New token generated; the old one is invalid. Update your client configs.",
       "token.regenerateFail": "Regenerate failed",
       "routes.title": "Routing status", "routes.lede": "Model names are routed by prefix; no prefix defaults to DeepSeek official.",
-      "vale.cardTitle": "Vale",
-      "vale.desc": "Cross-platform channel switching. Configure once, then <code>vale use</code> switches with one command.",
-      "vale.defaultModel": "Default model",
-      "vale.setupBtn": "⚡ One-click configure Vale",
-      "vale.setupNote": "Command copied — paste into a terminal to install and register in one step; then <code>vale use &lt;channel&gt;</code> switches, <code>vale restore</code> rolls back.",
-      "vale.cheat": "vale check · vale use &lt;channel|model&gt; · vale use auto · vale models · vale restore",
-      "vale.healthLoading": "Loading channel health…",
-      "vale.healthFail": "Channel health unreachable",
-      "vale.recommend": "Recommended",
-      "vale.copyFail": "Copy failed — select and copy manually",
+      "route.title": "Channel switch",
+      "route.desc": "Set the Claude Code model to <code>auto</code>, then flip channels here — no restart needed.",
+      "route.use": "Use",
+      "route.current": "Current",
+      "route.auto": "Auto-select healthy channel",
+      "route.switched": "Switched — takes effect on the next request",
+      "route.fail": "Switch failed",
+      "route.loadFail": "Failed to load channel status",
       "keys.title": "API Keys", "keys.lede": "Add your own API keys from each provider; the gateway only uses your keys, so each user pays for their own usage.",
       "key.configured": "Configured", "key.notConfigured": "Not configured",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "from api.deepseek.com",
@@ -311,81 +307,6 @@
     $("#token-note").hidden = true;
     const { routes } = await loadRoutes();
     $("#overview-switchboard").innerHTML = switchboardHTML(routes);
-    await loadValeCard();
-  }
-
-  // ── Vale card (overview) ─────────────────────────────
-  // Info + command generation only: the browser can't touch local files, so
-  // the button copies a combined install+register command for the terminal.
-  const VALE_FALLBACK_MODELS = [
-    "ds/deepseek-v4-flash", "qw/qwen3.8-max-preview",
-    "og/deepseek-v4-flash", "og/minimax-m3", "or/openai/gpt-5.6-luna:floor[1m]",
-  ];
-
-  function valeSetupCommand(apiHost, token, model) {
-    const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
-    return `curl -fsSL ${base}/api/vale-install | sh && vale provider add vale-gw --base ${base} --token ${token} --model ${model}`;
-  }
-
-  async function loadValeCard() {
-    const sel = $("#vale-model-select");
-    const btn = $("#btn-vale-setup");
-    const note = $("#vale-setup-note");
-    const cmd = $("#vale-setup-cmd");
-    const healthRow = $("#vale-health-row");
-    if (!sel || !btn || !healthRow) return;
-    let apiHost = "";
-    try { ({ apiHost } = await loadRoutes()); } catch {}
-    // 模型选择器：/v1/models 需要 x-api-key（网关鉴权端点）—— 不带会 401，
-    // 而 api() 对 401 会 showAuth() 把用户踢回登录页（"每次都要重新登录"的根因）。
-    let models = VALE_FALLBACK_MODELS;
-    try {
-      const { res, data } = await api("/v1/models", { headers: { "x-api-key": me?.token || "" } });
-      if (res.ok && Array.isArray(data?.data)) {
-        const ids = data.data.map((m) => m.id).filter((x) => typeof x === "string");
-        if (ids.length) models = ids;
-      }
-    } catch {}
-    const groups = {};
-    for (const m of models) {
-      const p = m.split("/")[0];
-      (groups[p] = groups[p] || []).push(m);
-    }
-    sel.innerHTML = Object.entries(groups)
-      .map(([p, ms]) => `<optgroup label="${esc(p + "/")}">${ms.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join("")}</optgroup>`)
-      .join("");
-    // 默认选中推荐模型
-    try {
-      const health = await api("/api/health");
-      if (health.res.ok && health.data?.recommended?.model && models.includes(health.data.recommended.model)) {
-        sel.value = health.data.recommended.model;
-      }
-    } catch {}
-    const renderCmd = () => {
-      cmd.textContent = valeSetupCommand(apiHost, me?.token || "", sel.value);
-      cmd.hidden = false;
-    };
-    btn.addEventListener("click", async () => {
-      renderCmd();
-      try {
-        await navigator.clipboard.writeText(cmd.textContent);
-        note.hidden = false;
-        toast(t("vale.setupNote"));
-      } catch { toast(t("vale.copyFail"), true); }
-    });
-    // 渠道健康（公开端点，30s 轮询）
-    const renderHealth = async () => {
-      try {
-        const { res, data } = await api("/api/health");
-        if (!res.ok || !Array.isArray(data?.channels)) { healthRow.textContent = t("vale.healthFail"); return; }
-        healthRow.innerHTML = data.channels
-          .map((c) => `<span class="chip ${c.ok ? "ok" : "bad"}">${esc(c.id + "/")} ${c.ok ? "✅" : `⚠️ ${esc(c.reason || "异常")}`}</span>`)
-          .join(" ") + (data.recommended ? ` <span class="muted">${t("vale.recommend")}: ${esc(data.recommended.model)}</span>` : "");
-      } catch { healthRow.textContent = t("vale.healthFail"); }
-    };
-    await renderHealth();
-    if (window.__valeHealthTimer) clearInterval(window.__valeHealthTimer);
-    window.__valeHealthTimer = setInterval(renderHealth, 30000);
   }
 
   function renderToken() {
@@ -498,14 +419,70 @@
   }
 
   /* ============ routes panel ============ */
+  // 渠道切换：/api/health 状态 + /api/me/route 当前选择；点 [使用] → PUT。
+  // 卡片复用 key-card 的样式，视觉与密钥管理页一致。
+  function routeCardHTML(ch, current) {
+    const status = ch.ok ? `<span class="badge ok">${t("route.use")}</span>` : `<span class="badge bad">${ch.reason || "异常"}</span>`;
+    const isCur = current === ch.model;
+    return `
+      <div class="key-card" data-model="${esc(ch.model)}">
+        <div class="top">
+          <div>
+            <div class="key-name">${esc(ch.id + "/")}${isCur ? ` <span class="badge ok">${t("route.current")}</span>` : ""}</div>
+            <div class="key-desc">${esc(ch.model)}</div>
+          </div>
+          ${status}
+        </div>
+        <div class="key-actions">
+          <button class="btn-primary btn-mini" data-act="use" ${ch.ok ? "" : "disabled"}>${t("route.use")}</button>
+        </div>
+      </div>`;
+  }
+
+  async function loadRouteCards() {
+    const box = $("#route-cards");
+    if (!box) return;
+    let current = null;
+    try {
+      const r = await api("/api/me/route");
+      if (r.res.ok) current = r.data?.model ?? null;
+    } catch {}
+    const health = await api("/api/health");
+    if (!health.res.ok || !Array.isArray(health.data?.channels)) {
+      box.textContent = t("route.loadFail");
+      return;
+    }
+    box.innerHTML = health.data.channels.map((c) => routeCardHTML(c, current)).join("");
+    // [使用] 按钮是动态渲染的，委托到容器；只绑定一次，避免每次重渲染叠加 listener。
+    if (!box.dataset.bound) {
+      box.dataset.bound = "1";
+      box.addEventListener("click", async (ev) => {
+        const btn = ev.target.closest("button[data-act='use']");
+        if (!btn || btn.disabled) return;
+        const card = btn.closest(".key-card");
+        const model = card?.dataset.model;
+        if (!model) return;
+        const r = await api("/api/me/route", { method: "PUT", body: JSON.stringify({ model }) });
+        if (r.res.ok) { toast(t("route.switched")); await loadRouteCards(); }
+        else toast(t("route.fail"), true);
+      });
+    }
+  }
+
+  async function clearRoute() {
+    const r = await api("/api/me/route", { method: "PUT", body: JSON.stringify({ model: null }) });
+    if (r.res.ok) { toast(t("route.switched")); await loadRouteCards(); }
+    else toast(t("route.fail"), true);
+  }
+
   async function loadRoutesPanel() {
-    const { routes, apiHost } = await loadRoutes();
-    $("#routes-switchboard").innerHTML = switchboardHTML(routes);
+    const { apiHost } = await loadRoutes();
     const ex = $("#client-example");
     if (ex) {
       const base = apiHost ? `https://${apiHost}` : "https://<your-api-host>";
       ex.textContent = ex.textContent.replace(/https:\/\/<your-api-host>/g, base);
     }
+    await loadRouteCards();
   }
 
   /* ============ users (admin) ============ */
@@ -771,6 +748,7 @@
     bindKeyActions();
     bindUsers();
     bindDevices();
+    $("#btn-route-auto")?.addEventListener("click", clearRoute);
   }
 
   document.addEventListener("DOMContentLoaded", () => {
