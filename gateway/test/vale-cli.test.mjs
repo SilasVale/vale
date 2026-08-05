@@ -15,7 +15,7 @@ import path from "node:path";
 
 const CLI = path.join(import.meta.dirname, "..", "public", "vale");
 
-function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true } = {}) {
+function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true, probeFailModels = [] } = {}) {
   const calls = { health: 0, probes: 0, models: 0 };
   const server = http.createServer((req, res) => {
     if (req.url === "/api/health") {
@@ -34,13 +34,21 @@ function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true
     }
     if (req.url === "/api/vale-probe" && req.method === "POST") {
       calls.probes++;
-      res.setHeader("content-type", "application/json");
-      res.statusCode = probeOk ? 200 : probeStatus;
-      res.end(JSON.stringify({
-        ok: probeOk, channel: "x",
-        status: probeOk ? 200 : probeStatus,
-        detail: probeOk ? "" : "upstream down",
-      }));
+      let body = "";
+      req.on("data", (d) => { body += d; });
+      req.on("end", () => {
+        let model = "";
+        try { model = JSON.parse(body || "{}").model || ""; } catch {}
+        const failed = probeFailModels.includes(model);
+        const ok = probeOk && !failed;
+        res.setHeader("content-type", "application/json");
+        res.statusCode = ok ? 200 : probeStatus;
+        res.end(JSON.stringify({
+          ok, channel: model.split("/")[0] || "x",
+          status: ok ? 200 : probeStatus,
+          detail: ok ? "" : "upstream down",
+        }));
+      });
       return;
     }
     if (req.url === "/v1/models" && req.method === "GET") {
@@ -170,7 +178,7 @@ test("use auto: 按优先级 qw>ds>og>or 选第一个健康渠道", async () => 
   } finally { server.close(); }
 });
 
-test("restore: 恢复最近备份", async () => {
+test("restore: 恢复最近备份（原子写；恢复前先备份当前状态）", async () => {
   const { server, port } = await makeGateway();
   try {
     const { file } = makeSettings();
@@ -179,6 +187,54 @@ test("restore: 恢复最近备份", async () => {
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
     assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // 回到切换前
+    // use 与 restore 各备份一次 → 2 个备份；最新的是恢复前的（qw）状态
+    const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
+    assert.equal(backups.length, 2);
+    const newest = backups.sort().reverse()[0];
+    const bak = JSON.parse(fs.readFileSync(path.join(path.dirname(file), newest), "utf8"));
+    assert.equal(bak.env.ANTHROPIC_MODEL, "qw/qwen3.8-max-preview");
+  } finally { server.close(); }
+});
+
+test("备份保留: 6 次 use 后只保留最近 5 个 .bak-vale-*", async () => {
+  const { server, port } = await makeGateway();
+  try {
+    const { file } = makeSettings();
+    for (let i = 0; i < 6; i++) {
+      const r = await run(["use", "qw"], file, gw(port));
+      assert.equal(r.status, 0, r.stderr);
+      // 每次切换后 settings 保持有效（后续 use 依赖它能读出 token）
+      const after = JSON.parse(fs.readFileSync(file, "utf8"));
+      assert.equal(after.env.ANTHROPIC_MODEL, "qw/qwen3.8-max-preview");
+    }
+    const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
+    assert.equal(backups.length, 5);
+  } finally { server.close(); }
+});
+
+test("use auto: 推荐渠道 qw 探测失败 → 回退到下一个健康渠道 ds", async () => {
+  const { server, port } = await makeGateway({ probeFailModels: ["qw/qwen3.8-max-preview"] });
+  try {
+    // 初始是 or：若回退不生效，配置会停留在 or（且命令非 0 退出）
+    const { file } = makeSettings({ ANTHROPIC_MODEL: "or/openai/gpt-5.6-luna:floor[1m]" });
+    const r = await run(["use", "auto"], file, gw(port));
+    assert.equal(r.status, 0, r.stderr);
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+  } finally { server.close(); }
+});
+
+test("use auto: 所有渠道探测失败 → 无可用渠道, 配置不变", async () => {
+  const { server, port } = await makeGateway({ probeOk: false, probeStatus: 400 });
+  try {
+    const { file } = makeSettings();
+    const r = await run(["use", "auto"], file, gw(port));
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /无可用渠道/);
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
+    assert.equal(backups.length, 0);
   } finally { server.close(); }
 });
 

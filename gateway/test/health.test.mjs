@@ -2,7 +2,7 @@
 // breaker and fetch.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildHealth, encodeBase64Utf8, posixInstaller, psInstaller, valeProbe } from "../src/index.js";
+import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, valeProbe } from "../src/index.js";
 
 // Mock env: breaker reports "open" (degraded) when asked.
 const openEnv = {
@@ -42,7 +42,7 @@ test("installer round-trip: non-ASCII CLI encodes and decodes losslessly", () =>
   const b64 = encodeBase64Utf8(cli);
   assert.equal(Buffer.from(b64, "base64").toString("utf8"), cli);
   const sh = posixInstaller(b64);
-  const shMatch = sh.match(/echo "([A-Za-z0-9+/=]+)" \| base64 -d/);
+  const shMatch = sh.match(/echo "([A-Za-z0-9+/=]+)" \| \(base64 -d 2>\/dev\/null \|\| base64 -D\)/);
   assert.ok(shMatch, "POSIX installer embeds base64");
   assert.equal(Buffer.from(shMatch[1], "base64").toString("utf8"), cli);
   const ps = psInstaller(b64);
@@ -120,4 +120,71 @@ test("valeProbe: key missing → ok false, no upstream call", async () => {
   const body = await res.json();
   assert.equal(body.ok, false);
   assert.match(body.detail, /key not configured/);
+});
+
+test("valeProbe: qw channel ok when upstream 200 (QWEN_API_KEY branch)", async () => {
+  // 只留 QWEN 密钥：若分支读错 key（如 DEEPSEEK_API_KEY），会返回 key not configured
+  const env = { ...keyedEnv, DEEPSEEK_API_KEY: undefined, OPENROUTER_API_KEY: undefined, OPENCODE_GO_API_KEY: undefined };
+  const res = await withFetch(async () => new Response("{}", { status: 200 }), () =>
+    valeProbe(env, "qw/qwen3.8-max-preview"),
+  );
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.channel, "qw");
+});
+
+test("valeProbe: or channel ok when upstream 200 (OPENROUTER_API_KEY branch)", async () => {
+  // 只留 OPENROUTER 密钥：若分支读错 key，会返回 key not configured
+  const env = { ...keyedEnv, DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined, OPENCODE_GO_API_KEY: undefined };
+  const res = await withFetch(async () => new Response("{}", { status: 200 }), () =>
+    valeProbe(env, "or/openai/gpt-5.6-luna:floor[1m]"),
+  );
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.channel, "or");
+});
+
+// ── probeRateLimited (KV-backed, whole-gateway) ──────────────────
+// Mirrors src/index.js: PROBE_RATE_LIMIT=60, window=60000ms.
+const PROBE_RATE_LIMIT = 60;
+const PROBE_WINDOW_MS = 60000;
+
+function kvEnv() {
+  const kv = new Map();
+  return {
+    kv,
+    env: {
+      KEYS: {
+        get: async (k) => kv.get(k) ?? null,
+        put: async (k, v) => { kv.set(k, v); }, // expirationTtl ignored by the mock
+      },
+    },
+  };
+}
+
+test("probeRateLimited: 前 60 次放行, 第 61 次限流, 换时间桶后放行", async () => {
+  const now = 1785000000000;
+  const realDateNow = Date.now;
+  Date.now = () => now;
+  const { env } = kvEnv();
+  try {
+    for (let i = 0; i < PROBE_RATE_LIMIT; i++) {
+      assert.equal(await probeRateLimited(env), false, `call ${i + 1} should pass`);
+    }
+    assert.equal(await probeRateLimited(env), true); // 第 61 次被限流
+    Date.now = () => now + PROBE_WINDOW_MS; // 下一个窗口
+    assert.equal(await probeRateLimited(env), false);
+  } finally {
+    Date.now = realDateNow;
+  }
+});
+
+test("probeRateLimited: KV 错误时 fail-open（不拦请求）", async () => {
+  const env = {
+    KEYS: {
+      get: async () => { throw new Error("kv down"); },
+      put: async () => { throw new Error("kv down"); },
+    },
+  };
+  assert.equal(await probeRateLimited(env), false);
 });
