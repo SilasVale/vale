@@ -101,6 +101,117 @@ function findBackup() {
     .reverse();
   return list.length ? path.join(dir, list[0]) : null;
 }
+
+/* ---- Provider store (~/.vale/providers.json) ----
+ * Like cc-switch: named providers each carry a full connection config
+ * (base URL + token + model). `vale use <provider>` switches the whole env
+ * block (base/token/model), so any provider — gateway channel or direct
+ * API — is one command away. File mode 0600; tokens never printed. */
+function providersFile() {
+  return process.env.VALE_PROVIDERS || path.join(os.homedir(), ".vale", "providers.json");
+}
+function readProviders() {
+  try {
+    const p = JSON.parse(fs.readFileSync(providersFile(), "utf8"));
+    return p && typeof p === "object" ? p : {};
+  } catch { return {}; }
+}
+function writeProviders(providers) {
+  const file = providersFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(providers, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+function maskKey(key) {
+  if (!key) return "";
+  if (key.length <= 8) return "***";
+  return key.slice(0, 3) + "***" + key.slice(-3);
+}
+function parseFlags(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    if (String(argv[i]).startsWith("--")) out[argv[i].slice(2)] = argv[i + 1];
+  }
+  return out;
+}
+function cmdProviderAdd(name, opts) {
+  if (!name || !opts.base || !opts.token || !opts.model) {
+    console.error("用法: vale provider add <名称> --base <URL> --token <TOKEN> --model <模型>");
+    process.exit(1);
+  }
+  const providers = readProviders();
+  providers[name] = { base: opts.base, token: opts.token, model: opts.model };
+  writeProviders(providers);
+  console.log(`已添加提供商 ${name} → ${opts.base}（${opts.model}）`);
+}
+function cmdProviderList() {
+  const providers = readProviders();
+  const names = Object.keys(providers);
+  if (!names.length) {
+    console.log("（无提供商，用 vale provider add 添加）");
+    return;
+  }
+  for (const n of names) {
+    const p = providers[n];
+    console.log(`  ${n} → ${p.base}  model: ${p.model}  token: ${maskKey(p.token)}`);
+  }
+  console.log("用法: vale use <提供商名>");
+}
+function cmdProviderRm(name) {
+  const providers = readProviders();
+  if (!providers[name]) {
+    console.error(`提供商不存在: ${name}`);
+    process.exit(1);
+  }
+  delete providers[name];
+  writeProviders(providers);
+  console.log(`已删除提供商 ${name}`);
+}
+// Generic probe for any provider base: fire a real max_tokens=1 request with
+// that provider's own token (works for the gateway AND direct APIs).
+async function probeTarget(base, token, model) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const r = await fetch(`${base}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "x-api-key": token,
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
+      signal: ctrl.signal,
+    });
+    return r.status === 200;
+  } catch { return false; } finally { clearTimeout(t); }
+}
+// Provider switch: replace the whole env block (base + token + model). Token
+// is written to BOTH ANTHROPIC_API_KEY (x-api-key) and ANTHROPIC_AUTH_TOKEN
+// (Bearer) so it works with gateways and direct APIs alike.
+async function cmdUseProvider(name, settings) {
+  const p = readProviders()[name];
+  if (!p || !p.base || !p.token || !p.model) {
+    console.error(`提供商不存在或配置不完整: ${name}`);
+    process.exit(1);
+  }
+  if (!(await probeTarget(p.base, p.token, p.model))) {
+    console.error(`探测失败: ${p.base} 上的 ${p.model} 不可用，未切换`);
+    process.exit(1);
+  }
+  const env = settings.env || {};
+  for (const k of MODEL_ENV_KEYS) env[k] = p.model;
+  env.ANTHROPIC_BASE_URL = p.base;
+  env.ANTHROPIC_API_KEY = p.token;
+  env.ANTHROPIC_AUTH_TOKEN = p.token;
+  settings.env = env;
+  const bak = backup();
+  writeAtomic(settings);
+  console.log(`已切换到提供商 ${name}（${p.model} @ ${p.base}）`);
+  console.log(`备份: ${bak}`);
+  console.log("重启 Claude Code 后生效");
+}
 function switchEnv(settings, model) {
   const env = settings.env || {};
   for (const k of MODEL_ENV_KEYS) env[k] = model;
@@ -221,6 +332,8 @@ async function cmdModels() {
 
 async function cmdUse(arg) {
   const settings = readSettings();
+  // Provider names resolve first (they carry their own base/token/model).
+  if (readProviders()[arg]) return cmdUseProvider(arg, settings);
   const token = authToken(settings);
   if (!token || !(await tokenValid(token))) {
     console.error("settings.json 里的 token 对网关无效 —— 请在 console 的密钥管理获取网关 token，更新 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN 后重试");
@@ -291,9 +404,17 @@ async function main() {
   const cmd = args[0] || "check";
   if (cmd === "check") return cmdCheck();
   if (cmd === "models") return cmdModels();
+  if (cmd === "provider") {
+    const sub = args[1];
+    if (sub === "add") return cmdProviderAdd(args[2], parseFlags(args.slice(3)));
+    if (sub === "list") return cmdProviderList();
+    if (sub === "rm") return cmdProviderRm(args[2]);
+    console.error("用法: vale provider add <名称> --base <URL> --token <TOKEN> --model <模型> | provider list | provider rm <名称>");
+    process.exit(1);
+  }
   if (cmd === "use") return args[1] === "auto" ? cmdAuto() : cmdUse(args[1]);
   if (cmd === "restore") return cmdRestore();
-  console.error(`用法: vale check | vale models | vale use <ds|qw|og|or|模型名|auto> | vale restore`);
+  console.error(`用法: vale check | vale models | vale use <ds|qw|og|or|模型名|提供商名|auto> | vale provider add|list|rm | vale restore`);
   process.exit(1);
 }
 
