@@ -191,9 +191,9 @@ test("probeRateLimited: KV 错误时 fail-open（不拦请求）", async () => {
 
 // ── auto route resolution ────────────────────────────
 // env with KV mock: route:<uid> → chosen model
-function routeEnv(routeValue, breakerOpen = false) {
+function routeEnv(routeValue, breakerOpen = false, uid = "admin") {
   const m = new Map();
-  if (routeValue !== null) m.set(`route:admin`, routeValue);
+  if (routeValue !== null) m.set(`route:${uid}`, routeValue);
   return {
     KEYS: {
       async get(k) { return m.has(k) ? m.get(k) : null; },
@@ -209,22 +209,24 @@ function routeEnv(routeValue, breakerOpen = false) {
   };
 }
 
+// NOTE: distinct uids per case — store.js caches route:<uid> for 60s
+// module-wide, so a shared uid would leak the previous case's choice.
 test("resolveAutoModel: uses chosen route", async () => {
-  const env = routeEnv("qw/qwen3.8-max-preview");
-  assert.equal(await resolveAutoModel(env, "admin"), "qw/qwen3.8-max-preview");
+  const env = routeEnv("qw/qwen3.8-max-preview", false, "u-choice");
+  assert.equal(await resolveAutoModel(env, "u-choice"), "qw/qwen3.8-max-preview");
 });
 
-test("resolveAutoModel: no choice → recommended (qw)", async () => {
-  const env = routeEnv(null);
-  assert.equal(await resolveAutoModel(env, "admin"), "qw/qwen3.8-max-preview");
+test("resolveAutoModel: no choice → default ds/deepseek-v4-flash", async () => {
+  const env = routeEnv(null, false, "u-none");
+  assert.equal(await resolveAutoModel(env, "u-none"), "ds/deepseek-v4-flash");
 });
 
-test("resolveAutoModel: chosen og channel with open breaker → falls back to recommended", async () => {
-  const env = routeEnv("og/deepseek-v4-flash", true);
-  assert.equal(await resolveAutoModel(env, "admin"), "qw/qwen3.8-max-preview");
+test("resolveAutoModel: chosen og channel with open breaker → falls back to default ds", async () => {
+  const env = routeEnv("og/deepseek-v4-flash", true, "u-ogopen");
+  assert.equal(await resolveAutoModel(env, "u-ogopen"), "ds/deepseek-v4-flash");
 });
 
-test("resolveAutoModel: chosen model not in whitelist → falls back", async () => {
-  const env = routeEnv("xx/nope");
-  assert.equal(await resolveAutoModel(env, "admin"), "qw/qwen3.8-max-preview");
+test("resolveAutoModel: chosen model not in whitelist → falls back to default ds", async () => {
+  const env = routeEnv("xx/nope", false, "u-nope");
+  assert.equal(await resolveAutoModel(env, "u-nope"), "ds/deepseek-v4-flash");
 });

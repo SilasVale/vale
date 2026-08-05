@@ -30,11 +30,11 @@
       "token.regenerateFail": "重生成失败",
       "routes.title": "路由状态", "routes.lede": "请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。",
       "route.title": "渠道切换",
-      "route.desc": "Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。",
+      "route.desc": "Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。未选择时默认走 <code>ds/deepseek-v4-flash</code>。",
       "route.use": "使用",
       "route.current": "当前",
       "route.bad": "异常",
-      "route.auto": "自动选择健康渠道",
+      "route.auto": "恢复默认渠道（ds）",
       "route.switched": "已切换，下次请求生效",
       "route.fail": "切换失败",
       "route.loadFail": "渠道状态加载失败",
@@ -100,11 +100,11 @@
       "token.regenerateFail": "Regenerate failed",
       "routes.title": "Routing status", "routes.lede": "Model names are routed by prefix; no prefix defaults to DeepSeek official.",
       "route.title": "Channel switch",
-      "route.desc": "Set the Claude Code model to <code>auto</code>, then flip channels here — no restart needed.",
+      "route.desc": "Set the Claude Code model to <code>auto</code>, then flip channels here — no restart needed. Defaults to <code>ds/deepseek-v4-flash</code> when unset.",
       "route.use": "Use",
       "route.current": "Current",
       "route.bad": "Down",
-      "route.auto": "Auto-select healthy channel",
+      "route.auto": "Restore default (ds)",
       "route.switched": "Switched — takes effect on the next request",
       "route.fail": "Switch failed",
       "route.loadFail": "Failed to load channel status",
@@ -483,8 +483,21 @@
     const { apiHost } = await loadRoutes();
     const ex = $("#client-example");
     if (ex) {
-      const base = apiHost ? `https://${apiHost}` : "https://<your-api-host>";
-      ex.textContent = ex.textContent.replace(/https:\/\/<your-api-host>/g, base);
+      // 用当前账户的真实值渲染客户端接入示例（base + 网关 token + auto[1m]）
+      const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
+      const token = me?.token || "<your gateway token>";
+      const modelKeys = [
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_SMALL_FAST_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+      ];
+      const env = { ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: token };
+      for (const k of modelKeys) env[k] = "auto[1m]";
+      ex.textContent = JSON.stringify({ env }, null, 2);
     }
     await loadRouteCards();
   }

@@ -128,8 +128,13 @@
   "env": {
     "ANTHROPIC_BASE_URL": "https://&lt;your-api-host&gt;",
     "ANTHROPIC_API_KEY": "&lt;your gateway token&gt;",
-    "ANTHROPIC_MODEL": "og/deepseek-v4-flash[1m]",
-    "ANTHROPIC_SMALL_FAST_MODEL": "og/deepseek-v4-flash[1m]"
+    "ANTHROPIC_MODEL": "auto[1m]",
+    "ANTHROPIC_SMALL_FAST_MODEL": "auto[1m]",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "auto[1m]",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "auto[1m]",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "auto[1m]",
+    "ANTHROPIC_DEFAULT_MODEL": "auto[1m]",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "auto[1m]"
   }
 }</code></pre>
           <div class="note" data-i18n="client.note">模型名里的 <code>[1m]</code> 是 Claude Code 的 1M 上下文窗口标记，上行前它自己会剥掉，网关按前缀路由不受影响。curl 手测勿发带 <code>[1m]</code> 的字面模型名。</div>
