@@ -171,3 +171,18 @@ test("getUserRoute / setUserRoute: cached read, write-through refresh", async ()
   assert.equal(await store.getUserRoute(kv, "admin"), "ds/deepseek-v4-flash");
   assert.equal(kv.counters.get, 1); // 仍无新 KV 读
 });
+
+test("getUserRoute: cache expires after the 60s route TTL", async () => {
+  const kv = makeKV({});
+  const realNow = Date.now;
+  try {
+    await store.setUserRoute(kv, "erin", "qw/qwen3.8-max-preview"); // put + cache
+    assert.equal(await store.getUserRoute(kv, "erin"), "qw/qwen3.8-max-preview"); // cache hit
+    assert.equal(kv.counters.get, 0);
+    Date.now = () => realNow() + 61 * 1000; // advance 61s — past the route TTL
+    assert.equal(await store.getUserRoute(kv, "erin"), "qw/qwen3.8-max-preview"); // expired → re-read KV
+    assert.equal(kv.counters.get, 1);
+  } finally {
+    Date.now = realNow;
+  }
+});
