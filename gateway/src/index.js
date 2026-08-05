@@ -116,6 +116,11 @@ export default {
       if (path === "/api/health") {
         return jsonOk(await buildHealth(env));
       }
+      if (request.method === "POST" && path === "/api/vale-probe") {
+        let body = {};
+        try { body = await request.json(); } catch {}
+        return await valeProbe(env, String(body.model || ""));
+      }
       if (path === "/api/vale-cli" || path === "/api/vale-install" || path === "/api/vale-install.ps1") {
         const cli = await serveAssetText(env, "/vale");
         if (cli === null) return jsonError(404, "vale CLI not found", "not_found_error");
@@ -1561,6 +1566,71 @@ export async function buildHealth(env) {
  *  CLI is full of Chinese text). Encode to bytes first. */
 export function encodeBase64Utf8(text) {
   return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+}
+
+/**
+ * Channel probe for the vale CLI's `use` command (public POST /api/vale-probe).
+ *
+ * Fires a real max_tokens=1 request through the requested channel using the
+ * WORKER-level provider keys, so the CLI can verify a channel serves BEFORE
+ * rewriting settings — from any settings state. Public like /api/health;
+ * each probe costs one tiny upstream call (og short-circuits on the open
+ * breaker, so a degraded channel costs nothing).
+ */
+export async function valeProbe(env, model) {
+  const prefix = model.split("/")[0];
+  const known = HEALTH_CHANNELS.some((c) => c.id === prefix) && MODELS.some((m) => m.id === model);
+  if (!known) {
+    return jsonError(400, `Unknown channel model: ${model}`, "invalid_request");
+  }
+  // og → zen (translate route), same request shape as testKey's zen check;
+  // respect the breaker first so a degraded channel fails fast at no cost.
+  if (prefix === "og") {
+    if (await isChannelDegraded(env)) {
+      return jsonOk({ ok: false, channel: prefix, detail: "circuit open" });
+    }
+    const key = env.OPENCODE_GO_API_KEY || "";
+    if (!key) return jsonOk({ ok: false, channel: prefix, detail: "OPENCODE_GO_API_KEY not configured" });
+    const upstreamModel = stripBracket(model.slice(prefix.length + 1));
+    let res;
+    try {
+      res = await fetchWithTimeout("https://opencode.ai/zen/go/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: upstreamModel,
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+          stream: false,
+        }),
+      }, upstreamTimeoutMs(env));
+    } catch (e) {
+      return jsonOk({ ok: false, channel: prefix, detail: e.message });
+    }
+    return jsonOk({ ok: res.ok, channel: prefix, status: res.status, detail: res.ok ? "" : `upstream ${res.status}` });
+  }
+  // Passthrough channels (ds/qw/or): reuse the exact route config of /v1/messages.
+  const route = pickRoute(prefix, env);
+  const key = prefix === "or" ? (env.OPENROUTER_API_KEY || "")
+    : prefix === "qw" ? (env.QWEN_API_KEY || "")
+    : (env.DEEPSEEK_API_KEY || "");
+  if (!key) return jsonOk({ ok: false, channel: prefix, detail: `${prefix}: key not configured` });
+  const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
+  let res;
+  try {
+    res = await fetchWithTimeout(route.upstream, {
+      method: "POST",
+      headers: passthroughHeaders(key),
+      body: JSON.stringify({
+        model: upstreamModel,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+      }),
+    }, upstreamTimeoutMs(env));
+  } catch (e) {
+    return jsonOk({ ok: false, channel: prefix, detail: e.message });
+  }
+  return jsonOk({ ok: res.ok, channel: prefix, status: res.status, detail: res.ok ? "" : `upstream ${res.status}` });
 }
 
 // POSIX one-liner installer — embeds the vale CLI as base64 (no quoting issues).

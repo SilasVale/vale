@@ -1,5 +1,10 @@
 // vale CLI subprocess tests — spawn the real gateway/public/vale against a
 // local mock gateway (node:http) and a temp settings.json. No network.
+//
+// The CLI talks to the gateway via VALE_GATEWAY (default https://api.saisi.online):
+//   - GET  /api/health       → channel status (public)
+//   - POST /api/vale-probe   → probe a channel (public, worker-side keys)
+//   - GET  /v1/models        → token validation for `use` (x-api-key)
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -10,8 +15,8 @@ import path from "node:path";
 
 const CLI = path.join(import.meta.dirname, "..", "public", "vale");
 
-function makeGateway({ health, okModels = [], status = 200 } = {}) {
-  const calls = { health: 0, messages: 0 };
+function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true } = {}) {
+  const calls = { health: 0, probes: 0, models: 0 };
   const server = http.createServer((req, res) => {
     if (req.url === "/api/health") {
       calls.health++;
@@ -27,11 +32,24 @@ function makeGateway({ health, okModels = [], status = 200 } = {}) {
       }));
       return;
     }
-    if (req.url === "/v1/messages") {
-      calls.messages++;
+    if (req.url === "/api/vale-probe" && req.method === "POST") {
+      calls.probes++;
       res.setHeader("content-type", "application/json");
-      res.statusCode = status;
-      res.end(JSON.stringify({ type: "message", id: "m1", role: "assistant", model: "x", content: [], stop_reason: "end_turn", usage: {} }));
+      res.statusCode = probeOk ? 200 : probeStatus;
+      res.end(JSON.stringify({
+        ok: probeOk, channel: "x",
+        status: probeOk ? 200 : probeStatus,
+        detail: probeOk ? "" : "upstream down",
+      }));
+      return;
+    }
+    if (req.url === "/v1/models" && req.method === "GET") {
+      calls.models++;
+      res.setHeader("content-type", "application/json");
+      res.statusCode = tokenOk ? 200 : 401;
+      res.end(tokenOk
+        ? JSON.stringify({ object: "list", data: [] })
+        : JSON.stringify({ type: "error", error: { type: "authentication_error", message: "Missing or invalid x-api-key" } }));
       return;
     }
     res.statusCode = 404;
@@ -44,12 +62,12 @@ function makeGateway({ health, okModels = [], status = 200 } = {}) {
   });
 }
 
-function makeSettings(base, extra = {}) {
+function makeSettings(extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vale-test-"));
   const file = path.join(dir, "settings.json");
   const data = {
     env: {
-      ANTHROPIC_BASE_URL: base,
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic", // 直连配置（CLI 不读它）
       ANTHROPIC_API_KEY: "test-token",
       ANTHROPIC_MODEL: "ds/deepseek-v4-flash",
       ...extra,
@@ -60,13 +78,13 @@ function makeSettings(base, extra = {}) {
   return { dir, file, data };
 }
 
-function run(args, settingsFile) {
+function run(args, settingsFile, gatewayUrl) {
   // NOTE: async spawn, NOT spawnSync — spawnSync blocks the parent's event
   // loop, so the in-process mock gateway could never respond to the CLI's
   // requests (deadlock). Async spawn lets the mock serve the child.
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
-      env: { ...process.env, VALE_SETTINGS: settingsFile },
+      env: { ...process.env, VALE_SETTINGS: settingsFile, VALE_GATEWAY: gatewayUrl },
     });
     let stdout = "";
     let stderr = "";
@@ -79,23 +97,25 @@ function run(args, settingsFile) {
   });
 }
 
+const gw = (port) => `http://127.0.0.1:${port}`;
+
 test("check: 显示渠道状态和当前渠道", async () => {
   const { server, port } = await makeGateway();
   try {
-    const { file } = makeSettings(`http://127.0.0.1:${port}`);
-    const r = await run(["check"], file);
+    const { file } = makeSettings();
+    const r = await run(["check"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /qw/);
     assert.match(r.stdout, /当前.*ds/);
   } finally { server.close(); }
 });
 
-test("use qw: 探测通过 → 改写 env + 备份", async () => {
-  const { server, port } = await makeGateway({ status: 200 });
+test("use qw: 探测通过 + token 有效 → 改写 env + 备份", async () => {
+  const { server, port } = await makeGateway();
   try {
-    const { file, data } = makeSettings(`http://127.0.0.1:${port}`);
+    const { file } = makeSettings();
     fs.chmodSync(file, 0o600); // settings 含 API key，权限收紧为 0600
-    const r = await run(["use", "qw"], file);
+    const r = await run(["use", "qw"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
     assert.equal(after.env.ANTHROPIC_MODEL, "qw/qwen3.8-max-preview");
@@ -113,10 +133,10 @@ test("use qw: 探测通过 → 改写 env + 备份", async () => {
 });
 
 test("use og: 探测失败(400) → 拒绝切换, 配置不变", async () => {
-  const { server, port } = await makeGateway({ status: 400 });
+  const { server, port } = await makeGateway({ probeOk: false, probeStatus: 400 });
   try {
-    const { file, data } = makeSettings(`http://127.0.0.1:${port}`);
-    const r = await run(["use", "og"], file);
+    const { file } = makeSettings();
+    const r = await run(["use", "og"], file, gw(port));
     assert.notEqual(r.status, 0);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
     assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
@@ -125,11 +145,25 @@ test("use og: 探测失败(400) → 拒绝切换, 配置不变", async () => {
   } finally { server.close(); }
 });
 
-test("use auto: 按优先级 qw>ds>og>or 选第一个健康渠道", async () => {
-  const { server, port } = await makeGateway({ status: 200 });
+test("use qw: token 对网关无效(401) → 拒绝切换并提示", async () => {
+  const { server, port } = await makeGateway({ tokenOk: false });
   try {
-    const { file } = makeSettings(`http://127.0.0.1:${port}`);
-    const r = await run(["use", "auto"], file);
+    const { file } = makeSettings();
+    const r = await run(["use", "qw"], file, gw(port));
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /token|密钥/);
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
+    assert.equal(backups.length, 0);
+  } finally { server.close(); }
+});
+
+test("use auto: 按优先级 qw>ds>og>or 选第一个健康渠道", async () => {
+  const { server, port } = await makeGateway();
+  try {
+    const { file } = makeSettings();
+    const r = await run(["use", "auto"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
     assert.equal(after.env.ANTHROPIC_MODEL, "qw/qwen3.8-max-preview");
@@ -137,11 +171,11 @@ test("use auto: 按优先级 qw>ds>og>or 选第一个健康渠道", async () => 
 });
 
 test("restore: 恢复最近备份", async () => {
-  const { server, port } = await makeGateway({ status: 200 });
+  const { server, port } = await makeGateway();
   try {
-    const { file } = makeSettings(`http://127.0.0.1:${port}`);
-    await run(["use", "qw"], file); // 产生备份 + 切换
-    const r = await run(["restore"], file);
+    const { file } = makeSettings();
+    await run(["use", "qw"], file, gw(port)); // 产生备份 + 切换
+    const r = await run(["restore"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
     assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // 回到切换前
@@ -149,8 +183,8 @@ test("restore: 恢复最近备份", async () => {
 });
 
 test("未知渠道 → 报错退出", async () => {
-  const { file } = makeSettings("http://127.0.0.1:1");
-  const r = await run(["use", "bogus"], file);
+  const { file } = makeSettings();
+  const r = await run(["use", "bogus"], file, gw(1));
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /未知渠道|unknown/i);
 });
@@ -162,8 +196,8 @@ test("check: /api/health 接受连接但不响应 → 超时后非0退出（不�
   server.on("connection", (s) => s.on("error", () => {})); // 客户端 abort 后吞掉 socket error
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
-    const { file } = makeSettings(`http://127.0.0.1:${server.address().port}`);
-    const r = await run(["check"], file);
+    const { file } = makeSettings();
+    const r = await run(["check"], file, gw(server.address().port));
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /无法获取渠道健康/);
   } finally {
