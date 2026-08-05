@@ -222,7 +222,7 @@ git commit -m "feat(stage-gateway): model=auto routes per-user choice; /api/me/r
 
 ---
 
-### Task 3: 前端 — 密钥管理面板渠道切换卡（key-card 风格）+ 移除概览 Vale 卡
+### Task 3: 前端 — 模型路由面板 key-card 风格渠道切换卡 + 移除概览 Vale 卡
 
 **Files:**
 - Modify: `gateway/public/index.html`
@@ -230,11 +230,11 @@ git commit -m "feat(stage-gateway): model=auto routes per-user choice; /api/me/r
 
 **Interfaces:**
 - Consumes: Task 2 的 `GET/PUT /api/me/route`；现有 `api()`、`t()`、`esc()`、`/api/health`。
-- Produces: 密钥管理面板 `#route-cards`（渠道卡片网格，key-card 风格）、`#btn-route-auto`；移除 `#vale-card` 及 `loadValeCard`/`valeSetupCommand`。
+- Produces: 模型路由面板 `#route-cards`（渠道卡片网格，key-card 风格，替换 switchboard）、`#btn-route-auto`；移除 `#vale-card` 及 `loadValeCard`/`valeSetupCommand`。
 
-- [ ] **Step 1: index.html — 密钥管理面板加渠道切换区、移除概览 Vale 卡**
+- [ ] **Step 1: index.html — 模型路由面板改造、移除概览 Vale 卡**
 
-a) `#panel-keys` 的 `#keys-cards` 之后加：
+a) `#panel-routes` 中，把 switchboard 卡片替换为：
 
 ```html
         <div class="card">
@@ -246,6 +246,8 @@ a) `#panel-keys` 的 `#keys-cards` 之后加：
           </div>
         </div>
 ```
+
+（`#routes-switchboard` 及其 wrapper card 删除；客户端接入示例卡保留。密钥管理面板不动。）
 
 b) 删除概览页整个 `#vale-card`（`<div class="card" id="vale-card">...</div>`）。
 
@@ -269,9 +271,9 @@ en 对应英文。删除 `vale.*` keys（`vale.cardTitle`、`vale.desc`、`vale.
 删除 `VALE_FALLBACK_MODELS`、`valeSetupCommand`、`loadValeCard` 及 `loadOverview` 里的 `await loadValeCard();` 调用；替换为：
 
 ```js
-  /* ============ route switch (keys panel) ============ */
+  /* ============ route switch (routing panel) ============ */
   // 渠道切换：/api/health 状态 + /api/me/route 当前选择；点 [使用] → PUT。
-  // 卡片复用 key-card 的样式，视觉与密钥卡片一致。
+  // 卡片复用 key-card 的样式，视觉与密钥管理页一致。
   function routeCardHTML(ch, current) {
     const status = ch.ok ? `<span class="badge ok">${t("route.use")}</span>` : `<span class="badge bad">${ch.reason || "异常"}</span>`;
     const isCur = current === ch.model;
@@ -322,7 +324,7 @@ en 对应英文。删除 `vale.*` keys（`vale.cardTitle`、`vale.desc`、`vale.
   }
 ```
 
-`loadKeys()` 末尾追加 `await loadRouteCards();`。
+`loadRoutesPanel()` 末尾追加 `await loadRouteCards();`（模型路由面板加载器；switchboard 渲染移除）。
 
 注意：`btn-route-auto` 的 addEventListener 在每次 loadRouteCards 里绑定会重复 —— 把 auto 按钮绑定移到 init（一次性），loadRouteCards 只负责渲染 + use 按钮（use 按钮是动态 innerHTML 里的，绑定在 box 上 ✅ 每次渲染新 listener 替换旧的，无重复问题）。调整：auto 按钮在 init 里绑定，点击时调一个共享的 `clearRoute()` 函数：
 
@@ -389,6 +391,6 @@ curl -s https://ai.saisi.online/ | grep -c 'id="vale-card"'     # 0（已移除�
 
 ## Self-Review 备注
 
-- Spec 覆盖：getUserRoute/setUserRoute ✅(T1)、resolveAutoModel + auto 分支 ✅(T2)、/api/me/route ✅(T2)、密钥管理渠道卡 ✅(T3)、移除概览 Vale 卡 ✅(T3)、验证+迁移 ✅(T4)。
+- Spec 覆盖：getUserRoute/setUserRoute ✅(T1)、resolveAutoModel + auto 分支 ✅(T2)、/api/me/route ✅(T2)、模型路由面板 key-card 渠道卡 ✅(T3)、移除概览 Vale 卡 ✅(T3)、验证+迁移 ✅(T4)。
 - 类型一致：`getUserRoute(env, id)`/`setUserRoute(env, id, model)`/`resolveAutoModel(env, uid)`/`isModelUsable(env, model)` 跨任务一致；前端 `model: null` 清除语义与 setUserRoute 的 null 分支一致。
 - 无占位符。
