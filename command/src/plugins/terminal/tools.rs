@@ -30,6 +30,7 @@ pub(super) fn build(
         tool_resize(terminal_mgr),
         tool_select(terminal_mgr),
         tool_read(output_buf),
+        tool_screen(output_buf),
         tool_secret_set(),
         tool_secret_get(),
         tool_secret_delete(),
@@ -401,6 +402,48 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                     Ok(json!({"text": text, "dropped": dropped}))
                 } else {
                     Ok(json!({"text": text}))
+                }
+            }
+        },
+    )
+}
+
+fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
+    let buf = output_buf.clone();
+    ToolDef::new(
+        "terminal_screen",
+        "Get the current on-screen text of a terminal session — the tail of the output buffer (ANSI-stripped), for AI readability. Returns up to `lines` lines (default 60).",
+        json!({"type":"object","properties":{"session_id":{"type":"string"},"lines":{"type":"integer","description":"Number of lines from the tail. Default 60."}},"required":["session_id"]}),
+        move |params: Value| {
+            let buf = buf.clone();
+            async move {
+                let session_id = require_str(&params, "session_id")?;
+                let lines = params.get("lines").and_then(|v| v.as_u64()).unwrap_or(60).max(1) as usize;
+                let (screen, dropped) = {
+                    let mut map = buf.lock().unwrap_or_else(|p| p.into_inner());
+                    let entry = map.get_mut(&session_id);
+                    match entry {
+                        Some(entry) => {
+                            // Tail: find the start of the Nth-from-end line.
+                            let data = &entry.data;
+                            let mut seen = 0;
+                            let mut i = data.len();
+                            while i > 0 && seen < lines {
+                                i -= 1;
+                                if data[i] == b'\n' {
+                                    seen += 1;
+                                }
+                            }
+                            let start = if seen >= lines { i + 1 } else { 0 };
+                            (clean_terminal_output(&data[start..]), entry.dropped)
+                        }
+                        None => (String::new(), 0u64),
+                    }
+                };
+                if dropped > 0 {
+                    Ok(json!({"screen": screen, "dropped": dropped}))
+                } else {
+                    Ok(json!({"screen": screen}))
                 }
             }
         },

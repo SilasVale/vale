@@ -2,7 +2,8 @@
 //!
 //! Tools: terminal_open, terminal_write, terminal_close, terminal_list,
 //!        terminal_execute, terminal_list_ports, terminal_read,
-//!        terminal_resize, terminal_select, secret_set/get/delete
+//!        terminal_screen, terminal_resize, terminal_select,
+//!        secret_set/get/delete
 //!
 //! Tool definitions live in `tools.rs` (one builder fn per tool); this module
 //! holds the plugin struct, the per-session output buffer, and the shared
@@ -140,11 +141,12 @@ mod tests {
     fn tool_count_and_names() {
         let tools = plugin().tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 13);
         for expected in [
             "terminal_open", "terminal_write", "terminal_close", "terminal_list",
             "terminal_execute", "terminal_list_ports", "terminal_resize",
-            "terminal_select", "terminal_read", "secret_set", "secret_get", "secret_delete",
+            "terminal_select", "terminal_read", "terminal_screen",
+            "secret_set", "secret_get", "secret_delete",
         ] {
             assert!(names.contains(&expected), "missing tool: {expected}");
         }

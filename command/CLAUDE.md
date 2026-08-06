@@ -120,7 +120,7 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
   threads); keystrokes try_send drop-on-full.
 - **MCP tool additions**: define the tool in `src/plugins/<plugin>/tools.rs`;
   the registry caches it at register time — no other registration site.
-  Update the tool-count tests (12 terminal / 18 browser) if adding/removing.
+  Update the tool-count tests (13 terminal / 18 browser) if adding/removing.
 
 ## Windows smoke checklist (manual)
 
