@@ -77,6 +77,13 @@
       "devices.keyGenerated": "注册码（一次性，装完即焚）：{code}",
       "devices.regKeyCmd": "在 Windows 安装时先设置这个环境变量，再运行安装：",
       "devices.genKeyFail": "生成失败",
+      "devices.online": "在线", "devices.offline": "离线",
+      "devices.pair": "配对扩展", "devices.pairFor": "设备：{name}",
+      "devices.pairHint": "在扩展 popup 输入此码完成配对。一次性，10 分钟内有效。",
+      "devices.pairCopied": "已复制配对码", "devices.pairFail": "生成配对码失败",
+      "gwMcp.title": "网关 MCP 配置",
+      "gwMcp.desc": "Claude Code 通过本配置接入网关（浏览器 / 终端工具），使用你当前账户的 token。",
+      "gwMcp.copy": "复制网关 MCP 配置",
       "loading": "加载中…", "err.loadRoutes": "路由信息加载失败",
     },
     en: {
@@ -147,6 +154,13 @@
       "devices.keyGenerated": "Registration key (one-time, consumed on use): {code}",
       "devices.regKeyCmd": "Set this env var on the Windows machine before install, then run:",
       "devices.genKeyFail": "Generation failed",
+      "devices.online": "Online", "devices.offline": "Offline",
+      "devices.pair": "Pair extension", "devices.pairFor": "Device: {name}",
+      "devices.pairHint": "Enter this code in the extension popup to pair. One-time, valid for 10 minutes.",
+      "devices.pairCopied": "Pairing code copied", "devices.pairFail": "Failed to generate pairing code",
+      "gwMcp.title": "Gateway MCP config",
+      "gwMcp.desc": "Claude Code connects to the gateway (browser / terminal tools) with this config, using your current account's token.",
+      "gwMcp.copy": "Copy gateway MCP config",
       "loading": "Loading…", "err.loadRoutes": "Failed to load routes",
     },
   };
@@ -294,6 +308,7 @@
     if (name === "routes") loadRoutesPanel();
     if (name === "users") loadUsers();
     if (name === "devices") loadDevices();
+    else stopDevicesPoll(); // 离开设备面板就停在线轮询
   }
 
   /* ============ overview ============ */
@@ -580,6 +595,26 @@
   }
 
   /* ============ devices (admin) ============ */
+  let devicesPollTimer = null;
+
+  function stopDevicesPoll() {
+    if (devicesPollTimer) { clearInterval(devicesPollTimer); devicesPollTimer = null; }
+  }
+
+  // 网关 MCP 配置：Claude Code → https://<console>/mcp（Bearer 当前用户 token）
+  function gwMcpSnippet() {
+    const snippet = {
+      mcpServers: {
+        "vale-gate": {
+          type: "http",
+          url: location.origin + "/mcp",
+          headers: { Authorization: `Bearer ${me?.token || ""}` },
+        },
+      },
+    };
+    return JSON.stringify(snippet, null, 2);
+  }
+
   async function loadCfToken() {
     const { res, data } = await api("/api/admin/cloudflare-token");
     if (res.ok && data) {
@@ -591,10 +626,17 @@
 
   async function loadDevices() {
     loadCfToken();
+    // 刷新一次 /api/me，网关 MCP 配置用当前用户 token
+    const m = await api("/api/me");
+    if (m.res.ok) me = m.data;
+    const gwEl = $("#gw-mcp-json");
+    if (gwEl) gwEl.textContent = gwMcpSnippet();
+
     const { res, data } = await api("/api/devices");
     if (!res.ok) return;
     const devices = data.devices || [];
     if (!devices.length) {
+      stopDevicesPoll();
       $("#devices-list").innerHTML = `<div class="note">${t("devices.empty")}</div>`;
       return;
     }
@@ -602,22 +644,58 @@
       <div class="user-row" data-name="${esc(d.name)}">
         <div class="user-main">
           <span class="u-name">${esc(d.name)}</span>
+          <span class="badge offline" data-status=""><span class="dot"></span></span>
           <span class="u-sub mono">${esc(d.hostname)}</span>
           <span class="badge">${esc(d.token)}</span>
         </div>
         <div class="user-actions">
+          <button class="btn-ghost btn-mini" data-pair="${esc(d.name)}">${t("devices.pair")}</button>
           <a class="btn-ghost btn-mini" href="/api/devices/${encodeURIComponent(d.name)}/proxy/" target="_blank" rel="noopener">${t("devices.open")}</a>
           <button class="btn-ghost btn-mini" data-mcp="${esc(d.name)}">${t("devices.copyMcp")}</button>
           <button class="btn-danger btn-mini" data-del="${esc(d.name)}">${t("btn.clear")}</button>
         </div>
       </div>`).join("");
+    // 在线状态：进面板立即查一次，之后每 30s 轮询（离开面板时 stopDevicesPoll 停掉）
+    await loadDeviceStatus();
+    stopDevicesPoll();
+    devicesPollTimer = setInterval(loadDeviceStatus, 30000);
+  }
+
+  async function loadDeviceStatus() {
+    if ($("#view-app").hidden || $("#panel-devices").hidden) return;
+    const box = $("#devices-list");
+    if (!box || !box.querySelector(".user-row")) return;
+    const { res, data } = await api("/api/plugins/status");
+    if (!res.ok || !data?.devices) return;
+    for (const [name, st] of Object.entries(data.devices)) {
+      const row = box.querySelector(`.user-row[data-name="${name}"]`);
+      const badge = row?.querySelector("[data-status]");
+      if (!badge) continue;
+      const online = !!st.online;
+      badge.className = "badge " + (online ? "online" : "offline");
+      badge.innerHTML = `<span class="dot"></span>${online ? t("devices.online") : t("devices.offline")}`;
+    }
+  }
+
+  function showPairModal(name, code) {
+    $("#pair-device-name").textContent = t("devices.pairFor", { name });
+    $("#pair-code").textContent = code;
+    $("#pair-modal").hidden = false;
   }
 
   async function bindDevices() {
     const list = $("#devices-list");
     list.addEventListener("click", async (ev) => {
+      const pairBtn = ev.target.closest("button[data-pair]");
       const mcpBtn = ev.target.closest("button[data-mcp]");
       const delBtn = ev.target.closest("button[data-del]");
+      if (pairBtn) {
+        const name = pairBtn.dataset.pair;
+        const { res, data } = await api("/api/plugins/pair", { method: "POST", body: JSON.stringify({ device: name }) });
+        if (res.ok && data.code) showPairModal(name, data.code);
+        else toast(data?.error?.message || t("devices.pairFail"), true);
+        return;
+      }
       if (mcpBtn) {
         const name = mcpBtn.dataset.mcp;
         const { res, data } = await api(`/api/devices/${encodeURIComponent(name)}/mcp`);
@@ -636,6 +714,21 @@
         if (res.ok) { toast(t("devices.deleted") + " " + name); loadDevices(); }
         else toast(data?.error?.message || t("devices.saveFail"), true);
       }
+    });
+
+    $("#btn-gw-mcp").addEventListener("click", async () => {
+      if (!me?.token) return;
+      try { await navigator.clipboard.writeText(gwMcpSnippet()); toast(t("devices.mcpCopied")); }
+      catch { toast(t("devices.mcpCopied") + " ⚠", true); }
+    });
+
+    $("#btn-pair-close").addEventListener("click", () => { $("#pair-modal").hidden = true; });
+    $("#pair-modal").addEventListener("click", (ev) => { if (ev.target === $("#pair-modal")) $("#pair-modal").hidden = true; });
+    $("#btn-pair-copy").addEventListener("click", async () => {
+      const code = $("#pair-code").textContent;
+      if (!code) return;
+      try { await navigator.clipboard.writeText(code); toast(t("devices.pairCopied")); }
+      catch { toast(t("token.copyFail"), true); }
     });
 
     $("#btn-dev-regkey").addEventListener("click", async () => {
