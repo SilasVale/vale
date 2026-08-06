@@ -39,7 +39,7 @@ export async function handleMcp(request, env) {
     }, id);
   }
   if (method === "notifications/initialized" || method === "notifications/cancelled") {
-    return mcpJson({}, null); // no-op notifications
+    return new Response(null, { status: 202 }); // JSON-RPC 2.0 notifications are not answered; streamable HTTP: 202, empty body
   }
   if (method === "ping") return mcpJson({}, id);
   if (method === "tools/list") {
@@ -119,14 +119,24 @@ function mcpError(code, message, id) {
 
 function mcpSseStream() {
   const encoder = new TextEncoder();
+  let timer = null;
   const stream = new ReadableStream({
     start(controller) {
-      const timer = setInterval(() => {
-        controller.enqueue(encoder.encode(": keepalive\n\n"));
+      // Keep the timer in the source's closure: `this` in start/cancel is the
+      // underlying source, not the controller, so controller._timer would be
+      // unreachable from cancel() → leaked interval per ended session.
+      timer = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
+        } catch {
+          // stream already cancelled — a tick racing cancel() must not throw
+        }
       }, 15000);
-      controller._timer = timer;
     },
-    cancel() { clearInterval(this._timer); },
+    cancel() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
   });
   return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
 }

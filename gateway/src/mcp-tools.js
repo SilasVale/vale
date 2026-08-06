@@ -4,7 +4,6 @@
  * /api/tools endpoints; browser tools route via PluginHubDO (added in Task 3).
  * Browser tools here are stubbed to a clear error until Task 3 wires the DO.
  */
-import { getDevice } from "./store.js";
 
 const TERMINAL_TOOLS = [
   {
