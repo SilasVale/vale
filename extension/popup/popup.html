@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vale Browser Control</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header>
+  <div class="logo"><span class="dot"></span>Vale Browser Control</div>
+  <span id="wsState" class="pill disconnected">disconnected</span>
+</header>
+
+<section id="pairedCard" class="card hidden">
+  <div class="row"><span class="label">Device</span><span id="device" class="mono">—</span></div>
+  <div class="row"><span class="label">Controlled tabs</span><span id="tabCount">0</span></div>
+  <div class="actions">
+    <button id="openTab" class="primary">Open tab</button>
+    <button id="openTerminal">Terminal</button>
+    <button id="unpair" class="danger">Unpair</button>
+  </div>
+</section>
+
+<section id="pairCard" class="card">
+  <p class="hint">Generate a pairing code on the console's Devices panel, then paste it here.</p>
+  <div class="pair-row">
+    <input id="code" placeholder="Pairing code" autocomplete="off" spellcheck="false">
+    <button id="pair" class="primary">Pair</button>
+  </div>
+</section>
+
+<p id="error" class="error hidden"></p>
+
+<footer>
+  <button id="options">Options</button>
+</footer>
+<script src="popup.js"></script>
+</body>
+</html>

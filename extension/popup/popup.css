@@ -1,0 +1,44 @@
+/* Vale extension popup — mirrors command/src/ui tokens (Linear-inspired light). */
+:root{
+  --bg:#fafafa; --card:#fff; --border:#e8e8ed; --border-strong:#d5d5db;
+  --accent:#5b6cf0; --accent-hover:#4a5ad4; --accent-bg:#eff0ff;
+  --green:#2ea043; --green-bg:#e6f4ea; --red:#cf222e; --red-bg:#ffe9eb;
+  --text:#131314; --text2:#6b6b6f; --text3:#94949b;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
+  --mono:"JetBrains Mono","Cascadia Code","SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  width:300px; font-family:var(--font); font-size:13px; line-height:1.5;
+  background:var(--bg); color:var(--text);
+  padding:12px; display:flex; flex-direction:column; gap:10px;
+}
+button{font-family:inherit;font-size:13px;cursor:pointer;border:1px solid var(--border-strong);
+  background:var(--card);color:var(--text);border-radius:8px;padding:6px 12px;transition:background .15s,color .15s,border-color .15s}
+button:hover{background:var(--accent-bg);border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover{background:var(--accent-hover)}
+button.danger:hover{background:var(--red-bg);border-color:var(--red);color:var(--red)}
+input{font-family:inherit;font-size:13px;border:1px solid var(--border-strong);border-radius:8px;padding:6px 10px;color:var(--text);background:var(--card)}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,108,240,.18)}
+
+header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.logo{display:flex;align-items:center;gap:7px;font-weight:600;font-size:13px}
+.logo .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.pill{font-size:11px;font-weight:600;border-radius:99px;padding:2px 8px;background:var(--accent-bg);color:var(--accent)}
+.pill.connected{background:var(--green-bg);color:var(--green)}
+.pill.disconnected{background:var(--red-bg);color:var(--red)}
+.pill.connecting{background:rgba(191,91,0,.08);color:var(--orange, #bf5b00)}
+
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.row{display:flex;justify-content:space-between;gap:8px}
+.label{color:var(--text2)}
+.mono{font-family:var(--mono);font-size:12px;word-break:break-all;text-align:right}
+.hint{color:var(--text3);font-size:12px}
+.pair-row{display:flex;gap:8px}
+.pair-row input{flex:1;min-width:0}
+.actions{display:flex;gap:8px}
+.actions button{flex:1;white-space:nowrap}
+.error{color:var(--red);font-size:12px;word-break:break-word}
+footer{display:flex;justify-content:flex-end}
+.hidden{display:none !important}
