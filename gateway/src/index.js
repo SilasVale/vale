@@ -232,6 +232,33 @@ async function handleConsole(request, env, url) {
     return jsonOk({ ok: true, apiToken: await getCfToken(env) });
   }
 
+  // Public: browser-extension pairing — the extension has no admin session, the
+  // pairing code is the credential (same pattern as /api/register above).
+  if (method === "POST" && path === `${PLUGIN_BASE}/pair/claim`) {
+    const { code } = (await request.json().catch(() => ({}))) || {};
+    const device = await consumePairCode(env, String(code || ""));
+    if (!device) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    const token = randomHex(16);
+    await addPluginLink(env, token, device);
+    return jsonOk({ token, device });
+  }
+
+  // Public: the browser extension opens its WebSocket here, trading a one-time
+  // ticket (fetched via /api/plugins/ws-ticket with the plugin token) for the
+  // connection. Ticket consumption keeps the long-lived token out of the URL
+  // and gates the hub by knowledge of a valid ticket, not just the device name.
+  if (method === "GET" && path === `${PLUGIN_BASE}/ws`) {
+    const device = url.searchParams.get("device") || "";
+    const ticket = url.searchParams.get("ticket") || "";
+    const ok = await consumeWsTicket(env, ticket);
+    if (!ok || ok !== device) return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
+    const d = await getDevice(env, device);
+    if (!d) return jsonError(404, "Device not found", "not_found_error");
+    const id = env.PLUGIN_HUB.idFromName(device);
+    const hub = env.PLUGIN_HUB.get(id);
+    return hub.fetch(request);
+  }
+
   // ---- Everything below requires a session ----
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
@@ -342,24 +369,17 @@ async function handleConsole(request, env, url) {
 
   // ---- Plugin (extension) pairing & status ----
   // POST /api/plugins/pair          → generate a one-time pairing code for a device
-  // POST /api/plugins/pair/claim    → claim a code → { token, device } (extension)
   // POST /api/plugins/ws-ticket     → trade the plugin token for a one-time WS ticket
   // POST /api/plugins/unpair        → drop all plugin links for a device
   // GET  /api/plugins/status        → online/offline per device (via PluginHubDO)
+  // (POST /api/plugins/pair/claim + GET /api/plugins/ws are PUBLIC — defined in
+  //  the public section above: the extension has no admin session.)
   if (method === "POST" && path === `${PLUGIN_BASE}/pair`) {
     const { device } = (await request.json().catch(() => ({}))) || {};
     const d = device ? await getDevice(env, String(device)) : null;
     if (!d) return jsonError(404, "Device not found", "not_found_error");
     const code = await createPairCode(env, d.name);
     return jsonOk({ code });
-  }
-  if (method === "POST" && path === `${PLUGIN_BASE}/pair/claim`) {
-    const { code } = (await request.json().catch(() => ({}))) || {};
-    const device = await consumePairCode(env, String(code || ""));
-    if (!device) return jsonError(403, "Invalid or used pairing code", "authorization_error");
-    const token = randomHex(16);
-    await addPluginLink(env, token, device);
-    return jsonOk({ token, device });
   }
   if (method === "POST" && path === `${PLUGIN_BASE}/ws-ticket`) {
     const auth = String(request.headers.get("authorization") || "");
