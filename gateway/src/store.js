@@ -392,6 +392,64 @@ export async function deleteRegKey(env, code) {
   await env.KEYS.delete(`regkey:${String(code).toLowerCase()}`);
 }
 
+/* ---------------- Plugin (extension) registry ----------------
+ *
+ * plugins:v1 → JSON map token → { device, createdAt }. The browser extension
+ * on a device's Chrome pairs via a one-time code (pair:<code>, 10min TTL),
+ * receives a plugin token, and trades it for one-time WS tickets
+ * (plg-ticket:<t>, 60s TTL) when connecting to the PluginHubDO.
+ */
+
+const PLUGIN_KEY = "plugins:v1";
+
+export async function listPluginLinks(env) {
+  const raw = await env.KEYS.get(PLUGIN_KEY);
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { return {}; }
+}
+export async function savePluginLinks(env, map) {
+  await env.KEYS.put(PLUGIN_KEY, JSON.stringify(map));
+}
+export async function addPluginLink(env, token, device) {
+  const map = await listPluginLinks(env);
+  map[token] = { device, createdAt: Date.now() };
+  await savePluginLinks(env, map);
+}
+export async function getPluginByToken(env, token) {
+  const map = await listPluginLinks(env);
+  return map[token] || null;
+}
+export async function removePluginLink(env, token) {
+  const map = await listPluginLinks(env);
+  if (map[token]) { delete map[token]; await savePluginLinks(env, map); }
+}
+
+// One-time pairing code (console admin generates; extension claims).
+export async function createPairCode(env, device) {
+  const code = randomHex(6).toUpperCase();
+  await env.KEYS.put(`pair:${code}`, device, { expirationTtl: 600 });
+  return code;
+}
+export async function consumePairCode(env, code) {
+  const device = await env.KEYS.get(`pair:${code}`);
+  if (!device) return null;
+  await env.KEYS.delete(`pair:${code}`);
+  return device;
+}
+
+// One-time short-lived WS ticket (extension trades its plugin token for this).
+export async function createWsTicket(env, device) {
+  const ticket = randomHex(16);
+  await env.KEYS.put(`plg-ticket:${ticket}`, device, { expirationTtl: 60 });
+  return ticket;
+}
+export async function consumeWsTicket(env, ticket) {
+  const device = await env.KEYS.get(`plg-ticket:${ticket}`);
+  if (!device) return null;
+  await env.KEYS.delete(`plg-ticket:${ticket}`);
+  return device;
+}
+
 /* ---- Cloudflare tunnel API token (account-level, admin-managed) ----
  *
  * cf:api_token — the API token used by the Windows install to set up the
