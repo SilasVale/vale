@@ -1,5 +1,4 @@
-//! Headless MCP server binary — thin wrapper over the vale_command library.
-//! (The desktop binary lives in src-tauri/ and enables the `desktop` feature.)
+//! vale-command server binary — thin wrapper over the vale_command library.
 //!
 //! Runs as a plain console process, or on Windows as the `ValeCommand` service
 //! when launched by the Service Control Manager.
@@ -114,7 +113,7 @@ async fn run_server(config_path: PathBuf) {
     let host = config.server.host.clone();
     let port = config.server.port;
     let name = config.server.name.clone();
-    let state = Arc::new(AppState::new(config, None));
+    let state = Arc::new(AppState::new(config));
 
     out!();
     out!("  MCP server running on http://{host}:{port}/mcp");

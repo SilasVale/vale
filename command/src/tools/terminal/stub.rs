@@ -1,4 +1,5 @@
-//! Headless stub — terminal tools report "desktop only" errors.
+//! Stub — terminal tools report "backend not enabled" errors when the
+//! `terminal` feature is off.
 
 use super::{TermOpenRequest, TermOutput, TermSessionInfo};
 use vale_command_core::DeviceError;

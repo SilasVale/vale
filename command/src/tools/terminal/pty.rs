@@ -1,4 +1,4 @@
-//! PTY backend — local shell via portable-pty (desktop only).
+//! PTY backend — local shell via portable-pty (`terminal` feature).
 
 use super::{TermBackend, TermOutput};
 use vale_command_core::DeviceError;

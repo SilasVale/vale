@@ -1,4 +1,4 @@
-//! OS keychain secrets (SSH passwords) — desktop only.
+//! OS keychain secrets (SSH passwords) — gated behind the `keyring` feature.
 
 #[cfg(feature = "keyring")]
 mod secrets_impl {
@@ -37,13 +37,13 @@ mod secrets_impl {
     use vale_command_core::DeviceError;
 
     pub fn set(_: &str, _: &str) -> Result<(), DeviceError> {
-        Err(DeviceError::Keychain { reason: "secrets only in desktop mode".into() })
+        Err(DeviceError::Keychain { reason: "secrets require the keyring feature".into() })
     }
     pub fn get(_: &str) -> Result<Option<String>, DeviceError> {
-        Err(DeviceError::Keychain { reason: "secrets only in desktop mode".into() })
+        Err(DeviceError::Keychain { reason: "secrets require the keyring feature".into() })
     }
     pub fn delete(_: &str) -> Result<(), DeviceError> {
-        Err(DeviceError::Keychain { reason: "secrets only in desktop mode".into() })
+        Err(DeviceError::Keychain { reason: "secrets require the keyring feature".into() })
     }
     pub fn list() -> Vec<String> { vec![] }
 }

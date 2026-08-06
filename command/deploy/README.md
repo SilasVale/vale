@@ -1,8 +1,9 @@
 # Vale Command — Deployment guide (Windows host + Cloudflare)
 
-Vale Command is a **headless MCP server + web panel** running on a Windows
-machine connected to hardware (serial + network), exposed over a Cloudflare
-Tunnel to `<download-host>` so Claude Code / any browser can reach it.
+Vale Command is a **pure-service MCP server** (terminal backends: PTY/SSH/
+serial) running on a Windows machine connected to hardware, exposed over a
+Cloudflare Tunnel to `<download-host>` so Claude Code can reach it. A tray app
+(`vale-tray.exe`) controls the service from the desktop.
 
 This directory only holds the **deployment scripts and samples**; the code
 lives at the repo root.
@@ -55,7 +56,7 @@ Multi-device: the script accepts `-Hostname`; pass it via a scriptblock
 <download-host> (device list page, optional, see multi-device)
 <device-host> ──Cloudflare Tunnel──► vale-command on Windows ──► hardware (serial/network)
 Claude Code (anywhere) ──HTTPS/MCP──► https://<device-host>/mcp
-Browser (anywhere) ──► https://<device-host> (web panel)
+Console (anywhere) ──► https://console.saisi.online/ (device page)
 ```
 
 ---
@@ -78,9 +79,7 @@ Browser (anywhere) ──► https://<device-host> (web panel)
 # produces target/x86_64-pc-windows-msvc/release/vale-command.exe
 ```
 
-> Features: default `--features terminal,browser` enables serial/SSH/PTY
-> terminals and the headless browser (Edge/Chrome). Drop `browser` if you only
-> need serial/terminal.
+> Features: `--features terminal` enables the real serial/SSH/PTY backends.
 
 ### 2. Install and register the service
 
@@ -111,7 +110,7 @@ cloudflared tunnel route dns vale-command <device-host>
 cloudflared service install       # register as an auto-start service
 ```
 
-Verify: open `https://<device-host>` in a browser, enter the token, see the panel.
+Verify: `curl.exe -H "Authorization: Bearer <TOKEN>" https://<device-host>/api/status` returns the server version and open serial ports.
 
 ### 4. Hook up Claude Code
 
@@ -133,8 +132,8 @@ config.yaml):
 Repeat steps 1–3 on each new machine, changing only the subdomain index
 (`d2`, `d3`, …). Each instance has its own token, independent of the others.
 
-Optional aggregate page: a tiny Cloudflare Worker as the `<download-host>`
-device list (name → subdomain); clicking through opens each full panel.
+The console (`https://console.saisi.online/`) lists devices and can open a
+per-device page; the tray app's "打开控制台" jumps straight there.
 
 ---
 
@@ -142,10 +141,8 @@ device list (name → subdomain); clicking through opens each full panel.
 
 - Each instance's token is independent and auto-generated on first run;
   `/api/*` and `/mcp` both require the Bearer token.
-- Panel static assets need no token, but data endpoints do; remember the token
-  per subdomain in the browser.
-- Browser/serial tools work in headless mode; `screenshot_ui`/`evaluate_ui` are
-  desktop-only.
+- Only the minimal root status page is public; every data endpoint requires
+  the token.
 
 ## Verification checklist
 
@@ -156,6 +153,6 @@ sc query ValeCommand
 curl.exe -H "Authorization: Bearer <TOKEN>" http://127.0.0.1:18080/api/status
 # public API through the tunnel
 curl.exe -H "Authorization: Bearer <TOKEN>" https://<device-host>/api/status
-# device web page (browser tool drives headless Edge)
-curl.exe -H "Authorization: Bearer <TOKEN>" -X POST https://<device-host>/api/tools/browser_navigate -d '{\"url\":\"http://<device-ip>/\"}'
+# list terminal sessions via the generic tool dispatch
+curl.exe -H "Authorization: Bearer <TOKEN>" -X POST https://<device-host>/api/tools/terminal_list -d '{}'
 ```

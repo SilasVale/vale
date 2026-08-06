@@ -44,7 +44,7 @@ sc.exe create $ServiceName binPath= $binPath start= auto DisplayName= "Vale Comm
 if ($LASTEXITCODE -ne 0) {
     throw "sc create failed (exit $LASTEXITCODE) - run as Administrator."
 }
-sc.exe description $ServiceName "Vale Command - remote device MCP server + web panel (serial / terminal / browser)" | Out-Null
+sc.exe description $ServiceName "Vale Command - remote device MCP server (serial / terminal)" | Out-Null
 sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 
 Write-Host "Starting '$ServiceName'..."
@@ -55,5 +55,5 @@ $token = Select-String -Path $ConfigPath -Pattern "auth_token:" | ForEach-Object
 Write-Host ""
 Write-Host "Service '$ServiceName' is running."
 Write-Host "Token: $token"
-Write-Host "Panel: http://127.0.0.1:18080/   MCP: http://127.0.0.1:18080/mcp"
+Write-Host "API : http://127.0.0.1:18080/   MCP: http://127.0.0.1:18080/mcp"
 Write-Host "Next: expose via Cloudflare Tunnel (see deploy/README.md)."

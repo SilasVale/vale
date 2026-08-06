@@ -1,4 +1,4 @@
-//! SSH session via russh — used by the terminal SshBackend (desktop only).
+//! SSH session via russh — used by the terminal SshBackend (`terminal` feature).
 
 use std::sync::Arc;
 

@@ -6,7 +6,7 @@
 name = "vale-tray"
 version = "0.1.0"
 edition = "2021"
-description = "Vale Command system tray controller (open panel / start / stop)"
+description = "Vale Command system tray controller (status / start-stop-restart / copy MCP config / open console / local terminal)"
 
 [[bin]]
 name = "vale-tray"

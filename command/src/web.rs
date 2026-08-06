@@ -1,25 +1,21 @@
-//! Web control panel served via Tower service (NOT axum route handlers).
+//! HTTP surface served via Tower service (NOT axum route handlers).
 //!
 //! axum route handlers don't work on cross-compiled Windows. This uses the Tower
 //! layer directly — the same layer MCP's StreamableHttpService sits on.
 //!
 //! Routes:
-//!   GET  /                  → HTML panel
-//!   GET  /styles.css        → CSS
-//!   GET  /app.js etc.       → ES module files
-//!   GET  /vendor/*          → vendored xterm assets
-//!   GET  /api/events        → SSE event stream
-//!   GET  /api/events/poll   → poll events (?after=N)
-//!   GET  /api/events/term   → SSE terminal byte stream (TermOutput JSON frames)
-//!   GET  /api/browser/frame → headless live browser frame (base64 PNG, one-shot)
-//!   GET  /api/browser/frame-stream → SSE live browser frames (2s push, no polling)
-//!   GET  /api/status        → system status
-//!   GET  /api/spec          → plugin spec
-//!   POST /api/tools/{name}  → generic tool dispatch via PluginRegistry
+//!   GET  /                   → minimal status page (no panel assets)
+//!   GET  /api/events         → SSE event stream
+//!   GET  /api/events/poll    → poll events (?after=N)
+//!   GET  /api/events/term    → SSE terminal byte stream (TermOutput JSON frames)
+//!   GET  /api/status         → system status
+//!   GET  /api/spec           → plugin spec
+//!   POST /api/tools/{name}   → generic tool dispatch via PluginRegistry
+//!   /mcp (via TokenGate)     → rmcp streamable HTTP server
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use std::convert::Infallible;
 use std::future::Future;
@@ -32,28 +28,18 @@ use tower::Service;
 use crate::state::AppState;
 use vale_command_core::EventBus;
 
-const PANEL: &str = include_str!("ui/index.html");
-
-// ── Embedded static assets (no build step, single-exe safe) ─────
-
-const ASSETS: &[(&str, &[u8], &str)] = &[
-    ("/styles.css",              include_bytes!("ui/styles.css"),              "text/css; charset=utf-8"),
-    ("/app.js",                  include_bytes!("ui/app.js"),                  "text/javascript; charset=utf-8"),
-    ("/state.js",                include_bytes!("ui/state.js"),                "text/javascript; charset=utf-8"),
-    ("/ipc.js",                  include_bytes!("ui/ipc.js"),                  "text/javascript; charset=utf-8"),
-    ("/events.js",               include_bytes!("ui/events.js"),               "text/javascript; charset=utf-8"),
-    ("/transport.js",            include_bytes!("ui/transport.js"),            "text/javascript; charset=utf-8"),
-    ("/view.js",                 include_bytes!("ui/view.js"),                 "text/javascript; charset=utf-8"),
-    ("/tabs.js",                 include_bytes!("ui/tabs.js"),                 "text/javascript; charset=utf-8"),
-    ("/browser.js",              include_bytes!("ui/browser.js"),              "text/javascript; charset=utf-8"),
-    ("/term.js",                 include_bytes!("ui/term.js"),                 "text/javascript; charset=utf-8"),
-    ("/conn.js",                 include_bytes!("ui/conn.js"),                 "text/javascript; charset=utf-8"),
-    ("/icons.js",                include_bytes!("ui/icons.js"),                "text/javascript; charset=utf-8"),
-    ("/vendor/xterm.min.js",            include_bytes!("ui/vendor/xterm.min.js"),            "text/javascript; charset=utf-8"),
-    ("/vendor/xterm.css",               include_bytes!("ui/vendor/xterm.css"),               "text/css; charset=utf-8"),
-    ("/vendor/xterm-addon-fit.min.js",  include_bytes!("ui/vendor/xterm-addon-fit.min.js"),  "text/javascript; charset=utf-8"),
-    ("/vendor/inter-variable.woff2",    include_bytes!("ui/vendor/inter-variable.woff2"),    "font/woff2"),
-];
+/// Minimal self-contained status page — the panel SPA is retired, but the
+/// device URL should still answer something readable in a browser.
+const STATUS_PAGE: &str = concat!(
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>vale-command</title></head>",
+    "<body style=\"font-family:monospace;margin:2rem\"><h1>vale-command</h1>",
+    "<p>MCP endpoint: <code>/mcp</code></p>",
+    "<p>Tool API: <code>/api/tools/{name}</code></p>",
+    "<p>Status: <code>/api/status</code></p>",
+    "<p>Version: ",
+    env!("CARGO_PKG_VERSION"),
+    "</p></body></html>",
+);
 
 // ── Tower Service ────────────────────────────────────────────
 
@@ -131,10 +117,10 @@ fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>
 
 // ── Token gate for the MCP route ─────────────────────────────
 
-/// Wraps any Tower service with the same bearer-token check as the panel.
-/// The MCP endpoint is as sensitive as the panel (it drives the browser and
-/// terminals), so it must not be reachable without the token when one is
-/// configured. rmcp has no server-side auth hook, so the check happens here.
+/// Wraps any Tower service with the same bearer-token check as the API.
+/// The MCP endpoint is as sensitive as the API (it drives terminals), so it
+/// must not be reachable without the token when one is configured. rmcp has
+/// no server-side auth hook, so the check happens here.
 #[derive(Clone)]
 pub struct TokenGate<S> {
     inner: S,
@@ -235,25 +221,14 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         return sse_term_stream(state).await;
     }
 
-    // SSE browser frame stream — live preview frames pushed over one long-lived
-    // connection (replaces headless screenshot polling).
-    if method == Method::GET && path == "/api/browser/frame-stream" {
-        if let Err(resp) = check_auth(&req, &state) { return *resp; }
-        return sse_browser_frame_stream(state).await;
-    }
-
-    // GET non-API — static UI, assets, vendor: public (no token needed)
+    // GET non-API — minimal status page: public (no token needed)
     if method == Method::GET && !path.starts_with("/api") && path != "/mcp" {
-        if let Some((_, bytes, ct)) = ASSETS.iter().find(|(p, _, _)| *p == path) {
-            let mut resp = built_response(StatusCode::OK, ct, Body::from(Bytes::from_static(bytes)));
-            resp.headers_mut().insert(
-                axum::http::HeaderName::from_static("cache-control"),
-                axum::http::HeaderValue::from_static("no-cache"),
-            );
-            return resp;
-        }
-        // Default html fallback
-        return Html(PANEL).into_response();
+        let mut resp = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(STATUS_PAGE));
+        resp.headers_mut().insert(
+            axum::http::HeaderName::from_static("cache-control"),
+            axum::http::HeaderValue::from_static("no-cache"),
+        );
+        return resp;
     }
 
     // Auth gate for all the /mcp + /api/* routes that follow
@@ -280,10 +255,6 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 .unwrap_or(0);
             api_events_poll(&state, after)
         },
-        // Headless live browser frame (base64 PNG) — used by the web panel's
-        // screenshot preview. Deliberately emits no BrowserScreenshot event so a
-        // 2s polling loop never floods the activity stream.
-        ("GET", "/api/browser/frame") => api_browser_frame(&state).await,
 
         // Generic tool dispatch: POST /api/tools/{name}
         ("POST", p) if p.starts_with("/api/tools/") => {
@@ -416,66 +387,11 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
 
 // ── Status ────────────────────────────────────────────────────
 
-/// SSE stream of live browser frames (headless preview). One long-lived
-/// connection per panel; frames are pushed every FRAME_INTERVAL while the
-/// browser has content, with a keep-alive backoff when it doesn't. Replaces
-/// the 2s polling loop, so a proxied panel costs zero gateway requests per
-/// frame.
-const FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
-const FRAME_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
-
-async fn sse_browser_frame_stream(state: Arc<AppState>) -> Response {
-    let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
-
-    tokio::spawn(async move {
-        loop {
-            match state.browser_mgr.screenshot(None).await {
-                Ok(b64) => {
-                    // {"ok":true,"result":"<base64 PNG>"}
-                    let json = serde_json::json!({ "ok": true, "result": b64 });
-                    if tx.send(Ok(Bytes::from(format!("data: {json}\n\n")))).await.is_err() {
-                        break;
-                    }
-                    tokio::time::sleep(FRAME_INTERVAL).await;
-                }
-                Err(_) => {
-                    // No tab / backend not enabled — keep the connection alive
-                    // and retry with backoff (a reconnect churn loop is worse).
-                    tokio::time::sleep(FRAME_BACKOFF).await;
-                }
-            }
-        }
-    });
-
-    let body = Body::from_stream(MpscStream { rx });
-
-    let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("connection"),
-        axum::http::HeaderValue::from_static("keep-alive"),
-    );
-    resp
-}
-
-/// Live browser frame for the headless web panel's screenshot preview.
-async fn api_browser_frame(state: &AppState) -> serde_json::Value {
-    match state.browser_mgr.screenshot(None).await {
-        Ok(b64) => serde_json::json!({"ok": true, "result": b64}),
-        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
-    }
-}
-
 async fn api_status(state: &AppState) -> serde_json::Value {
-    let tabs = state.browser_mgr.tab_list().await.unwrap_or_default();
     let serial = state.serial_pool.list_open_ports();
     serde_json::json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
-        "tabs": tabs,
         "serial_ports": serial,
     })
 }
@@ -526,7 +442,7 @@ mod tests {
     use axum::http::Request;
 
     fn state() -> Arc<AppState> {
-        Arc::new(AppState::new(Config::default(), None))
+        Arc::new(AppState::new(Config::default()))
     }
 
     fn req(method: &str, path: &str) -> Request<Body> {
@@ -548,11 +464,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spec_lists_both_plugins() {
+    async fn spec_lists_terminal_plugin() {
         let resp = handle_request(req("GET", "/api/spec"), state()).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        assert_eq!(v["plugins"].as_array().unwrap().len(), 2);
+        assert_eq!(v["plugins"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -591,7 +507,7 @@ mod tests {
     async fn auth_401_without_token() {
         let mut cfg = Config::default();
         cfg.server.auth_token = Some("sekret".into());
-        let st = Arc::new(AppState::new(cfg, None));
+        let st = Arc::new(AppState::new(cfg));
         let resp = handle_request(req("GET", "/api/status"), st).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
@@ -600,23 +516,26 @@ mod tests {
     async fn auth_ok_with_bearer_token() {
         let mut cfg = Config::default();
         cfg.server.auth_token = Some("sekret".into());
-        let st = Arc::new(AppState::new(cfg, None));
+        let st = Arc::new(AppState::new(cfg));
         let resp = handle_request(req_with_token("GET", "/api/status", "sekret"), st).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    async fn static_assets_are_public() {
-        // UI assets need no token — the panel must render before auth
-        let resp = handle_request(req("GET", "/styles.css"), state()).await;
+    async fn status_page_is_public() {
+        // The root page needs no token — it carries no data beyond the version.
+        let resp = handle_request(req("GET", "/"), state()).await;
         assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("vale-command"));
     }
 
     #[tokio::test]
     async fn term_sse_requires_auth() {
         let mut cfg = Config::default();
         cfg.server.auth_token = Some("sekret".into());
-        let st = Arc::new(AppState::new(cfg, None));
+        let st = Arc::new(AppState::new(cfg));
         let resp = handle_request(req("GET", "/api/events/term"), st).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
@@ -647,39 +566,5 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes);
         assert!(text.contains("term-0"), "SSE frame missing session id: {text}");
         assert!(text.starts_with("data: "));
-    }
-
-    #[tokio::test]
-    async fn frame_stream_requires_auth() {
-        let mut cfg = Config::default();
-        cfg.server.auth_token = Some("sekret".into());
-        let st = Arc::new(AppState::new(cfg, None));
-        let resp = handle_request(req("GET", "/api/browser/frame-stream"), st).await;
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn frame_stream_ok_with_stub() {
-        // Stub backend has no browser — the connection still opens and stays
-        // alive (keep-alive backoff), and the response is an SSE stream.
-        let resp = handle_request(req("GET", "/api/browser/frame-stream"), state()).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp.headers()
-            .get(axum::http::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        assert!(ct.contains("text/event-stream"), "content-type: {ct}");
-    }
-
-    #[tokio::test]
-    async fn browser_frame_returns_error_without_backend() {
-        // Default state uses the stub browser backend (no browser feature) —
-        // the frame endpoint must answer a clean JSON error, not panic.
-        let st = state();
-        let resp = handle_request(req("GET", "/api/browser/frame"), st).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        let v = json_body(resp).await;
-        assert_eq!(v["ok"], false);
-        assert!(v["error"].as_str().is_some_and(|s| !s.is_empty()));
     }
 }

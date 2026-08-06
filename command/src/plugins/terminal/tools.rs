@@ -2,7 +2,7 @@
 //!
 //! The closures capture clones of the shared context (managers, bus, buffer),
 //! so the tool list is built a single time by `PluginRegistry::register` and
-//! reused for MCP list_tools, the web panel spec, and Tauri dispatch alike.
+//! reused for MCP list_tools and the web /api/spec endpoint alike.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -87,7 +87,7 @@ fn tool_open(
                     }
                 }
                 // Drain output channel to keep backend alive.
-                // Forward to desktop UI via EventBus, also buffer for MCP terminal_read.
+                // Forward via EventBus, also buffer for MCP terminal_read.
                 let bus2 = bus.clone();
                 let sid_buf = id.clone();
                 tokio::spawn(async move {
