@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vale Browser Control — Options</title>
+<link rel="stylesheet" href="options.css">
+</head>
+<body>
+<main class="card">
+  <h1>Vale Browser Control</h1>
+  <label for="consoleOrigin">Console origin</label>
+  <input id="consoleOrigin" type="url" placeholder="https://console.saisi.online" spellcheck="false">
+  <p class="hint">The Vale console this extension pairs with — used for /api/plugins/* (pairing, WS) and controlled tabs.</p>
+  <div class="row">
+    <button id="save">Save</button>
+    <span id="saved" class="saved hidden">Saved</span>
+  </div>
+</main>
+<script src="options.js"></script>
+</body>
+</html>
