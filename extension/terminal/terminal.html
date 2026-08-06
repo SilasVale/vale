@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Vale Terminal</title>
+  <link rel="stylesheet" href="vendor/xterm.css">
+  <link rel="stylesheet" href="terminal.css">
+</head>
+<body>
+  <div id="toolbar">
+    <select id="device-select"></select>
+    <div id="tabs"></div>
+    <button id="new-session">New PTY</button>
+    <span id="status"></span>
+  </div>
+  <div id="term-container"></div>
+  <script src="vendor/xterm.min.js"></script>
+  <script src="vendor/xterm-addon-fit.min.js"></script>
+  <script type="module" src="terminal.js"></script>
+</body>
+</html>
