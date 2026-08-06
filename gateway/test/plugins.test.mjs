@@ -42,24 +42,28 @@ test("ws ticket: one-time", async () => {
   assert.equal(await consumeWsTicket(e, t), null);
 });
 
-// The extension has no admin session, so pair/claim and /ws must be reachable
-// without one. handleConsole's public section ends where requireSession is
-// called — a route registered after that gate 401s before its handler runs.
+// The extension has no admin session, so pair/claim, ws-ticket and /ws must be
+// reachable without one. handleConsole's public section ends where requireSession
+// is called — a route registered after that gate 401s before its handler runs.
 // Worker routing can't run under plain node, so assert the registration order
 // by reading handleConsole's source (same check a reviewer would do by eye).
-test("pair/claim + /ws routes sit in the PUBLIC section (before requireSession)", () => {
+test("pair/claim + ws-ticket + /ws routes sit in the PUBLIC section (before requireSession)", () => {
   const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
   const body = src.slice(src.indexOf("async function handleConsole"));
   const sessionGate = body.indexOf("const user = await requireSession(request, env);");
   assert.ok(sessionGate > 0, "requireSession gate found");
   const claim = body.indexOf("`${PLUGIN_BASE}/pair/claim`");
+  const ticket = body.indexOf("`${PLUGIN_BASE}/ws-ticket`");
   const ws = body.indexOf("`${PLUGIN_BASE}/ws`");
   assert.ok(claim > 0, "pair/claim route found");
+  assert.ok(ticket > 0, "ws-ticket route found");
   assert.ok(ws > 0, "/ws route found");
   assert.ok(claim < sessionGate, "pair/claim registered before requireSession");
+  assert.ok(ticket < sessionGate, "ws-ticket registered before requireSession");
   assert.ok(ws < sessionGate, "/ws registered before requireSession");
   // Exactly one registration each — no admin-section copy left behind.
   assert.equal(claim, body.lastIndexOf("`${PLUGIN_BASE}/pair/claim`"));
+  assert.equal(ticket, body.lastIndexOf("`${PLUGIN_BASE}/ws-ticket`"));
   assert.equal(ws, body.lastIndexOf("`${PLUGIN_BASE}/ws`"));
 });
 
