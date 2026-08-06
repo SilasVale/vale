@@ -38,6 +38,10 @@ export async function connect() {
   // connect that replaces this one, forever).
   if (ws && (ws.readyState === 0 || ws.readyState === 1)) {
     try { ws.close(1000, "reconnect"); } catch {}
+    // Mark it stale right away: while we await the ticket fetch below, `ws`
+    // must not still point at the closing socket, or its onclose would see
+    // `ws === sock` and schedule a spurious reconnect + duplicate fetch.
+    ws = null;
   }
   const consoleOrigin = (await chrome.storage.local.get("consoleOrigin")).consoleOrigin || "https://console.saisi.online";
   let ticket;

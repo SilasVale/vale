@@ -26,12 +26,32 @@ async function resolveRef(tabId, ref) {
   if (!el) throw new Error(`element ref ${ref} not found — re-snapshot`);
   return { el, snap };
 }
-async function clickByPath(tabId, path) {
+// Build an in-page expression that re-resolves a snapshot element by its
+// path. chain[0] is resolved via document.querySelector (light DOM), each
+// following selector via the previous level's shadowRoot — document.querySelector
+// cannot match :host, so shadow elements walk the host chain instead. `path`
+// is the light-DOM selector, or null when the element lives in an open shadow
+// root — then the full chain (light-DOM selector first) is in `shadowPath`.
+// mode "rect" returns the element's rect (or null), mode "focus" focuses it
+// and returns true (or false) — the caller throws on null/false.
+export function reResolveExpr(el, mode) {
+  const chain = el.path ? [el.path, ...(el.shadowPath || [])] : (el.shadowPath || []);
+  const miss = mode === "focus" ? "false" : "null";
+  if (!chain.length) return `(() => ${miss})()`;
+  let steps = "";
+  for (let i = 0; i < chain.length; i++) {
+    const q = i === 0
+      ? `document.querySelector(${JSON.stringify(chain[i])})`
+      : `_el.shadowRoot.querySelector(${JSON.stringify(chain[i])})`;
+    steps += `${i === 0 ? "let " : ""}_el = ${q};\n    if (!_el) return ${miss};\n    `;
+  }
+  steps += mode === "focus" ? "_el.focus();\n    return true;" : "return _el.getBoundingClientRect();";
+  return `(() => {\n  try {\n    ${steps}\n  } catch { return ${miss}; }\n})()`;
+}
+
+async function clickByPath(tabId, el) {
   // Re-resolve the path in-page; if it fails, DOM changed → re-snapshot.
-  const found = await evaluate(tabId, `(() => {
-    try { const el = document.querySelector(${JSON.stringify(path)}); return el ? el.getBoundingClientRect() : null; }
-    catch { return null; }
-  })()`);
+  const found = await evaluate(tabId, reResolveExpr(el, "rect"));
   if (!found) throw new Error("DOM changed — please re-snapshot");
   const x = found.x + found.width / 2, y = found.y + found.height / 2;
   await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
@@ -54,12 +74,13 @@ export async function runTool(tool, params) {
     }
     case "browser_click": {
       const { el } = await resolveRef(tabId, params.element_ref);
-      await clickByPath(tabId, el.path);
+      await clickByPath(tabId, el);
       return snapshot(tabId);
     }
     case "browser_type": {
       const { el } = await resolveRef(tabId, params.element_ref);
-      await evaluate(tabId, `(() => { const el = document.querySelector(${JSON.stringify(el.path)}); el?.focus(); return true; })()`);
+      const focused = await evaluate(tabId, reResolveExpr(el, "focus"));
+      if (!focused) throw new Error("DOM changed — please re-snapshot");
       await send(tabId, "Input.insertText", { text: String(params.text) });
       return snapshot(tabId);
     }
@@ -76,6 +97,7 @@ export async function runTool(tool, params) {
     case "browser_close": {
       await chrome.tabs.remove(tabId);
       delete state.controlledTabs[device];
+      state.error = null; // a stale detach error must not survive a clean close
       return { closed: true };
     }
     default: throw new Error(`unknown browser tool: ${tool}`);
