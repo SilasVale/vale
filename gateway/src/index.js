@@ -20,10 +20,12 @@
  * The admin is seeded from the existing CLIENT_KEY, keeping the legacy settings.json working.
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute } from "./store.js";
-import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "./auth.js";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
+import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.js";
 import { build101Response, deviceFetch } from "./device-fetch.js";
 import { handleMcp } from "./mcp.js";
+import { PluginHubDO } from "./plugin-hub.js";
+export { PluginHubDO };
 
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
@@ -31,6 +33,7 @@ const AUTH_BASE = "/api/auth";
 const ADMIN_BASE = "/api/admin";
 const ME_BASE = "/api/me";
 const DEVICE_BASE = "/api/devices";
+const PLUGIN_BASE = "/api/plugins";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -335,6 +338,56 @@ async function handleConsole(request, env, url) {
     const d = await getDevice(env, decodeURIComponent(proxyMatch[1]));
     if (!d) return jsonError(404, "Device not found", "not_found_error");
     return await proxyDevice(request, env, d, proxyMatch[2] || "/");
+  }
+
+  // ---- Plugin (extension) pairing & status ----
+  // POST /api/plugins/pair          → generate a one-time pairing code for a device
+  // POST /api/plugins/pair/claim    → claim a code → { token, device } (extension)
+  // POST /api/plugins/ws-ticket     → trade the plugin token for a one-time WS ticket
+  // POST /api/plugins/unpair        → drop all plugin links for a device
+  // GET  /api/plugins/status        → online/offline per device (via PluginHubDO)
+  if (method === "POST" && path === `${PLUGIN_BASE}/pair`) {
+    const { device } = (await request.json().catch(() => ({}))) || {};
+    const d = device ? await getDevice(env, String(device)) : null;
+    if (!d) return jsonError(404, "Device not found", "not_found_error");
+    const code = await createPairCode(env, d.name);
+    return jsonOk({ code });
+  }
+  if (method === "POST" && path === `${PLUGIN_BASE}/pair/claim`) {
+    const { code } = (await request.json().catch(() => ({}))) || {};
+    const device = await consumePairCode(env, String(code || ""));
+    if (!device) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    const token = randomHex(16);
+    await addPluginLink(env, token, device);
+    return jsonOk({ token, device });
+  }
+  if (method === "POST" && path === `${PLUGIN_BASE}/ws-ticket`) {
+    const auth = String(request.headers.get("authorization") || "");
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const link = token ? await getPluginByToken(env, token) : null;
+    if (!link) return jsonError(401, "Invalid plugin token", "authorization_error");
+    const ticket = await createWsTicket(env, link.device);
+    return jsonOk({ ticket, device: link.device });
+  }
+  if (method === "POST" && path === `${PLUGIN_BASE}/unpair`) {
+    const { device } = (await request.json().catch(() => ({}))) || {};
+    const links = await listPluginLinks(env);
+    for (const [t, l] of Object.entries(links)) if (l.device === device) await removePluginLink(env, t);
+    return jsonOk({ ok: true });
+  }
+  if (method === "GET" && path === `${PLUGIN_BASE}/status`) {
+    const devices = await listDevices(env);
+    const out = {};
+    for (const d of devices) {
+      try {
+        const id = env.PLUGIN_HUB.idFromName(d.name);
+        const hub = env.PLUGIN_HUB.get(id);
+        const res = await hub.fetch("https://hub/status");
+        const j = await res.json();
+        out[d.name] = { online: !!j.online };
+      } catch { out[d.name] = { online: false }; }
+    }
+    return jsonOk({ devices: out });
   }
 
   // Cloudflare tunnel API token — account-level credential the install fetches
