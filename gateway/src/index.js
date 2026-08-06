@@ -271,6 +271,32 @@ async function handleConsole(request, env, url) {
     return hub.fetch(request);
   }
 
+  // ---- Device reverse-proxy: admin session cookie OR paired plugin token ----
+  // <any> /api/devices/<name>/proxy/<rest> → reverse-proxy to the device panel.
+  // The console admin browses the panel with the session cookie; the browser
+  // extension's terminal page is cross-site (no console cookie, SameSite=Lax),
+  // so it authenticates with the plugin token it was paired with
+  // (Authorization: Bearer <token>, the same credential as /api/plugins/ws).
+  // The token grants access ONLY to the device it's paired to — no other
+  // device, no admin APIs, no /api/me.
+  const proxyMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/proxy(.*)$`));
+  if (proxyMatch) {
+    const deviceName = decodeURIComponent(proxyMatch[1]);
+    const d = await getDevice(env, deviceName);
+    if (!d) return jsonError(404, "Device not found", "not_found_error");
+    const user = await requireSession(request, env);
+    if (user && user.role === "admin") {
+      return await proxyDevice(request, env, d, proxyMatch[2] || "/");
+    }
+    const auth = String(request.headers.get("authorization") || "");
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const link = token ? await getPluginByToken(env, token) : null;
+    if (link && link.device === deviceName) {
+      return await proxyDevice(request, env, d, proxyMatch[2] || "/");
+    }
+    return jsonError(401, "Not logged in or invalid plugin token", "authentication_error");
+  }
+
   // ---- Everything below requires a session ----
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
@@ -334,12 +360,13 @@ async function handleConsole(request, env, url) {
   if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
 
   // ---- Device module (Vale Command registry) ----
+  // (the reverse-proxy route lives in its own section above, before the
+  //  session gate — it also accepts the paired plugin token)
   // GET    /api/devices                        → list (token masked)
   // POST   /api/devices                        → add/update {name, hostname, token}
   // POST   /api/devices/register-key           → generate a one-time install key
   // DELETE /api/devices/<name>                 → remove
   // GET    /api/devices/<name>/mcp             → MCP config for a device (with token)
-  // <any>  /api/devices/<name>/proxy/<rest>    → reverse-proxy to the device panel
   if (method === "POST" && path === `${DEVICE_BASE}/register-key`) {
     const key = await createRegKey(env);
     return jsonOk({ ok: true, key });
@@ -371,12 +398,6 @@ async function handleConsole(request, env, url) {
   if (delMatch && method === "DELETE") {
     await deleteDevice(env, decodeURIComponent(delMatch[1]));
     return jsonOk({ ok: true });
-  }
-  const proxyMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/proxy(.*)$`));
-  if (proxyMatch) {
-    const d = await getDevice(env, decodeURIComponent(proxyMatch[1]));
-    if (!d) return jsonError(404, "Device not found", "not_found_error");
-    return await proxyDevice(request, env, d, proxyMatch[2] || "/");
   }
 
   // ---- Plugin (extension) pairing & status ----
