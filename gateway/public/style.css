@@ -236,6 +236,14 @@ button { font-family: var(--font-body); }
 .badge.ok { background: var(--accent-soft); color: var(--accent-ink); }
 .badge.empty { background: #f1f1ef; color: var(--muted); }
 .badge.off { background: var(--danger-soft); color: var(--danger); }
+.badge .dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  margin-right: 6px; vertical-align: 1px;
+}
+.badge.online { background: var(--accent-soft); color: var(--accent-ink); }
+.badge.online .dot { background: var(--accent); }
+.badge.offline { background: #f1f1ef; color: var(--muted); }
+.badge.offline .dot { background: var(--faint); }
 
 /* ---------- 网关 Token ---------- */
 .token-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
@@ -319,8 +327,31 @@ button { font-family: var(--font-body); }
 .user-main { display: flex; align-items: center; gap: 10px; }
 .user-main .u-name { font-weight: 600; font-size: 14px; }
 .user-main .u-sub { color: var(--faint); font-size: 12px; font-family: var(--font-mono); }
-.user-actions { display: flex; gap: 8px; align-items: center; }
+.user-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 #invite-box { margin-top: 10px; }
+
+/* ---------- 配对弹窗 ---------- */
+.modal {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(28, 28, 30, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.modal-card {
+  width: 100%; max-width: 380px;
+  background: var(--surface);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  padding: 22px 24px;
+}
+.modal-card .muted { margin: 10px 0 0; }
+.modal-card .key-actions { margin-top: 14px; }
+.pair-code {
+  font-size: 26px; font-weight: 700; letter-spacing: 0.14em; text-align: center;
+  background: #141417; color: #d8f5f0;
+  border-radius: var(--radius-sm);
+  padding: 14px 10px; margin: 14px 0 2px;
+}
 
 /* ---------- toast ---------- */
 .toast {

@@ -180,6 +180,15 @@
 
         <div class="card">
           <div class="card-head">
+            <h2 data-i18n="gwMcp.title">网关 MCP 配置</h2>
+            <button id="btn-gw-mcp" class="btn-primary" data-i18n="gwMcp.copy">复制网关 MCP 配置</button>
+          </div>
+          <p class="muted" data-i18n="gwMcp.desc">Claude Code 通过本配置接入网关（浏览器 / 终端工具），使用你当前账户的 token。</p>
+          <pre><code id="gw-mcp-json"></code></pre>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
             <h2 data-i18n="devices.regKeyTitle">安装新设备</h2>
             <div class="install-flow-btns">
               <a id="btn-dev-download" class="btn-primary" href="https://command.saisi.online/vale-command/ValeCommand-Setup.exe" download data-i18n="devices.downloadInstall">下载安装程序 ↓</a>
@@ -220,6 +229,21 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <div id="pair-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="card-head">
+        <h2 data-i18n="devices.pair">配对扩展</h2>
+        <button class="btn-ghost btn-mini" id="btn-pair-close" aria-label="Close">✕</button>
+      </div>
+      <p class="muted" id="pair-device-name"></p>
+      <div class="pair-code mono" id="pair-code"></div>
+      <p class="muted" data-i18n="devices.pairHint">在扩展 popup 输入此码完成配对。一次性，10 分钟内有效。</p>
+      <div class="key-actions">
+        <button class="btn-primary" id="btn-pair-copy" data-i18n="btn.copy">复制</button>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden></div>
