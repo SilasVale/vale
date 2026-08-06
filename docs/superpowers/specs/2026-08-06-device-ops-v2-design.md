@@ -51,7 +51,7 @@ Claude Code → /mcp → mcp.js 鉴权(admin) → PluginHubDO `/call` 登记 pen
 - **WS 客户端**：先 `POST /api/plugins/ws-ticket`（Bearer 插件 token）拿一次性短票 → `wss://<console>/api/plugins/ws?device=<d>&ticket=<t>`；帧协议 `{id, type:"request|response|ping|pong|hello", tool, params, ok, result, error}`；指数退避重连 1s→30s+抖动
 - **终端页**：xterm 全屏 + 多会话 tab；下行 EventSource 代理 SSE（网关注入 Bearer），上行 fetch 代理 POST
 - **popup**：连接状态/设备/受控标签页/按钮（开面板/开终端/配对/选项）
-- 安装方式（待最终确认）：控制台 Devices 面板"安装扩展"按钮 + 指引（zip + chrome://extensions 加载），可加 Windows 端安装脚本
+- **安装方式（已定）**：A. 控制台 Devices 面板「安装扩展」按钮 + 指引（下载 zip + 解压 + chrome://extensions 加载已解压扩展）；B. Windows 端安装脚本（PowerShell 下载/解压/打印指引，并入 vale-command-setup.ps1 或独立脚本）。不做 Chrome Web Store 上架（审核成本高，暂缓）
 
 ## 网关改造（`gateway/`）
 
@@ -125,20 +125,51 @@ KV 新增：
 
 Devices 区加：每设备"在线"列（轮询 /api/plugins/status）、「生成扩展配对码」按钮、「网关 MCP 配置」复制按钮（`https://<console>/mcp` + 当前用户 token）。
 
-## 设备端小改（`command/`）
+## 设备端改动（`command/`）
+
+### A. 新增 `terminal_screen`（AI 屏幕缓冲）
 
 1. **新增 `terminal_screen`**（`src/plugins/terminal/tools.rs`，仿 `tool_read` 结构）：
    - schema `{session_id: string, lines?: integer 默认60}`
    - 实现：OutputBuf 取 SessionBuf → 从尾部倒扫 N 个 `\n` 起点 → `clean_terminal_output` → `{screen, dropped, total_bytes}`。屏幕缓冲已在 OutputBuf（1MB 环剪），不需要新后端
    - `build()` 注册；更新工具数量测试 12→13 与 CLAUDE.md 计数
 2. **"等输出稳定"不动**：已在设备端 `tool_execute` 会话模式
-3. **终端显示保持 SSE+POST**（本阶段）：设备端新 WS 端点与 Windows 交叉编译约束冲突（web.rs:1-19），收益（人看为主）不划算；WS 反代修好后随时可加
+3. **终端显示保持 SSE+POST**：设备端新 WS 端点与 Windows 交叉编译约束冲突（web.rs:1-19），收益（人看为主）不划算；WS 反代修好后随时可加
 
-## 保留/降级
+### B. 瘦身（退役 Web 面板 / Tauri / 浏览器自动化）
 
+- **删**：`src/ui/`、`src-tauri/`、`plugins/browser/`、`src/tools/browser.rs`（desktop_impl 部分）、`browser_headless.rs`、`cdp.rs`、`desktop_api.rs`、`browser` feature、`tauri` feature、`vale-command-desktop` member
+- **留**：`/mcp`（TokenGate + rmcp）、`/api/tools/{name}`、SSE 端点、terminal 后端、`web.rs` 鉴权逻辑
+- **新**：托盘小应用（Windows 原生，无窗口；复用 `vale-tray` crate 或新 crate，功能见上文）
+- **Cargo.toml**：清理 `tauri`/`browser` feature、相关 optional deps（tokio-tungstenite、reqwest、url、tauri）；保留 `terminal`、`keyring`、`windows-service`
+- **验证**：`cargo test` + `cargo clippy --all-targets` + `cargo xwin check -p vale-command --target x86_64-pc-windows-msvc`（去 desktop 后无需 webkit2gtk）；Windows 冒烟（MCP 直连、/api/tools、托盘）
+
+## vale-command 瘦身（本次纳入，用户已确认退役桌面应用）
+
+用户已确认：退役 Web 面板、Tauri 桌面窗口/WebView、浏览器自动化；保留强化终端后端 + MCP server；托盘独立保留。
+
+**退役**：
+- `src/ui/` SPA 静态页（面板 UI——被扩展终端页/受控标签页取代）
+- `src-tauri/`（Tauri 桌面窗口 + WebView + `tauri` feature + `desktop_api.rs` + `src-tauri/src/`）
+- `src/tools/browser.rs` desktop_impl、`browser_headless.rs`、`cdp.rs`、`tools/browser.rs` 的 `browser` feature 及 plugins/browser/（浏览器自动化——被扩展 chrome.debugger 取代）
+- `vale-command-desktop` workspace member
+
+**保留（vale-command 变纯服务，无 UI）**：
+- `src/mcp/server.rs`（rmcp MCP server，`/mcp` + TokenGate）——Claude Code 直连设备 MCP 向后兼容
+- `src/tools/terminal/`（PTY/SSH/serial 后端）——物理能力必须留
+- `src/web.rs` 的 **`/api/tools/{name}` 工具派发 + SSE 流端点**（扩展终端页经反代复用；网关终端工具也走它）
+- cloudflared tunnel、设备注册、`bootstrap.rs`/`config.yaml`
+- Windows 服务（vale-command + cloudflared）
+
+**托盘独立成小应用**（新，Windows 原生托盘，无窗口）：
+- 开关/重启 vale-command 服务、显示运行状态/子域名/token 掩码
+- 复制 MCP 配置、打开控制台设备页
+- 本地终端入口（打开本地终端窗口看日志/测试，不依赖扩展）
+
+**保留/降级（其余）**：
 - 设备注册/列表/token、反代路径重写、登录/管理员：**全部不动**
-- Claude Code 直连设备 MCP（`https://dN.../mcp`）：**向后兼容保留**（旧 headless 浏览器工具不删）
-- 本次不动的重构（后续阶段）：vale-command 退役 Web 面板/Tauri/浏览器自动化、托盘独立小应用（开关+状态/复制配置+打开控制台/本地终端入口）
+- Claude Code 直连设备 MCP（`https://dN.../mcp`）：**向后兼容保留**
+- 旧 headless 浏览器工具（plugins/browser/）：随浏览器自动化一并退役（Claude Code 直连的设备 MCP 不再有浏览器工具——浏览器能力全部走网关 MCP + 扩展）
 
 ## 风险与缓解
 
@@ -166,4 +197,21 @@ Devices 区加：每设备"在线"列（轮询 /api/plugins/status）、「生�
 - `gateway/wrangler.jsonc`：PLUGIN_HUB DO 绑定 + v2 迁移
 - `gateway/public/app.js|index.html|style.css`：在线列/配对 UI/MCP 配置复制
 - `command/src/plugins/terminal/tools.rs`：terminal_screen
+- `command/`：退役 src/ui、src-tauri、plugins/browser、browser feature；新增托盘小应用
+- `command/Cargo.toml`：清理 tauri/browser feature 与相关 deps
 - 计划文件：/home/zhengsaisi/.claude/plans/terminal-browser-rustling-hopcroft.md
+
+## 实施顺序（调整，含瘦身）
+
+核心链路先行，瘦身放后段（功能优先，避免一次改动过大出错）：
+
+| 阶段 | 内容 |
+|---|---|
+| 0 | 修网关 WS 反代 101 分支（根因修复，最小改动） |
+| 1 | 网关 MCP 端点 + 终端工具（deviceFetch 提取；terminal_open/screen/send/list/close） |
+| 2 | 扩展最小可用（骨架 + popup 配对 + cdp 控制器 + ws.js；browser_open/snapshot/screenshot/click） |
+| 3 | 扩展 WS 通道完善（PluginHubDO + ticket/status + 心跳/alarm） |
+| 4 | 终端 AI 工具（设备 terminal_screen + 网关 5 个终端工具） |
+| 5 | 终端显示进扩展（terminal 页 xterm + SSE/POST 走代理） |
+| 6 | vale-command 瘦身（退役面板/Tauri/浏览器自动化 + 托盘小应用） |
+| 7 | 收尾：console SPA 在线列/配对 UI；安装指引；README；wrangler deploy |
