@@ -1,8 +1,8 @@
 /**
  * MCP tool registry for the gateway (vale-gate /mcp endpoint).
  * All tools take a `device` name; terminal tools proxy the device's existing
- * /api/tools endpoints; browser tools route via PluginHubDO (added in Task 3).
- * Browser tools here are stubbed to a clear error until Task 3 wires the DO.
+ * /api/tools endpoints; browser tools route via PluginHubDO → WS → the browser
+ * extension, which drives the device's Chrome over CDP.
  */
 
 const TERMINAL_TOOLS = [
