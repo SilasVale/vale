@@ -22,7 +22,8 @@
 
 import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute } from "./store.js";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "./auth.js";
-import { build101Response } from "./device-fetch.js";
+import { build101Response, deviceFetch } from "./device-fetch.js";
+import { handleMcp } from "./mcp.js";
 
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
@@ -158,6 +159,11 @@ export default {
       // ---- Console API ----
       if (isPageHost && path.startsWith("/api/")) {
         return await handleConsole(request, env, url);
+      }
+
+      // ---- MCP endpoint (Claude Code) — admin token, page host only ----
+      if (isPageHost && path === "/mcp") {
+        return await handleMcp(request, env);
       }
 
       // ---- Static page (Workers Assets): non-/v1/ paths → ai domain only ----
@@ -691,28 +697,22 @@ function mcpConfig(d) {
 /** Reverse-proxy to the device panel, injecting the Bearer token server-side. */
 async function proxyDevice(request, env, device, restPath) {
   const url = new URL(request.url);
-  const upstream = new URL(`https://${device.hostname}${restPath}`);
-  upstream.search = url.search;
 
+  // The panel sits behind a tunnel that adds its own x-forwarded-*; don't pass
+  // the console's through. deviceFetch injects the Bearer token and strips
+  // host/cookie; restPath carries the request query string.
   const headers = new Headers(request.headers);
-  headers.delete("host");
-  headers.delete("cookie");            // the console session belongs to valegate
   headers.delete("x-forwarded-proto");
   headers.delete("x-forwarded-for");
   headers.delete("cf-connecting-ip");
   headers.set("x-forwarded-proto", "https");
-  headers.set("Authorization", `Bearer ${device.token}`);
 
-  let resp;
-  try {
-    resp = await fetch(upstream.toString(), {
-      method: request.method,
-      headers,
-      body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
-    });
-  } catch (e) {
-    return jsonError(502, `Device unreachable: ${e.message}`, "proxy_error");
-  }
+  const { resp, error } = await deviceFetch(env, device, restPath + url.search, {
+    method: request.method,
+    headers,
+    body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
+  });
+  if (!resp) return jsonError(502, error || "Device unreachable", "proxy_error");
 
   const outHeaders = new Headers(resp.headers);
   outHeaders.set("Access-Control-Allow-Origin", "*");

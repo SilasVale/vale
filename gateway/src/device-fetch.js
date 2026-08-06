@@ -22,3 +22,25 @@ export function build101Response(resp) {
   }
   return new Response(resp.body || null, { status: 101, headers: new Headers(resp.headers) });
 }
+
+/**
+ * Fetch a device panel/MCP path with the Bearer token injected server-side.
+ * Shared by proxyDevice (HTTP proxy) and the gateway MCP terminal tools.
+ * Behavior is identical to the old inline fetch in proxyDevice (Bearer
+ * injection, host/cookie stripped). Returns { status, ok, resp } — resp is
+ * undefined when the device is unreachable, with `error` carrying the reason.
+ */
+export async function deviceFetch(env, device, restPath, init = {}) {
+  const upstream = new URL(`https://${device.hostname}${restPath}`);
+  const headers = new Headers(init.headers || {});
+  headers.delete("host");
+  headers.delete("cookie");
+  headers.set("Authorization", `Bearer ${device.token}`);
+  let resp;
+  try {
+    resp = await fetch(upstream.toString(), { ...init, headers });
+  } catch (e) {
+    return { status: 502, ok: false, error: `Device unreachable: ${e.message}` };
+  }
+  return { status: resp.status, ok: resp.ok, resp };
+}
