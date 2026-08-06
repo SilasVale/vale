@@ -327,7 +327,6 @@ Write-Host "Give it ~10 seconds for the tunnel to come up, then connect Claude C
 $tokenVal = ($token -split "auth_token:\s*")[1]
 @"
 TOKEN=$tokenVal
-PANEL=https://$Hostname/
 MCP=https://$Hostname/mcp
 HOSTNAME=$Hostname
 "@ | Set-Content -Path (Join-Path $InstallDir "install-result.txt") -Encoding ascii

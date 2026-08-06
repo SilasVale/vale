@@ -6,10 +6,3 @@ server:
 serial:
   default_baud_rate: 115200
   default_timeout_ms: 1000
-
-browser:
-  page_load_timeout_secs: 30
-  # Headless browser executable override (default: auto-discover Edge/Chrome).
-  # headless_executable: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
-  # CDP debug port for the headless browser (default: 19623).
-  # headless_cdp_port: 19623
