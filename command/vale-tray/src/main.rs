@@ -75,10 +75,15 @@ fn auth_token() -> String {
 }
 
 /// Masked token for display: `a1b2…ef34` (empty → "未找到").
+/// Char-safe: the token may be hand-edited into non-ASCII text, and byte
+/// slicing would panic on a non-char-boundary — killing the refresh loop.
 fn token_mask() -> String {
     let tok = auth_token();
-    if tok.len() >= 8 {
-        format!("{}…{}", &tok[..4], &tok[tok.len() - 4..])
+    let chars: Vec<char> = tok.chars().collect();
+    if chars.len() >= 8 {
+        let head: String = chars[..4].iter().collect();
+        let tail: String = chars[chars.len() - 4..].iter().collect();
+        format!("{head}…{tail}")
     } else {
         tok
     }

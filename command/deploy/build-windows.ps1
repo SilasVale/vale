@@ -7,8 +7,7 @@
 
 param([switch]$Release)
 
-$feature = "terminal,browser"   # serial/SSH/PTY + headless Edge/Chrome.
-# Drop `browser` if you only need serial/terminal:  $feature = "terminal"
+$feature = "terminal"   # serial/SSH/PTY. The `browser` feature is retired.
 
 $config = if ($Release) { "--release" } else { "" }
 $args = @("build", "--features", $feature) + @($config) + @("--bin", "vale-command")
