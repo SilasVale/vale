@@ -1,17 +1,21 @@
 // Terminal page — full-screen xterm for the paired device's terminal sessions.
 //
 // Transport (all through the gateway reverse proxy; the gateway injects the
-// device Bearer server-side, so the page needs no token):
-//   down: EventSource on /api/events/term  → TermOutput frames {session_id,
+// device Bearer server-side — the page only needs to authenticate TO the
+// gateway with the plugin token it was paired with):
+//   down: fetch-read SSE on /api/events/term → TermOutput frames {session_id,
 //         data:number[]} → xterm.write(new Uint8Array(data))
 //   up:   POST /api/tools/terminal_write   → per keystroke
 //         POST /api/tools/terminal_open    → new PTY session
 //         POST /api/tools/terminal_list    → existing sessions (re-attach)
 //         POST /api/tools/terminal_resize  → rows/cols after fit
 //
-// One session per tab: each session owns an xterm + EventSource (the device
-// SSE stream carries every session, frames are filtered by session_id).
-// EventSource reconnects automatically on drop.
+// One session per tab: each session owns an xterm + SSE reader (the device
+// SSE stream carries every session, frames are filtered by session_id). The
+// page is cross-site to the console (SameSite=Lax cookie never attaches), so
+// every request carries `Authorization: Bearer <pluginToken>`. EventSource
+// can't set headers — the SSE stream is read via fetch + ReadableStream and
+// reconnects like EventSource would.
 import { loadPairing } from "../lib/state.js";
 
 const DEFAULT_ORIGIN = "https://console.saisi.online";
@@ -49,9 +53,13 @@ function setStatus(text, isError = false) {
 async function callTool(name, body = {}) {
   const res = await fetch(`${proxy}/api/tools/${name}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${pairing.token}`,
+    },
     body: JSON.stringify(body),
   });
+  if (res.status === 401) throw new Error("not paired / invalid token");
   if (!res.ok) throw new Error(`${name}: HTTP ${res.status}`);
   const j = await res.json().catch(() => ({}));
   if (!j.ok) throw new Error(`${name}: ${j.error || "unknown error"}`);
@@ -110,25 +118,68 @@ function activate(sid) {
   });
 }
 
+/**
+ * Consume the device's SSE terminal stream. EventSource can't set request
+ * headers, so read the stream with fetch + ReadableStream and authenticate to
+ * the gateway with the plugin token in the Authorization header. Reconnects
+ * like EventSource would (3s backoff), surfacing the state in the status line.
+ */
 function attachStream(sid, term) {
-  const es = new EventSource(`${proxy}/api/events/term`);
-  es.onopen = () => {
-    if (activeSid === sid && statusEl.textContent === "reconnecting…") setStatus("");
+  let closed = false;
+
+  const connect = async () => {
+    if (closed) return;
+    try {
+      const res = await fetch(`${proxy}/api/events/term`, {
+        headers: { authorization: `Bearer ${pairing.token}` },
+      });
+      if (res.status === 401) {
+        if (activeSid === sid) setStatus("not paired / invalid token", true);
+      } else if (!res.ok) {
+        if (activeSid === sid) setStatus(`stream error ${res.status}`, true);
+      } else {
+        if (activeSid === sid && statusEl.textContent === "reconnecting…") setStatus("");
+      }
+      if (!res.ok || !res.body) {
+        setTimeout(connect, 3000);
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (!closed) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          // SSE events are separated by blank lines; a data line may be split
+          // across read chunks, so only consume complete events.
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) !== -1) {
+            const raw = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
+            if (!dataLine) continue;
+            let frame;
+            try { frame = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
+            // One stream carries every session's output — keep only ours.
+            // `{lagged:true}` frames have no session_id and are dropped here.
+            if (frame.session_id !== sid) continue;
+            if (Array.isArray(frame.data)) term.write(new Uint8Array(frame.data));
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => {});
+      }
+    } catch {
+      if (activeSid === sid) setStatus("reconnecting…");
+    }
+    // Stream dropped or rejected → reconnect, matching EventSource behavior.
+    setTimeout(connect, 3000);
   };
-  es.onerror = () => {
-    // EventSource retries automatically; just surface the state for the
-    // active session.
-    if (activeSid === sid) setStatus("reconnecting…");
-  };
-  es.onmessage = (ev) => {
-    let frame;
-    try { frame = JSON.parse(ev.data); } catch { return; }
-    // One stream carries every session's output — keep only ours.
-    // `{lagged:true}` frames have no session_id and are dropped here.
-    if (frame.session_id !== sid) return;
-    if (Array.isArray(frame.data)) term.write(new Uint8Array(frame.data));
-  };
-  return es;
+
+  connect();
+  return { close: () => { closed = true; } };
 }
 
 /** Create the xterm + tab for a session and wire it to the device. */
