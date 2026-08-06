@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 RELEASE="${1:-release}"   # pass "debug" for a debug build
 TARGET="x86_64-pc-windows-msvc"
 
-features="terminal,browser"   # serial/SSH/PTY + headless Edge/Chrome.
+features="terminal"   # serial/SSH/PTY backends (keyring optional).
 
 case "$RELEASE" in
   release) profile="--release" ;;

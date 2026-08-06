@@ -1,13 +1,12 @@
-//! Config bootstrap shared by the headless (`src/main.rs`) and desktop
-//! (`src-tauri/src/setup.rs`) binaries: create a default config if missing,
-//! load it (with an optional fallback path), and ensure an auth token exists.
+//! Config bootstrap for the `src/main.rs` binary: create a default config if
+//! missing, load it (with an optional fallback path), and ensure an auth token
+//! exists.
 
 use vale_command_core::Config;
 use std::path::Path;
 
 /// Load the config at `path`, creating a default file first if it doesn't
-/// exist; if the primary file fails to parse, try `fallback` (desktop mode
-/// keeps a copy of the config next to the binary).
+/// exist; if the primary file fails to parse, try `fallback`.
 ///
 /// Ensures an auth token is present. Returns `(config, Some(token))` when a
 /// new token was generated — callers persist the config and print the token.

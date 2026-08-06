@@ -318,11 +318,3 @@ fn serial_pool_list_ports_does_not_panic() {
     let _ = pool.list_ports();
 }
 
-// ═══════════════════════════════════════════════════════════════
-// CDP_PORT constant
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn cdp_port_is_19623() {
-    assert_eq!(vale_command::tools::cdp::CDP_PORT, 19623);
-}

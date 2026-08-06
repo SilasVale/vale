@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "vale-command-core", "src-tauri"]
+members = [".", "vale-command-core"]
 default-members = ["."]
 resolver = "2"
 
@@ -36,13 +36,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
 
 # Optional deps — gated behind features; headless builds skip them entirely.
-# CDP talks only to ws://localhost and http://localhost, so tokio-tungstenite
-# needs no TLS (drops native-tls/openssl) and reqwest needs no default-tls.
 russh = { version = "0.55", default-features = false, features = ["ring"], optional = true }
-tokio-tungstenite = { version = "0.24", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
-url = { version = "2", optional = true }
-tauri = { version = "2", features = ["unstable"], optional = true }
 portable-pty = { version = "0.8", optional = true }
 keyring = { version = "2", optional = true }
 
@@ -59,16 +53,10 @@ reqwest = "0.12"
 
 [features]
 default = []
-# Real terminal backends (PTY/SSH/Serial) — no GUI required.
+# Real terminal backends (PTY/SSH/Serial).
 terminal = ["dep:portable-pty", "dep:russh"]
-# Browser automation via CDP (headless Chrome/Edge) — no GUI required.
-browser = ["dep:tokio-tungstenite", "dep:reqwest", "dep:url"]
 # OS keychain secrets for SSH passwords.
 keyring = ["dep:keyring"]
-# Tauri UI implies the CDP machinery, so any tauri build also gets browser.
-tauri = ["dep:tauri", "browser"]
-# Desktop app composition — Tauri UI plus everything else.
-desktop = ["tauri", "terminal", "browser", "keyring"]
 
 # ProcessPrng workaround: use CPU RDRAND instruction instead of Windows API
 # This avoids the ProcessPrng/BCryptGenRandom dependency.

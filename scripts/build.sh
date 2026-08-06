@@ -13,7 +13,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="x86_64-pc-windows-msvc"
-FEATURES="terminal,browser"   # serial/SSH/PTY + headless Edge/Chrome
+FEATURES="terminal"   # serial/SSH/PTY backends (keyring optional)
 
 # --- token: prefer $CLOUDFLARE_API_TOKEN, else ~/.cloudflare-token ---
 cf_token() {

@@ -1,4 +1,4 @@
-//! SSH backend — remote shell via SshSession (desktop only).
+//! SSH backend — remote shell via SshSession (`terminal` feature).
 
 use super::{TermBackend, TermOutput};
 use crate::tools::ssh::SshSession;

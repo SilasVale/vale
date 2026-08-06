@@ -32,7 +32,7 @@ impl ServerHandler for DeviceServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.instructions = Some(
-            "Vale Command device access: Browser automation and Terminal (PTY/SSH/Serial) tools.".into(),
+            "Vale Command device access: Terminal (PTY/SSH/Serial) tools.".into(),
         );
         let mut caps = ServerCapabilities::default();
         let mut tools_cap = ToolsCapability::default();
@@ -105,8 +105,7 @@ fn to_mcp_tool(t: &vale_command_core::ToolDef) -> Tool {
 
 pub async fn serve(config: Config, state: Arc<AppState>) -> anyhow::Result<()> {
     let ct = CancellationToken::new();
-    // Wire Ctrl+C to the shutdown token so "Press Ctrl+C to stop" is true
-    // (desktop mode cancels via the window-destroy token instead).
+    // Wire Ctrl+C to the shutdown token so "Press Ctrl+C to stop" is true.
     let ctrl_ct = ct.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
@@ -148,15 +147,15 @@ pub async fn bind(
             },
         );
 
-    // MCP service at /mcp (token-gated like the panel) + Web panel via
-    // fallback_service (Tower layer)
+    // MCP service at /mcp (token-gated) + the web surface via fallback_service
+    // (Tower layer)
     let mcp_app = axum::Router::new()
         .nest_service("/mcp", crate::web::TokenGate::new(service, config.server.auth_token.clone()))
         .fallback_service(crate::web::WebPanel::new(state.clone()));
     let mcp_listener = tokio::net::TcpListener::bind(addr).await?;
     let actual = mcp_listener.local_addr()?;
 
-    tracing::info!("Server:  http://{actual}/  (MCP: /mcp, Panel: /)");
+    tracing::info!("Server:  http://{actual}/  (MCP: /mcp)");
 
     let mcp_ct = ct.clone();
     let mcp_srv = axum::serve(mcp_listener, mcp_app).with_graceful_shutdown(async move {
@@ -170,7 +169,7 @@ pub async fn bind(
     Ok((actual, mcp_handle))
 }
 
-/// Serve MCP+Web with an external CancellationToken (for Tauri graceful shutdown).
+/// Serve MCP+Web with an external CancellationToken.
 pub async fn serve_with_token(
     config: Config,
     state: Arc<AppState>,
@@ -193,13 +192,13 @@ mod tests {
     use vale_command_core::Config;
 
     fn server() -> DeviceServer {
-        DeviceServer::new(Arc::new(AppState::new(Config::default(), None)))
+        DeviceServer::new(Arc::new(AppState::new(Config::default())))
     }
 
     #[test]
     fn get_tool_found() {
-        assert!(server().get_tool("browser_navigate").is_some());
         assert!(server().get_tool("terminal_open").is_some());
+        assert!(server().get_tool("terminal_execute").is_some());
     }
 
     #[test]

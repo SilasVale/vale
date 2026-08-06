@@ -35,7 +35,7 @@ pub struct OpenPortInfo {
     pub baud_rate: u32,
 }
 
-// open()/take_port() only have callers in desktop builds; the struct/fields
+// open()/take_port() only have callers in terminal-feature builds; the struct/fields
 // exist in both so list_open_ports() works headless.
 #[cfg_attr(not(feature = "terminal"), allow(dead_code))]
 struct OpenPort {

@@ -1,8 +1,7 @@
 //! Plugin registry — discovers and manages capability plugins.
 //!
-//! Tools are the single source of truth for MCP, Web API, and Tauri commands.
+//! Tools are the single source of truth for MCP and the Web API.
 
-pub mod browser;
 pub mod terminal;
 
 use vale_command_core::DeviceError;

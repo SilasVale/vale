@@ -1,4 +1,4 @@
-//! Serial backend — raw byte I/O on a port taken from SerialPool (desktop only).
+//! Serial backend — raw byte I/O on a port taken from SerialPool (`terminal` feature).
 
 use super::{TermBackend, TermOutput};
 use crate::tools::serial::SerialPool;
