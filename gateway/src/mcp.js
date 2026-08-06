@@ -63,12 +63,25 @@ export async function handleMcp(request, env) {
   return mcpError(-32601, `Method not found: ${method}`, id);
 }
 
-async function callTool(tool, env, device, args) {
+export async function callTool(tool, env, device, args) {
   if (tool.name.startsWith("terminal_")) {
     return callTerminalTool(tool.name, env, device, args);
   }
-  // Browser tools are wired via PluginHubDO in Task 3; until then, a clear error.
-  throw new Error("browser tools require the extension channel (task 3)");
+  // Browser tools route via PluginHubDO → WS → extension (chrome.debugger) on
+  // the device's browser. The DO resolves with the extension's response frame
+  // {id, type:"response", ok, result|error}; unwrap to the inner result so
+  // formatResult turns {image:...} into an MCP image block.
+  const id = env.PLUGIN_HUB.idFromName(device.name);
+  const hub = env.PLUGIN_HUB.get(id);
+  const res = await hub.fetch("https://hub/call", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tool: tool.name, params: args, requestId: crypto.randomUUID() }),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (res.status === 503) throw new Error("extension_offline — is the Vale extension running on the device browser?");
+  if (j.error) throw new Error(`extension error: ${j.error}`);
+  return j.result;
 }
 
 async function callTerminalTool(name, env, device, args) {
