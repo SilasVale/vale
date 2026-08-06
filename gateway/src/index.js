@@ -22,6 +22,7 @@
 
 import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute } from "./store.js";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "./auth.js";
+import { build101Response } from "./device-fetch.js";
 
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
@@ -717,8 +718,11 @@ async function proxyDevice(request, env, device, restPath) {
   outHeaders.set("Access-Control-Allow-Origin", "*");
   const ct = String(outHeaders.get("content-type") || "").toLowerCase();
 
-  // Streaming (SSE / octet-stream / 101): pass the body through untouched.
-  if (resp.body && (ct.includes("text/event-stream") || ct.includes("application/octet-stream") || resp.status === 101)) {
+  if (resp.status === 101) {
+    return build101Response(resp) ?? resp;
+  }
+  // Streaming (SSE / octet-stream): pass the body through untouched.
+  if (resp.body && (ct.includes("text/event-stream") || ct.includes("application/octet-stream"))) {
     return new Response(resp.body, { status: resp.status, headers: outHeaders });
   }
 
