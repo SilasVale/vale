@@ -243,6 +243,18 @@ async function handleConsole(request, env, url) {
     return jsonOk({ token, device });
   }
 
+  // Public: the extension trades its plugin token for a one-time WS ticket
+  // here (no admin session — the plugin token is the credential). The ticket
+  // keeps the long-lived token out of the /ws URL and is consumed once.
+  if (method === "POST" && path === `${PLUGIN_BASE}/ws-ticket`) {
+    const auth = String(request.headers.get("authorization") || "");
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const link = token ? await getPluginByToken(env, token) : null;
+    if (!link) return jsonError(401, "Invalid plugin token", "authorization_error");
+    const ticket = await createWsTicket(env, link.device);
+    return jsonOk({ ticket, device: link.device });
+  }
+
   // Public: the browser extension opens its WebSocket here, trading a one-time
   // ticket (fetched via /api/plugins/ws-ticket with the plugin token) for the
   // connection. Ticket consumption keeps the long-lived token out of the URL
@@ -369,25 +381,18 @@ async function handleConsole(request, env, url) {
 
   // ---- Plugin (extension) pairing & status ----
   // POST /api/plugins/pair          → generate a one-time pairing code for a device
-  // POST /api/plugins/ws-ticket     → trade the plugin token for a one-time WS ticket
   // POST /api/plugins/unpair        → drop all plugin links for a device
   // GET  /api/plugins/status        → online/offline per device (via PluginHubDO)
-  // (POST /api/plugins/pair/claim + GET /api/plugins/ws are PUBLIC — defined in
-  //  the public section above: the extension has no admin session.)
+  // (POST /api/plugins/pair/claim, POST /api/plugins/ws-ticket and
+  //  GET /api/plugins/ws are PUBLIC — defined in the public section above:
+  //  the extension has no admin session and authenticates by pairing code /
+  //  plugin token instead.)
   if (method === "POST" && path === `${PLUGIN_BASE}/pair`) {
     const { device } = (await request.json().catch(() => ({}))) || {};
     const d = device ? await getDevice(env, String(device)) : null;
     if (!d) return jsonError(404, "Device not found", "not_found_error");
     const code = await createPairCode(env, d.name);
     return jsonOk({ code });
-  }
-  if (method === "POST" && path === `${PLUGIN_BASE}/ws-ticket`) {
-    const auth = String(request.headers.get("authorization") || "");
-    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-    const link = token ? await getPluginByToken(env, token) : null;
-    if (!link) return jsonError(401, "Invalid plugin token", "authorization_error");
-    const ticket = await createWsTicket(env, link.device);
-    return jsonOk({ ticket, device: link.device });
   }
   if (method === "POST" && path === `${PLUGIN_BASE}/unpair`) {
     const { device } = (await request.json().catch(() => ({}))) || {};
