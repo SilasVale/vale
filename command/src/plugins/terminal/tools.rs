@@ -426,8 +426,16 @@ fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
                         Some(entry) => {
                             // Tail: find the start of the Nth-from-end line.
                             let data = &entry.data;
+                            // Skip trailing blank lines (`\r\n`/`\n` at the end of
+                            // the buffer) so the Nth-from-end scan counts content
+                            // lines, not an empty tail — otherwise screen came back
+                            // blank whenever the buffer ended in a newline.
+                            let mut end = data.len();
+                            while end > 0 && (data[end - 1] == b'\n' || data[end - 1] == b'\r') {
+                                end -= 1;
+                            }
                             let mut seen = 0;
-                            let mut i = data.len();
+                            let mut i = end;
                             while i > 0 && seen < lines {
                                 i -= 1;
                                 if data[i] == b'\n' {
@@ -435,7 +443,7 @@ fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
                                 }
                             }
                             let start = if seen >= lines { i + 1 } else { 0 };
-                            (clean_terminal_output(&data[start..]), entry.dropped)
+                            (clean_terminal_output(&data[start..end]), entry.dropped)
                         }
                         None => (String::new(), 0u64),
                     }

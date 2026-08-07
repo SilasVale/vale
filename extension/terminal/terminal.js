@@ -194,11 +194,11 @@ function adoptSession(sid, label) {
     fontSize: 13,
     fontFamily: 'monospace',
     theme: {
-      background: "#0f1115",
-      foreground: "#d6d8de",
-      cursor: "#5b8cff",
-      cursorAccent: "#0f1115",
-      selectionBackground: "rgba(91,140,255,.25)",
+      background: "#ffffff",
+      foreground: "#1a1c20",
+      cursor: "#5b6cf0",
+      cursorAccent: "#ffffff",
+      selectionBackground: "rgba(91,108,240,.2)",
     },
   });
   const fit = new window.FitAddon.FitAddon();
