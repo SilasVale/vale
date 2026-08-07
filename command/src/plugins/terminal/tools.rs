@@ -187,6 +187,20 @@ fn tool_list(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
     )
 }
 
+/// Append the platform-appropriate line terminator to a command sent to a
+/// terminal session. Windows PowerShell only ends a command on CRLF (\r\n) — a
+/// bare \n leaves the shell in the multi-line continuation prompt (>>) and the
+/// command never runs. Unix shells accept a bare \n.
+pub fn append_command_newline(command: &str) -> String {
+    if command.ends_with('\n') || command.ends_with('\r') {
+        command.to_string()
+    } else if cfg!(target_os = "windows") {
+        format!("{command}\r\n")
+    } else {
+        format!("{command}\n")
+    }
+}
+
 fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let buf = output_buf.clone();
@@ -215,12 +229,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let mut read_abs = buf.lock()
                         .unwrap_or_else(|p| p.into_inner())
                         .get(&sid).map(|e| e.end_abs()).unwrap_or(0);
-                    // Write command + newline
-                    let cmd_with_nl = if command.ends_with('\n') {
-                        command.clone()
-                    } else {
-                        format!("{}\n", command)
-                    };
+                    // Write command + newline. Windows PowerShell only recognizes
+                    // the end of a command on CRLF (\r\n) — a bare \n drops it
+                    // into the multi-line continuation prompt (>>), so the
+                    // command never executes. Unix shells accept either.
+                    let cmd_with_nl = append_command_newline(&command);
                     terminal_mgr.term_write(&sid, &cmd_with_nl).await?;
 
                     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -678,6 +691,34 @@ mod tests {
         let tool = find(&tools, "terminal_execute");
         let err = tool.handler.call(json!({"command": "echo hi", "session_id": "nope"})).await.unwrap_err();
         assert!(!err.to_string().is_empty(), "expected a DeviceError, got empty");
+    }
+
+    // ── append_command_newline (Windows CRLF vs Unix LF) ───────
+
+    #[test]
+    fn append_newline_unix_uses_lf() {
+        // On non-Windows, a command gets a bare \n.
+        if !cfg!(target_os = "windows") {
+            assert_eq!(append_command_newline("echo hi"), "echo hi\n");
+        }
+    }
+
+    #[test]
+    fn append_newline_windows_uses_crlf() {
+        // On Windows, PowerShell needs \r\n to end a command — a bare \n would
+        // drop it into the continuation prompt (>>) and never execute.
+        if cfg!(target_os = "windows") {
+            assert_eq!(append_command_newline("echo hi"), "echo hi\r\n");
+        }
+    }
+
+    #[test]
+    fn append_newline_does_not_duplicate_existing_terminator() {
+        // A command that already ends in a line terminator must not get another
+        // appended (both platforms).
+        assert!(append_command_newline("echo hi\n").ends_with('\n'));
+        assert_eq!(append_command_newline("echo hi\r\n"), "echo hi\r\n");
+        assert_eq!(append_command_newline("echo hi\r"), "echo hi\r");
     }
 
     // ── clean_terminal_output (edge cases) ──────────────────────
