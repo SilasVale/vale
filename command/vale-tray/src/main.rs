@@ -239,11 +239,11 @@ try {{
         .args(["-NoProfile", "-Command", &ps])
         .spawn();
     // Do NOT exit here — the tray stays alive. In the upgrade path the
-    // installer kills vale-command.exe and relaunches a fresh tray, replacing
-    // this one; in the "up to date" / "declined" paths this tray keeps running.
-    // (Exiting unconditionally made the tray vanish even when the user only
-    // clicked "check for updates" on an already-current install.)
-    std::process::exit(0);
+    // PowerShell kills this tray (Stop-Process vale-tray) before running the
+    // installer, which relaunches a fresh one; in the "up to date" / "declined"
+    // paths this tray keeps running. (Exiting unconditionally made the tray
+    // vanish even when the user only clicked "check for updates" on an
+    // already-current install.)
 }
 
 /// Handles of the dynamic menu items, so the status lines and start/stop
