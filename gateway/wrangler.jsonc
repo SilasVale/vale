@@ -36,6 +36,9 @@
     "binding": "ASSETS",
     "not_found_handling": "none",
     "run_worker_first": true
+  },
+  "vars": {
+    "CONSOLE_HOST": "ai.saisi.online,api.saisi.online"
   }
   // Vale Gate — unified AI gateway + device console. Custom domains are added
   // in the dashboard (custom_domains API is OAuth-only).

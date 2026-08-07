@@ -43,7 +43,7 @@ export async function connect() {
     // `ws === sock` and schedule a spurious reconnect + duplicate fetch.
     ws = null;
   }
-  const consoleOrigin = (await chrome.storage.local.get("consoleOrigin")).consoleOrigin || "https://ai.saisi.online";
+  const consoleOrigin = (await chrome.storage.local.get("consoleOrigin")).consoleOrigin || "https://api.saisi.online";
   let ticket;
   try {
     // Trade the plugin token for a one-time WS ticket.
@@ -81,14 +81,18 @@ export async function connect() {
     sock.onmessage = (ev) => {
       try { handleFrame(JSON.parse(ev.data)); } catch {}
     };
-    sock.onclose = () => {
+    sock.onclose = (ev) => {
       if (ws !== sock) return; // stale socket replaced by a newer connect()
       ws = null;
       state.wsState = "disconnected";
       stopHeartbeat();
+      console.error(`[vale-ext] WS closed: code=${ev?.code} reason=${ev?.reason} wasClean=${ev?.wasClean}`);
       scheduleReconnect();
     };
-    sock.onerror = () => { try { sock.close(); } catch {} };
+    sock.onerror = (ev) => {
+      console.error("[vale-ext] WS error:", ev?.error || ev?.message || ev, "url:", url);
+      try { sock.close(); } catch {}
+    };
   } catch (e) {
     state.error = String(e);
     scheduleReconnect();
