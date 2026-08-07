@@ -142,7 +142,7 @@ const never = (url, init) => new Promise((_, reject) => {
   });
 });
 
-test("og translate slow failure: 502 and trips the og breaker exactly once", async () => {
+test("og translate timeout: 502, breaker NOT tripped (slow ≠ dead)", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips });
   const res = await withFetch(never, () =>
@@ -150,7 +150,18 @@ test("og translate slow failure: 502 and trips the og breaker exactly once", asy
   );
   assert.equal(res.status, 502);
   assert.match((await res.json()).error.message, /timeout/);
-  assert.equal(trips.length, 1);
+  assert.equal(trips.length, 0); // timeout is zen's normal slow behavior — must NOT trip
+});
+
+test("og translate network error: 502 and trips the breaker exactly once", async () => {
+  const trips = [];
+  const { env, token } = gwEnv({ trips });
+  const res = await withFetch(async () => { throw new TypeError("fetch failed"); }, () =>
+    post(env, token, { model: "og/mimo-v2.5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error.message, /network error/);
+  assert.equal(trips.length, 1); // unreachable → trip
 });
 
 test("og translate fast 500: retried via fetchZenWithRetry, breaker NOT tripped", async () => {

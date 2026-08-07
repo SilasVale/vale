@@ -755,8 +755,13 @@ export async function handleGateway(request, env, url) {
     body: JSON.stringify(openaiReq),
   }, { timeoutMs: upstreamTimeoutMs(env) });
   if (!upstream || !upstream.ok) {
-    // Only slow failures trip the breaker; fast 5xx/429 stays with the retries.
-    if (!upstream) await recordChannelFailure(env);
+    // Only a hard network failure (channel unreachable) trips the breaker.
+    // Slow responses (timeout) are zen's normal behavior — multi-second latency
+    // is observed routinely, so a slow request must NOT take the whole og
+    // channel down; Claude Code's own retry handles it. Fast 5xx/429 stays with
+    // the retries (no trip). detail distinguishes: "network error: ..." vs
+    // "timeout after ...ms".
+    if (detail?.startsWith("network error")) await recordChannelFailure(env);
     return jsonError(502, `og: ${detail || `upstream ${upstream?.status || "error"}`}`, "api_error");
   }
   // True streaming: when the client asked for a stream, forward zen's OpenAI SSE
