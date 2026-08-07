@@ -185,6 +185,7 @@ fn check_for_update() {
         r#"
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+Add-Type -AssemblyName System.Windows.Forms
 $log = Join-Path '{2}' 'vale-update.log'
 function Log($m) {{ try {{ (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m | Out-File -FilePath $log -Append -Encoding utf8 }} catch {{}} }}
 function Restore-Tray {{
