@@ -43,7 +43,7 @@ export async function connect() {
     // `ws === sock` and schedule a spurious reconnect + duplicate fetch.
     ws = null;
   }
-  const consoleOrigin = (await chrome.storage.local.get("consoleOrigin")).consoleOrigin || "https://console.saisi.online";
+  const consoleOrigin = (await chrome.storage.local.get("consoleOrigin")).consoleOrigin || "https://ai.saisi.online";
   let ticket;
   try {
     // Trade the plugin token for a one-time WS ticket.

@@ -1,7 +1,7 @@
 // Options — consoleOrigin lives in chrome.storage.local; background is
 // notified so it can refresh tools.js CONSOLE_ORIGIN and re-auth the WS.
 const $ = (id) => document.getElementById(id);
-const DEFAULT_ORIGIN = "https://console.saisi.online";
+const DEFAULT_ORIGIN = "https://ai.saisi.online";
 
 async function load() {
   const { consoleOrigin } = await chrome.storage.local.get("consoleOrigin");
