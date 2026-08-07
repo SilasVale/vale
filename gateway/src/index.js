@@ -1143,12 +1143,23 @@ export function scanTopLevelModel(raw) {
     }
     if (c === "{" || c === "[") {
       depth += 1;
-      if (depth === 1) pendingKey = true;
+      if (depth === 1) pendingKey = true; // entering the top-level object
       i += 1;
       continue;
     }
     if (c === "}" || c === "]") {
       depth -= 1;
+      i += 1;
+      continue;
+    }
+    if (c === ",") {
+      // Top-level comma → the next token is a new key. Without this, any
+      // field before "model" (system/tools, which Claude Code sends first)
+      // leaves pendingKey false and "model" is never matched — the request
+      // silently routes to the default (ds) channel.
+      if (depth === 1) pendingKey = true;
+      keyStart = -1;
+      keyEnd = -1;
       i += 1;
       continue;
     }

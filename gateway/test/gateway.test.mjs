@@ -255,3 +255,19 @@ test("estimateTokens: large body approximates instead of walking", () => {
   const big = "x".repeat(2_000_000);
   assert.ok(estimateTokens(big) > 0);
 });
+
+test("scanTopLevelModel: model after system/tools (Claude Code field order)", () => {
+  // Claude Code sends system + tools BEFORE model — the scanner must not let
+  // earlier fields break top-level key detection (regression: model → null,
+  // request silently routed to the default ds channel).
+  const raw = JSON.stringify({
+    system: [{ type: "text", text: "You are a coding agent." }],
+    tools: [{ name: "Bash", description: "Run a command", input_schema: { type: "object", properties: {} } }],
+    model: "og/deepseek-v4-flash",
+    max_tokens: 100,
+    messages: [{ role: "user", content: "hi" }],
+  });
+  assert.equal(scanTopLevelModel(raw).model, "og/deepseek-v4-flash");
+  const out = rawWithModel(raw, "ds/deepseek-v4-flash");
+  assert.equal(JSON.parse(out).model, "ds/deepseek-v4-flash");
+});
