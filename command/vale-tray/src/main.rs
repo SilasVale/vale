@@ -51,7 +51,18 @@ fn console_url() -> String {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "https://console.saisi.online/".to_string())
+        .unwrap_or_else(|| "https://ai.saisi.online/".to_string())
+}
+
+/// The device panel URL — the device subdomain root. The static page is
+/// public (no token needed); API routes under it require the token.
+fn panel_url() -> String {
+    let host = device_hostname();
+    if host.is_empty() {
+        console_url()
+    } else {
+        format!("https://{host}/")
+    }
 }
 
 /// First value of the given key in config.yaml (flat `key: value` lines).
@@ -231,6 +242,7 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
         let host_item = MenuItem::new("域名：--", false, None);
         let token_item = MenuItem::new("Token：--", false, None);
         let copy_mcp = MenuItem::with_id("copy_mcp", "复制 MCP 配置", true, None);
+        let open_panel = MenuItem::with_id("open_panel", "打开设备面板", true, None);
         let open_console = MenuItem::with_id("open_console", "打开控制台", true, None);
         let open_terminal = MenuItem::with_id("open_terminal", "本地终端", true, None);
         let check_update = MenuItem::with_id("check_update", "检查更新", true, None);
@@ -245,6 +257,7 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
         menu.append(&token_item).expect("menu token");
         menu.append(&sep).expect("menu sep1");
         menu.append(&copy_mcp).expect("menu copy_mcp");
+        menu.append(&open_panel).expect("menu open_panel");
         menu.append(&open_console).expect("menu open_console");
         menu.append(&open_terminal).expect("menu open_terminal");
         menu.append(&check_update).expect("menu check_update");
@@ -300,6 +313,7 @@ fn main() {
             while let Ok(ev) = menu_rx.try_recv() {
                 match ev.id.0.as_str() {
                     "copy_mcp" => copy_mcp_config(),
+                    "open_panel" => open_url(&panel_url()),
                     "open_console" => open_url(&console_url()),
                     "open_terminal" => open_local_terminal(),
                     "check_update" => check_for_update(),
