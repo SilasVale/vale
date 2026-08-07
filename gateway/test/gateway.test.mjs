@@ -10,7 +10,7 @@
 // store.js keeps a module-level 24h cache, so every test uses a distinct token/user.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleGateway } from "../src/index.js";
+import { handleGateway, scanTopLevelModel, rawWithModel, estimateTokens } from "../src/index.js";
 
 let uidSeq = 0;
 function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30 } = {}) {
@@ -206,4 +206,52 @@ test("og web_search: search via DeepSeek, answer via zen chat/completions", asyn
   const body = await res.json();
   const text = body.content.find((b) => b.type === "text");
   assert.equal(text.text, "search answer");
+});
+
+// ── scanTopLevelModel / rawWithModel (CPU-safe model extraction) ──
+
+test("scanTopLevelModel: extracts top-level model", () => {
+  const raw = JSON.stringify({ model: "og/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] });
+  const { model } = scanTopLevelModel(raw);
+  assert.equal(model, "og/deepseek-v4-flash");
+});
+
+test("scanTopLevelModel: ignores model inside messages content", () => {
+  const raw = JSON.stringify({ max_tokens: 5, messages: [{ role: "user", content: "hi", model: "inside" }] });
+  assert.equal(scanTopLevelModel(raw).model, null);
+});
+
+test("scanTopLevelModel: ignores model in nested tool_use input", () => {
+  const raw = JSON.stringify({ messages: [{ role: "assistant", content: [{ type: "tool_use", input: { model: "x" } }] }] });
+  assert.equal(scanTopLevelModel(raw).model, null);
+});
+
+test("scanTopLevelModel: model-like string inside escaped content", () => {
+  const raw = '{"model":"auto","messages":[{"content":"\\"model\\":\\"x\\""}]}';
+  const { model } = scanTopLevelModel(raw);
+  assert.equal(model, "auto");
+});
+
+test("scanTopLevelModel: no model field → null", () => {
+  assert.equal(scanTopLevelModel("{}").model, null);
+});
+
+test("rawWithModel: swaps only the top-level model value", () => {
+  const raw = JSON.stringify({ model: "ds/deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] });
+  const out = rawWithModel(raw, "qw/qwen3.8-max-preview");
+  const parsed = JSON.parse(out);
+  assert.equal(parsed.model, "qw/qwen3.8-max-preview");
+  assert.equal(parsed.messages.length, 1);
+});
+
+test("rawWithModel: missing model returns body unchanged", () => {
+  const raw = JSON.stringify({ messages: [{ role: "user", content: "hi" }] });
+  assert.equal(rawWithModel(raw, "qw/qwen"), raw);
+});
+
+test("estimateTokens: large body approximates instead of walking", () => {
+  // A 2M-char body must not be char-walked (Free plan CPU budget) — the
+  // approximation path returns a positive estimate quickly.
+  const big = "x".repeat(2_000_000);
+  assert.ok(estimateTokens(big) > 0);
 });
