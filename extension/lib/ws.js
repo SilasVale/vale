@@ -47,7 +47,10 @@ export async function connect() {
   let ticket;
   try {
     // Trade the plugin token for a one-time WS ticket.
-    const res = await fetch(`${consoleOrigin}/api/plugins/ws-ticket`, { headers: { Authorization: `Bearer ${pairing.token}` } });
+    const res = await fetch(`${consoleOrigin}/api/plugins/ws-ticket`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${pairing.token}` },
+    });
     const j = await res.json().catch(() => ({}));
     if (!state.pairedDevice) return; // unpaired while fetching the ticket
     if (!j.ticket) {
