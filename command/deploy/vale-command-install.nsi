@@ -18,6 +18,9 @@ Var REGKEY_INPUT
 
 ; Registration key page: optional. From ai.saisi.online → 设备管理 → 生成注册码.
 ; If filled, the setup script auto-registers the device (no token copy-paste).
+; NOTE: NSIS skips ALL pages — MUI ones and these custom ones — when the
+; installer runs silently (/S), so the custom pages below need no IfSilent
+; guards; their callbacks never run in silent mode.
 Page custom regKeyPage regKeyPageLeave
 Function regKeyPage
   nsDialogs::Create 1018
@@ -79,14 +82,19 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install" SEC01
-  ; Stop any running vale-command / tray first, otherwise their exe files are
-  ; locked and copying the new binaries fails with "cannot open file for writing"
-  ; (the re-install case). The setup script also kills them, but that runs after
-  ; this copy step.
+  ; Stop any running vale-command first, otherwise its exe is locked and
+  ; copying the new binaries fails with "cannot open file for writing"
+  ; (the re-install case). The setup script also kills it, but that runs
+  ; after this copy step.
+  ; In silent mode (auto-upgrade from the tray) vale-tray.exe is NOT killed:
+  ; the tray that launched this installer exits itself right after starting
+  ; it, and a fresh tray is relaunched below once the copy is done.
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
-  nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
   nsExec::ExecToLog 'schtasks /End /TN ValeCommand'
-  nsExec::ExecToLog 'schtasks /End /TN ValeCommandTray'
+  ${IfNot} ${Silent}
+    nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
+    nsExec::ExecToLog 'schtasks /End /TN ValeCommandTray'
+  ${EndIf}
   Sleep 1000
 
   SetOutPath "$INSTDIR"
@@ -110,10 +118,29 @@ Section "Install" SEC01
   ; Launch the setup in its OWN visible console window (run-setup.bat) so the
   ; user can watch progress and the Cloudflare browser auth. Non-blocking - the
   ; installer returns to an interactive page immediately (cancel always works).
-  DetailPrint "正在启动 Vale Command 配置窗口（独立窗口显示进度，可能弹出 Cloudflare 授权）..."
-  Exec '"$INSTDIR\run-setup.bat"'
+  ; Fresh installs only: an upgrade must NOT re-run the setup script — it would
+  ; re-auth / re-register a device that is already configured.
+  ${IfNot} ${Silent}
+    DetailPrint "正在启动 Vale Command 配置窗口（独立窗口显示进度，可能弹出 Cloudflare 授权）..."
+    Exec '"$INSTDIR\run-setup.bat"'
+  ${EndIf}
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
+
+  ; Silent mode = auto-upgrade from the tray: the launching tray has already
+  ; exited, so bring a fresh tray back. schtasks /Run triggers the at-logon
+  ; ValeCommandTray task, restoring the exact previous environment (interactive
+  ; session, elevated as before). If that task is missing (tray was started
+  ; manually), start the exe directly.
+  ${If} ${Silent}
+    nsExec::ExecToLog 'schtasks /Query /TN ValeCommandTray'
+    Pop $0
+    ${If} $0 != 0
+      Exec '"$INSTDIR\vale-tray.exe"'
+    ${Else}
+      nsExec::ExecToLog 'schtasks /Run /TN ValeCommandTray'
+    ${EndIf}
+  ${EndIf}
 SectionEnd
 
 Section "Uninstall"
