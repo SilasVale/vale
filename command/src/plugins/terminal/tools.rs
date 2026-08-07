@@ -499,3 +499,208 @@ fn tool_secret_delete() -> ToolDef {
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::serial::SerialPool;
+    use crate::tools::terminal::TerminalManager;
+    use std::collections::HashMap;
+    use vale_command_core::AppEventBus;
+
+    /// Build the tool list with a caller-controlled output buffer so tests can
+    /// pre-seed session output and exercise terminal_read / terminal_screen.
+    fn seeded_tools() -> (Vec<ToolDef>, OutputBuf) {
+        let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
+        let serial = Arc::new(SerialPool::new(115200, 1000));
+        let mgr = Arc::new(TerminalManager::new(serial.clone()));
+        let buf: OutputBuf = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let tools = build(&mgr, &serial, &bus, &buf);
+        (tools, buf)
+    }
+
+    fn find<'a>(tools: &'a [ToolDef], name: &str) -> &'a ToolDef {
+        tools.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("missing tool: {name}"))
+    }
+
+    async fn call(tool: &ToolDef, params: serde_json::Value) -> serde_json::Value {
+        tool.handler.call(params).await.expect("handler should not error")
+    }
+
+    fn seed(buf: &OutputBuf, sid: &str, data: &[u8], dropped: u64) {
+        let mut map = buf.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = map.entry(sid.to_string()).or_default();
+        entry.data.extend_from_slice(data);
+        entry.dropped = dropped;
+        entry.cursor = 0;
+    }
+
+    // ── terminal_screen (tail-N lines) ──────────────────────────
+
+    #[tokio::test]
+    async fn screen_empty_session_returns_empty() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"", 0);
+        let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1"})).await;
+        assert_eq!(out["screen"], "");
+        assert!(out.get("dropped").is_none(), "no dropped when nothing evicted");
+    }
+
+    #[tokio::test]
+    async fn screen_tail_lines_with_ansi_stripped() {
+        let (tools, buf) = seeded_tools();
+        // 10 lines; request the last 3.
+        let mut data = Vec::new();
+        for i in 0..10 {
+            data.extend_from_slice(format!("\x1b[32mline-{i}\x1b[0m\n").as_bytes());
+        }
+        seed(&buf, "s1", &data, 0);
+        let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 3})).await;
+        assert_eq!(out["screen"], "line-7\nline-8\nline-9");
+    }
+
+    #[tokio::test]
+    async fn screen_skips_trailing_blank_lines() {
+        // Regression for the "blank screen" bug: a buffer ending in \r\n (or \n)
+        // must not collapse the tail scan — the Nth-from-end scan counts content
+        // lines, so screen must return real content even with a trailing newline.
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"hello\r\nworld\r\n", 0);
+        let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 5})).await;
+        assert_eq!(out["screen"], "hello\nworld");
+    }
+
+    #[tokio::test]
+    async fn screen_lines_exceeds_buffer_returns_all() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"a\nb\nc", 0);
+        let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 100})).await;
+        assert_eq!(out["screen"], "a\nb\nc");
+    }
+
+    #[tokio::test]
+    async fn screen_reports_dropped_after_eviction() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"tail-content", 500);
+        let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1"})).await;
+        assert_eq!(out["screen"], "tail-content");
+        assert_eq!(out["dropped"], 500);
+    }
+
+    #[tokio::test]
+    async fn screen_utf8_chinese_survives() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", "你好世界\n第二行".as_bytes(), 0);
+        let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 10})).await;
+        assert_eq!(out["screen"], "你好世界\n第二行");
+    }
+
+    // ── terminal_read (cursor) ──────────────────────────────────
+
+    #[tokio::test]
+    async fn read_first_call_returns_all_and_advances_cursor() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"hello world", 0);
+        let out1 = call(find(&tools, "terminal_read"), json!({"session_id": "s1"})).await;
+        assert_eq!(out1["text"], "hello world");
+        // Cursor advanced: a second no-offset read returns nothing new.
+        let out2 = call(find(&tools, "terminal_read"), json!({"session_id": "s1"})).await;
+        assert_eq!(out2["text"], "");
+    }
+
+    #[tokio::test]
+    async fn read_offset_zero_rereads_from_beginning() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"abc", 0);
+        // First read advances cursor to end.
+        call(find(&tools, "terminal_read"), json!({"session_id": "s1"})).await;
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 0})).await;
+        assert_eq!(out["text"], "abc");
+    }
+
+    #[tokio::test]
+    async fn read_explicit_offset_slices() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"hello world", 0);
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 6})).await;
+        assert_eq!(out["text"], "world");
+    }
+
+    #[tokio::test]
+    async fn read_clean_strips_ansi() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"\x1b[31mred\x1b[0m", 0);
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "clean": true})).await;
+        assert_eq!(out["text"], "red");
+    }
+
+    #[tokio::test]
+    async fn read_unknown_session_empty() {
+        let (tools, _buf) = seeded_tools();
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "missing"})).await;
+        assert_eq!(out["text"], "");
+    }
+
+    #[tokio::test]
+    async fn read_requires_session_id() {
+        let (tools, _buf) = seeded_tools();
+        let tool = find(&tools, "terminal_read");
+        let err = tool.handler.call(json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("missing required field"), "unexpected: {err}");
+    }
+
+    // ── terminal_execute (dispatch) ─────────────────────────────
+
+    #[tokio::test]
+    async fn execute_requires_command() {
+        let (tools, _buf) = seeded_tools();
+        let tool = find(&tools, "terminal_execute");
+        let err = tool.handler.call(json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("missing required field"), "unexpected: {err}");
+    }
+
+    #[tokio::test]
+    async fn execute_local_shell_mode_runs_on_stub() {
+        // Headless (no `terminal` feature): the local-shell mode uses tokio::process
+        // and must work — the stub only affects terminal_open/write/resize.
+        let (tools, _buf) = seeded_tools();
+        let out = call(find(&tools, "terminal_execute"), json!({"command": "echo stub-ok"})).await;
+        let text = out.as_str().unwrap_or_default();
+        assert!(text.contains("stub-ok"), "expected echo output in result, got: {text}");
+    }
+
+    #[tokio::test]
+    async fn execute_session_mode_missing_session_errors() {
+        // Writing to a session that doesn't exist must return an Err (not panic
+        // or hang). The exact message differs by backend (stub: "backend not
+        // enabled"; real: "session not found") — only assert it errors.
+        let (tools, _buf) = seeded_tools();
+        let tool = find(&tools, "terminal_execute");
+        let err = tool.handler.call(json!({"command": "echo hi", "session_id": "nope"})).await.unwrap_err();
+        assert!(!err.to_string().is_empty(), "expected a DeviceError, got empty");
+    }
+
+    // ── clean_terminal_output (edge cases) ──────────────────────
+
+    #[test]
+    fn clean_unterminated_csi_absorbed() {
+        // An unterminated CSI (no final byte) must not hang or panic — it's
+        // skipped conservatively.
+        assert_eq!(clean_terminal_output(b"\x1b[31mred"), "red");
+    }
+
+    #[test]
+    fn clean_crlf_mixed_with_ansi() {
+        assert_eq!(
+            clean_terminal_output(b"a\r\x1b[Kb\r\nc\rd"),
+            "a\nb\nc\nd"
+        );
+    }
+
+    #[test]
+    fn clean_dropped_utf8_replacement() {
+        // A lone continuation byte is replaced, not dropped silently.
+        let input = b"ab\x80cd";
+        assert_eq!(clean_terminal_output(input), "ab\u{FFFD}cd");
+    }
+}
