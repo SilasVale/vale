@@ -84,6 +84,7 @@
       "gwMcp.title": "网关 MCP 配置",
       "gwMcp.desc": "Claude Code 通过本配置接入网关（浏览器 / 终端工具），使用你当前账户的 token。",
       "gwMcp.copy": "复制网关 MCP 配置",
+      "ext.title": "安装浏览器扩展", "ext.download": "下载扩展 ↓", "ext.desc": "在 Windows 设备的 Chrome/Edge 里加载此扩展，AI 才能操作设备浏览器。三步：下载 zip → 解压 → chrome://extensions 打开「开发者模式」→「加载已解压的扩展程序」选解压文件夹。装好后在本页对应设备点「配对扩展」。",
       "loading": "加载中…", "err.loadRoutes": "路由信息加载失败",
     },
     en: {
@@ -161,6 +162,7 @@
       "gwMcp.title": "Gateway MCP config",
       "gwMcp.desc": "Claude Code connects to the gateway (browser / terminal tools) with this config, using your current account's token.",
       "gwMcp.copy": "Copy gateway MCP config",
+      "ext.title": "Install browser extension", "ext.download": "Download extension ↓", "ext.desc": "Load this extension in the device's Chrome/Edge so the AI can operate the device browser. Three steps: download zip → unzip → chrome://extensions enable Developer mode → Load unpacked → pick the folder. Then click Pair on the device below.",
       "loading": "Loading…", "err.loadRoutes": "Failed to load routes",
     },
   };
