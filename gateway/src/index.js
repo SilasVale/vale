@@ -268,7 +268,12 @@ async function handleConsole(request, env, url) {
     if (!d) return jsonError(404, "Device not found", "not_found_error");
     const id = env.PLUGIN_HUB.idFromName(device);
     const hub = env.PLUGIN_HUB.get(id);
-    return hub.fetch(request);
+    // The DO dispatches on its own /ws path — rewrite the URL path so the
+    // upgrade request lands on the DO's handler (the raw request path is
+    // /api/plugins/ws, which the DO would 404).
+    const wsUrl = new URL(request.url);
+    wsUrl.pathname = "/ws";
+    return hub.fetch(new Request(wsUrl.toString(), request));
   }
 
   // ---- Device reverse-proxy: admin session cookie OR paired plugin token ----

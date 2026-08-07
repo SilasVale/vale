@@ -2,7 +2,7 @@ import { connect, disconnect, setRequestHandler } from "./lib/ws.js";
 import { state, loadPairing, savePairing, clearPairing } from "./lib/state.js";
 import { runTool, setConsoleOrigin } from "./lib/tools.js";
 
-const DEFAULT_ORIGIN = "https://ai.saisi.online";
+const DEFAULT_ORIGIN = "https://api.saisi.online";
 async function consoleOrigin() {
   return (await chrome.storage.local.get("consoleOrigin")).consoleOrigin || DEFAULT_ORIGIN;
 }
