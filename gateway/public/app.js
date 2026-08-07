@@ -76,7 +76,7 @@
       "devices.regKeyDesc": "下载安装程序 → 生成注册码 → Windows 上设置 <code>$env:VALE_REG_KEY</code> 后安装，装完自动登记到下方列表（无需手动抄 token）。",
       "devices.keyGenerated": "注册码（一次性，装完即焚）：{code}",
       "devices.regKeyCmd": "在 Windows 安装时先设置这个环境变量，再运行安装：",
-      "devices.genKeyFail": "生成失败",
+      "devices.genKeyFail": "生成失败", "devices.keyCopied": "注册码已复制",
       "devices.online": "在线", "devices.offline": "离线",
       "devices.pair": "配对扩展", "devices.pairFor": "设备：{name}",
       "devices.pairHint": "在扩展 popup 输入此码完成配对。一次性，10 分钟内有效。",
@@ -154,7 +154,7 @@
       "devices.regKeyDesc": "Download the installer → generate a key → set <code>$env:VALE_REG_KEY</code> on Windows and install. The device registers itself below — no token copy-paste.",
       "devices.keyGenerated": "Registration key (one-time, consumed on use): {code}",
       "devices.regKeyCmd": "Set this env var on the Windows machine before install, then run:",
-      "devices.genKeyFail": "Generation failed",
+      "devices.genKeyFail": "Generation failed", "devices.keyCopied": "Registration key copied",
       "devices.online": "Online", "devices.offline": "Offline",
       "devices.pair": "Pair extension", "devices.pairFor": "Device: {name}",
       "devices.pairHint": "Enter this code in the extension popup to pair. One-time, valid for 10 minutes.",
@@ -742,8 +742,15 @@
         const box = $("#regkey-box");
         box.innerHTML = `
           <div class="note tip">${t("devices.keyGenerated", { code: `<code class="mono">${esc(data.key)}</code>` })}</div>
+          <div class="key-edit-row" style="margin-top:8px">
+            <code class="mono" id="regkey-value">${esc(data.key)}</code>
+            <button id="btn-regkey-copy" class="btn-ghost" data-i18n="btn.copy">复制</button>
+          </div>
           <div class="muted" style="margin-top:8px">${t("devices.regKeyCmd")}</div>
           <div class="key-edit-row"><code class="mono">$env:VALE_REG_KEY = "${esc(data.key)}"; irm https://command.saisi.online/vale-command/vale-command-setup.ps1 | iex</code></div>`;
+        $("#btn-regkey-copy").addEventListener("click", () => {
+          navigator.clipboard?.writeText(data.key).then(() => toast(t("devices.keyCopied"))).catch(() => {});
+        });
         navigator.clipboard?.writeText(data.key).catch(() => {});
         toast(t("devices.genKey"));
       } else {
