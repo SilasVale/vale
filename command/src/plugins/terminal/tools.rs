@@ -690,6 +690,26 @@ mod tests {
     }
 
     #[test]
+    fn clean_osc_title_stripped() {
+        // OSC title sequences (ESC ]0;... BEL) appear in every bash prompt —
+        // they must be stripped so AI-read screen text isn't full of noise.
+        assert_eq!(clean_terminal_output(b"\x1b]0;user@host: ~\x07prompt$ "), "prompt$ ");
+    }
+
+    #[test]
+    fn clean_osc_with_st_terminator() {
+        // OSC terminated by ST (ESC \) rather than BEL.
+        assert_eq!(clean_terminal_output(b"\x1b]0;title\x1b\\hi"), "hi");
+    }
+
+    #[test]
+    fn clean_bash_prompt_with_osc_and_csi() {
+        // A real bash prompt: OSC title + CSI color codes + prompt text.
+        let input = b"\x1b]0;zhengsaisi@61-83: ~\x07\x1b[01;32mzhengsaisi@61-83\x1b[00m:\x1b[01;34m~\x1b[00m$ echo hi\nhi";
+        assert_eq!(clean_terminal_output(input), "zhengsaisi@61-83:~$ echo hi\nhi");
+    }
+
+    #[test]
     fn clean_crlf_mixed_with_ansi() {
         assert_eq!(
             clean_terminal_output(b"a\r\x1b[Kb\r\nc\rd"),

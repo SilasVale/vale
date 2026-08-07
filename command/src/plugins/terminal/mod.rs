@@ -61,6 +61,22 @@ pub fn clean_terminal_output(raw: &[u8]) -> String {
                 i += 1;
             }
             if i < bytes.len() { i += 1; } // skip the terminating letter
+        } else if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b']' {
+            // Skip OSC sequence (ESC ] ... ST|BEL): terminal title (ESC ]0;...
+            // BEL) appears in every bash prompt, so leaving it in makes AI-read
+            // screen text full of ESC]0;... noise. Ends at BEL (\x07) or ST
+            // (ESC \).
+            i += 2;
+            let mut term = false;
+            while i < bytes.len() && bytes[i] != 0x07 {
+                if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                    i += 2;
+                    term = true;
+                    break;
+                }
+                i += 1;
+            }
+            if !term && i < bytes.len() { i += 1; } // skip the BEL (ST already consumed)
         } else if bytes[i] == b'\r' {
             // \r\n → \n, standalone \r → \n
             if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
