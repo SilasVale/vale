@@ -164,38 +164,78 @@ fn restart_task() {
         .spawn();
 }
 
-/// Check the download server for a newer vale-command and prompt the user.
-/// Uses PowerShell (Windows built-in, no new deps) to fetch /api/version and
-/// show a message box. LOCAL_VERSION must be bumped alongside
-/// command/Cargo.toml when a new installer is shipped.
-const LOCAL_VERSION: &str = "0.7.0";
+/// Full auto-upgrade: check the download server for a newer vale-command and,
+/// if one exists, download the installer into the install dir and run it
+/// silently (elevated via the runas verb). The silent installer kills
+/// vale-command.exe, copies the new binaries and relaunches a fresh tray via
+/// the ValeCommandTray scheduled task; this tray exits right after spawning
+/// the PowerShell so the old instance never lingers next to the relaunched
+/// one. On any failure (user declined, network, UAC cancel, installer error)
+/// the PowerShell script restores the tray itself.
+///
+/// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
+/// bumped alongside command/Cargo.toml and index/src/index.js when a new
+/// installer is shipped.
+const LOCAL_VERSION: &str = "0.7.1";
 const VERSION_URL: &str = "https://command.saisi.online/api/version";
-const DOWNLOAD_URL: &str = "https://command.saisi.online/vale-command/ValeCommand-Setup.exe";
 
 fn check_for_update() {
+    let dir = install_dir();
     let ps = format!(
         r#"
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$log = Join-Path '{2}' 'vale-update.log'
+function Log($m) {{ try {{ (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m | Out-File -FilePath $log -Append -Encoding utf8 }} catch {{}} }}
+function Restore-Tray {{
+  try {{ schtasks /Run /TN ValeCommandTray 2>$null | Out-Null; Start-Sleep -Seconds 1 }} catch {{}}
+  if (-not (Get-Process vale-tray -ErrorAction SilentlyContinue)) {{
+    Start-Process -FilePath '{2}\vale-tray.exe'
+  }}
+}}
 try {{
+  Log 'check: start'
   $j = Invoke-RestMethod -Uri '{0}' -TimeoutSec 10
   $remote = [version]$j.version
   $local = [version]'{1}'
-  if ($remote -gt $local) {{
-    $r = [System.Windows.Forms.MessageBox]::Show(
-      "有新版本 $($j.version)（当前 {1}）。是否打开下载页？", "Vale Command 更新", 'YesNo')
-    if ($r -eq 'Yes') {{ Start-Process '{2}' }}
-  }} else {{
+  if ($remote -le $local) {{
+    Log 'check: up to date'
     [System.Windows.Forms.MessageBox]::Show("已是最新版本 {1}。", "Vale Command 更新", 'OK')
+    return
   }}
+  Log "check: newer $($j.version) available"
+  $r = [System.Windows.Forms.MessageBox]::Show(
+    "发现新版本 $($j.version)（当前 {1}）。是否立即升级？", "Vale Command 更新", 'YesNo')
+  if ($r -ne 'Yes') {{ Log 'check: declined'; Restore-Tray; return }}
+  [System.Windows.Forms.MessageBox]::Show(
+    "正在下载更新并静默升级，约需 1 分钟。期间服务会短暂中断，完成后托盘将自动重启。",
+    "Vale Command 更新", 'OK')
+  $installer = Join-Path '{2}' 'ValeCommand-Setup.exe'
+  Remove-Item $installer -Force -ErrorAction SilentlyContinue
+  Log 'update: downloading'
+  Invoke-WebRequest -Uri $j.download -OutFile $installer -TimeoutSec 300
+  Log 'update: downloaded, running silent installer'
+  $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D={2}" -Verb RunAs -PassThru -Wait
+  if ($p.ExitCode -ne 0) {{ throw "安装程序退出码 $($p.ExitCode)" }}
+  Log 'update: install ok'
+  Remove-Item $installer -Force -ErrorAction SilentlyContinue
+  [System.Windows.Forms.MessageBox]::Show(
+    "升级完成！已更新到 $($j.version)。", "Vale Command 更新", 'OK')
 }} catch {{
-  [System.Windows.Forms.MessageBox]::Show("检查更新失败：$($_.Exception.Message)", "Vale Command 更新", 'OK')
+  Log "update: FAILED - $($_.Exception.Message)"
+  [System.Windows.Forms.MessageBox]::Show("升级失败：$($_.Exception.Message)", "Vale Command 更新", 'OK')
+  Restore-Tray
 }}
 "#,
-        VERSION_URL, LOCAL_VERSION, DOWNLOAD_URL,
+        VERSION_URL, LOCAL_VERSION, dir.display(),
     );
     let _ = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
         .spawn();
+    // This tray's job is done — the silent installer relaunches a fresh tray
+    // once the new binaries are in place; exit now so there is never a
+    // duplicate tray next to the relaunched one.
+    std::process::exit(0);
 }
 
 /// Handles of the dynamic menu items, so the status lines and start/stop
