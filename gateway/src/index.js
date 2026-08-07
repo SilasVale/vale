@@ -787,7 +787,7 @@ export async function handleGateway(request, env, url) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(openaiReq),
-  }, { timeoutMs: upstreamTimeoutMs(env) });
+  }, { timeoutMs: ogTimeoutMs(env) });
   if (!upstream || !upstream.ok) {
     // Only a hard network failure (channel unreachable) trips the breaker.
     // Slow responses (timeout) are zen's normal behavior — multi-second latency
@@ -1023,6 +1023,17 @@ export async function fetchWithTimeout(url, init = {}, ms = 15000) {
 function upstreamTimeoutMs(env) {
   const v = Number(env?.UPSTREAM_TIMEOUT_MS);
   return Number.isFinite(v) && v > 0 ? v : 30000;
+}
+
+/**
+ * og (zen) timeout — 60s, double the default. zen is a third-party gateway
+ * whose latency intermittently spikes past 30s (observed "og: timeout after
+ * 30000ms" 502s). A 60s budget absorbs those spikes so occasional slowness
+ * doesn't surface as a 502 that Claude Code retries into a multi-minute stall.
+ */
+function ogTimeoutMs(env) {
+  const v = Number(env?.OG_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 60000;
 }
 
 // Circuit breaker for the og channel, backed by a Durable Object so every

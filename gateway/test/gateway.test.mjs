@@ -41,6 +41,7 @@ function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30 } = 
       KEYS: { get: async (k) => (kv.has(k) ? kv.get(k) : null), put: async () => {}, delete: async () => {} },
       BREAKER: breaker,
       UPSTREAM_TIMEOUT_MS: timeout,
+      OG_TIMEOUT_MS: timeout, // og translate reads this (60s default)
     },
     token,
   };
