@@ -45,7 +45,12 @@ export function reResolveExpr(el, mode) {
       : `_el.shadowRoot.querySelector(${JSON.stringify(chain[i])})`;
     steps += `${i === 0 ? "let " : ""}_el = ${q};\n    if (!_el) return ${miss};\n    `;
   }
-  steps += mode === "focus" ? "_el.focus();\n    return true;" : "return _el.getBoundingClientRect();";
+  // Return a plain object, not the DOMRect itself — CDP `returnByValue`
+  // serializes plain objects but drops DOMRect's read-only props, which made
+  // `Input.dispatchMouseEvent` fail with "params.x: mandatory field missing".
+  steps += mode === "focus"
+    ? "_el.focus();\n    return true;"
+    : "const r = _el.getBoundingClientRect();\n    return { x: r.x, y: r.y, width: r.width, height: r.height };";
   return `(() => {\n  try {\n    ${steps}\n  } catch { return ${miss}; }\n})()`;
 }
 
