@@ -91,6 +91,17 @@ document.getElementById('foot-time').textContent = new Date().toISOString().repl
 
 export default {
   async fetch(request, env) {
+    // Version endpoint for the vale-tray "check for updates" menu item.
+    // Bump VERSION alongside command/Cargo.toml when a new installer is shipped.
+    if (new URL(request.url).pathname === "/api/version") {
+      return new Response(
+        JSON.stringify({
+          version: "0.7.0",
+          download: "https://command.saisi.online/vale-command/ValeCommand-Setup.exe",
+        }),
+        { headers: { "content-type": "application/json" } }
+      );
+    }
     const consoleUrl = (env && env.CONSOLE_URL) || "https://<console-host>";
     return new Response(PAGE(consoleUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },

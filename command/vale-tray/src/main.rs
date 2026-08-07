@@ -153,6 +153,40 @@ fn restart_task() {
         .spawn();
 }
 
+/// Check the download server for a newer vale-command and prompt the user.
+/// Uses PowerShell (Windows built-in, no new deps) to fetch /api/version and
+/// show a message box. LOCAL_VERSION must be bumped alongside
+/// command/Cargo.toml when a new installer is shipped.
+const LOCAL_VERSION: &str = "0.7.0";
+const VERSION_URL: &str = "https://command.saisi.online/api/version";
+const DOWNLOAD_URL: &str = "https://command.saisi.online/vale-command/ValeCommand-Setup.exe";
+
+fn check_for_update() {
+    let ps = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+try {{
+  $j = Invoke-RestMethod -Uri '{0}' -TimeoutSec 10
+  $remote = [version]$j.version
+  $local = [version]'{1}'
+  if ($remote -gt $local) {{
+    $r = [System.Windows.Forms.MessageBox]::Show(
+      "有新版本 $($j.version)（当前 {1}）。是否打开下载页？", "Vale Command 更新", 'YesNo')
+    if ($r -eq 'Yes') {{ Start-Process '{2}' }}
+  }} else {{
+    [System.Windows.Forms.MessageBox]::Show("已是最新版本 {1}。", "Vale Command 更新", 'OK')
+  }}
+}} catch {{
+  [System.Windows.Forms.MessageBox]::Show("检查更新失败：$($_.Exception.Message)", "Vale Command 更新", 'OK')
+}}
+"#,
+        VERSION_URL, LOCAL_VERSION, DOWNLOAD_URL,
+    );
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+        .spawn();
+}
+
 /// Handles of the dynamic menu items, so the status lines and start/stop
 /// enabled-state can be refreshed without rebuilding the tray.
 struct TrayUi {
@@ -199,6 +233,7 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
         let copy_mcp = MenuItem::with_id("copy_mcp", "复制 MCP 配置", true, None);
         let open_console = MenuItem::with_id("open_console", "打开控制台", true, None);
         let open_terminal = MenuItem::with_id("open_terminal", "本地终端", true, None);
+        let check_update = MenuItem::with_id("check_update", "检查更新", true, None);
         let start = MenuItem::with_id("start", "启动", true, None);
         let stop = MenuItem::with_id("stop", "停止", true, None);
         let restart = MenuItem::with_id("restart", "重启", true, None);
@@ -212,6 +247,7 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
         menu.append(&copy_mcp).expect("menu copy_mcp");
         menu.append(&open_console).expect("menu open_console");
         menu.append(&open_terminal).expect("menu open_terminal");
+        menu.append(&check_update).expect("menu check_update");
         menu.append(&sep).expect("menu sep2");
         menu.append(&start).expect("menu start");
         menu.append(&stop).expect("menu stop");
@@ -266,6 +302,7 @@ fn main() {
                     "copy_mcp" => copy_mcp_config(),
                     "open_console" => open_url(&console_url()),
                     "open_terminal" => open_local_terminal(),
+                    "check_update" => check_for_update(),
                     "start" => schtasks(&["/Run", "/TN", "ValeCommand"]),
                     "stop" => schtasks(&["/End", "/TN", "ValeCommand"]),
                     "restart" => restart_task(),
