@@ -6,7 +6,8 @@
  *
  *   or/<model>   → OpenRouter (proxied via the openrouter-proxy CF Worker)
  *   ds/<model>   → DeepSeek official (api.deepseek.com/anthropic, Bearer passthrough)
- *   og/<model>   → OpenCode Go (opencode.ai/zen/go, Anthropic↔OpenAI translation)
+ *   og/<model>   → OpenCode Go (opencode.ai/zen/go — Anthropic↔OpenAI translation;
+ *                  native-Anthropic passthrough disabled, zen /v1/messages auth unverified)
  *   (none)       → default ds/ (DeepSeek official)
  *
  * Auth:
@@ -29,6 +30,21 @@ export { PluginHubDO };
 
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
+
+// OpenCode Zen/Go endpoints. deepseek-v4-flash and minimax-m3 are Anthropic-native
+// on zen/go/v1/messages (announced 2026-08-06 for ds4f; minimax was already native) —
+// those models bypass the OpenAI translation. Other og models (mimo-v2.5, kimi, glm)
+// only speak OpenAI chat/completions and keep the translate path.
+const OG_ZEN_ANTHROPIC = "https://opencode.ai/zen/go" + VERIFY_PATH;
+const OG_ZEN_CHAT = "https://opencode.ai/zen/go/v1/chat/completions";
+// zen/go/v1/messages currently rejects BOTH Bearer and x-api-key with this
+// user's key ("Missing API key" for either), while chat/completions works with
+// Bearer — the "native Anthropic" announcement (2026-08-06) is not live on the
+// Go endpoint, or uses auth we can't satisfy. Keep the set empty so every og
+// model uses the proven translate path; add names back when messages works.
+// (Verified 2026-08-07: all three og models — deepseek-v4-flash, minimax-m3,
+// mimo-v2.5 — work via chat/completions translate with the user's key.)
+const OG_NATIVE_ANTHROPIC = new Set([]);
 const AUTH_BASE = "/api/auth";
 const ADMIN_BASE = "/api/admin";
 const ME_BASE = "/api/me";
@@ -54,7 +70,7 @@ const ROUTE_INFO = [
   {
     prefix: "og/",
     backend: "OpenCode Go",
-    desc: "opencode.ai/zen/go — Anthropic↔OpenAI translation, tool calls & thinking",
+    desc: "opencode.ai/zen/go — chat/completions translation (all models)",
     models: ["deepseek-v4-flash", "minimax-m3"],
   },
   {
@@ -557,7 +573,7 @@ async function authLogin(request, env, secure) {
 
 /* ---------------- /v1/* gateway ---------------- */
 
-async function handleGateway(request, env, url) {
+export async function handleGateway(request, env, url) {
   const path = url.pathname;
   const method = request.method;
 
@@ -599,8 +615,19 @@ async function handleGateway(request, env, url) {
     model = await resolveAutoModel(env, user.id);
   }
   const prefix = model.split("/")[0];
-  const route = pickRoute(prefix, env);
-  const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
+  const baseRoute = pickRoute(prefix, env);
+  const upstreamModel = stripBracket(baseRoute.stripPrefix ? model.slice(prefix.length + 1) : model);
+  // og/deepseek-v4-flash + og/minimax-m3 are Anthropic-native on zen/go/v1/messages —
+  // bypass the OpenAI translation; other og models (mimo-v2.5, kimi, glm) keep it.
+  // upstreamModel is already bracket-stripped, so a [1m] marker cannot mask the check.
+  // NOTE: native passthrough currently DISABLED — zen/go/v1/messages rejects both
+  // Bearer and x-api-key auth ("Missing API key") with this user's key, while the
+  // chat/completions translate path works. Re-enable once zen's messages-endpoint
+  // auth is confirmed (see OG_NATIVE_ANTHROPIC gate below).
+  const route =
+    baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel)
+      ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
+      : baseRoute;
 
   // ---- Gateway-side vision pre-processing ----
   // Text-only models (deepseek, minimax, ...) can't see images. When a request
@@ -615,13 +642,13 @@ async function handleGateway(request, env, url) {
 
   // ---- Gateway web search (og/ model answers, DeepSeek executes the search) ----
   // Claude Code's WebSearch is executed server-side via Anthropic's web_search
-  // server tool. opencode zen (og/) doesn't implement it, but DeepSeek official's
-  // Anthropic endpoint does. So for og/ models, run the search through DeepSeek
-  // official and let the requested og/ model answer from the results — the model
-  // stays og/, DeepSeek is only the search backend. Requires this user's
-  // DEEPSEEK_API_KEY. ds/ and or/ requests pass through untouched (ds/ handles
-  // web_search natively).
-  const isWebSearch = isMessages && route.type === "translate" && (
+  // server tool. opencode zen (og/) doesn't implement it — for any og model,
+  // native-Anthropic or not — but DeepSeek official's Anthropic endpoint does.
+  // So for og/ models, run the search through DeepSeek official and let the
+  // requested og/ model answer from the results — the model stays og/, DeepSeek
+  // is only the search backend. Requires this user's DEEPSEEK_API_KEY. ds/ and
+  // or/ requests pass through untouched (ds/ handles web_search natively).
+  const isWebSearch = isMessages && (route.type === "translate" || route.kind === "opencode") && (
     (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
     (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
   );
@@ -642,8 +669,12 @@ async function handleGateway(request, env, url) {
   if (route.kind === "openrouter" && !openRouterKey) {
     return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
   }
-  // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key
-  const bearerKey = route.kind === "openrouter" ? openRouterKey : route.kind === "qwen" ? qwenKey : deepseekKey;
+  // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
+  // og/ (translate or native) uses their OpenCode Go key — never the DeepSeek key.
+  const bearerKey = route.kind === "openrouter" ? openRouterKey
+    : route.kind === "qwen" ? qwenKey
+    : route.kind === "opencode" ? opencodeGoKey
+    : deepseekKey;
 
   // count_tokens
   if (isCount) {
@@ -672,8 +703,8 @@ async function handleGateway(request, env, url) {
   }
 
   // ---- POST /v1/messages ----
-  // Passthrough routes (or/ds): the upstream already speaks the Anthropic protocol,
-  // forward the body unchanged + stream the response.
+  // Passthrough routes (or/ds/qw): the upstream already speaks the Anthropic
+  // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
@@ -704,7 +735,9 @@ async function handleGateway(request, env, url) {
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 
-  // Translation route (og): Anthropic → OpenAI → zen/go, then reshape back to Anthropic SSE
+  // Translation route (og, non-native models only): Anthropic → OpenAI → zen/go,
+  // then reshape back to Anthropic SSE. deepseek-v4-flash / minimax-m3 never get
+  // here — they were switched to passthrough above.
   if (!opencodeGoKey) {
     return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
   }
@@ -882,7 +915,7 @@ async function testKey(name, key) {
     }
     if (name === "OPENCODE_GO_API_KEY") {
       // Do not send the literal "[1m]" suffix — zen rejects it with 401
-      const res = await fetchWithTimeout("https://opencode.ai/zen/go/v1/chat/completions", {
+      const res = await fetchWithTimeout(OG_ZEN_CHAT, {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1078,6 +1111,10 @@ function pickRoute(prefix, env) {
 function passthroughHeaders(bearerKey) {
   const h = new Headers();
   h.set("Content-Type", "application/json");
+  // All passthrough targets speak the Anthropic protocol (ds/qw native,
+  // openrouter-proxy) — send the standard version header; OpenAI-format
+  // backends ignore it.
+  h.set("anthropic-version", "2023-06-01");
   // Do not forward the client's auth header — use this user's own key
   if (bearerKey) h.set("Authorization", `Bearer ${bearerKey}`);
   return h;
@@ -1348,7 +1385,10 @@ async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query
     }],
   };
   try {
-    const resp = await fetchWithTimeout(route.upstream, {
+    // Always the OpenAI-format endpoint: this sends an OpenAI body (toOpenAIRequest).
+    // For native-Anthropic og models the request route's upstream is now /v1/messages,
+    // which would reject an OpenAI body — so pin the chat/completions URL explicitly.
+    const resp = await fetchWithTimeout(OG_ZEN_CHAT, {
       method: "POST",
       headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
@@ -1751,8 +1791,9 @@ export async function valeProbe(env, model) {
   if (!known) {
     return jsonError(400, `Unknown channel model: ${model}`, "invalid_request");
   }
-  // og → zen (translate route), same request shape as testKey's zen check;
-  // respect the breaker first so a degraded channel fails fast at no cost.
+  // og → zen; respect the breaker first so a degraded channel fails fast at no cost.
+  // Native-Anthropic models (deepseek-v4-flash / minimax-m3) probe zen/go/v1/messages,
+  // other og models probe chat/completions — same probe body works for both formats.
   if (prefix === "og") {
     if (await isChannelDegraded(env)) {
       return jsonOk({ ok: false, channel: prefix, detail: "circuit open" });
@@ -1760,9 +1801,10 @@ export async function valeProbe(env, model) {
     const key = env.OPENCODE_GO_API_KEY || "";
     if (!key) return jsonOk({ ok: false, channel: prefix, detail: "OPENCODE_GO_API_KEY not configured" });
     const upstreamModel = stripBracket(model.slice(prefix.length + 1));
+    const native = OG_NATIVE_ANTHROPIC.has(upstreamModel);
     let res;
     try {
-      res = await fetchWithTimeout("https://opencode.ai/zen/go/v1/chat/completions", {
+      res = await fetchWithTimeout(native ? OG_ZEN_ANTHROPIC : OG_ZEN_CHAT, {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({

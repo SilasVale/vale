@@ -65,11 +65,15 @@ const keyedEnv = {
   },
 };
 
-function withFetch(handler, fn) {
+async function withFetch(handler, fn) {
+  // Must await fn() INSIDE the try: the handler stays installed for the whole
+  // async run. Returning fn() directly restores fetch in the same tick, so a
+  // fetch deferred past an await (e.g. og's breaker check) hits the real
+  // network instead of the stub.
   const real = globalThis.fetch;
   globalThis.fetch = handler;
   try {
-    return fn();
+    return await fn();
   } finally {
     globalThis.fetch = real;
   }
@@ -84,6 +88,21 @@ test("valeProbe: og with open breaker short-circuits, no upstream call", async (
   const body = await res.json();
   assert.equal(body.ok, false);
   assert.equal(body.detail, "circuit open");
+});
+
+test("valeProbe: og model probes zen chat/completions (translate path, native disabled)", async () => {
+  let seen;
+  const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response("{}", { status: 200 }); }, () =>
+    valeProbe(keyedEnv, "og/deepseek-v4-flash"),
+  );
+  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
+  // og probe passes a plain-object header (not a Headers instance)
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-og");
+  assert.equal(JSON.parse(seen.init.body).model, "deepseek-v4-flash");
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.channel, "og");
 });
 
 test("valeProbe: ds channel ok when upstream 200", async () => {
