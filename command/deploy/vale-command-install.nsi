@@ -30,8 +30,11 @@ Function regKeyPage
   ${EndIf}
   ${NSD_CreateLabel} 0 0 100% 36u "注册码（可选）：到 ai.saisi.online 控制台 → 设备管理 → 生成注册码。$\r$\n填了它，装完自动登记设备，无需手动抄 token；留空则之后手动添加。"
   Pop $0
+  ; Single-line input (ES_AUTOHSCROLL): a registration key is one token, and a
+  ; pasted multi-line value would break the env-var handoff in run-setup.bat.
   ${NSD_CreateText} 0 40u 100% 22u ""
   Pop $REGKEY_INPUT
+  ${NSD_AddStyle} $REGKEY_INPUT ${ES_AUTOHSCROLL}
   ${NSD_SetText} $REGKEY_INPUT "$REGKEY"
   nsDialogs::Show
 FunctionEnd
