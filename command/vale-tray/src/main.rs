@@ -207,10 +207,15 @@ try {{
   Log "check: newer $($j.version) available"
   $r = [System.Windows.Forms.MessageBox]::Show(
     "发现新版本 $($j.version)（当前 {1}）。是否立即升级？", "Vale Command 更新", 'YesNo')
-  if ($r -ne 'Yes') {{ Log 'check: declined'; Restore-Tray; return }}
+  if ($r -ne 'Yes') {{ Log 'check: declined'; return }}
   [System.Windows.Forms.MessageBox]::Show(
     "正在下载更新并静默升级，约需 1 分钟。期间服务会短暂中断，完成后托盘将自动重启。",
     "Vale Command 更新", 'OK')
+  # The old tray must be gone before the installer relaunches a fresh one,
+  # otherwise two tray icons appear. Kill it now — the installer restarts it
+  # via the ValeCommandTray scheduled task once the new binaries are in place.
+  Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Milliseconds 500
   $installer = Join-Path '{2}' 'ValeCommand-Setup.exe'
   Remove-Item $installer -Force -ErrorAction SilentlyContinue
   Log 'update: downloading'
@@ -231,11 +236,13 @@ try {{
         VERSION_URL, LOCAL_VERSION, dir.display(),
     );
     let _ = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+        .args(["-NoProfile", "-Command", &ps])
         .spawn();
-    // This tray's job is done — the silent installer relaunches a fresh tray
-    // once the new binaries are in place; exit now so there is never a
-    // duplicate tray next to the relaunched one.
+    // Do NOT exit here — the tray stays alive. In the upgrade path the
+    // installer kills vale-command.exe and relaunches a fresh tray, replacing
+    // this one; in the "up to date" / "declined" paths this tray keeps running.
+    // (Exiting unconditionally made the tray vanish even when the user only
+    // clicked "check for updates" on an already-current install.)
     std::process::exit(0);
 }
 
