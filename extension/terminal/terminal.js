@@ -18,7 +18,7 @@
 // reconnects like EventSource would.
 import { loadPairing } from "../lib/state.js";
 
-const DEFAULT_ORIGIN = "https://ai.saisi.online";
+const DEFAULT_ORIGIN = "https://api.saisi.online";
 const PTY_TARGET = "powershell"; // device runs Windows
 const DEFAULT_ROWS = 30;
 const DEFAULT_COLS = 100;
