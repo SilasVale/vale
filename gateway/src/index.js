@@ -31,6 +31,10 @@ export { PluginHubDO };
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
 
+// Request body cap: Claude Code 1M-context bodies run ~4-10MB; anything larger
+// would blow the Workers Free plan's 10ms CPU budget just to scan/parse it.
+const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
+
 // OpenCode Zen/Go endpoints. deepseek-v4-flash and minimax-m3 are Anthropic-native
 // on zen/go/v1/messages (announced 2026-08-06 for ds4f; minimax was already native) —
 // those models bypass the OpenAI translation. Other og models (mimo-v2.5, kimi, glm)
@@ -608,8 +612,22 @@ export async function handleGateway(request, env, url) {
     return jsonError(404, "Not Found", "not_found_error");
   }
 
-  const body = await request.json();
-  let model = body.model || "";
+  // Read the body as raw text ONCE and extract the top-level "model" field
+  // with a lightweight scan — full JSON.parse + re-stringify of a multi-MB
+  // body exceeds the Workers Free plan 10ms CPU budget (Error 1102). Only the
+  // og translate path (which must walk the message array) parses the object.
+  // Size guard first: a body over MAX_BODY_BYTES would take too long to even
+  // scan on the Free plan — reject it outright.
+  const declaredLen = Number(request.headers.get("content-length") || 0);
+  if (declaredLen > MAX_BODY_BYTES) {
+    return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
+  }
+  const rawText = await request.text();
+  if (rawText.length > MAX_BODY_BYTES) {
+    return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
+  }
+  const { model: scannedModel } = scanTopLevelModel(rawText);
+  let model = scannedModel || "";
   if (model === "auto") {
     // Claude Code 固定模型名 auto：按用户网页选择路由
     model = await resolveAutoModel(env, user.id);
@@ -629,16 +647,11 @@ export async function handleGateway(request, env, url) {
       ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
       : baseRoute;
 
-  // ---- Gateway-side vision pre-processing ----
-  // Text-only models (deepseek, minimax, ...) can't see images. When a request
-  // carries image blocks and the target model isn't on the vision-capable
-  // allowlist, describe each image with the configured vision model (default
-  // og/mimo-v2.5) and swap the image blocks for that text, so any model can
-  // answer image questions. count_tokens skips this.
-  if (isMessages) {
-    const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
-    if (prep.changed) body.messages = prep.messages;
-  }
+  // The full body object is only needed on the og translate path (web_search
+  // detection, image pre-processing, toOpenAIRequest). Passthrough routes
+  // (ds/qw/or) forward the raw text with the model field swapped — parsing a
+  // multi-MB body into an object graph would blow the Free plan CPU budget.
+  let body = null;
 
   // ---- Gateway web search (og/ model answers, DeepSeek executes the search) ----
   // Claude Code's WebSearch is executed server-side via Anthropic's web_search
@@ -648,21 +661,33 @@ export async function handleGateway(request, env, url) {
   // requested og/ model answer from the results — the model stays og/, DeepSeek
   // is only the search backend. Requires this user's DEEPSEEK_API_KEY. ds/ and
   // or/ requests pass through untouched (ds/ handles web_search natively).
-  const isWebSearch = isMessages && (route.type === "translate" || route.kind === "opencode") && (
-    (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
-    (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
-  );
-  if (isWebSearch) {
-    if (!deepseekKey) {
-      return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
+  if (isMessages && (route.type === "translate" || route.kind === "opencode")) {
+    body = JSON.parse(rawText);
+    const isWebSearch = (
+      (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
+      (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
+    );
+    if (isWebSearch) {
+      if (!deepseekKey) {
+        return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
+      }
+      const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
+      if (body.stream) {
+        return new Response(toSSE(res), {
+          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+        });
+      }
+      return jsonOk(res);
     }
-    const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
-    if (body.stream) {
-      return new Response(toSSE(res), {
-        headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
-      });
-    }
-    return jsonOk(res);
+
+    // ---- Gateway-side vision pre-processing ----
+    // Text-only models (deepseek, minimax, ...) can't see images. When a request
+    // carries image blocks and the target model isn't on the vision-capable
+    // allowlist, describe each image with the configured vision model (default
+    // og/mimo-v2.5) and swap the image blocks for that text, so any model can
+    // answer image questions. count_tokens skips this.
+    const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
+    if (prep.changed) body.messages = prep.messages;
   }
 
   // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
@@ -679,7 +704,9 @@ export async function handleGateway(request, env, url) {
   // count_tokens
   if (isCount) {
     if (route.type === "translate") {
-      return jsonOk({ input_tokens: estimateTokens(JSON.stringify(body.messages || [])) });
+      // og translate counts locally — estimate from the raw body length
+      // (estimateTokens itself approximates for bodies over 1M chars).
+      return jsonOk({ input_tokens: estimateTokens(rawText) });
     }
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
@@ -692,14 +719,19 @@ export async function handleGateway(request, env, url) {
       upstream = await fetchWithTimeout(route.upstream.replace(VERIFY_PATH, COUNT_PATH), {
         method: "POST",
         headers: passthroughHeaders(bearerKey),
-        body: JSON.stringify({ ...body, model: upstreamModel }),
+        body: rawWithModel(rawText, upstreamModel),
       }, upstreamTimeoutMs(env));
     } catch (e) {
-      return jsonError(502, `count_tokens upstream ${route.kind}: ${e.message}`, "api_error");
+      // Upstream unreachable/failed — fall back to a local estimate instead of
+      // 502ing: Claude Code calls count_tokens on every request, and a big body
+      // shouldn't turn that into an error (or a 10ms-CPU trip on the Free plan).
+      return jsonOk({ input_tokens: estimateTokens(rawText) });
     }
-    if (!upstream.ok) return jsonError(upstream.status, "count_tokens upstream failed", "api_error");
+    if (!upstream.ok) {
+      return jsonOk({ input_tokens: estimateTokens(rawText) });
+    }
     const json = await upstream.json();
-    return jsonOk({ input_tokens: json.input_tokens || estimateTokens(JSON.stringify(body.messages || [])) });
+    return jsonOk({ input_tokens: json.input_tokens || estimateTokens(rawText) });
   }
 
   // ---- POST /v1/messages ----
@@ -714,10 +746,12 @@ export async function handleGateway(request, env, url) {
     }
     let upstream;
     try {
+      // Forward the raw body with only the top-level model field swapped —
+      // no parse, no spread, no full re-stringify (Free plan 10ms CPU budget).
       upstream = await fetchWithTimeout(route.upstream, {
         method: "POST",
         headers: passthroughHeaders(bearerKey),
-        body: JSON.stringify({ ...body, model: upstreamModel }),
+        body: rawWithModel(rawText, upstreamModel),
       }, upstreamTimeoutMs(env));
     } catch (e) {
       return jsonError(502, `upstream ${route.kind}: ${e.message}`, "api_error");
@@ -769,7 +803,14 @@ export async function handleGateway(request, env, url) {
   // whole response and flushing it at once — that made thinking look frozen and
   // could time out long generations).
   if (body.stream) {
-    return new Response(streamOgToAnthropic(upstream.body, body.model, upstreamModel), {
+    // Extract the scalars the encoder needs, then drop the big body object so
+    // the GC can reclaim it while the (potentially minutes-long) stream runs —
+    // keeping a multi-MB parsed body resident the whole time pushes the Free
+    // plan's 128MB isolate limit.
+    const clientModel = body.model;
+    const streamBody = streamOgToAnthropic(upstream.body, clientModel, upstreamModel);
+    body = null;
+    return new Response(streamBody, {
       headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
     });
   }
@@ -1050,14 +1091,118 @@ export async function recordChannelFailure(env) {
 }
 
 /**
+ * Replace the top-level "model" value in a raw JSON body without parsing it.
+ * Re-scans for the field's value span (cheap O(n), no object graph) and
+ * rebuilds only that slice. Falls back to the unchanged body if the field
+ * can't be located.
+ */
+export function rawWithModel(raw, newModel) {
+  const { valueStart, valueEnd } = scanTopLevelModel(raw);
+  if (valueStart < 0 || valueEnd <= valueStart) return raw;
+  return raw.slice(0, valueStart) + JSON.stringify(newModel) + raw.slice(valueEnd);
+}
+
+/**
+ * Lightweight scan of a JSON request body for the TOP-LEVEL "model" field,
+ * WITHOUT building the object graph (avoids the full parse + re-stringify
+ * that burns the Workers Free plan's 10ms CPU budget on multi-MB bodies).
+ *
+ * Walks the JSON once: skips strings (with escapes), objects, arrays, and
+ * tracks depth. Returns { model, valueStart, valueEnd } where valueStart/End
+ * bound the model string value (including its quotes) for in-place
+ * replacement; model is null when absent.
+ */
+export function scanTopLevelModel(raw) {
+  let i = 0;
+  const n = raw.length;
+  let depth = 0; // {} and [] nesting — model must sit at depth 0
+  let inStr = false;
+  let keyStart = -1; // first char of the key text (after its opening quote)
+  let keyEnd = -1;   // index of the key's closing quote
+  let pendingKey = false;
+  while (i < n) {
+    const c = raw[i];
+    if (inStr) {
+      if (c === "\\") { i += 2; continue; }
+      if (c === '"') {
+        inStr = false;
+        if (keyStart >= 0) keyEnd = i; // closing quote of a key string
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      if (pendingKey) {
+        keyStart = i + 1; // start of the key text
+        keyEnd = -1;
+        pendingKey = false;
+      }
+      inStr = true;
+      i += 1;
+      continue;
+    }
+    if (c === "{" || c === "[") {
+      depth += 1;
+      if (depth === 1) pendingKey = true;
+      i += 1;
+      continue;
+    }
+    if (c === "}" || c === "]") {
+      depth -= 1;
+      i += 1;
+      continue;
+    }
+    if (c === ":") {
+      // key "model" at top level? keyStart..keyEnd bound the key text.
+      if (depth === 1 && keyStart >= 0 && keyEnd > keyStart && raw.slice(keyStart, keyEnd) === "model") {
+        // value follows — skip whitespace, expect a string.
+        let j = i + 1;
+        while (j < n && (raw[j] === " " || raw[j] === "\t" || raw[j] === "\n" || raw[j] === "\r")) j += 1;
+        if (j < n && raw[j] === '"') {
+          const vs = j;
+          let k = j + 1;
+          let val = "";
+          while (k < n) {
+            if (raw[k] === "\\") { val += raw[k] + (raw[k + 1] || ""); k += 2; continue; }
+            if (raw[k] === '"') break;
+            val += raw[k];
+            k += 1;
+          }
+          return { model: val, valueStart: vs, valueEnd: k + 1 };
+        }
+        return { model: null, valueStart: -1, valueEnd: -1 };
+      }
+      keyStart = -1;
+      keyEnd = -1;
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  return { model: null, valueStart: -1, valueEnd: -1 };
+}
+
+/**
  * Rough token estimate. ASCII runs ~4 chars/token, CJK/other script chars are
  * ~1.8 tokens each — the plain `length / 4` underestimates Chinese-heavy
  * prompts, which skews the client's context accounting.
+ *
+ * CPU-safe: the char-by-char walk is O(n) and on a multi-MB body could alone
+ * exceed the Workers Free plan 10ms CPU budget. Large bodies fall back to a
+ * byte-length approximation (never stringify+walk them) — count_tokens only
+ * needs a context-budget estimate, ±20% is fine.
  */
+const ESTIMATE_WALK_LIMIT = 1_000_000; // chars: beyond this, approximate
+
 export function estimateTokens(jsonStr) {
+  const s = String(jsonStr);
+  if (s.length > ESTIMATE_WALK_LIMIT) {
+    // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
+    return Math.ceil(s.length / 3);
+  }
   let ascii = 0;
   let other = 0;
-  for (const ch of String(jsonStr)) {
+  for (const ch of s) {
     if (ch.charCodeAt(0) < 128) ascii += 1;
     else other += 1;
   }
