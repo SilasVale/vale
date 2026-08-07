@@ -80,7 +80,7 @@ if (-not $Hostname) {
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
-Set-Content -Path (Join-Path $InstallDir "vale-command.console") -Value "https://console.saisi.online/"
+Set-Content -Path (Join-Path $InstallDir "vale-command.console") -Value "https://ai.saisi.online/"
 
 
 Write-Host "=== Vale Command one-click install ($Hostname) ==="
@@ -181,7 +181,7 @@ if ($ns.Count -gt 0) {
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
-Set-Content -Path (Join-Path $InstallDir "vale-command.console") -Value "https://console.saisi.online/"
+Set-Content -Path (Join-Path $InstallDir "vale-command.console") -Value "https://ai.saisi.online/"
 
 Write-Host "  hostname: $Hostname"
 
@@ -321,7 +321,7 @@ Write-Host ""
 Write-Host "Claude Code config:"
 Write-Host "  { `"mcpServers`": { `"vale-command`": { `"type`": `"http`", `"url`": `"https://$Hostname/mcp`", `"headers`": { `"Authorization`": `"Bearer <token>`" } } } }"
 Write-Host ""
-Write-Host "Give it ~10 seconds for the tunnel to come up, then connect Claude Code to the MCP URL (or open the console at https://console.saisi.online/)."
+Write-Host "Give it ~10 seconds for the tunnel to come up, then connect Claude Code to the MCP URL (or open the console at https://ai.saisi.online/)."
 
 # Write a result file the NSIS installer's finish page reads to show the token.
 $tokenVal = ($token -split "auth_token:\s*")[1]
