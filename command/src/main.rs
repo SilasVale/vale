@@ -83,6 +83,28 @@ fn main() {
         return;
     }
 
+    // Self-heal the cloudflared tunnel on startup: if the bundled
+    // fix-tunnel.ps1 exists (it repairs a legacy vale-command-dN tunnel +
+    // *.command.saisi.online ingress to vale-agent-dN + *.agent.saisi.online,
+    // idempotent), run it once in the background. Runs as SYSTEM here (the
+    // scheduled task), which can write the systemprofile cloudflared config
+    // that the service reads — the silent-upgrade path ran it as an admin
+    // user and could not always reach that file.
+    #[cfg(windows)]
+    {
+        let install_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_default();
+        let fix_script = install_dir.join("fix-tunnel.ps1");
+        if fix_script.exists() && !init_mode {
+            let _ = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(&fix_script)
+                .spawn();
+        }
+    }
+
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(run_server(config_path));
 }
