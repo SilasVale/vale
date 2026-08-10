@@ -226,7 +226,7 @@ Write-Host "  tunnel id: $tunnelId"
 # cloudflared fails with 1003 when the hostname already has a record, and the
 # old "already exists - route in place" fallback was wrong: a bare CNAME is
 # NOT a tunnel route, so the tunnel 530'd with error 1033 (no route).
-& $cloudflared tunnel route dns $tunnelName $Hostname --overwrite
+& $cloudflared tunnel route dns $tunnelName $Hostname
 if ($LASTEXITCODE -ne 0) {
     throw "tunnel route dns failed (exit $LASTEXITCODE)"
 }
