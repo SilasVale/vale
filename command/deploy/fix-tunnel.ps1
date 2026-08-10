@@ -25,9 +25,16 @@ $tunnelName = "vale-agent-" + ($hostname -split '\.')[0]
 
 $cloudflared = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
 if (-not $cloudflared) { Write-Host "!! cloudflared not found"; exit 1 }
-$newTunnel = Get-TunnelId $cloudflared $tunnelName
+# Find the agent tunnel by NAME, not by the first UUID in `tunnel list` — the
+# legacy vale-command-dN tunnels still exist and Get-TunnelId's regex could
+# match one of them, writing the OLD tunnel into the config.
+$list = & $cloudflared tunnel list 2>&1 | Out-String
+$newTunnel = ""
+if ($list -match "([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})\s+$([regex]::Escape($tunnelName))\s") {
+    $newTunnel = $Matches[1]
+}
 if (-not $newTunnel) {
-    Write-Host "!! tunnel $tunnelName not found — create it (cloudflared tunnel create $tunnelName)"
+    Write-Host "!! tunnel $tunnelName not found in tunnel list — create it (cloudflared tunnel create $tunnelName)"
     exit 1
 }
 
@@ -80,7 +87,7 @@ foreach ($cfg in $cfgCandidates) {
 # Ensure the tunnel has a real DNS route for the hostname (a bare CNAME is not
 # a route — without this the tunnel 530s with error 1033). --overwrite replaces
 # any pre-existing record with a proper tunnel route.
-& $cloudflared tunnel route dns $tunnelName $hostname --overwrite 2>&1 | Out-Null
+& $cloudflared tunnel route dns $tunnelName $hostname 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  !! route dns failed (exit $LASTEXITCODE) — add the Public Hostname in the dashboard"
 } else {
