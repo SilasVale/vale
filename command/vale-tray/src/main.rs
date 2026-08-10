@@ -11,6 +11,9 @@
 //!   - Copy MCP config (Claude Code snippet) to the clipboard
 //!   - Open the console (gateway device page) in the default browser
 //!   - Open a local terminal (PowerShell in the install dir) for logs/testing
+//!   - Updates: manual 检查更新 (dialog) + checkable 自动更新 (silent hourly
+//!     check, auto-installs newer ValeAgent-Setup.exe — toggle persisted in
+//!     %APPDATA%\ValeAgent\auto-update, progress in vale-update.log)
 //!
 //! The install dir is located from this exe's own path; the subdomain comes
 //! from `vale-agent.hostname` (written by the setup script) and the console
@@ -21,7 +24,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 /// Refresh the status line items every this often.
@@ -89,6 +92,30 @@ fn auth_token() -> String {
         .or_else(|| config_value("auth_token"))
         .map(|v| v.trim_matches('"').to_string())
         .unwrap_or_default()
+}
+
+/// Directory holding the tray's own state (auto-update toggle, busy marker).
+/// Lives in %APPDATA% because the tray runs as the logged-on user and the
+/// install dir (C:\vale-agent) is not reliably user-writable.
+fn auto_update_dir() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|p| p.join("ValeAgent"))
+        .unwrap_or_else(install_dir)
+}
+
+/// Is the 自动更新 toggle on? Persisted as "1"/"0" in APPDATA so it survives
+/// upgrades and logon/logoff.
+fn auto_update_enabled() -> bool {
+    std::fs::read_to_string(auto_update_dir().join("auto-update"))
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false)
+}
+
+fn set_auto_update(enabled: bool) {
+    let dir = auto_update_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join("auto-update"), if enabled { "1" } else { "0" });
 }
 
 /// Masked token for display: `a1b2…ef34` (empty → "未找到").
@@ -182,7 +209,7 @@ fn restart_task() {
 /// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
 /// bumped alongside command/Cargo.toml and index/src/index.js when a new
 /// installer is shipped.
-const LOCAL_VERSION: &str = "0.9.1";
+const LOCAL_VERSION: &str = "0.9.2";
 const VERSION_URL: &str = "https://agent.saisi.online/api/version";
 
 fn check_for_update() {
@@ -252,6 +279,67 @@ try {{
     // already-current install.)
 }
 
+/// How often the tray re-checks for updates while the 自动更新 toggle is on.
+const AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+/// Silent auto-update: like `check_for_update()` but with no dialogs at all —
+/// query the version endpoint and, if newer, download + run the silent
+/// installer. Every step goes to vale-update.log in the install dir (a log
+/// endpoint reads it back instead of asking the user to open files). A busy
+/// marker in APPDATA guards against two updates racing (the hourly auto check
+/// vs a manual 检查更新 click).
+fn auto_update_check() {
+    let dir = install_dir();
+    let ps = format!(
+        r#"
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$log = Join-Path '{2}' 'vale-update.log'
+function Log($m) {{ try {{ (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m | Out-File -FilePath $log -Append -Encoding utf8 }} catch {{}} }}
+$busy = Join-Path $env:APPDATA 'ValeAgent\update-busy'
+if (Test-Path $busy) {{ Log 'auto: another update in progress, skip'; return }}
+New-Item -ItemType File -Path $busy -Force | Out-Null
+function Restore-Tray {{
+  try {{ schtasks /Run /TN ValeAgentTray 2>$null | Out-Null; Start-Sleep -Seconds 1 }} catch {{}}
+  if (-not (Get-Process vale-tray -ErrorAction SilentlyContinue)) {{
+    Start-Process -FilePath '{2}\vale-tray.exe'
+  }}
+}}
+try {{
+  Log 'auto: check'
+  $j = Invoke-RestMethod -Uri '{0}' -TimeoutSec 10
+  $remote = [version]$j.version
+  $local = [version]'{1}'
+  if ($remote -le $local) {{ Log 'auto: up to date'; return }}
+  Log "auto: newer $($j.version) available, silent upgrade"
+  # Kill this tray before the installer relaunches a fresh one via the
+  # ValeAgentTray task (otherwise two tray icons appear). This PowerShell is a
+  # detached child of the tray, so it survives the kill.
+  Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Milliseconds 500
+  $installer = Join-Path '{2}' 'ValeAgent-Setup.exe'
+  Remove-Item $installer -Force -ErrorAction SilentlyContinue
+  Log 'auto: downloading'
+  Invoke-WebRequest -Uri $j.download -OutFile $installer -TimeoutSec 300
+  Log 'auto: running silent installer'
+  $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D={2}" -Verb RunAs -PassThru -Wait
+  if ($p.ExitCode -ne 0) {{ throw "安装程序退出码 $($p.ExitCode)" }}
+  Log 'auto: install ok'
+  Remove-Item $installer -Force -ErrorAction SilentlyContinue
+}} catch {{
+  Log "auto: FAILED - $($_.Exception.Message)"
+  Restore-Tray
+}} finally {{
+  Remove-Item $busy -Force -ErrorAction SilentlyContinue
+}}
+"#,
+        VERSION_URL, LOCAL_VERSION, dir.display(),
+    );
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+        .spawn();
+}
+
 /// Handles of the dynamic menu items, so the status lines and start/stop
 /// enabled-state can be refreshed without rebuilding the tray.
 struct TrayUi {
@@ -284,7 +372,7 @@ impl TrayUi {
 /// tray exists (Shell_NotifyIcon then fails). The old `.expect()` on the first
 /// attempt killed the process silently, so the icon never came back after a
 /// reboot. Retry for up to ~60s instead.
-fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
+fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi, CheckMenuItem)> {
     for attempt in 0..20 {
         let img = image::load_from_memory(png).expect("decode tray icon").to_rgba8();
         let (w, h) = img.dimensions();
@@ -300,6 +388,13 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
         let open_console = MenuItem::with_id("open_console", "打开控制台", true, None);
         let open_terminal = MenuItem::with_id("open_terminal", "本地终端", true, None);
         let check_update = MenuItem::with_id("check_update", "检查更新", true, None);
+        let auto_update = CheckMenuItem::with_id(
+            "auto_update",
+            "自动更新",
+            true,
+            auto_update_enabled(),
+            None,
+        );
         let start = MenuItem::with_id("start", "启动", true, None);
         let stop = MenuItem::with_id("stop", "停止", true, None);
         let restart = MenuItem::with_id("restart", "重启", true, None);
@@ -315,6 +410,7 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
         menu.append(&open_console).expect("menu open_console");
         menu.append(&open_terminal).expect("menu open_terminal");
         menu.append(&check_update).expect("menu check_update");
+        menu.append(&auto_update).expect("menu auto_update");
         menu.append(&sep).expect("menu sep2");
         menu.append(&start).expect("menu start");
         menu.append(&stop).expect("menu stop");
@@ -332,7 +428,7 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
         {
             Ok(t) => {
                 ui.refresh(&t);
-                return Some((t, ui));
+                return Some((t, ui, auto_update));
             }
             Err(e) => {
                 eprintln!("[vale-tray] tray icon failed (attempt {}): {e:?}", attempt + 1);
@@ -387,13 +483,17 @@ fn main() {
     }
 
     let png = include_bytes!("tray-icon.png");
-    let Some((tray, ui)) = create_tray(png) else { return };
+    let Some((tray, ui, auto_update)) = create_tray(png) else { return };
     let _tray_rx = TrayIconEvent::receiver();
 
     // --- Event loop ---
     let event_loop = winit::event_loop::EventLoop::new().expect("create event loop");
     let menu_rx = MenuEvent::receiver();
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
+    // First auto-update check ~60s after tray start (network is often not up
+    // right at logon). Only advances when the check actually runs, so toggling
+    // 自动更新 on triggers one within a minute.
+    let mut last_auto_check = Instant::now() - AUTO_CHECK_INTERVAL + Duration::from_secs(60);
 
     event_loop
         .run(move |_event, el| {
@@ -404,6 +504,10 @@ fn main() {
                 ui.refresh(&tray);
                 last_refresh = Instant::now();
             }
+            if auto_update_enabled() && last_auto_check.elapsed() >= AUTO_CHECK_INTERVAL {
+                auto_update_check();
+                last_auto_check = Instant::now();
+            }
             while let Ok(ev) = menu_rx.try_recv() {
                 match ev.id.0.as_str() {
                     "copy_mcp" => copy_mcp_config(),
@@ -411,6 +515,9 @@ fn main() {
                     "open_console" => open_url(&console_url()),
                     "open_terminal" => open_local_terminal(),
                     "check_update" => check_for_update(),
+                    // The OS toggled the checkmark already — persist whatever
+                    // the box now shows (checked → auto-update on).
+                    "auto_update" => set_auto_update(auto_update.is_checked()),
                     "start" => schtasks(&["/Run", "/TN", "ValeAgent"]),
                     "stop" => schtasks(&["/End", "/TN", "ValeAgent"]),
                     "restart" => restart_task(),
