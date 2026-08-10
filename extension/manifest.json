@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Vale Browser Control",
   "description": "AI-first device browser control — real tabs driven via chrome.debugger for Claude Code MCP.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "permissions": ["tabs", "debugger", "storage", "alarms"],
   "host_permissions": ["https://*/*"],
   "background": { "service_worker": "background.js", "type": "module" },
