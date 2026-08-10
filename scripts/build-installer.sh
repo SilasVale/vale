@@ -27,6 +27,7 @@ trap 'rm -rf "$STAGE"' EXIT
 cp "$VALEEXE" "$TRAYEXE" \
    "$ROOT/command/deploy/vale-agent-setup.ps1" \
    "$ROOT/command/deploy/run-setup.bat" \
+   "$ROOT/command/deploy/fix-tunnel.ps1" \
    "$ROOT/command/deploy/vale-agent-install.nsi" \
    "$ROOT/index/public/vale-agent/vale-browser-control.zip" "$STAGE/"
 
