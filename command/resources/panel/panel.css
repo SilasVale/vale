@@ -1,0 +1,113 @@
+/* Terminal page — full-screen xterm (light), session tab bar on top. */
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  color: #1a1c20;
+  font: 13px/1.5 system-ui, sans-serif;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #f6f7f9;
+  border-bottom: 1px solid #e2e5ea;
+}
+#device-select {
+  background: #ffffff;
+  color: #1a1c20;
+  border: 1px solid #d3d8e0;
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+#tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+}
+.tab {
+  background: #ffffff;
+  color: #4a5260;
+  border: 1px solid #d3d8e0;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  font: inherit;
+}
+.tab:hover { color: #1a1c20; }
+/* Dead session (closed by the AI agent) — visible tombstone. */
+.tab.closed { color: #a2a8b3; text-decoration: line-through; }
+.tab.closed:hover { color: #a2a8b3; }
+.tab.active {
+  background: #e8ebf2;
+  color: #1a1c20;
+  border-color: #b6bdc9;
+}
+/* Per-tab export icon — muted, visible on hover. */
+.tab-export {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #a2a8b3;
+  visibility: hidden;
+  cursor: pointer;
+}
+.tab:hover .tab-export,
+.tab.active .tab-export { visibility: visible; }
+.tab-export:hover { color: #5b6cf0; }
+#new-session {
+  background: #5b6cf0;
+  color: #ffffff;
+  border: 1px solid #4a5ad6;
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+#new-session:hover { background: #4a58d6; }
+#export-all {
+  background: #f0f1f5;
+  color: #4a5260;
+  border: 1px solid #d3d8e0;
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+#export-all:hover { background: #e4e7ef; }
+#status {
+  color: #68707e;
+  font-size: 12px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#status.error { color: #d64545; }
+
+#term-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.term-session {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px;
+}
+.term-session.active { display: block; }
+.term-session .xterm {
+  height: 100%;
+  padding: 2px;
+}

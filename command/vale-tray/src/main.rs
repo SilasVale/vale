@@ -54,14 +54,15 @@ fn console_url() -> String {
         .unwrap_or_else(|| "https://ai.saisi.online/".to_string())
 }
 
-/// The device panel URL — the device subdomain root. The static page is
-/// public (no token needed); API routes under it require the token.
+/// The device panel URL — the terminal web panel served by vale-command at
+/// /panel/. The page is public (like the status page); the user enters the
+/// device token in the browser (remembered in localStorage).
 fn panel_url() -> String {
     let host = device_hostname();
     if host.is_empty() {
         console_url()
     } else {
-        format!("https://{host}/")
+        format!("https://{host}/panel/")
     }
 }
 
@@ -78,9 +79,11 @@ fn server_port() -> u16 {
     config_value("port").and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_PORT)
 }
 
-/// Full auth token from config.yaml (auth_token:), or empty.
+/// Full device token from config.yaml. Prefers the new `device_token:` field,
+/// falls back to the legacy `auth_token:` name (0.8.4 and earlier).
 fn auth_token() -> String {
-    config_value("auth_token")
+    config_value("device_token")
+        .or_else(|| config_value("auth_token"))
         .map(|v| v.trim_matches('"').to_string())
         .unwrap_or_default()
 }
@@ -176,7 +179,7 @@ fn restart_task() {
 /// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
 /// bumped alongside command/Cargo.toml and index/src/index.js when a new
 /// installer is shipped.
-const LOCAL_VERSION: &str = "0.8.4";
+const LOCAL_VERSION: &str = "0.8.5";
 const VERSION_URL: &str = "https://command.saisi.online/api/version";
 
 fn check_for_update() {

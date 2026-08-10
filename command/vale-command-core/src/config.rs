@@ -18,8 +18,12 @@ pub struct ServerConfig {
     pub name: String,
     /// API/MCP bearer token — auto-generated on first launch, written to config.yaml.
     /// `None` means no auth (legacy mode, auto-upgraded to a generated token).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_token: Option<String>,
+    ///
+    /// Renamed from `auth_token` (0.8.5): `alias` keeps old config.yaml files
+    /// working — an existing `auth_token:` line is read as `device_token`, so
+    /// the token survives the rename without regeneration.
+    #[serde(skip_serializing_if = "Option::is_none", alias = "auth_token")]
+    pub device_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +54,7 @@ impl Config {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { host: "0.0.0.0".into(), port: 3000, name: "vale-command".into(), auth_token: None }
+        Self { host: "0.0.0.0".into(), port: 3000, name: "vale-command".into(), device_token: None }
     }
 }
 
@@ -61,13 +65,13 @@ impl ServerConfig {
     /// Uses `getrandom` (CSPRNG, rdrand/OS source) — never a guessable fallback,
     /// since this token gates the entire HTTP/MCP API.
     pub fn ensure_token(&mut self) -> anyhow::Result<Option<String>> {
-        if self.auth_token.is_some() {
+        if self.device_token.is_some() {
             return Ok(None);
         }
         let mut buf = [0u8; 32];
-        getrandom::getrandom(&mut buf).map_err(|e| anyhow::anyhow!("failed to generate auth token: {e}"))?;
+        getrandom::getrandom(&mut buf).map_err(|e| anyhow::anyhow!("failed to generate device token: {e}"))?;
         let token: String = buf.iter().map(|b| format!("{b:02x}")).collect();
-        self.auth_token = Some(token.clone());
+        self.device_token = Some(token.clone());
         Ok(Some(token))
     }
 }

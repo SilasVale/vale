@@ -41,6 +41,40 @@ const STATUS_PAGE: &str = concat!(
     "</p></body></html>",
 );
 
+// ── Terminal panel static assets (embedded, public) ──────────
+
+/// Serve a file from the embedded panel assets. Whitelist by name — no path
+/// traversal, no directory listing.
+fn serve_panel_file(file: &str, content_type: &'static str) -> Response {
+    const HTML: &str = include_str!("../resources/panel/index.html");
+    const JS: &str = include_str!("../resources/panel/panel.js");
+    const CSS: &str = include_str!("../resources/panel/panel.css");
+    const XTERM_JS: &str = include_str!("../resources/panel/vendor/xterm.min.js");
+    const XTERM_CSS: &str = include_str!("../resources/panel/vendor/xterm.css");
+    const FIT_JS: &str = include_str!("../resources/panel/vendor/xterm-addon-fit.min.js");
+    let body: &str = match file {
+        "index.html" => HTML,
+        "panel.js" => JS,
+        "panel.css" => CSS,
+        "vendor/xterm.min.js" => XTERM_JS,
+        "vendor/xterm.css" => XTERM_CSS,
+        "vendor/xterm-addon-fit.min.js" => FIT_JS,
+        _ => return built_response(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", Body::from("not found")),
+    };
+    let mut resp = built_response(StatusCode::OK, content_type, Body::from(body));
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("cache-control"),
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    resp
+}
+
+fn panel_content_type(file: &str) -> &'static str {
+    if file.ends_with(".js") { "text/javascript; charset=utf-8" }
+    else if file.ends_with(".css") { "text/css; charset=utf-8" }
+    else { "text/html; charset=utf-8" }
+}
+
 // ── Tower Service ────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -94,7 +128,7 @@ fn built_response(status: StatusCode, content_type: &'static str, body: Body) ->
 /// can be called before the Send boundary. The error is boxed — Response is
 /// large and only ever handled at the top of handle_request.
 fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>> {
-    let Some(ref token) = state.config.server.auth_token else {
+    let Some(ref token) = state.config.server.device_token else {
         return Ok(()); // no auth configured
     };
     // Check Authorization header first, then ?token= query param (for SSE)
@@ -219,6 +253,17 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     if method == Method::GET && path == "/api/events/term" {
         if let Err(resp) = check_auth(&req, &state) { return *resp; }
         return sse_term_stream(state).await;
+    }
+
+    // Terminal panel (static page, public like the status page — it shows no
+    // data until the user enters the device token in the browser). Assets are
+    // embedded at compile time from resources/panel/.
+    if method == Method::GET && (path == "/panel" || path == "/panel/") {
+        return serve_panel_file("index.html", "text/html; charset=utf-8");
+    }
+    if method == Method::GET && path.starts_with("/panel/") {
+        let file = &path["/panel/".len()..];
+        return serve_panel_file(file, panel_content_type(file));
     }
 
     // GET non-API — minimal status page: public (no token needed)
@@ -506,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn auth_401_without_token() {
         let mut cfg = Config::default();
-        cfg.server.auth_token = Some("sekret".into());
+        cfg.server.device_token = Some("sekret".into());
         let st = Arc::new(AppState::new(cfg));
         let resp = handle_request(req("GET", "/api/status"), st).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -515,7 +560,7 @@ mod tests {
     #[tokio::test]
     async fn auth_ok_with_bearer_token() {
         let mut cfg = Config::default();
-        cfg.server.auth_token = Some("sekret".into());
+        cfg.server.device_token = Some("sekret".into());
         let st = Arc::new(AppState::new(cfg));
         let resp = handle_request(req_with_token("GET", "/api/status", "sekret"), st).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -534,7 +579,7 @@ mod tests {
     #[tokio::test]
     async fn term_sse_requires_auth() {
         let mut cfg = Config::default();
-        cfg.server.auth_token = Some("sekret".into());
+        cfg.server.device_token = Some("sekret".into());
         let st = Arc::new(AppState::new(cfg));
         let resp = handle_request(req("GET", "/api/events/term"), st).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);

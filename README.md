@@ -75,3 +75,18 @@ The post-deploy E2E script (pair → browser_open → screenshot → click → t
   { "mcpServers": { "vale-gate": { "type": "http", "url": "https://<console>/mcp", "headers": { "Authorization": "Bearer <admin-token>" } } } }
   ```
   The console's Devices panel shows a ready-made `vale-gate` snippet (with the current user's token) and a per-device `vale-command` snippet.
+
+## Tokens 体系(3 个边界 → 3 个 token)
+
+| Token | 名字 | 在哪 | 认证什么 | 谁持有 |
+|---|---|---|---|---|
+| **设备访问令牌** | `device_token`(旧名 `auth_token`,0.8.5 兼容) | `D:\vale-command\config.yaml` | 设备 API(`/api/*`)+ MCP(`/mcp`)+ 终端面板 | 设备(Windows) |
+| **控制台令牌** | `console_token`(user token / x-api-key) | 用户 settings.json / 控制台设置 | 网关管理 + AI 路由 | 你(Claude 配置) |
+| **浏览器令牌** | `browser_token`(plugin token) | 扩展 `chrome.storage`(配对自动存) | 插件 WS / browser 驱动 | 浏览器扩展 |
+
+**获取方式**:
+- `device_token`:装好 vale-command 后读 `D:\vale-command\config.yaml` 的 `device_token:` 行(自动生成)。**终端面板用这个**:打开 `https://<device-host>/panel/` 填一次,浏览器记住。
+- `console_token`:控制台登录后,设置/设备页复制 MCP 配置(带 token)。
+- `browser_token`:不用手动获取——控制台设备页生成配对码,扩展配对时自动存。
+
+**原则**:一个信任边界一个 token,不再重复。`device.token`(网关注册时填的)与 `device_token` 是同一份——注册设备时填 config.yaml 里的值即可。
