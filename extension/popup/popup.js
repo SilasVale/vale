@@ -37,7 +37,13 @@ $("openTab").addEventListener("click", async () => {
 });
 
 $("openTerminal").addEventListener("click", () => {
-  chrome.tabs.create({ url: chrome.runtime.getURL("terminal/terminal.html") });
+  // Terminal moved to a standalone web panel (no extension needed): open the
+  // panel at the console origin. The panel asks for the device hostname +
+  // token once and stores them in localStorage.
+  chrome.storage.local.get("consoleOrigin").then(({ consoleOrigin }) => {
+    const base = (consoleOrigin || "https://api.saisi.online").replace(/\/+$/, "");
+    chrome.tabs.create({ url: `${base}/panel/` });
+  });
 });
 
 $("unpair").addEventListener("click", async () => {
