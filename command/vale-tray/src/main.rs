@@ -176,7 +176,7 @@ fn restart_task() {
 /// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
 /// bumped alongside command/Cargo.toml and index/src/index.js when a new
 /// installer is shipped.
-const LOCAL_VERSION: &str = "0.7.2";
+const LOCAL_VERSION: &str = "0.8.0";
 const VERSION_URL: &str = "https://command.saisi.online/api/version";
 
 fn check_for_update() {
@@ -339,7 +339,47 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
     None
 }
 
+/// Take a Windows named mutex so only ONE tray instance runs — otherwise
+/// every update/setup run spawns another tray (AtLogOn task + NSIS relaunch +
+/// manual start) and the taskbar shows one icon per process. A second launch
+/// sees `ERROR_ALREADY_EXISTS`, shows a toast, and exits; the handle is kept
+/// alive for the process lifetime (dropped on exit).
+fn single_instance_guard() -> Result<(), ()> {
+    use std::ptr::null;
+    use std::ffi::c_void;
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+    const MUTEX_NAME: &str = "Local\\ValeCommandTraySingleInstance";
+    let wide: Vec<u16> = MUTEX_NAME.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let h = CreateMutexW(null(), 0, wide.as_ptr());
+        if h == 0 { return Err(()); }
+        let already = GetLastError() == ERROR_ALREADY_EXISTS;
+        if already {
+            // Another instance holds the mutex. Close this duplicate handle
+            // and report "already running".
+            windows_sys::Win32::Foundation::CloseHandle(h);
+            Err(())
+        } else {
+            // Keep the handle alive for the process lifetime by leaking it —
+            // the OS reclaims it on exit.
+            std::mem::forget(Box::new(h as *mut c_void));
+            Ok(())
+        }
+    }
+}
+
 fn main() {
+    if single_instance_guard().is_err() {
+        // Another tray is already running — flash a toast instead of a second
+        // icon, then exit. (No user-visible window, so a MessageBox is the
+        // cheapest honest signal.)
+        let _ = std::process::Command::new("powershell")
+            .args(["-c", "[System.Windows.Forms.MessageBox]::Show('Vale Command 托盘已在运行。', 'Vale Command', 'OK', 'Information')"])
+            .spawn();
+        std::process::exit(0);
+    }
+
     let png = include_bytes!("tray-icon.png");
     let Some((tray, ui)) = create_tray(png) else { return };
     let _tray_rx = TrayIconEvent::receiver();
