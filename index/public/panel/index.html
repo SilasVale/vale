@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vale Terminal Panel</title>
+  <link rel="stylesheet" href="vendor/xterm.css">
+  <link rel="stylesheet" href="panel.css">
+  <style>
+    /* Connection form — shown on first load until host+token are saved. */
+    #conn-form { max-width: 480px; margin: 80px auto; padding: 24px; border: 1px solid #d3d8e0; border-radius: 8px; }
+    #conn-form h1 { font-size: 18px; margin: 0 0 12px; }
+    #conn-form label { display: block; margin: 10px 0 4px; font-size: 13px; color: #4a5260; }
+    #conn-form input { width: 100%; padding: 8px; border: 1px solid #d3d8e0; border-radius: 4px; font: inherit; box-sizing: border-box; }
+    #conn-form .hint { font-size: 12px; color: #a2a8b3; margin-top: 8px; }
+    #conn-form button { margin-top: 14px; background: #5b6cf0; color: #fff; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="conn-form">
+    <h1>Vale Terminal Panel</h1>
+    <label>Device hostname</label>
+    <input id="host" placeholder="d1.command.saisi.online" autocomplete="off">
+    <label>Auth token</label>
+    <input id="token" type="password" placeholder="Bearer token from D:\vale-command\config.yaml" autocomplete="off">
+    <button id="save">Connect</button>
+    <div class="hint">凭据保存在本浏览器(localStorage),不会上传到别处。</div>
+    <div id="status"></div>
+  </div>
+
+  <div id="panel-main" class="hidden">
+    <div id="toolbar">
+      <select id="device-select"></select>
+      <div id="tabs"></div>
+      <button id="new-session">New PTY</button>
+      <button id="export-all" title="Export all session logs">Export all</button>
+      <span id="status"></span>
+    </div>
+    <div id="term-container"></div>
+  </div>
+
+  <script src="vendor/xterm.min.js"></script>
+  <script src="vendor/xterm-addon-fit.min.js"></script>
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
