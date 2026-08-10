@@ -6,7 +6,9 @@
  *
  *   or/<model>   → OpenRouter (proxied via the openrouter-proxy CF Worker)
  *   ds/<model>   → DeepSeek official (api.deepseek.com/anthropic, Bearer passthrough)
- *   og/<model>   → OpenCode Go (opencode.ai/zen/go, Anthropic↔OpenAI translation)
+ *   og/<model>   → OpenCode Go (opencode.ai/zen/go — deepseek-v4-flash native
+ *                  Anthropic via /v1/messages with x-api-key; other models
+ *                  Anthropic↔OpenAI translation via chat/completions)
  *   (none)       → default ds/ (DeepSeek official)
  *
  * Auth:
@@ -20,15 +22,43 @@
  * The admin is seeded from the existing CLIENT_KEY, keeping the legacy settings.json working.
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken } from "./store.js";
-import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "./auth.js";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
+import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.js";
+import { build101Response, deviceFetch } from "./device-fetch.js";
+import { handleMcp } from "./mcp.js";
+import { PluginHubDO } from "./plugin-hub.js";
+export { PluginHubDO };
 
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
+
+// Request body cap: Claude Code 1M-context bodies run ~4-10MB; anything larger
+// would blow the Workers Free plan's 10ms CPU budget just to scan/parse it.
+const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
+
+// og translate: floor for client max_tokens. deepseek-v4-flash + max thinking
+// spends the whole budget on thinking, so tiny client budgets come back empty.
+const OG_MIN_MAX_TOKENS = 8000;
+
+// OpenCode Zen/Go endpoints. deepseek-v4-flash and minimax-m3 are Anthropic-native
+// on zen/go/v1/messages (announced 2026-08-06 for ds4f; minimax was already native) —
+// those models bypass the OpenAI translation. Other og models (mimo-v2.5, kimi, glm)
+// only speak OpenAI chat/completions and keep the translate path.
+const OG_ZEN_ANTHROPIC = "https://opencode.ai/zen/go" + VERIFY_PATH;
+const OG_ZEN_CHAT = "https://opencode.ai/zen/go/v1/chat/completions";
+// deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (announced
+// 2026-08-06) and authenticates with x-api-key (verified 2026-08-10 per
+// handoff 2.5.6: ~54s full response, thinking + answer). Native passthrough
+// forwards the Anthropic stream untouched — no per-chunk OpenAI translation,
+// so no 1102 CPU risk on huge streams. Other og models (minimax-m3, mimo-v2.5)
+// only speak chat/completions and keep the translate path (verified 2026-08-07
+// with this user's key).
+const OG_NATIVE_ANTHROPIC = new Set(["deepseek-v4-flash"]);
 const AUTH_BASE = "/api/auth";
 const ADMIN_BASE = "/api/admin";
 const ME_BASE = "/api/me";
 const DEVICE_BASE = "/api/devices";
+const PLUGIN_BASE = "/api/plugins";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -41,6 +71,7 @@ const MODELS = [
   { id: "og/deepseek-v4-flash", owned_by: "opencode" },
   { id: "og/minimax-m3", owned_by: "opencode" },
   { id: "or/openai/gpt-5.6-luna:floor[1m]", owned_by: "openrouter" },
+  { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
 ];
 
 // Route info shown in the console ("model routing" section). Public, no keys.
@@ -48,7 +79,7 @@ const ROUTE_INFO = [
   {
     prefix: "og/",
     backend: "OpenCode Go",
-    desc: "opencode.ai/zen/go — Anthropic↔OpenAI translation, tool calls & thinking",
+    desc: "opencode.ai/zen/go — chat/completions translation (all models)",
     models: ["deepseek-v4-flash", "minimax-m3"],
   },
   {
@@ -64,12 +95,44 @@ const ROUTE_INFO = [
     models: ["openai/gpt-5.6-luna:floor[1m]"],
   },
   {
+    prefix: "qw/",
+    backend: "Qwen MaaS (Aliyun)",
+    desc: "token-plan.ap-southeast-1.maas.aliyuncs.com — Anthropic passthrough",
+    models: ["qwen3.8-max-preview"],
+  },
+  {
     prefix: "none",
     backend: "DeepSeek Official (default)",
     desc: "fallback route",
     models: ["deepseek-v4-flash"],
   },
 ];
+
+// ---- Channel health (public /api/health) ----
+const HEALTH_CHANNELS = [
+  { id: "ds", model: "ds/deepseek-v4-flash" },
+  { id: "qw", model: "qw/qwen3.8-max-preview" },
+  { id: "og", model: "og/deepseek-v4-flash" },
+  { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
+];
+const HEALTH_PRIORITY = ["qw", "ds", "og", "or"];
+
+// Public /api/vale-probe rate limit: each probe costs a real upstream call
+// (real money), so cap probes at 60/min gateway-wide via a KV counter.
+// KV is eventually consistent (~1s) — fine for a rate limiter.
+const PROBE_RATE_LIMIT = 60; // probes per minute, whole gateway
+const PROBE_RATE_WINDOW_MS = 60000;
+
+export async function probeRateLimited(env) {
+  try {
+    const bucket = Math.floor(Date.now() / PROBE_RATE_WINDOW_MS);
+    const key = `probe-rate:${bucket}`;
+    const cur = Number(await env.KEYS.get(key)) || 0;
+    if (cur >= PROBE_RATE_LIMIT) return true;
+    await env.KEYS.put(key, String(cur + 1), { expirationTtl: 120 });
+    return false;
+  } catch { return false; } // fail-open on KV errors, like the breaker
+}
 
 export default {
   async fetch(request, env) {
@@ -96,11 +159,39 @@ export default {
         url.hostname === "localhost" || url.hostname === "127.0.0.1" || consoleHosts.includes(url.hostname);
       const path = url.pathname;
 
+      // ---- Public tooling endpoints (any host) ----
+      if (path === "/api/health") {
+        return jsonOk(await buildHealth(env));
+      }
+      if (request.method === "POST" && path === "/api/vale-probe") {
+        if (await probeRateLimited(env)) {
+          return jsonError(429, "probe rate limit exceeded", "rate_limited");
+        }
+        let body = {};
+        try { body = await request.json(); } catch {}
+        return await valeProbe(env, String(body.model || ""));
+      }
+      if (path === "/api/vale-cli" || path === "/api/vale-install" || path === "/api/vale-install.ps1") {
+        const cli = await serveAssetText(env, "/vale");
+        if (cli === null) return jsonError(404, "vale CLI not found", "not_found_error");
+        if (path === "/api/vale-cli") {
+          return new Response(cli, { headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS } });
+        }
+        const b64 = encodeBase64Utf8(cli);
+        const body = path === "/api/vale-install" ? posixInstaller(b64) : psInstaller(b64);
+        return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS } });
+      }
+
       await seedAdmin(env);
 
       // ---- Console API ----
       if (isPageHost && path.startsWith("/api/")) {
         return await handleConsole(request, env, url);
+      }
+
+      // ---- MCP endpoint (Claude Code) — admin token, page host only ----
+      if (isPageHost && path === "/mcp") {
+        return await handleMcp(request, env);
       }
 
       // ---- Static page (Workers Assets): non-/v1/ paths → ai domain only ----
@@ -166,6 +257,76 @@ async function handleConsole(request, env, url) {
     return jsonOk({ ok: true, apiToken: await getCfToken(env) });
   }
 
+  // Public: browser-extension pairing — the extension has no admin session, the
+  // pairing code is the credential (same pattern as /api/register above).
+  if (method === "POST" && path === `${PLUGIN_BASE}/pair/claim`) {
+    const { code } = (await request.json().catch(() => ({}))) || {};
+    const device = await consumePairCode(env, String(code || ""));
+    if (!device) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    const token = randomHex(16);
+    await addPluginLink(env, token, device);
+    return jsonOk({ token, device });
+  }
+
+  // Public: the extension trades its plugin token for a one-time WS ticket
+  // here (no admin session — the plugin token is the credential). The ticket
+  // keeps the long-lived token out of the /ws URL and is consumed once.
+  if (method === "POST" && path === `${PLUGIN_BASE}/ws-ticket`) {
+    const auth = String(request.headers.get("authorization") || "");
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const link = token ? await getPluginByToken(env, token) : null;
+    if (!link) return jsonError(401, "Invalid plugin token", "authorization_error");
+    const ticket = await createWsTicket(env, link.device);
+    return jsonOk({ ticket, device: link.device });
+  }
+
+  // Public: the browser extension opens its WebSocket here, trading a one-time
+  // ticket (fetched via /api/plugins/ws-ticket with the plugin token) for the
+  // connection. Ticket consumption keeps the long-lived token out of the URL
+  // and gates the hub by knowledge of a valid ticket, not just the device name.
+  if (method === "GET" && path === `${PLUGIN_BASE}/ws`) {
+    const device = url.searchParams.get("device") || "";
+    const ticket = url.searchParams.get("ticket") || "";
+    const ok = await consumeWsTicket(env, ticket);
+    if (!ok || ok !== device) return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
+    const d = await getDevice(env, device);
+    if (!d) return jsonError(404, "Device not found", "not_found_error");
+    const id = env.PLUGIN_HUB.idFromName(device);
+    const hub = env.PLUGIN_HUB.get(id);
+    // The DO dispatches on its own /ws path — rewrite the URL path so the
+    // upgrade request lands on the DO's handler (the raw request path is
+    // /api/plugins/ws, which the DO would 404).
+    const wsUrl = new URL(request.url);
+    wsUrl.pathname = "/ws";
+    return hub.fetch(new Request(wsUrl.toString(), request));
+  }
+
+  // ---- Device reverse-proxy: admin session cookie OR paired plugin token ----
+  // <any> /api/devices/<name>/proxy/<rest> → reverse-proxy to the device panel.
+  // The console admin browses the panel with the session cookie; the browser
+  // extension's terminal page is cross-site (no console cookie, SameSite=Lax),
+  // so it authenticates with the plugin token it was paired with
+  // (Authorization: Bearer <token>, the same credential as /api/plugins/ws).
+  // The token grants access ONLY to the device it's paired to — no other
+  // device, no admin APIs, no /api/me.
+  const proxyMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/proxy(.*)$`));
+  if (proxyMatch) {
+    const deviceName = decodeURIComponent(proxyMatch[1]);
+    const d = await getDevice(env, deviceName);
+    if (!d) return jsonError(404, "Device not found", "not_found_error");
+    const user = await requireSession(request, env);
+    if (user && user.role === "admin") {
+      return await proxyDevice(request, env, d, proxyMatch[2] || "/");
+    }
+    const auth = String(request.headers.get("authorization") || "");
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const link = token ? await getPluginByToken(env, token) : null;
+    if (link && link.device === deviceName) {
+      return await proxyDevice(request, env, d, proxyMatch[2] || "/");
+    }
+    return jsonError(401, "Not logged in or invalid plugin token", "authentication_error");
+  }
+
   // ---- Everything below requires a session ----
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
@@ -181,6 +342,20 @@ async function handleConsole(request, env, url) {
       token: user.token,
       keys: userKeysStatus(ukeys),
     });
+  }
+  // Per-user route selection (Claude Code model=auto)
+  if (method === "GET" && path === `${ME_BASE}/route`) {
+    return jsonOk({ model: await getUserRoute(env, user.id) });
+  }
+  if (method === "PUT" && path === `${ME_BASE}/route`) {
+    let body = {};
+    try { body = await request.json(); } catch {}
+    const model = body?.model ?? null;
+    if (model !== null && !MODELS.some((m) => m.id === model)) {
+      return jsonError(400, `Unknown model: ${model}`, "invalid_request");
+    }
+    await setUserRoute(env, user.id, model);
+    return jsonOk({ ok: true, model });
   }
   if (method === "POST" && path === `${ME_BASE}/token/regenerate`) {
     const token = await regenerateToken(env, user.id);
@@ -215,12 +390,13 @@ async function handleConsole(request, env, url) {
   if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
 
   // ---- Device module (Vale Command registry) ----
+  // (the reverse-proxy route lives in its own section above, before the
+  //  session gate — it also accepts the paired plugin token)
   // GET    /api/devices                        → list (token masked)
   // POST   /api/devices                        → add/update {name, hostname, token}
   // POST   /api/devices/register-key           → generate a one-time install key
   // DELETE /api/devices/<name>                 → remove
   // GET    /api/devices/<name>/mcp             → MCP config for a device (with token)
-  // <any>  /api/devices/<name>/proxy/<rest>    → reverse-proxy to the device panel
   if (method === "POST" && path === `${DEVICE_BASE}/register-key`) {
     const key = await createRegKey(env);
     return jsonOk({ ok: true, key });
@@ -253,11 +429,41 @@ async function handleConsole(request, env, url) {
     await deleteDevice(env, decodeURIComponent(delMatch[1]));
     return jsonOk({ ok: true });
   }
-  const proxyMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/proxy(.*)$`));
-  if (proxyMatch) {
-    const d = await getDevice(env, decodeURIComponent(proxyMatch[1]));
+
+  // ---- Plugin (extension) pairing & status ----
+  // POST /api/plugins/pair          → generate a one-time pairing code for a device
+  // POST /api/plugins/unpair        → drop all plugin links for a device
+  // GET  /api/plugins/status        → online/offline per device (via PluginHubDO)
+  // (POST /api/plugins/pair/claim, POST /api/plugins/ws-ticket and
+  //  GET /api/plugins/ws are PUBLIC — defined in the public section above:
+  //  the extension has no admin session and authenticates by pairing code /
+  //  plugin token instead.)
+  if (method === "POST" && path === `${PLUGIN_BASE}/pair`) {
+    const { device } = (await request.json().catch(() => ({}))) || {};
+    const d = device ? await getDevice(env, String(device)) : null;
     if (!d) return jsonError(404, "Device not found", "not_found_error");
-    return await proxyDevice(request, env, d, proxyMatch[2] || "/");
+    const code = await createPairCode(env, d.name);
+    return jsonOk({ code });
+  }
+  if (method === "POST" && path === `${PLUGIN_BASE}/unpair`) {
+    const { device } = (await request.json().catch(() => ({}))) || {};
+    const links = await listPluginLinks(env);
+    for (const [t, l] of Object.entries(links)) if (l.device === device) await removePluginLink(env, t);
+    return jsonOk({ ok: true });
+  }
+  if (method === "GET" && path === `${PLUGIN_BASE}/status`) {
+    const devices = await listDevices(env);
+    const out = {};
+    for (const d of devices) {
+      try {
+        const id = env.PLUGIN_HUB.idFromName(d.name);
+        const hub = env.PLUGIN_HUB.get(id);
+        const res = await hub.fetch("https://hub/status");
+        const j = await res.json();
+        out[d.name] = { online: !!j.online };
+      } catch { out[d.name] = { online: false }; }
+    }
+    return jsonOk({ devices: out });
   }
 
   // Cloudflare tunnel API token — account-level credential the install fetches
@@ -376,7 +582,7 @@ async function authLogin(request, env, secure) {
 
 /* ---------------- /v1/* gateway ---------------- */
 
-async function handleGateway(request, env, url) {
+export async function handleGateway(request, env, url) {
   const path = url.pathname;
   const method = request.method;
 
@@ -390,6 +596,7 @@ async function handleGateway(request, env, url) {
   const deepseekKey = ukeys.DEEPSEEK_API_KEY || null;
   const opencodeGoKey = ukeys.OPENCODE_GO_API_KEY || null;
   const openRouterKey = ukeys.OPENROUTER_API_KEY || null;
+  const qwenKey = ukeys.QWEN_API_KEY || null;
 
   // GET /v1/models — list of prefixed models this gateway supports
   if (method === "GET" && path.endsWith("/models")) {
@@ -410,85 +617,155 @@ async function handleGateway(request, env, url) {
     return jsonError(404, "Not Found", "not_found_error");
   }
 
-  const body = await request.json();
-  const model = body.model || "";
-  const prefix = model.split("/")[0];
-  const route = pickRoute(prefix, env);
-  const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
-
-  // ---- Gateway-side vision pre-processing ----
-  // Text-only models (deepseek, minimax, ...) can't see images. When a request
-  // carries image blocks and the target model isn't on the vision-capable
-  // allowlist, describe each image with the configured vision model (default
-  // og/mimo-v2.5) and swap the image blocks for that text, so any model can
-  // answer image questions. count_tokens skips this.
-  if (isMessages) {
-    const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
-    if (prep.changed) body.messages = prep.messages;
+  // Read the body as raw text ONCE and extract the top-level "model" field
+  // with a lightweight scan — full JSON.parse + re-stringify of a multi-MB
+  // body exceeds the Workers Free plan 10ms CPU budget (Error 1102). Only the
+  // og translate path (which must walk the message array) parses the object.
+  // Size guard first: a body over MAX_BODY_BYTES would take too long to even
+  // scan on the Free plan — reject it outright.
+  const declaredLen = Number(request.headers.get("content-length") || 0);
+  if (declaredLen > MAX_BODY_BYTES) {
+    return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
+  const rawText = await request.text();
+  if (rawText.length > MAX_BODY_BYTES) {
+    return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
+  }
+  const { model: scannedModel } = scanTopLevelModel(rawText);
+  let model = scannedModel || "";
+  if (model === "auto") {
+    // Claude Code 固定模型名 auto：按用户网页选择路由
+    model = await resolveAutoModel(env, user.id);
+  }
+  const prefix = model.split("/")[0];
+  const baseRoute = pickRoute(prefix, env);
+  const upstreamModel = stripBracket(baseRoute.stripPrefix ? model.slice(prefix.length + 1) : model);
+  // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
+  // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
+  // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
+  // already bracket-stripped, so a [1m] marker cannot mask the check.
+  const route =
+    baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel)
+      ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
+      : baseRoute;
+
+  // The full body object is only needed on the og translate path (web_search
+  // detection, image pre-processing, toOpenAIRequest). Passthrough routes
+  // (ds/qw/or) forward the raw text with the model field swapped — parsing a
+  // multi-MB body into an object graph would blow the Free plan CPU budget.
+  let body = null;
 
   // ---- Gateway web search (og/ model answers, DeepSeek executes the search) ----
   // Claude Code's WebSearch is executed server-side via Anthropic's web_search
-  // server tool. opencode zen (og/) doesn't implement it, but DeepSeek official's
-  // Anthropic endpoint does. So for og/ models, run the search through DeepSeek
-  // official and let the requested og/ model answer from the results — the model
-  // stays og/, DeepSeek is only the search backend. Requires this user's
-  // DEEPSEEK_API_KEY. ds/ and or/ requests pass through untouched (ds/ handles
-  // web_search natively).
-  const isWebSearch = isMessages && route.type === "translate" && (
-    (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
-    (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
-  );
-  if (isWebSearch) {
-    if (!deepseekKey) {
-      return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
+  // server tool. opencode zen (og/) doesn't implement it — for any og model,
+  // native-Anthropic or not — but DeepSeek official's Anthropic endpoint does.
+  // So for og/ models, run the search through DeepSeek official and let the
+  // requested og/ model answer from the results — the model stays og/, DeepSeek
+  // is only the search backend. Requires this user's DEEPSEEK_API_KEY. ds/ and
+  // or/ requests pass through untouched (ds/ handles web_search natively).
+  if (isMessages && (route.type === "translate" || route.kind === "opencode")) {
+    body = JSON.parse(rawText);
+    const isWebSearch = (
+      (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
+      (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
+    );
+    if (isWebSearch) {
+      if (!deepseekKey) {
+        return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
+      }
+      const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
+      if (body.stream) {
+        return new Response(toSSE(res), {
+          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+        });
+      }
+      return jsonOk(res);
     }
-    const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
-    if (body.stream) {
-      return new Response(toSSE(res), {
-        headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
-      });
-    }
-    return jsonOk(res);
+
+    // ---- Gateway-side vision pre-processing ----
+    // Text-only models (deepseek, minimax, ...) can't see images. When a request
+    // carries image blocks and the target model isn't on the vision-capable
+    // allowlist, describe each image with the configured vision model (default
+    // og/mimo-v2.5) and swap the image blocks for that text, so any model can
+    // answer image questions. count_tokens skips this.
+    const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
+    if (prep.changed) body.messages = prep.messages;
   }
 
   // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
   if (route.kind === "openrouter" && !openRouterKey) {
     return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
   }
-  // ds / no prefix use this user's DeepSeek key
-  const bearerKey = route.kind === "openrouter" ? openRouterKey : deepseekKey;
+  // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
+  // og/ (translate or native) uses their OpenCode Go key — never the DeepSeek key.
+  const bearerKey = route.kind === "openrouter" ? openRouterKey
+    : route.kind === "qwen" ? qwenKey
+    : route.kind === "opencode" ? opencodeGoKey
+    : deepseekKey;
 
   // count_tokens
   if (isCount) {
-    if (route.type === "translate") {
-      return jsonOk({ input_tokens: Math.ceil(JSON.stringify(body.messages || []).length / 4) });
+    if (route.kind === "opencode") {
+      // og counts locally — translate AND native passthrough (zen's count
+      // endpoint adds nothing; local estimate is CPU-cheap). estimateTokens
+      // itself approximates for bodies over 1M chars.
+      return jsonOk({ input_tokens: estimateTokens(rawText) });
     }
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
     }
-    const upstream = await fetch(route.upstream.replace(VERIFY_PATH, COUNT_PATH), {
-      method: "POST",
-      headers: passthroughHeaders(bearerKey),
-      body: JSON.stringify({ ...body, model: upstreamModel }),
-    });
-    if (!upstream.ok) return jsonError(upstream.status, "count_tokens upstream failed", "api_error");
+    if (route.kind === "qwen" && !qwenKey) {
+      return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    let upstream;
+    try {
+      upstream = await fetchWithTimeout(route.upstream.replace(VERIFY_PATH, COUNT_PATH), {
+        method: "POST",
+        headers: passthroughHeaders(bearerKey),
+        body: rawWithModel(rawText, upstreamModel),
+      }, upstreamTimeoutMs(env));
+    } catch (e) {
+      // Upstream unreachable/failed — fall back to a local estimate instead of
+      // 502ing: Claude Code calls count_tokens on every request, and a big body
+      // shouldn't turn that into an error (or a 10ms-CPU trip on the Free plan).
+      return jsonOk({ input_tokens: estimateTokens(rawText) });
+    }
+    if (!upstream.ok) {
+      return jsonOk({ input_tokens: estimateTokens(rawText) });
+    }
     const json = await upstream.json();
-    return jsonOk({ input_tokens: json.input_tokens || Math.ceil(JSON.stringify(body.messages || []).length / 4) });
+    return jsonOk({ input_tokens: json.input_tokens || estimateTokens(rawText) });
   }
 
   // ---- POST /v1/messages ----
-  // Passthrough routes (or/ds): the upstream already speaks the Anthropic protocol,
-  // forward the body unchanged + stream the response.
+  // Passthrough routes (or/ds/qw): the upstream already speaks the Anthropic
+  // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
     }
-    const upstream = await fetch(route.upstream, {
+    if (route.kind === "qwen" && !qwenKey) {
+      return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    // og-native parsed the body above (web-search detection, image
+    // pre-processing) — forward THAT (images must arrive described, deepseek
+    // is text-only). ds/qw/or never parse: raw text with only the top-level
+    // model field swapped — no parse, no spread, no full re-stringify (Free
+    // plan 10ms CPU budget). og-native authenticates with x-api-key;
+    // every other passthrough channel uses Bearer.
+    const forwardBody = body !== null
+      ? JSON.stringify({ ...body, model: upstreamModel })
+      : rawWithModel(rawText, upstreamModel);
+    const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
       method: "POST",
-      headers: passthroughHeaders(bearerKey),
-      body: JSON.stringify({ ...body, model: upstreamModel }),
-    });
+      headers: passthroughHeaders(bearerKey, { apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false }),
+      body: forwardBody,
+    }, { timeoutMs: upstreamTimeoutMs(env) });
+    if (!upstream) {
+      // Slow failure (timeout / network error) — single attempt, no retry, no
+      // breaker trip (passthrough channels have no breaker anyway).
+      return jsonError(502, `upstream ${route.kind}: ${detail}`, "api_error");
+    }
     if (!upstream.ok) {
       let message = `Upstream ${upstream.status}`;
       try {
@@ -502,33 +779,58 @@ async function handleGateway(request, env, url) {
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 
-  // Translation route (og): Anthropic → OpenAI → zen/go, then reshape back to Anthropic SSE
+  // Translation route (og, non-native models only): Anthropic → OpenAI → zen/go,
+  // then reshape back to Anthropic SSE. deepseek-v4-flash / minimax-m3 never get
+  // here — they were switched to passthrough above.
   if (!opencodeGoKey) {
     return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
   }
+  if (await isChannelDegraded(env)) {
+    // Circuit open: repeated hard failures — fail fast instead of waiting on zen again.
+    return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
+  }
   const openaiReq = toOpenAIRequest(body, upstreamModel);
-  const upstream = await fetchZenWithRetry(route.upstream, {
+  // max_tokens floor — deepseek-v4-flash + max thinking counts thinking against
+  // the budget, so a small client max_tokens returns "thinking only, 0 answer"
+  // (8/8 reproductions at max_tokens=300, 2026-08-09). Only the client-facing
+  // request gets floored; internal calls (describeImage 1500, ogWebSearchAnswer
+  // 500) keep their intentionally small budgets. Absent stays absent.
+  if (openaiReq.max_tokens && openaiReq.max_tokens < OG_MIN_MAX_TOKENS) openaiReq.max_tokens = OG_MIN_MAX_TOKENS;
+  const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${opencodeGoKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(openaiReq),
-  });
-  if (!upstream.ok) {
-    let message = `Upstream ${upstream.status}`;
-    try {
-      const err = await upstream.json();
-      message = err.error?.message || message;
-    } catch {}
-    return jsonError(upstream.status, message, "api_error");
+  }, { timeoutMs: ogTimeoutMs(env) });
+  if (!upstream || !upstream.ok) {
+    // Only a hard network failure (channel unreachable) counts toward the
+    // breaker — and only N consecutive failures open it (see BreakerDO).
+    // Slow responses (timeout) are zen's normal behavior — multi-second latency
+    // is observed routinely, so a slow request must NOT take the whole og
+    // channel down; Claude Code's own retry handles it. Fast 5xx/429 stays with
+    // the retries (no trip). detail distinguishes: "network error: ..." vs
+    // "timeout after ...ms".
+    if (detail?.startsWith("network error")) await recordChannelFailure(env);
+    return jsonError(502, `og: ${detail || `upstream ${upstream?.status || "error"}`}`, "api_error");
   }
+  // A real response (even a retried 5xx→2xx) resets the consecutive-failure
+  // count — otherwise yesterday's blips would combine with today's to trip.
+  await recordChannelSuccess(env);
   // True streaming: when the client asked for a stream, forward zen's OpenAI SSE
   // chunks to Anthropic SSE increments as they arrive (instead of buffering the
   // whole response and flushing it at once — that made thinking look frozen and
   // could time out long generations).
   if (body.stream) {
-    return new Response(streamOgToAnthropic(upstream.body, body.model, upstreamModel), {
+    // Extract the scalars the encoder needs, then drop the big body object so
+    // the GC can reclaim it while the (potentially minutes-long) stream runs —
+    // keeping a multi-MB parsed body resident the whole time pushes the Free
+    // plan's 128MB isolate limit.
+    const clientModel = body.model;
+    const streamBody = streamOgToAnthropic(upstream.body, clientModel, upstreamModel);
+    body = null;
+    return new Response(streamBody, {
       headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
     });
   }
@@ -537,28 +839,39 @@ async function handleGateway(request, env, url) {
 }
 
 /**
- * Fetch zen with retry on transient upstream failures (5xx / 429).
+ * Fetch an upstream with retry on transient failures (5xx / 429).
  *
- * opencode zen/go intermittently returns 500 ("Internal server error") for a
- * fraction of requests (observed ~50% on 2026-08-03). Retrying the identical
- * request a couple of times makes the gateway transparently absorb those
- * failures instead of surfacing "API error" to the client. Only retries before
- * any response body has started (a streaming response that dies mid-stream
- * cannot be replayed).
+ * Used by the og translate path (zen/go, which intermittently returns 500 —
+ * observed ~50% on 2026-08-03) and the ds/qw/or passthrough paths (official
+ * APIs' transient 5xx/429s). Retrying the identical request a couple of times
+ * makes the gateway transparently absorb those failures instead of surfacing
+ * "API error" to the client. Only retries before any response body has started
+ * (a streaming response that dies mid-stream cannot be replayed).
+ *
+ * Slow failures (timeout / network error) are NOT retried — an upstream that
+ * takes 45s to fail will simply fail again; retries only help fast 5xx/429s.
+ * Returns { response, detail } where detail explains the failure for the 502.
  */
-async function fetchZenWithRetry(url, init, { attempts = 3, backoffMs = 750 } = {}) {
+export async function fetchWithRetry(url, init, { attempts = 3, backoffMs = 750, timeoutMs = 30000 } = {}) {
   let last = null;
+  let detail = "";
   for (let attempt = 1; attempt <= attempts; attempt++) {
-    last = await fetch(url, { ...init, body: init.body });
-    if (last.ok || !(last.status >= 500 || last.status === 429)) {
-      return last;
+    try {
+      last = await fetchWithTimeout(url, { ...init, body: init.body }, timeoutMs);
+    } catch (e) {
+      detail = e.name === "TimeoutError" ? `timeout after ${timeoutMs}ms` : `network error: ${e.message}`;
+      break;
     }
-    console.error(`[og] zen upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
+    if (last.ok || !(last.status >= 500 || last.status === 429)) {
+      return { response: last, detail: "" };
+    }
+    detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
+    console.error(`[gateway] upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
     if (attempt < attempts) {
       await new Promise((r) => setTimeout(r, backoffMs * attempt));
     }
   }
-  return last;
+  return { response: last, detail };
 }
 
 /* ---------------- Device module helpers ---------------- */
@@ -587,35 +900,32 @@ function mcpConfig(d) {
 /** Reverse-proxy to the device panel, injecting the Bearer token server-side. */
 async function proxyDevice(request, env, device, restPath) {
   const url = new URL(request.url);
-  const upstream = new URL(`https://${device.hostname}${restPath}`);
-  upstream.search = url.search;
 
+  // The panel sits behind a tunnel that adds its own x-forwarded-*; don't pass
+  // the console's through. deviceFetch injects the Bearer token and strips
+  // host/cookie; restPath carries the request query string.
   const headers = new Headers(request.headers);
-  headers.delete("host");
-  headers.delete("cookie");            // the console session belongs to valegate
   headers.delete("x-forwarded-proto");
   headers.delete("x-forwarded-for");
   headers.delete("cf-connecting-ip");
   headers.set("x-forwarded-proto", "https");
-  headers.set("Authorization", `Bearer ${device.token}`);
 
-  let resp;
-  try {
-    resp = await fetch(upstream.toString(), {
-      method: request.method,
-      headers,
-      body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
-    });
-  } catch (e) {
-    return jsonError(502, `Device unreachable: ${e.message}`, "proxy_error");
-  }
+  const { resp, error } = await deviceFetch(env, device, restPath + url.search, {
+    method: request.method,
+    headers,
+    body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
+  });
+  if (!resp) return jsonError(502, error || "Device unreachable", "proxy_error");
 
   const outHeaders = new Headers(resp.headers);
   outHeaders.set("Access-Control-Allow-Origin", "*");
   const ct = String(outHeaders.get("content-type") || "").toLowerCase();
 
-  // Streaming (SSE / octet-stream / 101): pass the body through untouched.
-  if (resp.body && (ct.includes("text/event-stream") || ct.includes("application/octet-stream") || resp.status === 101)) {
+  if (resp.status === 101) {
+    return build101Response(resp) ?? resp;
+  }
+  // Streaming (SSE / octet-stream): pass the body through untouched.
+  if (resp.body && (ct.includes("text/event-stream") || ct.includes("application/octet-stream"))) {
     return new Response(resp.body, { status: resp.status, headers: outHeaders });
   }
 
@@ -671,7 +981,7 @@ async function testKey(name, key) {
     }
     if (name === "OPENCODE_GO_API_KEY") {
       // Do not send the literal "[1m]" suffix — zen rejects it with 401
-      const res = await fetchWithTimeout("https://opencode.ai/zen/go/v1/chat/completions", {
+      const res = await fetchWithTimeout(OG_ZEN_CHAT, {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -682,6 +992,18 @@ async function testKey(name, key) {
         }),
       });
       return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "OpenCode Go auth OK" : `Upstream ${res.status}` });
+    }
+    if (name === "QWEN_API_KEY") {
+      const res = await fetchWithTimeout("https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: "qwen3.8-max-preview",
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+        }),
+      });
+      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "Qwen MaaS auth OK" : `Upstream ${res.status}` });
     }
   } catch (e) {
     return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
@@ -698,14 +1020,267 @@ function userKeysStatus(ukeys) {
   return out;
 }
 
-async function fetchWithTimeout(url, init = {}, ms = 15000) {
+export async function fetchWithTimeout(url, init = {}, ms = 15000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
     return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (e) {
+    if (e.name === "AbortError") {
+      const err = new Error(`timeout after ${ms}ms`);
+      err.name = "TimeoutError";
+      throw err;
+    }
+    throw e;
   } finally {
     clearTimeout(t);
   }
+}
+
+/* ---------------- Reliability: upstream timeout, circuit breaker, estimation ---------------- */
+
+/** Effective upstream timeout: env UPSTREAM_TIMEOUT_MS, default 30s. */
+function upstreamTimeoutMs(env) {
+  const v = Number(env?.UPSTREAM_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 30000;
+}
+
+/**
+ * og (zen) timeout — 120s. zen is a third-party gateway whose latency
+ * intermittently spikes past 30s (observed "og: timeout after 30000ms" 502s),
+ * and real max-thinking requests run 40-54s before first byte (measured
+ * 2026-08-09); a 60s budget was tight for those. 120s absorbs the spikes AND
+ * the legitimate long thinking without surfacing a 502. Streaming note: this
+ * timeout only gates time-to-headers (observed ~7s) — once the SSE stream
+ * starts, it runs untimed.
+ */
+export function ogTimeoutMs(env) {
+  const v = Number(env?.OG_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 120000;
+}
+
+// Circuit breaker for the og channel, backed by a Durable Object so every
+// worker isolate shares one strongly-consistent state. Alternatives were
+// tried and failed on Cloudflare platform semantics:
+//   - in-memory counter: isolates restart the count → never trips
+//   - KV counter: writes can take up to 60s to propagate → every request reads
+//     the pre-write state → never trips
+//   - Cache API: put() is not available on the free plan → silently no-ops
+//
+// Semantics: only HARD network failures (channel unreachable) count toward the
+// breaker, and only BREAKER_FAIL_THRESHOLD (3) CONSECUTIVE failures open it for
+// BREAKER_DEGRADE_MS (60s) — a single network blip must not take the whole og
+// channel down. Slow responses (timeout) are zen's normal behavior (multi-second
+// latency observed routinely) and do NOT count; fast 5xx/429 stays handled by
+// fetchWithRetry's retries and does NOT trip, so zen's intermittent 500s
+// (~50% observed 2026-08-03) never cut the channel. A successful response
+// (/reset) zeroes the count. After the TTL the first request probes zen for
+// real and re-trips on failure.
+const BREAKER_DEGRADE_MS = 60000;
+const BREAKER_FAIL_THRESHOLD = 3;
+
+/** Durable Object holding the breaker state (single instance per channel name). */
+export class BreakerDO {
+  constructor(state, env) {
+    this.state = state;
+  }
+
+  async fetch(request) {
+    const action = new URL(request.url).pathname;
+    try {
+      if (action === "/trip") {
+        // Record one hard failure; open the circuit only after N consecutive.
+        const count = Number((await this.state.storage.get("failCount")) || 0) + 1;
+        if (count >= BREAKER_FAIL_THRESHOLD) {
+          await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
+          await this.state.storage.delete("failCount");
+        } else {
+          await this.state.storage.put("failCount", count);
+        }
+        return new Response("ok");
+      }
+      if (action === "/reset") {
+        // A success between failures — restart the consecutive count. The
+        // degradedUntil is NOT cleared: while the circuit is open no real
+        // request gets through, and the half-open probe that succeeds resets
+        // the count for the next genuine failure.
+        await this.state.storage.delete("failCount");
+        return new Response("ok");
+      }
+      if (action === "/clear") {
+        await this.state.storage.delete("degradedUntil");
+        await this.state.storage.delete("failCount");
+        return new Response("ok");
+      }
+      if (action === "/check") {
+        const degradedUntil = (await this.state.storage.get("degradedUntil")) || 0;
+        return new Response(degradedUntil > Date.now() ? "1" : "0");
+      }
+      return new Response("not found", { status: 404 });
+    } catch (e) {
+      return new Response(`breaker error: ${e.message}`, { status: 500 });
+    }
+  }
+}
+
+function breakerStub(env) {
+  return env.BREAKER.get(env.BREAKER.idFromName("og"));
+}
+
+export async function isChannelDegraded(env) {
+  try {
+    const res = await breakerStub(env).fetch("https://breaker/check");
+    return (await res.text()) === "1";
+  } catch (e) {
+    console.error("[breaker] check failed:", e.message);
+    return false;
+  }
+}
+
+export async function recordChannelFailure(env) {
+  try {
+    await breakerStub(env).fetch("https://breaker/trip");
+  } catch (e) {
+    console.error("[breaker] trip failed:", e.message);
+  }
+}
+
+export async function recordChannelSuccess(env) {
+  try {
+    await breakerStub(env).fetch("https://breaker/reset");
+  } catch (e) {
+    console.error("[breaker] reset failed:", e.message);
+  }
+}
+
+/**
+ * Replace the top-level "model" value in a raw JSON body without parsing it.
+ * Re-scans for the field's value span (cheap O(n), no object graph) and
+ * rebuilds only that slice. Falls back to the unchanged body if the field
+ * can't be located.
+ */
+export function rawWithModel(raw, newModel) {
+  const { valueStart, valueEnd } = scanTopLevelModel(raw);
+  if (valueStart < 0 || valueEnd <= valueStart) return raw;
+  return raw.slice(0, valueStart) + JSON.stringify(newModel) + raw.slice(valueEnd);
+}
+
+/**
+ * Lightweight scan of a JSON request body for the TOP-LEVEL "model" field,
+ * WITHOUT building the object graph (avoids the full parse + re-stringify
+ * that burns the Workers Free plan's 10ms CPU budget on multi-MB bodies).
+ *
+ * Walks the JSON once: skips strings (with escapes), objects, arrays, and
+ * tracks depth. Returns { model, valueStart, valueEnd } where valueStart/End
+ * bound the model string value (including its quotes) for in-place
+ * replacement; model is null when absent.
+ */
+export function scanTopLevelModel(raw) {
+  let i = 0;
+  const n = raw.length;
+  let depth = 0; // {} and [] nesting — model must sit at depth 0
+  let inStr = false;
+  let keyStart = -1; // first char of the key text (after its opening quote)
+  let keyEnd = -1;   // index of the key's closing quote
+  let pendingKey = false;
+  while (i < n) {
+    const c = raw[i];
+    if (inStr) {
+      if (c === "\\") { i += 2; continue; }
+      if (c === '"') {
+        inStr = false;
+        if (keyStart >= 0) keyEnd = i; // closing quote of a key string
+      }
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      if (pendingKey) {
+        keyStart = i + 1; // start of the key text
+        keyEnd = -1;
+        pendingKey = false;
+      }
+      inStr = true;
+      i += 1;
+      continue;
+    }
+    if (c === "{" || c === "[") {
+      depth += 1;
+      if (depth === 1) pendingKey = true; // entering the top-level object
+      i += 1;
+      continue;
+    }
+    if (c === "}" || c === "]") {
+      depth -= 1;
+      i += 1;
+      continue;
+    }
+    if (c === ",") {
+      // Top-level comma → the next token is a new key. Without this, any
+      // field before "model" (system/tools, which Claude Code sends first)
+      // leaves pendingKey false and "model" is never matched — the request
+      // silently routes to the default (ds) channel.
+      if (depth === 1) pendingKey = true;
+      keyStart = -1;
+      keyEnd = -1;
+      i += 1;
+      continue;
+    }
+    if (c === ":") {
+      // key "model" at top level? keyStart..keyEnd bound the key text.
+      if (depth === 1 && keyStart >= 0 && keyEnd > keyStart && raw.slice(keyStart, keyEnd) === "model") {
+        // value follows — skip whitespace, expect a string.
+        let j = i + 1;
+        while (j < n && (raw[j] === " " || raw[j] === "\t" || raw[j] === "\n" || raw[j] === "\r")) j += 1;
+        if (j < n && raw[j] === '"') {
+          const vs = j;
+          let k = j + 1;
+          let val = "";
+          while (k < n) {
+            if (raw[k] === "\\") { val += raw[k] + (raw[k + 1] || ""); k += 2; continue; }
+            if (raw[k] === '"') break;
+            val += raw[k];
+            k += 1;
+          }
+          return { model: val, valueStart: vs, valueEnd: k + 1 };
+        }
+        return { model: null, valueStart: -1, valueEnd: -1 };
+      }
+      keyStart = -1;
+      keyEnd = -1;
+      i += 1;
+      continue;
+    }
+    i += 1;
+  }
+  return { model: null, valueStart: -1, valueEnd: -1 };
+}
+
+/**
+ * Rough token estimate. ASCII runs ~4 chars/token, CJK/other script chars are
+ * ~1.8 tokens each — the plain `length / 4` underestimates Chinese-heavy
+ * prompts, which skews the client's context accounting.
+ *
+ * CPU-safe: the char-by-char walk is O(n) and on a multi-MB body could alone
+ * exceed the Workers Free plan 10ms CPU budget. Large bodies fall back to a
+ * byte-length approximation (never stringify+walk them) — count_tokens only
+ * needs a context-budget estimate, ±20% is fine.
+ */
+const ESTIMATE_WALK_LIMIT = 1_000_000; // chars: beyond this, approximate
+
+export function estimateTokens(jsonStr) {
+  const s = String(jsonStr);
+  if (s.length > ESTIMATE_WALK_LIMIT) {
+    // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
+    return Math.ceil(s.length / 3);
+  }
+  let ascii = 0;
+  let other = 0;
+  for (const ch of s) {
+    if (ch.charCodeAt(0) < 128) ascii += 1;
+    else other += 1;
+  }
+  return Math.ceil(ascii / 4 + other * 1.8);
 }
 
 /* ---------------- Routing ---------------- */
@@ -732,6 +1307,13 @@ function pickRoute(prefix, env) {
         stripPrefix: true,
         upstream: "https://api.deepseek.com/anthropic" + VERIFY_PATH,
       };
+    case "qw":
+      return {
+        type: "passthrough",
+        kind: "qwen",
+        stripPrefix: true,
+        upstream: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
+      };
     case "og":
       return {
         type: "translate",
@@ -750,11 +1332,20 @@ function pickRoute(prefix, env) {
   }
 }
 
-function passthroughHeaders(bearerKey) {
+function passthroughHeaders(bearerKey, { apiKeyHeader = false } = {}) {
   const h = new Headers();
   h.set("Content-Type", "application/json");
-  // Do not forward the client's auth header — use this user's own key
-  if (bearerKey) h.set("Authorization", `Bearer ${bearerKey}`);
+  // All passthrough targets speak the Anthropic protocol (ds/qw native,
+  // openrouter-proxy) — send the standard version header; OpenAI-format
+  // backends ignore it.
+  h.set("anthropic-version", "2023-06-01");
+  // Do not forward the client's auth header — use this user's own key.
+  // zen/go/v1/messages (native-Anthropic og) authenticates with x-api-key;
+  // every other upstream accepts Bearer.
+  if (bearerKey) {
+    if (apiKeyHeader) h.set(apiKeyHeader, bearerKey);
+    else h.set("Authorization", `Bearer ${bearerKey}`);
+  }
   return h;
 }
 
@@ -905,11 +1496,11 @@ async function describeImage(env, ukeys, source, visionModel) {
     if (!bearerKey) return "(图片描述失败：视觉模型后端未配置)";
     let resp;
     try {
-      resp = await fetch(route.upstream, {
+      resp = await fetchWithTimeout(route.upstream, {
         method: "POST",
         headers: passthroughHeaders(bearerKey),
         body: JSON.stringify({ ...miniReq, model: upstreamModel }),
-      });
+      }, upstreamTimeoutMs(env));
     } catch (e) {
       return `(图片描述失败：${e.message})`;
     }
@@ -926,11 +1517,11 @@ async function describeImage(env, ukeys, source, visionModel) {
   const openaiReq = toOpenAIRequest(miniReq, upstreamModel);
   let resp;
   try {
-    resp = await fetch(route.upstream, {
+    resp = await fetchWithTimeout(route.upstream, {
       method: "POST",
       headers: { Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify(openaiReq),
-    });
+    }, upstreamTimeoutMs(env));
   } catch (e) {
     return `(图片描述失败：${e.message})`;
   }
@@ -967,7 +1558,7 @@ async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey,
 
   let searchJson = {};
   try {
-    const sr = await fetch(searchUrl, {
+    const sr = await fetchWithTimeout(searchUrl, {
       method: "POST",
       headers: passthroughHeaders(deepseekKey),
       body: JSON.stringify({
@@ -977,14 +1568,14 @@ async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey,
         tool_choice: { type: "tool", name: "web_search" },
         messages: [{ role: "user", content: query }],
       }),
-    });
+    }, upstreamTimeoutMs(env));
     if (sr.ok) searchJson = await sr.json();
   } catch {}
 
   const serverToolUses = (searchJson.content || []).filter((b) => b.type === "server_tool_use");
   const resultBlocks = (searchJson.content || []).filter((b) => b.type === "web_search_tool_result");
 
-  let answer = await ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks);
+  let answer = await ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks);
   if (!answer) {
     // Fall back to DeepSeek's own summary if the og/ model didn't produce one.
     answer = (searchJson.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
@@ -1009,7 +1600,7 @@ async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey,
 }
 
 /** Ask the requested og/ model to answer the query from the search result titles/URLs. */
-async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, resultBlocks) {
+async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks) {
   if (!opencodeGoKey) return "";
   const resultsText = resultBlocks
     .map((rb) => (rb.content || []).map((r) => `- ${r.title}\n  ${r.url}`).join("\n"))
@@ -1023,11 +1614,14 @@ async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, res
     }],
   };
   try {
-    const resp = await fetch(route.upstream, {
+    // Always the OpenAI-format endpoint: this sends an OpenAI body (toOpenAIRequest).
+    // For native-Anthropic og models the request route's upstream is now /v1/messages,
+    // which would reject an OpenAI body — so pin the chat/completions URL explicitly.
+    const resp = await fetchWithTimeout(OG_ZEN_CHAT, {
       method: "POST",
       headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
       body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
-    });
+    }, upstreamTimeoutMs(env));
     if (!resp.ok) {
       console.error(`ogWebSearchAnswer: zen ${resp.status}`);
       return "";
@@ -1044,7 +1638,7 @@ async function ogWebSearchAnswer(route, upstreamModel, opencodeGoKey, query, res
 
 /* ---------------- OpenAI → Anthropic (for og translation) ---------------- */
 
-function toAnthropicResponse(up, model) {
+export function toAnthropicResponse(up, model) {
   const choice = up.choices?.[0];
   const msg = choice?.message || {};
   const blocks = [];
@@ -1064,7 +1658,11 @@ function toAnthropicResponse(up, model) {
       input_tokens: up.usage?.prompt_tokens || 0,
       output_tokens: up.usage?.completion_tokens || 0,
       cache_creation_input_tokens: 0,
-      cache_read_input_tokens: up.usage?.prompt_cache_hit_tokens || 0,
+      // zen reports prompt cache hits as usage.prompt_tokens_details.cached_tokens
+      // (OpenAI naming), not prompt_cache_hit_tokens — read both so cache hits
+      // surface to the client instead of always showing 0.
+      cache_read_input_tokens:
+        up.usage?.prompt_cache_hit_tokens || up.usage?.prompt_tokens_details?.cached_tokens || 0,
     },
   };
 }
@@ -1137,7 +1735,7 @@ function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
  * Stateful translator from OpenAI stream deltas to Anthropic SSE events.
  * Accumulates tool-call arguments by index and tracks which content block is open.
  */
-class AnthropicStreamEncoder {
+export class AnthropicStreamEncoder {
   constructor(clientModel, upstreamModel) {
     this.clientModel = clientModel;
     this.upstreamModel = upstreamModel;
@@ -1161,7 +1759,10 @@ class AnthropicStreamEncoder {
     if (chunk.usage) {
       this.usage.input_tokens = chunk.usage.prompt_tokens || 0;
       this.usage.output_tokens = chunk.usage.completion_tokens || 0;
-      this.usage.cache_read_input_tokens = chunk.usage.prompt_cache_hit_tokens || 0;
+      // zen reports cache hits as usage.prompt_tokens_details.cached_tokens —
+      // read both names, same as toAnthropicResponse.
+      this.usage.cache_read_input_tokens =
+        chunk.usage.prompt_cache_hit_tokens || chunk.usage.prompt_tokens_details?.cached_tokens || 0;
     }
     if (choice.finish_reason) this.lastStopReason = STREAM_STOP_MAP[choice.finish_reason] || "end_turn";
 
@@ -1354,4 +1955,159 @@ function jsonError(status, message, type) {
     status,
     headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+}
+
+/* ---------------- Public endpoints: health / vale-cli / installers ---------------- */
+
+export async function buildHealth(env) {
+  const channels = [];
+  for (const c of HEALTH_CHANNELS) {
+    let ok = true;
+    let reason = "";
+    if (c.id === "og") {
+      ok = !(await isChannelDegraded(env));
+      if (!ok) reason = "circuit open";
+    }
+    channels.push({ id: c.id, ok, model: c.model, ...(reason ? { reason } : {}) });
+  }
+  const recommended = HEALTH_PRIORITY.map((id) => channels.find((c) => c.id === id)).find((c) => c.ok);
+  return {
+    channels,
+    recommended: recommended ? { channel: recommended.id, model: recommended.model } : null,
+  };
+}
+
+/** Model usable for routing? In the whitelist and (og) breaker not open. */
+export async function isModelUsable(env, model) {
+  if (!MODELS.some((m) => m.id === model)) return false;
+  if (model.startsWith("og/")) return !(await isChannelDegraded(env));
+  return true;
+}
+
+// Default channel when the user hasn't made a selection: the stable,
+// cheapest direct channel (DeepSeek official).
+const DEFAULT_ROUTE_MODEL = "ds/deepseek-v4-flash";
+
+/**
+ * Resolve Claude Code's fixed `auto` model name to this user's chosen
+ * channel (per-user route selection). Falls back to the default channel
+ * (ds/deepseek-v4-flash) when unset or unusable.
+ */
+export async function resolveAutoModel(env, uid) {
+  const chosen = await getUserRoute(env, uid);
+  if (chosen && (await isModelUsable(env, chosen))) return chosen;
+  return DEFAULT_ROUTE_MODEL;
+}
+
+/** UTF-8-safe base64: btoa is Latin1-only and throws on non-ASCII (the vale
+ *  CLI is full of Chinese text). Encode to bytes first. */
+export function encodeBase64Utf8(text) {
+  return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+}
+
+/**
+ * Channel probe for the vale CLI's `use` command (public POST /api/vale-probe).
+ *
+ * Fires a real max_tokens=1 request through the requested channel using the
+ * WORKER-level provider keys, so the CLI can verify a channel serves BEFORE
+ * rewriting settings — from any settings state. Public like /api/health;
+ * each probe costs one tiny upstream call (og short-circuits on the open
+ * breaker, so a degraded channel costs nothing).
+ */
+export async function valeProbe(env, model) {
+  const prefix = model.split("/")[0];
+  const known = HEALTH_CHANNELS.some((c) => c.id === prefix) && MODELS.some((m) => m.id === model);
+  if (!known) {
+    return jsonError(400, `Unknown channel model: ${model}`, "invalid_request");
+  }
+  // og → zen; respect the breaker first so a degraded channel fails fast at no cost.
+  // Native-Anthropic models (deepseek-v4-flash / minimax-m3) probe zen/go/v1/messages,
+  // other og models probe chat/completions — same probe body works for both formats.
+  if (prefix === "og") {
+    if (await isChannelDegraded(env)) {
+      return jsonOk({ ok: false, channel: prefix, detail: "circuit open" });
+    }
+    const key = env.OPENCODE_GO_API_KEY || "";
+    if (!key) return jsonOk({ ok: false, channel: prefix, detail: "OPENCODE_GO_API_KEY not configured" });
+    const upstreamModel = stripBracket(model.slice(prefix.length + 1));
+    const native = OG_NATIVE_ANTHROPIC.has(upstreamModel);
+    let res;
+    try {
+      // Native models hit zen /v1/messages with x-api-key; translate models
+      // hit chat/completions with Bearer.
+      const headers = native
+        ? { "x-api-key": key, "Content-Type": "application/json" }
+        : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+      res = await fetchWithTimeout(native ? OG_ZEN_ANTHROPIC : OG_ZEN_CHAT, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model: upstreamModel,
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+          stream: false,
+        }),
+      }, upstreamTimeoutMs(env));
+    } catch (e) {
+      return jsonOk({ ok: false, channel: prefix, detail: e.message });
+    }
+    return jsonOk({ ok: res.ok, channel: prefix, status: res.status, detail: res.ok ? "" : `upstream ${res.status}` });
+  }
+  // Passthrough channels (ds/qw/or): reuse the exact route config of /v1/messages.
+  const route = pickRoute(prefix, env);
+  const key = prefix === "or" ? (env.OPENROUTER_API_KEY || "")
+    : prefix === "qw" ? (env.QWEN_API_KEY || "")
+    : (env.DEEPSEEK_API_KEY || "");
+  if (!key) return jsonOk({ ok: false, channel: prefix, detail: `${prefix}: key not configured` });
+  const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
+  let res;
+  try {
+    res = await fetchWithTimeout(route.upstream, {
+      method: "POST",
+      headers: passthroughHeaders(key),
+      body: JSON.stringify({
+        model: upstreamModel,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+      }),
+    }, upstreamTimeoutMs(env));
+  } catch (e) {
+    return jsonOk({ ok: false, channel: prefix, detail: e.message });
+  }
+  return jsonOk({ ok: res.ok, channel: prefix, status: res.status, detail: res.ok ? "" : `upstream ${res.status}` });
+}
+
+// POSIX one-liner installer — embeds the vale CLI as base64 (no quoting issues).
+export function posixInstaller(b64) {
+  return `#!/bin/sh
+set -e
+command -v node >/dev/null 2>&1 || { echo "error: Node.js required"; exit 1; }
+DEST="\${VALE_BIN:-\$HOME/.local/bin}"
+mkdir -p "\$DEST"
+echo "${b64}" | (base64 -d 2>/dev/null || base64 -D) > "\$DEST/vale"
+chmod +x "\$DEST/vale"
+echo "installed: \$DEST/vale"
+echo "usage: vale check | vale use <ds|qw|og|or> | vale use auto | vale restore"
+`;
+}
+
+// PowerShell one-liner installer (irm | iex) — installs vale + vale.cmd wrapper.
+export function psInstaller(b64) {
+  return `$ErrorActionPreference = "Stop"
+try { node --version | Out-Null } catch { Write-Error "Node.js required"; exit 1 }
+$dest = Join-Path $HOME ".local\\bin"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+$script = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${b64}"))
+Set-Content -Path (Join-Path $dest "vale") -Value $script -Encoding UTF8 -NoNewline
+Set-Content -Path (Join-Path $dest "vale.cmd") -Value '@echo off\r\nnode "%~dp0vale" %*' -Encoding ASCII
+Write-Host "installed: $dest\\vale  (command: vale)"
+`;
+}
+
+async function serveAssetText(env, assetPath) {
+  if (!env.ASSETS || typeof env.ASSETS.fetch !== "function") {
+    return null;
+  }
+  const res = await env.ASSETS.fetch(new Request(`https://assets.local${assetPath}`));
+  return res.ok ? await res.text() : null;
 }

@@ -6,8 +6,9 @@
  *
  *   or/<model>   → OpenRouter (proxied via the openrouter-proxy CF Worker)
  *   ds/<model>   → DeepSeek official (api.deepseek.com/anthropic, Bearer passthrough)
- *   og/<model>   → OpenCode Go (opencode.ai/zen/go — Anthropic↔OpenAI translation;
- *                  native-Anthropic passthrough disabled, zen /v1/messages auth unverified)
+ *   og/<model>   → OpenCode Go (opencode.ai/zen/go — deepseek-v4-flash native
+ *                  Anthropic via /v1/messages with x-api-key; other models
+ *                  Anthropic↔OpenAI translation via chat/completions)
  *   (none)       → default ds/ (DeepSeek official)
  *
  * Auth:
@@ -35,20 +36,24 @@ const COUNT_PATH = "/v1/messages/count_tokens";
 // would blow the Workers Free plan's 10ms CPU budget just to scan/parse it.
 const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
 
+// og translate: floor for client max_tokens. deepseek-v4-flash + max thinking
+// spends the whole budget on thinking, so tiny client budgets come back empty.
+const OG_MIN_MAX_TOKENS = 8000;
+
 // OpenCode Zen/Go endpoints. deepseek-v4-flash and minimax-m3 are Anthropic-native
 // on zen/go/v1/messages (announced 2026-08-06 for ds4f; minimax was already native) —
 // those models bypass the OpenAI translation. Other og models (mimo-v2.5, kimi, glm)
 // only speak OpenAI chat/completions and keep the translate path.
 const OG_ZEN_ANTHROPIC = "https://opencode.ai/zen/go" + VERIFY_PATH;
 const OG_ZEN_CHAT = "https://opencode.ai/zen/go/v1/chat/completions";
-// zen/go/v1/messages currently rejects BOTH Bearer and x-api-key with this
-// user's key ("Missing API key" for either), while chat/completions works with
-// Bearer — the "native Anthropic" announcement (2026-08-06) is not live on the
-// Go endpoint, or uses auth we can't satisfy. Keep the set empty so every og
-// model uses the proven translate path; add names back when messages works.
-// (Verified 2026-08-07: all three og models — deepseek-v4-flash, minimax-m3,
-// mimo-v2.5 — work via chat/completions translate with the user's key.)
-const OG_NATIVE_ANTHROPIC = new Set([]);
+// deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (announced
+// 2026-08-06) and authenticates with x-api-key (verified 2026-08-10 per
+// handoff 2.5.6: ~54s full response, thinking + answer). Native passthrough
+// forwards the Anthropic stream untouched — no per-chunk OpenAI translation,
+// so no 1102 CPU risk on huge streams. Other og models (minimax-m3, mimo-v2.5)
+// only speak chat/completions and keep the translate path (verified 2026-08-07
+// with this user's key).
+const OG_NATIVE_ANTHROPIC = new Set(["deepseek-v4-flash"]);
 const AUTH_BASE = "/api/auth";
 const ADMIN_BASE = "/api/admin";
 const ME_BASE = "/api/me";
@@ -635,13 +640,10 @@ export async function handleGateway(request, env, url) {
   const prefix = model.split("/")[0];
   const baseRoute = pickRoute(prefix, env);
   const upstreamModel = stripBracket(baseRoute.stripPrefix ? model.slice(prefix.length + 1) : model);
-  // og/deepseek-v4-flash + og/minimax-m3 are Anthropic-native on zen/go/v1/messages —
-  // bypass the OpenAI translation; other og models (mimo-v2.5, kimi, glm) keep it.
-  // upstreamModel is already bracket-stripped, so a [1m] marker cannot mask the check.
-  // NOTE: native passthrough currently DISABLED — zen/go/v1/messages rejects both
-  // Bearer and x-api-key auth ("Missing API key") with this user's key, while the
-  // chat/completions translate path works. Re-enable once zen's messages-endpoint
-  // auth is confirmed (see OG_NATIVE_ANTHROPIC gate below).
+  // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
+  // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
+  // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
+  // already bracket-stripped, so a [1m] marker cannot mask the check.
   const route =
     baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel)
       ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
@@ -703,9 +705,10 @@ export async function handleGateway(request, env, url) {
 
   // count_tokens
   if (isCount) {
-    if (route.type === "translate") {
-      // og translate counts locally — estimate from the raw body length
-      // (estimateTokens itself approximates for bodies over 1M chars).
+    if (route.kind === "opencode") {
+      // og counts locally — translate AND native passthrough (zen's count
+      // endpoint adds nothing; local estimate is CPU-cheap). estimateTokens
+      // itself approximates for bodies over 1M chars.
       return jsonOk({ input_tokens: estimateTokens(rawText) });
     }
     if (route.kind === "deepseek" && !deepseekKey) {
@@ -744,17 +747,24 @@ export async function handleGateway(request, env, url) {
     if (route.kind === "qwen" && !qwenKey) {
       return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
     }
-    let upstream;
-    try {
-      // Forward the raw body with only the top-level model field swapped —
-      // no parse, no spread, no full re-stringify (Free plan 10ms CPU budget).
-      upstream = await fetchWithTimeout(route.upstream, {
-        method: "POST",
-        headers: passthroughHeaders(bearerKey),
-        body: rawWithModel(rawText, upstreamModel),
-      }, upstreamTimeoutMs(env));
-    } catch (e) {
-      return jsonError(502, `upstream ${route.kind}: ${e.message}`, "api_error");
+    // og-native parsed the body above (web-search detection, image
+    // pre-processing) — forward THAT (images must arrive described, deepseek
+    // is text-only). ds/qw/or never parse: raw text with only the top-level
+    // model field swapped — no parse, no spread, no full re-stringify (Free
+    // plan 10ms CPU budget). og-native authenticates with x-api-key;
+    // every other passthrough channel uses Bearer.
+    const forwardBody = body !== null
+      ? JSON.stringify({ ...body, model: upstreamModel })
+      : rawWithModel(rawText, upstreamModel);
+    const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
+      method: "POST",
+      headers: passthroughHeaders(bearerKey, { apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false }),
+      body: forwardBody,
+    }, { timeoutMs: upstreamTimeoutMs(env) });
+    if (!upstream) {
+      // Slow failure (timeout / network error) — single attempt, no retry, no
+      // breaker trip (passthrough channels have no breaker anyway).
+      return jsonError(502, `upstream ${route.kind}: ${detail}`, "api_error");
     }
     if (!upstream.ok) {
       let message = `Upstream ${upstream.status}`;
@@ -776,11 +786,17 @@ export async function handleGateway(request, env, url) {
     return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
   }
   if (await isChannelDegraded(env)) {
-    // Circuit open: recent slow failure — fail fast instead of waiting on zen again.
-    return jsonError(502, "og: circuit open (recent timeout, try again in ~1 min)", "api_error");
+    // Circuit open: repeated hard failures — fail fast instead of waiting on zen again.
+    return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
   }
   const openaiReq = toOpenAIRequest(body, upstreamModel);
-  const { response: upstream, detail } = await fetchZenWithRetry(route.upstream, {
+  // max_tokens floor — deepseek-v4-flash + max thinking counts thinking against
+  // the budget, so a small client max_tokens returns "thinking only, 0 answer"
+  // (8/8 reproductions at max_tokens=300, 2026-08-09). Only the client-facing
+  // request gets floored; internal calls (describeImage 1500, ogWebSearchAnswer
+  // 500) keep their intentionally small budgets. Absent stays absent.
+  if (openaiReq.max_tokens && openaiReq.max_tokens < OG_MIN_MAX_TOKENS) openaiReq.max_tokens = OG_MIN_MAX_TOKENS;
+  const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${opencodeGoKey}`,
@@ -789,7 +805,8 @@ export async function handleGateway(request, env, url) {
     body: JSON.stringify(openaiReq),
   }, { timeoutMs: ogTimeoutMs(env) });
   if (!upstream || !upstream.ok) {
-    // Only a hard network failure (channel unreachable) trips the breaker.
+    // Only a hard network failure (channel unreachable) counts toward the
+    // breaker — and only N consecutive failures open it (see BreakerDO).
     // Slow responses (timeout) are zen's normal behavior — multi-second latency
     // is observed routinely, so a slow request must NOT take the whole og
     // channel down; Claude Code's own retry handles it. Fast 5xx/429 stays with
@@ -798,6 +815,9 @@ export async function handleGateway(request, env, url) {
     if (detail?.startsWith("network error")) await recordChannelFailure(env);
     return jsonError(502, `og: ${detail || `upstream ${upstream?.status || "error"}`}`, "api_error");
   }
+  // A real response (even a retried 5xx→2xx) resets the consecutive-failure
+  // count — otherwise yesterday's blips would combine with today's to trip.
+  await recordChannelSuccess(env);
   // True streaming: when the client asked for a stream, forward zen's OpenAI SSE
   // chunks to Anthropic SSE increments as they arrive (instead of buffering the
   // whole response and flushing it at once — that made thinking look frozen and
@@ -819,20 +839,20 @@ export async function handleGateway(request, env, url) {
 }
 
 /**
- * Fetch zen with retry on transient upstream failures (5xx / 429).
+ * Fetch an upstream with retry on transient failures (5xx / 429).
  *
- * opencode zen/go intermittently returns 500 ("Internal server error") for a
- * fraction of requests (observed ~50% on 2026-08-03). Retrying the identical
- * request a couple of times makes the gateway transparently absorb those
- * failures instead of surfacing "API error" to the client. Only retries before
- * any response body has started (a streaming response that dies mid-stream
- * cannot be replayed).
+ * Used by the og translate path (zen/go, which intermittently returns 500 —
+ * observed ~50% on 2026-08-03) and the ds/qw/or passthrough paths (official
+ * APIs' transient 5xx/429s). Retrying the identical request a couple of times
+ * makes the gateway transparently absorb those failures instead of surfacing
+ * "API error" to the client. Only retries before any response body has started
+ * (a streaming response that dies mid-stream cannot be replayed).
  *
  * Slow failures (timeout / network error) are NOT retried — an upstream that
  * takes 45s to fail will simply fail again; retries only help fast 5xx/429s.
  * Returns { response, detail } where detail explains the failure for the 502.
  */
-export async function fetchZenWithRetry(url, init, { attempts = 3, backoffMs = 750, timeoutMs = 30000 } = {}) {
+export async function fetchWithRetry(url, init, { attempts = 3, backoffMs = 750, timeoutMs = 30000 } = {}) {
   let last = null;
   let detail = "";
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -846,7 +866,7 @@ export async function fetchZenWithRetry(url, init, { attempts = 3, backoffMs = 7
       return { response: last, detail: "" };
     }
     detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
-    console.error(`[og] zen upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
+    console.error(`[gateway] upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
     if (attempt < attempts) {
       await new Promise((r) => setTimeout(r, backoffMs * attempt));
     }
@@ -1026,14 +1046,17 @@ function upstreamTimeoutMs(env) {
 }
 
 /**
- * og (zen) timeout — 60s, double the default. zen is a third-party gateway
- * whose latency intermittently spikes past 30s (observed "og: timeout after
- * 30000ms" 502s). A 60s budget absorbs those spikes so occasional slowness
- * doesn't surface as a 502 that Claude Code retries into a multi-minute stall.
+ * og (zen) timeout — 120s. zen is a third-party gateway whose latency
+ * intermittently spikes past 30s (observed "og: timeout after 30000ms" 502s),
+ * and real max-thinking requests run 40-54s before first byte (measured
+ * 2026-08-09); a 60s budget was tight for those. 120s absorbs the spikes AND
+ * the legitimate long thinking without surfacing a 502. Streaming note: this
+ * timeout only gates time-to-headers (observed ~7s) — once the SSE stream
+ * starts, it runs untimed.
  */
-function ogTimeoutMs(env) {
+export function ogTimeoutMs(env) {
   const v = Number(env?.OG_TIMEOUT_MS);
-  return Number.isFinite(v) && v > 0 ? v : 60000;
+  return Number.isFinite(v) && v > 0 ? v : 120000;
 }
 
 // Circuit breaker for the og channel, backed by a Durable Object so every
@@ -1044,12 +1067,17 @@ function ogTimeoutMs(env) {
 //     the pre-write state → never trips
 //   - Cache API: put() is not available on the free plan → silently no-ops
 //
-// Semantics: a slow failure (timeout / network error — a channel that takes
-// 30s+ to fail is broken, not flaky) trips the breaker for 60s. Fast 5xx/429
-// stays handled by fetchZenWithRetry's retries and does NOT trip, so zen's
-// intermittent 500s (~50% observed 2026-08-03) never cut the channel. After
-// the TTL the first request probes zen for real and re-trips on failure.
+// Semantics: only HARD network failures (channel unreachable) count toward the
+// breaker, and only BREAKER_FAIL_THRESHOLD (3) CONSECUTIVE failures open it for
+// BREAKER_DEGRADE_MS (60s) — a single network blip must not take the whole og
+// channel down. Slow responses (timeout) are zen's normal behavior (multi-second
+// latency observed routinely) and do NOT count; fast 5xx/429 stays handled by
+// fetchWithRetry's retries and does NOT trip, so zen's intermittent 500s
+// (~50% observed 2026-08-03) never cut the channel. A successful response
+// (/reset) zeroes the count. After the TTL the first request probes zen for
+// real and re-trips on failure.
 const BREAKER_DEGRADE_MS = 60000;
+const BREAKER_FAIL_THRESHOLD = 3;
 
 /** Durable Object holding the breaker state (single instance per channel name). */
 export class BreakerDO {
@@ -1061,11 +1089,27 @@ export class BreakerDO {
     const action = new URL(request.url).pathname;
     try {
       if (action === "/trip") {
-        await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
+        // Record one hard failure; open the circuit only after N consecutive.
+        const count = Number((await this.state.storage.get("failCount")) || 0) + 1;
+        if (count >= BREAKER_FAIL_THRESHOLD) {
+          await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
+          await this.state.storage.delete("failCount");
+        } else {
+          await this.state.storage.put("failCount", count);
+        }
+        return new Response("ok");
+      }
+      if (action === "/reset") {
+        // A success between failures — restart the consecutive count. The
+        // degradedUntil is NOT cleared: while the circuit is open no real
+        // request gets through, and the half-open probe that succeeds resets
+        // the count for the next genuine failure.
+        await this.state.storage.delete("failCount");
         return new Response("ok");
       }
       if (action === "/clear") {
         await this.state.storage.delete("degradedUntil");
+        await this.state.storage.delete("failCount");
         return new Response("ok");
       }
       if (action === "/check") {
@@ -1098,6 +1142,14 @@ export async function recordChannelFailure(env) {
     await breakerStub(env).fetch("https://breaker/trip");
   } catch (e) {
     console.error("[breaker] trip failed:", e.message);
+  }
+}
+
+export async function recordChannelSuccess(env) {
+  try {
+    await breakerStub(env).fetch("https://breaker/reset");
+  } catch (e) {
+    console.error("[breaker] reset failed:", e.message);
   }
 }
 
@@ -1280,15 +1332,20 @@ function pickRoute(prefix, env) {
   }
 }
 
-function passthroughHeaders(bearerKey) {
+function passthroughHeaders(bearerKey, { apiKeyHeader = false } = {}) {
   const h = new Headers();
   h.set("Content-Type", "application/json");
   // All passthrough targets speak the Anthropic protocol (ds/qw native,
   // openrouter-proxy) — send the standard version header; OpenAI-format
   // backends ignore it.
   h.set("anthropic-version", "2023-06-01");
-  // Do not forward the client's auth header — use this user's own key
-  if (bearerKey) h.set("Authorization", `Bearer ${bearerKey}`);
+  // Do not forward the client's auth header — use this user's own key.
+  // zen/go/v1/messages (native-Anthropic og) authenticates with x-api-key;
+  // every other upstream accepts Bearer.
+  if (bearerKey) {
+    if (apiKeyHeader) h.set(apiKeyHeader, bearerKey);
+    else h.set("Authorization", `Bearer ${bearerKey}`);
+  }
   return h;
 }
 
@@ -1976,9 +2033,14 @@ export async function valeProbe(env, model) {
     const native = OG_NATIVE_ANTHROPIC.has(upstreamModel);
     let res;
     try {
+      // Native models hit zen /v1/messages with x-api-key; translate models
+      // hit chat/completions with Bearer.
+      const headers = native
+        ? { "x-api-key": key, "Content-Type": "application/json" }
+        : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
       res = await fetchWithTimeout(native ? OG_ZEN_ANTHROPIC : OG_ZEN_CHAT, {
         method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           model: upstreamModel,
           messages: [{ role: "user", content: "ping" }],

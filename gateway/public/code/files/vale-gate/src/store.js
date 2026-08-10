@@ -18,7 +18,7 @@ import { hashPassword, randomHex } from "./auth.js";
 
 export const ADMIN_USERNAME = "admin";
 export const ADMIN_ID = "admin"; // user ID = username → readable KV keys
-export const USER_KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY"];
+export const USER_KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY", "QWEN_API_KEY"];
 
 /* ---- Per-isolate TTL cache ----
  *
@@ -42,6 +42,22 @@ function cset(k, v) {
   __c.set(k, { v, exp: Date.now() + CACHE_TTL });
 }
 function cdel(...ks) { for (const k of ks) __c.delete(k); }
+
+/* Route selection (model=auto): short-TTL cache — a switch must take effect
+ * fast across isolates; 60s bounds staleness to a minute. */
+const ROUTE_CACHE_TTL = 60 * 1000;
+const __rc = new Map(); // route:<id> -> { v, exp }
+function rcget(k) {
+  const e = __rc.get(k);
+  if (!e) return undefined;
+  if (e.exp <= Date.now()) { __rc.delete(k); return undefined; }
+  return e.v;
+}
+function rcset(k, v) {
+  if (__rc.size >= 512) __rc.delete(__rc.keys().next().value);
+  __rc.set(k, { v, exp: Date.now() + ROUTE_CACHE_TTL });
+}
+function rcdel(k) { __rc.delete(k); }
 
 async function getJSON(env, key) {
   if (!env.KEYS) return null;
@@ -241,6 +257,28 @@ export async function deleteUserKey(env, id, name) {
   return ukeys;
 }
 
+/* ---- Per-user route selection (model=auto) ---- */
+
+export async function getUserRoute(env, id) {
+  const key = `route:${id}`;
+  const hit = rcget(key);
+  if (hit !== undefined) return hit;
+  const v = (await env.KEYS.get(key)) || null;
+  rcset(key, v);
+  return v;
+}
+
+export async function setUserRoute(env, id, model) {
+  const key = `route:${id}`;
+  if (model === null || model === undefined || model === "") {
+    await env.KEYS.delete(key);
+    rcdel(key);
+    return;
+  }
+  await env.KEYS.put(key, String(model));
+  rcset(key, String(model)); // write-through：切换立即生效（同 isolate 零延迟）
+}
+
 /* ---- Admin password (stored in KV as plaintext so the console can show/change it) ---- */
 
 /** Read the admin password: KV is authoritative; migrate from the Worker secret once if absent */
@@ -352,6 +390,64 @@ export async function hasRegKey(env, code) {
 export async function deleteRegKey(env, code) {
   if (!env.KEYS || !code) return;
   await env.KEYS.delete(`regkey:${String(code).toLowerCase()}`);
+}
+
+/* ---------------- Plugin (extension) registry ----------------
+ *
+ * plugins:v1 → JSON map token → { device, createdAt }. The browser extension
+ * on a device's Chrome pairs via a one-time code (pair:<code>, 10min TTL),
+ * receives a plugin token, and trades it for one-time WS tickets
+ * (plg-ticket:<t>, 60s TTL) when connecting to the PluginHubDO.
+ */
+
+const PLUGIN_KEY = "plugins:v1";
+
+export async function listPluginLinks(env) {
+  const raw = await env.KEYS.get(PLUGIN_KEY);
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { return {}; }
+}
+export async function savePluginLinks(env, map) {
+  await env.KEYS.put(PLUGIN_KEY, JSON.stringify(map));
+}
+export async function addPluginLink(env, token, device) {
+  const map = await listPluginLinks(env);
+  map[token] = { device, createdAt: Date.now() };
+  await savePluginLinks(env, map);
+}
+export async function getPluginByToken(env, token) {
+  const map = await listPluginLinks(env);
+  return map[token] || null;
+}
+export async function removePluginLink(env, token) {
+  const map = await listPluginLinks(env);
+  if (map[token]) { delete map[token]; await savePluginLinks(env, map); }
+}
+
+// One-time pairing code (console admin generates; extension claims).
+export async function createPairCode(env, device) {
+  const code = randomHex(6).toUpperCase();
+  await env.KEYS.put(`pair:${code}`, device, { expirationTtl: 600 });
+  return code;
+}
+export async function consumePairCode(env, code) {
+  const device = await env.KEYS.get(`pair:${code}`);
+  if (!device) return null;
+  await env.KEYS.delete(`pair:${code}`);
+  return device;
+}
+
+// One-time short-lived WS ticket (extension trades its plugin token for this).
+export async function createWsTicket(env, device) {
+  const ticket = randomHex(16);
+  await env.KEYS.put(`plg-ticket:${ticket}`, device, { expirationTtl: 60 });
+  return ticket;
+}
+export async function consumeWsTicket(env, ticket) {
+  const device = await env.KEYS.get(`plg-ticket:${ticket}`);
+  if (!device) return null;
+  await env.KEYS.delete(`plg-ticket:${ticket}`);
+  return device;
 }
 
 /* ---- Cloudflare tunnel API token (account-level, admin-managed) ----

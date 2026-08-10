@@ -90,16 +90,29 @@ test("valeProbe: og with open breaker short-circuits, no upstream call", async (
   assert.equal(body.detail, "circuit open");
 });
 
-test("valeProbe: og model probes zen chat/completions (translate path, native disabled)", async () => {
+test("valeProbe: og native model probes zen /v1/messages with x-api-key", async () => {
   let seen;
   const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response("{}", { status: 200 }); }, () =>
     valeProbe(keyedEnv, "og/deepseek-v4-flash"),
   );
+  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/messages");
+  const apiKey = seen.init.headers.get ? seen.init.headers.get("x-api-key") : seen.init.headers["x-api-key"];
+  assert.equal(apiKey, "sk-og");
+  assert.equal(JSON.parse(seen.init.body).model, "deepseek-v4-flash");
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.channel, "og");
+});
+
+test("valeProbe: og translate model probes zen chat/completions with Bearer", async () => {
+  let seen;
+  const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response("{}", { status: 200 }); }, () =>
+    valeProbe(keyedEnv, "og/minimax-m3"),
+  );
   assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
-  // og probe passes a plain-object header (not a Headers instance)
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-og");
-  assert.equal(JSON.parse(seen.init.body).model, "deepseek-v4-flash");
+  assert.equal(JSON.parse(seen.init.body).model, "minimax-m3");
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.channel, "og");

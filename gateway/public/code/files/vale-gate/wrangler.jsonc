@@ -9,15 +9,40 @@
       "id": "a1fb10da621b411caeda6d98c060bbea"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BREAKER",
+        "class_name": "BreakerDO"
+      },
+      {
+        "name": "PLUGIN_HUB",
+        "class_name": "PluginHubDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-breaker",
+      "new_sqlite_classes": ["BreakerDO"]
+    },
+    {
+      "tag": "v2-plugin-hub",
+      "new_sqlite_classes": ["PluginHubDO"]
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "none",
     "run_worker_first": true
+  },
+  "vars": {
+    "CONSOLE_HOST": "ai.saisi.online,api.saisi.online"
   }
   // Vale Gate — unified AI gateway + device console. Custom domains are added
   // in the dashboard (custom_domains API is OAuth-only).
   // Vars (set via `wrangler var put`, NOT committed): CONSOLE_HOST, API_HOST, OPENROUTER_PROXY_URL
   // Secrets (set via `wrangler secret put`): CLIENT_KEY, DEEPSEEK_API_KEY, OPENCODE_GO_API_KEY,
-  // OPENROUTER_API_KEY, ADMIN_PASSWORD
+  // OPENROUTER_API_KEY, QWEN_API_KEY, ADMIN_PASSWORD
 }
