@@ -96,7 +96,7 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
-          version: "0.8.5",
+          version: "0.8.6",
           download: "https://agent.saisi.online/vale-command/ValeCommand-Setup.exe",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
