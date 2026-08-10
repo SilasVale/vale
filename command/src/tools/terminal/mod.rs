@@ -238,6 +238,18 @@ mod desktop_impl {
                 .map(|s| TermSessionInfo { id: s.id.clone(), kind: s.kind.clone(), label: s.label.clone() })
                 .collect()
         }
+
+        /// Clone a session's info (id/kind/label) if it still exists. Used by
+        /// the output drainer and terminal_close to capture metadata BEFORE the
+        /// session leaves the manager, so retained history keeps its kind/label.
+        pub async fn term_info(&self, sid: &str) -> Option<TermSessionInfo> {
+            let inner = self.inner.lock().await;
+            inner.sessions.iter().find(|s| s.id == sid).map(|s| TermSessionInfo {
+                id: s.id.clone(),
+                kind: s.kind.clone(),
+                label: s.label.clone(),
+            })
+        }
     }
 }
 
