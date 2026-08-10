@@ -96,10 +96,10 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
-          version: "0.8.3",
+          version: "0.8.4",
           download: "https://command.saisi.online/vale-command/ValeCommand-Setup.exe",
         }),
-        { headers: { "content-type": "application/json" } }
+        { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
     }
     const consoleUrl = (env && env.CONSOLE_URL) || "https://<console-host>";
