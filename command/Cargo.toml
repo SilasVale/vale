@@ -7,7 +7,7 @@ resolver = "2"
 version = "0.8.5"
 
 [package]
-name = "vale-command"
+name = "vale-agent"
 version.workspace = true
 edition = "2021"
 
@@ -15,11 +15,11 @@ edition = "2021"
 crate-type = ["rlib"]
 
 [[bin]]
-name = "vale-command"
+name = "vale-agent"
 path = "src/main.rs"
 
 [dependencies]
-vale-command-core = { path = "vale-command-core" }
+vale-agent-core = { path = "vale-command-core" }
 rmcp = { version = "2", features = ["server", "transport-streamable-http-server", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "process", "signal"] }
 tokio-util = "0.7"

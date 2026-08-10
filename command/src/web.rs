@@ -26,7 +26,7 @@ use tokio::sync::mpsc;
 use tower::Service;
 
 use crate::state::AppState;
-use vale_command_core::EventBus;
+use vale_agent_core::EventBus;
 
 /// Minimal self-contained status page — the panel SPA is retired, but the
 /// device URL should still answer something readable in a browser.
@@ -483,7 +483,7 @@ fn api_spec(state: &AppState) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::state::AppState;
-    use vale_command_core::Config;
+    use vale_agent_core::Config;
     use axum::http::Request;
 
     fn state() -> Arc<AppState> {

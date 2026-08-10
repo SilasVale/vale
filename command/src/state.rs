@@ -1,8 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use vale_command_core::events::{AppEventBus, EventBus};
-use vale_command_core::Config;
+use vale_agent_core::events::{AppEventBus, EventBus};
+use vale_agent_core::Config;
 use crate::plugins::PluginRegistry;
 use crate::plugins::terminal::TerminalPlugin;
 use crate::tools::serial::SerialPool;

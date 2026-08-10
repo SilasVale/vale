@@ -1,8 +1,8 @@
 // Re-export core types from vale_command-core
-pub use vale_command_core::config;
-pub use vale_command_core::error;
-pub use vale_command_core::events;
-pub use vale_command_core::{Config, DeviceError, AgentEvent, Plugin, ToolDef, ToolHandler, NavItem, EventBus, AppEventBus};
+pub use vale_agent_core::config;
+pub use vale_agent_core::error;
+pub use vale_agent_core::events;
+pub use vale_agent_core::{Config, DeviceError, AgentEvent, Plugin, ToolDef, ToolHandler, NavItem, EventBus, AppEventBus};
 
 pub mod bootstrap;
 pub mod mcp;

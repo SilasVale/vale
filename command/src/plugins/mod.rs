@@ -4,8 +4,8 @@
 
 pub mod terminal;
 
-use vale_command_core::DeviceError;
-use vale_command_core::Plugin;
+use vale_agent_core::DeviceError;
+use vale_agent_core::Plugin;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,9 +30,9 @@ pub fn to_value_or_empty<T: serde::Serialize>(v: T) -> Value {
 /// and `all_tools`/spec iteration never re-runs the closure factories.
 pub struct PluginRegistry {
     pub plugins: Vec<Box<dyn Plugin>>,
-    by_name: HashMap<String, Arc<vale_command_core::ToolDef>>,
+    by_name: HashMap<String, Arc<vale_agent_core::ToolDef>>,
     /// Tools per plugin, built once at register time.
-    tools_by_plugin: Vec<(String, Vec<Arc<vale_command_core::ToolDef>>)>,
+    tools_by_plugin: Vec<(String, Vec<Arc<vale_agent_core::ToolDef>>)>,
 }
 
 impl Default for PluginRegistry {
@@ -47,7 +47,7 @@ impl PluginRegistry {
     }
 
     pub fn register(&mut self, plugin: Box<dyn Plugin>) {
-        let tools: Vec<Arc<vale_command_core::ToolDef>> = plugin.tools().into_iter().map(Arc::new).collect();
+        let tools: Vec<Arc<vale_agent_core::ToolDef>> = plugin.tools().into_iter().map(Arc::new).collect();
         for t in &tools {
             self.by_name.insert(t.name.clone(), t.clone());
         }
@@ -56,19 +56,19 @@ impl PluginRegistry {
     }
 
     /// All tools across plugins (cached — no rebuilds).
-    pub fn all_tools(&self) -> Vec<Arc<vale_command_core::ToolDef>> {
+    pub fn all_tools(&self) -> Vec<Arc<vale_agent_core::ToolDef>> {
         self.tools_by_plugin.iter().flat_map(|(_, ts)| ts.iter().cloned()).collect()
     }
 
     /// Tools of one plugin by name (cached).
-    pub fn plugin_tools(&self, name: &str) -> &[Arc<vale_command_core::ToolDef>] {
+    pub fn plugin_tools(&self, name: &str) -> &[Arc<vale_agent_core::ToolDef>] {
         self.tools_by_plugin.iter()
             .find(|(n, _)| n == name)
             .map(|(_, ts)| ts.as_slice())
             .unwrap_or(&[])
     }
 
-    pub fn find_tool(&self, name: &str) -> Option<Arc<vale_command_core::ToolDef>> {
+    pub fn find_tool(&self, name: &str) -> Option<Arc<vale_agent_core::ToolDef>> {
         self.by_name.get(name).cloned()
     }
 }
@@ -76,7 +76,7 @@ impl PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vale_command_core::ToolDef;
+    use vale_agent_core::ToolDef;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 

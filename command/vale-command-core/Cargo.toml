@@ -1,5 +1,5 @@
 [package]
-name = "vale-command-core"
+name = "vale-agent-core"
 version.workspace = true
 edition = "2021"
 description = "Core framework for Vale Command — Plugin trait, config, error types, events"

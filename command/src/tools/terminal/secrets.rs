@@ -2,7 +2,7 @@
 
 #[cfg(feature = "keyring")]
 mod secrets_impl {
-    use vale_command_core::DeviceError;
+    use vale_agent_core::DeviceError;
     use keyring::Entry;
     const SERVICE: &str = "vale-command";
 
@@ -34,7 +34,7 @@ mod secrets_impl {
 
 #[cfg(not(feature = "keyring"))]
 mod secrets_impl {
-    use vale_command_core::DeviceError;
+    use vale_agent_core::DeviceError;
 
     pub fn set(_: &str, _: &str) -> Result<(), DeviceError> {
         Err(DeviceError::Keychain { reason: "secrets require the keyring feature".into() })

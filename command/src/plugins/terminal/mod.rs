@@ -14,10 +14,10 @@ mod tools;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use vale_command_core::{Plugin, ToolDef};
+use vale_agent_core::{Plugin, ToolDef};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
-use vale_command_core::EventBus;
+use vale_agent_core::EventBus;
 
 /// Per-session output buffer for non-destructive MCP read access.
 /// Stores accumulated raw bytes with a cursor tracking how much has been read.
@@ -268,7 +268,7 @@ impl Plugin for TerminalPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vale_command_core::{AppEventBus, Plugin};
+    use vale_agent_core::{AppEventBus, Plugin};
     use serde_json::json;
 
     fn plugin() -> TerminalPlugin {
