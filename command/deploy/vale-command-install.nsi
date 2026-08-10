@@ -107,6 +107,11 @@ Section "Install" SEC01
   File "vale-command-setup.ps1"
   File "run-setup.bat"
   File "vale-tray.exe"
+  ; Browser extension zip — extracted to $INSTDIR\extension\ by the setup
+  ; script so the terminal panel loads from the same install dir (Load
+  ; unpacked → $INSTDIR\extension). Updated together with the binaries on
+  ; every install/upgrade.
+  File "vale-browser-control.zip"
 
   ; Persist the registration key so run-setup.bat can pass it to the setup
   ; script ($env:VALE_REG_KEY). Empty when the user left the field blank.
