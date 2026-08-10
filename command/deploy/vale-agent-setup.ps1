@@ -221,17 +221,14 @@ if (-not $tunnelId) {
     if (-not $tunnelId) { throw "could not create tunnel; output: $created" }
 }
 Write-Host "  tunnel id: $tunnelId"
-# Route DNS - tolerant of an already-existing record (re-install): cloudflared's
-# route command fails with code 1003 when the hostname already has a record even
-# if it already points to this tunnel. If the hostname resolves, the route is in
-# place; only fail when there is no record at all.
-& $cloudflared tunnel route dns $tunnelName $Hostname
+# Route DNS - --overwrite so a pre-existing CNAME (from a previous install or
+# an operator-added record) is REPLACED by a real tunnel route. Without it,
+# cloudflared fails with 1003 when the hostname already has a record, and the
+# old "already exists - route in place" fallback was wrong: a bare CNAME is
+# NOT a tunnel route, so the tunnel 530'd with error 1033 (no route).
+& $cloudflared tunnel route dns $tunnelName $Hostname --overwrite
 if ($LASTEXITCODE -ne 0) {
-    if (Resolve-DnsName $Hostname -ErrorAction SilentlyContinue) {
-        Write-Host "  dns record for $Hostname already exists - route in place."
-    } else {
-        throw "tunnel route dns failed (exit $LASTEXITCODE) and no DNS record for $Hostname"
-    }
+    throw "tunnel route dns failed (exit $LASTEXITCODE)"
 }
 
 # 5. Tunnel config
