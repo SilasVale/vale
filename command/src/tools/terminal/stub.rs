@@ -23,4 +23,5 @@ impl TerminalManager {
         Err(DeviceError::Internal { message: "terminal backend not enabled (build with --features terminal)".into() })
     }
     pub async fn term_list(&self) -> Vec<TermSessionInfo> { vec![] }
+    pub async fn term_info(&self, _sid: &str) -> Option<TermSessionInfo> { None }
 }

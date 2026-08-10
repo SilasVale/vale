@@ -3,7 +3,7 @@
 //! Tools: terminal_open, terminal_write, terminal_close, terminal_list,
 //!        terminal_execute, terminal_list_ports, terminal_read,
 //!        terminal_screen, terminal_resize, terminal_select,
-//!        secret_set/get/delete
+//!        terminal_history, secret_set/get/delete
 //!
 //! Tool definitions live in `tools.rs` (one builder fn per tool); this module
 //! holds the plugin struct, the per-session output buffer, and the shared
@@ -46,7 +46,104 @@ impl SessionBuf {
     }
 }
 
-pub(super) type OutputBuf = Arc<std::sync::Mutex<HashMap<String, SessionBuf>>>;
+/// A closed session's buffer retained in memory for terminal_read /
+/// terminal_history (process lifetime only — no persistence).
+pub struct RetainedSession {
+    pub buf: SessionBuf,
+    pub kind: String,
+    pub label: String,
+    pub closed_at_unix: u64, // seconds since epoch, set at retain time
+    pub seq: u64,            // monotonic retain order — tie-breaks same-second closes
+}
+
+/// Live + retained output buffers, guarded by one mutex so the live→history
+/// move on close is atomic (no window where a session is in neither map).
+#[derive(Default)]
+pub struct SessionStore {
+    pub live: HashMap<String, SessionBuf>,
+    pub history: HashMap<String, RetainedSession>,
+    max_history_sessions: usize,
+    max_history_bytes: u64,
+    retain_seq: u64,
+}
+
+const MAX_HISTORY_SESSIONS: usize = 32;
+const MAX_HISTORY_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
+
+impl SessionStore {
+    pub fn new() -> Self {
+        Self {
+            live: HashMap::new(),
+            history: HashMap::new(),
+            max_history_sessions: MAX_HISTORY_SESSIONS,
+            max_history_bytes: MAX_HISTORY_BYTES,
+            retain_seq: 0,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_caps(sessions: usize, bytes: u64) -> Self {
+        Self {
+            live: HashMap::new(),
+            history: HashMap::new(),
+            max_history_sessions: sessions,
+            max_history_bytes: bytes,
+            retain_seq: 0,
+        }
+    }
+
+    /// Move a live buffer into history (idempotent: false if the drainer
+    /// already retained it). Enforces the caps, evicting oldest-closed first.
+    pub fn retain_live(&mut self, sid: &str, kind: &str, label: &str) -> bool {
+        if let Some(mut buf) = self.live.remove(sid) {
+            let closed_at_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            // History reads must be able to read from the beginning again, so
+            // reset the cursor (it rode along from the live session).
+            buf.cursor = 0;
+            self.retain_seq += 1;
+            self.history.insert(
+                sid.to_string(),
+                RetainedSession { buf, kind: kind.to_string(), label: label.to_string(), closed_at_unix, seq: self.retain_seq },
+            );
+            self.enforce_history_caps();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn enforce_history_caps(&mut self) {
+        // Evict the OLDEST-closed first. closed_at_unix is second-granular, so
+        // same-second closes tie on it — `seq` (monotonic retain order) breaks
+        // the tie deterministically.
+        let oldest_key = |history: &HashMap<String, RetainedSession>| {
+            history.iter()
+                .min_by_key(|(_, h)| (h.closed_at_unix, h.seq))
+                .map(|(k, _)| k.clone())
+        };
+        while self.history.len() > self.max_history_sessions {
+            match oldest_key(&self.history) {
+                Some(k) => { self.history.remove(&k); }
+                None => break,
+            }
+        }
+        let mut total: u64 = self.history.values().map(|h| h.buf.end_abs() as u64).sum();
+        while total > self.max_history_bytes {
+            match oldest_key(&self.history) {
+                Some(k) => {
+                    total -= self.history.get(&k).map(|h| h.buf.end_abs() as u64).unwrap_or(0);
+                    self.history.remove(&k);
+                }
+                None => break,
+            }
+        }
+    }
+}
+
+pub(super) type OutputBuf = Arc<std::sync::Mutex<SessionStore>>;
 
 /// Strip ANSI escape sequences and normalize line endings for AI readability.
 pub fn clean_terminal_output(raw: &[u8]) -> String {
@@ -124,7 +221,7 @@ impl TerminalPlugin {
         serial_pool: Arc<SerialPool>,
         bus: Arc<dyn EventBus>,
     ) -> Self {
-        Self { terminal_mgr, serial_pool, bus, output_buf: Arc::new(std::sync::Mutex::new(HashMap::new())) }
+        Self { terminal_mgr, serial_pool, bus, output_buf: Arc::new(std::sync::Mutex::new(SessionStore::new())) }
     }
 }
 
@@ -157,11 +254,12 @@ mod tests {
     fn tool_count_and_names() {
         let tools = plugin().tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(tools.len(), 13);
+        assert_eq!(tools.len(), 14);
         for expected in [
             "terminal_open", "terminal_write", "terminal_close", "terminal_list",
             "terminal_execute", "terminal_list_ports", "terminal_resize",
             "terminal_select", "terminal_read", "terminal_screen",
+            "terminal_history",
             "secret_set", "secret_get", "secret_delete",
         ] {
             assert!(names.contains(&expected), "missing tool: {expected}");

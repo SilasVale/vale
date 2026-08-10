@@ -12,7 +12,7 @@ use vale_command_core::{AgentEvent, DeviceError, EventBus, ToolDef};
 use crate::plugins::{require_str, to_value_or_empty};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::{parse_serial_target, parse_ssh_target, TerminalManager};
-use super::{clean_terminal_output, OutputBuf};
+use super::{clean_terminal_output, OutputBuf, RetainedSession};
 
 pub(super) fn build(
     terminal_mgr: &Arc<TerminalManager>,
@@ -25,6 +25,7 @@ pub(super) fn build(
         tool_write(terminal_mgr),
         tool_close(terminal_mgr, bus, output_buf),
         tool_list(terminal_mgr),
+        tool_history(terminal_mgr, output_buf),
         tool_execute(terminal_mgr, bus, output_buf),
         tool_list_ports(serial_pool),
         tool_resize(terminal_mgr),
@@ -90,13 +91,24 @@ fn tool_open(
                 // Forward via EventBus, also buffer for MCP terminal_read.
                 let bus2 = bus.clone();
                 let sid_buf = id.clone();
+                // Capture metadata BEFORE the recv loop, while the session is
+                // still registered in the manager — retained history needs it.
+                let mgr2 = terminal_mgr.clone();
                 tokio::spawn(async move {
+                    // Metadata for the retained history entry (kind/label).
+                    let (kind, label) = {
+                        let meta = mgr2.term_info(&sid_buf).await;
+                        (
+                            meta.as_ref().map(|m| m.kind.clone()).unwrap_or_default(),
+                            meta.as_ref().map(|m| m.label.clone()).unwrap_or_else(|| sid_buf.clone()),
+                        )
+                    };
                     let mut rx = _rx;
                     while let Some(output) = rx.recv().await {
                         // Poison recovery — dropping buffered output on a poisoned
                         // lock would silently lose terminal data.
-                        let mut map = buf.lock().unwrap_or_else(|p| p.into_inner());
-                        let entry = map.entry(sid_buf.clone()).or_default();
+                        let mut store = buf.lock().unwrap_or_else(|p| p.into_inner());
+                        let entry = store.live.entry(sid_buf.clone()).or_default();
                         entry.data.extend_from_slice(&output.data);
                         // Cap at 1 MB — evict oldest half if exceeded
                         if entry.data.len() > MAX_BUF_BYTES {
@@ -105,14 +117,17 @@ fn tool_open(
                             entry.cursor = entry.cursor.saturating_sub(remove);
                             entry.dropped += remove as u64;
                         }
-                        drop(map);
+                        drop(store);
                         if let Ok(v) = serde_json::to_value(&output) {
                             bus2.emit_term_output(v);
                         }
                     }
-                    // Session ended — release the buffer (terminal_close also
-                    // removes it; whichever runs second is a no-op).
-                    buf.lock().unwrap_or_else(|p| p.into_inner()).remove(&sid_buf);
+                    // Session ended — retain the buffer in history instead of
+                    // dropping it (terminal_close also retains; whichever runs
+                    // second is a no-op).
+                    buf.lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .retain_live(&sid_buf, &kind, &label);
                 });
                 Ok(json!(id))
             }
@@ -152,12 +167,17 @@ fn tool_close(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, outp
             let buf = buf.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
+                // Capture metadata before close, then close.
+                let meta = terminal_mgr.term_info(&session_id).await;
                 let kind = terminal_mgr.term_close(&session_id).await;
-                // Release the session's output buffer (the drainer's own
-                // cleanup on channel close is a no-op if it ran first).
-                if let Ok(mut map) = buf.lock() {
-                    map.remove(&session_id);
-                }
+                // Retain the session's output in history instead of deleting
+                // it (the drainer's own retain on channel close is a no-op if
+                // it ran first — retain_live is idempotent).
+                let label = meta.as_ref().map(|m| m.label.clone()).unwrap_or_default();
+                let kind_ref = kind.as_deref().unwrap_or("pty");
+                buf.lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .retain_live(&session_id, kind_ref, &label);
                 if let Some(k) = kind {
                     match k.as_str() {
                         "ssh" => bus.emit(&AgentEvent::SshDisconnect { session_id: session_id.clone() }),
@@ -182,6 +202,44 @@ fn tool_list(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
             async move {
                 let sessions = terminal_mgr.term_list().await;
                 Ok(to_value_or_empty(&sessions))
+            }
+        },
+    )
+}
+
+fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> ToolDef {
+    let terminal_mgr = terminal_mgr.clone();
+    let buf = output_buf.clone();
+    ToolDef::new(
+        "terminal_history",
+        "List ALL terminal sessions, including closed ones retained in history. Each entry: {id, kind, label, status: 'live'|'closed', bytes, closed_at? (unix seconds)}. Closed entries sorted newest-first.",
+        json!({"type":"object","properties":{}}),
+        move |_params: Value| {
+            let terminal_mgr = terminal_mgr.clone();
+            let buf = buf.clone();
+            async move {
+                let mut entries: Vec<Value> = Vec::new();
+                // Live sessions (from the manager) + their current byte count.
+                let live = terminal_mgr.term_list().await;
+                let store = buf.lock().unwrap_or_else(|p| p.into_inner());
+                for s in &live {
+                    let bytes = store.live.get(&s.id).map(|e| e.end_abs()).unwrap_or(0);
+                    entries.push(json!({"id": s.id, "kind": s.kind, "label": s.label, "status": "live", "bytes": bytes}));
+                }
+                // Retained closed sessions, newest-closed first.
+                let mut closed: Vec<(String, &RetainedSession)> = store.history.iter()
+                    .map(|(k, v)| (k.clone(), v))
+                    .collect();
+                closed.sort_by_key(|(_, h)| std::cmp::Reverse(h.closed_at_unix));
+                for (sid, h) in closed {
+                    entries.push(json!({
+                        "id": sid, "kind": h.kind, "label": h.label,
+                        "status": "closed", "bytes": h.buf.end_abs(),
+                        "closed_at": h.closed_at_unix,
+                    }));
+                }
+                drop(store);
+                Ok(json!(entries))
             }
         },
     )
@@ -228,7 +286,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // offset could panic on an out-of-range slice).
                     let mut read_abs = buf.lock()
                         .unwrap_or_else(|p| p.into_inner())
-                        .get(&sid).map(|e| e.end_abs()).unwrap_or(0);
+                        .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
                     // Write command + newline. Windows PowerShell only recognizes
                     // the end of a command on CRLF (\r\n) — a bare \n drops it
                     // into the multi-line continuation prompt (>>), so the
@@ -245,7 +303,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         let (chunk, chunk_len) = buf.lock()
                             .unwrap_or_else(|p| p.into_inner())
-                            .get(&sid)
+                            .live.get(&sid)
                             .map(|e| {
                                 let s = e.slice_from(read_abs);
                                 (String::from_utf8_lossy(s).to_string(), s.len())
@@ -379,42 +437,60 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
     let buf = output_buf.clone();
     ToolDef::new(
         "terminal_read",
-        "Read buffered output from a terminal session. Non-destructive: uses a cursor so repeating the call without `offset` returns only new output since last read. Use `offset: 0` to re-read from the beginning. Set `clean: true` to strip ANSI escapes and normalize line endings for AI readability.",
-        json!({"type":"object","properties":{"session_id":{"type":"string"},"offset":{"type":"integer","description":"Byte offset to start reading from. 0 = beginning. Default = last cursor position."},"clean":{"type":"boolean","description":"Strip ANSI escapes and normalize \\r\\n → \\n. Default false."}},"required":["session_id"]}),
+        "Read buffered output from a terminal session. Non-destructive: uses a cursor so repeating the call without `offset` returns only new output since last read. `offset` is an ABSOLUTE byte offset into the session's byte stream (see `start`/`end` in the response); `offset: 0` re-reads from the beginning. Reads work on closed sessions (retained history). Set `clean: true` to strip ANSI escapes and normalize line endings for AI readability.",
+        json!({"type":"object","properties":{"session_id":{"type":"string"},"offset":{"type":"integer","description":"ABSOLUTE byte offset to start reading from. 0 = beginning. Default = last cursor position."},"clean":{"type":"boolean","description":"Strip ANSI escapes and normalize \\r\\n → \\n. Default false."}},"required":["session_id"]}),
         move |params: Value| {
             let buf = buf.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
-                let (text, dropped) = {
-                    let mut map = buf.lock().unwrap_or_else(|p| p.into_inner());
-                    if let Some(entry) = map.get_mut(&session_id) {
-                        let offset = params.get("offset")
-                            .and_then(|v| v.as_u64())
-                            .map(|o| o as usize)
-                            .unwrap_or(entry.cursor);
-                        let offset = offset.min(entry.data.len());
-                        let raw = &entry.data[offset..];
-                        let clean = params.get("clean")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let text = if clean {
-                            clean_terminal_output(raw)
-                        } else {
-                            String::from_utf8_lossy(raw).to_string()
-                        };
-                        // Advance cursor only when no explicit offset was given
-                        if params.get("offset").is_none() {
-                            entry.cursor = entry.data.len();
+                let (text, start, end, dropped) = {
+                    let mut store = buf.lock().unwrap_or_else(|p| p.into_inner());
+                    // Live session, or retained history (closed).
+                    let explicit_offset = params.get("offset").is_some();
+                    let offset = params.get("offset").and_then(|v| v.as_u64()).map(|o| o as usize);
+                    let clean = params.get("clean").and_then(|v| v.as_bool()).unwrap_or(false);
+                    match store.live.get_mut(&session_id) {
+                        Some(entry) => {
+                            let offset = offset.unwrap_or(entry.cursor);
+                            let rel = offset.saturating_sub(entry.dropped as usize).min(entry.data.len());
+                            let start = entry.dropped as usize + rel;
+                            let end = entry.end_abs();
+                            let raw = &entry.data[rel..];
+                            let text = if clean {
+                                clean_terminal_output(raw)
+                            } else {
+                                String::from_utf8_lossy(raw).to_string()
+                            };
+                            // Advance cursor only when no explicit offset was given
+                            if !explicit_offset {
+                                entry.cursor = entry.data.len();
+                            }
+                            (text, start, end, entry.dropped)
                         }
-                        (text, entry.dropped)
-                    } else {
-                        (String::new(), 0u64)
+                        None => match store.history.get(&session_id) {
+                            Some(h) => {
+                                let entry = &h.buf;
+                                let offset = offset.unwrap_or(entry.cursor);
+                                let rel = offset.saturating_sub(entry.dropped as usize).min(entry.data.len());
+                                let start = entry.dropped as usize + rel;
+                                let end = entry.end_abs();
+                                let raw = &entry.data[rel..];
+                                let text = if clean {
+                                    clean_terminal_output(raw)
+                                } else {
+                                    String::from_utf8_lossy(raw).to_string()
+                                };
+                                // History reads never advance any cursor.
+                                (text, start, end, entry.dropped)
+                            }
+                            None => (String::new(), 0usize, 0usize, 0u64),
+                        },
                     }
                 };
                 if dropped > 0 {
-                    Ok(json!({"text": text, "dropped": dropped}))
+                    Ok(json!({"text": text, "start": start, "end": end, "dropped": dropped}))
                 } else {
-                    Ok(json!({"text": text}))
+                    Ok(json!({"text": text, "start": start, "end": end}))
                 }
             }
         },
@@ -433,8 +509,8 @@ fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
                 let session_id = require_str(&params, "session_id")?;
                 let lines = params.get("lines").and_then(|v| v.as_u64()).unwrap_or(60).max(1) as usize;
                 let (screen, dropped) = {
-                    let mut map = buf.lock().unwrap_or_else(|p| p.into_inner());
-                    let entry = map.get_mut(&session_id);
+                    let mut store = buf.lock().unwrap_or_else(|p| p.into_inner());
+                    let entry = store.live.get_mut(&session_id);
                     match entry {
                         Some(entry) => {
                             // Tail: find the start of the Nth-from-end line.
@@ -516,9 +592,9 @@ fn tool_secret_delete() -> ToolDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::terminal::{SessionStore};
     use crate::tools::serial::SerialPool;
     use crate::tools::terminal::TerminalManager;
-    use std::collections::HashMap;
     use vale_command_core::AppEventBus;
 
     /// Build the tool list with a caller-controlled output buffer so tests can
@@ -527,7 +603,7 @@ mod tests {
         let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
         let serial = Arc::new(SerialPool::new(115200, 1000));
         let mgr = Arc::new(TerminalManager::new(serial.clone()));
-        let buf: OutputBuf = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let buf: OutputBuf = Arc::new(std::sync::Mutex::new(SessionStore::new()));
         let tools = build(&mgr, &serial, &bus, &buf);
         (tools, buf)
     }
@@ -541,8 +617,8 @@ mod tests {
     }
 
     fn seed(buf: &OutputBuf, sid: &str, data: &[u8], dropped: u64) {
-        let mut map = buf.lock().unwrap_or_else(|p| p.into_inner());
-        let entry = map.entry(sid.to_string()).or_default();
+        let mut store = buf.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = store.live.entry(sid.to_string()).or_default();
         entry.data.extend_from_slice(data);
         entry.dropped = dropped;
         entry.cursor = 0;
@@ -652,6 +728,111 @@ mod tests {
         let (tools, _buf) = seeded_tools();
         let out = call(find(&tools, "terminal_read"), json!({"session_id": "missing"})).await;
         assert_eq!(out["text"], "");
+    }
+
+    // ── terminal_read: absolute offsets + start/end + history ────
+
+    #[tokio::test]
+    async fn read_reports_start_end_spans() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"hello world", 0);
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 0})).await;
+        assert_eq!(out["text"], "hello world");
+        assert_eq!(out["start"], 0);
+        assert_eq!(out["end"], 11);
+    }
+
+    #[tokio::test]
+    async fn read_absolute_offset_after_eviction() {
+        let (tools, buf) = seeded_tools();
+        // 10 bytes evicted from the front; data holds "hello world" (11 bytes).
+        seed(&buf, "s1", b"hello world", 10);
+        // offset 6 absolute → rel = 6-10 clamped to 0 → start 10, text whole.
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 6})).await;
+        assert_eq!(out["text"], "hello world");
+        assert_eq!(out["start"], 10);
+        assert_eq!(out["end"], 21);
+    }
+
+    #[tokio::test]
+    async fn read_works_on_retained_session() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"closed-log", 0);
+        buf.lock().unwrap().retain_live("s1", "serial", "COM4");
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 0})).await;
+        assert_eq!(out["text"], "closed-log");
+        assert_eq!(out["start"], 0);
+        assert_eq!(out["end"], 10);
+    }
+
+    #[tokio::test]
+    async fn read_history_does_not_advance_cursor() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"abc", 0);
+        // Advance the live cursor past all bytes.
+        call(find(&tools, "terminal_read"), json!({"session_id": "s1"})).await;
+        // Retain (moves to history) — the cursor snapshot rides along.
+        buf.lock().unwrap().retain_live("s1", "pty", "shell");
+        // A no-offset read on a retained session still returns all — history
+        // reads never advance a cursor, so a fresh read must not be suppressed.
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1"})).await;
+        assert_eq!(out["text"], "abc");
+    }
+
+    // ── terminal_history ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn history_lists_live_and_closed_sorted_newest_first() {
+        let (tools, buf) = seeded_tools();
+        // Live session (no output → bytes 0).
+        let out = call(find(&tools, "terminal_history"), json!({})).await;
+        assert!(out.is_array(), "history should return an array, got {out}");
+        // No live sessions in seeded_tools (manager has none) — only history.
+        seed(&buf, "s1", b"a", 0);
+        buf.lock().unwrap().retain_live("s1", "ssh", "admin@host");
+        let out = call(find(&tools, "terminal_history"), json!({})).await;
+        let arr = out.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "s1");
+        assert_eq!(arr[0]["kind"], "ssh");
+        assert_eq!(arr[0]["label"], "admin@host");
+        assert_eq!(arr[0]["status"], "closed");
+        assert!(arr[0]["closed_at"].as_u64().unwrap() > 0);
+        assert_eq!(arr[0]["bytes"], 1);
+    }
+
+    // ── SessionStore caps + idempotent retain ────────────────────
+
+    #[test]
+    fn retain_evicts_oldest_beyond_session_cap() {
+        let mut store = SessionStore::with_caps(2, 10_000_000);
+        for i in 0..3 {
+            store.live.entry(format!("s{i}")).or_default().data.extend_from_slice(b"x");
+            store.retain_live(&format!("s{i}"), "pty", "shell");
+        }
+        // Cap 2 → oldest (s0) evicted.
+        assert!(!store.history.contains_key("s0"), "s0 should be evicted");
+        assert!(store.history.contains_key("s1") && store.history.contains_key("s2"));
+    }
+
+    #[test]
+    fn retain_evicts_oldest_beyond_byte_cap() {
+        let mut store = SessionStore::with_caps(10, 3); // 3 bytes total cap
+        for i in 0..3 {
+            store.live.entry(format!("s{i}")).or_default().data.extend_from_slice(b"xx");
+            store.retain_live(&format!("s{i}"), "pty", "shell");
+        }
+        // Total bytes exceed 3 → evict oldest until under. s0 (2B) evicted first.
+        let total: u64 = store.history.values().map(|h| h.buf.end_abs() as u64).sum();
+        assert!(total <= 3, "history bytes {total} exceed cap");
+    }
+
+    #[test]
+    fn retain_idempotent_second_call_false() {
+        let mut store = SessionStore::new();
+        store.live.entry("s1".into()).or_default().data.extend_from_slice(b"hi");
+        assert!(store.retain_live("s1", "pty", "shell"), "first retain moves it");
+        assert!(!store.retain_live("s1", "pty", "shell"), "second retain is a no-op");
     }
 
     #[tokio::test]
