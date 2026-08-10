@@ -7,17 +7,17 @@
 #   - prints the token and Claude Code MCP config
 #
 # Run on the Windows machine as Administrator (interactive browser auth):
-#   irm https://command.saisi.online/vale-command/vale-command-setup.ps1 | iex
+#   irm https://agent.saisi.online/vale-command/vale-command-setup.ps1 | iex
 #
 # OR with a Cloudflare API token (no browser popup). The token only needs
 # Tunnel:Edit + Zone:DNS:Edit; it's used transiently at setup, never stored:
 #   $env:CLOUDFLARE_API_TOKEN = "cfat_..."
-#   irm https://command.saisi.online/vale-command/vale-command-setup.ps1 | iex
+#   irm https://agent.saisi.online/vale-command/vale-command-setup.ps1 | iex
 #
 param(
     [string]$Hostname = "",   # empty = auto-assign the next free dN subdomain
     [string]$InstallDir = "C:\vale-command",
-    [string]$Base = "https://command.saisi.online",
+    [string]$Base = "https://agent.saisi.online",
     [switch]$SkipDownload   # set when the NSIS installer bundles the exe
 )
 
@@ -68,14 +68,24 @@ if (-not $Hostname) {
     # 3. DNS probe for the next free dN (fresh install).
     if (-not $Hostname) {
         for ($n = 1; $n -lt 50; $n++) {
-            $cand = "d$n.command.saisi.online"
+            $cand = "d$n.agent.saisi.online"
             if (-not (Resolve-DnsName $cand -ErrorAction SilentlyContinue)) {
                 $Hostname = $cand
                 break
             }
         }
-        if (-not $Hostname) { $Hostname = "d1.command.saisi.online" }
+        if (-not $Hostname) { $Hostname = "d1.agent.saisi.online" }
     }
+    Set-Content -Path $hostFile -Value $Hostname
+}
+# Domain migration (0.8.6): the device subdomain moved from
+# *.command.saisi.online to *.agent.saisi.online. If the detected hostname is
+# still on the old domain, rewrite it to the new one so the tunnel ingress and
+# the hostname file both use the new domain. (The DNS CNAME for the new
+# subdomain is added by the operator; this only rewrites the config side.)
+if ($Hostname -match '\.command\.saisi\.online$') {
+    Write-Host "  migrating hostname: $Hostname → $($Hostname -replace '\.command\.saisi\.online$','.agent.saisi.online')"
+    $Hostname = $Hostname -replace '\.command\.saisi\.online$', '.agent.saisi.online'
     Set-Content -Path $hostFile -Value $Hostname
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a
@@ -100,6 +110,19 @@ if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-command.exe" $e
 $trayExe = Join-Path $InstallDir "vale-tray.exe"
 Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
 if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-tray.exe" $trayExe -Force }
+# Browser extension: extract vale-browser-control.zip into $INSTDIR\extension\
+# so Chrome's "Load unpacked" points at the same install dir (updated together
+# with the binaries on every install/upgrade). The NSIS installer bundles the
+# zip for fresh installs; the script path re-downloads it on updates.
+Write-Host "  browser extension -> $InstallDir\extension"
+$extZip = Join-Path $InstallDir "vale-browser-control.zip"
+if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-browser-control.zip" $extZip -Force }
+$extDir = Join-Path $InstallDir "extension"
+if (Test-Path $extZip) {
+    Remove-Item $extDir -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-Archive -Path $extZip -DestinationPath $extDir -Force
+    Write-Host "    extracted to $extDir (Load unpacked this dir)"
+}
 if (-not (Test-Path $cfg)) {
     Write-Host "  bootstrapping config + auth token"
     & $exe --init $cfg
@@ -176,7 +199,7 @@ $tunnels = & $cloudflared tunnel list 2>&1 | Out-String
 $ns = [regex]::Matches($tunnels, "vale-command-d(\d+)") | ForEach-Object { [int]$_.Groups[1].Value }
 if ($ns.Count -gt 0) {
     $lowest = ($ns | Measure-Object -Minimum).Minimum
-    $Hostname = "d$lowest.command.saisi.online"
+    $Hostname = "d$lowest.agent.saisi.online"
     Set-Content -Path $hostFile -Value $Hostname
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a

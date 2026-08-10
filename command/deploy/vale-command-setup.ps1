@@ -78,6 +78,16 @@ if (-not $Hostname) {
     }
     Set-Content -Path $hostFile -Value $Hostname
 }
+# Domain migration (0.8.6): the device subdomain moved from
+# *.command.saisi.online to *.agent.saisi.online. If the detected hostname is
+# still on the old domain, rewrite it to the new one so the tunnel ingress and
+# the hostname file both use the new domain. (The DNS CNAME for the new
+# subdomain is added by the operator; this only rewrites the config side.)
+if ($Hostname -match '\.command\.saisi\.online$') {
+    Write-Host "  migrating hostname: $Hostname → $($Hostname -replace '\.command\.saisi\.online$','.agent.saisi.online')"
+    $Hostname = $Hostname -replace '\.command\.saisi\.online$', '.agent.saisi.online'
+    Set-Content -Path $hostFile -Value $Hostname
+}
 # Console URL for the tray app ("打开控制台") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
 Set-Content -Path (Join-Path $InstallDir "vale-command.console") -Value "https://ai.saisi.online/"
