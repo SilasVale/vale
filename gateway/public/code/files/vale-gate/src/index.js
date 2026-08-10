@@ -36,23 +36,15 @@ const COUNT_PATH = "/v1/messages/count_tokens";
 // would blow the Workers Free plan's 10ms CPU budget just to scan/parse it.
 const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
 
-// og translate: floor for client max_tokens. deepseek-v4-flash + max thinking
-// spends the whole budget on thinking, so tiny client budgets come back empty.
-const OG_MIN_MAX_TOKENS = 8000;
-
-// OpenCode Zen/Go endpoints. deepseek-v4-flash and minimax-m3 are Anthropic-native
-// on zen/go/v1/messages (announced 2026-08-06 for ds4f; minimax was already native) —
-// those models bypass the OpenAI translation. Other og models (mimo-v2.5, kimi, glm)
-// only speak OpenAI chat/completions and keep the translate path.
+// OpenCode Zen/Go endpoints. deepseek-v4-flash is Anthropic-native on
+// zen/go/v1/messages (announced 2026-08-06) and authenticates with x-api-key
+// (verified 2026-08-10 per handoff 2.5.6: ~54s full response, thinking +
+// answer). Native passthrough forwards the Anthropic stream untouched — no
+// per-chunk OpenAI translation, so no 1102 CPU risk on huge streams. Other og
+// models (minimax-m3, mimo-v2.5) only speak chat/completions and keep the
+// translate path (verified 2026-08-07 with this user's key).
 const OG_ZEN_ANTHROPIC = "https://opencode.ai/zen/go" + VERIFY_PATH;
 const OG_ZEN_CHAT = "https://opencode.ai/zen/go/v1/chat/completions";
-// deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (announced
-// 2026-08-06) and authenticates with x-api-key (verified 2026-08-10 per
-// handoff 2.5.6: ~54s full response, thinking + answer). Native passthrough
-// forwards the Anthropic stream untouched — no per-chunk OpenAI translation,
-// so no 1102 CPU risk on huge streams. Other og models (minimax-m3, mimo-v2.5)
-// only speak chat/completions and keep the translate path (verified 2026-08-07
-// with this user's key).
 const OG_NATIVE_ANTHROPIC = new Set(["deepseek-v4-flash"]);
 const AUTH_BASE = "/api/auth";
 const ADMIN_BASE = "/api/admin";
@@ -790,12 +782,6 @@ export async function handleGateway(request, env, url) {
     return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
   }
   const openaiReq = toOpenAIRequest(body, upstreamModel);
-  // max_tokens floor — deepseek-v4-flash + max thinking counts thinking against
-  // the budget, so a small client max_tokens returns "thinking only, 0 answer"
-  // (8/8 reproductions at max_tokens=300, 2026-08-09). Only the client-facing
-  // request gets floored; internal calls (describeImage 1500, ogWebSearchAnswer
-  // 500) keep their intentionally small budgets. Absent stays absent.
-  if (openaiReq.max_tokens && openaiReq.max_tokens < OG_MIN_MAX_TOKENS) openaiReq.max_tokens = OG_MIN_MAX_TOKENS;
   const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
     method: "POST",
     headers: {
