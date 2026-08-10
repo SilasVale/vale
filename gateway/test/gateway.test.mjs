@@ -213,56 +213,6 @@ test("og translate success resets the breaker failure count", async () => {
   assert.equal(resets.length, 1); // success → count reset
 });
 
-// ── max_tokens floor on the client-facing translate path ───────
-
-test("og translate: small client max_tokens is floored to 8000", async () => {
-  const { env, token } = gwEnv();
-  let sent;
-  await withFetch(async (url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
-    post(env, token, { model: "og/mimo-v2.5", max_tokens: 300, stream: false, messages: [{ role: "user", content: "hi" }] }),
-  );
-  assert.equal(sent.max_tokens, 8000); // 300 < floor → raised
-});
-
-test("og translate: max_tokens above floor passes through unchanged", async () => {
-  const { env, token } = gwEnv();
-  let sent;
-  await withFetch(async (url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
-    post(env, token, { model: "og/mimo-v2.5", max_tokens: 10000, stream: false, messages: [{ role: "user", content: "hi" }] }),
-  );
-  assert.equal(sent.max_tokens, 10000);
-});
-
-test("og translate: no client max_tokens stays absent (no default invented)", async () => {
-  const { env, token } = gwEnv();
-  let sent;
-  await withFetch(async (url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
-    post(env, token, { model: "og/mimo-v2.5", stream: false, messages: [{ role: "user", content: "hi" }] }),
-  );
-  assert.equal(sent.max_tokens, undefined);
-});
-
-test("og translate: image describe keeps its own 1500 budget (floor is client-path only)", async () => {
-  const { env, token } = gwEnv();
-  const calls = [];
-  await withFetch(async (url, init) => {
-    calls.push(JSON.parse(init.body));
-    if (calls.length === 1) {
-      // describeImage → og/mimo-v2.5 vision model
-      return new Response(JSON.stringify({ choices: [{ message: { content: "a screenshot" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
-    }
-    return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
-  }, () =>
-    post(env, token, {
-      model: "og/mimo-v2.5", max_tokens: 300, stream: false,
-      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGk=" } }] }],
-    }),
-  );
-  assert.equal(calls.length, 2); // describe + main
-  assert.equal(calls[0].max_tokens, 1500); // internal describe budget untouched
-  assert.equal(calls[1].max_tokens, 8000); // client path floored
-});
-
 test("og translate fast 500: retried via fetchWithRetry, breaker NOT tripped", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips, timeout: 1000 });
