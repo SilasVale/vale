@@ -17,18 +17,24 @@
 // can't set headers — the SSE stream is read via fetch + ReadableStream and
 // reconnects like EventSource would.
 import { loadPairing } from "../lib/state.js";
+import { idbPut, idbGet, idbGetAll, idbDelete } from "./idb.js";
 
 const DEFAULT_ORIGIN = "https://api.saisi.online";
 const PTY_TARGET = "powershell"; // device runs Windows
 const DEFAULT_ROWS = 30;
 const DEFAULT_COLS = 100;
 const POLL_MS = 2500; // discovery cadence for sessions opened by the AI agent
+const SYNC_MS = 5000; // byte-offset sync cadence (missed-output recovery)
+const HISTORY_POLL_MS = 10000; // closed-session discovery cadence
+const FLUSH_LINE_THRESHOLD = 512; // lines before forcing an IndexedDB flush
+const FLUSH_IDLE_MS = 60000; // max delay before an idle session is flushed
 
 const $ = (id) => document.getElementById(id);
 const deviceSelect = $("device-select");
 const tabsEl = $("tabs");
 const termContainer = $("term-container");
 const newSessionBtn = $("new-session");
+const exportAllBtn = $("export-all");
 const statusEl = $("status");
 
 const pairing = await loadPairing();
@@ -90,13 +96,77 @@ async function doResize(sid) {
   }).catch(() => {});
 }
 
+// ── Export (timestamped session logs) ──────────────────────────
+
+/** Local time → "YYYY-MM-DD HH:mm:ss" (seconds granularity). */
+function fmtTs(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+         `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** Trigger a .txt download. */
+function download(name, text) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Header + timestamped lines for one session. */
+function sessionLogText(s, sid) {
+  const head = `=== session ${sid} (${s.kind || "?"}${s.label ? ", " + s.label : ""}) ` +
+               `${s.openedAt ? fmtTs(s.openedAt) : "?"} → ${s.closedAt ? fmtTs(s.closedAt) : "open"} ===\n`;
+  const body = s.lines.map((l) => `[${fmtTs(l.t)}] ${l.text}`).join("\n");
+  return head + body + (body ? "\n" : "") + `=== end ${sid} ===\n`;
+}
+
+async function exportSession(sid) {
+  const s = sessions.get(sid);
+  if (!s) return;
+  if (!s.closed) {
+    try { await syncSession(sid); } catch {} // freshest tail for live sessions
+    try { await flushSession(s); } catch {}
+  }
+  const text = sessionLogText(s, sid);
+  download(`vale-term-${sid}.txt`, text);
+}
+
+async function exportAll() {
+  const parts = [];
+  for (const [sid, s] of sessions) {
+    if (!s.closed) {
+      try { await syncSession(sid); } catch {}
+      try { await flushSession(s); } catch {}
+    }
+    parts.push(sessionLogText(s, sid));
+  }
+  const stamp = fmtTs(Date.now()).replace(/[-: ]/g, "");
+  download(`vale-terminal-log-${stamp}.txt`, parts.join("\n"));
+}
+
 function renderTab(sid, label) {
   const tab = document.createElement("button");
   tab.className = "tab";
   tab.dataset.sid = sid;
   tab.textContent = label || sid;
   tab.title = sid;
-  tab.addEventListener("click", () => activate(sid));
+  tab.addEventListener("click", (e) => {
+    if (e.target.closest(".tab-export")) { exportSession(sid); return; }
+    activate(sid);
+  });
+  // Per-tab export icon (⤓) — visible on hover via CSS.
+  const ex = document.createElement("span");
+  ex.className = "tab-export";
+  ex.textContent = "⤓";
+  ex.title = "Export this session";
+  tab.appendChild(ex);
   tabsEl.appendChild(tab);
   return tab;
 }
@@ -128,11 +198,16 @@ function activate(sid) {
  * the gateway with the plugin token in the Authorization header. Reconnects
  * like EventSource would (3s backoff), surfacing the state in the status line.
  */
-function attachStream(sid, term) {
+function attachStream(sid) {
   let closed = false;
+  // Streams UTF-8 bytes to text WITHOUT emitting replacement chars for
+  // multi-byte chars split across frames (stream:true holds partial state).
+  const lineDecoder = new TextDecoder("utf-8");
 
   const connect = async () => {
     if (closed) return;
+    const s = sessions.get(sid);
+    if (!s) { closed = true; return; }
     try {
       const res = await fetch(`${proxy}/api/events/term`, {
         headers: { authorization: `Bearer ${pairing.token}` },
@@ -167,9 +242,16 @@ function attachStream(sid, term) {
             let frame;
             try { frame = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
             // One stream carries every session's output — keep only ours.
-            // `{lagged:true}` frames have no session_id and are dropped here.
+            // `{lagged:true}` frames have no session_id and mean this consumer
+            // was too slow — the sync loop will recover the gap.
+            if (!frame.session_id) { s.needSync = true; continue; }
             if (frame.session_id !== sid) continue;
-            if (Array.isArray(frame.data)) term.write(new Uint8Array(frame.data));
+            if (Array.isArray(frame.data)) {
+              s.term.write(new Uint8Array(frame.data));
+              s.renderedBytes += frame.data.length; // absolute byte coverage
+              s.sseDirty = true;
+              ingestLines(s, lineDecoder.decode(new Uint8Array(frame.data), { stream: true }));
+            }
           }
         }
       } finally {
@@ -178,6 +260,7 @@ function attachStream(sid, term) {
     } catch {
       if (closed) return; // intentional close via markClosed — not an error
       if (activeSid === sid) setStatus("reconnecting…");
+      s.needSync = true; // dropped stream → sync loop recovers the gap
     }
     // Stream dropped or rejected → reconnect, matching EventSource behavior.
     if (!closed) setTimeout(connect, 3000);
@@ -190,19 +273,25 @@ function attachStream(sid, term) {
 /** Create the xterm + tab for a session and wire it to the device.
  *  Idempotent: re-adopting a live session is a no-op; re-adopting a closed
  *  one (vale-command restarted and reused term-N) resurrects the tab. */
-function adoptSession(sid, label) {
+function adoptSession(sid, label, idbRec = null) {
   const existing = sessions.get(sid);
   if (existing && !existing.closed) return; // dedup — never duplicate tabs
   if (existing) {
     // Resurrection: vale-command restarted and reused term-N. Reuse the tab
     // and xterm rather than hiding the new session behind the tombstone.
     existing.closed = false;
-    existing.tab.classList.remove("closed");
-    existing.tab.textContent = label;
-    existing.tab.title = sid;
+    existing.complete = false;
+    existing.closedAt = null;
+    existing.savedOnly = false;
+    if (existing.tab) {
+      existing.tab.classList.remove("closed");
+      existing.tab.textContent = label;
+      existing.tab.title = sid;
+    }
     existing.term.reset();
     existing.term.options.disableStdin = false;
-    backfillAndAttach(sid, existing);
+    renderLines(existing);
+    backfillAndAttach(sid, existing, idbRec);
     return;
   }
   const container = document.createElement("div");
@@ -212,6 +301,7 @@ function adoptSession(sid, label) {
   const term = new window.Terminal({
     convertEol: true,
     cursorBlink: true,
+    scrollback: 20000,
     fontSize: 13,
     fontFamily: 'monospace',
     theme: {
@@ -235,29 +325,71 @@ function adoptSession(sid, label) {
   const observer = new ResizeObserver(() => scheduleResize(sid));
   observer.observe(container);
 
-  const s = { term, fit, es: null, container, observer, resizeTimer: null, tab: null, closed: false, label };
+  const s = {
+    sid, term, fit, es: null, container, observer, resizeTimer: null,
+    tab: null, closed: false, label,
+    // Byte-offset sync model: `renderedBytes` is the single source of truth
+    // for "how much of this session's byte stream has been written to the
+    // xterm". It only ever advances by raw spans — SSE frame.data.length and
+    // terminal_read's `end` — never by clean-text length.
+    renderedBytes: 0,
+    lines: [],        // [{t: ms, text}] receipt-timestamped clean lines
+    pendingLine: "",
+    persistedSeq: 0,  // s.lines.length at last IndexedDB flush
+    openedAt: Date.now(),
+    closedAt: null,
+    complete: false,
+    savedOnly: false,
+    kind,
+    syncInFlight: false,
+    sseDirty: false,
+    needSync: false,
+    flushTimer: null,
+  };
   sessions.set(sid, s); // before any await — activate() and the poll guard see it immediately
   s.tab = renderTab(sid, label);
-  backfillAndAttach(sid, s);
+  backfillAndAttach(sid, s, null);
 }
 
 /** History backfill, then live SSE attach — in that order, so old output
- *  never renders below new output. Backfill uses terminal_read with an
- *  explicit offset:0, which does not advance the session cursor, so the AI
- *  agent's own reads are unaffected. */
-async function backfillAndAttach(sid, s) {
+ *  never renders below new output. If `idbRec` (an IndexedDB record) is given,
+ *  its persisted lines render first (restored from a previous panel session),
+ *  then the backend tail is fetched from `renderedBytes` — no double render.
+ *  The read uses an explicit offset so the AI agent's cursor is untouched. */
+async function backfillAndAttach(sid, s, idbRec) {
+  if (idbRec) {
+    s.lines = idbRec.lines || [];
+    s.openedAt = idbRec.openedAt || s.openedAt;
+    s.closedAt = idbRec.closedAt || null;
+    s.persistedSeq = idbRec.persistedSeq || s.lines.length;
+    s.renderedBytes = idbRec.endAbs || 0;
+    renderLines(s);
+  }
   try {
-    const hist = await callTool("terminal_read", { session_id: sid, offset: 0, clean: true });
-    if (hist && typeof hist.text === "string" && hist.text) {
-      s.term.write(hist.text);
-      if (Number(hist.dropped) > 0) {
-        s.term.write(`\r\n[dropped ${hist.dropped} bytes of earlier output — buffer overflow]\r\n`);
+    const hist = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: true });
+    if (hist && typeof hist.text === "string") {
+      if (Number(hist.start) > s.renderedBytes) {
+        s.term.write(`\r\n[dropped ${Number(hist.start) - s.renderedBytes} bytes of output — missed while offline]\r\n`);
+      }
+      if (hist.text) {
+        s.term.write(hist.text);
+        s.renderedBytes = Number(hist.end) || s.renderedBytes;
+        ingestLines(s, hist.text);
+        scheduleFlush(s);
       }
     }
   } catch {
     // No history (brand-new session, or buffer already released) — attach live.
   }
-  if (!s.closed) s.es = attachStream(sid, s.term);
+  if (!s.closed) s.es = attachStream(sid);
+}
+
+/** Render the session's accumulated `lines` into the xterm (IDB restore /
+ *  resurrection). Newlines are appended because lines are stored split. */
+function renderLines(s) {
+  for (const l of s.lines) {
+    s.term.write(`${l.text}\r\n`);
+  }
 }
 
 /** A session vanished from terminal_list (closed on the device). Keep the tab
@@ -277,6 +409,163 @@ function markClosed(sid) {
   if (sid === activeSid) setStatus("session closed");
 }
 
+// ── Line ingestion + IndexedDB flush ────────────────────────────
+
+/** Split text into clean lines with receipt timestamps, merging a trailing
+ *  partial line into `pendingLine` (it completes when the next chunk ends in
+ *  a newline). Receipt time is the panel's local clock — the accepted
+ *  approximation (backend-precise timestamps are a non-goal). */
+function ingestLines(s, text) {
+  if (!text) return;
+  const chunks = text.split("\n");
+  for (let i = 0; i < chunks.length; i++) {
+    let line = chunks[i];
+    if (i === 0 && s.pendingLine !== "") {
+      line = s.pendingLine + line;
+      s.pendingLine = "";
+    }
+    if (i < chunks.length - 1) {
+      // Skip empty lines (terminal blank lines carry no log value and would
+      // bloat the export with bare `[]` timestamps).
+      if (line !== "") s.lines.push({ t: Date.now(), text: line });
+    } else if (line !== "") {
+      s.pendingLine = line; // partial — wait for the rest
+    }
+  }
+  scheduleFlush(s);
+}
+
+function scheduleFlush(s) {
+  clearTimeout(s.flushTimer);
+  if (s.lines.length - s.persistedSeq >= FLUSH_LINE_THRESHOLD) {
+    flushSession(s);
+    return;
+  }
+  s.flushTimer = setTimeout(() => flushSession(s), FLUSH_IDLE_MS);
+}
+
+async function flushSession(s) {
+  clearTimeout(s.flushTimer);
+  if (s.flushTimer !== undefined) s.flushTimer = null;
+  if (s.persistedSeq === s.lines.length) return; // nothing new
+  try {
+    await idbPut({
+      sid: s.sid,
+      kind: s.kind || "",
+      label: s.label || "",
+      openedAt: s.openedAt,
+      closedAt: s.closedAt,
+      complete: s.complete,
+      endAbs: s.renderedBytes,
+      persistedSeq: s.lines.length,
+      lines: s.lines,
+    });
+    s.persistedSeq = s.lines.length;
+  } catch { /* IDB unavailable — memory-only mode is fine */ }
+}
+
+// ── Byte-offset sync (missed-output recovery) ──────────────────
+
+/** Fetch ONLY the output the panel hasn't rendered yet (from `renderedBytes`)
+ *  and append it. Runs on a cadence + when SSE was lagged/dropped. */
+async function syncSession(sid) {
+  const s = sessions.get(sid);
+  if (!s || s.closed || s.savedOnly || s.syncInFlight) return;
+  if (!s.needSync && !s.sseDirty) return; // nothing new since last sync
+  s.syncInFlight = true;
+  try {
+    const r = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: true });
+    if (r && typeof r.text === "string" && r.text) {
+      if (Number(r.start) > s.renderedBytes) {
+        s.term.write(`\r\n[dropped ${Number(r.start) - s.renderedBytes} bytes of output — missed while offline]\r\n`);
+      }
+      s.term.write(r.text);
+      s.renderedBytes = Number(r.end) || s.renderedBytes;
+      ingestLines(s, r.text);
+      scheduleFlush(s);
+    }
+    s.needSync = false;
+    s.sseDirty = false;
+  } catch {
+    s.needSync = true; // network blip → retry next cycle
+  } finally {
+    s.syncInFlight = false;
+  }
+}
+
+async function syncAll() {
+  for (const sid of [...sessions.keys()]) {
+    await syncSession(sid);
+  }
+}
+
+/** Session vanished from terminal_list — final tail read, persist, mark closed. */
+async function finalizeSession(sid) {
+  const s = sessions.get(sid);
+  if (!s || s.closed || s.savedOnly) return;
+  try { await syncSession(sid); } catch {} // final tail — works post-close via history
+  s.closedAt = Date.now();
+  s.complete = true;
+  markClosed(sid); // updates tab styling; sets s.closed = true
+  try { await flushSession(s); } catch {}
+}
+
+/** Discover closed sessions retained in history (adopt as read-only [saved]
+ *  tabs so the panel can load a session closed before it opened). */
+async function pollHistory() {
+  try {
+    const list = await callTool("terminal_history").catch(() => null);
+    if (!Array.isArray(list)) return;
+    for (const h of list) {
+      if (h.status !== "closed") continue; // live handled by pollSessions
+      if (sessions.has(h.id)) continue;
+      const idbRec = await idbGet(h.id).catch(() => null);
+      adoptHistorySession(h, idbRec);
+    }
+  } finally {
+    setTimeout(pollHistory, HISTORY_POLL_MS);
+  }
+}
+
+/** Adopt a closed session as a read-only tab: IDB lines (if any) + backend tail. */
+async function adoptHistorySession(h, idbRec) {
+  const container = document.createElement("div");
+  container.className = "term-session";
+  termContainer.appendChild(container);
+
+  const term = new window.Terminal({
+    convertEol: true,
+    cursorBlink: false,
+    disableStdin: true,
+    scrollback: 20000,
+    fontSize: 13,
+    fontFamily: 'monospace',
+    theme: {
+      background: "#ffffff",
+      foreground: "#1a1c20",
+      cursor: "#5b6cf0",
+      cursorAccent: "#ffffff",
+      selectionBackground: "rgba(91,108,240,.2)",
+    },
+  });
+  const fit = new window.FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(container);
+
+  const s = {
+    sid: h.id, term, fit, es: null, container, observer: null, resizeTimer: null,
+    tab: null, closed: true, savedOnly: true,
+    renderedBytes: 0, lines: [], pendingLine: "", persistedSeq: 0,
+    openedAt: idbRec?.openedAt || Date.now(), closedAt: idbRec?.closedAt || Date.now(),
+    complete: true, kind: h.kind || "", label: h.label || h.id,
+    syncInFlight: false, sseDirty: false, needSync: false, flushTimer: null,
+  };
+  sessions.set(h.id, s); // before any await
+  s.tab = renderTab(h.id, `${s.label} [saved]`);
+  s.tab.classList.add("closed");
+  await backfillAndAttach(h.id, s, idbRec);
+}
+
 /** Discover sessions the AI agent opened (or closed) on the device. Silent on
  *  errors — next tick retries. Stale-marking only applies to sids that were in
  *  the PREVIOUS snapshot, so a session created while a poll was in flight is
@@ -288,12 +577,21 @@ async function pollSessions() {
     const list = await callTool("terminal_list").catch(() => null);
     if (!Array.isArray(list)) return; // network blip → silent retry
     const current = new Set();
-    for (const s of list) {
+    // Fetch saved records in parallel — a serial await per session would stall
+    // the poll on slow IDB.
+    const recs = await Promise.all(
+      list.map((s) => idbGet(s.id).catch(() => null))
+    );
+    list.forEach((s, i) => {
       current.add(s.id);
-      adoptSession(s.id, s.label || s.kind || s.id); // idempotent — no pre-check needed
-    }
+      // idempotent — no pre-check needed. Pass the saved record if any, so a
+      // session that was saved then reopened continues its old log.
+      adoptSession(s.id, s.label || s.kind || s.id, recs[i]);
+    });
     for (const sid of lastKnown) {
-      if (!current.has(sid)) markClosed(sid);
+      if (!current.has(sid)) {
+        finalizeSession(sid); // tail read + persist + mark closed (fire-and-forget)
+      }
     }
     lastKnown = current;
   } finally {
@@ -335,8 +633,17 @@ async function init() {
   opt.textContent = pairing.device;
   deviceSelect.appendChild(opt);
 
-  // Re-attach to sessions still alive on the device (e.g. after the page was
-  // closed and reopened).
+  // Restore previously saved sessions from IndexedDB (read-only [saved] tabs),
+  // then re-attach to live sessions on the device. A live session with the
+  // same sid as a saved one resurrects it (the adoptSession dedup is a no-op
+  // for live; savedOnly entries are replaced by the live adoption).
+  const saved = await idbGetAll().catch(() => []);
+  pruneIdb(saved);
+  for (const rec of saved) {
+    if (sessions.has(rec.sid)) continue;
+    await adoptHistorySession({ id: rec.sid, kind: rec.kind || "", label: rec.label || "" }, rec);
+  }
+
   let list;
   try {
     list = await callTool("terminal_list");
@@ -346,20 +653,61 @@ async function init() {
   }
   const existing = Array.isArray(list) ? list : [];
   if (!existing.length) {
-    await openSession("shell");
+    // Only auto-open a shell if there are no saved sessions to show.
+    if (!saved.length) await openSession("shell");
     return;
   }
   for (const s of existing) {
-    adoptSession(s.id, s.label || s.kind || s.id);
+    // If a saved record exists for this sid, pass it to backfill so the live
+    // adoption continues the old log instead of starting from scratch.
+    const idbRec = saved.find((r) => r.sid === s.id) || null;
+    adoptSession(s.id, s.label || s.kind || s.id, idbRec);
   }
-  // Activate the most recently opened session.
+  // Activate the most recently opened session (or the first saved tab).
+  const last = existing[existing.length - 1]?.id || [...sessions.keys()][0];
   activeSid = null;
-  activate(existing[existing.length - 1].id);
+  activate(last);
+}
+
+/** Bound the IndexedDB store: drop the oldest-closed records beyond caps. */
+function pruneIdb(records) {
+  const MAX_RECORDS = 40;
+  const MAX_LINES = 300000;
+  const sorted = records.slice().sort((a, b) => (a.closedAt || 0) - (b.closedAt || 0));
+  const dropped = [];
+  let lines = sorted.reduce((n, r) => n + (r.lines?.length || 0), 0);
+  while (sorted.length - dropped.length > MAX_RECORDS || lines > MAX_LINES) {
+    const rec = sorted[dropped.length];
+    if (!rec) break;
+    dropped.push(rec.sid);
+    lines -= rec.lines?.length || 0;
+  }
+  for (const sid of dropped) idbDelete(sid).catch(() => {});
 }
 
 newSessionBtn.addEventListener("click", () => openSession("shell"));
+exportAllBtn.addEventListener("click", () => exportAll());
 
 init();
 // Start discovery after init's adopt pass; the dedup guard in adoptSession
 // covers any overlap between init's terminal_list and the first poll.
 setTimeout(pollSessions, POLL_MS);
+setTimeout(pollHistory, HISTORY_POLL_MS); // closed sessions retained in history
+// Byte-offset sync loop: recovers SSE gaps (lagged frames, reconnects,
+// pre-attach output). setTimeout-chained, never stacked.
+(function syncLoop() {
+  setTimeout(async () => {
+    await syncAll();
+    syncLoop();
+  }, SYNC_MS);
+})();
+// Flush everything to IndexedDB when the tab goes hidden / unloads — a crash
+// can lose at most the lines since the last snapshot (≤ FLUSH_IDLE_MS of output).
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    for (const s of sessions.values()) flushSession(s);
+  }
+});
+window.addEventListener("pagehide", () => {
+  for (const s of sessions.values()) flushSession(s);
+});

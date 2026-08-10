@@ -53,6 +53,17 @@ body {
   color: #1a1c20;
   border-color: #b6bdc9;
 }
+/* Per-tab export icon — muted, visible on hover. */
+.tab-export {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #a2a8b3;
+  visibility: hidden;
+  cursor: pointer;
+}
+.tab:hover .tab-export,
+.tab.active .tab-export { visibility: visible; }
+.tab-export:hover { color: #5b6cf0; }
 #new-session {
   background: #5b6cf0;
   color: #ffffff;
@@ -63,6 +74,16 @@ body {
   font: inherit;
 }
 #new-session:hover { background: #4a58d6; }
+#export-all {
+  background: #f0f1f5;
+  color: #4a5260;
+  border: 1px solid #d3d8e0;
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+#export-all:hover { background: #e4e7ef; }
 #status {
   color: #68707e;
   font-size: 12px;
