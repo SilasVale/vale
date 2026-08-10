@@ -10,7 +10,7 @@ REM Pass the registration key (if entered in the installer) to the setup script.
 if exist "%VC_DIR%\regkey.txt" (
   set /p VALE_REG_KEY=<"%VC_DIR%\regkey.txt"
 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "%VC_DIR%\vale-command-setup.ps1" -InstallDir "%VC_DIR%" -SkipDownload
+powershell -NoProfile -ExecutionPolicy Bypass -File "%VC_DIR%\vale-agent-setup.ps1" -InstallDir "%VC_DIR%" -SkipDownload
 echo.
 echo Setup finished. Scroll up for your token, then close this window.
 pause

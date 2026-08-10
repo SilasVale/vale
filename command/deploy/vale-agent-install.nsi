@@ -2,10 +2,10 @@ Unicode true
 !include "MUI2.nsh"
 !include "nsDialogs.nsh"
 
-Name "Vale Command"
-OutFile "ValeCommand-Setup.exe"
+Name "Vale Agent"
+OutFile "ValeAgent-Setup.exe"
 RequestExecutionLevel admin
-InstallDir "C:\vale-command"
+InstallDir "C:\vale-agent"
 
 Var RESULT_TEXT
 Var REGKEY
@@ -85,26 +85,26 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install" SEC01
-  ; Stop any running vale-command first, otherwise its exe is locked and
+  ; Stop any running vale-agent first, otherwise its exe is locked and
   ; copying the new binaries fails with "cannot open file for writing"
   ; (the re-install case). The setup script also kills it, but that runs
   ; after this copy step.
   ; In silent mode (auto-upgrade from the tray) vale-tray.exe is NOT killed:
   ; the tray that launched this installer exits itself right after starting
   ; it, and a fresh tray is relaunched below once the copy is done.
-  nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
-  nsExec::ExecToLog 'schtasks /End /TN ValeCommand'
+  nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
+  nsExec::ExecToLog 'schtasks /End /TN ValeAgent'
   ${IfNot} ${Silent}
     nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
-    nsExec::ExecToLog 'schtasks /End /TN ValeCommandTray'
+    nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray'
   ${EndIf}
   Sleep 1000
 
   SetOutPath "$INSTDIR"
 
   ; Copy app + setup script + launcher + tray
-  File "/oname=vale-command.exe" "vale-command.exe"
-  File "vale-command-setup.ps1"
+  File "/oname=vale-agent.exe" "vale-agent.exe"
+  File "vale-agent-setup.ps1"
   File "run-setup.bat"
   File "vale-tray.exe"
   ; Browser extension zip — extracted to $INSTDIR\extension\ by the setup
@@ -129,7 +129,7 @@ Section "Install" SEC01
   ; Fresh installs only: an upgrade must NOT re-run the setup script — it would
   ; re-auth / re-register a device that is already configured.
   ${IfNot} ${Silent}
-    DetailPrint "正在启动 Vale Command 配置窗口（独立窗口显示进度，可能弹出 Cloudflare 授权）..."
+    DetailPrint "正在启动 Vale Agent 配置窗口（独立窗口显示进度，可能弹出 Cloudflare 授权）..."
     Exec '"$INSTDIR\run-setup.bat"'
   ${EndIf}
 
@@ -137,7 +137,7 @@ Section "Install" SEC01
 
   ; Silent mode = auto-upgrade from the tray: the launching tray has already
   ; exited, so bring a fresh tray back. schtasks /Run triggers the at-logon
-  ; ValeCommandTray task, restoring the exact previous environment (interactive
+  ; ValeAgentTray task, restoring the exact previous environment (interactive
   ; session, elevated as before). If that task is missing (tray was started
   ; manually), start the exe directly.
   ${If} ${Silent}
@@ -149,30 +149,30 @@ Section "Install" SEC01
     ; to *.agent.saisi.online in both cloudflared configs (user + systemprofile),
     ; update the hostname file, restart the cloudflared service. Idempotent —
     ; a config already on agent is untouched.
-    nsExec::ExecToLog 'powershell -NoProfile -Command "$old='\''.command.saisi.online'\''; $new='\''.agent.saisi.online'\''; $files=@(\"$env:USERPROFILE\.cloudflared\config.yml\",\"$env:WINDIR\System32\config\systemprofile\.cloudflared\config.yml\",\"$INSTDIR\vale-command.hostname\"); foreach($f in $files){ if(Test-Path $f){ $c=Get-Content $f -Raw; if($c -match [regex]::Escape($old)){ Set-Content $f ($c -replace [regex]::Escape($old),$new) -Encoding ascii; Write-Host \"migrated $f\" } } }; sc.exe stop cloudflared 2>$null | Out-Null; sc.exe start cloudflared 2>$null | Out-Null"'
-    nsExec::ExecToLog 'schtasks /Query /TN ValeCommandTray'
+    nsExec::ExecToLog 'powershell -NoProfile -Command "$old='\''.command.saisi.online'\''; $new='\''.agent.saisi.online'\''; $files=@(\"$env:USERPROFILE\.cloudflared\config.yml\",\"$env:WINDIR\System32\config\systemprofile\.cloudflared\config.yml\",\"$INSTDIR\vale-agent.hostname\"); foreach($f in $files){ if(Test-Path $f){ $c=Get-Content $f -Raw; if($c -match [regex]::Escape($old)){ Set-Content $f ($c -replace [regex]::Escape($old),$new) -Encoding ascii; Write-Host \"migrated $f\" } } }; sc.exe stop cloudflared 2>$null | Out-Null; sc.exe start cloudflared 2>$null | Out-Null"'
+    nsExec::ExecToLog 'schtasks /Query /TN ValeAgentTray'
     Pop $0
     ${If} $0 != 0
       Exec '"$INSTDIR\vale-tray.exe"'
     ${Else}
-      nsExec::ExecToLog 'schtasks /Run /TN ValeCommandTray'
+      nsExec::ExecToLog 'schtasks /Run /TN ValeAgentTray'
     ${EndIf}
   ${EndIf}
 SectionEnd
 
 Section "Uninstall"
   ; Stop and remove the scheduled tasks + cloudflared service (best effort)
-  nsExec::ExecToLog 'schtasks /End /TN ValeCommandTray'
-  nsExec::ExecToLog 'schtasks /Delete /TN ValeCommandTray /F'
-  nsExec::ExecToLog 'schtasks /End /TN ValeCommand'
-  nsExec::ExecToLog 'schtasks /Delete /TN ValeCommand /F'
+  nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray'
+  nsExec::ExecToLog 'schtasks /Delete /TN ValeAgentTray /F'
+  nsExec::ExecToLog 'schtasks /End /TN ValeAgent'
+  nsExec::ExecToLog 'schtasks /Delete /TN ValeAgent /F'
   nsExec::ExecToLog 'sc stop Cloudflared'
   nsExec::ExecToLog 'sc delete Cloudflared'
-  Delete "$INSTDIR\vale-command.exe"
-  Delete "$INSTDIR\vale-command-setup.ps1"
+  Delete "$INSTDIR\vale-agent.exe"
+  Delete "$INSTDIR\vale-agent-setup.ps1"
   Delete "$INSTDIR\run-setup.bat"
   Delete "$INSTDIR\vale-tray.exe"
-  Delete "$INSTDIR\vale-command.hostname"
+  Delete "$INSTDIR\vale-agent.hostname"
   Delete "$INSTDIR\install-result.txt"
   Delete "$INSTDIR\regkey.txt"
   Delete "$INSTDIR\uninstall.exe"

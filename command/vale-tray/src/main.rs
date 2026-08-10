@@ -1,7 +1,7 @@
-//! Vale Command system tray controller.
+//! Vale Agent system tray controller.
 #![windows_subsystem = "windows"]
 //!
-//! Windows-native tray app (no window) for the headless vale-command server,
+//! Windows-native tray app (no window) for the headless vale-agent server,
 //! which runs as the `ValeCommand` scheduled task (same install dir as this
 //! exe). Features:
 //!
@@ -13,8 +13,8 @@
 //!   - Open a local terminal (PowerShell in the install dir) for logs/testing
 //!
 //! The install dir is located from this exe's own path; the subdomain comes
-//! from `vale-command.hostname` (written by the setup script) and the console
-//! URL from `vale-command.console` (fallback: https://console.saisi.online/).
+//! from `vale-agent.hostname` (written by the setup script) and the console
+//! URL from `vale-agent.console` (fallback: https://console.saisi.online/).
 
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
@@ -34,20 +34,23 @@ fn install_dir() -> PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("C:\\vale-command"))
+        .unwrap_or_else(|| PathBuf::from("C:\\vale-agent"))
 }
 
-/// The device subdomain for this install, from vale-command.hostname.
+/// The device subdomain for this install, from vale-agent.hostname (falls
+/// back to the legacy vale-command.hostname name from before the rename).
 fn device_hostname() -> String {
-    std::fs::read_to_string(install_dir().join("vale-command.hostname"))
+    let dir = install_dir();
+    std::fs::read_to_string(dir.join("vale-agent.hostname"))
+        .or_else(|_| std::fs::read_to_string(dir.join("vale-command.hostname")))
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
 }
 
-/// The console URL — explicit `vale-command.console` file wins, else the
+/// The console URL — explicit `vale-agent.console` file wins, else the
 /// default console host.
 fn console_url() -> String {
-    std::fs::read_to_string(install_dir().join("vale-command.console"))
+    std::fs::read_to_string(install_dir().join("vale-agent.console"))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -151,7 +154,7 @@ fn open_local_terminal() {
         .args([
             "/c",
             "start",
-            "\"Vale Command\"",
+            "\"Vale Agent\"",
             "powershell",
             "-NoExit",
             "-Command",
@@ -204,16 +207,16 @@ try {{
   $local = [version]'{1}'
   if ($remote -le $local) {{
     Log 'check: up to date'
-    [System.Windows.Forms.MessageBox]::Show("已是最新版本 {1}。", "Vale Command 更新", 'OK')
+    [System.Windows.Forms.MessageBox]::Show("已是最新版本 {1}。", "Vale Agent 更新", 'OK')
     return
   }}
   Log "check: newer $($j.version) available"
   $r = [System.Windows.Forms.MessageBox]::Show(
-    "发现新版本 $($j.version)（当前 {1}）。是否立即升级？", "Vale Command 更新", 'YesNo')
+    "发现新版本 $($j.version)（当前 {1}）。是否立即升级？", "Vale Agent 更新", 'YesNo')
   if ($r -ne 'Yes') {{ Log 'check: declined'; return }}
   [System.Windows.Forms.MessageBox]::Show(
     "正在下载更新并静默升级，约需 1 分钟。期间服务会短暂中断，完成后托盘将自动重启。",
-    "Vale Command 更新", 'OK')
+    "Vale Agent 更新", 'OK')
   # The old tray must be gone before the installer relaunches a fresh one,
   # otherwise two tray icons appear. Kill it now — the installer restarts it
   # via the ValeCommandTray scheduled task once the new binaries are in place.
@@ -229,10 +232,10 @@ try {{
   Log 'update: install ok'
   Remove-Item $installer -Force -ErrorAction SilentlyContinue
   [System.Windows.Forms.MessageBox]::Show(
-    "升级完成！已更新到 $($j.version)。", "Vale Command 更新", 'OK')
+    "升级完成！已更新到 $($j.version)。", "Vale Agent 更新", 'OK')
 }} catch {{
   Log "update: FAILED - $($_.Exception.Message)"
-  [System.Windows.Forms.MessageBox]::Show("升级失败：$($_.Exception.Message)", "Vale Command 更新", 'OK')
+  [System.Windows.Forms.MessageBox]::Show("升级失败：$($_.Exception.Message)", "Vale Agent 更新", 'OK')
   Restore-Tray
 }}
 "#,
@@ -271,7 +274,7 @@ impl TrayUi {
         self.host_item.set_text(format!("域名：{}", if host.is_empty() { "未知" } else { &host }));
         let mask = token_mask();
         self.token_item.set_text(format!("Token：{}", if mask.is_empty() { "未找到" } else { &mask }));
-        let _ = tray.set_tooltip(Some(format!("Vale Command — {status}")));
+        let _ = tray.set_tooltip(Some(format!("Vale Agent — {status}")));
     }
 }
 
@@ -288,7 +291,7 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
         let icon = Icon::from_rgba(img.into_raw(), w, h).expect("build tray icon");
 
         let menu = Menu::new();
-        let header = MenuItem::new("Vale Command", false, None);
+        let header = MenuItem::new("Vale Agent", false, None);
         let status_item = MenuItem::new("状态：--", false, None);
         let host_item = MenuItem::new("域名：--", false, None);
         let token_item = MenuItem::new("Token：--", false, None);
@@ -323,7 +326,7 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi)> {
 
         match TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip("Vale Command")
+            .with_tooltip("Vale Agent")
             .with_icon(icon)
             .build()
         {
@@ -378,7 +381,7 @@ fn main() {
         // icon, then exit. (No user-visible window, so a MessageBox is the
         // cheapest honest signal.)
         let _ = std::process::Command::new("powershell")
-            .args(["-c", "[System.Windows.Forms.MessageBox]::Show('Vale Command 托盘已在运行。', 'Vale Command', 'OK', 'Information')"])
+            .args(["-c", "[System.Windows.Forms.MessageBox]::Show('Vale Agent 托盘已在运行。', 'Vale Agent', 'OK', 'Information')"])
             .spawn();
         std::process::exit(0);
     }

@@ -1,22 +1,22 @@
-# vale-command-setup.ps1 - full headless install on a Windows machine:
-#   - downloads vale-command.exe (from this same origin)
+# vale-agent-setup.ps1 - full headless install on a Windows machine:
+#   - downloads vale-agent.exe (from this same origin)
 #   - bootstraps config.yaml + auth token
 #   - installs cloudflared, authenticates to Cloudflare, creates the tunnel,
 #     routes a subdomain
-#   - registers both Windows services (vale-command + cloudflared)
+#   - registers both Windows services (vale-agent + cloudflared)
 #   - prints the token and Claude Code MCP config
 #
 # Run on the Windows machine as Administrator (interactive browser auth):
-#   irm https://agent.saisi.online/vale-command/vale-command-setup.ps1 | iex
+#   irm https://agent.saisi.online/vale-agent/vale-agent-setup.ps1 | iex
 #
 # OR with a Cloudflare API token (no browser popup). The token only needs
 # Tunnel:Edit + Zone:DNS:Edit; it's used transiently at setup, never stored:
 #   $env:CLOUDFLARE_API_TOKEN = "cfat_..."
-#   irm https://agent.saisi.online/vale-command/vale-command-setup.ps1 | iex
+#   irm https://agent.saisi.online/vale-agent/vale-agent-setup.ps1 | iex
 #
 param(
     [string]$Hostname = "",   # empty = auto-assign the next free dN subdomain
-    [string]$InstallDir = "C:\vale-command",
+    [string]$InstallDir = "C:\vale-agent",
     [string]$Base = "https://agent.saisi.online",
     [switch]$SkipDownload   # set when the NSIS installer bundles the exe
 )
@@ -52,8 +52,8 @@ Require-Admin
 # Auto-assign the subdomain when not given. Reuse the existing install's
 # hostname if there is one, else pick the next free dN by DNS probe. The
 # CLOUDFLARED CONFIG is the ground truth for a re-install (a buggy earlier run
-# can write a stale value into vale-command.hostname, as happened with d2).
-$hostFile = Join-Path $InstallDir "vale-command.hostname"
+# can write a stale value into vale-agent.hostname, as happened with d2).
+$hostFile = Join-Path $InstallDir "vale-agent.hostname"
 if (-not $Hostname) {
     # 1. The existing working setup's subdomain (cloudflared config ingress).
     $cfCfg = Join-Path $env:USERPROFILE ".cloudflared\config.yml"
@@ -90,33 +90,33 @@ if ($Hostname -match '\.command\.saisi\.online$') {
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
-Set-Content -Path (Join-Path $InstallDir "vale-command.console") -Value "https://ai.saisi.online/"
+Set-Content -Path (Join-Path $InstallDir "vale-agent.console") -Value "https://ai.saisi.online/"
 
 
 Write-Host "=== Vale Command one-click install ($Hostname) ==="
 
 # 1. Binary + config/token
-$exe = Join-Path $InstallDir "vale-command.exe"
+$exe = Join-Path $InstallDir "vale-agent.exe"
 $cfg = Join-Path $InstallDir "config.yaml"
-Write-Host "`n[1/7] vale-command binary"
+Write-Host "`n[1/7] vale-agent binary"
 # Re-download every run so fixes to the binary take effect, and kill any stray
 # instance first so the exe file is not locked by a running process.
-Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
-if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-command.exe" $exe -Force }
+Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force
+if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-agent.exe" $exe -Force }
 # Tray app: re-download on updates too. The NSIS installer bundles it for fresh
 # installs, but the script path must fetch it so an update also refreshes the
 # tray (and its scheduled-task registration below). Kill strays first — a
 # running exe locks the file.
 $trayExe = Join-Path $InstallDir "vale-tray.exe"
 Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
-if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-tray.exe" $trayExe -Force }
+if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-tray.exe" $trayExe -Force }
 # Browser extension: extract vale-browser-control.zip into $INSTDIR\extension\
 # so Chrome's "Load unpacked" points at the same install dir (updated together
 # with the binaries on every install/upgrade). The NSIS installer bundles the
 # zip for fresh installs; the script path re-downloads it on updates.
 Write-Host "  browser extension -> $InstallDir\extension"
 $extZip = Join-Path $InstallDir "vale-browser-control.zip"
-if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-browser-control.zip" $extZip -Force }
+if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-browser-control.zip" $extZip -Force }
 $extDir = Join-Path $InstallDir "extension"
 if (Test-Path $extZip) {
     Remove-Item $extDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -193,10 +193,10 @@ if ($apiToken) {
 }
 
 # Authoritative hostname: prefer reusing the lowest-numbered existing
-# vale-command-dN tunnel (the original device). A buggy earlier run can leave a
+# vale-agent-dN tunnel (the original device). A buggy earlier run can leave a
 # stale d2 in the config/hostname files; the tunnel list is the ground truth.
 $tunnels = & $cloudflared tunnel list 2>&1 | Out-String
-$ns = [regex]::Matches($tunnels, "vale-command-d(\d+)") | ForEach-Object { [int]$_.Groups[1].Value }
+$ns = [regex]::Matches($tunnels, "vale-agent-d(\d+)") | ForEach-Object { [int]$_.Groups[1].Value }
 if ($ns.Count -gt 0) {
     $lowest = ($ns | Measure-Object -Minimum).Minimum
     $Hostname = "d$lowest.agent.saisi.online"
@@ -204,14 +204,14 @@ if ($ns.Count -gt 0) {
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
-Set-Content -Path (Join-Path $InstallDir "vale-command.console") -Value "https://ai.saisi.online/"
+Set-Content -Path (Join-Path $InstallDir "vale-agent.console") -Value "https://ai.saisi.online/"
 
 Write-Host "  hostname: $Hostname"
 
 # 4. Create tunnel + DNS route (per-device tunnel, idempotent).
 # Each device machine gets its own tunnel named after its subdomain
-# (vale-command-d1, vale-command-d2, ...) so machines never share a tunnel.
-$tunnelName = "vale-command-" + ($Hostname -split '\.')[0]
+# (vale-agent-d1, vale-agent-d2, ...) so machines never share a tunnel.
+$tunnelName = "vale-agent-" + ($Hostname -split '\.')[0]
 Write-Host "`n[4/7] tunnel create + DNS route ($tunnelName)"
 $tunnelId = Get-TunnelId $cloudflared $tunnelName
 if (-not $tunnelId) {
@@ -256,40 +256,40 @@ New-Item -ItemType Directory -Force -Path $sysCfDir | Out-Null
 Copy-Item $cfCfg (Join-Path $sysCfDir "config.yml") -Force
 Copy-Item (Join-Path $cfDir "$tunnelId.json") (Join-Path $sysCfDir "$tunnelId.json") -Force -ErrorAction SilentlyContinue
 
-# 6. vale-command as an auto-start scheduled task.
-# A Windows service requires the process to speak the SCM protocol; vale-command
+# 6. vale-agent as an auto-start scheduled task.
+# A Windows service requires the process to speak the SCM protocol; vale-agent
 # is a plain console binary, so a service shows RUNNING while its server thread
 # never binds. A boot scheduled task launches it exactly like a manual run
 # (which works) - same auto-start, no service-protocol requirements.
-Write-Host "`n[6/7] vale-command boot task"
-Stop-ScheduledTask -TaskName "ValeCommand" -ErrorAction SilentlyContinue | Out-Null
-Unregister-ScheduledTask -TaskName "ValeCommand" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-sc.exe delete ValeCommand 2>&1 | Out-Null   # remove any old broken service
+Write-Host "`n[6/7] vale-agent boot task"
+Stop-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue | Out-Null
+Unregister-ScheduledTask -TaskName "ValeAgent" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+sc.exe delete ValeAgent 2>&1 | Out-Null   # remove any old broken service
 $action = New-ScheduledTaskAction -Execute $exe -Argument "`"$cfg`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 # ExecutionTimeLimit 0 = never kill the task. Default is 72h — the server
 # (and the tray below) would silently stop after 3 days until a reboot.
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
-Register-ScheduledTask -TaskName "ValeCommand" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-if (-not (Get-ScheduledTask -TaskName "ValeCommand" -ErrorAction SilentlyContinue)) {
-    throw "failed to register scheduled task ValeCommand"
+Register-ScheduledTask -TaskName "ValeAgent" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+if (-not (Get-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue)) {
+    throw "failed to register scheduled task ValeAgent"
 }
-Start-ScheduledTask -TaskName "ValeCommand" | Out-Null
+Start-ScheduledTask -TaskName "ValeAgent" | Out-Null
 Start-Sleep -Seconds 2
 
 # Tray app: register an at-logon task so the tray icon appears for the logged-in
-# user (highest privileges so it can start/stop the SYSTEM ValeCommand task).
+# user (highest privileges so it can start/stop the SYSTEM ValeAgent task).
 $trayExe = Join-Path $InstallDir "vale-tray.exe"
 if (Test-Path $trayExe) {
-    Unregister-ScheduledTask -TaskName "ValeCommandTray" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+    Unregister-ScheduledTask -TaskName "ValeAgentTray" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
     $trayAction = New-ScheduledTaskAction -Execute $trayExe
     $trayTrigger = New-ScheduledTaskTrigger -AtLogOn
     $trayPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-    # Same unlimited ExecutionTimeLimit as the ValeCommand task — a tray app
+    # Same unlimited ExecutionTimeLimit as the ValeAgent task — a tray app
     # must never be killed by the default 72h task limit.
-    Register-ScheduledTask -TaskName "ValeCommandTray" -Action $trayAction -Trigger $trayTrigger -Principal $trayPrincipal -Settings $settings -Force | Out-Null
-    Start-ScheduledTask -TaskName "ValeCommandTray" | Out-Null
+    Register-ScheduledTask -TaskName "ValeAgentTray" -Action $trayAction -Trigger $trayTrigger -Principal $trayPrincipal -Settings $settings -Force | Out-Null
+    Start-ScheduledTask -TaskName "ValeAgentTray" | Out-Null
 }
 
 # 7. cloudflared as a service - bake the tunnel token into the service so it
@@ -342,7 +342,7 @@ Write-Host "MCP   : https://$Hostname/mcp"
 Write-Host "Token : $token"
 Write-Host ""
 Write-Host "Claude Code config:"
-Write-Host "  { `"mcpServers`": { `"vale-command`": { `"type`": `"http`", `"url`": `"https://$Hostname/mcp`", `"headers`": { `"Authorization`": `"Bearer <token>`" } } } }"
+Write-Host "  { `"mcpServers`": { `"vale-agent`": { `"type`": `"http`", `"url`": `"https://$Hostname/mcp`", `"headers`": { `"Authorization`": `"Bearer <token>`" } } } }"
 Write-Host ""
 Write-Host "Give it ~10 seconds for the tunnel to come up, then connect Claude Code to the MCP URL (or open the console at https://ai.saisi.online/)."
 
