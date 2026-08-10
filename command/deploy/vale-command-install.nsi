@@ -141,6 +141,10 @@ Section "Install" SEC01
   ; session, elevated as before). If that task is missing (tray was started
   ; manually), start the exe directly.
   ${If} ${Silent}
+    ; The setup script extracts the bundled browser-extension zip, but silent
+    ; upgrades skip it (run-setup.bat runs only on fresh installs) — extract
+    ; here so $INSTDIR\extension\ stays fresh on every update.
+    nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -Recurse -Force \"$INSTDIR\extension\" -ErrorAction SilentlyContinue; Expand-Archive -Force -Path \"$INSTDIR\vale-browser-control.zip\" -DestinationPath \"$INSTDIR\extension\""'
     nsExec::ExecToLog 'schtasks /Query /TN ValeCommandTray'
     Pop $0
     ${If} $0 != 0
