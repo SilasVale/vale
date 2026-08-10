@@ -16,6 +16,7 @@ path = "src/main.rs"
 tray-icon = "0.19"
 winit = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"] }
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }
 
 [profile.release]
 strip = true
