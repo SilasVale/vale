@@ -6,8 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use vale_command::state::AppState;
-use vale_command::Config;
+use vale_agent::state::AppState;
+use vale_agent::Config;
 
 /// Write a line to stdout, ignoring errors — a Windows service process has
 /// no console, and println! would panic on the invalid handle, killing the
@@ -90,7 +90,7 @@ fn main() {
 /// Load config (creating a default file + auth token if missing); persist and
 /// print a freshly generated token.
 fn load_config(config_path: &PathBuf) -> Config {
-    let (config, token) = match vale_command::bootstrap::load_or_create(config_path, None) {
+    let (config, token) = match vale_agent::bootstrap::load_or_create(config_path, None) {
         Ok(v) => v,
         Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
     };
@@ -125,7 +125,7 @@ async fn run_server(config_path: PathBuf) {
 
     tracing::info!("Starting MCP server...");
 
-    if let Err(e) = vale_command::mcp::serve(state.config.clone(), state).await {
+    if let Err(e) = vale_agent::mcp::serve(state.config.clone(), state).await {
         fatal(&format!("Server error: {e}"));
     }
 }

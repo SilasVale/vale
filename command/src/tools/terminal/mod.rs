@@ -100,7 +100,7 @@ pub trait TermBackend: Send + Sync {
 #[cfg(feature = "terminal")]
 mod desktop_impl {
     use super::*;
-    use vale_command_core::DeviceError;
+    use vale_agent_core::DeviceError;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 

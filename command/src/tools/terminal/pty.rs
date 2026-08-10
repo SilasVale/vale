@@ -1,7 +1,7 @@
 //! PTY backend — local shell via portable-pty (`terminal` feature).
 
 use super::{TermBackend, TermOutput};
-use vale_command_core::DeviceError;
+use vale_agent_core::DeviceError;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};

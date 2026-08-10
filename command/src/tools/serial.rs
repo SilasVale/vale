@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use vale_command_core::DeviceError;
+use vale_agent_core::DeviceError;
 
 /// Monotonic port-id counter (uuid was overkill for session labels).
 static NEXT_PORT_ID: AtomicU64 = AtomicU64::new(1);

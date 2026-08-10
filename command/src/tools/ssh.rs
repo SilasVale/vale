@@ -6,7 +6,7 @@ use russh::client::{self, connect, Handle};
 use russh::ChannelMsg;
 use tokio::sync::mpsc;
 
-use vale_command_core::DeviceError;
+use vale_agent_core::DeviceError;
 
 /// Minimal SSH handler that accepts all server keys.
 /// (Host-key verification is a known gap — TOFU/known-hosts is deferred.)

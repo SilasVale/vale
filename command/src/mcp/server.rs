@@ -14,7 +14,7 @@ use rmcp::transport::streamable_http_server::{
 use rmcp::{ErrorData as McpError, ServerHandler};
 use tokio_util::sync::CancellationToken;
 
-use vale_command_core::Config;
+use vale_agent_core::Config;
 use crate::state::AppState;
 
 #[derive(Debug, Clone)]
@@ -95,7 +95,7 @@ impl ServerHandler for DeviceServer {
 }
 
 /// ToolDef → rmcp Tool conversion (shared by list_tools and get_tool).
-fn to_mcp_tool(t: &vale_command_core::ToolDef) -> Tool {
+fn to_mcp_tool(t: &vale_agent_core::ToolDef) -> Tool {
     let mut tool = Tool::default();
     tool.name = t.name.clone().into();
     tool.description = Some(t.description.clone().into());
@@ -189,7 +189,7 @@ pub async fn serve_with_token(
 mod tests {
     use super::*;
     use crate::state::AppState;
-    use vale_command_core::Config;
+    use vale_agent_core::Config;
 
     fn server() -> DeviceServer {
         DeviceServer::new(Arc::new(AppState::new(Config::default())))

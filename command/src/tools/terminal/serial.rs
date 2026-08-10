@@ -2,7 +2,7 @@
 
 use super::{TermBackend, TermOutput};
 use crate::tools::serial::SerialPool;
-use vale_command_core::DeviceError;
+use vale_agent_core::DeviceError;
 use std::io::Read;
 use std::sync::Arc;
 

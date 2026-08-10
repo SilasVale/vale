@@ -2,7 +2,7 @@
 
 use super::{TermBackend, TermOutput};
 use crate::tools::ssh::SshSession;
-use vale_command_core::DeviceError;
+use vale_agent_core::DeviceError;
 use tokio::sync::mpsc;
 
 pub struct SshBackend {

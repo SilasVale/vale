@@ -2,7 +2,7 @@
 //! missing, load it (with an optional fallback path), and ensure an auth token
 //! exists.
 
-use vale_command_core::Config;
+use vale_agent_core::Config;
 use std::path::Path;
 
 /// Load the config at `path`, creating a default file first if it doesn't

@@ -2,7 +2,7 @@
 //! `terminal` feature is off.
 
 use super::{TermOpenRequest, TermOutput, TermSessionInfo};
-use vale_command_core::DeviceError;
+use vale_agent_core::DeviceError;
 use std::sync::Arc;
 
 pub struct TerminalManager;

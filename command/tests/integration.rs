@@ -1,8 +1,8 @@
 //! Integration tests for vale_command — lib crate, so we can import vale_command types.
 
-use vale_command::config::Config;
-use vale_command::events::AppEventBus;
-use vale_command::EventBus;
+use vale_agent::config::Config;
+use vale_agent::events::AppEventBus;
+use vale_agent::EventBus;
 
 // ═══════════════════════════════════════════════════════════════
 // Config parsing
@@ -52,7 +52,7 @@ fn config_ignores_legacy_fields() {
 #[test]
 fn config_default_yaml_embedded() {
     // The embedded default config must parse to Config
-    let _: Config = serde_yaml::from_str(vale_command::DEFAULT_CONFIG_YAML)
+    let _: Config = serde_yaml::from_str(vale_agent::DEFAULT_CONFIG_YAML)
         .expect("DEFAULT_CONFIG_YAML must be valid Config");
 }
 
@@ -69,7 +69,7 @@ fn config_default_impl() {
 
 #[test]
 fn ensure_token_is_64_hex_chars() {
-    use vale_command::config::ServerConfig;
+    use vale_agent::config::ServerConfig;
     let mut c = ServerConfig::default();
     let token = c.ensure_token().unwrap().expect("token generated");
     assert_eq!(token.len(), 64);
@@ -79,7 +79,7 @@ fn ensure_token_is_64_hex_chars() {
 
 #[test]
 fn ensure_token_idempotent() {
-    use vale_command::config::ServerConfig;
+    use vale_agent::config::ServerConfig;
     let mut c = ServerConfig::default();
     let t1 = c.ensure_token().unwrap().unwrap();
     let again = c.ensure_token().unwrap();
@@ -89,7 +89,7 @@ fn ensure_token_idempotent() {
 
 #[test]
 fn ensure_token_unique_across_configs() {
-    use vale_command::config::ServerConfig;
+    use vale_agent::config::ServerConfig;
     let mut a = ServerConfig::default();
     let mut b = ServerConfig::default();
     let ta = a.ensure_token().unwrap().unwrap();
@@ -113,7 +113,7 @@ fn ensure_token_serialization_roundtrip() {
 #[test]
 fn eventbus_emit_and_recent() {
     let bus = AppEventBus::new();
-    let ev = vale_command::AgentEvent::ShellExec { command: "ls".into() };
+    let ev = vale_agent::AgentEvent::ShellExec { command: "ls".into() };
     let seq = bus.emit(&ev);
     assert_eq!(seq, 1);
 
@@ -130,7 +130,7 @@ fn eventbus_seq_monotonic() {
     let bus = AppEventBus::new();
     let mut last = 0;
     for i in 0..10 {
-        let seq = bus.emit(&vale_command::AgentEvent::ShellExec { command: format!("cmd{i}") });
+        let seq = bus.emit(&vale_agent::AgentEvent::ShellExec { command: format!("cmd{i}") });
         assert_eq!(seq, last + 1);
         last = seq;
     }
@@ -140,7 +140,7 @@ fn eventbus_seq_monotonic() {
 fn eventbus_after_filter() {
     let bus = AppEventBus::new();
     for i in 0..5 {
-        bus.emit(&vale_command::AgentEvent::ShellExec { command: format!("cmd{i}") });
+        bus.emit(&vale_agent::AgentEvent::ShellExec { command: format!("cmd{i}") });
     }
     // recent(0) returns everything retained
     let all = bus.recent(0);
@@ -157,7 +157,7 @@ fn eventbus_ring_cap_and_resume() {
     let bus = AppEventBus::new();
     // Cap is 200; emit 250 events — ring evicts oldest, seq keeps counting
     for i in 0..250 {
-        bus.emit(&vale_command::AgentEvent::ShellExec { command: format!("cmd{i}") });
+        bus.emit(&vale_agent::AgentEvent::ShellExec { command: format!("cmd{i}") });
     }
     let all = bus.recent(0);
     assert_eq!(all.len(), 200);
@@ -178,8 +178,8 @@ fn eventbus_hook_receives_seq() {
     bus.set_hook(move |seq, _ev| {
         sink.lock().unwrap().push(seq);
     });
-    bus.emit(&vale_command::AgentEvent::ShellExec { command: "a".into() });
-    bus.emit(&vale_command::AgentEvent::ShellExec { command: "b".into() });
+    bus.emit(&vale_agent::AgentEvent::ShellExec { command: "a".into() });
+    bus.emit(&vale_agent::AgentEvent::ShellExec { command: "b".into() });
     assert_eq!(*seen.lock().unwrap(), vec![1u64, 2]);
 }
 
@@ -219,7 +219,7 @@ fn eventbus_term_output_broadcasts() {
 fn require_str_ok() {
     use serde_json::json;
     let params = json!({"name": "test", "count": 42});
-    let val = vale_command::plugins::require_str(&params, "name").unwrap();
+    let val = vale_agent::plugins::require_str(&params, "name").unwrap();
     assert_eq!(val, "test");
 }
 
@@ -227,7 +227,7 @@ fn require_str_ok() {
 fn require_str_missing() {
     use serde_json::json;
     let params = json!({"other": 1});
-    let err = vale_command::plugins::require_str(&params, "name").unwrap_err();
+    let err = vale_agent::plugins::require_str(&params, "name").unwrap_err();
     assert!(err.to_string().contains("name"));
 }
 
@@ -235,7 +235,7 @@ fn require_str_missing() {
 // clean_terminal_output (tests the real pub fn, not a hand copy)
 // ═══════════════════════════════════════════════════════════════
 
-use vale_command::plugins::terminal::clean_terminal_output;
+use vale_agent::plugins::terminal::clean_terminal_output;
 
 #[test]
 fn clean_ansi_strip() {
@@ -271,7 +271,7 @@ fn clean_empty() {
 // SessionBuf — cursor + absolute-offset clamp logic
 // ═══════════════════════════════════════════════════════════════
 
-use vale_command::plugins::terminal::SessionBuf;
+use vale_agent::plugins::terminal::SessionBuf;
 
 #[test]
 fn sessionbuf_end_abs_and_slice() {
@@ -306,14 +306,14 @@ fn sessionbuf_slice_clamps_after_eviction() {
 #[test]
 fn serial_pool_new() {
     // SerialPool is always compiled (not feature-gated)
-    let pool = vale_command::tools::serial::SerialPool::new(115200, 1000);
+    let pool = vale_agent::tools::serial::SerialPool::new(115200, 1000);
     let ports = pool.list_open_ports();
     assert!(ports.is_empty()); // no ports open yet
 }
 
 #[test]
 fn serial_pool_list_ports_does_not_panic() {
-    let pool = vale_command::tools::serial::SerialPool::new(115200, 1000);
+    let pool = vale_agent::tools::serial::SerialPool::new(115200, 1000);
     // list_ports may fail if no serial ports exist, but shouldn't panic
     let _ = pool.list_ports();
 }

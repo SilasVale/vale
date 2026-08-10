@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use serde_json::{json, Value};
 
-use vale_command_core::{AgentEvent, DeviceError, EventBus, ToolDef};
+use vale_agent_core::{AgentEvent, DeviceError, EventBus, ToolDef};
 use crate::plugins::{require_str, to_value_or_empty};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::{parse_serial_target, parse_ssh_target, TerminalManager};
@@ -640,7 +640,7 @@ mod tests {
     use crate::plugins::terminal::{DiagBuf, SessionStore};
     use crate::tools::serial::SerialPool;
     use crate::tools::terminal::TerminalManager;
-    use vale_command_core::AppEventBus;
+    use vale_agent_core::AppEventBus;
 
     /// Build the tool list with a caller-controlled output buffer so tests can
     /// pre-seed session output and exercise terminal_read / terminal_screen.

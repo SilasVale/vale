@@ -2,8 +2,8 @@
 //! rmcp client. Exercises the whole dispatch path (HTTP → DeviceServer →
 //! PluginRegistry → tool handler) with zero hardware.
 
-use vale_command::state::AppState;
-use vale_command_core::Config;
+use vale_agent::state::AppState;
+use vale_agent_core::Config;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock};
 use rmcp::ServiceExt;
 use rmcp::transport::{
@@ -20,7 +20,7 @@ async fn start_server(auth_token: Option<&str>) -> String {
     cfg.server.port = 0; // ephemeral — bind() reports the actual port
     cfg.server.device_token = auth_token.map(|t| t.to_string());
     let state = Arc::new(AppState::new(cfg.clone()));
-    let (addr, _handle) = vale_command::mcp::bind(cfg, state, CancellationToken::new())
+    let (addr, _handle) = vale_agent::mcp::bind(cfg, state, CancellationToken::new())
         .await
         .expect("bind server");
     format!("http://{addr}/mcp")
