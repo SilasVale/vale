@@ -2,12 +2,12 @@
 #![windows_subsystem = "windows"]
 //!
 //! Windows-native tray app (no window) for the headless vale-agent server,
-//! which runs as the `ValeCommand` scheduled task (same install dir as this
+//! which runs as the `ValeAgent` scheduled task (same install dir as this
 //! exe). Features:
 //!
 //!   - Status: server running / subdomain / masked auth token (read from
 //!     config.yaml in the install dir)
-//!   - Switch: start / stop / restart the ValeCommand scheduled task
+//!   - Switch: start / stop / restart the ValeAgent scheduled task
 //!   - Copy MCP config (Claude Code snippet) to the clipboard
 //!   - Open the console (gateway device page) in the default browser
 //!   - Open a local terminal (PowerShell in the install dir) for logs/testing
@@ -112,7 +112,7 @@ fn server_running(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
 }
 
-/// Launch a `schtasks` command that controls the ValeCommand scheduled task.
+/// Launch a `schtasks` command that controls the ValeAgent scheduled task.
 fn schtasks(args: &[&str]) {
     let _ = Command::new("schtasks").args(args).spawn();
 }
@@ -131,7 +131,7 @@ fn copy_mcp_config() {
         return;
     }
     let json = format!(
-        "{{ \"mcpServers\": {{ \"vale-command\": {{ \"type\": \"http\", \
+        "{{ \"mcpServers\": {{ \"vale-agent\": {{ \"type\": \"http\", \
          \"url\": \"https://{host}/mcp\", \"headers\": {{ \"Authorization\": \
          \"Bearer {token}\" }} }} }} }}"
     );
@@ -166,15 +166,15 @@ fn open_local_terminal() {
 /// Restart the scheduled task: end, wait for the shutdown, run again.
 fn restart_task() {
     let _ = Command::new("cmd")
-        .args(["/c", "schtasks /End /TN ValeCommand & timeout /t 2 /nobreak >nul & schtasks /Run /TN ValeCommand"])
+        .args(["/c", "schtasks /End /TN ValeAgent & timeout /t 2 /nobreak >nul & schtasks /Run /TN ValeAgent"])
         .spawn();
 }
 
-/// Full auto-upgrade: check the download server for a newer vale-command and,
+/// Full auto-upgrade: check the download server for a newer vale-agent and,
 /// if one exists, download the installer into the install dir and run it
 /// silently (elevated via the runas verb). The silent installer kills
-/// vale-command.exe, copies the new binaries and relaunches a fresh tray via
-/// the ValeCommandTray scheduled task; this tray exits right after spawning
+/// vale-agent.exe, copies the new binaries and relaunches a fresh tray via
+/// the ValeAgentTray scheduled task; this tray exits right after spawning
 /// the PowerShell so the old instance never lingers next to the relaunched
 /// one. On any failure (user declined, network, UAC cancel, installer error)
 /// the PowerShell script restores the tray itself.
@@ -182,7 +182,7 @@ fn restart_task() {
 /// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
 /// bumped alongside command/Cargo.toml and index/src/index.js when a new
 /// installer is shipped.
-const LOCAL_VERSION: &str = "0.8.6";
+const LOCAL_VERSION: &str = "0.8.7";
 const VERSION_URL: &str = "https://agent.saisi.online/api/version";
 
 fn check_for_update() {
@@ -195,7 +195,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $log = Join-Path '{2}' 'vale-update.log'
 function Log($m) {{ try {{ (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m | Out-File -FilePath $log -Append -Encoding utf8 }} catch {{}} }}
 function Restore-Tray {{
-  try {{ schtasks /Run /TN ValeCommandTray 2>$null | Out-Null; Start-Sleep -Seconds 1 }} catch {{}}
+  try {{ schtasks /Run /TN ValeAgentTray 2>$null | Out-Null; Start-Sleep -Seconds 1 }} catch {{}}
   if (-not (Get-Process vale-tray -ErrorAction SilentlyContinue)) {{
     Start-Process -FilePath '{2}\vale-tray.exe'
   }}
@@ -219,10 +219,10 @@ try {{
     "Vale Agent 更新", 'OK')
   # The old tray must be gone before the installer relaunches a fresh one,
   # otherwise two tray icons appear. Kill it now — the installer restarts it
-  # via the ValeCommandTray scheduled task once the new binaries are in place.
+  # via the ValeAgentTray scheduled task once the new binaries are in place.
   Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
   Start-Sleep -Milliseconds 500
-  $installer = Join-Path '{2}' 'ValeCommand-Setup.exe'
+  $installer = Join-Path '{2}' 'ValeAgent-Setup.exe'
   Remove-Item $installer -Force -ErrorAction SilentlyContinue
   Log 'update: downloading'
   Invoke-WebRequest -Uri $j.download -OutFile $installer -TimeoutSec 300
@@ -280,7 +280,7 @@ impl TrayUi {
 
 /// Build the tray icon + menu, retrying until Explorer's tray area accepts it.
 ///
-/// The `ValeCommandTray` at-logon scheduled task can fire before Explorer's
+/// The `ValeAgentTray` at-logon scheduled task can fire before Explorer's
 /// tray exists (Shell_NotifyIcon then fails). The old `.expect()` on the first
 /// attempt killed the process silently, so the icon never came back after a
 /// reboot. Retry for up to ~60s instead.
@@ -355,7 +355,7 @@ fn single_instance_guard() -> Result<(), ()> {
     use std::ffi::c_void;
     use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
     use windows_sys::Win32::System::Threading::CreateMutexW;
-    const MUTEX_NAME: &str = "Local\\ValeCommandTraySingleInstance";
+    const MUTEX_NAME: &str = "Local\\ValeAgentTraySingleInstance";
     let wide: Vec<u16> = MUTEX_NAME.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let h = CreateMutexW(null(), 0, wide.as_ptr());
@@ -411,8 +411,8 @@ fn main() {
                     "open_console" => open_url(&console_url()),
                     "open_terminal" => open_local_terminal(),
                     "check_update" => check_for_update(),
-                    "start" => schtasks(&["/Run", "/TN", "ValeCommand"]),
-                    "stop" => schtasks(&["/End", "/TN", "ValeCommand"]),
+                    "start" => schtasks(&["/Run", "/TN", "ValeAgent"]),
+                    "stop" => schtasks(&["/End", "/TN", "ValeAgent"]),
                     "restart" => restart_task(),
                     "quit" => std::process::exit(0),
                     _ => {}
