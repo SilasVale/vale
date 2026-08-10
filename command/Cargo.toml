@@ -4,7 +4,7 @@ default-members = ["."]
 resolver = "2"
 
 [workspace.package]
-version = "0.9.2"
+version = "0.9.3"
 
 [package]
 name = "vale-agent"
@@ -42,6 +42,10 @@ keyring = { version = "2", optional = true }
 
 serde_yaml = "0.9"
 
+# HTTP client for the update plugin (agent_update MCP tool). rustls-tls keeps the
+# cross-compile pure-Rust — native-tls pulls Windows schannel and breaks xwin.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
 # Windows-only: lets the headless binary register itself as the `ValeCommand`
 # Windows service (SCM protocol). Ignored entirely on Linux/macOS builds.
 [target.'cfg(windows)'.dependencies]
@@ -49,7 +53,7 @@ windows-service = "0.7"
 
 [dev-dependencies]
 rmcp = { version = "2", features = ["client", "transport-streamable-http-client-reqwest"] }
-reqwest = "0.12"
+
 
 [features]
 default = []
