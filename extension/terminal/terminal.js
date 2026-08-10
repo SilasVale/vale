@@ -348,6 +348,7 @@ function adoptSession(sid, label, idbRec = null) {
   };
   sessions.set(sid, s); // before any await — activate() and the poll guard see it immediately
   s.tab = renderTab(sid, label);
+  callTool("terminal_diag_write", { line: `adopt: ${sid} (${s.kind}:${label})` }).catch(() => {});
   backfillAndAttach(sid, s, null);
 }
 
@@ -574,8 +575,16 @@ async function pollSessions() {
   if (polling) return;
   polling = true;
   try {
-    const list = await callTool("terminal_list").catch(() => null);
+    const list = await callTool("terminal_list").catch((e) => {
+      console.error("[vale-term] terminal_list failed:", e);
+      callTool("terminal_diag_write", { line: `poll ERROR: ${String(e && e.message || e)}` }).catch(() => {});
+      return null;
+    });
+    console.log("[vale-term] poll terminal_list:", list ? list.map(s => `${s.id}(${s.kind}:${s.label})`) : "NULL/FAILED");
     if (!Array.isArray(list)) return; // network blip → silent retry
+    callTool("terminal_diag_write", {
+      line: `poll ok: ${list.map(s => `${s.id}(${s.kind})`).join(",") || "(empty)"} | sessions=${[...sessions.keys()].join(",") || "(none)"}`,
+    }).catch(() => {});
     const current = new Set();
     // Fetch saved records in parallel — a serial await per session would stall
     // the poll on slow IDB.
