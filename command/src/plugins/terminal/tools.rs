@@ -124,7 +124,7 @@ fn tool_write(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     ToolDef::new(
         "terminal_write",
-        "Write data to a terminal session.",
+        "Write raw data to a terminal session. Sends bytes exactly as given. For shell commands on Unix devices (serial/ssh to Linux), the command must end with a newline (\\n) — otherwise the shell joins it with whatever is typed next, mangling both. For Windows PowerShell use \\r\\n. Control characters (e.g. \\u0003 for Ctrl+C) are sent verbatim and need no newline.",
         json!({"type":"object","properties":{"session_id":{"type":"string"},"data":{"type":"string"}},"required":["session_id","data"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
