@@ -69,7 +69,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
   <p class="lede">Vale Command is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel at its own subdomain and is managed from the <a href="${consoleUrl}">Vale console</a> (admin login).</p>
 
   <div class="install">
-    <a class="install-btn" href="/vale-command/ValeCommand-Setup.exe" download>Download installer ↓</a>
+    <a class="install-btn" href="/vale-agent/ValeAgent-Setup.exe" download>Download installer ↓</a>
     <span class="install-note">On the Windows machine connected to the device, download and run the installer (pick a directory; it installs a tray icon).</span>
   </div>
 
@@ -97,7 +97,7 @@ export default {
       return new Response(
         JSON.stringify({
           version: "0.8.6",
-          download: "https://agent.saisi.online/vale-command/ValeCommand-Setup.exe",
+          download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );

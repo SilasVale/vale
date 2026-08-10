@@ -31,8 +31,8 @@ use vale_agent_core::EventBus;
 /// Minimal self-contained status page — the panel SPA is retired, but the
 /// device URL should still answer something readable in a browser.
 const STATUS_PAGE: &str = concat!(
-    "<!doctype html><html><head><meta charset=\"utf-8\"><title>vale-command</title></head>",
-    "<body style=\"font-family:monospace;margin:2rem\"><h1>vale-command</h1>",
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>vale-agent</title></head>",
+    "<body style=\"font-family:monospace;margin:2rem\"><h1>vale-agent</h1>",
     "<p>MCP endpoint: <code>/mcp</code></p>",
     "<p>Tool API: <code>/api/tools/{name}</code></p>",
     "<p>Status: <code>/api/status</code></p>",
@@ -573,7 +573,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
         let text = String::from_utf8_lossy(&body);
-        assert!(text.contains("vale-command"));
+        assert!(text.contains("vale-agent"));
     }
 
     #[tokio::test]
