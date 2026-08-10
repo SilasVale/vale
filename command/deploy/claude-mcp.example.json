@@ -2,7 +2,7 @@
   "mcpServers": {
     "vale-command": {
       "type": "http",
-      "url": "https://d1.command.saisi.online/mcp",
+      "url": "https://d1.agent.saisi.online/mcp",
       "headers": {
         "Authorization": "Bearer <TOKEN_FROM_config.yaml>"
       }

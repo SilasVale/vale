@@ -37,7 +37,7 @@ the token and Claude Code config.
 Multi-device: the script accepts `-Hostname`; pass it via a scriptblock
 (`irm | iex` can't take parameters):
 ```powershell
-& ([scriptblock]::Create((irm "https://<download-host>/vale-command/vale-command-setup.ps1"))) -Hostname d2.command.saisi.online
+& ([scriptblock]::Create((irm "https://<download-host>/vale-command/vale-command-setup.ps1"))) -Hostname d2.agent.saisi.online
 ```
 
 ## Directory

@@ -867,7 +867,7 @@ function validateDevice(body) {
   const hostname = String(body?.hostname || "").trim();
   const token = String(body?.token || "").trim();
   if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) throw new Error("Device name must be 1-32 chars: letters/digits/_ -");
-  if (!/^([a-z0-9-]+\.)+[a-z0-9-]+$/i.test(hostname)) throw new Error("hostname must be a domain like d1.command.saisi.online");
+  if (!/^([a-z0-9-]+\.)+[a-z0-9-]+$/i.test(hostname)) throw new Error("hostname must be a domain like d1.agent.saisi.online");
   if (token.length < 8) throw new Error("Token must be at least 8 chars");
   return { name, hostname, token };
 }

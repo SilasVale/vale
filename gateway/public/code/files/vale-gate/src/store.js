@@ -317,7 +317,7 @@ export async function createInvite(env) {
  *
  * devices:v1 → JSON array of { name, hostname, token }
  *   name     → device id (also the console key), e.g. "d1"
- *   hostname → the device's public host, e.g. "d1.command.saisi.online"
+ *   hostname → the device's public host, e.g. "d1.agent.saisi.online"
  *   token    → the vale-command Bearer token (MCP + panel auth). Stored here so
  *              the console can show the MCP config and the proxy can inject it
  *              server-side; NEVER auto-dispensed to non-admin callers.
