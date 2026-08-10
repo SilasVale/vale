@@ -29,6 +29,15 @@
       "token.regenerated": "已生成新 Token，旧 Token 已失效。请同步更新客户端配置。",
       "token.regenerateFail": "重生成失败",
       "routes.title": "路由状态", "routes.lede": "请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。",
+      "route.title": "渠道切换",
+      "route.desc": "Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。未选择时默认走 <code>ds/deepseek-v4-flash</code>。",
+      "route.use": "使用",
+      "route.current": "当前",
+      "route.bad": "异常",
+      "route.auto": "恢复默认渠道（ds）",
+      "route.switched": "已切换，下次请求生效",
+      "route.fail": "切换失败",
+      "route.loadFail": "渠道状态加载失败",
       "keys.title": "密钥管理", "keys.lede": "填入你自己在对应服务商申请的 API key，网关转发时只使用你自己的 key，各算各的额度。",
       "key.configured": "已配置", "key.notConfigured": "未配置",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "api.deepseek.com 申请",
@@ -67,7 +76,15 @@
       "devices.regKeyDesc": "下载安装程序 → 生成注册码 → Windows 上设置 <code>$env:VALE_REG_KEY</code> 后安装，装完自动登记到下方列表（无需手动抄 token）。",
       "devices.keyGenerated": "注册码（一次性，装完即焚）：{code}",
       "devices.regKeyCmd": "在 Windows 安装时先设置这个环境变量，再运行安装：",
-      "devices.genKeyFail": "生成失败",
+      "devices.genKeyFail": "生成失败", "devices.keyCopied": "注册码已复制",
+      "devices.online": "在线", "devices.offline": "离线",
+      "devices.pair": "配对扩展", "devices.pairFor": "设备：{name}",
+      "devices.pairHint": "在扩展 popup 输入此码完成配对。一次性，10 分钟内有效。",
+      "devices.pairCopied": "已复制配对码", "devices.pairFail": "生成配对码失败",
+      "gwMcp.title": "网关 MCP 配置",
+      "gwMcp.desc": "Claude Code 通过本配置接入网关（浏览器 / 终端工具），使用你当前账户的 token。",
+      "gwMcp.copy": "复制网关 MCP 配置",
+      "ext.title": "安装浏览器扩展", "ext.download": "下载扩展 ↓", "ext.desc": "在 Windows 设备的 Chrome/Edge 里加载此扩展，AI 才能操作设备浏览器。三步：下载 zip → 解压 → chrome://extensions 打开「开发者模式」→「加载已解压的扩展程序」选解压文件夹。装好后在本页对应设备点「配对扩展」。",
       "loading": "加载中…", "err.loadRoutes": "路由信息加载失败",
     },
     en: {
@@ -90,6 +107,15 @@
       "token.regenerated": "New token generated; the old one is invalid. Update your client configs.",
       "token.regenerateFail": "Regenerate failed",
       "routes.title": "Routing status", "routes.lede": "Model names are routed by prefix; no prefix defaults to DeepSeek official.",
+      "route.title": "Channel switch",
+      "route.desc": "Set the Claude Code model to <code>auto</code>, then flip channels here — no restart needed. Defaults to <code>ds/deepseek-v4-flash</code> when unset.",
+      "route.use": "Use",
+      "route.current": "Current",
+      "route.bad": "Down",
+      "route.auto": "Restore default (ds)",
+      "route.switched": "Switched — takes effect on the next request",
+      "route.fail": "Switch failed",
+      "route.loadFail": "Failed to load channel status",
       "keys.title": "API Keys", "keys.lede": "Add your own API keys from each provider; the gateway only uses your keys, so each user pays for their own usage.",
       "key.configured": "Configured", "key.notConfigured": "Not configured",
       "key.ds.backend": "DeepSeek", "key.ds.hint": "from api.deepseek.com",
@@ -128,7 +154,15 @@
       "devices.regKeyDesc": "Download the installer → generate a key → set <code>$env:VALE_REG_KEY</code> on Windows and install. The device registers itself below — no token copy-paste.",
       "devices.keyGenerated": "Registration key (one-time, consumed on use): {code}",
       "devices.regKeyCmd": "Set this env var on the Windows machine before install, then run:",
-      "devices.genKeyFail": "Generation failed",
+      "devices.genKeyFail": "Generation failed", "devices.keyCopied": "Registration key copied",
+      "devices.online": "Online", "devices.offline": "Offline",
+      "devices.pair": "Pair extension", "devices.pairFor": "Device: {name}",
+      "devices.pairHint": "Enter this code in the extension popup to pair. One-time, valid for 10 minutes.",
+      "devices.pairCopied": "Pairing code copied", "devices.pairFail": "Failed to generate pairing code",
+      "gwMcp.title": "Gateway MCP config",
+      "gwMcp.desc": "Claude Code connects to the gateway (browser / terminal tools) with this config, using your current account's token.",
+      "gwMcp.copy": "Copy gateway MCP config",
+      "ext.title": "Install browser extension", "ext.download": "Download extension ↓", "ext.desc": "Load this extension in the device's Chrome/Edge so the AI can operate the device browser. Three steps: download zip → unzip → chrome://extensions enable Developer mode → Load unpacked → pick the folder. Then click Pair on the device below.",
       "loading": "Loading…", "err.loadRoutes": "Failed to load routes",
     },
   };
@@ -276,6 +310,7 @@
     if (name === "routes") loadRoutesPanel();
     if (name === "users") loadUsers();
     if (name === "devices") loadDevices();
+    else stopDevicesPoll(); // 离开设备面板就停在线轮询
   }
 
   /* ============ overview ============ */
@@ -403,14 +438,85 @@
   }
 
   /* ============ routes panel ============ */
+  // 渠道切换：/api/health 状态 + /api/me/route 当前选择；点 [使用] → PUT。
+  // 卡片复用 key-card 的样式，视觉与密钥管理页一致。
+  function routeCardHTML(ch, current) {
+    const status = ch.ok
+      ? `<span class="badge ok">${t("route.use")}</span>`
+      : `<span class="badge off">${esc(ch.reason || t("route.bad"))}</span>`;
+    const isCur = current === ch.model;
+    return `
+      <div class="key-card" data-model="${esc(ch.model)}">
+        <div class="top">
+          <div>
+            <div class="key-name">${esc(ch.id + "/")}${isCur ? ` <span class="badge ok">${t("route.current")}</span>` : ""}</div>
+            <div class="key-desc">${esc(ch.model)}</div>
+          </div>
+          ${status}
+        </div>
+        <div class="key-actions">
+          <button class="btn-primary btn-mini" data-act="use" ${ch.ok ? "" : "disabled"}>${t("route.use")}</button>
+        </div>
+      </div>`;
+  }
+
+  async function loadRouteCards() {
+    const box = $("#route-cards");
+    if (!box) return;
+    let current = null;
+    try {
+      const r = await api("/api/me/route");
+      if (r.res.ok) current = r.data?.model ?? null;
+    } catch {}
+    const health = await api("/api/health");
+    if (!health.res.ok || !Array.isArray(health.data?.channels)) {
+      box.textContent = t("route.loadFail");
+      return;
+    }
+    box.innerHTML = health.data.channels.map((c) => routeCardHTML(c, current)).join("");
+    // [使用] 按钮是动态渲染的，委托到容器；只绑定一次，避免每次重渲染叠加 listener。
+    if (!box.dataset.bound) {
+      box.dataset.bound = "1";
+      box.addEventListener("click", async (ev) => {
+        const btn = ev.target.closest("button[data-act='use']");
+        if (!btn || btn.disabled) return;
+        const card = btn.closest(".key-card");
+        const model = card?.dataset.model;
+        if (!model) return;
+        const r = await api("/api/me/route", { method: "PUT", body: JSON.stringify({ model }) });
+        if (r.res.ok) { toast(t("route.switched")); await loadRouteCards(); }
+        else toast(t("route.fail"), true);
+      });
+    }
+  }
+
+  async function clearRoute() {
+    const r = await api("/api/me/route", { method: "PUT", body: JSON.stringify({ model: null }) });
+    if (r.res.ok) { toast(t("route.switched")); await loadRouteCards(); }
+    else toast(t("route.fail"), true);
+  }
+
   async function loadRoutesPanel() {
-    const { routes, apiHost } = await loadRoutes();
-    $("#routes-switchboard").innerHTML = switchboardHTML(routes);
+    const { apiHost } = await loadRoutes();
     const ex = $("#client-example");
     if (ex) {
-      const base = apiHost ? `https://${apiHost}` : "https://<your-api-host>";
-      ex.textContent = ex.textContent.replace(/https:\/\/<your-api-host>/g, base);
+      // 用当前账户的真实值渲染客户端接入示例（base + 网关 token + auto[1m]）
+      const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
+      const token = me?.token || "<your gateway token>";
+      const modelKeys = [
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_SMALL_FAST_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+      ];
+      const env = { ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: token };
+      for (const k of modelKeys) env[k] = "auto[1m]";
+      ex.textContent = JSON.stringify({ env }, null, 2);
     }
+    await loadRouteCards();
   }
 
   /* ============ users (admin) ============ */
@@ -491,6 +597,26 @@
   }
 
   /* ============ devices (admin) ============ */
+  let devicesPollTimer = null;
+
+  function stopDevicesPoll() {
+    if (devicesPollTimer) { clearInterval(devicesPollTimer); devicesPollTimer = null; }
+  }
+
+  // 网关 MCP 配置：Claude Code → https://<console>/mcp（Bearer 当前用户 token）
+  function gwMcpSnippet() {
+    const snippet = {
+      mcpServers: {
+        "vale-gate": {
+          type: "http",
+          url: location.origin + "/mcp",
+          headers: { Authorization: `Bearer ${me?.token || ""}` },
+        },
+      },
+    };
+    return JSON.stringify(snippet, null, 2);
+  }
+
   async function loadCfToken() {
     const { res, data } = await api("/api/admin/cloudflare-token");
     if (res.ok && data) {
@@ -502,10 +628,17 @@
 
   async function loadDevices() {
     loadCfToken();
+    // 刷新一次 /api/me，网关 MCP 配置用当前用户 token
+    const m = await api("/api/me");
+    if (m.res.ok) me = m.data;
+    const gwEl = $("#gw-mcp-json");
+    if (gwEl) gwEl.textContent = gwMcpSnippet();
+
     const { res, data } = await api("/api/devices");
     if (!res.ok) return;
     const devices = data.devices || [];
     if (!devices.length) {
+      stopDevicesPoll();
       $("#devices-list").innerHTML = `<div class="note">${t("devices.empty")}</div>`;
       return;
     }
@@ -513,22 +646,58 @@
       <div class="user-row" data-name="${esc(d.name)}">
         <div class="user-main">
           <span class="u-name">${esc(d.name)}</span>
+          <span class="badge offline" data-status=""><span class="dot"></span></span>
           <span class="u-sub mono">${esc(d.hostname)}</span>
           <span class="badge">${esc(d.token)}</span>
         </div>
         <div class="user-actions">
+          <button class="btn-ghost btn-mini" data-pair="${esc(d.name)}">${t("devices.pair")}</button>
           <a class="btn-ghost btn-mini" href="/api/devices/${encodeURIComponent(d.name)}/proxy/" target="_blank" rel="noopener">${t("devices.open")}</a>
           <button class="btn-ghost btn-mini" data-mcp="${esc(d.name)}">${t("devices.copyMcp")}</button>
           <button class="btn-danger btn-mini" data-del="${esc(d.name)}">${t("btn.clear")}</button>
         </div>
       </div>`).join("");
+    // 在线状态：进面板立即查一次，之后每 30s 轮询（离开面板时 stopDevicesPoll 停掉）
+    await loadDeviceStatus();
+    stopDevicesPoll();
+    devicesPollTimer = setInterval(loadDeviceStatus, 30000);
+  }
+
+  async function loadDeviceStatus() {
+    if ($("#view-app").hidden || $("#panel-devices").hidden) return;
+    const box = $("#devices-list");
+    if (!box || !box.querySelector(".user-row")) return;
+    const { res, data } = await api("/api/plugins/status");
+    if (!res.ok || !data?.devices) return;
+    for (const [name, st] of Object.entries(data.devices)) {
+      const row = box.querySelector(`.user-row[data-name="${name}"]`);
+      const badge = row?.querySelector("[data-status]");
+      if (!badge) continue;
+      const online = !!st.online;
+      badge.className = "badge " + (online ? "online" : "offline");
+      badge.innerHTML = `<span class="dot"></span>${online ? t("devices.online") : t("devices.offline")}`;
+    }
+  }
+
+  function showPairModal(name, code) {
+    $("#pair-device-name").textContent = t("devices.pairFor", { name });
+    $("#pair-code").textContent = code;
+    $("#pair-modal").hidden = false;
   }
 
   async function bindDevices() {
     const list = $("#devices-list");
     list.addEventListener("click", async (ev) => {
+      const pairBtn = ev.target.closest("button[data-pair]");
       const mcpBtn = ev.target.closest("button[data-mcp]");
       const delBtn = ev.target.closest("button[data-del]");
+      if (pairBtn) {
+        const name = pairBtn.dataset.pair;
+        const { res, data } = await api("/api/plugins/pair", { method: "POST", body: JSON.stringify({ device: name }) });
+        if (res.ok && data.code) showPairModal(name, data.code);
+        else toast(data?.error?.message || t("devices.pairFail"), true);
+        return;
+      }
       if (mcpBtn) {
         const name = mcpBtn.dataset.mcp;
         const { res, data } = await api(`/api/devices/${encodeURIComponent(name)}/mcp`);
@@ -549,6 +718,21 @@
       }
     });
 
+    $("#btn-gw-mcp").addEventListener("click", async () => {
+      if (!me?.token) return;
+      try { await navigator.clipboard.writeText(gwMcpSnippet()); toast(t("devices.mcpCopied")); }
+      catch { toast(t("devices.mcpCopied") + " ⚠", true); }
+    });
+
+    $("#btn-pair-close").addEventListener("click", () => { $("#pair-modal").hidden = true; });
+    $("#pair-modal").addEventListener("click", (ev) => { if (ev.target === $("#pair-modal")) $("#pair-modal").hidden = true; });
+    $("#btn-pair-copy").addEventListener("click", async () => {
+      const code = $("#pair-code").textContent;
+      if (!code) return;
+      try { await navigator.clipboard.writeText(code); toast(t("devices.pairCopied")); }
+      catch { toast(t("token.copyFail"), true); }
+    });
+
     $("#btn-dev-regkey").addEventListener("click", async () => {
       const btn = $("#btn-dev-regkey");
       btn.disabled = true;
@@ -558,8 +742,15 @@
         const box = $("#regkey-box");
         box.innerHTML = `
           <div class="note tip">${t("devices.keyGenerated", { code: `<code class="mono">${esc(data.key)}</code>` })}</div>
+          <div class="key-edit-row" style="margin-top:8px">
+            <code class="mono" id="regkey-value">${esc(data.key)}</code>
+            <button id="btn-regkey-copy" class="btn-ghost" data-i18n="btn.copy">复制</button>
+          </div>
           <div class="muted" style="margin-top:8px">${t("devices.regKeyCmd")}</div>
           <div class="key-edit-row"><code class="mono">$env:VALE_REG_KEY = "${esc(data.key)}"; irm https://command.saisi.online/vale-command/vale-command-setup.ps1 | iex</code></div>`;
+        $("#btn-regkey-copy").addEventListener("click", () => {
+          navigator.clipboard?.writeText(data.key).then(() => toast(t("devices.keyCopied"))).catch(() => {});
+        });
         navigator.clipboard?.writeText(data.key).catch(() => {});
         toast(t("devices.genKey"));
       } else {
@@ -676,6 +867,7 @@
     bindKeyActions();
     bindUsers();
     bindDevices();
+    $("#btn-route-auto")?.addEventListener("click", clearRoute);
   }
 
   document.addEventListener("DOMContentLoaded", () => {

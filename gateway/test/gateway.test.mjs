@@ -1,11 +1,8 @@
 // Full-path /v1/messages gateway tests — mock KV + stubbed fetch, no Cloudflare calls.
 //
-// Exercises handleGateway's routing for the og/ channel. As of 2026-08-07 the
-// native-Anthropic passthrough (zen/go/v1/messages) is DISABLED — zen rejects
-// both Bearer and x-api-key there with this user's key, while chat/completions
-// works. So every og model goes through the OpenAI translate path. The passthrough
-// gate (OG_NATIVE_ANTHROPIC) stays as a one-line switch for when zen's messages
-// endpoint becomes usable.
+// Exercises handleGateway's routing for the og/ channel. deepseek-v4-flash is
+// Anthropic-native on zen/go/v1/messages (x-api-key auth) and bypasses the OpenAI
+// translation; other og models (minimax-m3, mimo-v2.5) keep the translate path.
 //
 // store.js keeps a module-level 24h cache, so every test uses a distinct token/user.
 import test from "node:test";
@@ -68,18 +65,20 @@ const post = (env, token, body, path = "/v1/messages") =>
     new URL(`https://g${path}`),
   );
 
-// ── og models all use the translate path (native passthrough disabled) ──
+// ── og models: deepseek-v4-flash native Anthropic passthrough, others translate ──
 
-test("og/deepseek-v4-flash goes to chat/completions with the OpenCode Go key", async () => {
+test("og/deepseek-v4-flash goes to zen /v1/messages with x-api-key (native Anthropic)", async () => {
   const { env, token } = gwEnv();
   let seen;
-  const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+  const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
     post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
   );
-  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
-  // The translate branch passes a plain-object header (not a Headers instance).
+  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/messages");
+  // Native passthrough sends x-api-key (zen's messages endpoint), never Bearer.
+  const apiKey = seen.init.headers.get ? seen.init.headers.get("x-api-key") : seen.init.headers["x-api-key"];
+  assert.equal(apiKey, "sk-og");
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
-  assert.equal(auth, "Bearer sk-og");
+  assert.equal(auth, null); // no Bearer on the native path
   const sent = JSON.parse(seen.init.body);
   assert.equal(sent.model, "deepseek-v4-flash"); // og/ prefix stripped
   assert.equal(sent.stream, false);
@@ -114,6 +113,33 @@ test("og/mimo-v2.5 keeps the translate path (chat/completions, Anthropic JSON ou
   const body = await res.json();
   assert.equal(body.type, "message");
   assert.equal(body.content[0].text, "ok");
+});
+
+test("og native: image request forwards the preprocessed body (described, no raw image)", async () => {
+  const { env, token } = gwEnv();
+  const calls = [];
+  await withFetch(async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body), headers: init.headers });
+    if (calls.length === 1) {
+      // describeImage → og/mimo-v2.5 vision model (translate)
+      return new Response(JSON.stringify({ choices: [{ message: { content: "a screenshot" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "og/deepseek-v4-flash", max_tokens: 10, stream: false,
+      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGk=" } }] }],
+    }),
+  );
+  assert.equal(calls.length, 2); // describe + native main
+  const main = calls[1];
+  assert.equal(main.url, "https://opencode.ai/zen/go/v1/messages");
+  const apiKey = main.headers.get ? main.headers.get("x-api-key") : main.headers["x-api-key"];
+  assert.equal(apiKey, "sk-og");
+  const content = main.body.messages[0].content;
+  assert.ok(content.every((b) => b.type !== "image"), "image must be described before native passthrough");
+  assert.ok(content.some((b) => b.type === "text" && b.text.includes("a screenshot")), "described text present");
+  assert.equal(main.body.model, "deepseek-v4-flash");
 });
 
 // ── count_tokens for og (translate route estimates, never hits upstream) ──
@@ -154,7 +180,7 @@ test("og translate timeout: 502, breaker NOT tripped (slow ≠ dead)", async () 
   assert.equal(trips.length, 0); // timeout is zen's normal slow behavior — must NOT trip
 });
 
-test("og translate network error: 502 and trips the breaker exactly once", async () => {
+test("og translate network error: 502 and counts a breaker failure (1 of 3)", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips });
   const res = await withFetch(async () => { throw new TypeError("fetch failed"); }, () =>
@@ -162,10 +188,82 @@ test("og translate network error: 502 and trips the breaker exactly once", async
   );
   assert.equal(res.status, 502);
   assert.match((await res.json()).error.message, /network error/);
-  assert.equal(trips.length, 1); // unreachable → trip
+  assert.equal(trips.length, 1); // one failure recorded — the DO opens only at 3
 });
 
-test("og translate fast 500: retried via fetchZenWithRetry, breaker NOT tripped", async () => {
+test("og translate success resets the breaker failure count", async () => {
+  const trips = [];
+  const resets = [];
+  const { env, token } = gwEnv({ trips });
+  // Track /reset calls on the breaker stub.
+  env.BREAKER.get = () => ({
+    fetch: async (req) => {
+      const u = typeof req === "string" ? req : String(req?.url || "");
+      if (u.endsWith("/trip")) trips?.push(u);
+      if (u.endsWith("/reset")) resets.push(u);
+      return new Response("0");
+    },
+  });
+  let n = 0;
+  const res = await withFetch(async () => (++n === 1 ? new Response("boom", { status: 500 }) : new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } })), () =>
+    post(env, token, { model: "og/mimo-v2.5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(trips.length, 0); // 500 is retried, never a breaker failure
+  assert.equal(resets.length, 1); // success → count reset
+});
+
+// ── max_tokens floor on the client-facing translate path ───────
+
+test("og translate: small client max_tokens is floored to 8000", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  await withFetch(async (url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+    post(env, token, { model: "og/mimo-v2.5", max_tokens: 300, stream: false, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(sent.max_tokens, 8000); // 300 < floor → raised
+});
+
+test("og translate: max_tokens above floor passes through unchanged", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  await withFetch(async (url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+    post(env, token, { model: "og/mimo-v2.5", max_tokens: 10000, stream: false, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(sent.max_tokens, 10000);
+});
+
+test("og translate: no client max_tokens stays absent (no default invented)", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  await withFetch(async (url, init) => { sent = JSON.parse(init.body); return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+    post(env, token, { model: "og/mimo-v2.5", stream: false, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(sent.max_tokens, undefined);
+});
+
+test("og translate: image describe keeps its own 1500 budget (floor is client-path only)", async () => {
+  const { env, token } = gwEnv();
+  const calls = [];
+  await withFetch(async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    if (calls.length === 1) {
+      // describeImage → og/mimo-v2.5 vision model
+      return new Response(JSON.stringify({ choices: [{ message: { content: "a screenshot" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "og/mimo-v2.5", max_tokens: 300, stream: false,
+      messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGk=" } }] }],
+    }),
+  );
+  assert.equal(calls.length, 2); // describe + main
+  assert.equal(calls[0].max_tokens, 1500); // internal describe budget untouched
+  assert.equal(calls[1].max_tokens, 8000); // client path floored
+});
+
+test("og translate fast 500: retried via fetchWithRetry, breaker NOT tripped", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips, timeout: 1000 });
   let n = 0;
@@ -175,6 +273,50 @@ test("og translate fast 500: retried via fetchZenWithRetry, breaker NOT tripped"
   assert.equal(n, 2);
   assert.equal(trips.length, 0);
   assert.equal(res.status, 200);
+});
+
+// ── ds passthrough retries (absorb fast 5xx/429, never slow failures) ──
+
+test("ds passthrough: 500 then 200 → retried, client gets 200", async () => {
+  const { env, token } = gwEnv({ timeout: 1000 });
+  let n = 0;
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return ++n === 1
+      ? new Response("boom", { status: 500 })
+      : new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(n, 2);
+  assert.equal(res.status, 200);
+  assert.equal(seen.url, "https://api.deepseek.com/anthropic/v1/messages");
+  const body = await res.json();
+  assert.equal(body.content[0].text, "ok");
+});
+
+test("ds passthrough: 500 ×3 → upstream status passed through (not wrapped as 502)", async () => {
+  const { env, token } = gwEnv({ timeout: 1000 });
+  let n = 0;
+  const res = await withFetch(async () => (++n, new Response(JSON.stringify({ error: { message: "upstream busy" } }), { status: 500, headers: { "content-type": "application/json" } })), () =>
+    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(n, 3);
+  assert.equal(res.status, 500); // passthrough keeps the upstream status
+  const body = await res.json();
+  assert.equal(body.error.message, "upstream busy");
+});
+
+test("ds passthrough: timeout → 502 single attempt, no retry (slow ≠ flaky)", async () => {
+  const trips = [];
+  const { env, token } = gwEnv({ trips, timeout: 50 });
+  const res = await withFetch(never, () =>
+    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error.message, /timeout/);
+  assert.equal(trips.length, 0);
 });
 
 // ── web_search on an og model ──────────────────────────────────

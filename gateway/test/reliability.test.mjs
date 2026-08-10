@@ -7,7 +7,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   fetchWithTimeout,
-  fetchZenWithRetry,
+  fetchWithRetry,
+  ogTimeoutMs,
   estimateTokens,
   BreakerDO,
   toAnthropicResponse,
@@ -40,12 +41,12 @@ const never = (url, init) => new Promise((_, reject) => {
 });
 const reqInit = { method: "POST", body: "{}" };
 
-// ── fetchZenWithRetry: slow failures are NOT retried ────────────
+// ── fetchWithRetry: slow failures are NOT retried ────────────
 
 test("timeout: single attempt, no retry, detail says timeout", async () => {
   await withFetch(never, async () => {
     fetchCalls = 0;
-    const { response, detail } = await fetchZenWithRetry("https://zen.example", reqInit, { timeoutMs: 30 });
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 30 });
     assert.equal(response, null);
     assert.match(detail, /^timeout after 30ms$/);
     assert.equal(fetchCalls, 1); // slow failure → no retry
@@ -55,7 +56,7 @@ test("timeout: single attempt, no retry, detail says timeout", async () => {
 test("network error: single attempt, no retry", async () => {
   await withFetch(async () => { throw new TypeError("fetch failed"); }, async () => {
     fetchCalls = 0;
-    const { response, detail } = await fetchZenWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response, null);
     assert.match(detail, /^network error: /);
     assert.equal(fetchCalls, 1);
@@ -65,7 +66,7 @@ test("network error: single attempt, no retry", async () => {
 test("fast 500 ×3: retried, detail says retried 3/3", async () => {
   await withFetch(async () => ok(500, { error: { message: "Internal server error" } }), async () => {
     fetchCalls = 0;
-    const { response, detail } = await fetchZenWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response.status, 500);
     assert.match(detail, /upstream 500 \(retried 3\/3\)/);
     assert.equal(fetchCalls, 3);
@@ -76,7 +77,7 @@ test("500 then 200: retry succeeds, no detail", async () => {
   let n = 0;
   await withFetch(async () => (++n === 1 ? ok(500) : ok(200, { id: "x" })), async () => {
     fetchCalls = 0;
-    const { response, detail } = await fetchZenWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response.status, 200);
     assert.equal(detail, "");
     assert.equal(fetchCalls, 2);
@@ -86,7 +87,7 @@ test("500 then 200: retry succeeds, no detail", async () => {
 test("429 counts as retryable", async () => {
   await withFetch(async () => ok(429), async () => {
     fetchCalls = 0;
-    const { response } = await fetchZenWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
+    const { response } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response.status, 429);
     assert.equal(fetchCalls, 3);
   });
@@ -98,26 +99,58 @@ test("fetchWithTimeout throws TimeoutError on abort", async () => {
   });
 });
 
+// ── og upstream timeout: 120s default absorbs max-thinking requests ──
+
+test("ogTimeoutMs: default 120s, env override wins", () => {
+  assert.equal(ogTimeoutMs({}), 120000);
+  assert.equal(ogTimeoutMs({ OG_TIMEOUT_MS: "180000" }), 180000);
+  assert.equal(ogTimeoutMs({ OG_TIMEOUT_MS: "0" }), 120000); // invalid → default
+});
+
 // ── Circuit breaker (Durable Object — shared, strongly consistent) ──
 
-test("BreakerDO: trip → check open, expires after 60s, clear resets", async () => {
+function breakerDO() {
   const storage = {
     _m: new Map(),
     async get(k) { return this._m.get(k); },
     async put(k, v) { this._m.set(k, v); },
     async delete(k) { this._m.delete(k); },
   };
-  const do_ = new BreakerDO({ storage }, {});
+  return new BreakerDO({ storage }, {});
+}
+const check = async (do_) => (await (await do_.fetch(new Request("https://breaker/check"))).text());
+
+test("BreakerDO: single trip does NOT open (needs 3 consecutive failures)", async () => {
+  const do_ = breakerDO();
+  await do_.fetch(new Request("https://breaker/trip"));
+  assert.equal(await check(do_), "0");
+  await do_.fetch(new Request("https://breaker/trip"));
+  assert.equal(await check(do_), "0"); // still closed at 2
+  await do_.fetch(new Request("https://breaker/trip"));
+  assert.equal(await check(do_), "1"); // 3rd consecutive failure trips
+});
+
+test("BreakerDO: reset clears the failure count, no trip on later single failure", async () => {
+  const do_ = breakerDO();
+  await do_.fetch(new Request("https://breaker/trip"));
+  await do_.fetch(new Request("https://breaker/trip"));
+  await do_.fetch(new Request("https://breaker/reset")); // a success between failures
+  assert.equal(await check(do_), "0");
+  await do_.fetch(new Request("https://breaker/trip"));
+  assert.equal(await check(do_), "0"); // count restarted, 1/3
+});
+
+test("BreakerDO: trips after threshold, expires after 60s, clear resets count too", async () => {
+  const do_ = breakerDO();
   const realNow = Date.now;
   try {
-    assert.equal(await (await do_.fetch(new Request("https://breaker/check"))).text(), "0");
-    await do_.fetch(new Request("https://breaker/trip"));
-    assert.equal(await (await do_.fetch(new Request("https://breaker/check"))).text(), "1");
+    for (let i = 0; i < 3; i++) await do_.fetch(new Request("https://breaker/trip"));
+    assert.equal(await check(do_), "1");
     Date.now = () => realNow() + 61 * 1000; // degrade window over
-    assert.equal(await (await do_.fetch(new Request("https://breaker/check"))).text(), "0");
+    assert.equal(await check(do_), "0");
     await do_.fetch(new Request("https://breaker/clear"));
-    await do_.fetch(new Request("https://breaker/trip"));
-    assert.equal(await (await do_.fetch(new Request("https://breaker/check"))).text(), "1");
+    for (let i = 0; i < 3; i++) await do_.fetch(new Request("https://breaker/trip"));
+    assert.equal(await check(do_), "1");
   } finally {
     Date.now = realNow;
   }
