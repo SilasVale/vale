@@ -7,12 +7,12 @@ credentials-file: C:\Users\<you>\.cloudflared\<TUNNEL_ID>.json
 
 ingress:
   # Device 1 — points to vale-command headless running on this Windows box.
-  - hostname: d1.command.saisi.online
+  - hostname: d1.agent.saisi.online
     service: http://127.0.0.1:18080
   # Add one entry per device (each machine has its own vale-command instance):
-  # - hostname: d2.command.saisi.online
+  # - hostname: d2.agent.saisi.online
   #   service: http://127.0.0.1:18080
-  # - hostname: d3.command.saisi.online
+  # - hostname: d3.agent.saisi.online
   #   service: http://127.0.0.1:18080
 
   # Catch-all: 404 so unknown hostnames never hit the panel.

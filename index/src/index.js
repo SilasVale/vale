@@ -97,7 +97,7 @@ export default {
       return new Response(
         JSON.stringify({
           version: "0.8.5",
-          download: "https://command.saisi.online/vale-command/ValeCommand-Setup.exe",
+          download: "https://agent.saisi.online/vale-command/ValeCommand-Setup.exe",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );

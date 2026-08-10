@@ -180,7 +180,7 @@ fn restart_task() {
 /// bumped alongside command/Cargo.toml and index/src/index.js when a new
 /// installer is shipped.
 const LOCAL_VERSION: &str = "0.8.5";
-const VERSION_URL: &str = "https://command.saisi.online/api/version";
+const VERSION_URL: &str = "https://agent.saisi.online/api/version";
 
 fn check_for_update() {
     let dir = install_dir();

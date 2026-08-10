@@ -7,17 +7,17 @@
 #   - prints the token and Claude Code MCP config
 #
 # Run on the Windows machine as Administrator (interactive browser auth):
-#   irm https://command.saisi.online/vale-command/vale-command-setup.ps1 | iex
+#   irm https://agent.saisi.online/vale-command/vale-command-setup.ps1 | iex
 #
 # OR with a Cloudflare API token (no browser popup). The token only needs
 # Tunnel:Edit + Zone:DNS:Edit; it's used transiently at setup, never stored:
 #   $env:CLOUDFLARE_API_TOKEN = "cfat_..."
-#   irm https://command.saisi.online/vale-command/vale-command-setup.ps1 | iex
+#   irm https://agent.saisi.online/vale-command/vale-command-setup.ps1 | iex
 #
 param(
     [string]$Hostname = "",   # empty = auto-assign the next free dN subdomain
     [string]$InstallDir = "C:\vale-command",
-    [string]$Base = "https://command.saisi.online",
+    [string]$Base = "https://agent.saisi.online",
     [switch]$SkipDownload   # set when the NSIS installer bundles the exe
 )
 
@@ -68,13 +68,13 @@ if (-not $Hostname) {
     # 3. DNS probe for the next free dN (fresh install).
     if (-not $Hostname) {
         for ($n = 1; $n -lt 50; $n++) {
-            $cand = "d$n.command.saisi.online"
+            $cand = "d$n.agent.saisi.online"
             if (-not (Resolve-DnsName $cand -ErrorAction SilentlyContinue)) {
                 $Hostname = $cand
                 break
             }
         }
-        if (-not $Hostname) { $Hostname = "d1.command.saisi.online" }
+        if (-not $Hostname) { $Hostname = "d1.agent.saisi.online" }
     }
     Set-Content -Path $hostFile -Value $Hostname
 }
@@ -189,7 +189,7 @@ $tunnels = & $cloudflared tunnel list 2>&1 | Out-String
 $ns = [regex]::Matches($tunnels, "vale-command-d(\d+)") | ForEach-Object { [int]$_.Groups[1].Value }
 if ($ns.Count -gt 0) {
     $lowest = ($ns | Measure-Object -Minimum).Minimum
-    $Hostname = "d$lowest.command.saisi.online"
+    $Hostname = "d$lowest.agent.saisi.online"
     Set-Content -Path $hostFile -Value $Hostname
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a

@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "vale-command-index",
+  "name": "vale-dist",
   "main": "src/index.js",
   "compatibility_date": "2026-08-01",
   "workers_dev": false,

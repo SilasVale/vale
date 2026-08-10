@@ -747,7 +747,7 @@
             <button id="btn-regkey-copy" class="btn-ghost" data-i18n="btn.copy">复制</button>
           </div>
           <div class="muted" style="margin-top:8px">${t("devices.regKeyCmd")}</div>
-          <div class="key-edit-row"><code class="mono">$env:VALE_REG_KEY = "${esc(data.key)}"; irm https://command.saisi.online/vale-command/vale-command-setup.ps1 | iex</code></div>`;
+          <div class="key-edit-row"><code class="mono">$env:VALE_REG_KEY = "${esc(data.key)}"; irm https://agent.saisi.online/vale-command/vale-command-setup.ps1 | iex</code></div>`;
         $("#btn-regkey-copy").addEventListener("click", () => {
           navigator.clipboard?.writeText(data.key).then(() => toast(t("devices.keyCopied"))).catch(() => {});
         });
