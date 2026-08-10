@@ -145,6 +145,11 @@ Section "Install" SEC01
     ; upgrades skip it (run-setup.bat runs only on fresh installs) — extract
     ; here so $INSTDIR\extension\ stays fresh on every update.
     nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -Recurse -Force \"$INSTDIR\extension\" -ErrorAction SilentlyContinue; Expand-Archive -Force -Path \"$INSTDIR\vale-browser-control.zip\" -DestinationPath \"$INSTDIR\extension\""'
+    ; Domain migration (0.8.6): rewrite a *.command.saisi.online tunnel ingress
+    ; to *.agent.saisi.online in both cloudflared configs (user + systemprofile),
+    ; update the hostname file, restart the cloudflared service. Idempotent —
+    ; a config already on agent is untouched.
+    nsExec::ExecToLog 'powershell -NoProfile -Command "$old='\''.command.saisi.online'\''; $new='\''.agent.saisi.online'\''; $files=@(\"$env:USERPROFILE\.cloudflared\config.yml\",\"$env:WINDIR\System32\config\systemprofile\.cloudflared\config.yml\",\"$INSTDIR\vale-command.hostname\"); foreach($f in $files){ if(Test-Path $f){ $c=Get-Content $f -Raw; if($c -match [regex]::Escape($old)){ Set-Content $f ($c -replace [regex]::Escape($old),$new) -Encoding ascii; Write-Host \"migrated $f\" } } }; sc.exe stop cloudflared 2>$null | Out-Null; sc.exe start cloudflared 2>$null | Out-Null"'
     nsExec::ExecToLog 'schtasks /Query /TN ValeCommandTray'
     Pop $0
     ${If} $0 != 0
