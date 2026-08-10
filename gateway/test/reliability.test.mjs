@@ -9,6 +9,8 @@ import {
   fetchWithTimeout,
   fetchWithRetry,
   ogTimeoutMs,
+  passthroughTimeoutMs,
+  upstreamTimeoutMs,
   estimateTokens,
   BreakerDO,
   toAnthropicResponse,
@@ -105,6 +107,22 @@ test("ogTimeoutMs: default 120s, env override wins", () => {
   assert.equal(ogTimeoutMs({}), 120000);
   assert.equal(ogTimeoutMs({ OG_TIMEOUT_MS: "180000" }), 180000);
   assert.equal(ogTimeoutMs({ OG_TIMEOUT_MS: "0" }), 120000); // invalid → default
+});
+
+// ── passthrough timeout: og-native must use the 120s og budget, not the 30s
+// generic one (deepseek-v4-flash native passthrough hit 30s 502s on zen's
+// 40-54s max-thinking; the 120s only protected the translate path) ──
+
+test("passthroughTimeoutMs: og-native gets the 120s og budget, others 30s generic", () => {
+  // og → ogTimeoutMs (120s default)
+  assert.equal(passthroughTimeoutMs({}, "opencode"), ogTimeoutMs({}));
+  // non-og → upstreamTimeoutMs (30s default)
+  assert.equal(passthroughTimeoutMs({}, "deepseek"), upstreamTimeoutMs({}));
+  assert.equal(passthroughTimeoutMs({}, "qwen"), upstreamTimeoutMs({}));
+  assert.equal(passthroughTimeoutMs({}, "openrouter"), upstreamTimeoutMs({}));
+  // env overrides still win
+  assert.equal(passthroughTimeoutMs({ OG_TIMEOUT_MS: "180000" }, "opencode"), 180000);
+  assert.equal(passthroughTimeoutMs({ UPSTREAM_TIMEOUT_MS: "45000" }, "deepseek"), 45000);
 });
 
 // ── Circuit breaker (Durable Object — shared, strongly consistent) ──
