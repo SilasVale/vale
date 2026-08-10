@@ -6,13 +6,6 @@
 // points users to the console. The console URL is set per-deployment via the
 // CONSOLE_URL var (no production domain is hardcoded here).
 
-// Current release — single source of truth for both /api/version (manual
-// check) and /api/update/stream (SSE push). Bump alongside command/Cargo.toml.
-const VERSION = {
-  version: "0.9.3",
-  download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
-};
-
 const PAGE = (consoleUrl) => `<!doctype html>
 <html lang="en">
 <head>
@@ -99,39 +92,15 @@ document.getElementById('foot-time').textContent = new Date().toISOString().repl
 export default {
   async fetch(request, env) {
     // Version endpoint for the vale-tray "check for updates" menu item.
+    // Bump VERSION alongside command/Cargo.toml when a new installer is shipped.
     if (new URL(request.url).pathname === "/api/version") {
-      return new Response(JSON.stringify(VERSION), {
-        headers: { "content-type": "application/json", "cache-control": "no-store" },
-      });
-    }
-
-    // SSE push channel for the tray's auto-updater. The client connects once
-    // and immediately receives the current version; deploying a new release
-    // updates this code, the next (re)connection carries the new version and
-    // the tray upgrades itself. Workers free tier caps streaming responses at
-    // ~30s, so the stream closes at 28s and the client reconnects cleanly —
-    // worst-case push latency is one reconnect cycle (~30s), far better than
-    // hourly polling.
-    if (new URL(request.url).pathname === "/api/update/stream") {
-      const encoder = new TextEncoder();
-      const event = `event: version\ndata: ${JSON.stringify(VERSION)}\n\n`;
-      let timer;
-      const stream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(encoder.encode(event));
-          timer = setInterval(() => {
-            controller.enqueue(encoder.encode(": ping\n\n"));
-          }, 15000);
-          setTimeout(() => {
-            clearInterval(timer);
-            try { controller.close(); } catch {}
-          }, 28000);
-        },
-        cancel() { clearInterval(timer); },
-      });
-      return new Response(stream, {
-        headers: { "content-type": "text/event-stream", "cache-control": "no-store" },
-      });
+      return new Response(
+        JSON.stringify({
+          version: "0.9.2",
+          download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
+        }),
+        { headers: { "content-type": "application/json", "cache-control": "no-store" } }
+      );
     }
     const consoleUrl = (env && env.CONSOLE_URL) || "https://<console-host>";
     return new Response(PAGE(consoleUrl), {
