@@ -12,13 +12,14 @@ use vale_command_core::{AgentEvent, DeviceError, EventBus, ToolDef};
 use crate::plugins::{require_str, to_value_or_empty};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::{parse_serial_target, parse_ssh_target, TerminalManager};
-use super::{clean_terminal_output, OutputBuf, RetainedSession};
+use super::{clean_terminal_output, DiagStore, OutputBuf, RetainedSession};
 
 pub(super) fn build(
     terminal_mgr: &Arc<TerminalManager>,
     serial_pool: &Arc<SerialPool>,
     bus: &Arc<dyn EventBus>,
     output_buf: &OutputBuf,
+    diag: &DiagStore,
 ) -> Vec<ToolDef> {
     vec![
         tool_open(terminal_mgr, bus, output_buf),
@@ -32,6 +33,8 @@ pub(super) fn build(
         tool_select(terminal_mgr),
         tool_read(output_buf),
         tool_screen(output_buf),
+        tool_diag_write(diag),
+        tool_diag_read(diag),
         tool_secret_set(),
         tool_secret_get(),
         tool_secret_delete(),
@@ -547,6 +550,48 @@ fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
     )
 }
 
+fn tool_diag_write(diag: &DiagStore) -> ToolDef {
+    let diag = diag.clone();
+    ToolDef::new(
+        "terminal_diag_write",
+        "POST a diagnostic line from the terminal panel (poll results, adopt events, SSE status, errors). Stored in a process-lifetime ring buffer (cap 200), read via terminal_diag_read.",
+        json!({"type":"object","properties":{"line":{"type":"string"}},"required":["line"]}),
+        move |params: Value| {
+            let diag = diag.clone();
+            async move {
+                let line = require_str(&params, "line")?;
+                let mut d = diag.lock().unwrap_or_else(|p| p.into_inner());
+                d.push(format!("{} {line}", chrono_timestamp()));
+                Ok(json!("ok"))
+            }
+        },
+    )
+}
+
+fn tool_diag_read(diag: &DiagStore) -> ToolDef {
+    let diag = diag.clone();
+    ToolDef::new(
+        "terminal_diag_read",
+        "Read the panel diagnostic ring buffer (newest last). Returns {entries: [...]}.",
+        json!({"type":"object","properties":{}}),
+        move |_params: Value| {
+            let diag = diag.clone();
+            async move {
+                let d = diag.lock().unwrap_or_else(|p| p.into_inner());
+                Ok(json!({"entries": d.snapshot()}))
+            }
+        },
+    )
+}
+
+/// Seconds-since-epoch as a string (for diag timestamps; no chrono dep needed).
+fn chrono_timestamp() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|_| "?".into())
+}
+
 fn tool_secret_set() -> ToolDef {
     ToolDef::new(
         "secret_set",
@@ -592,7 +637,7 @@ fn tool_secret_delete() -> ToolDef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::terminal::{SessionStore};
+    use crate::plugins::terminal::{DiagBuf, SessionStore};
     use crate::tools::serial::SerialPool;
     use crate::tools::terminal::TerminalManager;
     use vale_command_core::AppEventBus;
@@ -604,7 +649,8 @@ mod tests {
         let serial = Arc::new(SerialPool::new(115200, 1000));
         let mgr = Arc::new(TerminalManager::new(serial.clone()));
         let buf: OutputBuf = Arc::new(std::sync::Mutex::new(SessionStore::new()));
-        let tools = build(&mgr, &serial, &bus, &buf);
+        let diag: DiagStore = Arc::new(std::sync::Mutex::new(DiagBuf::default()));
+        let tools = build(&mgr, &serial, &bus, &buf, &diag);
         (tools, buf)
     }
 

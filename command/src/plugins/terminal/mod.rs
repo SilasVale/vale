@@ -145,6 +145,29 @@ impl SessionStore {
 
 pub(super) type OutputBuf = Arc<std::sync::Mutex<SessionStore>>;
 
+/// Ring buffer of panel diagnostics — the terminal page POSTs its runtime
+/// state (poll results, adopt events, SSE status, errors) so the developer
+/// can read it remotely via terminal_diag_read instead of asking the user to
+/// copy DevTools output. Cap 200 entries, process lifetime.
+#[derive(Default)]
+pub struct DiagBuf {
+    entries: std::collections::VecDeque<String>,
+}
+
+pub(super) type DiagStore = Arc<std::sync::Mutex<DiagBuf>>;
+
+impl DiagBuf {
+    pub fn push(&mut self, line: String) {
+        self.entries.push_back(line);
+        if self.entries.len() > 200 {
+            self.entries.pop_front();
+        }
+    }
+    pub fn snapshot(&self) -> Vec<String> {
+        self.entries.iter().cloned().collect()
+    }
+}
+
 /// Strip ANSI escape sequences and normalize line endings for AI readability.
 pub fn clean_terminal_output(raw: &[u8]) -> String {
     let mut out = String::with_capacity(raw.len());
@@ -213,6 +236,7 @@ pub struct TerminalPlugin {
     serial_pool: Arc<SerialPool>,
     bus: Arc<dyn EventBus>,
     output_buf: OutputBuf,
+    diag: DiagStore,
 }
 
 impl TerminalPlugin {
@@ -221,7 +245,11 @@ impl TerminalPlugin {
         serial_pool: Arc<SerialPool>,
         bus: Arc<dyn EventBus>,
     ) -> Self {
-        Self { terminal_mgr, serial_pool, bus, output_buf: Arc::new(std::sync::Mutex::new(SessionStore::new())) }
+        Self {
+            terminal_mgr, serial_pool, bus,
+            output_buf: Arc::new(std::sync::Mutex::new(SessionStore::new())),
+            diag: Arc::new(std::sync::Mutex::new(DiagBuf::default())),
+        }
     }
 }
 
@@ -233,7 +261,7 @@ impl Plugin for TerminalPlugin {
     }
 
     fn tools(&self) -> Vec<ToolDef> {
-        tools::build(&self.terminal_mgr, &self.serial_pool, &self.bus, &self.output_buf)
+        tools::build(&self.terminal_mgr, &self.serial_pool, &self.bus, &self.output_buf, &self.diag)
     }
 }
 
@@ -254,12 +282,12 @@ mod tests {
     fn tool_count_and_names() {
         let tools = plugin().tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 16);
         for expected in [
             "terminal_open", "terminal_write", "terminal_close", "terminal_list",
             "terminal_execute", "terminal_list_ports", "terminal_resize",
             "terminal_select", "terminal_read", "terminal_screen",
-            "terminal_history",
+            "terminal_history", "terminal_diag_write", "terminal_diag_read",
             "secret_set", "secret_get", "secret_delete",
         ] {
             assert!(names.contains(&expected), "missing tool: {expected}");
