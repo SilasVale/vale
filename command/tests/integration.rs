@@ -84,7 +84,7 @@ fn ensure_token_idempotent() {
     let t1 = c.ensure_token().unwrap().unwrap();
     let again = c.ensure_token().unwrap();
     assert!(again.is_none(), "second call must not regenerate");
-    assert_eq!(c.auth_token.as_deref(), Some(t1.as_str()));
+    assert_eq!(c.device_token.as_deref(), Some(t1.as_str()));
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn ensure_token_serialization_roundtrip() {
     let token = c.server.ensure_token().unwrap().unwrap();
     let yaml = serde_yaml::to_string(&c).unwrap();
     let back: Config = serde_yaml::from_str(&yaml).unwrap();
-    assert_eq!(back.server.auth_token.as_deref(), Some(token.as_str()));
+    assert_eq!(back.server.device_token.as_deref(), Some(token.as_str()));
 }
 
 // ═══════════════════════════════════════════════════════════════

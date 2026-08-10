@@ -150,7 +150,7 @@ pub async fn bind(
     // MCP service at /mcp (token-gated) + the web surface via fallback_service
     // (Tower layer)
     let mcp_app = axum::Router::new()
-        .nest_service("/mcp", crate::web::TokenGate::new(service, config.server.auth_token.clone()))
+        .nest_service("/mcp", crate::web::TokenGate::new(service, config.server.device_token.clone()))
         .fallback_service(crate::web::WebPanel::new(state.clone()));
     let mcp_listener = tokio::net::TcpListener::bind(addr).await?;
     let actual = mcp_listener.local_addr()?;

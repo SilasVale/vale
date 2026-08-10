@@ -18,7 +18,7 @@ async fn start_server(auth_token: Option<&str>) -> String {
     let mut cfg = Config::default();
     cfg.server.host = "127.0.0.1".into();
     cfg.server.port = 0; // ephemeral — bind() reports the actual port
-    cfg.server.auth_token = auth_token.map(|t| t.to_string());
+    cfg.server.device_token = auth_token.map(|t| t.to_string());
     let state = Arc::new(AppState::new(cfg.clone()));
     let (addr, _handle) = vale_command::mcp::bind(cfg, state, CancellationToken::new())
         .await
