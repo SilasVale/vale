@@ -3,6 +3,7 @@
 //! Tools are the single source of truth for MCP and the Web API.
 
 pub mod terminal;
+pub mod update;
 
 use vale_agent_core::DeviceError;
 use vale_agent_core::Plugin;
