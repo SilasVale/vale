@@ -27,7 +27,8 @@ trap 'rm -rf "$STAGE"' EXIT
 cp "$VALEEXE" "$TRAYEXE" \
    "$ROOT/command/deploy/vale-command-setup.ps1" \
    "$ROOT/command/deploy/run-setup.bat" \
-   "$ROOT/command/deploy/vale-command-install.nsi" "$STAGE/"
+   "$ROOT/command/deploy/vale-command-install.nsi" \
+   "$ROOT/index/public/vale-command/vale-browser-control.zip" "$STAGE/"
 
 echo "=== building ValeCommand-Setup.exe (makensis) ==="
 (cd "$STAGE" && NSISDIR="$NSISDIR" "$MAKENSIS" vale-command-install.nsi >/dev/null 2>&1) \

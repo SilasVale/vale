@@ -100,6 +100,19 @@ if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-command.exe" $e
 $trayExe = Join-Path $InstallDir "vale-tray.exe"
 Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
 if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-tray.exe" $trayExe -Force }
+# Browser extension: extract vale-browser-control.zip into $INSTDIR\extension\
+# so Chrome's "Load unpacked" points at the same install dir (updated together
+# with the binaries on every install/upgrade). The NSIS installer bundles the
+# zip for fresh installs; the script path re-downloads it on updates.
+Write-Host "  browser extension -> $InstallDir\extension"
+$extZip = Join-Path $InstallDir "vale-browser-control.zip"
+if (-not $SkipDownload) { Download-File "$Base/vale-command/vale-browser-control.zip" $extZip -Force }
+$extDir = Join-Path $InstallDir "extension"
+if (Test-Path $extZip) {
+    Remove-Item $extDir -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-Archive -Path $extZip -DestinationPath $extDir -Force
+    Write-Host "    extracted to $extDir (Load unpacked this dir)"
+}
 if (-not (Test-Path $cfg)) {
     Write-Host "  bootstrapping config + auth token"
     & $exe --init $cfg
