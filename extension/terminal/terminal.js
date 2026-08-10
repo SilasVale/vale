@@ -22,6 +22,7 @@ const DEFAULT_ORIGIN = "https://api.saisi.online";
 const PTY_TARGET = "powershell"; // device runs Windows
 const DEFAULT_ROWS = 30;
 const DEFAULT_COLS = 100;
+const POLL_MS = 2500; // discovery cadence for sessions opened by the AI agent
 
 const $ = (id) => document.getElementById(id);
 const deviceSelect = $("device-select");
@@ -43,6 +44,8 @@ const proxy = `${origin}/api/devices/${encodeURIComponent(pairing.device)}/proxy
 // session_id → { term, fit, es, container, observer, resizeTimer }
 const sessions = new Map();
 let activeSid = null;
+let lastKnown = new Set(); // sids present in the previous poll snapshot
+let polling = false;       // re-entrancy guard: never stack polls
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
@@ -95,6 +98,7 @@ function renderTab(sid, label) {
   tab.title = sid;
   tab.addEventListener("click", () => activate(sid));
   tabsEl.appendChild(tab);
+  return tab;
 }
 
 function highlightTabs() {
@@ -172,18 +176,35 @@ function attachStream(sid, term) {
         await reader.cancel().catch(() => {});
       }
     } catch {
+      if (closed) return; // intentional close via markClosed — not an error
       if (activeSid === sid) setStatus("reconnecting…");
     }
     // Stream dropped or rejected → reconnect, matching EventSource behavior.
-    setTimeout(connect, 3000);
+    if (!closed) setTimeout(connect, 3000);
   };
 
   connect();
   return { close: () => { closed = true; } };
 }
 
-/** Create the xterm + tab for a session and wire it to the device. */
+/** Create the xterm + tab for a session and wire it to the device.
+ *  Idempotent: re-adopting a live session is a no-op; re-adopting a closed
+ *  one (vale-command restarted and reused term-N) resurrects the tab. */
 function adoptSession(sid, label) {
+  const existing = sessions.get(sid);
+  if (existing && !existing.closed) return; // dedup — never duplicate tabs
+  if (existing) {
+    // Resurrection: vale-command restarted and reused term-N. Reuse the tab
+    // and xterm rather than hiding the new session behind the tombstone.
+    existing.closed = false;
+    existing.tab.classList.remove("closed");
+    existing.tab.textContent = label;
+    existing.tab.title = sid;
+    existing.term.reset();
+    existing.term.options.disableStdin = false;
+    backfillAndAttach(sid, existing);
+    return;
+  }
   const container = document.createElement("div");
   container.className = "term-session";
   termContainer.appendChild(container);
@@ -214,9 +235,71 @@ function adoptSession(sid, label) {
   const observer = new ResizeObserver(() => scheduleResize(sid));
   observer.observe(container);
 
-  const es = attachStream(sid, term);
-  sessions.set(sid, { term, fit, es, container, observer, resizeTimer: null });
-  renderTab(sid, label);
+  const s = { term, fit, es: null, container, observer, resizeTimer: null, tab: null, closed: false, label };
+  sessions.set(sid, s); // before any await — activate() and the poll guard see it immediately
+  s.tab = renderTab(sid, label);
+  backfillAndAttach(sid, s);
+}
+
+/** History backfill, then live SSE attach — in that order, so old output
+ *  never renders below new output. Backfill uses terminal_read with an
+ *  explicit offset:0, which does not advance the session cursor, so the AI
+ *  agent's own reads are unaffected. */
+async function backfillAndAttach(sid, s) {
+  try {
+    const hist = await callTool("terminal_read", { session_id: sid, offset: 0, clean: true });
+    if (hist && typeof hist.text === "string" && hist.text) {
+      s.term.write(hist.text);
+      if (Number(hist.dropped) > 0) {
+        s.term.write(`\r\n[dropped ${hist.dropped} bytes of earlier output — buffer overflow]\r\n`);
+      }
+    }
+  } catch {
+    // No history (brand-new session, or buffer already released) — attach live.
+  }
+  if (!s.closed) s.es = attachStream(sid, s.term);
+}
+
+/** A session vanished from terminal_list (closed on the device). Keep the tab
+ *  as a visible tombstone: greyed, "[closed]" suffix, input disabled, SSE
+ *  reconnect loop stopped. */
+function markClosed(sid) {
+  const s = sessions.get(sid);
+  if (!s || s.closed) return;
+  s.closed = true;
+  if (s.es) s.es.close(); // stop the 3s reconnect loop
+  s.term.options.disableStdin = true; // typing into a dead session is pointless
+  if (s.tab) {
+    s.tab.classList.add("closed");
+    s.tab.textContent = `${s.label || sid} [closed]`;
+    s.tab.title = `${sid} (closed on device)`;
+  }
+  if (sid === activeSid) setStatus("session closed");
+}
+
+/** Discover sessions the AI agent opened (or closed) on the device. Silent on
+ *  errors — next tick retries. Stale-marking only applies to sids that were in
+ *  the PREVIOUS snapshot, so a session created while a poll was in flight is
+ *  never wrongly marked closed. */
+async function pollSessions() {
+  if (polling) return;
+  polling = true;
+  try {
+    const list = await callTool("terminal_list").catch(() => null);
+    if (!Array.isArray(list)) return; // network blip → silent retry
+    const current = new Set();
+    for (const s of list) {
+      current.add(s.id);
+      adoptSession(s.id, s.label || s.kind || s.id); // idempotent — no pre-check needed
+    }
+    for (const sid of lastKnown) {
+      if (!current.has(sid)) markClosed(sid);
+    }
+    lastKnown = current;
+  } finally {
+    polling = false;
+    setTimeout(pollSessions, POLL_MS);
+  }
 }
 
 /** Open a new PTY on the device and attach a tab to it. */
@@ -277,3 +360,6 @@ async function init() {
 newSessionBtn.addEventListener("click", () => openSession("shell"));
 
 init();
+// Start discovery after init's adopt pass; the dedup guard in adoptSession
+// covers any overlap between init's terminal_list and the first poll.
+setTimeout(pollSessions, POLL_MS);

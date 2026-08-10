@@ -45,6 +45,9 @@ body {
   font: inherit;
 }
 .tab:hover { color: #1a1c20; }
+/* Dead session (closed by the AI agent) — visible tombstone. */
+.tab.closed { color: #a2a8b3; text-decoration: line-through; }
+.tab.closed:hover { color: #a2a8b3; }
 .tab.active {
   background: #e8ebf2;
   color: #1a1c20;
