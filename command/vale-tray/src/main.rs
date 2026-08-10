@@ -11,9 +11,11 @@
 //!   - Copy MCP config (Claude Code snippet) to the clipboard
 //!   - Open the console (gateway device page) in the default browser
 //!   - Open a local terminal (PowerShell in the install dir) for logs/testing
-//!   - Updates: manual 检查更新 (dialog) + checkable 自动更新 (silent hourly
-//!     check, auto-installs newer ValeAgent-Setup.exe — toggle persisted in
-//!     %APPDATA%\ValeAgent\auto-update, progress in vale-update.log)
+//!   - Updates: manual 检查更新 (dialog) + checkable 自动更新 — a detached
+//!     SSE subscriber on /api/update/stream pushes new versions (≈30s worst
+//!     case after a release), auto-installs ValeAgent-Setup.exe silently.
+//!     Toggle persisted in %APPDATA%\ValeAgent\auto-update, subscriber PID in
+//!     auto-updater.pid, progress in vale-update.log
 //!
 //! The install dir is located from this exe's own path; the subdomain comes
 //! from `vale-agent.hostname` (written by the setup script) and the console
@@ -209,7 +211,7 @@ fn restart_task() {
 /// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
 /// bumped alongside command/Cargo.toml and index/src/index.js when a new
 /// installer is shipped.
-const LOCAL_VERSION: &str = "0.9.2";
+const LOCAL_VERSION: &str = "0.9.3";
 const VERSION_URL: &str = "https://agent.saisi.online/api/version";
 
 fn check_for_update() {
@@ -279,16 +281,38 @@ try {{
     // already-current install.)
 }
 
-/// How often the tray re-checks for updates while the 自动更新 toggle is on.
-const AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// The auto-updater background process: subscribes to the SSE push channel
+/// (/api/update/stream) and, when a newer version event arrives, downloads +
+/// silently installs it. It runs detached from the tray so an upgrade can kill
+/// the tray mid-flight while the updater keeps working; the installer relaunches
+/// a fresh tray, which starts its own updater. Toggle 自动更新 on/off starts /
+/// stops it; its PID is persisted in APPDATA for that.
+fn auto_updater_pid() -> Option<u32> {
+    std::fs::read_to_string(auto_update_dir().join("auto-updater.pid"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
 
-/// Silent auto-update: like `check_for_update()` but with no dialogs at all —
-/// query the version endpoint and, if newer, download + run the silent
-/// installer. Every step goes to vale-update.log in the install dir (a log
-/// endpoint reads it back instead of asking the user to open files). A busy
-/// marker in APPDATA guards against two updates racing (the hourly auto check
-/// vs a manual 检查更新 click).
-fn auto_update_check() {
+fn updater_alive(pid: u32) -> bool {
+    std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Spawn the background auto-updater unless one is already running.
+fn start_auto_updater() {
+    if let Some(pid) = auto_updater_pid() {
+        if updater_alive(pid) {
+            return;
+        }
+    }
     let dir = install_dir();
     let ps = format!(
         r#"
@@ -297,47 +321,92 @@ $ProgressPreference = 'SilentlyContinue'
 $log = Join-Path '{2}' 'vale-update.log'
 function Log($m) {{ try {{ (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m | Out-File -FilePath $log -Append -Encoding utf8 }} catch {{}} }}
 $busy = Join-Path $env:APPDATA 'ValeAgent\update-busy'
-if (Test-Path $busy) {{ Log 'auto: another update in progress, skip'; return }}
-New-Item -ItemType File -Path $busy -Force | Out-Null
 function Restore-Tray {{
   try {{ schtasks /Run /TN ValeAgentTray 2>$null | Out-Null; Start-Sleep -Seconds 1 }} catch {{}}
   if (-not (Get-Process vale-tray -ErrorAction SilentlyContinue)) {{
     Start-Process -FilePath '{2}\vale-tray.exe'
   }}
 }}
-try {{
-  Log 'auto: check'
-  $j = Invoke-RestMethod -Uri '{0}' -TimeoutSec 10
-  $remote = [version]$j.version
-  $local = [version]'{1}'
-  if ($remote -le $local) {{ Log 'auto: up to date'; return }}
-  Log "auto: newer $($j.version) available, silent upgrade"
-  # Kill this tray before the installer relaunches a fresh one via the
-  # ValeAgentTray task (otherwise two tray icons appear). This PowerShell is a
-  # detached child of the tray, so it survives the kill.
-  Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
-  Start-Sleep -Milliseconds 500
-  $installer = Join-Path '{2}' 'ValeAgent-Setup.exe'
-  Remove-Item $installer -Force -ErrorAction SilentlyContinue
-  Log 'auto: downloading'
-  Invoke-WebRequest -Uri $j.download -OutFile $installer -TimeoutSec 300
-  Log 'auto: running silent installer'
-  $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D={2}" -Verb RunAs -PassThru -Wait
-  if ($p.ExitCode -ne 0) {{ throw "安装程序退出码 $($p.ExitCode)" }}
-  Log 'auto: install ok'
-  Remove-Item $installer -Force -ErrorAction SilentlyContinue
-}} catch {{
-  Log "auto: FAILED - $($_.Exception.Message)"
-  Restore-Tray
-}} finally {{
-  Remove-Item $busy -Force -ErrorAction SilentlyContinue
+Log 'auto: updater started'
+while ($true) {{
+  try {{
+    $req = [System.Net.HttpWebRequest]::Create('{0}')
+    $req.Timeout = 60000
+    $req.ReadWriteTimeout = 40000
+    $res = $req.GetResponse()
+    $stream = $res.GetResponseStream()
+    $reader = New-Object System.IO.StreamReader($stream)
+    try {{
+      while (($line = $reader.ReadLine()) -ne $null) {{
+        if ($line -notlike 'data:*') {{ continue }}
+        $data = $line.Substring(5)
+        Log "auto: push $data"
+        $j = $data | ConvertFrom-Json
+        $remote = [version]$j.version
+        $local = [version]'{1}'
+        if ($remote -le $local) {{ continue }}
+        if (Test-Path $busy) {{ Log 'auto: busy, skip'; continue }}
+        New-Item -ItemType File -Path $busy -Force | Out-Null
+        try {{
+          Log "auto: newer $($j.version), silent upgrade"
+          # Kill this tray before the installer relaunches a fresh one via the
+          # ValeAgentTray task (otherwise two tray icons appear). This PowerShell
+          # is a detached child of the tray, so it survives the kill.
+          Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Milliseconds 500
+          $installer = Join-Path '{2}' 'ValeAgent-Setup.exe'
+          Remove-Item $installer -Force -ErrorAction SilentlyContinue
+          Invoke-WebRequest -Uri $j.download -OutFile $installer -TimeoutSec 300
+          Log 'auto: running silent installer'
+          $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D={2}" -Verb RunAs -PassThru -Wait
+          if ($p.ExitCode -ne 0) {{ throw "安装程序退出码 $($p.ExitCode)" }}
+          Log 'auto: install ok'
+          Remove-Item $installer -Force -ErrorAction SilentlyContinue
+          Restore-Tray
+          exit 0
+        }} catch {{
+          Log "auto: FAILED - $($_.Exception.Message)"
+          Restore-Tray
+        }} finally {{
+          Remove-Item $busy -Force -ErrorAction SilentlyContinue
+        }}
+      }}
+    }} finally {{
+      $reader.Dispose(); $stream.Dispose(); $res.Dispose()
+    }}
+  }} catch {{
+    Log "auto: stream error - $($_.Exception.Message)"
+  }}
+  Start-Sleep -Seconds 5
+  # The updater follows its owner: if the tray is gone (user quit), stop.
+  if (-not (Get-Process vale-tray -ErrorAction SilentlyContinue)) {{ Log 'auto: tray gone, exit'; exit 0 }}
 }}
 "#,
         VERSION_URL, LOCAL_VERSION, dir.display(),
     );
-    let _ = Command::new("powershell")
+    if let Ok(child) = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
-        .spawn();
+        .spawn()
+    {
+        let dir = auto_update_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("auto-updater.pid"), child.id().to_string());
+    }
+}
+
+/// Stop the background auto-updater (toggle-off / tray quit).
+fn stop_auto_updater() {
+    if let Some(pid) = auto_updater_pid() {
+        let _ = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"),
+            ])
+            .spawn();
+        let _ = std::fs::remove_file(auto_update_dir().join("auto-updater.pid"));
+    }
 }
 
 /// Handles of the dynamic menu items, so the status lines and start/stop
@@ -490,10 +559,10 @@ fn main() {
     let event_loop = winit::event_loop::EventLoop::new().expect("create event loop");
     let menu_rx = MenuEvent::receiver();
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
-    // First auto-update check ~60s after tray start (network is often not up
-    // right at logon). Only advances when the check actually runs, so toggling
-    // 自动更新 on triggers one within a minute.
-    let mut last_auto_check = Instant::now() - AUTO_CHECK_INTERVAL + Duration::from_secs(60);
+    // Resume a previously-enabled auto-updater (toggle persisted in APPDATA).
+    if auto_update_enabled() {
+        start_auto_updater();
+    }
 
     event_loop
         .run(move |_event, el| {
@@ -504,10 +573,6 @@ fn main() {
                 ui.refresh(&tray);
                 last_refresh = Instant::now();
             }
-            if auto_update_enabled() && last_auto_check.elapsed() >= AUTO_CHECK_INTERVAL {
-                auto_update_check();
-                last_auto_check = Instant::now();
-            }
             while let Ok(ev) = menu_rx.try_recv() {
                 match ev.id.0.as_str() {
                     "copy_mcp" => copy_mcp_config(),
@@ -516,12 +581,23 @@ fn main() {
                     "open_terminal" => open_local_terminal(),
                     "check_update" => check_for_update(),
                     // The OS toggled the checkmark already — persist whatever
-                    // the box now shows (checked → auto-update on).
-                    "auto_update" => set_auto_update(auto_update.is_checked()),
+                    // the box now shows and (re)start / stop the subscriber.
+                    "auto_update" => {
+                        let on = auto_update.is_checked();
+                        set_auto_update(on);
+                        if on {
+                            start_auto_updater();
+                        } else {
+                            stop_auto_updater();
+                        }
+                    }
                     "start" => schtasks(&["/Run", "/TN", "ValeAgent"]),
                     "stop" => schtasks(&["/End", "/TN", "ValeAgent"]),
                     "restart" => restart_task(),
-                    "quit" => std::process::exit(0),
+                    "quit" => {
+                        stop_auto_updater();
+                        std::process::exit(0);
+                    }
                     _ => {}
                 }
             }
