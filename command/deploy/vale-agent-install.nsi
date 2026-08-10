@@ -107,6 +107,7 @@ Section "Install" SEC01
   File "vale-agent-setup.ps1"
   File "run-setup.bat"
   File "vale-tray.exe"
+  File "fix-tunnel.ps1"
   ; Browser extension zip — extracted to $INSTDIR\extension\ by the setup
   ; script so the terminal panel loads from the same install dir (Load
   ; unpacked → $INSTDIR\extension). Updated together with the binaries on
@@ -149,7 +150,16 @@ Section "Install" SEC01
     ; to *.agent.saisi.online in both cloudflared configs (user + systemprofile),
     ; update the hostname file, restart the cloudflared service. Idempotent —
     ; a config already on agent is untouched.
-    nsExec::ExecToLog 'powershell -NoProfile -Command "$old='\''.command.saisi.online'\''; $new='\''.agent.saisi.online'\''; $files=@(\"$env:USERPROFILE\.cloudflared\config.yml\",\"$env:WINDIR\System32\config\systemprofile\.cloudflared\config.yml\",\"$INSTDIR\vale-agent.hostname\"); foreach($f in $files){ if(Test-Path $f){ $c=Get-Content $f -Raw; if($c -match [regex]::Escape($old)){ Set-Content $f ($c -replace [regex]::Escape($old),$new) -Encoding ascii; Write-Host \"migrated $f\" } } }; sc.exe stop cloudflared 2>$null | Out-Null; sc.exe start cloudflared 2>$null | Out-Null"'
+    ; Repair the cloudflared tunnel config after the domain migration — the
+    ; bundled fix-tunnel.ps1 rewrites a legacy vale-command-dN tunnel +
+    ; *.command.saisi.online ingress to vale-agent-dN + *.agent.saisi.online
+    ; (user + systemprofile configs), fixes config.yaml name, restarts
+    ; cloudflared. Idempotent; safe on fresh installs.
+    nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\fix-tunnel.ps1"'
+    ; Restart the vale-agent service task — the end above stopped it, and the
+    ; tray relaunch alone does not start the server. Without this the user had
+    ; to start it manually after every upgrade.
+    nsExec::ExecToLog 'schtasks /Run /TN ValeAgent'
     nsExec::ExecToLog 'schtasks /Query /TN ValeAgentTray'
     Pop $0
     ${If} $0 != 0
