@@ -34,7 +34,8 @@ body {
 #toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
   padding: 10px 16px;
   background: var(--surface-glass);
   backdrop-filter: saturate(180%) blur(20px);
@@ -135,5 +136,6 @@ body {
 .term-session.active { display: block; }
 .term-session .xterm {
   height: 100%;
-  padding: 4px;
+  border-radius: var(--radius);
+  overflow: hidden;
 }
