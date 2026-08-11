@@ -58,7 +58,10 @@ function loadConfig() {
     hostname = location.host;
     hostInput.value = hostname;
     hostInput.disabled = true;
-    token = localStorage.getItem(LS_TOKEN) || window.__PANEL_TOKEN__ || "";
+    // Injected token (backend, current) wins over any stale localStorage
+    // value from an earlier session — a leftover token can be expired and
+    // would 401 every request until the user re-enters it.
+    token = window.__PANEL_TOKEN__ || localStorage.getItem(LS_TOKEN) || "";
     if (token) {
       tokenInput.value = token;
       connForm.classList.add("hidden");
