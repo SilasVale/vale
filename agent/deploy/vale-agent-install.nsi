@@ -1,5 +1,9 @@
 Unicode true
 !include "MUI2.nsh"
+
+; Brand icon (unified Vale V mark, 2026-08-12)
+Icon "vale-agent.ico"
+UninstallIcon "vale-agent.ico"
 !include "nsDialogs.nsh"
 
 Name "Vale Agent"

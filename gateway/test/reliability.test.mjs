@@ -5,6 +5,7 @@
 // count_tokens estimate, and zen's cache-hit usage field mapping.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { withFetch, assertFetchCalls } from "./helpers.mjs";
 import {
   fetchWithTimeout,
   fetchWithRetry,
@@ -16,19 +17,6 @@ import {
   toAnthropicResponse,
   AnthropicStreamEncoder,
 } from "../src/index.js";
-
-// ── fetch mocking ───────────────────────────────────────────────
-
-let fetchCalls = 0;
-async function withFetch(handler, fn) {
-  const real = globalThis.fetch;
-  globalThis.fetch = async (...args) => { fetchCalls++; return handler(...args); };
-  try {
-    return await fn();
-  } finally {
-    globalThis.fetch = real;
-  }
-}
 
 const ok = (status = 200, body = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 // A fetch that hangs until the caller's AbortController fires — like a real
@@ -47,51 +35,46 @@ const reqInit = { method: "POST", body: "{}" };
 
 test("timeout: single attempt, no retry, detail says timeout", async () => {
   await withFetch(never, async () => {
-    fetchCalls = 0;
     const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 30 });
     assert.equal(response, null);
     assert.match(detail, /^timeout after 30ms$/);
-    assert.equal(fetchCalls, 1); // slow failure → no retry
+    assertFetchCalls(1); // slow failure → no retry
   });
 });
 
 test("network error: single attempt, no retry", async () => {
   await withFetch(async () => { throw new TypeError("fetch failed"); }, async () => {
-    fetchCalls = 0;
     const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response, null);
     assert.match(detail, /^network error: /);
-    assert.equal(fetchCalls, 1);
+    assertFetchCalls(1);
   });
 });
 
 test("fast 500 ×3: retried, detail says retried 3/3", async () => {
   await withFetch(async () => ok(500, { error: { message: "Internal server error" } }), async () => {
-    fetchCalls = 0;
     const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response.status, 500);
     assert.match(detail, /upstream 500 \(retried 3\/3\)/);
-    assert.equal(fetchCalls, 3);
+    assertFetchCalls(3);
   });
 });
 
 test("500 then 200: retry succeeds, no detail", async () => {
   let n = 0;
   await withFetch(async () => (++n === 1 ? ok(500) : ok(200, { id: "x" })), async () => {
-    fetchCalls = 0;
     const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response.status, 200);
     assert.equal(detail, "");
-    assert.equal(fetchCalls, 2);
+    assertFetchCalls(2);
   });
 });
 
 test("429 counts as retryable", async () => {
   await withFetch(async () => ok(429), async () => {
-    fetchCalls = 0;
     const { response } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response.status, 429);
-    assert.equal(fetchCalls, 3);
+    assertFetchCalls(3);
   });
 });
 
