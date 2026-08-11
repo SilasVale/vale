@@ -62,7 +62,7 @@
       "users.list": "用户列表",
       "user.enabled": "启用", "user.disabled": "禁用", "user.disableToast": "已禁用", "user.enableToast": "已启用",
       "migrated.yes": "已自动迁移至 KV", "migrated.no": "KV 未初始化",
-      "nav.devices": "设备管理", "devices.lede": "注册每台 Windows 设备（vale-command）的 token，控制台即可代理到设备面板、复制 MCP 配置。",
+      "nav.devices": "设备管理", "devices.lede": "注册每台 Windows 设备（vale-agent）的 token，控制台即可代理到设备面板、复制 MCP 配置。",
       "devices.addTitle": "添加 / 更新设备", "devices.listTitle": "设备列表",
       "devices.namePh": "设备名（如 d1）", "devices.hostPh": "<device-host>", "devices.tokenPh": "Bearer token（安装时生成）",
       "devices.saved": "设备已保存", "devices.saveFail": "保存失败",
@@ -140,7 +140,7 @@
       "users.list": "Users",
       "user.enabled": "Enabled", "user.disabled": "Disabled", "user.disableToast": "Disabled", "user.enableToast": "Enabled",
       "migrated.yes": "Migrated to KV", "migrated.no": "KV not initialized",
-      "nav.devices": "Devices", "devices.lede": "Register each Windows device (vale-command) token so the console can proxy to its panel and copy MCP configs.",
+      "nav.devices": "Devices", "devices.lede": "Register each Windows device (vale-agent) token so the console can proxy to its panel and copy MCP configs.",
       "devices.addTitle": "Add / update device", "devices.listTitle": "Devices",
       "devices.namePh": "Device name (e.g. d1)", "devices.hostPh": "<device-host>", "devices.tokenPh": "Bearer token (from install)",
       "devices.saved": "Device saved", "devices.saveFail": "Save failed",
@@ -652,7 +652,7 @@
         </div>
         <div class="user-actions">
           <button class="btn-ghost btn-mini" data-pair="${esc(d.name)}">${t("devices.pair")}</button>
-          <a class="btn-ghost btn-mini" href="/api/devices/${encodeURIComponent(d.name)}/proxy/" target="_blank" rel="noopener">${t("devices.open")}</a>
+          <a class="btn-ghost btn-mini" href="https://${esc(d.hostname)}/panel/" target="_blank" rel="noopener">${t("devices.open")}</a>
           <button class="btn-ghost btn-mini" data-mcp="${esc(d.name)}">${t("devices.copyMcp")}</button>
           <button class="btn-danger btn-mini" data-del="${esc(d.name)}">${t("btn.clear")}</button>
         </div>
@@ -747,7 +747,7 @@
             <button id="btn-regkey-copy" class="btn-ghost" data-i18n="btn.copy">复制</button>
           </div>
           <div class="muted" style="margin-top:8px">${t("devices.regKeyCmd")}</div>
-          <div class="key-edit-row"><code class="mono">$env:VALE_REG_KEY = "${esc(data.key)}"; irm https://agent.saisi.online/vale-command/vale-command-setup.ps1 | iex</code></div>`;
+          <div class="key-edit-row"><code class="mono">$env:VALE_REG_KEY = "${esc(data.key)}"; irm https://agent.saisi.online/vale-agent/vale-agent-setup.ps1 | iex</code></div>`;
         $("#btn-regkey-copy").addEventListener("click", () => {
           navigator.clipboard?.writeText(data.key).then(() => toast(t("devices.keyCopied"))).catch(() => {});
         });
