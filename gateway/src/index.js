@@ -470,11 +470,19 @@ async function handleConsole(request, env, url) {
   return jsonError(404, "Not Found", "not_found_error");
 }
 
+// Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
+// secret) over the admin password. Using the password directly lets any invited
+// user offline-brute-force it from their own signed cookie (HMAC-SHA256 is not
+// memory-hard); with SESSION_SECRET set, the password is never a signing key.
+function sessionSecret(env, adminPassword) {
+  return env.SESSION_SECRET || adminPassword;
+}
+
 async function requireSession(request, env) {
   const ap = await getAdminPassword(env);
   if (!ap) return null;
   const cookie = parseCookie(request.headers.get("Cookie"))[SESSION_COOKIE];
-  const session = await verifySessionToken(ap, cookie);
+  const session = await verifySessionToken(sessionSecret(env, ap), cookie);
   if (!session) return null;
   const user = await getUser(env, session.uid);
   if (!user || !user.enabled) return null;
@@ -494,7 +502,7 @@ async function authRegister(request, env, secure) {
       inviteCode: body.inviteCode,
       role: "user", // always a normal user; the admin can only come from seeding
     });
-    const token = await issueSessionToken(ap, created.id, created.role);
+    const token = await issueSessionToken(sessionSecret(env, ap), created.id, created.role);
     return jsonOk({ ok: true, username: created.username, role: created.role, token: created.token }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
   } catch (e) {
     return jsonError(400, e.message, "invalid_request");
@@ -505,6 +513,14 @@ async function authLogin(request, env, secure) {
   const ap = await getAdminPassword(env);
   if (!ap) return jsonError(500, "Admin password not configured", "config_error");
   const body = await readJson(request);
+  // Brute-force throttle: 5 consecutive failures lock the username for 30s
+  // (exponential backoff would need the failure count; a flat lock is simple
+  // and stops online guessing of the 6-8 char passwords).
+  const lockKey = `login-lock:${String(body.username || "").toLowerCase()}`;
+  const locked = await env.KEYS.get(lockKey);
+  if (locked) {
+    return jsonError(429, "Too many attempts — try again in ~30s", "rate_limited");
+  }
   const user = await findUserByUsername(env, body.username);
   if (!user || !user.enabled) return jsonError(401, "Incorrect username or password", "authentication_error");
   let ok = false;
@@ -514,8 +530,21 @@ async function authLogin(request, env, secure) {
   } else {
     ok = !!user.salt && !!user.passwordHash && (await verifyPassword(body.password || "", user.salt, user.passwordHash));
   }
-  if (!ok) return jsonError(401, "Incorrect username or password", "authentication_error");
-  const token = await issueSessionToken(ap, user.id, user.role);
+  if (!ok) {
+    // Track failures: 5th consecutive miss arms the 30s lock.
+    const fails = Number(await env.KEYS.get(lockKey + ":n")) || 0;
+    const next = fails + 1;
+    if (next >= 5) {
+      await env.KEYS.put(lockKey, "1", { expirationTtl: 30 });
+      await env.KEYS.delete(lockKey + ":n");
+    } else {
+      await env.KEYS.put(lockKey + ":n", String(next), { expirationTtl: 60 });
+    }
+    return jsonError(401, "Incorrect username or password", "authentication_error");
+  }
+  // Success clears the failure counter.
+  await env.KEYS.delete(lockKey + ":n");
+  const token = await issueSessionToken(sessionSecret(env, ap), user.id, user.role);
   return jsonOk({ ok: true, username: user.username, role: user.role }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
 }
 

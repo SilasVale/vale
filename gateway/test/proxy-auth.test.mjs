@@ -154,3 +154,24 @@ test("proxy: SSE response passes through with the plugin token", async () => {
     globalThis.fetch = real;
   }
 });
+
+// ── Login brute-force throttle ────────────────────────────────
+
+test("login: 5 wrong passwords lock the username for 30s", async () => {
+  const env = makeEnv();
+  const post = (pw) => worker.fetch(new Request("https://x/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "admin", password: pw }),
+  }), env);
+  for (let i = 0; i < 4; i++) {
+    const res = await post(`wrong-${i}`);
+    assert.equal(res.status, 401);
+  }
+  // 5th wrong password arms the lock.
+  const fifth = await post("wrong-5");
+  assert.equal(fifth.status, 401);
+  // Even the correct password is now refused.
+  const locked = await post(ADMIN_PW);
+  assert.equal(locked.status, 429);
+});
