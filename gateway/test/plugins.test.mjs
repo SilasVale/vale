@@ -110,3 +110,16 @@ test("ws-ticket: valid plugin token → 200, unknown token → 401 (public route
   });
   assert.equal(bad.status, 401);
 });
+
+test("plugin link: expires after 30 days, getPluginByToken drops it", async () => {
+  const e = env();
+  await addPluginLink(e, "tok-exp", "d1");
+  const realNow = Date.now;
+  try {
+    assert.equal((await getPluginByToken(e, "tok-exp")).device, "d1");
+    Date.now = () => realNow() + 31 * 24 * 60 * 60 * 1000; // 31 days
+    assert.equal(await getPluginByToken(e, "tok-exp"), null);
+  } finally {
+    Date.now = realNow;
+  }
+});
