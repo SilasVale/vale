@@ -3,6 +3,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, resolveAutoModel, valeProbe } from "../src/index.js";
+import { __clearDegradedCache } from "../src/reliability.js";
+
+// The in-isolate breaker cache is shared across tests in this file — clear it
+// before each so a test that flipped open/closed doesn't poison the next.
+test.beforeEach(() => __clearDegradedCache());
 
 // Mock env: breaker reports "open" (degraded) when asked.
 const openEnv = {
