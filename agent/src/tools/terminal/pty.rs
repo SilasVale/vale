@@ -28,7 +28,7 @@ impl PtyBackend {
             if cfg!(windows) { "powershell.exe" } else { "bash" }
         } else { shell };
 
-        tracing::debug!("[vale_command] PTY: spawning shell={shell_cmd}");
+        tracing::debug!("[vale-agent] PTY: spawning shell={shell_cmd}");
 
         let r = if rows > 0 { rows } else { 24 };
         let c = if cols > 0 { cols } else { 80 };
@@ -66,7 +66,7 @@ impl PtyBackend {
                     Err(_) => break,
                 }
             }
-            tracing::debug!("[vale_command] PTY reader ended: {sid_reader}");
+            tracing::debug!("[vale-agent] PTY reader ended: {sid_reader}");
         });
 
         // Reaper thread: polls try_wait every 100ms so shell exits are
@@ -86,7 +86,7 @@ impl PtyBackend {
                 if done { break; }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
-            tracing::debug!("[vale_command] PTY reaper: shell exited: {sid}");
+            tracing::debug!("[vale-agent] PTY reaper: shell exited: {sid}");
         });
 
         Ok(PtyBackend {

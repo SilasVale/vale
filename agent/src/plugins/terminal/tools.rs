@@ -359,7 +359,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 #[cfg(windows)]
                                 { let _ = tokio::process::Command::new("taskkill").args(["/F", "/PID", &pid_str]).output().await; }
                             }
-                            return Err(DeviceError::Internal {
+                            return Err(DeviceError::Timeout {
                                 message: format!("command timed out after {timeout_secs}s"),
                             });
                         }

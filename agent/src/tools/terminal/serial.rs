@@ -18,7 +18,7 @@ impl SerialBackend {
         tx: tokio::sync::mpsc::Sender<TermOutput>, sid: String,
     ) -> Result<Self, DeviceError> {
         let (port_name, baud) = super::parse_serial_target(target);
-        tracing::debug!("[vale_command] Serial: opening {port_name} at {baud} baud");
+        tracing::debug!("[vale-agent] Serial: opening {port_name} at {baud} baud");
 
         // Open in pool, then take ownership out — session owns the port,
         // so reads/writes never contend on the shared pool lock. The open
@@ -68,7 +68,7 @@ impl SerialBackend {
                     _ => {}
                 }
             }
-            tracing::debug!("[vale_command] Serial reader ended: {sid}");
+            tracing::debug!("[vale-agent] Serial reader ended: {sid}");
         });
 
         // Writer thread — direct byte write, no hex encoding
