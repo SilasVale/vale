@@ -633,9 +633,17 @@ export async function handleGateway(request, env, url) {
   // og/gpt-5.6-luna is region-blocked on zen (upstream 403 for CN) but fully
   // usable via OpenRouter's US exit. Map it to the or/ channel so both og/ and
   // or/ spellings hit the same working route (OpenRouter key + proxy exit).
+  // og/deepseek-v4-flash on zen is intermittently congested (2-26s first-token
+  // jitter); the same model via OpenRouter is stable ~1.4s — map it too, with
+  // an escape hatch: ?direct=1 forces the original zen route.
+  // ?direct=1 on the request forces the original zen route for og/ models
+  // (escape hatch if the OpenRouter mapping ever misbehaves).
+  const directOg = url.searchParams.get("direct") === "1";
   let effectiveModel = model;
   if (model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]") {
     effectiveModel = "or/openai/gpt-5.6-luna:floor[1m]";
+  } else if (model === "og/deepseek-v4-flash" && !directOg) {
+    effectiveModel = "or/deepseek-v4-flash";
   }
   const prefix2 = effectiveModel.split("/")[0];
   const baseRoute = pickRoute(prefix2, env);
