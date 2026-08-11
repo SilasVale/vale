@@ -692,40 +692,19 @@ async function handleGatewayImpl(request, env, url) {
     : route.kind === "opencode" ? opencodeGoKey
     : deepseekKey;
 
-  // count_tokens
+  // count_tokens — local estimate for EVERY channel (2026-08-12). The upstream
+  // count endpoint used to be called per-request (one extra round-trip on every
+  // Claude Code turn, ~hundreds of ms); a local estimate is within the module's
+  // own ±20% accuracy stance and cuts that latency entirely. Missing-key checks
+  // are still real config errors and stay.
   if (isCount) {
-    if (route.kind === "opencode" || usProxy) {
-      // og counts locally — translate AND native passthrough (zen's count
-      // endpoint adds nothing; local estimate is CPU-cheap). estimateTokens
-      // itself approximates for bodies over 1M chars.
-      // US_PROXY 开启时同样本地估算:代理 URL 是编码后的 ?path=,replace()
-      // 拼不出正确的 count 路径,硬拼会变成真实生成调用(浪费)。
-      return jsonOk({ input_tokens: estimateTokens(rawText) });
-    }
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
     }
     if (route.kind === "qwen" && !qwenKey) {
       return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
     }
-    let upstream;
-    try {
-      upstream = await fetchWithTimeout(route.upstream.replace(VERIFY_PATH, COUNT_PATH), {
-        method: "POST",
-        headers: passthroughHeaders(bearerKey),
-        body: rawWithModel(rawText, upstreamModel),
-      }, upstreamTimeoutMs(env));
-    } catch (e) {
-      // Upstream unreachable/failed — fall back to a local estimate instead of
-      // 502ing: Claude Code calls count_tokens on every request, and a big body
-      // shouldn't turn that into an error (or a 10ms-CPU trip on the Free plan).
-      return jsonOk({ input_tokens: estimateTokens(rawText) });
-    }
-    if (!upstream.ok) {
-      return jsonOk({ input_tokens: estimateTokens(rawText) });
-    }
-    const json = await upstream.json();
-    return jsonOk({ input_tokens: json.input_tokens || estimateTokens(rawText) });
+    return jsonOk({ input_tokens: estimateTokens(rawText) });
   }
 
   // ---- POST /v1/messages ----
