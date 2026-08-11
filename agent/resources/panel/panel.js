@@ -574,7 +574,23 @@ async function init() {
   window.addEventListener("pagehide", () => { for (const s of sessions.values()) flushSession(s); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") for (const s of sessions.values()) flushSession(s);
+    // Returning to the tab: the container may have been resized or the layout
+    // reflowed while hidden — refit every session so xterm fills the window.
+    else { clearTimeout(refitTimer); refitTimer = setTimeout(refitAll, 200); }
   });
+  // Window resize (browser zoom, maximized toggle, sidebar hide): debounce and
+  // refit all sessions. Without this xterm keeps its old cell grid and leaves
+  // white space or clips content until the next session switch.
+  window.addEventListener("resize", () => { clearTimeout(refitTimer); refitTimer = setTimeout(refitAll, 150); });
+}
+
+let refitTimer = null;
+function refitAll() {
+  for (const [sid, s] of sessions) {
+    if (s.term && !s.complete) {
+      try { s.fit.fit(); } catch {}
+    }
+  }
 }
 
 function mkSavedSession(sid, rec) {

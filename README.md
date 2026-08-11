@@ -21,7 +21,7 @@ Vale Index ── installer / script distribution
 |---|---|---|---|
 | `gateway/` | **Vale Gate** | Cloudflare Worker | Vale console (login/roles) + AI gateway (BYOK routing) + `/mcp` (AI-first device tools) + PluginHubDO (extension hub) + device reverse proxy |
 | `extension/` | **Vale Browser Control** | Chrome/Edge (MV3) | pairs with the console, drives the device's real browser via `chrome.debugger` (no network ports), keeps a WS to PluginHubDO, full-screen terminal page |
-| `command/` | **Vale Command** | Windows (Rust) | slim headless MCP server (`/mcp`, token-gated) + `/api/tools/{name}` + system tray; web panel retired |
+| `agent/` | **Vale Agent** | Windows (Rust) | slim headless MCP server (`/mcp`, token-gated) + `/api/tools/{name}` + system tray; web panel retired |
 | `index/` | **Vale Index** | Cloudflare Worker | installer / script download distribution |
 | `docs/` | docs | — | platform & device-integration design |
 
@@ -31,7 +31,7 @@ Vale Index ── installer / script distribution
 # Build command (Windows cross-compile; needs cargo-xwin)
 ./scripts/build.sh command
 
-# Build the NSIS installer and stage the downloads into index/public/vale-command/
+# Build the NSIS installer and stage the downloads into index/public/vale-agent/
 # (*.exe is gitignored — run this before deploying index, else downloads 404)
 ./scripts/build-installer.sh
 
@@ -43,7 +43,7 @@ Vale Index ── installer / script distribution
 ./scripts/build.sh deploy
 ```
 
-See `command/CLAUDE.md` (Rust build guide) and `gateway/DEVICE-INTEGRATION.md` (device integration).
+See `agent/CLAUDE.md` (Rust build guide) and `gateway/DEVICE-INTEGRATION.md` (device integration).
 
 ### Gateway deploy (manual)
 
