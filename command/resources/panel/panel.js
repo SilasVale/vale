@@ -42,6 +42,7 @@ let token = "";
 let lastSeq = 0;
 let lastKnown = new Set();
 let polling = false;
+let booted = false; // init() ran once — guards double-boot from loadConfig + saveConfig
 let sessions = new Map(); // sid → session record
 let activeSid = null;
 
@@ -62,6 +63,9 @@ function loadConfig() {
       tokenInput.value = token;
       connForm.classList.add("hidden");
       panelMain.classList.remove("hidden");
+      if (!booted) { booted = true; init(); } // boot the session discovery +
+                                              // SSE loops (previously init()
+                                              // only ran on the Connect click)
       return true;
     }
     setStatus("enter the device token (D:\\vale-command\\config.yaml)");
@@ -75,6 +79,7 @@ function loadConfig() {
     tokenInput.value = token;
     connForm.classList.add("hidden");
     panelMain.classList.remove("hidden");
+    if (!booted) { booted = true; init(); }
     return true;
   }
   return false;
@@ -88,7 +93,10 @@ function saveConfig() {
   localStorage.setItem(LS_TOKEN, token);
   connForm.classList.add("hidden");
   panelMain.classList.remove("hidden");
-  init();
+  // init() already ran at load (loadConfig boots the discovery loops when a
+  // token is present); if the user is filling this form the loops haven't
+  // started yet — boot them now. Guard against double-boot.
+  if (!booted) { booted = true; init(); }
 }
 
 // ── Transport ───────────────────────────────────────────────────
