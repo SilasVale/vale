@@ -44,8 +44,8 @@ impl ServerHandler for DeviceServer {
         // is the only construction form.
         #[allow(clippy::field_reassign_with_default)]
         let mut server_info = Implementation::default();
-        server_info.name = "vale-command".into();
-        server_info.title = Some("Vale Command".into());
+        server_info.name = "vale-agent".into();
+        server_info.title = Some("Vale Agent".into());
         server_info.version = env!("CARGO_PKG_VERSION").into();
         info.server_info = server_info;
         info

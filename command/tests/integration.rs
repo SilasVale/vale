@@ -14,7 +14,7 @@ fn config_full() {
 server:
   host: "127.0.0.1"
   port: 9999
-  name: "vale-command"
+  name: "vale-agent"
 serial:
   default_baud_rate: 9600
   default_timeout_ms: 500
@@ -60,7 +60,7 @@ fn config_default_yaml_embedded() {
 fn config_default_impl() {
     let c = Config::default();
     assert_eq!(c.server.port, 3000);
-    assert_eq!(c.server.name, "vale-command");
+    assert_eq!(c.server.name, "vale-agent");
 }
 
 // ═══════════════════════════════════════════════════════════════
