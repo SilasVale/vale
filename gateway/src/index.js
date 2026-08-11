@@ -20,6 +20,15 @@
  *
  * Keys live in Cloudflare KV via store.js (users, tokens, invites, per-user keys).
  * The admin is seeded from the existing CLIENT_KEY, keeping the legacy settings.json working.
+ *
+ * Module map (2026-08-12 refactor):
+ *   index.js              front door + console API + /v1/* routing (handleGateway)
+ *   channels.js           channel registry (MODELS/ROUTE_INFO/HEALTH channels + og endpoints)
+ *   body-scan.js          10ms-CPU-budget raw-string scans (never parse big bodies)
+ *   anthropic-translate.js Anthropic↔OpenAI SSE translation (pure, zero env)
+ *   reliability.js        fetchWithTimeout/Retry + BreakerDO + timeouts
+ *   http.js               jsonOk/jsonError/readJson/CORS
+ *   store.js / auth.js / device-fetch.js / mcp.js / plugin-hub.js  supporting modules
  */
 
 import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
