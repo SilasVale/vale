@@ -125,12 +125,29 @@ export function scanTopLevelModel(raw) {
  * needs a context-budget estimate, ±20% is fine.
  */
 const ESTIMATE_WALK_LIMIT = 1_000_000; // chars: beyond this, approximate
+// Sampling window: walking every char of a 1M-char body costs ~17ms and alone
+// blows the Workers Free 10ms CPU budget (Error 1102). Sampling the first
+// ESTIMATE_SAMPLE chars and extrapolating keeps it O(1) with ±20% accuracy —
+// which the module's own doc says is fine for a context-budget estimate.
+const ESTIMATE_SAMPLE = 128 * 1024; // 128K chars sampled ≈ 1-2ms
 
 export function estimateTokens(jsonStr) {
   const s = String(jsonStr);
-  if (s.length > ESTIMATE_WALK_LIMIT) {
+  const len = s.length;
+  if (len > ESTIMATE_WALK_LIMIT) {
     // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
-    return Math.ceil(s.length / 3);
+    return Math.ceil(len / 3);
+  }
+  if (len > ESTIMATE_SAMPLE) {
+    // Sample the head (model + system prompt live there) and extrapolate.
+    let ascii = 0;
+    let other = 0;
+    for (let i = 0; i < ESTIMATE_SAMPLE; i++) {
+      if (s.charCodeAt(i) < 128) ascii += 1;
+      else other += 1;
+    }
+    const ratio = len / ESTIMATE_SAMPLE;
+    return Math.ceil((ascii * ratio) / 4 + (other * ratio) * 1.8);
   }
   let ascii = 0;
   let other = 0;
