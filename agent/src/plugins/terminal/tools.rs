@@ -206,6 +206,9 @@ fn tool_list(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
     )
 }
 
+
+// ── History ───────────────────────────────────────
+
 fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let buf = output_buf.clone();
@@ -257,6 +260,9 @@ pub fn append_command_newline(command: &str) -> String {
         format!("{command}\n")
     }
 }
+
+
+// ── Execute ──────────────────────────────────────
 
 fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
@@ -430,6 +436,9 @@ fn tool_select(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
     )
 }
 
+
+// ── Output (read/screen) ────────────────────────────
+
 fn tool_read(output_buf: &OutputBuf) -> ToolDef {
     let buf = output_buf.clone();
     ToolDef::new(
@@ -544,6 +553,9 @@ fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
     )
 }
 
+
+// ── Diagnostics ────────────────────────────────────
+
 fn tool_diag_write(diag: &DiagStore) -> ToolDef {
     let diag = diag.clone();
     ToolDef::new(
@@ -585,6 +597,9 @@ fn chrono_timestamp() -> String {
         .map(|d| d.as_secs().to_string())
         .unwrap_or_else(|_| "?".into())
 }
+
+
+// ── Secrets (keychain) ─────────────────────────────
 
 fn tool_secret_set() -> ToolDef {
     ToolDef::new(
