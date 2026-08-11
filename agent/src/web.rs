@@ -4,7 +4,10 @@
 //! layer directly — the same layer MCP's StreamableHttpService sits on.
 //!
 //! Routes:
-//!   GET  /                   → minimal status page (no panel assets)
+//!   GET  /                   → minimal status page (no token needed)
+//!   GET  /panel, /panel/     → Apple-style terminal panel (token entered in
+//!                              the browser, saved to localStorage; no server
+//!                              token injection since 1.0.5)
 //!   GET  /api/events         → SSE event stream
 //!   GET  /api/events/poll    → poll events (?after=N)
 //!   GET  /api/events/term    → SSE terminal byte stream (TermOutput JSON frames)
