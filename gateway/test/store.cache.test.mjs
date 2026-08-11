@@ -186,3 +186,17 @@ test("getUserRoute: cache expires after the 60s route TTL", async () => {
     Date.now = realNow;
   }
 });
+
+test("getGlobalSetting: auth keys expire after 60s (not 24h)", async () => {
+  const kv = makeKV({ "settings:US_PROXY": "1" });
+  const realNow = Date.now;
+  try {
+    assert.equal(await store.getGlobalSetting(kv, "US_PROXY"), "1"); // cache
+    assert.equal(kv.counters.get, 1);
+    Date.now = () => realNow() + 61 * 1000; // past the 60s auth TTL
+    assert.equal(await store.getGlobalSetting(kv, "US_PROXY"), "1"); // re-read KV
+    assert.equal(kv.counters.get, 2);
+  } finally {
+    Date.now = realNow;
+  }
+});

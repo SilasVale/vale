@@ -1,4 +1,4 @@
-# Vale Command Build Guide
+# Vale Agent Build Guide
 
 ## Cross-compilation to Windows (MSVC)
 
@@ -9,30 +9,31 @@ Requires `cargo-xwin` for cross-compiling from Linux:
 cargo install cargo-xwin
 
 # Windows check (fast, run after touching Cargo.toml or feature-gated code)
-cargo xwin check -p vale-command --target x86_64-pc-windows-msvc --features terminal
+cargo xwin check -p vale-agent --target x86_64-pc-windows-msvc --features terminal
 
 # Debug build
-cargo clean && cargo xwin build -p vale-command --target x86_64-pc-windows-msvc --features terminal
+cargo clean && cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --features terminal
 
 # Release build
-cargo clean && cargo xwin build -p vale-command --target x86_64-pc-windows-msvc --features terminal --release
+cargo clean && cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --features terminal --release
 ```
 
 Output binaries:
-- `target/x86_64-pc-windows-msvc/debug/vale-command.exe` (debug)
-- `target/x86_64-pc-windows-msvc/release/vale-command.exe` (release)
+- `target/x86_64-pc-windows-msvc/debug/vale-agent.exe` (debug)
+- `target/x86_64-pc-windows-msvc/release/vale-agent.exe` (release)
 
-`scripts/build.sh command` builds vale-command + the vale-tray app in one go.
+`scripts/build.sh agent` builds vale-agent + the vale-tray app in one go.
 
 ## Architecture
 
-vale-command is a pure service now — MCP server + terminal backends + SSE
-endpoints. The web panel SPA, the Tauri desktop app, and browser automation
-(CDP / headless Chrome-Edge) are retired; the browser extension + gateway MCP
-replaced them. A standalone tray app (`vale-tray/`) controls the Windows
-service.
+vale-agent is a pure service — MCP server + terminal backends + SSE endpoints.
+The Tauri desktop app and browser automation (CDP / headless Chrome-Edge) are
+retired; the browser extension + gateway MCP replaced them. The web panel
+(`/panel`, Apple-style terminal) is served by `src/web.rs` — token entered in
+the browser, kept in localStorage (no server-side injection since 1.0.5). A
+standalone tray app (`vale-tray/`) controls the Windows service.
 
-- **MCP** (rmcp): external tool interface at `http://0.0.0.0:18080/mcp` —
+- **MCP** (rmcp): external tool interface at `http://0.0.0.0:3000/mcp` —
   token-gated via `TokenGate` in `src/web.rs` (rmcp has no server-side auth hook)
 
 ### Module map
@@ -74,11 +75,11 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   `refactor(stage-i)`, `perf(stage-h)`, `feat(stage-k)` …). Each commit must
   leave the workspace green.
 - **Verification per change**: `cargo test` → `cargo clippy --all-targets`
-  (target: zero warnings) → `cargo xwin check -p vale-command
+  (target: zero warnings) → `cargo xwin check -p vale-agent
   --target x86_64-pc-windows-msvc --features terminal`. After touching
   feature-gated code, also run `cargo test --features terminal` and
   `cargo clippy --features terminal --all-targets`. Smoke:
-  `cargo run --bin vale-command --features terminal -- /tmp/ct.yaml`
+  `cargo run --bin vale-agent --features terminal -- /tmp/ct.yaml`
   then curl `/api/status` and `/api/tools/terminal_list` with the Bearer token
   from `/tmp/ct.yaml`.
 - **Feature-gating rule**: real terminal code is gated behind the `terminal`
@@ -104,9 +105,9 @@ dependencies don't affect the Linux build):
 cd vale-tray && cargo xwin build --target x86_64-pc-windows-msvc --release
 ```
 
-Installed by `deploy/vale-command-setup.ps1` as the `ValeCommandTray` at-logon
-scheduled task. Reads `vale-command.hostname` (device subdomain),
-`vale-command.console` (console URL, optional) and `config.yaml`
+Installed by `deploy/vale-agent-setup.ps1` as the `ValeCommandTray` at-logon
+scheduled task. Reads `vale-agent.hostname` (device subdomain),
+`vale-agent.console` (console URL, optional) and `config.yaml`
 (port + auth token) from the install dir. Controls the `ValeCommand` scheduled
 task via schtasks.
 

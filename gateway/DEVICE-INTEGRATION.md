@@ -6,14 +6,14 @@
 ## Background & goal
 
 - **Vale Gate** — AI gateway console (login + admin/user roles + invite codes), runs on a Cloudflare Worker
-- **Vale Command** — slim headless MCP server on Windows (web panel retired), exposed via Cloudflare Tunnels, one subdomain per machine
+- **Vale Agent** — slim headless MCP server on Windows, exposed via Cloudflare Tunnels, one subdomain per machine. `GET /` is a minimal status page; `/panel` serves the Apple-style terminal panel (token entered in the browser, saved to localStorage — never injected server-side since 1.0.5)
 
 **Goal**: bring device control into the Vale Gate console as an admin-only「Devices」module, and give Claude Code one `/mcp` endpoint that operates every device's **browser and terminal**.
 
 ## Key architecture conclusions (v2)
 
 1. **Browser control lives in an extension, not a second device server**: the **Vale Browser Control** extension (Chrome/Edge MV3) drives the device's real browser via `chrome.debugger` — internal CDP, no network ports to open. The extension keeps a WebSocket to a per-device **PluginHubDO**; the gateway's `/mcp` routes `browser_*` tool calls through the hub as request/response frames.
-2. **Terminal control keeps the device's existing `/api/tools` surface**: the gateway proxies `terminal_*` MCP calls to Vale Command, injecting the device Bearer token server-side (same pattern as the device panel proxy).
+2. **Terminal control keeps the device's existing `/api/tools` surface**: the gateway proxies `terminal_*` MCP calls to Vale Agent, injecting the device Bearer token server-side (same pattern as the device panel proxy).
 3. **No extension account needed**: pairing is code-based — admin generates a one-time code, the extension claims it for a plugin token, and the token trades for a one-time WS ticket. The plugin token also authenticates the extension's terminal page through the reverse proxy, scoped to its own device only.
 
 ## Architecture
@@ -23,7 +23,7 @@ Claude Code ── https://<console>/mcp (admin Bearer token) ──► Vale Gat
    │ terminal_*  → device /api/tools (token injected server-side)
    │ browser_*   → PluginHubDO /call {tool, params, requestId}
    ▼                        │ WS frames {id, type: request|response}
-Vale Command (Windows)      Vale Browser Control extension
+Vale Agent (Windows)      Vale Browser Control extension
    /mcp + /api/tools          │ chrome.debugger (internal CDP)
                               ▼
                     device's real Chrome/Edge tab
@@ -78,8 +78,8 @@ Device list (name / hostname / masked token) with an **online badge** (polled fr
 
 ## Verification
 
-- ✅ Gateway suite: `cd gateway && node --test` — 98/98 green (MCP handler + browser tools, plugin pairing/ticket, proxy auth + WS, store/cache, reliability)
-- ✅ Bundle: `npx wrangler deploy --dry-run` — 20 assets, DO bindings (BreakerDO, PluginHubDO) and migration `v2-plugin-hub` validated
+- ✅ Gateway suite: `cd gateway && node --test` — 141 pass / 1 skip / 0 fail (2026-08-12) (MCP handler + browser tools, plugin pairing/ticket, proxy auth + WS, store/cache, reliability)
+- ✅ Bundle: `npx wrangler deploy --dry-run` — ~20 assets, DO bindings (BreakerDO, PluginHubDO) and migration `v2-plugin-hub` validated
 - ⏳ Production E2E pending (needs a real Chrome with the extension + a real device + a deployed worker) — see checklist below
 
 ## E2E checklist (run after `wrangler deploy`)
