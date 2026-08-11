@@ -158,10 +158,27 @@ function breakerStub(env) {
   return env.BREAKER.get(env.BREAKER.idFromName("og"));
 }
 
+// In-isolate cache for the breaker check: the DO /check does a storage get
+// (~5-20ms) on EVERY og translate request, /api/health, and probe, while
+// degradedUntil only changes every 60s. A 5s TTL absorbs the per-request
+// checks without delaying failover meaningfully.
+/** Test hook: clear the in-isolate breaker cache. Tests that flip the
+ *  breaker open/closed in the same process would otherwise read a stale
+ *  cached value from an earlier test file. */
+export function __clearDegradedCache() {
+  degradedCache = { at: 0, value: false };
+}
+
+let degradedCache = { at: 0, value: false };
+const DEGRADED_CACHE_TTL_MS = 5000;
+
 export async function isChannelDegraded(env) {
+  const now = Date.now();
+  if (now - degradedCache.at < DEGRADED_CACHE_TTL_MS) return degradedCache.value;
   try {
     const res = await breakerStub(env).fetch("https://breaker/check");
-    return (await res.text()) === "1";
+    degradedCache = { at: now, value: (await res.text()) === "1" };
+    return degradedCache.value;
   } catch (e) {
     console.error("[breaker] check failed:", e.message);
     return false;
