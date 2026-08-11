@@ -279,6 +279,32 @@ export async function setUserRoute(env, id, model) {
   rcset(key, String(model)); // write-through：切换立即生效（同 isolate 零延迟）
 }
 
+/* ---- Global settings (console-controlled, e.g. US_PROXY exit switch) ---- */
+
+/** Read a global setting; falls back to a Worker secret/env of the same name
+ *  so the console toggle can override (and persist) a bootstrap value. */
+export async function getGlobalSetting(env, name) {
+  const key = `settings:${name}`;
+  const hit = cget(key);
+  if (hit !== undefined) return hit;
+  let v = await env.KEYS.get(key);
+  if (v === null || v === undefined) v = env[name] ? String(env[name]) : null;
+  if (v === null || v === undefined) v = null;
+  cset(key, v);
+  return v;
+}
+
+export async function setGlobalSetting(env, name, value) {
+  const key = `settings:${name}`;
+  if (value === null || value === undefined || value === "" || value === "0" || value === "false") {
+    await env.KEYS.delete(key);
+    cdel(key);
+    return;
+  }
+  await env.KEYS.put(key, String(value));
+  cset(key, String(value)); // write-through：切换立即生效（同 isolate 零延迟）
+}
+
 /* ---- Admin password (stored in KV as plaintext so the console can show/change it) ---- */
 
 /** Read the admin password: KV is authoritative; migrate from the Worker secret once if absent */
