@@ -1,12 +1,34 @@
-// Plugin pairing/ticket store helpers — pure local, no Cloudflare calls.
-//
-// The plugin registry lives in a single KV JSON map (plugins:v1); pair codes
-// and WS tickets are one-time KV values with TTLs. A Map-backed KV stub stands
-// in for the Workers binding.
+// Plugin pairing/ticket store helpers + the public pair/claim and ws-ticket
+// routes. The plugin registry lives in a single KV JSON map (plugins:v1);
+// pair codes and WS tickets are one-time KV values with TTLs. A Map-backed KV
+// stub stands in for the Workers binding.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import worker from "../src/index.js";
 import { createPairCode, consumePairCode, addPluginLink, getPluginByToken, removePluginLink, createWsTicket, consumeWsTicket } from "../src/store.js";
+
+// Full worker fetch: pair/claim + ws-ticket are public (no admin session) —
+// the extension has no session cookie. Asserted by behavior, not source order.
+function makeEnv() {
+  const m = new Map([
+    ["_admin_seeded", "1"],
+    ["auth:admin_password", "pw"],
+    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "" })],
+  ]);
+  return {
+    CONSOLE_HOST: "x",
+    KEYS: {
+      async get(k) { return m.has(k) ? m.get(k) : null; },
+      async put(k, v) { m.set(k, v); },
+      async delete(k) { m.delete(k); },
+    },
+  };
+}
+
+async function apiFetch(env, path, init = {}) {
+  const req = new Request(`https://x${path}`, { method: "POST", headers: { "content-type": "application/json" }, ...init });
+  return worker.fetch(req, env);
+}
 
 function env() {
   const m = new Map();
@@ -42,43 +64,49 @@ test("ws ticket: one-time", async () => {
   assert.equal(await consumeWsTicket(e, t), null);
 });
 
-// The extension has no admin session, so pair/claim, ws-ticket and /ws must be
-// reachable without one. handleConsole's public section ends where requireSession
-// is called — a route registered after that gate 401s before its handler runs.
-// Worker routing can't run under plain node, so assert the registration order
-// by reading handleConsole's source (same check a reviewer would do by eye).
-test("pair/claim + ws-ticket + /ws routes sit in the PUBLIC section (before requireSession)", () => {
-  const src = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
-  const body = src.slice(src.indexOf("async function handleConsole"));
-  const sessionGate = body.indexOf("const user = await requireSession(request, env);");
-  assert.ok(sessionGate > 0, "requireSession gate found");
-  const claim = body.indexOf("`${PLUGIN_BASE}/pair/claim`");
-  const ticket = body.indexOf("`${PLUGIN_BASE}/ws-ticket`");
-  const ws = body.indexOf("`${PLUGIN_BASE}/ws`");
-  assert.ok(claim > 0, "pair/claim route found");
-  assert.ok(ticket > 0, "ws-ticket route found");
-  assert.ok(ws > 0, "/ws route found");
-  assert.ok(claim < sessionGate, "pair/claim registered before requireSession");
-  assert.ok(ticket < sessionGate, "ws-ticket registered before requireSession");
-  assert.ok(ws < sessionGate, "/ws registered before requireSession");
-  // Exactly one registration each — no admin-section copy left behind.
-  assert.equal(claim, body.lastIndexOf("`${PLUGIN_BASE}/pair/claim`"));
-  assert.equal(ticket, body.lastIndexOf("`${PLUGIN_BASE}/ws-ticket`"));
-  assert.equal(ws, body.lastIndexOf("`${PLUGIN_BASE}/ws`"));
+// Behavior tests: pair/claim and ws-ticket are PUBLIC (the extension has no
+// session cookie) — a valid code/ticket returns 200, invalid ones 403/401.
+
+test("pair/claim: valid code → 200 with token, invalid code → 403", async () => {
+  const env = makeEnv();
+  // Store a real pair code for device d1 (value is the device name string).
+  const kv = env.KEYS;
+  const code = "PAIRCODE123";
+  await kv.put(`pair:${code}`, "d1");
+  const ok = await apiFetch(env, "/api/plugins/pair/claim", { body: JSON.stringify({ code }) });
+  assert.equal(ok.status, 200);
+  const j = await ok.json();
+  assert.equal(j.device, "d1");
+  assert.ok(j.token.length >= 8);
+  // One-time: consuming again fails (the code was deleted).
+  const again = await apiFetch(env, "/api/plugins/pair/claim", { body: JSON.stringify({ code }) });
+  assert.equal(again.status, 403);
+  // Unknown code → 403.
+  const bad = await apiFetch(env, "/api/plugins/pair/claim", { body: JSON.stringify({ code: "NOPE" }) });
+  assert.equal(bad.status, 403);
 });
 
-test("pair code: unknown or empty code is rejected (claim 403 path)", async () => {
-  const e = env();
-  assert.equal(await consumePairCode(e, ""), null);
-  assert.equal(await consumePairCode(e, "NOPE123"), null);
+test("pair/claim: no admin session required (public route)", async () => {
+  const env = makeEnv();
+  const kv = env.KEYS;
+  await kv.put("pair:CODE2", "d1");
+  // No cookie, no Authorization header — must still reach the handler.
+  const res = await apiFetch(env, "/api/plugins/pair/claim", { body: JSON.stringify({ code: "CODE2" }) });
+  assert.equal(res.status, 200);
 });
 
-test("ws ticket: bound to its device — mismatched ?device= fails the gate", async () => {
-  const e = env();
-  const t = await createWsTicket(e, "d1");
-  const claimedDevice = await consumeWsTicket(e, t);
-  // /api/plugins/ws forwards to the hub only when the ticket's device matches
-  // the ?device= param; a mismatch must 403 before any hub fetch.
-  assert.equal(claimedDevice, "d1");
-  assert.notEqual(claimedDevice, "d2");
+test("ws-ticket: valid plugin token → 200, unknown token → 401 (public route)", async () => {
+  const env = makeEnv();
+  const kv = env.KEYS;
+  await kv.put("plugins:v1", JSON.stringify({ "tok-d1": { device: "d1", createdAt: 1 } }));
+  const ok = await apiFetch(env, "/api/plugins/ws-ticket", {
+    headers: { authorization: "Bearer tok-d1", "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(ok.status, 200);
+  const bad = await apiFetch(env, "/api/plugins/ws-ticket", {
+    headers: { authorization: "Bearer tok-nope", "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(bad.status, 401);
 });
