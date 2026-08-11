@@ -8,9 +8,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleGateway, scanTopLevelModel, rawWithModel, estimateTokens } from "../src/index.js";
+import { __clearCaches } from "../src/store.js";
 
 let uidSeq = 0;
-function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30 } = {}) {
+function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30, usProxy = false } = {}) {
   const uid = `u${++uidSeq}`;
   const token = `tok-${uid}`;
   const kv = new Map([
@@ -21,6 +22,8 @@ function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30 } = 
       OPENROUTER_API_KEY: "sk-or", QWEN_API_KEY: "sk-qw", ...keys,
     })],
   ]);
+  // US_PROXY: KV setting wins (the console toggle writes settings:US_PROXY).
+  if (usProxy) kv.set("settings:US_PROXY", "1");
   const breaker = {
     idFromName: () => ({}),
     get: () => ({
@@ -96,6 +99,42 @@ test("og/minimax-m3 also goes to chat/completions (translate path)", async () =>
   assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
   assert.equal(JSON.parse(seen.init.body).model, "minimax-m3");
   assert.equal(res.status, 200);
+});
+
+// ── US_PROXY switch: on = every channel via the Vercel US exit ──
+
+test("US_PROXY on: og/deepseek-v4-flash walks translate via the proxy (not native)", async () => {
+  __clearCaches(); // 24h settings cache would poison the switch test
+  const { env, token } = gwEnv({ usProxy: true });
+  let seen;
+  const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(seen.url, "https://v.saisi.online/api/zen?target=og&path=%2Fv1%2Fchat%2Fcompletions");
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-og");
+  assert.equal(res.status, 200);
+});
+
+test("US_PROXY on: ds/ goes through the proxy passthrough", async () => {
+  __clearCaches(); // 24h settings cache would poison the switch test
+  const { env, token } = gwEnv({ usProxy: true });
+  let seen;
+  const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(seen.url, "https://v.saisi.online/api/zen?target=ds&path=%2Fanthropic%2Fv1%2Fmessages");
+  assert.equal(res.status, 200);
+});
+
+test("US_PROXY off (default): flash keeps native direct passthrough", async () => {
+  __clearCaches(); // 24h settings cache would poison the switch test
+  const { env, token } = gwEnv(); // no settings:US_PROXY key
+  let seen;
+  await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/messages");
 });
 
 test("og/mimo-v2.5 keeps the translate path (chat/completions, Anthropic JSON out)", async () => {
