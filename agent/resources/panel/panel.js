@@ -1,6 +1,6 @@
-// Vale Command — terminal panel (Web page, no extension).
+// Vale Agent — terminal panel (Web page, no extension).
 //
-// Opens a URL and shows every terminal session on a vale-command device in
+// Opens a URL and shows every terminal session on a vale-agent device in
 // real time (PTY / SSH / serial), driven by the device's own SSE + events —
 // no browser extension, no pairing, no polling for sessions.
 //
@@ -68,7 +68,7 @@ function loadConfig() {
                                               // only ran on the Connect click)
       return true;
     }
-    setStatus("enter the device token (D:\\vale-command\\config.yaml)");
+    setStatus("enter the device token (C:\\vale-agent\\config.yaml)");
     return false;
   }
   // Standalone mode: full hostname + token.
@@ -177,7 +177,7 @@ function adoptSession(sid, label, idbRec = null) {
   const existing = sessions.get(sid);
   if (existing && !existing.closed) return; // dedup
   if (existing) {
-    // Resurrection (vale-command restarted, sid reused)
+    // Resurrection (vale-agent restarted, sid reused)
     existing.closed = false;
     existing.complete = false;
     existing.closedAt = null;

@@ -272,12 +272,12 @@ function attachStream(sid) {
 
 /** Create the xterm + tab for a session and wire it to the device.
  *  Idempotent: re-adopting a live session is a no-op; re-adopting a closed
- *  one (vale-command restarted and reused term-N) resurrects the tab. */
+ *  one (vale-agent restarted and reused term-N) resurrects the tab. */
 function adoptSession(sid, label, idbRec = null) {
   const existing = sessions.get(sid);
   if (existing && !existing.closed) return; // dedup — never duplicate tabs
   if (existing) {
-    // Resurrection: vale-command restarted and reused term-N. Reuse the tab
+    // Resurrection: vale-agent restarted and reused term-N. Reuse the tab
     // and xterm rather than hiding the new session behind the tombstone.
     existing.closed = false;
     existing.complete = false;
