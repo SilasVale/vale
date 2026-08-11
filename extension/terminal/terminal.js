@@ -307,9 +307,9 @@ function adoptSession(sid, label, idbRec = null) {
     theme: {
       background: "#ffffff",
       foreground: "#1a1c20",
-      cursor: "#5b6cf0",
+      cursor: "#0e9384",
       cursorAccent: "#ffffff",
-      selectionBackground: "rgba(91,108,240,.2)",
+      selectionBackground: "rgba(14,147,132,.2)",
     },
   });
   const fit = new window.FitAddon.FitAddon();
@@ -544,9 +544,9 @@ async function adoptHistorySession(h, idbRec) {
     theme: {
       background: "#ffffff",
       foreground: "#1a1c20",
-      cursor: "#5b6cf0",
+      cursor: "#0e9384",
       cursorAccent: "#ffffff",
-      selectionBackground: "rgba(91,108,240,.2)",
+      selectionBackground: "rgba(14,147,132,.2)",
     },
   });
   const fit = new window.FitAddon.FitAddon();

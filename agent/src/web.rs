@@ -29,16 +29,24 @@ use crate::state::AppState;
 use vale_agent_core::EventBus;
 
 /// Minimal self-contained status page — the panel SPA is retired, but the
-/// device URL should still answer something readable in a browser.
+/// device URL should still answer something readable in a browser. Apple-style
+/// light, matching the rest of the Vale surface (2026-08-12).
 const STATUS_PAGE: &str = concat!(
-    "<!doctype html><html><head><meta charset=\"utf-8\"><title>vale-agent</title></head>",
-    "<body style=\"font-family:monospace;margin:2rem\"><h1>vale-agent</h1>",
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>vale-agent</title>",
+    "<style>body{background:#f5f5f7;color:#1d1d1f;font-family:-apple-system,'SF Pro Text','PingFang SC','Segoe UI',sans-serif;margin:0;display:flex;justify-content:center;padding:12vh 24px}",
+    ".card{background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border:1px solid rgba(0,0,0,.08);border-radius:20px;box-shadow:0 12px 32px rgba(0,0,0,.12);padding:32px;max-width:480px;width:100%}",
+    ".mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:#1d1d1f;color:#fff;font-weight:700;font-size:22px}",
+    "h1{font-size:22px;margin:14px 0 4px;font-weight:650;letter-spacing:-.01em}",
+    "p{color:#6e6e73;font-size:13px;margin:4px 0}",
+    "code{background:#e7f5f2;color:#0b7a6e;padding:1px 6px;border-radius:6px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:12px}",
+    "</style></head>",
+    "<body><div class=\"card\"><span class=\"mark\">V</span><h1>vale-agent</h1>",
     "<p>MCP endpoint: <code>/mcp</code></p>",
     "<p>Tool API: <code>/api/tools/{name}</code></p>",
     "<p>Status: <code>/api/status</code></p>",
     "<p>Version: ",
     env!("CARGO_PKG_VERSION"),
-    "</p></body></html>",
+    "</p></div></body></html>",
 );
 
 // ── Terminal panel static assets (embedded, public) ──────────

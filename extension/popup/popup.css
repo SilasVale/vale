@@ -1,11 +1,17 @@
 /* Vale extension popup — Apple-style light, unified brand tokens. */
 :root{
-  --bg:#f5f5f7; --card:#fff; --border:rgba(0,0,0,0.08); --border-strong:rgba(0,0,0,0.14);
-  --accent:#0e9384; --accent-hover:#0b7a6e; --accent-bg:#e7f5f2;
+  /* Canonical names (match the Vale spec) with legacy aliases below. */
+  --bg:#f5f5f7; --surface:#fff; --line:rgba(0,0,0,0.08); --line-strong:rgba(0,0,0,0.14);
+  --accent:#0e9384; --accent-ink:#0b7a6e; --accent-soft:#e7f5f2;
+  --ink:#1d1d1f; --muted:#6e6e73; --faint:#86868b;
+  --radius:14px; --radius-sm:10px; --radius-lg:20px;
   --green:#2ea043; --green-bg:#e6f4ea; --red:#dc2626; --red-bg:#fef2f2;
-  --text:#1d1d1f; --text2:#6e6e73; --text3:#86868b;
-  --font:-apple-system,"SF Pro Text","PingFang SC","Segoe UI",Inter,sans-serif;
+  --font:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Inter,sans-serif;
   --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;
+  /* Legacy aliases */
+  --card:var(--surface); --border:var(--line); --border-strong:var(--line-strong);
+  --accent-hover:var(--accent-ink); --accent-bg:var(--accent-soft);
+  --text:var(--ink); --text2:var(--muted); --text3:var(--faint);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{

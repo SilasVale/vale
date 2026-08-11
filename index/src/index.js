@@ -22,12 +22,12 @@ const PAGE = (consoleUrl) => `<!doctype html>
     --surface-glass: rgba(255,255,255,0.72);
     --line: rgba(0,0,0,0.08);
     --line-strong: rgba(0,0,0,0.14);
-    --txt: #1d1d1f;
-    --dim: #6e6e73;
+    --ink: #1d1d1f;
+    --muted: #6e6e73;
     --faint: #86868b;
     --accent: #0e9384;
     --accent-hover: #0b7a6e;
-    --radius: 20px;
+    --radius: 14px;
     --radius-sm: 10px;
     --shadow: 0 12px 32px rgba(0,0,0,0.12);
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -35,15 +35,15 @@ const PAGE = (consoleUrl) => `<!doctype html>
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { -webkit-text-size-adjust: 100%; }
-  body { background: var(--bg); color: var(--txt); font: 15px/1.55 var(--sans); min-height: 100vh; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); min-height: 100vh; }
 
   .wrap { max-width: 760px; margin: 0 auto; padding: 56px 24px 44px; }
   .brand { display: flex; align-items: center; gap: 14px; }
   .brand .mark { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
                  border-radius: 12px; background: #1d1d1f; color: #fff; font-size: 24px; font-weight: 700; }
   .brand .name { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
-  .brand .tag { font: 12px/1 var(--mono); color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; }
-  .lede { color: var(--dim); margin-top: 12px; font-size: 14px; max-width: 640px; }
+  .brand .tag { font: 12px/1 var(--mono); color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .lede { color: var(--muted); margin-top: 12px; font-size: 14px; max-width: 640px; }
   .lede a { color: var(--accent); }
 
   .install { display: flex; align-items: center; gap: 10px; margin-top: 24px; flex-wrap: wrap; }
@@ -61,8 +61,10 @@ const PAGE = (consoleUrl) => `<!doctype html>
   .step .n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
              color: #fff; display: flex; align-items: center; justify-content: center;
              font: 700 13px/1 var(--sans); margin-top: 1px; }
-  .step .body { color: var(--txt); font-size: 14px; }
+  .step .body { color: var(--ink); font-size: 14px; }
   .step code { font: 12px/1.5 var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+
+  .mono { font-family: var(--mono); }
 
   footer { max-width: 760px; margin: 0 auto; padding: 0 24px 44px; color: var(--faint); font-size: 12px;
            display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
