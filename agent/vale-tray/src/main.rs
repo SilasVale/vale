@@ -207,9 +207,9 @@ fn restart_task() {
 /// the PowerShell script restores the tray itself.
 ///
 /// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
-/// bumped alongside command/Cargo.toml and index/src/index.js when a new
+/// bumped alongside agent/Cargo.toml and index/src/index.js when a new
 /// installer is shipped.
-const LOCAL_VERSION: &str = "1.0.2";
+const LOCAL_VERSION: &str = "1.0.6";
 const VERSION_URL: &str = "https://agent.saisi.online/api/version";
 
 fn check_for_update() {

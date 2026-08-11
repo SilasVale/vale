@@ -30,6 +30,12 @@ export const USER_KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENR
  * most one read per day per isolate, instead of one read per request.
  */
 const CACHE_TTL = 24 * 60 * 60 * 1000;
+// Security-critical keys get a short TTL so admin changes (disable user,
+// regenerate token, flip US_PROXY, change password) propagate across
+// isolates within a minute instead of up to 24h. KV reads are cheap — a few
+// hundred per key per isolate per day.
+const AUTH_CACHE_TTL = 60 * 1000;
+const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:"];
 const __c = new Map(); // kvKey -> { v, exp }; v may be null (cached "not found")
 function cget(k) {
   const e = __c.get(k);
@@ -39,7 +45,8 @@ function cget(k) {
 }
 function cset(k, v) {
   if (__c.size >= 512) __c.delete(__c.keys().next().value); // bound cache size
-  __c.set(k, { v, exp: Date.now() + CACHE_TTL });
+  const ttl = AUTH_PREFIXES.some((p) => k.startsWith(p)) ? AUTH_CACHE_TTL : CACHE_TTL;
+  __c.set(k, { v, exp: Date.now() + ttl });
 }
 function cdel(...ks) { for (const k of ks) __c.delete(k); }
 /** Test hook: wipe the module-level 24h caches (settings/route/keys). Never
