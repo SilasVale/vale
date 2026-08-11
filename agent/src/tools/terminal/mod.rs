@@ -209,16 +209,16 @@ mod desktop_impl {
             Ok(())
         }
 
-        pub async fn term_close(&self, sid: &str) -> Option<String> {
+        pub async fn term_close(&self, sid: &str) -> Result<String, DeviceError> {
             let mut inner = self.inner.lock().await;
             if let Some(pos) = inner.sessions.iter().position(|s| s.id == sid) {
                 let kind = inner.sessions[pos].kind.clone();
                 // Signal backend to close
                 inner.sessions[pos].backend.close();
                 inner.sessions.remove(pos);
-                Some(kind)
+                Ok(kind)
             } else {
-                None
+                Err(DeviceError::Internal { message: format!("session not found: {sid}") })
             }
         }
 

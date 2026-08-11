@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use vale_agent_core::DeviceError;
+use vale_agent_core::{recover_guard, DeviceError};
 
 /// Monotonic port-id counter (uuid was overkill for session labels).
 static NEXT_PORT_ID: AtomicU64 = AtomicU64::new(1);
@@ -126,9 +126,7 @@ impl SerialPool {
         })?;
 
         let id = format!("port-{}", NEXT_PORT_ID.fetch_add(1, Ordering::Relaxed));
-        self.ports
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        recover_guard(&self.ports)
             .insert(
                 id.clone(),
                 OpenPort {
@@ -145,17 +143,13 @@ impl SerialPool {
     /// Used by terminal sessions that need exclusive port access without pool lock contention.
     #[cfg_attr(not(feature = "terminal"), allow(dead_code))]
     pub fn take_port(&self, port_id: &str) -> Option<Box<dyn serialport::SerialPort>> {
-        self.ports
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        recover_guard(&self.ports)
             .remove(port_id)
             .map(|entry| entry.port)
     }
 
     pub fn list_open_ports(&self) -> Vec<OpenPortInfo> {
-        self.ports
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        recover_guard(&self.ports)
             .iter()
             .map(|(id, p)| OpenPortInfo {
                 id: id.clone(),

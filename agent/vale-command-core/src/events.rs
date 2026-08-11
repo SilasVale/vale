@@ -5,6 +5,8 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use tokio::sync::broadcast;
 
+use crate::recover_guard;
+
 /// Events emitted after Agent actions complete.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
@@ -97,13 +99,13 @@ impl AppEventBus {
 
     /// Set a hook callback invoked on every emit (e.g. Tauri event forwarding).
     pub fn set_hook(&self, hook: impl Fn(u64, &AgentEvent) + Send + Sync + 'static) {
-        let mut h = self.hook.lock().unwrap_or_else(|p| p.into_inner());
+        let mut h = recover_guard(&self.hook);
         *h = Some(Box::new(hook));
     }
 
     /// Set a hook for terminal output forwarding.
     pub fn set_term_hook(&self, hook: impl Fn(serde_json::Value) + Send + Sync + 'static) {
-        let mut h = self.term_hook.lock().unwrap_or_else(|p| p.into_inner());
+        let mut h = recover_guard(&self.term_hook);
         *h = Some(Box::new(hook));
     }
 
@@ -124,7 +126,7 @@ impl EventBus for AppEventBus {
         // Assign seq + ring buffer (keep last RING_CAP events, O(1) eviction).
         // A poisoned lock must never silently produce seq 0 — the buffer's
         // contents are still valid, so recover the guard.
-        let mut guard = self.log.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = recover_guard(&self.log);
         let (ring, next_seq) = &mut *guard;
         let seq = *next_seq;
         *next_seq += 1;
@@ -136,7 +138,7 @@ impl EventBus for AppEventBus {
         // Broadcast to SSE / any subscriber
         let _ = self.tx.send(SeqEvent { seq, event: event.clone() });
         // Optional hook (e.g. Tauri event forwarding)
-        let hook = self.hook.lock().unwrap_or_else(|p| p.into_inner());
+        let hook = recover_guard(&self.hook);
         if let Some(ref f) = *hook {
             f(seq, event);
         }
@@ -148,7 +150,7 @@ impl EventBus for AppEventBus {
     }
 
     fn recent(&self, after: u64) -> Vec<SeqEvent> {
-        let guard = self.log.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = recover_guard(&self.log);
         guard.0.iter().filter(|e| e.seq > after).cloned().collect()
     }
 
@@ -156,7 +158,7 @@ impl EventBus for AppEventBus {
         // Broadcast to web-panel SSE subscribers first, then the desktop hook —
         // the hook order is preserved so the Tauri "term-output" event is unchanged.
         let _ = self.term_tx.send(output.clone());
-        let hook = self.term_hook.lock().unwrap_or_else(|p| p.into_inner());
+        let hook = recover_guard(&self.term_hook);
         if let Some(ref f) = *hook {
             f(output);
         }

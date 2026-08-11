@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use serde_json::{json, Value};
 
-use vale_agent_core::{AgentEvent, DeviceError, EventBus, ToolDef};
+use vale_agent_core::{recover_guard, AgentEvent, DeviceError, EventBus, ToolDef};
 use crate::plugins::{require_str, to_value_or_empty};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::{parse_serial_target, parse_ssh_target, TerminalManager};
@@ -110,7 +110,7 @@ fn tool_open(
                     while let Some(output) = rx.recv().await {
                         // Poison recovery — dropping buffered output on a poisoned
                         // lock would silently lose terminal data.
-                        let mut store = buf.lock().unwrap_or_else(|p| p.into_inner());
+                        let mut store = recover_guard(&buf);
                         let entry = store.live.entry(sid_buf.clone()).or_default();
                         entry.data.extend_from_slice(&output.data);
                         // Cap at 1 MB — evict oldest half if exceeded
@@ -128,8 +128,7 @@ fn tool_open(
                     // Session ended — retain the buffer in history instead of
                     // dropping it (terminal_close also retains; whichever runs
                     // second is a no-op).
-                    buf.lock()
-                        .unwrap_or_else(|p| p.into_inner())
+                    recover_guard(&buf)
                         .retain_live(&sid_buf, &kind, &label);
                 });
                 Ok(json!(id))
@@ -170,24 +169,21 @@ fn tool_close(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, outp
             let buf = buf.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
-                // Capture metadata before close, then close.
+                // Capture metadata before close, then close. term_close fails
+                // on unknown sessions instead of fabricating a kind.
                 let meta = terminal_mgr.term_info(&session_id).await;
-                let kind = terminal_mgr.term_close(&session_id).await;
+                let kind = terminal_mgr.term_close(&session_id).await?;
                 // Retain the session's output in history instead of deleting
                 // it (the drainer's own retain on channel close is a no-op if
                 // it ran first — retain_live is idempotent).
                 let label = meta.as_ref().map(|m| m.label.clone()).unwrap_or_default();
-                let kind_ref = kind.as_deref().unwrap_or("pty");
-                buf.lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .retain_live(&session_id, kind_ref, &label);
-                if let Some(k) = kind {
-                    match k.as_str() {
-                        "ssh" => bus.emit(&AgentEvent::SshDisconnect { session_id: session_id.clone() }),
-                        "serial" => bus.emit(&AgentEvent::SerialClose { port_id: session_id.clone() }),
-                        _ => bus.emit(&AgentEvent::TermClose { session_id: session_id.clone() }),
-                    };
-                }
+                recover_guard(&buf)
+                    .retain_live(&session_id, &kind, &label);
+                match kind.as_str() {
+                    "ssh" => bus.emit(&AgentEvent::SshDisconnect { session_id: session_id.clone() }),
+                    "serial" => bus.emit(&AgentEvent::SerialClose { port_id: session_id.clone() }),
+                    _ => bus.emit(&AgentEvent::TermClose { session_id: session_id.clone() }),
+                };
                 Ok(json!(format!("Closed terminal session {session_id}")))
             }
         },
@@ -224,7 +220,7 @@ fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> 
                 let mut entries: Vec<Value> = Vec::new();
                 // Live sessions (from the manager) + their current byte count.
                 let live = terminal_mgr.term_list().await;
-                let store = buf.lock().unwrap_or_else(|p| p.into_inner());
+                let store = recover_guard(&buf);
                 for s in &live {
                     let bytes = store.live.get(&s.id).map(|e| e.end_abs()).unwrap_or(0);
                     entries.push(json!({"id": s.id, "kind": s.kind, "label": s.label, "status": "live", "bytes": bytes}));
@@ -287,8 +283,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // UTF-8 lossy conversion and 1MB eviction can never
                     // desynchronize the index (the old String-length-based
                     // offset could panic on an out-of-range slice).
-                    let mut read_abs = buf.lock()
-                        .unwrap_or_else(|p| p.into_inner())
+                    let mut read_abs = recover_guard(&buf)
                         .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
                     // Write command + newline. Windows PowerShell only recognizes
                     // the end of a command on CRLF (\r\n) — a bare \n drops it
@@ -304,8 +299,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
 
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        let (chunk, chunk_len) = buf.lock()
-                            .unwrap_or_else(|p| p.into_inner())
+                        let (chunk, chunk_len) = recover_guard(&buf)
                             .live.get(&sid)
                             .map(|e| {
                                 let s = e.slice_from(read_abs);
@@ -447,7 +441,7 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
             async move {
                 let session_id = require_str(&params, "session_id")?;
                 let (text, start, end, dropped) = {
-                    let mut store = buf.lock().unwrap_or_else(|p| p.into_inner());
+                    let mut store = recover_guard(&buf);
                     // Live session, or retained history (closed).
                     let explicit_offset = params.get("offset").is_some();
                     let offset = params.get("offset").and_then(|v| v.as_u64()).map(|o| o as usize);
@@ -512,7 +506,7 @@ fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
                 let session_id = require_str(&params, "session_id")?;
                 let lines = params.get("lines").and_then(|v| v.as_u64()).unwrap_or(60).max(1) as usize;
                 let (screen, dropped) = {
-                    let mut store = buf.lock().unwrap_or_else(|p| p.into_inner());
+                    let mut store = recover_guard(&buf);
                     let entry = store.live.get_mut(&session_id);
                     match entry {
                         Some(entry) => {
@@ -560,7 +554,7 @@ fn tool_diag_write(diag: &DiagStore) -> ToolDef {
             let diag = diag.clone();
             async move {
                 let line = require_str(&params, "line")?;
-                let mut d = diag.lock().unwrap_or_else(|p| p.into_inner());
+                let mut d = recover_guard(&diag);
                 d.push(format!("{} {line}", chrono_timestamp()));
                 Ok(json!("ok"))
             }
@@ -577,7 +571,7 @@ fn tool_diag_read(diag: &DiagStore) -> ToolDef {
         move |_params: Value| {
             let diag = diag.clone();
             async move {
-                let d = diag.lock().unwrap_or_else(|p| p.into_inner());
+                let d = recover_guard(&diag);
                 Ok(json!({"entries": d.snapshot()}))
             }
         },
@@ -663,7 +657,7 @@ mod tests {
     }
 
     fn seed(buf: &OutputBuf, sid: &str, data: &[u8], dropped: u64) {
-        let mut store = buf.lock().unwrap_or_else(|p| p.into_inner());
+        let mut store = recover_guard(&buf);
         let entry = store.live.entry(sid.to_string()).or_default();
         entry.data.extend_from_slice(data);
         entry.dropped = dropped;
