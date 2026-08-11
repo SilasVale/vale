@@ -49,13 +49,15 @@ let activeSid = null;
 
 function loadConfig() {
   // Same-origin mode: served by vale-command at /panel/ — hostname is this
-  // device's own domain, only the token is needed (entered once, remembered).
+  // device's own domain. The backend injects the device token into the page
+  // (window.__PANEL_TOKEN__), so no input is needed at all; a previously
+  // saved localStorage token still wins for override.
   const sameOrigin = location.pathname.startsWith("/panel");
   if (sameOrigin) {
     hostname = location.host;
     hostInput.value = hostname;
     hostInput.disabled = true;
-    token = localStorage.getItem(LS_TOKEN) || "";
+    token = localStorage.getItem(LS_TOKEN) || window.__PANEL_TOKEN__ || "";
     if (token) {
       tokenInput.value = token;
       connForm.classList.add("hidden");

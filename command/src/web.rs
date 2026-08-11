@@ -259,7 +259,27 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // data until the user enters the device token in the browser). Assets are
     // embedded at compile time from resources/panel/.
     if method == Method::GET && (path == "/panel" || path == "/panel/") {
-        return serve_panel_file("index.html", "text/html; charset=utf-8");
+        // Inject the device token into the panel HTML so the page can use it
+        // as its default — the user opens /panel/ and sees sessions without
+        // typing anything. Only the panel page gets this; the token never
+        // leaves the device's own domain.
+        let html = serve_panel_file("index.html", "text/html; charset=utf-8");
+        let token = state.config.server.device_token.clone().unwrap_or_default();
+        let inject = format!(
+            "<script>window.__PANEL_TOKEN__ = {}</script>",
+            serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".to_string())
+        );
+        let body = axum::body::to_bytes(html.into_body(), 1 << 20).await.unwrap_or_default();
+        let mut html = String::from_utf8_lossy(&body).into_owned();
+        if let Some(pos) = html.find("</head>") {
+            html.insert_str(pos, &inject);
+        }
+        let mut resp = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
+        resp.headers_mut().insert(
+            axum::http::HeaderName::from_static("cache-control"),
+            axum::http::HeaderValue::from_static("no-store"),
+        );
+        return resp;
     }
     if method == Method::GET && path.starts_with("/panel/") {
         let file = &path["/panel/".len()..];
