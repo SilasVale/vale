@@ -8,6 +8,15 @@ pub use config::Config;
 pub use error::DeviceError;
 pub use events::{AgentEvent, AppEventBus, EventBus};
 
+// ── Poison recovery ────────────────────────────────────────────
+
+/// Lock a std Mutex, recovering from a poisoned guard (a panic while holding
+/// the lock) instead of propagating it. The CLAUDE.md contract: poison is
+/// recovered with `into_inner()` — never silently dropped data.
+pub fn recover_guard<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 // ── Plugin Trait ──────────────────────────────────────────────
 
 /// A plugin represents one capability domain (SSH, Serial, Browser, Discovery).
