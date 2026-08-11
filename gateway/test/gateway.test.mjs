@@ -292,9 +292,47 @@ test("ds passthrough: 500 ×3 → upstream status passed through (not wrapped as
     post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(n, 3);
-  assert.equal(res.status, 500); // passthrough keeps the upstream status
+  assert.equal(res.status, 500); // ds passthrough surfaces the upstream status
+});
+
+// ── Error paths: bad token / missing key / og translate retry exhaustion ──
+
+test("bad gateway token → 401", async () => {
+  const { env } = gwEnv();
+  const res = await post(env, "tok-bogus", { model: "ds/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] });
+  assert.equal(res.status, 401);
+});
+
+test("og translate: missing OPENCODE_GO_API_KEY → 502 config_error", async () => {
+  const { env, token } = gwEnv({ keys: { OPENCODE_GO_API_KEY: undefined } });
+  const res = await withFetch(async () => { throw new Error("must not be called"); }, () =>
+    post(env, token, { model: "og/mimo-v2.5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(res.status, 502);
   const body = await res.json();
-  assert.equal(body.error.message, "upstream busy");
+  assert.match(body.error.message, /OPENCODE_GO_API_KEY not configured/);
+});
+
+test("og-native passthrough: missing OPENCODE_GO_API_KEY → 502 config_error (not bare Upstream 401)", async () => {
+  const { env, token } = gwEnv({ keys: { OPENCODE_GO_API_KEY: undefined } });
+  const res = await withFetch(async () => { throw new Error("must not be called"); }, () =>
+    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, stream: false, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.match(body.error.message, /OPENCODE_GO_API_KEY not configured/);
+});
+
+test("og translate: 500 ×3 → 502, breaker NOT tripped (fast 5xx stays with retries)", async () => {
+  const trips = [];
+  const { env, token } = gwEnv({ trips, timeout: 1000 });
+  let n = 0;
+  const res = await withFetch(async () => (++n, new Response(JSON.stringify({ error: { message: "upstream busy" } }), { status: 500, headers: { "content-type": "application/json" } })), () =>
+    post(env, token, { model: "og/mimo-v2.5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(n, 3); // retried 3 attempts
+  assert.equal(res.status, 502);
+  assert.equal(trips.length, 0); // fast 5xx must not trip the breaker
 });
 
 test("ds passthrough: timeout → 502 single attempt, no retry (slow ≠ flaky)", async () => {
