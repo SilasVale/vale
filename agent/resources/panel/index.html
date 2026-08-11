@@ -11,20 +11,20 @@
     /* Connection form — shown on first load until host+token are saved. */
     #conn-form {
       max-width: 440px; margin: 10vh auto; padding: 32px;
-      background: rgba(255,255,255,0.72);
+      background: var(--surface-glass);
       backdrop-filter: saturate(180%) blur(20px);
       -webkit-backdrop-filter: saturate(180%) blur(20px);
-      border: 1px solid rgba(0,0,0,0.08);
-      border-radius: 20px;
-      box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
     }
     #conn-form h1 { font-size: 20px; margin: 0 0 4px; font-weight: 650; letter-spacing: -0.01em; }
-    #conn-form label { display: block; margin: 14px 0 5px; font-size: 13px; color: #6e6e73; }
-    #conn-form input { width: 100%; padding: 9px 12px; border: 1px solid rgba(0,0,0,0.14); border-radius: 10px; font: inherit; box-sizing: border-box; background: #fff; }
-    #conn-form input:focus { outline: 2px solid #0e9384; outline-offset: 1px; border-color: transparent; }
-    #conn-form .hint { font-size: 12px; color: #86868b; margin-top: 8px; }
-    #conn-form button { margin-top: 18px; background: #0e9384; color: #fff; border: none; border-radius: 10px; padding: 9px 18px; cursor: pointer; font: 600 14px -apple-system, "PingFang SC", sans-serif; }
-    #conn-form button:hover { background: #0b7a6e; }
+    #conn-form label { display: block; margin: 14px 0 5px; font-size: 13px; color: var(--muted); }
+    #conn-form input { width: 100%; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); font: inherit; box-sizing: border-box; background: var(--surface); }
+    #conn-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+    #conn-form .hint { font-size: 12px; color: var(--faint); margin-top: 8px; }
+    #conn-form button { margin-top: 18px; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: 9px 18px; cursor: pointer; font: 600 14px var(--font); }
+    #conn-form button:hover { background: var(--accent-ink); }
     .hidden { display: none !important; }
   </style>
 </head>
@@ -37,15 +37,17 @@
     <input id="token" type="password" placeholder="Bearer token from D:\vale-command\config.yaml" autocomplete="off">
     <button id="save">Connect</button>
     <div class="hint">凭据保存在本浏览器(localStorage),不会上传到别处。</div>
-    <div id="status"></div>
+    <div id="conn-status"></div>
   </div>
 
   <div id="panel-main" class="hidden">
     <div id="toolbar">
       <select id="device-select"></select>
       <div id="tabs"></div>
-      <button id="new-session">New PTY</button>
-      <button id="export-all" title="Export all session logs">Export all</button>
+      <div id="toolbar-actions">
+        <button id="new-session">New PTY</button>
+        <button id="export-all" title="Export all session logs">Export all</button>
+      </div>
     </div>
     <div id="term-container"></div>
     <div id="statusbar"><span id="status"></span></div>
