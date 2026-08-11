@@ -195,6 +195,18 @@ test("og count_tokens estimates without any upstream call", async () => {
   assert.ok(Number.isInteger(body.input_tokens) && body.input_tokens > 0);
 });
 
+test("ds count_tokens also estimates locally (no per-turn upstream round-trip)", async () => {
+  const { env, token } = gwEnv();
+  let calls = 0;
+  const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
+    post(env, token, { model: "ds/deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] }, "/v1/messages/count_tokens"),
+  );
+  assert.equal(calls, 0); // all channels estimate locally since 2026-08-12
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.ok(Number.isInteger(body.input_tokens) && body.input_tokens > 0);
+});
+
 // ── reliability on the translate path ──────────────────────────
 
 // A fetch that hangs until the caller's AbortController fires — like a real
