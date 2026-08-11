@@ -4,13 +4,14 @@
    ============================================================ */
 
 :root {
-  --bg: #f7f7f5;
+  --bg: #f5f5f7;           /* Apple-style gray */
   --surface: #ffffff;
-  --ink: #1c1c1e;
-  --muted: #71717a;
-  --faint: #a1a1aa;
-  --line: #e7e5e4;
-  --line-strong: #d6d3d1;
+  --surface-glass: rgba(255,255,255,0.72);
+  --ink: #1d1d1f;
+  --muted: #6e6e73;
+  --faint: #86868b;
+  --line: rgba(0,0,0,0.08);
+  --line-strong: rgba(0,0,0,0.14);
 
   --accent: #0e9384;
   --accent-ink: #0b7a6e;
@@ -25,12 +26,12 @@
 
   --radius: 12px;
   --radius-sm: 8px;
-  --shadow: 0 1px 2px rgba(28, 28, 30, 0.05);
-  --shadow-lg: 0 8px 24px rgba(28, 28, 30, 0.08);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
 
-  --font-display: "Space Grotesk", "Inter", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-body: "Inter", -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
+  --font-display: "Space Grotesk", -apple-system, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-body: -apple-system, "SF Pro Text", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Consolas, "Courier New", monospace;
 }
 
 * { box-sizing: border-box; }
@@ -180,7 +181,9 @@ button { font-family: var(--font-body); }
 
 .sidebar {
   width: 232px; flex-shrink: 0;
-  background: var(--surface);
+  background: var(--surface-glass);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
   border-right: 1px solid var(--line);
   display: flex; flex-direction: column;
   padding: 20px 14px;

@@ -42,6 +42,7 @@ let token = "";
 let lastSeq = 0;
 let lastKnown = new Set();
 let polling = false;
+let booted = false; // init() ran once — guards double-boot from loadConfig + saveConfig
 let sessions = new Map(); // sid → session record
 let activeSid = null;
 
@@ -49,17 +50,25 @@ let activeSid = null;
 
 function loadConfig() {
   // Same-origin mode: served by vale-command at /panel/ — hostname is this
-  // device's own domain, only the token is needed (entered once, remembered).
+  // device's own domain. The backend injects the device token into the page
+  // (window.__PANEL_TOKEN__), so no input is needed at all; a previously
+  // saved localStorage token still wins for override.
   const sameOrigin = location.pathname.startsWith("/panel");
   if (sameOrigin) {
     hostname = location.host;
     hostInput.value = hostname;
     hostInput.disabled = true;
-    token = localStorage.getItem(LS_TOKEN) || "";
+    // Injected token (backend, current) wins over any stale localStorage
+    // value from an earlier session — a leftover token can be expired and
+    // would 401 every request until the user re-enters it.
+    token = window.__PANEL_TOKEN__ || localStorage.getItem(LS_TOKEN) || "";
     if (token) {
       tokenInput.value = token;
       connForm.classList.add("hidden");
       panelMain.classList.remove("hidden");
+      if (!booted) { booted = true; init(); } // boot the session discovery +
+                                              // SSE loops (previously init()
+                                              // only ran on the Connect click)
       return true;
     }
     setStatus("enter the device token (D:\\vale-command\\config.yaml)");
@@ -73,6 +82,7 @@ function loadConfig() {
     tokenInput.value = token;
     connForm.classList.add("hidden");
     panelMain.classList.remove("hidden");
+    if (!booted) { booted = true; init(); }
     return true;
   }
   return false;
@@ -86,7 +96,10 @@ function saveConfig() {
   localStorage.setItem(LS_TOKEN, token);
   connForm.classList.add("hidden");
   panelMain.classList.remove("hidden");
-  init();
+  // init() already ran at load (loadConfig boots the discovery loops when a
+  // token is present); if the user is filling this form the loops haven't
+  // started yet — boot them now. Guard against double-boot.
+  if (!booted) { booted = true; init(); }
 }
 
 // ── Transport ───────────────────────────────────────────────────
@@ -154,6 +167,8 @@ function activate(sid) {
   }
   requestAnimationFrame(() => {
     try { s.fit.fit(); } catch {}
+    // Focus the newly activated session so keystrokes go straight to it —
+    // without this the first keystroke can land nowhere (no focused terminal).
     try { s.term.focus(); } catch {}
   });
 }
@@ -186,6 +201,8 @@ function adoptSession(sid, label, idbRec = null) {
     scrollback: 20000,
     fontSize: 13,
     fontFamily: 'monospace',
+    disableStdin: false, // live sessions are writable — don't inherit the
+                         // saved-session default of true
     theme: {
       background: "#ffffff",
       foreground: "#1a1c20",
@@ -201,6 +218,9 @@ function adoptSession(sid, label, idbRec = null) {
   term.onData((data) => {
     callTool("terminal_write", { session_id: sid, data }).catch(() => {});
   });
+  // Clicking anywhere in the session focuses the terminal, so typing works
+  // right away instead of requiring a precise click on the xterm viewport.
+  container.addEventListener("pointerdown", () => { try { term.focus(); } catch {} });
 
   const s = {
     sid, term, fit, container, tab: null,
@@ -212,6 +232,16 @@ function adoptSession(sid, label, idbRec = null) {
   sessions.set(sid, s); // before any await
   s.tab = renderTab(sid, label);
   diag(`adopt: ${sid} (${label})`);
+  // Activate the first adopted session so its container is visible (the
+  // .term-session is display:none until .active) — otherwise fit() on a
+  // hidden container computes 0 dimensions and the session is invisible.
+  if (activeSid === null) activate(sid);
+  // Fit after the container is laid out (requestAnimationFrame) so the xterm
+  // canvas fills the whole session area — without this a freshly adopted
+  // session renders at its default small size and leaves blank space below.
+  requestAnimationFrame(() => {
+    try { s.fit.fit(); } catch {}
+  });
   backfillAndAttach(sid, s, idbRec);
 }
 
@@ -244,15 +274,16 @@ async function backfillAndAttach(sid, s, idbRec) {
     renderLines(s);
   }
   try {
-    const hist = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: true });
+    const hist = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: false });
     if (hist && typeof hist.text === "string") {
       if (Number(hist.start) > s.renderedBytes) {
         s.term.write(`\r\n[dropped ${Number(hist.start) - s.renderedBytes} bytes — missed while offline]\r\n`);
       }
       if (hist.text) {
-        s.term.write(hist.text);
+        s.term.write(hist.text); // raw bytes — xterm renders PSReadLine's
+                                 // cursor-rewrite sequences correctly
         s.renderedBytes = Number(hist.end) || s.renderedBytes;
-        ingestLines(s, hist.text);
+        ingestLines(s, stripAnsi(hist.text)); // clean text for export/storage
       }
     }
   } catch { /* brand-new session → attach live */ }
@@ -319,6 +350,14 @@ function attachStream(sid) {
 
 // ── Line ingestion + local persistence (localStorage, no IDB needed) ──
 
+/// Strip ANSI/VT escape sequences — for export/localStorage line records.
+/// (The terminal display itself gets the RAW stream so xterm can render
+/// PSReadLine's cursor-rewrite sequences correctly; stripping them there is
+/// what left broken fragments like stray prompt pieces in the panel.)
+function stripAnsi(s) {
+  return s.replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
 function ingestLines(s, text) {
   if (!text) return;
   const chunks = text.split("\n");
@@ -368,14 +407,14 @@ async function syncSession(sid) {
   if (!s.needSync && !s.sseDirty) return;
   s.syncInFlight = true;
   try {
-    const r = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: true });
+    const r = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: false });
     if (r && typeof r.text === "string" && r.text) {
       if (Number(r.start) > s.renderedBytes) {
         s.term.write(`\r\n[dropped ${Number(r.start) - s.renderedBytes} bytes — missed while offline]\r\n`);
       }
       s.term.write(r.text);
       s.renderedBytes = Number(r.end) || s.renderedBytes;
-      ingestLines(s, r.text);
+      ingestLines(s, stripAnsi(r.text));
     }
     s.needSync = false;
     s.sseDirty = false;
@@ -535,7 +574,23 @@ async function init() {
   window.addEventListener("pagehide", () => { for (const s of sessions.values()) flushSession(s); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") for (const s of sessions.values()) flushSession(s);
+    // Returning to the tab: the container may have been resized or the layout
+    // reflowed while hidden — refit every session so xterm fills the window.
+    else { clearTimeout(refitTimer); refitTimer = setTimeout(refitAll, 200); }
   });
+  // Window resize (browser zoom, maximized toggle, sidebar hide): debounce and
+  // refit all sessions. Without this xterm keeps its old cell grid and leaves
+  // white space or clips content until the next session switch.
+  window.addEventListener("resize", () => { clearTimeout(refitTimer); refitTimer = setTimeout(refitAll, 150); });
+}
+
+let refitTimer = null;
+function refitAll() {
+  for (const [sid, s] of sessions) {
+    if (s.term && !s.complete) {
+      try { s.fit.fit(); } catch {}
+    }
+  }
 }
 
 function mkSavedSession(sid, rec) {
@@ -550,6 +605,9 @@ function mkSavedSession(sid, rec) {
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(container);
+  requestAnimationFrame(() => {
+    try { fit.fit(); } catch {}
+  });
   const s = {
     sid, term, fit, container, tab: null, closed: true, savedOnly: true,
     label: rec.label || sid, renderedBytes: rec.endAbs || 0,

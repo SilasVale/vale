@@ -1,72 +1,83 @@
-// Vale Command — install / download landing page (Cloudflare Worker).
+// Vale Agent — install / download landing page (Cloudflare Worker).
 //
-// This Worker is the download site for vale-command. Device management
+// This Worker is the download site for vale-agent. Device management
 // (registry + MCP config + panel proxy) lives in the Vale console
 // (admin-only). This page only distributes the installer + setup scripts and
 // points users to the console. The console URL is set per-deployment via the
 // CONSOLE_URL var (no production domain is hardcoded here).
+
+const FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d1d1f'/%3E%3Cpath d='M20 16 L32 48 L44 16' fill='none' stroke='%23ffffff' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
 
 const PAGE = (consoleUrl) => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vale Command</title>
+<title>Vale Agent</title>
+<link rel="icon" href="${FAVICON}">
 <style>
   :root {
-    --bg: #ffffff;      /* page background */
-    --bg-soft: #f6f7f9; /* subtle header / footer zones */
-    --line: #e7e9ee;    /* hairline borders */
-    --line-strong: #d7dbe3;
-    --txt: #191c22;
-    --dim: #68707e;
-    --accent: #5b6cf0;  /* matches the vale-command panel accent */
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-glass: rgba(255,255,255,0.72);
+    --line: rgba(0,0,0,0.08);
+    --line-strong: rgba(0,0,0,0.14);
+    --txt: #1d1d1f;
+    --dim: #6e6e73;
+    --faint: #86868b;
+    --accent: #0e9384;
+    --accent-hover: #0b7a6e;
+    --radius: 20px;
+    --radius-sm: 10px;
+    --shadow: 0 12px 32px rgba(0,0,0,0.12);
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --sans: -apple-system, "SF Pro Text", "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { -webkit-text-size-adjust: 100%; }
   body { background: var(--bg); color: var(--txt); font: 15px/1.55 var(--sans); min-height: 100vh; }
 
-  /* Thin accent rule across the very top — the one bold stroke on the page. */
-  .topbar { height: 3px; background: linear-gradient(90deg, var(--accent), #8a6ff0 60%, transparent); }
-
-  .wrap { max-width: 760px; margin: 0 auto; padding: 44px 24px 44px; }
-  .brand { display: flex; align-items: baseline; gap: 12px; }
-  .brand .name { font-size: 24px; font-weight: 720; letter-spacing: -0.02em; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 56px 24px 44px; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand .mark { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+                 border-radius: 12px; background: #1d1d1f; color: #fff; font-size: 24px; font-weight: 700; }
+  .brand .name { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
   .brand .tag { font: 12px/1 var(--mono); color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; }
-  .led-head { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-right: 2px; vertical-align: 1px; }
-  .lede { color: var(--dim); margin-top: 8px; font-size: 14px; max-width: 640px; }
+  .lede { color: var(--dim); margin-top: 12px; font-size: 14px; max-width: 640px; }
   .lede a { color: var(--accent); }
 
-  .install { display: flex; align-items: center; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+  .install { display: flex; align-items: center; gap: 10px; margin-top: 24px; flex-wrap: wrap; }
   .install-btn { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff;
-                 text-decoration: none; font-size: 13px; font-weight: 600; padding: 9px 16px; border-radius: 8px;
+                 text-decoration: none; font-size: 14px; font-weight: 600; padding: 10px 18px; border-radius: var(--radius-sm);
                  transition: background .15s ease, transform .15s ease; }
-  .install-btn:hover { background: #4a58d6; transform: translateY(-1px); }
+  .install-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
   .install-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .install-note { color: var(--dim); font-size: 12px; }
+  .install-note { color: var(--faint); font-size: 12px; }
 
-  .steps { margin-top: 26px; display: flex; flex-direction: column; gap: 12px; }
-  .step { display: flex; gap: 12px; align-items: flex-start; }
-  .step .n { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--bg-soft);
-             border: 1px solid var(--line-strong); display: flex; align-items: center; justify-content: center;
-             font: 12px/1 var(--mono); color: var(--dim); margin-top: 1px; }
+  .steps { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }
+  .step { display: flex; gap: 14px; align-items: flex-start; background: var(--surface-glass);
+          backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
+          border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px 16px; }
+  .step .n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
+             color: #fff; display: flex; align-items: center; justify-content: center;
+             font: 700 13px/1 var(--sans); margin-top: 1px; }
   .step .body { color: var(--txt); font-size: 14px; }
-  .step code { font: 12px/1.5 var(--mono); background: var(--bg-soft); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+  .step code { font: 12px/1.5 var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
 
-  footer { max-width: 760px; margin: 0 auto; padding: 0 24px 44px; color: var(--dim); font-size: 12px;
+  footer { max-width: 760px; margin: 0 auto; padding: 0 24px 44px; color: var(--faint); font-size: 12px;
            display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
-<div class="topbar"></div>
 <div class="wrap">
   <div class="brand">
-    <span class="name"><span class="led-head"></span>Vale Command</span>
-    <span class="tag">device agent</span>
+    <span class="mark">V</span>
+    <div>
+      <div class="name">Vale Agent</div>
+      <div class="tag">device agent</div>
+    </div>
   </div>
-  <p class="lede">Vale Command is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel at its own subdomain and is managed from the <a href="${consoleUrl}">Vale console</a> (admin login).</p>
+  <p class="lede">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel at its own subdomain and is managed from the <a href="${consoleUrl}">Vale console</a> (admin login).</p>
 
   <div class="install">
     <a class="install-btn" href="/vale-agent/ValeAgent-Setup.exe" download>Download installer ↓</a>
@@ -80,7 +91,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
   </div>
 </div>
 <footer>
-  <span>Vale Command — device access for AI agents</span>
+  <span>Vale Agent — device access for AI agents</span>
   <span class="mono" id="foot-time"></span>
 </footer>
 <script>
@@ -92,7 +103,7 @@ document.getElementById('foot-time').textContent = new Date().toISOString().repl
 export default {
   async fetch(request, env) {
     // Version endpoint for the vale-tray "check for updates" menu item.
-    // Bump VERSION alongside command/Cargo.toml when a new installer is shipped.
+    // Bump VERSION alongside agent/Cargo.toml when a new installer is shipped.
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({

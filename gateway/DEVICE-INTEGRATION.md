@@ -1,6 +1,6 @@
 # Vale device control — Vale Gate + browser extension (v2)
 
-> Status: **implemented** (monorepo `gateway/` + `extension/` + `command/`)
+> Status: **implemented** (monorepo `gateway/` + `extension/` + `agent/`)
 > Date: 2026-08-06 (v2 — browser extension + chrome.debugger replaces the 2026-08-02 design: web panel, remote CDP, panel-only proxy)
 
 ## Background & goal
@@ -60,7 +60,7 @@ One DO per device (`idFromName`), WebSocket Hibernation. Extension pings every 2
 - **popup** — pair (paste code → claim → plugin token), open controlled tab (`<console>/api/devices/<d>/proxy/`), terminal page, unpair; **options** — console origin
 - **terminal/terminal.html** — full-screen xterm: fetch-read SSE on the device's `/api/events/term` (frames filtered by session_id), keystrokes → `POST /api/tools/terminal_write`, resize → `terminal_resize`; every request carries `Authorization: Bearer <pluginToken>` through the gateway proxy (cross-site page, no console cookie)
 
-## Vale Command (slimmed, `command/`)
+## Vale Agent (slimmed, `agent/`)
 
 - Web panel retired → minimal status page (`GET /`); still serves `/mcp` (rmcp streamable HTTP, token-gated), `/api/events` SSE, `/api/status`, `POST /api/tools/{name}`
 - **terminal_screen** (`src/plugins/terminal/tools.rs`) — tail-N-lines of a session's output buffer, ANSI-stripped, for AI readability (default 60 lines, reports dropped bytes if the buffer wrapped)

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Vale unified build script (command / gateway / index from the monorepo root)
+# Vale unified build script (agent / gateway / index from the monorepo root)
 #
-#   ./scripts/build.sh                 # build command (Windows cross-compile, release)
-#   ./scripts/build.sh command [debug] # build vale-command + vale-tray
+#   ./scripts/build.sh                 # build agent (Windows cross-compile, release)
+#   ./scripts/build.sh agent [debug]   # build vale-agent + vale-tray
+#   ./scripts/build.sh command [debug] # legacy alias for `agent`
 #   ./scripts/build.sh gateway         # deploy the Vale Gate worker
 #   ./scripts/build.sh index           # deploy the Vale Index worker
-#   ./scripts/build.sh deploy          # build command + deploy gateway/index
+#   ./scripts/build.sh deploy          # build agent + deploy gateway/index
 #
 # Dependencies: cargo-xwin, wrangler (global v4), CLOUDFLARE_API_TOKEN (deploy
 # only, or a ~/.cloudflare-token file).
@@ -22,23 +23,23 @@ cf_token() {
   else echo ""; fi
 }
 
-build_command() {
+build_agent() {
   local profile="${1:-release}"
   local flags=""
   case "$profile" in
     release) flags="--release" ;;
     debug)   flags="" ;;
-    *) echo "usage: $0 command [release|debug]"; exit 1 ;;
+    *) echo "usage: $0 agent [release|debug]"; exit 1 ;;
   esac
-  echo "=== [command] vale-command (${profile}) ==="
-  ( cd "$ROOT/command" \
-      && cargo xwin build --target "$TARGET" $flags --features "$FEATURES" --bin vale-command )
-  echo "    ok: command/target/$TARGET/${profile}/vale-command.exe"
+  echo "=== [agent] vale-agent (${profile}) ==="
+  ( cd "$ROOT/agent" \
+      && cargo xwin build --target "$TARGET" $flags --features "$FEATURES" --bin vale-agent )
+  echo "    ok: agent/target/$TARGET/${profile}/vale-agent.exe"
 
-  echo "=== [command] vale-tray (release) ==="
-  ( cd "$ROOT/command/vale-tray" \
+  echo "=== [agent] vale-tray (release) ==="
+  ( cd "$ROOT/agent/vale-tray" \
       && cargo xwin build --target "$TARGET" --release )
-  echo "    ok: command/vale-tray/target/$TARGET/release/vale-tray.exe"
+  echo "    ok: agent/vale-tray/target/$TARGET/release/vale-tray.exe"
 }
 
 deploy_worker() {
@@ -53,11 +54,11 @@ deploy_worker() {
       && CLOUDFLARE_API_TOKEN="$token" wrangler deploy )
 }
 
-cmd="${1:-command}"
+cmd="${1:-agent}"
 case "$cmd" in
-  command)  build_command "${2:-release}" ;;
+  agent|command)  build_agent "${2:-release}" ;;
   gateway)  deploy_worker gateway "Vale Gate" ;;
   index)    deploy_worker index "Vale Index" ;;
-  deploy)   build_command "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" ;;
-  *) echo "usage: $0 [command|gateway|index|deploy]"; exit 1 ;;
+  deploy)   build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" ;;
+  *) echo "usage: $0 [agent|gateway|index|deploy]"; exit 1 ;;
 esac

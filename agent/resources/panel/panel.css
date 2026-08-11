@@ -1,4 +1,28 @@
-/* Terminal page — full-screen xterm (light), session tab bar on top. */
+/* Vale Agent terminal panel — Apple-style light theme.
+   Tokens match the unified Vale brand (see docs/superpowers/specs/2026-08-11-apple-style-unification-design.md). */
+
+:root {
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-glass: rgba(255, 255, 255, 0.72);
+  --ink: #1d1d1f;
+  --muted: #6e6e73;
+  --faint: #86868b;
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.14);
+  --accent: #0e9384;
+  --accent-ink: #0b7a6e;
+  --accent-soft: #e7f5f2;
+  --danger: #dc2626;
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-lg: 20px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --font: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+          "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas, monospace;
+}
 
 html, body {
   height: 100%;
@@ -7,93 +31,104 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
-  background: #ffffff;
-  color: #1a1c20;
-  font: 13px/1.5 system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.5 var(--font);
 }
 
+/* ---------- toolbar: frosted glass ---------- */
 #toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  background: #f6f7f9;
-  border-bottom: 1px solid #e2e5ea;
+  padding: 10px 16px;
+  background: var(--surface-glass);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 #device-select {
-  background: #ffffff;
-  color: #1a1c20;
-  border: 1px solid #d3d8e0;
-  border-radius: 4px;
-  padding: 4px 8px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  font: inherit;
 }
 #tabs {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   flex: 1;
   min-width: 0;
   overflow-x: auto;
 }
 .tab {
-  background: #ffffff;
-  color: #4a5260;
-  border: 1px solid #d3d8e0;
-  border-radius: 4px;
-  padding: 4px 10px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 5px 12px;
   cursor: pointer;
   white-space: nowrap;
   font: inherit;
+  transition: all .15s ease;
 }
-.tab:hover { color: #1a1c20; }
+.tab:hover { color: var(--ink); border-color: var(--faint); }
 /* Dead session (closed by the AI agent) — visible tombstone. */
-.tab.closed { color: #a2a8b3; text-decoration: line-through; }
-.tab.closed:hover { color: #a2a8b3; }
+.tab.closed { color: var(--faint); text-decoration: line-through; }
+.tab.closed:hover { color: var(--faint); }
 .tab.active {
-  background: #e8ebf2;
-  color: #1a1c20;
-  border-color: #b6bdc9;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-color: var(--accent);
 }
 /* Per-tab export icon — muted, visible on hover. */
 .tab-export {
   margin-left: 6px;
   font-size: 11px;
-  color: #a2a8b3;
+  color: var(--faint);
   visibility: hidden;
   cursor: pointer;
 }
 .tab:hover .tab-export,
 .tab.active .tab-export { visibility: visible; }
-.tab-export:hover { color: #5b6cf0; }
+.tab-export:hover { color: var(--accent); }
 #new-session {
-  background: #5b6cf0;
+  background: var(--accent);
   color: #ffffff;
-  border: 1px solid #4a5ad6;
-  border-radius: 4px;
-  padding: 4px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
   cursor: pointer;
-  font: inherit;
+  font: 600 13px var(--font);
+  transition: all .15s ease;
 }
-#new-session:hover { background: #4a58d6; }
+#new-session:hover { background: var(--accent-ink); }
 #export-all {
-  background: #f0f1f5;
-  color: #4a5260;
-  border: 1px solid #d3d8e0;
-  border-radius: 4px;
-  padding: 4px 12px;
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
   cursor: pointer;
   font: inherit;
+  transition: all .15s ease;
 }
-#export-all:hover { background: #e4e7ef; }
+#export-all:hover { color: var(--ink); border-color: var(--faint); }
 #status {
-  color: #68707e;
+  color: var(--muted);
   font-size: 12px;
   max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#status.error { color: #d64545; }
+#status.error { color: var(--danger); }
 
+/* ---------- terminal ---------- */
 #term-container {
   flex: 1;
   min-height: 0;
@@ -104,10 +139,10 @@ body {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 4px;
+  padding: 6px 8px 8px;
 }
 .term-session.active { display: block; }
 .term-session .xterm {
   height: 100%;
-  padding: 2px;
+  padding: 4px;
 }

@@ -26,7 +26,7 @@ from `CONSOLE_URL`. Note the installer `.exe` is gitignored — run
 
 ## Installing Vale Command on a machine
 
-Follow `command/deploy/README.md` — one-click install on the target Windows
-machine (`irm https://<download-host>/vale-command/vale-command-setup.ps1 | iex`).
+Follow `agent/deploy/README.md` — one-click install on the target Windows
+machine (`irm https://<download-host>/vale-agent/vale-agent-setup.ps1 | iex`).
 After install, register the device in the Vale console (Devices → generate a
 registration key), which stores the device name / host / token.
