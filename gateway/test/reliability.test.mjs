@@ -208,3 +208,27 @@ test("stream encoder: cache hits from last chunk surface in message_start", () =
   assert.match(sseOut, /"cache_read_input_tokens":192/);
   assert.match(sseOut, /"input_tokens":271/);
 });
+
+// ── streamOgToAnthropic: upstream dies mid-stream → graceful close ──
+
+test("stream: upstream throw closes the stream gracefully (no hang)", async () => {
+  const { streamOgToAnthropic } = await import("../src/anthropic-translate.js");
+  // A body whose reader.read() throws once.
+  const failing = new ReadableStream({
+    start(controller) { controller.error(new Error("upstream died")); },
+  });
+  const out = streamOgToAnthropic(failing, "auto", "deepseek-v4-flash");
+  const reader = out.getReader();
+  const chunks = [];
+  let done = false;
+  while (!done) {
+    try {
+      const { value, done: d } = await reader.read();
+      if (d) { done = true; break; }
+      chunks.push(new TextDecoder().decode(value));
+    } catch { done = true; } // must not throw out of the stream
+  }
+  const text = chunks.join("");
+  // The graceful close emits message_stop even with zero upstream bytes.
+  assert.match(text, /message_stop/);
+});

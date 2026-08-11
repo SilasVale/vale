@@ -146,8 +146,20 @@ export function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
           controller.enqueue(encoder.encode(pending));
           return;
         }
-        // Otherwise pull the next upstream bytes.
-        const { done, value } = await reader.read();
+        // Otherwise pull the next upstream bytes. An upstream that dies
+        // mid-stream (network drop, 5xx body cut) must end the Anthropic SSE
+        // gracefully — close open blocks and emit message_stop instead of
+        // leaving the client hanging on a torn stream.
+        let chunk;
+        try {
+          chunk = await reader.read();
+        } catch (e) {
+          const tail = encoderStream.finish(buffer);
+          if (tail) controller.enqueue(encoder.encode(tail));
+          controller.close();
+          return;
+        }
+        const { done, value } = chunk;
         if (done) {
           const tail = encoderStream.finish(buffer);
           if (tail) controller.enqueue(encoder.encode(tail));
