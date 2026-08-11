@@ -54,7 +54,7 @@ impl Config {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { host: "0.0.0.0".into(), port: 3000, name: "vale-command".into(), device_token: None }
+        Self { host: "0.0.0.0".into(), port: 3000, name: "vale-agent".into(), device_token: None }
     }
 }
 
