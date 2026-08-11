@@ -719,9 +719,21 @@
       const row = box.querySelector(`.user-row[data-name="${name}"]`);
       const badge = row?.querySelector("[data-status]");
       if (!badge) continue;
-      const online = !!st.online;
-      badge.className = "badge " + (online ? "online" : "offline");
-      badge.innerHTML = `<span class="dot"></span>${online ? t("devices.online") : t("devices.offline")}`;
+      // Combined status: agent+tunnel is the real health signal; the extension
+      // WS adds a hint when the agent is up but no browser extension is paired.
+      const agentUp = !!st.agent_up;
+      const extUp = !!st.online;
+      if (agentUp && extUp) {
+        badge.className = "badge online";
+        badge.innerHTML = `<span class="dot"></span>${t("devices.online")}`;
+      } else if (agentUp) {
+        badge.className = "badge empty";
+        badge.innerHTML = `<span class="dot"></span>${t("devices.offline")}`;
+        badge.title = "agent 在线,浏览器扩展未连接";
+      } else {
+        badge.className = "badge offline";
+        badge.innerHTML = `<span class="dot"></span>${t("devices.offline")}`;
+      }
     }
   }
 
