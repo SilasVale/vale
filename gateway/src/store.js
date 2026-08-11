@@ -42,6 +42,13 @@ function cset(k, v) {
   __c.set(k, { v, exp: Date.now() + CACHE_TTL });
 }
 function cdel(...ks) { for (const k of ks) __c.delete(k); }
+/** Test hook: wipe the module-level 24h caches (settings/route/keys). Never
+ *  called in production — tests that flip global settings (e.g. US_PROXY)
+ *  would otherwise read a stale cached value from an earlier test. */
+export function __clearCaches() {
+  __c.clear();
+  __rc.clear();
+}
 
 /* Route selection (model=auto): short-TTL cache — a switch must take effect
  * fast across isolates; 60s bounds staleness to a minute. */
