@@ -349,7 +349,8 @@ export async function setAdminPassword(env, value) {
 
 export async function createInvite(env) {
   const code = randomHex(5).toUpperCase();
-  await env.KEYS.put(`invite:${code}`, "1");
+  // 7-day TTL: an invite shared in chat must not stay valid forever.
+  await env.KEYS.put(`invite:${code}`, "1", { expirationTtl: 7 * 24 * 60 * 60 });
   return code;
 }
 
