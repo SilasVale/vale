@@ -1,4 +1,4 @@
-// Re-export core types from vale_command-core
+// Re-export core types from vale-agent-core
 pub use vale_agent_core::config;
 pub use vale_agent_core::error;
 pub use vale_agent_core::events;

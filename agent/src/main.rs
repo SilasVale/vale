@@ -1,4 +1,4 @@
-//! vale-command server binary — thin wrapper over the vale_command library.
+//! vale-agent server binary — thin wrapper over the vale-agent library.
 //!
 //! Runs as a plain console process, or on Windows as the `ValeCommand` service
 //! when launched by the Service Control Manager.
@@ -112,7 +112,7 @@ fn main() {
 /// Load config (creating a default file + auth token if missing); persist and
 /// print a freshly generated token.
 fn load_config(config_path: &PathBuf) -> Config {
-    let (config, token) = match vale_agent::bootstrap::load_or_create(config_path, None) {
+    let (config, token) = match vale_agent::bootstrap::load_or_create(config_path, None, &|msg| eout!("{msg}")) {
         Ok(v) => v,
         Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
     };

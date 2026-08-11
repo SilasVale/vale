@@ -124,6 +124,13 @@ fn built_response(status: StatusCode, content_type: &'static str, body: Body) ->
 
 // ── Auth helper ────────────────────────────────────────────
 
+/// Read a query parameter by name, splitting on `&` so it works regardless of
+/// position (`?after=5&token=x` — the old strip_prefix("token=") only matched
+/// when the param came first).
+fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
+    query?.split('&').find_map(|pair| pair.strip_prefix(key).and_then(|rest| rest.strip_prefix('=')))
+}
+
 /// Check Bearer token or ?token= query param. Static (non-async) so it
 /// can be called before the Send boundary. The error is boxed — Response is
 /// large and only ever handled at the top of handle_request.
@@ -136,9 +143,7 @@ fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    let from_query = req.uri().query()
-        .and_then(|q| q.strip_prefix("token="))
-        .map(|t| t.split('&').next().unwrap_or(t));
+    let from_query = query_param(req.uri().query(), "token");
     if from_header == Some(token.as_str()) || from_query == Some(token.as_str()) {
         return Ok(());
     }
@@ -314,8 +319,7 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         ("GET", "/api/spec") => api_spec(&state),
         ("GET", "/api/status") => api_status(&state).await,
         ("GET", "/api/events/poll") => {
-            let after: u64 = query_str.as_deref()
-                .and_then(|q| q.strip_prefix("after="))
+            let after: u64 = query_param(query_str.as_deref(), "after")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
             api_events_poll(&state, after)
@@ -369,34 +373,38 @@ impl futures::stream::Stream for MpscStream {
     }
 }
 
-async fn sse_stream(state: Arc<AppState>) -> Response {
-    let mut broadcast_rx = state.event_bus.subscribe();
-    let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
+/// Build a text/event-stream response from a broadcast receiver. The
+/// `encode` closure turns a received item into a `data:` frame; `lagged`
+/// provides the fallback frame when the receiver falls behind (loss-tolerant
+/// stream — the client catches up by polling from its last seq).
+async fn sse_response<T>(
+    mut rx: tokio::sync::broadcast::Receiver<T>,
+    encode: impl Fn(&T) -> String + Send + 'static,
+    lagged: impl Fn(u64) -> String + Send + 'static,
+) -> Response
+where
+    T: Clone + Send + 'static,
+{
+    let (tx, mpsc_rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
 
     tokio::spawn(async move {
         use tokio::sync::broadcast::error::RecvError;
         loop {
-            match broadcast_rx.recv().await {
-                Ok(event) => {
-                    // SeqEvent serializes as {"seq":n,"event":{...}}
-                    let json = serde_json::to_string(&event).unwrap_or_default();
-                    let sse = format!("data: {json}\n\n");
-                    if tx.send(Ok(Bytes::from(sse))).await.is_err() {
+            match rx.recv().await {
+                Ok(item) => {
+                    if tx.send(Ok(Bytes::from(encode(&item)))).await.is_err() {
                         break;
                     }
                 }
                 Err(RecvError::Lagged(n)) => {
-                    // Plain data frame so EventSource.onmessage fires; the client
-                    // responds by polling once from its last seq to catch up.
-                    let msg = format!("data: {{\"lagged\":{n}}}\n\n");
-                    let _ = tx.send(Ok(Bytes::from(msg))).await;
+                    let _ = tx.send(Ok(Bytes::from(lagged(n)))).await;
                 }
                 Err(RecvError::Closed) => break,
             }
         }
     });
 
-    let body = Body::from_stream(MpscStream { rx });
+    let body = Body::from_stream(MpscStream { rx: mpsc_rx });
 
     let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
     resp.headers_mut().insert(
@@ -410,44 +418,25 @@ async fn sse_stream(state: Arc<AppState>) -> Response {
     resp
 }
 
+async fn sse_stream(state: Arc<AppState>) -> Response {
+    let rx = state.event_bus.subscribe();
+    // SeqEvent serializes as {"seq":n,"event":{...}}
+    let encode = |event: &vale_agent_core::events::SeqEvent| format!("data: {}\n\n", serde_json::to_string(event).unwrap_or_default());
+    // Plain data frame so EventSource.onmessage fires; the client responds by
+    // polling once from its last seq to catch up.
+    let lagged = |n: u64| format!("data: {{\"lagged\":{n}}}\n\n");
+    sse_response(rx, encode, lagged).await
+}
+
 /// SSE stream of raw terminal output (TermOutput JSON frames).
 async fn sse_term_stream(state: Arc<AppState>) -> Response {
-    let mut term_rx = state.event_bus.subscribe_term_output();
-    let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
-
-    tokio::spawn(async move {
-        use tokio::sync::broadcast::error::RecvError;
-        loop {
-            match term_rx.recv().await {
-                Ok(output) => {
-                    // {"session_id":"term-0","data":[104,101,...]}
-                    let json = serde_json::to_string(&output).unwrap_or_default();
-                    if tx.send(Ok(Bytes::from(format!("data: {json}\n\n")))).await.is_err() {
-                        break;
-                    }
-                }
-                Err(RecvError::Lagged(_)) => {
-                    // Loss-tolerant stream; a lagged frame is ignored client-side
-                    // (it has no session_id). Keep the connection alive.
-                    let _ = tx.send(Ok(Bytes::from("data: {\"lagged\":true}\n\n"))).await;
-                }
-                Err(RecvError::Closed) => break,
-            }
-        }
-    });
-
-    let body = Body::from_stream(MpscStream { rx });
-
-    let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("connection"),
-        axum::http::HeaderValue::from_static("keep-alive"),
-    );
-    resp
+    let rx = state.event_bus.subscribe_term_output();
+    // {"session_id":"term-0","data":[104,101,...]}
+    let encode = |output: &serde_json::Value| format!("data: {}\n\n", serde_json::to_string(output).unwrap_or_default());
+    // Loss-tolerant stream; a lagged frame is ignored client-side (it has no
+    // session_id). Keep the connection alive.
+    let lagged = |_n: u64| "data: {\"lagged\":true}\n\n".to_string();
+    sse_response(rx, encode, lagged).await
 }
 
 // ── Status ────────────────────────────────────────────────────

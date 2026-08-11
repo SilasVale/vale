@@ -10,10 +10,18 @@ use std::path::Path;
 ///
 /// Ensures an auth token is present. Returns `(config, Some(token))` when a
 /// new token was generated — callers persist the config and print the token.
-pub fn load_or_create(path: &Path, fallback: Option<&Path>) -> anyhow::Result<(Config, Option<String>)> {
+///
+/// Never `println!` here: in Windows service mode there is no console and a
+/// bare `println!` panics (see `out!`/`eout!` in main.rs). Any diagnostics
+/// go through the injected `log` callback, which callers may discard.
+pub fn load_or_create(
+    path: &Path,
+    fallback: Option<&Path>,
+    log: &dyn Fn(&str),
+) -> anyhow::Result<(Config, Option<String>)> {
     if !path.exists() {
         std::fs::write(path, crate::DEFAULT_CONFIG_YAML)?;
-        println!("  Created default config: {}", path.display());
+        log(&format!("  Created default config: {}", path.display()));
     }
     let mut config = Config::load(path).or_else(|_| {
         fallback
