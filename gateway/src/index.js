@@ -630,8 +630,16 @@ export async function handleGateway(request, env, url) {
     model = await resolveAutoModel(env, user.id);
   }
   const prefix = model.split("/")[0];
-  const baseRoute = pickRoute(prefix, env);
-  const upstreamModel = stripBracket(baseRoute.stripPrefix ? model.slice(prefix.length + 1) : model);
+  // og/gpt-5.6-luna is region-blocked on zen (upstream 403 for CN) but fully
+  // usable via OpenRouter's US exit. Map it to the or/ channel so both og/ and
+  // or/ spellings hit the same working route (OpenRouter key + proxy exit).
+  let effectiveModel = model;
+  if (model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]") {
+    effectiveModel = "or/openai/gpt-5.6-luna:floor[1m]";
+  }
+  const prefix2 = effectiveModel.split("/")[0];
+  const baseRoute = pickRoute(prefix2, env);
+  const upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
   // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
@@ -762,8 +770,8 @@ export async function handleGateway(request, env, url) {
       let message = `Upstream ${upstream.status}`;
       try {
         const err = await upstream.json();
-        message = err.error?.message || message;
-      } catch {}
+        message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
+      } catch { /* non-JSON error body */ }
       return jsonError(upstream.status, message, "api_error");
     }
     const headers = new Headers(upstream.headers);
