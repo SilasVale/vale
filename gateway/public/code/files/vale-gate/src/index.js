@@ -341,7 +341,7 @@ async function handleConsole(request, env, url) {
   // ---- Admin-only ----
   if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
 
-  // ---- Device module (Vale Command registry) ----
+  // ---- Device module (Vale Agent registry) ----
   // (the reverse-proxy route lives in its own section above, before the
   //  session gate — it also accepts the paired plugin token)
   // GET    /api/devices                        → list (token masked)
