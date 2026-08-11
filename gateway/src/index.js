@@ -31,15 +31,14 @@ import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStr
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.js";
 import { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES } from "./body-scan.js";
 import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.js";
-import { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC } from "./channels.js";
-export { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC };
+import { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH } from "./channels.js";
+export { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH };
 export { jsonOk, jsonError, readJson, CORS_HEADERS };
 export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE };
 export { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess };
 export { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES };
 export { PluginHubDO };
 
-const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
 
 const AUTH_BASE = "/api/auth";
@@ -98,8 +97,7 @@ export default {
         if (await probeRateLimited(env)) {
           return jsonError(429, "probe rate limit exceeded", "rate_limited");
         }
-        let body = {};
-        try { body = await request.json(); } catch {}
+        const body = await readJson(request);
         return await valeProbe(env, String(body.model || ""));
       }
       if (path === "/api/vale-cli" || path === "/api/vale-install" || path === "/api/vale-install.ps1") {
@@ -163,8 +161,7 @@ async function handleConsole(request, env, url) {
   // registration key + the device's {name, hostname, token}). Not session-based:
   // the install runs headless on the device machine.
   if (method === "POST" && path === "/api/register") {
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     if (!(await hasRegKey(env, body.key))) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
@@ -180,8 +177,7 @@ async function handleConsole(request, env, url) {
   // token pasted on the machine). Validates but does NOT consume the key —
   // consumption happens at /api/register when the device is registered.
   if (method === "POST" && path === "/api/install/tunnel-token") {
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     if (!(await hasRegKey(env, body.key))) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
@@ -279,8 +275,7 @@ async function handleConsole(request, env, url) {
     return jsonOk({ model: await getUserRoute(env, user.id) });
   }
   if (method === "PUT" && path === `${ME_BASE}/route`) {
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     const model = body?.model ?? null;
     if (model !== null && !MODELS.some((m) => m.id === model)) {
       return jsonError(400, `Unknown model: ${model}`, "invalid_request");
@@ -302,15 +297,13 @@ async function handleConsole(request, env, url) {
     if (user.role !== "admin") {
       return jsonError(403, "Admin only", "forbidden");
     }
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : null);
     const v = await getGlobalSetting(env, "US_PROXY");
     return jsonOk({ ok: true, enabled: !!v });
   }
   if (method === "PUT" && path === `${ME_BASE}/keys`) {
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     const { name, value } = body || {};
     if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
     if (typeof value !== "string" || !value.trim()) return jsonError(400, "value must not be empty", "invalid_request");
@@ -325,8 +318,7 @@ async function handleConsole(request, env, url) {
     return jsonOk({ ok: true, name });
   }
   if (method === "POST" && path === `${ME_BASE}/keys/test`) {
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     const name = body?.name;
     if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
     const ukeys = await getUserKeys(env, user.id);
@@ -358,8 +350,7 @@ async function handleConsole(request, env, url) {
     });
   }
   if (method === "POST" && path === DEVICE_BASE) {
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     let device;
     try { device = validateDevice(body); } catch (e) { return jsonError(400, e.message, "invalid_request"); }
     await upsertDevice(env, device);
@@ -420,8 +411,7 @@ async function handleConsole(request, env, url) {
     return jsonOk({ configured: !!token, masked: token ? maskKey(token) : "" });
   }
   if (method === "PUT" && path === `${ADMIN_BASE}/cloudflare-token`) {
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     const v = String(body?.token || "").trim();
     if (v && !/^[A-Za-z0-9_-]{20,}$/.test(v)) {
       return jsonError(400, "Token looks invalid (expected 20+ chars of letters/digits/_ -)", "invalid_request");
@@ -453,8 +443,7 @@ async function handleConsole(request, env, url) {
   }
   if (method === "PUT" && path.startsWith(`${ADMIN_BASE}/users/`) && path.endsWith("/enabled")) {
     const id = decodeURIComponent(path.slice(`${ADMIN_BASE}/users/`.length, -"/enabled".length));
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     if (id === ADMIN_ID) return jsonError(400, "Cannot disable the admin account", "invalid_request");
     const u = await setUserEnabled(env, id, !!body.enabled);
     return jsonOk({ ok: true, id, enabled: u.enabled });
@@ -465,8 +454,7 @@ async function handleConsole(request, env, url) {
     return jsonOk({ password: await getAdminPassword(env) });
   }
   if (method === "PUT" && path === `${ADMIN_BASE}/password`) {
-    let body = {};
-    try { body = await request.json(); } catch {}
+    const body = await readJson(request);
     const v = String(body?.password || "");
     if (v.length < 8) return jsonError(400, "Admin password must be at least 8 chars", "invalid_request");
     await setAdminPassword(env, v);
@@ -492,8 +480,7 @@ async function requireSession(request, env) {
 async function authRegister(request, env, secure) {
   const ap = await getAdminPassword(env);
   if (!ap) return jsonError(500, "Admin password not configured", "config_error");
-  let body = {};
-  try { body = await request.json(); } catch {}
+  const body = await readJson(request);
   try {
     const created = await createUser(env, {
       username: body.username,
@@ -511,8 +498,7 @@ async function authRegister(request, env, secure) {
 async function authLogin(request, env, secure) {
   const ap = await getAdminPassword(env);
   if (!ap) return jsonError(500, "Admin password not configured", "config_error");
-  let body = {};
-  try { body = await request.json(); } catch {}
+  const body = await readJson(request);
   const user = await findUserByUsername(env, body.username);
   if (!user || !user.enabled) return jsonError(401, "Incorrect username or password", "authentication_error");
   let ok = false;
@@ -584,11 +570,9 @@ export async function handleGateway(request, env, url) {
     // Claude Code 固定模型名 auto：按用户网页选择路由
     model = await resolveAutoModel(env, user.id);
   }
-  const prefix = model.split("/")[0];
   // og/gpt-5.6-luna is region-blocked on zen (upstream 403 for CN) but fully
   // usable via OpenRouter's US exit. Map it to the or/ channel so both og/ and
   // or/ spellings hit the same working route (OpenRouter key + proxy exit).
-  const directOg = url.searchParams.get("direct") === "1";
   let effectiveModel = model;
   if (model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]") {
     effectiveModel = "or/openai/gpt-5.6-luna:floor[1m]";
@@ -599,8 +583,7 @@ export async function handleGateway(request, env, url) {
   // 美国出口开关:控制台 KV 设置优先,回退 Worker secret(env.US_PROXY)。
   // KV 写透传后立即生效(同 isolate 零延迟)。
   const usProxy = await getGlobalSetting(env, "US_PROXY");
-  env.US_PROXY = usProxy;
-  const baseRoute = pickRoute(prefix2, env);
+  const baseRoute = pickRoute(prefix2, env, usProxy);
   const upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
@@ -611,7 +594,7 @@ export async function handleGateway(request, env, url) {
   // 且 translate 完整支持 thinking(reasoning_content)。关闭时保持原生直连
   // (直连原生 8s 优于直连 chat/completions 7.8s 相当,原生已验证)。
   const route =
-    baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel) && !env.US_PROXY
+    baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel) && !usProxy
       ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
       : baseRoute;
 
@@ -671,7 +654,7 @@ export async function handleGateway(request, env, url) {
 
   // count_tokens
   if (isCount) {
-    if (route.kind === "opencode" || env.US_PROXY) {
+    if (route.kind === "opencode" || usProxy) {
       // og counts locally — translate AND native passthrough (zen's count
       // endpoint adds nothing; local estimate is CPU-cheap). estimateTokens
       // itself approximates for bodies over 1M chars.
@@ -714,6 +697,12 @@ export async function handleGateway(request, env, url) {
     }
     if (route.kind === "qwen" && !qwenKey) {
       return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    // og-native (deepseek-v4-flash via /v1/messages) needs the OpenCode Go key
+    // too — without it the request would go out headerless and return a bare
+    // "Upstream 401" instead of a clear config error (translate path checks).
+    if (route.kind === "opencode" && !opencodeGoKey) {
+      return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
     }
     // og-native parsed the body above (web-search detection, image
     // pre-processing) — forward THAT (images must arrive described, deepseek
@@ -971,11 +960,12 @@ function stripBracket(s) {
   return s.replace(/\[[^\]]*\]$/, "");
 }
 
-function pickRoute(prefix, env) {
+function pickRoute(prefix, env, usProxy) {
   // 美国出口开关:US_PROXY=1 时所有模型经 Vercel 代理(v.saisi.online/api/zen)
   // 从美国边缘出口访问上游,规避区域限制/拥堵。target=og|ds|qw|or 选上游,
-  // path 参数带上游相对路径(代理 base 已含主机级前缀)。
-  const via = (direct, path) => env.US_PROXY
+  // path 参数带上游相对路径(代理 base 已含主机级前缀)。usProxy is a local
+  // per-request value — never mutate the shared env object with it.
+  const via = (direct, path) => usProxy
     ? `https://v.saisi.online/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
     : direct;
   switch (prefix) {
@@ -1037,7 +1027,6 @@ function passthroughHeaders(bearerKey, { apiKeyHeader = false } = {}) {
   return h;
 }
 
-/* ---------------- Anthropic → OpenAI (for og translation) ---------------- */
 
 /* ---------------- Gateway-side vision pre-processing ---------------- */
 // The gateway's own models (deepseek, minimax, ...) are text-only. If an incoming
@@ -1243,7 +1232,6 @@ async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query
   }
 }
 
-/* ---------------- OpenAI → Anthropic (for og translation) ---------------- */
 
 
 /* ---------------- Public endpoints: health / vale-cli / installers ---------------- */
