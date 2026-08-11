@@ -12,7 +12,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleMcp } from "../src/mcp.js";
 
-const DEVICE = { name: "d1", hostname: "d1.command.saisi.online", token: "devtok" };
+const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 
 // admin: token:admintoken → admin (role admin); bob: token:usertoken → bob (role user)
 function makeEnv() {
@@ -103,7 +103,7 @@ test("mcp: tools/call terminal_send → device /api/tools/terminal_execute with 
     assert.ok(data.result.content[0].text.includes("pwd"));
 
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].url, "https://d1.command.saisi.online/api/tools/terminal_execute");
+    assert.equal(calls[0].url, "https://d1.agent.saisi.online/api/tools/terminal_execute");
     assert.deepEqual(JSON.parse(calls[0].init.body), { command: "ls -la", session_id: "s-1", quiet_ms: 400 }); // device + input stripped, input→command
     assert.deepEqual(JSON.parse(calls[1].init.body), { command: "pwd", session_id: "s-1", quiet_ms: 400 });   // default quiet_ms
     assert.equal(calls[0].init.headers.get("authorization"), "Bearer devtok"); // device token injected server-side

@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleMcp, callTool } from "../src/mcp.js";
 
-const DEVICE = { name: "d1", hostname: "d1.command.saisi.online", token: "devtok" };
+const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 
 // PLUGIN_HUB stub: idFromName maps every name to itself, get() returns a
 // fetch stub that records calls — the real DO binding behaves the same way.
