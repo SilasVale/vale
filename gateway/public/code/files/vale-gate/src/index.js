@@ -667,11 +667,13 @@ export async function handleGateway(request, env, url) {
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
   // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
   // already bracket-stripped, so a [1m] marker cannot mask the check.
+  // US_PROXY 开启时:deepseek-v4-flash 也走 translate(chat/completions 经美国
+  // 代理)—— 实测代理 chat/completions 1.6s vs 原生 /v1/messages 11s(5 倍),
+  // 且 translate 完整支持 thinking(reasoning_content)。关闭时保持原生直连
+  // (直连原生 8s 优于直连 chat/completions 7.8s 相当,原生已验证)。
   const route =
-    baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel)
-      ? { ...baseRoute, type: "passthrough", upstream: env.US_PROXY
-          ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/messages")}`
-          : OG_ZEN_ANTHROPIC }
+    baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel) && !env.US_PROXY
+      ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
       : baseRoute;
 
   // The full body object is only needed on the og translate path (web_search
