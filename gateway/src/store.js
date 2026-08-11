@@ -450,14 +450,27 @@ export async function listPluginLinks(env) {
 export async function savePluginLinks(env, map) {
   await env.KEYS.put(PLUGIN_KEY, JSON.stringify(map));
 }
+// Plugin links expire after PLUGIN_LINK_TTL_MS (30 days) — a leaked extension
+// token must not grant permanent remote control of a device's browser
+// (chrome.debugger can read/write/click/type on any tab).
+export const PLUGIN_LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
 export async function addPluginLink(env, token, device) {
   const map = await listPluginLinks(env);
-  map[token] = { device, createdAt: Date.now() };
+  map[token] = { device, createdAt: Date.now(), expiresAt: Date.now() + PLUGIN_LINK_TTL_MS };
   await savePluginLinks(env, map);
 }
 export async function getPluginByToken(env, token) {
   const map = await listPluginLinks(env);
-  return map[token] || null;
+  const link = map[token] || null;
+  if (!link) return null;
+  if (link.expiresAt && link.expiresAt < Date.now()) {
+    // Expired — drop it (lazy cleanup) and treat as unknown.
+    delete map[token];
+    await savePluginLinks(env, map);
+    return null;
+  }
+  return link;
 }
 export async function removePluginLink(env, token) {
   const map = await listPluginLinks(env);
