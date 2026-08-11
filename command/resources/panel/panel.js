@@ -167,6 +167,8 @@ function activate(sid) {
   }
   requestAnimationFrame(() => {
     try { s.fit.fit(); } catch {}
+    // Focus the newly activated session so keystrokes go straight to it —
+    // without this the first keystroke can land nowhere (no focused terminal).
     try { s.term.focus(); } catch {}
   });
 }
@@ -199,6 +201,8 @@ function adoptSession(sid, label, idbRec = null) {
     scrollback: 20000,
     fontSize: 13,
     fontFamily: 'monospace',
+    disableStdin: false, // live sessions are writable — don't inherit the
+                         // saved-session default of true
     theme: {
       background: "#ffffff",
       foreground: "#1a1c20",
@@ -214,6 +218,9 @@ function adoptSession(sid, label, idbRec = null) {
   term.onData((data) => {
     callTool("terminal_write", { session_id: sid, data }).catch(() => {});
   });
+  // Clicking anywhere in the session focuses the terminal, so typing works
+  // right away instead of requiring a precise click on the xterm viewport.
+  container.addEventListener("pointerdown", () => { try { term.focus(); } catch {} });
 
   const s = {
     sid, term, fit, container, tab: null,
