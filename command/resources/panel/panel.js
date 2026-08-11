@@ -222,6 +222,10 @@ function adoptSession(sid, label, idbRec = null) {
   sessions.set(sid, s); // before any await
   s.tab = renderTab(sid, label);
   diag(`adopt: ${sid} (${label})`);
+  // Activate the first adopted session so its container is visible (the
+  // .term-session is display:none until .active) — otherwise fit() on a
+  // hidden container computes 0 dimensions and the session is invisible.
+  if (activeSid === null) activate(sid);
   // Fit after the container is laid out (requestAnimationFrame) so the xterm
   // canvas fills the whole session area — without this a freshly adopted
   // session renders at its default small size and leaves blank space below.
