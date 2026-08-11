@@ -36,7 +36,7 @@ export const ROUTE_INFO = [
   {
     prefix: "og/",
     backend: "OpenCode Go",
-    desc: "opencode.ai/zen/go — chat/completions translation (all models)",
+    desc: "opencode.ai/zen/go — deepseek-v4-flash native /v1/messages; others chat/completions translation",
     models: ["deepseek-v4-flash", "minimax-m3"],
   },
   {
