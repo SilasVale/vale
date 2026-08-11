@@ -40,7 +40,8 @@ body {
 #toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
   padding: 10px 16px;
   background: var(--surface-glass);
   backdrop-filter: saturate(180%) blur(20px);
@@ -69,7 +70,7 @@ body {
   background: var(--surface);
   color: var(--muted);
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   padding: 5px 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -96,10 +97,15 @@ body {
 .tab:hover .tab-export,
 .tab.active .tab-export { visibility: visible; }
 .tab-export:hover { color: var(--accent); }
+#toolbar-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
 #new-session {
   background: var(--accent);
   color: #ffffff;
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   padding: 6px 14px;
   cursor: pointer;
@@ -118,15 +124,27 @@ body {
   transition: all .15s ease;
 }
 #export-all:hover { color: var(--ink); border-color: var(--faint); }
+/* ---------- bottom status bar ---------- */
+#statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  background: var(--surface-glass);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-top: 1px solid var(--line);
+}
 #status {
   color: var(--muted);
   font-size: 12px;
-  max-width: 320px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 #status.error { color: var(--danger); }
+#conn-status.error { color: var(--danger); font-size: 12px; margin-top: 6px; }
 
 /* ---------- terminal ---------- */
 #term-container {
@@ -139,10 +157,11 @@ body {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 6px 8px 8px;
+  padding: 10px 12px 12px;
 }
 .term-session.active { display: block; }
 .term-session .xterm {
   height: 100%;
-  padding: 4px;
+  border-radius: var(--radius);
+  overflow: hidden;
 }

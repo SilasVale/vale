@@ -579,8 +579,10 @@
       .map((u) => `
         <div class="user-row" data-id="${esc(u.id)}">
           <div class="user-main">
-            <span class="u-name">${esc(u.username)}</span>
-            ${u.role === "admin" ? `<span class="badge admin">${t("role.admin")}</span>` : ""}
+            <div class="u-line">
+              <span class="u-name">${esc(u.username)}</span>
+              ${u.role === "admin" ? `<span class="badge admin">${t("role.admin")}</span>` : ""}
+            </div>
             <span class="u-sub">${esc(maskToken(u.token))}</span>
           </div>
           <div class="user-actions">
@@ -688,10 +690,11 @@
     $("#devices-list").innerHTML = devices.map((d) => `
       <div class="user-row" data-name="${esc(d.name)}">
         <div class="user-main">
-          <span class="u-name">${esc(d.name)}</span>
-          <span class="badge offline" data-status=""><span class="dot"></span></span>
-          <span class="u-sub mono">${esc(d.hostname)}</span>
-          <span class="badge">${esc(d.token)}</span>
+          <div class="u-line">
+            <span class="u-name">${esc(d.name)}</span>
+            <span class="badge offline" data-status=""><span class="dot"></span></span>
+          </div>
+          <div class="u-sub mono">${esc(d.hostname)} · ${esc(maskToken(d.token))}</div>
         </div>
         <div class="user-actions">
           <button class="btn-ghost btn-mini" data-pair="${esc(d.name)}">${t("devices.pair")}</button>
