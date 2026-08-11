@@ -254,15 +254,16 @@ async function backfillAndAttach(sid, s, idbRec) {
     renderLines(s);
   }
   try {
-    const hist = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: true });
+    const hist = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: false });
     if (hist && typeof hist.text === "string") {
       if (Number(hist.start) > s.renderedBytes) {
         s.term.write(`\r\n[dropped ${Number(hist.start) - s.renderedBytes} bytes — missed while offline]\r\n`);
       }
       if (hist.text) {
-        s.term.write(hist.text);
+        s.term.write(hist.text); // raw bytes — xterm renders PSReadLine's
+                                 // cursor-rewrite sequences correctly
         s.renderedBytes = Number(hist.end) || s.renderedBytes;
-        ingestLines(s, hist.text);
+        ingestLines(s, stripAnsi(hist.text)); // clean text for export/storage
       }
     }
   } catch { /* brand-new session → attach live */ }
@@ -329,6 +330,14 @@ function attachStream(sid) {
 
 // ── Line ingestion + local persistence (localStorage, no IDB needed) ──
 
+/// Strip ANSI/VT escape sequences — for export/localStorage line records.
+/// (The terminal display itself gets the RAW stream so xterm can render
+/// PSReadLine's cursor-rewrite sequences correctly; stripping them there is
+/// what left broken fragments like stray prompt pieces in the panel.)
+function stripAnsi(s) {
+  return s.replace(/\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
 function ingestLines(s, text) {
   if (!text) return;
   const chunks = text.split("\n");
@@ -378,14 +387,14 @@ async function syncSession(sid) {
   if (!s.needSync && !s.sseDirty) return;
   s.syncInFlight = true;
   try {
-    const r = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: true });
+    const r = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: false });
     if (r && typeof r.text === "string" && r.text) {
       if (Number(r.start) > s.renderedBytes) {
         s.term.write(`\r\n[dropped ${Number(r.start) - s.renderedBytes} bytes — missed while offline]\r\n`);
       }
       s.term.write(r.text);
       s.renderedBytes = Number(r.end) || s.renderedBytes;
-      ingestLines(s, r.text);
+      ingestLines(s, stripAnsi(r.text));
     }
     s.needSync = false;
     s.sseDirty = false;
