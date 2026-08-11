@@ -15,7 +15,7 @@ import worker from "../src/index.js";
 import { issueSessionToken, SESSION_COOKIE } from "../src/auth.js";
 
 const ADMIN_PW = "test-admin-password";
-const DEVICE = { name: "d1", hostname: "d1.command.saisi.online", token: "devtok" };
+const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 
 // KV stub: device registry, plugin links (plugins:v1 token → {device}),
 // admin password + users for the session path. `_admin_seeded` keeps
@@ -75,7 +75,7 @@ test("proxy: paired plugin token → proxied; device Bearer injected server-side
     const res = await worker.fetch(new Request(PROXY_URL, { headers: { authorization: "Bearer tok-d1" } }), makeEnv());
     assert.equal(res.status, 200);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, "https://d1.command.saisi.online/api/tools/terminal_list");
+    assert.equal(calls[0].url, "https://d1.agent.saisi.online/api/tools/terminal_list");
     assert.equal(calls[0].init.headers.get("authorization"), "Bearer devtok"); // device token, not the plugin token
     assert.equal(calls[0].init.headers.get("cookie"), null); // console session never forwarded
     assert.equal(calls[0].init.method, "GET");
