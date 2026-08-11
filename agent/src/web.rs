@@ -139,20 +139,24 @@ fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
     query?.split('&').find_map(|pair| pair.strip_prefix(key).and_then(|rest| rest.strip_prefix('=')))
 }
 
-/// Check Bearer token or ?token= query param. Static (non-async) so it
-/// can be called before the Send boundary. The error is boxed — Response is
-/// large and only ever handled at the top of handle_request.
+/// Check the Bearer token (Authorization header only). Static (non-async) so
+/// it can be called before the Send boundary. The error is boxed — Response
+/// is large and only ever handled at the top of handle_request.
+///
+/// SECURITY (2026-08-12): the ?token= query param was removed — a cross-site
+/// page could send a text/plain POST with the token in the URL (no CORS
+/// preflight) and bypass auth. Clients use the Authorization header (the
+/// panel fetches SSE with fetch(), which sets headers; nothing used the
+/// query param).
 fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>> {
     let Some(ref token) = state.config.server.device_token else {
         return Ok(()); // no auth configured
     };
-    // Check Authorization header first, then ?token= query param (for SSE)
     let from_header = req.headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    let from_query = query_param(req.uri().query(), "token");
-    if from_header == Some(token.as_str()) || from_query == Some(token.as_str()) {
+    if from_header == Some(token.as_str()) {
         return Ok(());
     }
     Err(Box::new(built_response(
