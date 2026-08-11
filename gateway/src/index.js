@@ -225,7 +225,11 @@ async function handleConsole(request, env, url) {
     // /api/plugins/ws, which the DO would 404).
     const wsUrl = new URL(request.url);
     wsUrl.pathname = "/ws";
-    return hub.fetch(new Request(wsUrl.toString(), request));
+    // Internal auth for the DO (it has its own external address) — the shared
+    // secret header is set by the main worker only.
+    const wsReq = new Request(wsUrl.toString(), request);
+    if (env.DO_AUTH) wsReq.headers.set("x-do-auth", env.DO_AUTH);
+    return hub.fetch(wsReq);
   }
 
   // ---- Device reverse-proxy: admin session cookie OR paired plugin token ----
@@ -396,7 +400,9 @@ async function handleConsole(request, env, url) {
       try {
         const id = env.PLUGIN_HUB.idFromName(d.name);
         const hub = env.PLUGIN_HUB.get(id);
-        const res = await hub.fetch("https://hub/status");
+        const statusReq = new Request("https://hub/status");
+        if (env.DO_AUTH) statusReq.headers.set("x-do-auth", env.DO_AUTH);
+        const res = await hub.fetch(statusReq);
         const j = await res.json();
         out[d.name] = { online: !!j.online };
       } catch { out[d.name] = { online: false }; }

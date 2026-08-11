@@ -123,3 +123,13 @@ test("hub /ws: valid websocket upgrade arms the idle alarm (skipped: needs CF ru
   // exercised by mcp-browser.test.mjs's hub stub.
   t.skip();
 });
+
+test("hub: DO_AUTH configured → request without x-do-auth is 401", async () => {
+  const state = makeState([]);
+  const hub = new PluginHubDO(state, { DO_AUTH: "sekret" });
+  const res = await hub.fetch(new Request("https://hub/status"));
+  assert.equal(res.status, 401);
+  // With the header → authorized.
+  const ok = await hub.fetch(new Request("https://hub/status", { headers: { "x-do-auth": "sekret" } }));
+  assert.equal(ok.status, 200);
+});
