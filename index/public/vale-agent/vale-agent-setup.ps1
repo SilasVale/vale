@@ -372,4 +372,7 @@ if ($env:VALE_REG_KEY) {
         Write-Warning "  auto-register failed: $($_.Exception.Message)"
         Write-Warning "  Add this device manually in the console: name=$regName host=$Hostname token (above)."
     }
+    # The registration key is single-use — never leave it on disk where any
+    # local user could read it and mint Cloudflare API tokens.
+    if (Test-Path $regKeyFile) { Remove-Item $regKeyFile -Force }
 }
