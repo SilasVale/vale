@@ -45,6 +45,12 @@ const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
 // translate path (verified 2026-08-07 with this user's key).
 const OG_ZEN_ANTHROPIC = "https://opencode.ai/zen/go" + VERIFY_PATH;
 const OG_ZEN_CHAT = "https://opencode.ai/zen/go/v1/chat/completions";
+// deepseek-v4-flash 走原生 /v1/messages(US_PROXY 关时直连原生,US_PROXY 开时
+// 走 translate chat 代理)。2026-08-11 交错实测:本时段原生直连总耗时最优
+// (10.7-14.4s vs chat 直连 13.8-16.1s);首字节 chat 直连最稳,原生也不差。
+// 时段敏感:之前测过 chat 代理 1.6s 最快——固定路径无法保证长期最优,
+// 控制台 US_PROXY 开关可随时切换。其他 og 模型(minimax/mimo/kimi/glm)
+// 始终走 translate(chat/completions)。
 const OG_NATIVE_ANTHROPIC = new Set(["deepseek-v4-flash"]);
 const AUTH_BASE = "/api/auth";
 const ADMIN_BASE = "/api/admin";
@@ -391,7 +397,7 @@ async function handleConsole(request, env, url) {
     const name = body?.name;
     if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
     const ukeys = await getUserKeys(env, user.id);
-    return testKey(name, ukeys[name]);
+    return testKey(env, name, ukeys[name]);
   }
 
   // ---- Admin-only ----
@@ -991,7 +997,7 @@ function rewriteDeviceBody(text, name) {
 
 /* ---- Connectivity tests ---- */
 
-async function testKey(name, key) {
+async function testKey(env, name, key) {
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
   try {
     if (name === "DEEPSEEK_API_KEY") {
@@ -1017,10 +1023,22 @@ async function testKey(name, key) {
           model: "deepseek-v4-flash",
           messages: [{ role: "user", content: "ping" }],
           max_tokens: 1,
-          stream: false,
+          stream: true,
         }),
       });
-      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "OpenCode Go auth OK" : `Upstream ${res.status}` });
+      if (!res.ok) {
+        return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
+      }
+      // 流式探测:收到首个 SSE data 块即判定连通(auth OK + 连接建立),
+      // 不等 thinking 结束(非流式要等完整响应 ~10s)。提前 cancel 释放连接。
+      const firstChunk = await (async () => {
+        const reader = res.body.getReader();
+        const { value } = await reader.read();
+        await reader.cancel().catch(() => {});
+        return new TextDecoder().decode(value || new Uint8Array());
+      })();
+      const ok = firstChunk.includes("data:");
+      return jsonOk({ ok, name, status: res.status, detail: ok ? "OpenCode Go auth OK" : "OpenCode Go auth FAILED (no stream data)" });
     }
     if (name === "QWEN_API_KEY") {
       const res = await fetchWithTimeout("https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages", {
