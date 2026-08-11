@@ -555,7 +555,7 @@ async function authLogin(request, env, secure) {
 
 /* ---------------- /v1/* gateway ---------------- */
 
-export async function handleGateway(request, env, url) {
+async function handleGatewayImpl(request, env, url) {
   const path = url.pathname;
   const method = request.method;
 
@@ -827,6 +827,26 @@ export async function handleGateway(request, env, url) {
   }
   const anthropicRes = toAnthropicResponse(await upstream.json(), upstreamModel);
   return jsonOk(anthropicRes);
+}
+
+/**
+ * Structured request log for the /v1/* hot path — one line per gateway
+ * request (user/model/status/latency). Visible via `wrangler tail`; no
+ * persistent storage on the Free plan, but enough to see who used what and
+ * which channel misbehaves.
+ */
+export async function handleGateway(request, env, url) {
+  const started = Date.now();
+  const res = await handleGatewayImpl(request, env, url);
+  try {
+    // One structured line per /v1 request — tail-visible usage/health signal.
+    console.log(JSON.stringify({
+      ts: started, ms: Date.now() - started, status: res.status,
+      key: String(request.headers.get("x-api-key") || "").slice(0, 8),
+      path: url.pathname,
+    }));
+  } catch { /* log must never break the request */ }
+  return res;
 }
 
 /* ---------------- Device module helpers ---------------- */
