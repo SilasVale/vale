@@ -877,7 +877,7 @@ function mcpConfig(d) {
   const url = `https://${d.hostname}/mcp`;
   const snippet = {
     mcpServers: {
-      "vale-command": { type: "http", url, headers: { Authorization: `Bearer ${d.token}` } },
+      "vale-agent": { type: "http", url, headers: { Authorization: `Bearer ${d.token}` } },
     },
   };
   return { url, json: JSON.stringify(snippet, null, 2) };
@@ -929,7 +929,7 @@ async function proxyDevice(request, env, device, restPath) {
   return new Response(resp.body, { status: resp.status, headers: outHeaders });
 }
 
-// Absolute paths a vale-command panel serves from its own root. When proxied
+// Absolute paths a vale-agent panel serves from its own root. When proxied
 // through the console they must carry the proxy mount so the SPA's absolute
 // paths (/api/*, /app.js, /ui/*, ...) keep resolving through the proxy.
 const PANEL_ROOT_PATHS = [
