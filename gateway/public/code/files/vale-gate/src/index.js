@@ -1002,9 +1002,13 @@ async function testKey(name, key) {
     }
     if (name === "OPENCODE_GO_API_KEY") {
       // Do not send the literal "[1m]" suffix — zen rejects it with 401
-      // NOTE: intentionally direct (not via US_PROXY) — key validation is a
-      // gateway-background operation, not a user-routed request.
-      const res = await fetchWithTimeout(OG_ZEN_CHAT, {
+      // 尊重 US_PROXY 开关:开启时经美国代理探测(实测 chat/completions
+      // 走代理 1-3s vs 直连 12-13s);关闭时直连。
+      const usProxy = await getGlobalSetting(env, "US_PROXY");
+      const probeUrl = usProxy
+        ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
+        : OG_ZEN_CHAT;
+      const res = await fetchWithTimeout(probeUrl, {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
