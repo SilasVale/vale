@@ -22,7 +22,7 @@
  * The admin is seeded from the existing CLIENT_KEY, keeping the legacy settings.json working.
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.js";
 import { build101Response, deviceFetch } from "./device-fetch.js";
 import { handleMcp } from "./mcp.js";
@@ -353,6 +353,22 @@ async function handleConsole(request, env, url) {
     const token = await regenerateToken(env, user.id);
     return jsonOk({ ok: true, token });
   }
+  // 美国出口开关(全局设置):GET 读当前值;PUT 改(仅管理员)。
+  // 网关在每次请求路由时读 KV,开关立即生效,无需重启。
+  if (method === "GET" && path === `${ME_BASE}/usproxy`) {
+    const v = await getGlobalSetting(env, "US_PROXY");
+    return jsonOk({ enabled: !!v });
+  }
+  if (method === "PUT" && path === `${ME_BASE}/usproxy`) {
+    if (user.role !== "admin") {
+      return jsonError(403, "Admin only", "forbidden");
+    }
+    let body = {};
+    try { body = await request.json(); } catch {}
+    await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : null);
+    const v = await getGlobalSetting(env, "US_PROXY");
+    return jsonOk({ ok: true, enabled: !!v });
+  }
   if (method === "PUT" && path === `${ME_BASE}/keys`) {
     let body = {};
     try { body = await request.json(); } catch {}
@@ -641,6 +657,10 @@ export async function handleGateway(request, env, url) {
     effectiveModel = model;
   }
   const prefix2 = effectiveModel.split("/")[0];
+  // 美国出口开关:控制台 KV 设置优先,回退 Worker secret(env.US_PROXY)。
+  // KV 写透传后立即生效(同 isolate 零延迟)。
+  const usProxy = await getGlobalSetting(env, "US_PROXY");
+  env.US_PROXY = usProxy;
   const baseRoute = pickRoute(prefix2, env);
   const upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key

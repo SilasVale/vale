@@ -118,6 +118,18 @@
           <div class="card-head"><h2 data-i18n="route.title">渠道切换</h2></div>
           <div class="card-body">
             <p class="muted" data-i18n="route.desc">Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。</p>
+            <div class="key-card" id="usproxy-card" style="display:none">
+              <div class="top">
+                <div>
+                  <div class="key-name" data-i18n="usproxy.title">美国出口</div>
+                  <div class="key-desc" data-i18n="usproxy.desc">所有模型经 Vercel 美国节点访问上游</div>
+                </div>
+                <span class="badge" id="usproxy-status"></span>
+              </div>
+              <div class="key-actions">
+                <button class="btn-primary btn-mini" id="btn-usproxy-toggle" data-i18n="usproxy.toggle">切换</button>
+              </div>
+            </div>
             <div class="cards" id="route-cards"></div>
             <button class="btn-ghost" id="btn-route-auto" data-i18n="route.auto">自动选择健康渠道</button>
           </div>
