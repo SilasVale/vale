@@ -263,23 +263,14 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // Terminal panel (static page, public like the status page — it shows no
     // data until the user enters the device token in the browser). Assets are
     // embedded at compile time from resources/panel/.
+    //
+    // SECURITY (2026-08-12): the panel previously embedded the device token as
+    // window.__PANEL_TOKEN__ for zero-config access. With CORS * on every
+    // response, any third-party page could fetch /panel/ and read the token.
+    // The token is no longer injected — the user enters it once in the panel
+    // (saved to localStorage) instead.
     if method == Method::GET && (path == "/panel" || path == "/panel/") {
-        // Inject the device token into the panel HTML so the page can use it
-        // as its default — the user opens /panel/ and sees sessions without
-        // typing anything. Only the panel page gets this; the token never
-        // leaves the device's own domain.
-        let html = serve_panel_file("index.html", "text/html; charset=utf-8");
-        let token = state.config.server.device_token.clone().unwrap_or_default();
-        let inject = format!(
-            "<script>window.__PANEL_TOKEN__ = {}</script>",
-            serde_json::to_string(&token).unwrap_or_else(|_| "\"\"".to_string())
-        );
-        let body = axum::body::to_bytes(html.into_body(), 1 << 20).await.unwrap_or_default();
-        let mut html = String::from_utf8_lossy(&body).into_owned();
-        if let Some(pos) = html.find("</head>") {
-            html.insert_str(pos, &inject);
-        }
-        let mut resp = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
+        let mut resp = serve_panel_file("index.html", "text/html; charset=utf-8");
         resp.headers_mut().insert(
             axum::http::HeaderName::from_static("cache-control"),
             axum::http::HeaderValue::from_static("no-store"),
@@ -397,7 +388,11 @@ where
                     }
                 }
                 Err(RecvError::Lagged(n)) => {
-                    let _ = tx.send(Ok(Bytes::from(lagged(n)))).await;
+                    // Client gone: stop like the Ok branch, or this task keeps
+                    // the broadcast subscription and a failing send forever.
+                    if tx.send(Ok(Bytes::from(lagged(n)))).await.is_err() {
+                        break;
+                    }
                 }
                 Err(RecvError::Closed) => break,
             }

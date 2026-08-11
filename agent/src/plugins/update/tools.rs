@@ -60,8 +60,15 @@ pub fn agent_update() -> ToolDef {
             let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
             let local = env!("CARGO_PKG_VERSION").to_string();
 
-            // 1. What does the release server say?
-            let resp = reqwest::get(VERSION_URL)
+            // 1. What does the release server say? Timeout so a hung release
+            //    server can't pin the handler forever (MCP client may have
+            //    disconnected; the future would linger otherwise).
+            let resp = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .map_err(|e| DeviceError::Internal { message: format!("client build failed: {e}") })?
+                .get(VERSION_URL)
+                .send()
                 .await
                 .map_err(|e| DeviceError::Internal { message: format!("version check failed: {e}") })?;
             let j: Value = resp
@@ -84,10 +91,17 @@ pub fn agent_update() -> ToolDef {
                 }));
             }
 
-            // 2. Download the installer next to this exe.
+            // 2. Download the installer next to this exe (300s: a slow release
+            //    server / bandwidth-limited device shouldn't fail a real update,
+            //    but must still terminate).
             let dir = install_dir();
             let installer = dir.join("ValeAgent-Setup.exe");
-            let bytes = reqwest::get(&download)
+            let bytes = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .map_err(|e| DeviceError::Internal { message: format!("client build failed: {e}") })?
+                .get(&download)
+                .send()
                 .await
                 .map_err(|e| DeviceError::Internal { message: format!("download failed: {e}") })?
                 .bytes()

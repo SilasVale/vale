@@ -99,11 +99,10 @@ export function toAnthropicResponse(up, model) {
     try { input = JSON.parse(tc.function?.arguments || "{}"); } catch {}
     blocks.push({ type: "tool_use", id: tc.id, name: tc.function?.name || "unknown", input });
   }
-  const stopMap = { stop: "end_turn", tool_calls: "tool_use", function_call: "tool_use", length: "max_tokens" };
   return {
     id: up.id, type: "message", role: "assistant", model,
     content: blocks,
-    stop_reason: stopMap[choice?.finish_reason] || "end_turn", stop_sequence: null,
+    stop_reason: STREAM_STOP_MAP[choice?.finish_reason] || "end_turn", stop_sequence: null,
     usage: {
       input_tokens: up.usage?.prompt_tokens || 0,
       output_tokens: up.usage?.completion_tokens || 0,

@@ -49,19 +49,16 @@ let activeSid = null;
 // ── Auth / config ───────────────────────────────────────────────
 
 function loadConfig() {
-  // Same-origin mode: served by vale-command at /panel/ — hostname is this
-  // device's own domain. The backend injects the device token into the page
-  // (window.__PANEL_TOKEN__), so no input is needed at all; a previously
-  // saved localStorage token still wins for override.
+  // Same-origin mode: served by vale-agent at /panel/ — hostname is this
+  // device's own domain. The token is entered once and kept in localStorage
+  // (the backend no longer injects window.__PANEL_TOKEN__ — it leaked the
+  // device token to any page that could fetch /panel/, fixed 2026-08-12).
   const sameOrigin = location.pathname.startsWith("/panel");
   if (sameOrigin) {
     hostname = location.host;
     hostInput.value = hostname;
     hostInput.disabled = true;
-    // Injected token (backend, current) wins over any stale localStorage
-    // value from an earlier session — a leftover token can be expired and
-    // would 401 every request until the user re-enters it.
-    token = window.__PANEL_TOKEN__ || localStorage.getItem(LS_TOKEN) || "";
+    token = localStorage.getItem(LS_TOKEN) || "";
     if (token) {
       tokenInput.value = token;
       connForm.classList.add("hidden");
