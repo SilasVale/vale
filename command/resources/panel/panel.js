@@ -222,6 +222,12 @@ function adoptSession(sid, label, idbRec = null) {
   sessions.set(sid, s); // before any await
   s.tab = renderTab(sid, label);
   diag(`adopt: ${sid} (${label})`);
+  // Fit after the container is laid out (requestAnimationFrame) so the xterm
+  // canvas fills the whole session area — without this a freshly adopted
+  // session renders at its default small size and leaves blank space below.
+  requestAnimationFrame(() => {
+    try { s.fit.fit(); } catch {}
+  });
   backfillAndAttach(sid, s, idbRec);
 }
 
@@ -569,6 +575,9 @@ function mkSavedSession(sid, rec) {
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(container);
+  requestAnimationFrame(() => {
+    try { fit.fit(); } catch {}
+  });
   const s = {
     sid, term, fit, container, tab: null, closed: true, savedOnly: true,
     label: rec.label || sid, renderedBytes: rec.endAbs || 0,
