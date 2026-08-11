@@ -397,15 +397,20 @@ async function handleConsole(request, env, url) {
     const devices = await listDevices(env);
     const out = {};
     for (const d of devices) {
+      // Extension WS (chrome.debugger hub) — reflects the browser extension.
+      let extOnline = false;
       try {
         const id = env.PLUGIN_HUB.idFromName(d.name);
         const hub = env.PLUGIN_HUB.get(id);
         const statusReq = new Request("https://hub/status");
         if (env.DO_AUTH) statusReq.headers.set("x-do-auth", env.DO_AUTH);
         const res = await hub.fetch(statusReq);
-        const j = await res.json();
-        out[d.name] = { online: !!j.online };
-      } catch { out[d.name] = { online: false }; }
+        extOnline = !!(await res.json()).online;
+      } catch { /* hub unreachable */ }
+      // Agent + tunnel health: probe the device's own /api/status through its
+      // tunnel (cached 30s — the console polls every 30s already).
+      const probe = await cachedDeviceProbe(env, d);
+      out[d.name] = { online: extOnline, agent_up: probe, tunnel_up: probe };
     }
     return jsonOk({ devices: out });
   }
@@ -825,6 +830,25 @@ export async function handleGateway(request, env, url) {
 }
 
 /* ---------------- Device module helpers ---------------- */
+
+// Device /api/status probe with a 30s in-isolate cache — the console polls
+// /api/plugins/status every 30s, so a live probe per call would hammer the
+// tunnel. The cache bounds it to one tunnel round-trip per 30s per device.
+const DEVICE_PROBE_CACHE = new Map(); // name -> { at, ok }
+const DEVICE_PROBE_TTL_MS = 30000;
+
+async function cachedDeviceProbe(env, device) {
+  const hit = DEVICE_PROBE_CACHE.get(device.name);
+  if (hit && Date.now() - hit.at < DEVICE_PROBE_TTL_MS) return hit.ok;
+  let ok = false;
+  try {
+    const res = await deviceFetch(env, device, "/api/status");
+    ok = res.ok;
+  } catch { ok = false; }
+  if (DEVICE_PROBE_CACHE.size >= 64) DEVICE_PROBE_CACHE.clear();
+  DEVICE_PROBE_CACHE.set(device.name, { at: Date.now(), ok });
+  return ok;
+}
 
 function validateDevice(body) {
   const name = String(body?.name || "").trim();

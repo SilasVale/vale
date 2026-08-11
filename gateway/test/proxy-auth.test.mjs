@@ -175,3 +175,25 @@ test("login: 5 wrong passwords lock the username for 30s", async () => {
   const locked = await post(ADMIN_PW);
   assert.equal(locked.status, 429);
 });
+
+// ── Device status (agent + tunnel probe) ───────────────────────
+
+test("plugins/status: agent_up reflects the device /api/status probe", async () => {
+  const env = makeEnv();
+  const adminCookie = await issueSessionToken(ADMIN_PW, "admin", "admin");
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/status")) return new Response(JSON.stringify({ ok: true, version: "1.0.6" }), { status: 200 });
+    return new Response("{}", { status: 200 });
+  };
+  try {
+    const res = await worker.fetch(new Request("https://x/api/plugins/status", { headers: { cookie: `${SESSION_COOKIE}=${adminCookie}` } }), env);
+    assert.equal(res.status, 200);
+    const j = await res.json();
+    assert.equal(j.devices.d1.agent_up, true);
+    assert.equal(j.devices.d1.tunnel_up, true);
+    assert.ok("online" in j.devices.d1); // extension WS state
+  } finally {
+    globalThis.fetch = real;
+  }
+});
