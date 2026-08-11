@@ -30,6 +30,8 @@ import { PluginHubDO } from "./plugin-hub.js";
 import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE } from "./anthropic-translate.js";
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.js";
 import { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES } from "./body-scan.js";
+import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.js";
+export { jsonOk, jsonError, readJson, CORS_HEADERS };
 export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE };
 export { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess };
 export { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES };
@@ -59,12 +61,6 @@ const ADMIN_BASE = "/api/admin";
 const ME_BASE = "/api/me";
 const DEVICE_BASE = "/api/devices";
 const PLUGIN_BASE = "/api/plugins";
-
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS,DELETE,PUT",
-  "Access-Control-Allow-Headers": "*",
-};
 
 const MODELS = [
   { id: "ds/deepseek-v4-flash", owned_by: "deepseek" },
@@ -1314,19 +1310,6 @@ async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query
 
 /* ---------------- OpenAI → Anthropic (for og translation) ---------------- */
 
-
-/* ---------------- Utilities ---------------- */
-
-function jsonOk(data, extraHeaders = {}) {
-  return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json", ...CORS_HEADERS, ...extraHeaders } });
-}
-
-function jsonError(status, message, type) {
-  return new Response(JSON.stringify({ type: "error", error: { type, message } }), {
-    status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-  });
-}
 
 /* ---------------- Public endpoints: health / vale-cli / installers ---------------- */
 
