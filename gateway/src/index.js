@@ -633,17 +633,12 @@ export async function handleGateway(request, env, url) {
   // og/gpt-5.6-luna is region-blocked on zen (upstream 403 for CN) but fully
   // usable via OpenRouter's US exit. Map it to the or/ channel so both og/ and
   // or/ spellings hit the same working route (OpenRouter key + proxy exit).
-  // og/deepseek-v4-flash on zen is intermittently congested (2-26s first-token
-  // jitter); the same model via OpenRouter is stable ~1.4s — map it too, with
-  // an escape hatch: ?direct=1 forces the original zen route.
-  // ?direct=1 on the request forces the original zen route for og/ models
-  // (escape hatch if the OpenRouter mapping ever misbehaves).
   const directOg = url.searchParams.get("direct") === "1";
   let effectiveModel = model;
   if (model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]") {
     effectiveModel = "or/openai/gpt-5.6-luna:floor[1m]";
-  } else if (model === "og/deepseek-v4-flash" && !directOg) {
-    effectiveModel = "or/deepseek-v4-flash";
+  } else {
+    effectiveModel = model;
   }
   const prefix2 = effectiveModel.split("/")[0];
   const baseRoute = pickRoute(prefix2, env);
@@ -654,7 +649,9 @@ export async function handleGateway(request, env, url) {
   // already bracket-stripped, so a [1m] marker cannot mask the check.
   const route =
     baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel)
-      ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
+      ? { ...baseRoute, type: "passthrough", upstream: env.US_PROXY
+          ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/messages")}`
+          : OG_ZEN_ANTHROPIC }
       : baseRoute;
 
   // The full body object is only needed on the og translate path (web_search
@@ -713,10 +710,12 @@ export async function handleGateway(request, env, url) {
 
   // count_tokens
   if (isCount) {
-    if (route.kind === "opencode") {
+    if (route.kind === "opencode" || env.US_PROXY) {
       // og counts locally — translate AND native passthrough (zen's count
       // endpoint adds nothing; local estimate is CPU-cheap). estimateTokens
       // itself approximates for bodies over 1M chars.
+      // US_PROXY 开启时同样本地估算:代理 URL 是编码后的 ?path=,replace()
+      // 拼不出正确的 count 路径,硬拼会变成真实生成调用(浪费)。
       return jsonOk({ input_tokens: estimateTokens(rawText) });
     }
     if (route.kind === "deepseek" && !deepseekKey) {
@@ -983,6 +982,8 @@ async function testKey(name, key) {
     }
     if (name === "OPENCODE_GO_API_KEY") {
       // Do not send the literal "[1m]" suffix — zen rejects it with 401
+      // NOTE: intentionally direct (not via US_PROXY) — key validation is a
+      // gateway-background operation, not a user-routed request.
       const res = await fetchWithTimeout(OG_ZEN_CHAT, {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -1304,34 +1305,42 @@ function stripBracket(s) {
 }
 
 function pickRoute(prefix, env) {
+  // 美国出口开关:US_PROXY=1 时所有模型经 Vercel 代理(v.saisi.online/api/zen)
+  // 从美国边缘出口访问上游,规避区域限制/拥堵。target=og|ds|qw|or 选上游,
+  // path 参数带上游相对路径(代理 base 已含主机级前缀)。
+  const via = (direct, path) => env.US_PROXY
+    ? `https://v.saisi.online/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
+    : direct;
   switch (prefix) {
     case "or":
       return {
         type: "passthrough",
         kind: "openrouter", // passes through the user's own OPENROUTER_API_KEY
         stripPrefix: true,
-        upstream: (env.OPENROUTER_PROXY_URL || "https://openrouter.example.com/api/proxy") + VERIFY_PATH,
+        // 代理 base 是 openrouter.ai/api,path 只用 /v1/messages(不含 /api,
+        // 否则拼出 openrouter.ai/api/api/v1/messages → 404)
+        upstream: via((env.OPENROUTER_PROXY_URL || "https://openrouter.example.com/api/proxy") + VERIFY_PATH, "/v1/messages"),
       };
     case "ds":
       return {
         type: "passthrough",
         kind: "deepseek",
         stripPrefix: true,
-        upstream: "https://api.deepseek.com/anthropic" + VERIFY_PATH,
+        upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
       };
     case "qw":
       return {
         type: "passthrough",
         kind: "qwen",
         stripPrefix: true,
-        upstream: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
+        upstream: via("https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH, "/apps/anthropic/v1/messages"),
       };
     case "og":
       return {
         type: "translate",
         kind: "opencode",
         stripPrefix: true,
-        upstream: "https://opencode.ai/zen/go/v1/chat/completions",
+        upstream: via("https://opencode.ai/zen/go/v1/chat/completions", "/v1/chat/completions"),
       };
     default:
       // No prefix / unknown prefix → DeepSeek official
@@ -1339,7 +1348,7 @@ function pickRoute(prefix, env) {
         type: "passthrough",
         kind: "deepseek",
         stripPrefix: false,
-        upstream: "https://api.deepseek.com/anthropic" + VERIFY_PATH,
+        upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
       };
   }
 }
@@ -1629,6 +1638,8 @@ async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query
     // Always the OpenAI-format endpoint: this sends an OpenAI body (toOpenAIRequest).
     // For native-Anthropic og models the request route's upstream is now /v1/messages,
     // which would reject an OpenAI body — so pin the chat/completions URL explicitly.
+    // NOTE: intentionally direct (not via US_PROXY) — web_search is a gateway
+    // background operation, not a user-routed request.
     const resp = await fetchWithTimeout(OG_ZEN_CHAT, {
       method: "POST",
       headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
