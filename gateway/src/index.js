@@ -31,6 +31,8 @@ import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStr
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.js";
 import { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES } from "./body-scan.js";
 import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.js";
+import { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC } from "./channels.js";
+export { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC };
 export { jsonOk, jsonError, readJson, CORS_HEADERS };
 export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE };
 export { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess };
@@ -40,78 +42,11 @@ export { PluginHubDO };
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
 
-// OpenCode Zen/Go endpoints. deepseek-v4-flash is Anthropic-native on
-// zen/go/v1/messages (announced 2026-08-06) and authenticates with x-api-key
-// (verified 2026-08-10 per handoff 2.5.6: ~54s full response, thinking +
-// answer). Native passthrough forwards the Anthropic stream untouched — no
-// per-chunk OpenAI translation, so no 1102 CPU risk on huge streams. Other og
-// models (minimax-m3, mimo-v2.5) only speak chat/completions and keep the
-// translate path (verified 2026-08-07 with this user's key).
-const OG_ZEN_ANTHROPIC = "https://opencode.ai/zen/go" + VERIFY_PATH;
-const OG_ZEN_CHAT = "https://opencode.ai/zen/go/v1/chat/completions";
-// deepseek-v4-flash 走原生 /v1/messages(US_PROXY 关时直连原生,US_PROXY 开时
-// 走 translate chat 代理)。2026-08-11 交错实测:本时段原生直连总耗时最优
-// (10.7-14.4s vs chat 直连 13.8-16.1s);首字节 chat 直连最稳,原生也不差。
-// 时段敏感:之前测过 chat 代理 1.6s 最快——固定路径无法保证长期最优,
-// 控制台 US_PROXY 开关可随时切换。其他 og 模型(minimax/mimo/kimi/glm)
-// 始终走 translate(chat/completions)。
-const OG_NATIVE_ANTHROPIC = new Set(["deepseek-v4-flash"]);
 const AUTH_BASE = "/api/auth";
 const ADMIN_BASE = "/api/admin";
 const ME_BASE = "/api/me";
 const DEVICE_BASE = "/api/devices";
 const PLUGIN_BASE = "/api/plugins";
-
-const MODELS = [
-  { id: "ds/deepseek-v4-flash", owned_by: "deepseek" },
-  { id: "og/deepseek-v4-flash", owned_by: "opencode" },
-  { id: "og/minimax-m3", owned_by: "opencode" },
-  { id: "or/openai/gpt-5.6-luna:floor[1m]", owned_by: "openrouter" },
-  { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
-];
-
-// Route info shown in the console ("model routing" section). Public, no keys.
-const ROUTE_INFO = [
-  {
-    prefix: "og/",
-    backend: "OpenCode Go",
-    desc: "opencode.ai/zen/go — chat/completions translation (all models)",
-    models: ["deepseek-v4-flash", "minimax-m3"],
-  },
-  {
-    prefix: "ds/",
-    backend: "DeepSeek Official",
-    desc: "api.deepseek.com/anthropic — Bearer passthrough",
-    models: ["deepseek-v4-flash"],
-  },
-  {
-    prefix: "or/",
-    backend: "OpenRouter",
-    desc: "openrouter.ai — user's own key, proxied via openrouter-proxy",
-    models: ["openai/gpt-5.6-luna:floor[1m]"],
-  },
-  {
-    prefix: "qw/",
-    backend: "Qwen MaaS (Aliyun)",
-    desc: "token-plan.ap-southeast-1.maas.aliyuncs.com — Anthropic passthrough",
-    models: ["qwen3.8-max-preview"],
-  },
-  {
-    prefix: "none",
-    backend: "DeepSeek Official (default)",
-    desc: "fallback route",
-    models: ["deepseek-v4-flash"],
-  },
-];
-
-// ---- Channel health (public /api/health) ----
-const HEALTH_CHANNELS = [
-  { id: "ds", model: "ds/deepseek-v4-flash" },
-  { id: "qw", model: "qw/qwen3.8-max-preview" },
-  { id: "og", model: "og/deepseek-v4-flash" },
-  { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
-];
-const HEALTH_PRIORITY = ["qw", "ds", "og", "or"];
 
 // Public /api/vale-probe rate limit: each probe costs a real upstream call
 // (real money), so cap probes at 60/min gateway-wide via a KV counter.
