@@ -286,18 +286,26 @@ function adoptSession(sid, label, idbRec = null) {
   term.open(container);
 
   term.onData((data) => {
-    callTool("terminal_write", { session_id: sid, data }).catch(() => {});
+    callTool("terminal_write", { session_id: sid, data })
+      .catch(() => { if (activeSid === sid) setStatus("write failed — session may be closed", true); });
   });
   // Sync the backend pty size whenever xterm re-fits (window resize, tab
   // switch, zoom). Without this the pty keeps its initial rows×cols (e.g.
   // 30×100) and clips the session to that grid — the "not full screen" bug.
-  // Debounced: fit() can fire multiple times per resize.
+  // Debounced trailing-edge: keep the LATEST dims (a first-event-wins
+  // debounce dropped the final size of a resize burst, leaving a stale grid).
   let resizeTimer = null;
+  let resizePending = null;
   term.onResize(({ cols, rows }) => {
-    if (resizeTimer) return; // in flight — next onResize picks up the latest
+    resizePending = { cols, rows };
+    if (resizeTimer) return;
     resizeTimer = setTimeout(() => {
       resizeTimer = null;
-      try { callTool("terminal_resize", { session_id: sid, rows, cols }).catch(() => {}); } catch {}
+      const dims = resizePending;
+      resizePending = null;
+      if (dims) {
+        try { callTool("terminal_resize", { session_id: sid, rows: dims.rows, cols: dims.cols }).catch(() => {}); } catch {}
+      }
     }, 150);
   });
   // Clicking anywhere in the session focuses the terminal, so typing works

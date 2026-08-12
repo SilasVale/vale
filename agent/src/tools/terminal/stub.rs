@@ -25,6 +25,8 @@ impl TerminalManager {
     pub async fn term_close(&self, _sid: &str) -> Result<String, DeviceError> {
         Err(disabled_err())
     }
+    pub async fn term_unregister(&self, _sid: &str) {}
+    pub async fn touch(&self, _sid: &str) {}
     pub async fn term_select(&self, _sid: &str) -> Result<(), DeviceError> {
         Err(disabled_err())
     }

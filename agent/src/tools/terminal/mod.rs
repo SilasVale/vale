@@ -109,23 +109,68 @@ mod desktop_impl {
         kind: String,
         label: String,
         backend: Box<dyn TermBackend>,
+        /// Last time output was seen — used by the idle sweeper.
+        last_output: std::time::Instant,
     }
+
+    /// Sessions idle this long (no output) are force-closed. Guards against a
+    /// client disconnect leaking SSH/PTY/serial sessions forever: nothing tied
+    /// a session to its owning connection, so a crashed panel/MCP client left
+    /// every open session running indefinitely.
+    const SESSION_IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+    /// Hard cap on concurrent sessions; oldest is evicted when exceeded.
+    const MAX_SESSIONS: usize = 16;
 
     struct TerminalInner {
         sessions: Vec<Session>,
         next_id: u32,
     }
 
+    #[derive(Clone)]
     pub struct TerminalManager {
-        inner: tokio::sync::Mutex<TerminalInner>,
+        inner: std::sync::Arc<tokio::sync::Mutex<TerminalInner>>,
         serial_pool: Arc<crate::tools::serial::SerialPool>,
     }
 
     impl TerminalManager {
         pub fn new(serial_pool: Arc<crate::tools::serial::SerialPool>) -> Self {
-            Self {
-                inner: tokio::sync::Mutex::new(TerminalInner { sessions: Vec::new(), next_id: 0 }),
+            let mgr = Self {
+                inner: std::sync::Arc::new(tokio::sync::Mutex::new(TerminalInner { sessions: Vec::new(), next_id: 0 })),
                 serial_pool,
+            };
+            // Idle sweeper: force-close sessions that have been silent for the
+            // TTL (client disconnected, backend stalled). Best-effort — never
+            // blocks open/close.
+            {
+                let mgr2 = mgr.clone();
+                tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+                    tick.tick().await; // first tick fires immediately — skip
+                    loop {
+                        tick.tick().await;
+                        let mut inner = mgr2.inner.lock().await;
+                        let now = std::time::Instant::now();
+                        let mut sweep = Vec::new();
+                        for (i, s) in inner.sessions.iter().enumerate() {
+                            if now.duration_since(s.last_output) > SESSION_IDLE_TTL {
+                                sweep.push(i);
+                            }
+                        }
+                        for i in sweep.into_iter().rev() {
+                            inner.sessions[i].backend.close();
+                            inner.sessions.remove(i);
+                        }
+                    }
+                });
+            }
+            mgr
+        }
+
+        /// Mark a session as recently active (called when output is received).
+        pub async fn touch(&self, sid: &str) {
+            let mut inner = self.inner.lock().await;
+            if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
+                s.last_output = std::time::Instant::now();
             }
         }
 
@@ -189,7 +234,20 @@ mod desktop_impl {
                 }
             };
 
-            self.inner.lock().await.sessions.push(Session { id: id.clone(), kind, label, backend });
+            // Session cap: evict the OLDEST session when over MAX_SESSIONS
+            // (client-disconnect leak guard; keeps the device usable).
+            {
+                let mut inner = self.inner.lock().await;
+                while inner.sessions.len() >= MAX_SESSIONS {
+                    if let Some(oldest) = inner.sessions.first() {
+                        oldest.backend.close();
+                        inner.sessions.remove(0);
+                    } else {
+                        break;
+                    }
+                }
+                inner.sessions.push(Session { id: id.clone(), kind, label, backend, last_output: std::time::Instant::now() });
+            }
             Ok((id, rx))
         }
 
@@ -219,6 +277,20 @@ mod desktop_impl {
                 Ok(kind)
             } else {
                 Err(DeviceError::Internal { message: format!("session not found: {sid}") })
+            }
+        }
+
+        /// Unregister a session whose backend has died on its own (SSH channel
+        /// dropped, PTY shell exited, serial unplugged). Closes the backend and
+        /// removes the entry WITHOUT the tool-level event/retain side effects
+        /// of term_close (the drainer already retains the buffer in history).
+        /// Without this, dead sessions lingered in term_list forever and
+        /// terminal_write/terminal_resize silently "succeeded" into a void.
+        pub async fn term_unregister(&self, sid: &str) {
+            let mut inner = self.inner.lock().await;
+            if let Some(pos) = inner.sessions.iter().position(|s| s.id == sid) {
+                inner.sessions[pos].backend.close();
+                inner.sessions.remove(pos);
             }
         }
 
