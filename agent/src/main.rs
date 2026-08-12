@@ -150,10 +150,13 @@ fn self_heal() {
 
     // 1. Stale binaries from other installs (they lock the exe AND hold the
     //    port). Runs as SYSTEM at boot; Stop-Process -Force is fine from
-    //    there. Processes at THIS install dir are never touched.
+    //    there. Never kill processes of THIS install dir — and never this
+    //    process. Exclude by PID (not by exe path): a path comparison can
+    //    miss an 8.3 short path / empty Path and kill ourselves.
+    let self_pid = std::process::id();
     let ps = format!(
         "Get-Process vale-agent,vale-command,vale-tray -ErrorAction SilentlyContinue \
-         | Where-Object {{ $_.Path -ne '{exe_str}' -and $_.Path -ne '{tray_str}' }} \
+         | Where-Object {{ $_.Id -ne {self_pid} -and $_.Path -ne '{exe_str}' -and $_.Path -ne '{tray_str}' }} \
          | Stop-Process -Force"
     );
     let _ = std::process::Command::new("powershell")

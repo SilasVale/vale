@@ -366,8 +366,12 @@ if ($LASTEXITCODE -ne 0) { throw "cloudflared service install failed (exit $LAST
 $oldEAP2 = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 sc.exe start Cloudflared 2>$null
+$scCode = $LASTEXITCODE
 $ErrorActionPreference = $oldEAP2
-if ($LASTEXITCODE -ne 0) { throw "cloudflared service failed to start (exit $LASTEXITCODE)" }
+# 1056 = ERROR_SERVICE_ALREADY_RUNNING. cloudflared's `service install`
+# auto-starts the service, so a redundant start is a benign no-op — treat it
+# as success, not a failure (this used to abort a fully successful install).
+if ($scCode -ne 0 -and $scCode -ne 1056) { throw "cloudflared service failed to start (exit $scCode)" }
 
 Start-Sleep -Seconds 2
 $token = (Select-String -Path $cfg -Pattern "auth_token:").Line
