@@ -1,8 +1,72 @@
-//! OS keychain secrets (SSH passwords) — gated behind the `keyring` feature.
+//! OS keychain secrets (SSH passwords) — file-backed.
+//!
+//! The production build ships with the `keyring` feature (Windows Credential
+//! Manager) but vale-agent runs as a Windows service (Session 0) where the
+//! Credential Manager is unreliable, so every keyring operation falls back to
+//! a file store next to the exe. Without the feature, the file store is the
+//! only store. The file is plaintext JSON — acceptable here: the device
+//! already holds the API token in config.yaml, and this keeps SSH passwords
+//! out of the panel's localStorage.
+
+use std::path::PathBuf;
+
+use vale_agent_core::DeviceError;
+
+pub(crate) mod file_impl {
+    use super::*;
+
+    fn store_path() -> PathBuf {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_default()
+            .join("vale-secrets.json")
+    }
+
+    fn read_all() -> serde_json::Map<String, serde_json::Value> {
+        match std::fs::read_to_string(store_path()) {
+            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+            Err(_) => serde_json::Map::new(),
+        }
+    }
+
+    fn write_all(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), DeviceError> {
+        let p = store_path();
+        std::fs::write(&p, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))
+            .map_err(|e| DeviceError::Keychain { reason: format!("write {p:?}: {e}") })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(())
+    }
+
+    fn key_of(target: &str) -> String {
+        format!("ssh:{target}")
+    }
+
+    pub fn set(target: &str, password: &str) -> Result<(), DeviceError> {
+        let mut map = read_all();
+        map.insert(key_of(target), serde_json::Value::String(password.to_string()));
+        write_all(&map)
+    }
+    pub fn get(target: &str) -> Result<Option<String>, DeviceError> {
+        Ok(read_all().get(&key_of(target)).and_then(|v| v.as_str()).map(String::from))
+    }
+    pub fn delete(target: &str) -> Result<(), DeviceError> {
+        let mut map = read_all();
+        if map.remove(&key_of(target)).is_some() { write_all(&map)?; }
+        Ok(())
+    }
+    pub fn list() -> Vec<String> {
+        read_all().keys().cloned().collect()
+    }
+}
 
 #[cfg(feature = "keyring")]
 mod secrets_impl {
-    use vale_agent_core::DeviceError;
+    use super::*;
     use keyring::Entry;
     const SERVICE: &str = "vale-command";
 
@@ -12,40 +76,42 @@ mod secrets_impl {
     }
 
     pub fn set(target: &str, password: &str) -> Result<(), DeviceError> {
-        entry(target)?.set_password(password)
-            .map_err(|e| DeviceError::Keychain { reason: format!("set: {e}") })
+        match entry(target) {
+            Ok(e) => match e.set_password(password) {
+                Ok(()) => Ok(()),
+                // Service context (Session 0) can't reach Credential Manager —
+                // fall back to the file store.
+                Err(_) => file_impl::set(target, password),
+            },
+            Err(_) => file_impl::set(target, password),
+        }
     }
     pub fn get(target: &str) -> Result<Option<String>, DeviceError> {
-        match entry(target)?.get_password() {
-            Ok(p) => Ok(Some(p)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(DeviceError::Keychain { reason: format!("get: {e}") }),
+        match entry(target) {
+            Ok(e) => match e.get_password() {
+                Ok(p) => Ok(Some(p)),
+                Err(_) => file_impl::get(target),
+            },
+            Err(_) => file_impl::get(target),
         }
     }
     pub fn delete(target: &str) -> Result<(), DeviceError> {
-        match entry(target)?.delete_password() {
-            Ok(()) => Ok(()),
-            Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(DeviceError::Keychain { reason: format!("delete: {e}") }),
+        match entry(target) {
+            Ok(e) => match e.delete_password() {
+                Ok(()) => file_impl::delete(target),
+                Err(_) => file_impl::delete(target),
+            },
+            Err(_) => file_impl::delete(target),
         }
     }
-    pub fn list() -> Vec<String> { vec![] }
+    pub fn list() -> Vec<String> {
+        file_impl::list()
+    }
 }
 
 #[cfg(not(feature = "keyring"))]
 mod secrets_impl {
-    use vale_agent_core::DeviceError;
-
-    pub fn set(_: &str, _: &str) -> Result<(), DeviceError> {
-        Err(DeviceError::Keychain { reason: "secrets require the keyring feature".into() })
-    }
-    pub fn get(_: &str) -> Result<Option<String>, DeviceError> {
-        Err(DeviceError::Keychain { reason: "secrets require the keyring feature".into() })
-    }
-    pub fn delete(_: &str) -> Result<(), DeviceError> {
-        Err(DeviceError::Keychain { reason: "secrets require the keyring feature".into() })
-    }
-    pub fn list() -> Vec<String> { vec![] }
+    pub use super::file_impl::{delete, get, list, set};
 }
 
 pub use secrets_impl::{delete as secret_delete, get as secret_get, list as secret_list, set as secret_set};
