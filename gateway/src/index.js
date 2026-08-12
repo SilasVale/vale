@@ -57,15 +57,17 @@ const DEVICE_BASE = "/api/devices";
 const PLUGIN_BASE = "/api/plugins";
 
 // Public /api/vale-probe rate limit: each probe costs a real upstream call
-// (real money), so cap probes at 60/min gateway-wide via a KV counter.
-// KV is eventually consistent (~1s) — fine for a rate limiter.
-const PROBE_RATE_LIMIT = 60; // probes per minute, whole gateway
+// (real money), so cap probes per-caller via a KV counter. Per-IP (the
+// gateway-wide bucket let one caller exhaust the budget for everyone AND a
+// minute-boundary race double-spent).
+const PROBE_RATE_LIMIT = 60; // probes per minute, per IP
 const PROBE_RATE_WINDOW_MS = 60000;
 
-export async function probeRateLimited(env) {
+export async function probeRateLimited(env, request) {
   try {
+    const ip = (request?.headers?.get?.("cf-connecting-ip")) || "unknown";
     const bucket = Math.floor(Date.now() / PROBE_RATE_WINDOW_MS);
-    const key = `probe-rate:${bucket}`;
+    const key = `probe-rate:${ip}:${bucket}`;
     const cur = Number(await env.KEYS.get(key)) || 0;
     if (cur >= PROBE_RATE_LIMIT) return true;
     await env.KEYS.put(key, String(cur + 1), { expirationTtl: 120 });
@@ -103,7 +105,7 @@ export default {
         return jsonOk(await buildHealth(env));
       }
       if (request.method === "POST" && path === "/api/vale-probe") {
-        if (await probeRateLimited(env)) {
+        if (await probeRateLimited(env, request)) {
           return jsonError(429, "probe rate limit exceeded", "rate_limited");
         }
         const body = await readJson(request);
