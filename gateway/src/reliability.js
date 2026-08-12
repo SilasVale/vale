@@ -203,6 +203,9 @@ export async function isChannelDegraded(env) {
 export async function recordChannelFailure(env) {
   try {
     await breakerStub(env).fetch("https://breaker/trip");
+    // Invalidate the 5s stale cache immediately — otherwise this isolate's
+    // health checks keep reporting ok for up to 5s after a trip.
+    degradedCache = { at: 0, value: false };
   } catch (e) {
     console.error("[breaker] trip failed:", e.message);
   }
