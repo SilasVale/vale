@@ -64,6 +64,11 @@ pub trait EventBus: Send + Sync {
     /// cursor from this even when no events match.
     fn last_seq(&self) -> u64;
 
+    /// Oldest seq still retained in the ring (0 when empty). A client whose
+    /// cursor is BELOW this has missed events that were evicted — it can
+    /// detect the gap instead of silently losing them.
+    fn first_seq(&self) -> u64;
+
     /// Forward terminal output to the desktop UI (no-op by default).
     fn emit_term_output(&self, _output: serde_json::Value) {}
 }
@@ -165,6 +170,11 @@ impl EventBus for AppEventBus {
     fn last_seq(&self) -> u64 {
         let guard = recover_guard(&self.log);
         guard.1.saturating_sub(1)
+    }
+
+    fn first_seq(&self) -> u64 {
+        let guard = recover_guard(&self.log);
+        guard.0.front().map(|e| e.seq).unwrap_or(0)
     }
 
     fn emit_term_output(&self, output: serde_json::Value) {

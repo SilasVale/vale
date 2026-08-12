@@ -503,7 +503,7 @@ fn api_events_poll(state: &AppState, after: u64) -> serde_json::Value {
     // last_seq lets the panel advance its cursor even when no events match —
     // without it the panel's lastSeq stays 0 and every poll re-fetches the
     // whole ring (resurrecting closed sessions every 2s).
-    serde_json::json!({"ok": true, "events": events, "last_seq": state.event_bus.last_seq()})
+    serde_json::json!({"ok": true, "events": events, "last_seq": state.event_bus.last_seq(), "first_seq": state.event_bus.first_seq()})
 }
 
 // ── Plugin Spec ───────────────────────────────────────────────

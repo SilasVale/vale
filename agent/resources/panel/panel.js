@@ -266,6 +266,9 @@ function adoptSession(sid, label, idbRec = null) {
     existing.closed = false;
     existing.complete = false;
     existing.closedAt = null;
+    // A restored saved-only record must become LIVE again — otherwise it is
+    // excluded from SSE + sync forever and the session freezes on reload.
+    existing.savedOnly = false;
     if (existing.tab) {
       existing.tab.classList.remove("closed");
       const existingName = existing.tab.querySelector(".tab-name");
@@ -513,14 +516,31 @@ function scheduleFlush(s) {
 async function flushSession(s) {
   clearTimeout(s.flushTimer);
   if (s.persistedSeq === s.lines.length) return;
+  // Bound what we persist: a single unbounded record could exceed the 5MB
+  // localStorage quota and silently kill persistence for EVERY session.
+  // Cap at the most recent 2000 lines per session (exports still read from
+  // the in-memory s.lines, which is unbounded).
+  const MAX_PERSIST_LINES = 2000;
+  const tail = s.lines.slice(-MAX_PERSIST_LINES);
   try {
     localStorage.setItem(`valePanel:${s.sid}`, JSON.stringify({
       sid: s.sid, label: s.label, openedAt: s.openedAt, closedAt: s.closedAt,
       complete: s.complete, endAbs: s.renderedBytes,
-      persistedSeq: s.lines.length, lines: s.lines,
+      persistedSeq: s.lines.length, lines: tail,
     }));
     s.persistedSeq = s.lines.length;
-  } catch { /* quota — memory-only is fine */ }
+  } catch (e) {
+    // Quota — shrink further and retry once; if that still fails, skip
+    // persistence but keep the in-memory session (exports unaffected).
+    try {
+      localStorage.setItem(`valePanel:${s.sid}`, JSON.stringify({
+        sid: s.sid, label: s.label, openedAt: s.openedAt, closedAt: s.closedAt,
+        complete: s.complete, endAbs: s.renderedBytes,
+        persistedSeq: s.lines.length, lines: tail.slice(-500),
+      }));
+      s.persistedSeq = s.lines.length;
+    } catch { /* memory-only is fine */ }
+  }
 }
 
 function loadSaved(sid) {
@@ -538,13 +558,20 @@ async function syncSession(sid) {
   if (!s.needSync && !s.sseDirty) return;
   s.syncInFlight = true;
   try {
-    const r = await callTool("terminal_read", { session_id: sid, offset: s.renderedBytes, clean: false });
+    // Snapshot the cursor NOW; SSE bytes arriving while the read is in
+    // flight also advance renderedBytes — never regress it, or the same
+    // bytes get written twice (duplicated lines in the terminal + export).
+    const from = s.renderedBytes;
+    const r = await callTool("terminal_read", { session_id: sid, offset: from, clean: false });
     if (r && typeof r.text === "string" && r.text) {
-      if (Number(r.start) > s.renderedBytes) {
-        s.term.write(`\r\n[dropped ${Number(r.start) - s.renderedBytes} bytes — missed while offline]\r\n`);
+      if (Number(r.start) > from) {
+        s.term.write(`\r\n[dropped ${Number(r.start) - from} bytes — missed while offline]\r\n`);
       }
+      // Only write what the server returned for THIS request's window; the
+      // server already returned [start,end), so render its text verbatim.
       s.term.write(r.text);
-      s.renderedBytes = Number(r.end) || s.renderedBytes;
+      // Advance to at least the server's end (SSE may already be ahead).
+      s.renderedBytes = Math.max(s.renderedBytes, Number(r.end) || from);
       ingestLines(s, stripAnsi(r.text));
     }
     s.needSync = false;
@@ -580,7 +607,15 @@ async function pollEvents() {
     if (!res) return;
     const j = await res.json().catch(() => ({}));
     const events = Array.isArray(j.events) ? j.events : [];
-    if (j.last_seq !== undefined) lastSeq = Number(j.last_seq) || lastSeq;
+    if (j.last_seq !== undefined) {
+      // Gap detection: if our cursor fell below the ring's oldest retained
+      // seq, events were evicted while we were away — surface it instead of
+      // silently missing session opens.
+      if (j.first_seq !== undefined && lastSeq > 0 && Number(j.first_seq) > lastSeq + 1) {
+        setStatus(`missed ${Number(j.first_seq) - lastSeq - 1} events while disconnected`);
+      }
+      lastSeq = Number(j.last_seq) || lastSeq;
+    }
     for (const ev of events) {
       const e = ev.event || {};
       if (e.session_id && (e.type === "SerialOpen" || e.type === "SshConnect")) {
