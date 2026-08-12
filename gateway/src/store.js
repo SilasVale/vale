@@ -14,7 +14,7 @@
  * keeps working without changes.
  */
 
-import { hashPassword, randomHex } from "./auth.js";
+import { hashPassword, verifyPassword, randomHex } from "./auth.js";
 
 export const ADMIN_USERNAME = "admin";
 export const ADMIN_ID = "admin"; // user ID = username → readable KV keys
@@ -319,18 +319,25 @@ export async function setGlobalSetting(env, name, value) {
   cset(key, String(value)); // write-through：切换立即生效（同 isolate 零延迟）
 }
 
-/* ---- Admin password (stored in KV as plaintext so the console can show/change it) ---- */
+/* ---- Admin password (stored hashed — never plaintext) ----
+ *
+ * Previously stored plaintext in KV and returned verbatim by
+ * GET /api/admin/password. Now: PBKDF2 (same scheme as user passwords via
+ * auth.js); getAdminPassword returns the stored hash, hasAdminPassword
+ * tells the console whether one is set, verifyAdminPassword compares a
+ * candidate. No raw value is ever exposed.
+ */
 
-/** Read the admin password: KV is authoritative; migrate from the Worker secret once if absent */
+/** Read the admin password hash: KV is authoritative; migrate from the Worker secret once if absent */
 export async function getAdminPassword(env) {
   const key = "auth:admin_password";
   const hit = cget(key);
   if (hit !== undefined) return hit;
-  if (!env.KEYS) return env.ADMIN_PASSWORD || "";
+  if (!env.KEYS) return env.ADMIN_PASSWORD ? await hashPassword(env.ADMIN_PASSWORD, "legacy") : "";
   let v = await env.KEYS.get(key);
   if (!v && env.ADMIN_PASSWORD) {
-    // one-time migration from the Worker secret — cache the written value
-    v = env.ADMIN_PASSWORD;
+    // one-time migration from the Worker secret — store it HASHED.
+    v = await hashPassword(env.ADMIN_PASSWORD, "legacy");
     await env.KEYS.put(key, v);
   }
   v = v || "";
@@ -338,9 +345,23 @@ export async function getAdminPassword(env) {
   return v;
 }
 
+export async function hasAdminPassword(env) {
+  return !!(await getAdminPassword(env));
+}
+
+/** Compare a candidate password against the stored hash. */
+export async function verifyAdminPassword(env, candidate) {
+  const stored = await getAdminPassword(env);
+  if (!stored) return false;
+  // Stored as `salt:hash` — reuse the same PBKDF2 verify as user accounts.
+  const [salt, hash] = stored.split(":");
+  return verifyPassword(candidate || "", salt, hash);
+}
+
 export async function setAdminPassword(env, value) {
   if (!env.KEYS) throw new Error("KV not bound");
-  const v = String(value);
+  const salt = randomHex(8);
+  const v = `${salt}:${await hashPassword(String(value), salt)}`;
   await env.KEYS.put("auth:admin_password", v);
   cset("auth:admin_password", v);
 }
