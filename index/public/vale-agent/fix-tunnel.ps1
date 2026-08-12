@@ -43,6 +43,7 @@ $files = @(
     (Join-Path $env:SystemRoot "System32\config\systemprofile\.cloudflared\config.yml"),
     $hostFile
 )
+$anyChanged = $false
 foreach ($f in $files) {
     if (-not (Test-Path $f)) { continue }
     $c = Get-Content $f -Raw
@@ -60,6 +61,7 @@ foreach ($f in $files) {
     if ($changed) {
         Set-Content $f $c -Encoding ascii
         Write-Host "  fixed: $f"
+        $anyChanged = $true
     }
     # Diagnostic log — written next to the install dir so it can be fetched
     # via the panel/API instead of asking the user to read files.
@@ -110,11 +112,17 @@ if ($routeCode -ne 0) {
     Write-Host "  route dns ok: $hostname → $tunnelName"
 }
 
-# Restart cloudflared so the new config takes effect
-$oldEAP2 = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-sc.exe stop cloudflared 2>$null | Out-Null
-Start-Sleep -Seconds 2
-sc.exe start cloudflared 2>$null | Out-Null
-$ErrorActionPreference = $oldEAP2
-Write-Host "  cloudflared restarted (tunnel $tunnelName → $newTunnel, hostname $hostname)"
+# Restart cloudflared ONLY if a config file actually changed. A restart drops
+# the tunnel for several seconds (error 1033 in the browser) — restarting on
+# every boot, when nothing changed, made every agent start briefly offline.
+if ($anyChanged) {
+    $oldEAP2 = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    sc.exe stop cloudflared 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    sc.exe start cloudflared 2>$null | Out-Null
+    $ErrorActionPreference = $oldEAP2
+    Write-Host "  cloudflared restarted (config changed; tunnel $tunnelName → $newTunnel, hostname $hostname)"
+} else {
+    Write-Host "  cloudflared config unchanged — not restarted"
+}
