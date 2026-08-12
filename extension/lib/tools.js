@@ -79,7 +79,15 @@ export async function runTool(tool, params) {
   const tabId = await ensureTab(device, proxyUrl(device));
   switch (tool) {
     case "browser_open": {
-      await send(tabId, "Page.navigate", { url: params.url });
+      // Scheme allowlist: file:// would let CDP navigate to and screenshot
+      // local files; chrome:// and others are internal. Only http(s) is a
+      // legit target for a browsing agent.
+      let u;
+      try { u = new URL(params.url); } catch { throw new Error(`invalid URL: ${params.url}`); }
+      if (u.protocol !== "http:" && u.protocol !== "https:") {
+        throw new Error(`unsupported URL scheme: ${u.protocol} — only http(s) allowed`);
+      }
+      await send(tabId, "Page.navigate", { url: u.href });
       await waitLoad(tabId, 30_000);
       return snapshot(tabId);
     }
