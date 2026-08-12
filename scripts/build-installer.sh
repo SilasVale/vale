@@ -22,11 +22,26 @@ for f in "$VALEEXE" "$TRAYEXE"; do
 done
 # Freshness preflight: a release binary built before the newest source change
 # (e.g. after `./scripts/build.sh agent debug`) would silently ship stale
-# code. Fail loudly instead of packaging it.
-NEWEST_SRC="$(find "$ROOT/agent/src" "$ROOT/agent/vale-command-core" "$ROOT/agent/vale-tray/src" \
-  \( -name '*.rs' -o -name 'Cargo.toml' \) -newer "$VALEEXE" -print | head -1)"
-if [ -n "$NEWEST_SRC" ]; then
-  echo "!! $NEWEST_SRC is newer than the release vale-agent.exe — run ./scripts/build.sh agent (release) first"
+# code. Guard BOTH exes against every input: agent + core + tray sources, the
+# workspace version manifest (where the version bump lives), tray build.rs +
+# Cargo.toml, deploy/* (ps1/bat/nsi/ico) and the extension zip. A stale tray
+# (LOCAL_VERSION drift) caused an hourly reinstall loop; a stale bundled
+# fix-tunnel.ps1 caused a tunnel misconfig. Fail loudly instead of packaging.
+NEWEST_IN="$(find "$ROOT/agent/src" "$ROOT/agent/vale-command-core" "$ROOT/agent/vale-tray" \
+  "$ROOT/agent/deploy" "$ROOT/index/public/vale-agent/vale-browser-control.zip" \
+  "$ROOT/agent/Cargo.toml" \
+  \( -name '*.rs' -o -name '*.toml' -o -name '*.ps1' -o -name '*.bat' -o -name '*.nsi' -o -name '*.ico' -o -name '*.zip' \) \
+  -newer "$VALEEXE" -print | head -1)"
+if [ -n "$NEWEST_IN" ]; then
+  echo "!! $NEWEST_IN is newer than the release vale-agent.exe — run ./scripts/build.sh agent (release) first"
+  exit 1
+fi
+# Tray guard: the tray has its own build (vale-tray/); check it against the
+# same inputs (the tray is NOT rebuilt by ./scripts/build.sh agent's guard).
+NEWEST_TRAY="$(find "$ROOT/agent/vale-tray" "$ROOT/agent/Cargo.toml" \
+  \( -name '*.rs' -o -name '*.toml' \) -newer "$TRAYEXE" -print | head -1)"
+if [ -n "$NEWEST_TRAY" ]; then
+  echo "!! $NEWEST_TRAY is newer than the release vale-tray.exe — rebuild the tray (cd agent/vale-tray && cargo xwin build --release)"
   exit 1
 fi
 [ -x "$MAKENSIS" ] || { echo "!! makensis not found at $MAKENSIS"; exit 1; }

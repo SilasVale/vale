@@ -635,7 +635,11 @@ async function handleGatewayImpl(request, env, url) {
     return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
   const rawText = await request.text();
-  if (rawText.length > MAX_BODY_BYTES) {
+  // The post-read guard must compare BYTES, not UTF-16 code units: a CJK/
+  // emoji body is up to 3 bytes per char, so a length check let ~3x the
+  // intended size through and blew the scan/parse CPU budget it exists to
+  // prevent. TextEncoder().encode().length is the cheap byte measure here.
+  if (new TextEncoder().encode(rawText).length > MAX_BODY_BYTES) {
     return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
   const { model: scannedModel } = scanTopLevelModel(rawText);
@@ -757,6 +761,12 @@ async function handleGatewayImpl(request, env, url) {
     if (route.kind === "opencode" && !opencodeGoKey) {
       return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
     }
+    // The og-native passthrough previously BYPASSED the circuit breaker — a
+    // dead channel kept getting routed (health lied, model=auto stuck on it).
+    // Check the breaker up front like the translate path does.
+    if (route.kind === "opencode" && await isChannelDegraded(env)) {
+      return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
+    }
     // og-native parsed the body above (web-search detection, image
     // pre-processing) — forward THAT (images must arrive described, deepseek
     // is text-only). ds/qw/or never parse: raw text with only the top-level
@@ -772,8 +782,9 @@ async function handleGatewayImpl(request, env, url) {
       body: forwardBody,
     }, { timeoutMs: passthroughTimeoutMs(env, route.kind) });
     if (!upstream) {
-      // Slow failure (timeout / network error) — single attempt, no retry, no
-      // breaker trip (passthrough channels have no breaker anyway).
+      // Slow failure (timeout / network error) — single attempt, no retry.
+      // A hard network failure counts toward the og breaker.
+      if (route.kind === "opencode" && detail?.startsWith("network error")) await recordChannelFailure(env);
       return jsonError(502, `upstream ${route.kind}: ${detail}`, "api_error");
     }
     if (!upstream.ok) {
@@ -782,8 +793,11 @@ async function handleGatewayImpl(request, env, url) {
         const err = await upstream.json();
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
       } catch { /* non-JSON error body */ }
+      // A real response resets the og consecutive-failure count.
+      if (route.kind === "opencode") await recordChannelSuccess(env);
       return jsonError(upstream.status, message, "api_error");
     }
+    if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
     headers.set("Access-Control-Allow-Origin", "*");
     return new Response(upstream.body, { status: upstream.status, headers });
