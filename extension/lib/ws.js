@@ -7,6 +7,7 @@ let ws = null;
 let backoffMs = 1000;
 let heartbeat = null;
 let requestSeq = 0;
+let connecting = false; // single-flight: no parallel reconnect chains
 const pending = new Map(); // id → {resolve, reject}
 
 export function wsSend(obj) {
@@ -30,6 +31,20 @@ export function callPlugin(tool, params) {
 }
 
 export async function connect() {
+  // Single-flight: the keepalive alarm + every failure path call connect();
+  // without this guard they spawned parallel reconnect chains and duplicate
+  // sockets (the hub replaces the old socket, whose onclose then schedules
+  // ANOTHER connect — unbounded churn).
+  if (connecting) return;
+  connecting = true;
+  try {
+    await connectInner();
+  } finally {
+    connecting = false;
+  }
+}
+
+async function connectInner() {
   const pairing = state.pairedDevice || (await loadPairing());
   if (!pairing) return;
   // Close any existing socket first — the hub has single-connection semantics

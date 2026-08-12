@@ -56,8 +56,13 @@ export function reResolveExpr(el, mode) {
 
 async function clickByPath(tabId, el) {
   // Re-resolve the path in-page; if it fails, DOM changed → re-snapshot.
+  // Scroll the element into view FIRST: an off-viewport element's rect lands
+  // the click on whatever is at those page coords (silently wrong action).
+  await evaluate(tabId, `(() => { const _p = ${JSON.stringify(el.path)}; const e = _p ? document.querySelector(_p) : null; if (e) e.scrollIntoView({block:"center"}); return true; })()`);
   const found = await evaluate(tabId, reResolveExpr(el, "rect"));
   if (!found) throw new Error("DOM changed — please re-snapshot");
+  // getBoundingClientRect() returns VIEWPORT coords — after scrollIntoView the
+  // element is on-screen, so these are directly usable by dispatchMouseEvent.
   const x = found.x + found.width / 2, y = found.y + found.height / 2;
   await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
   await send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
@@ -111,8 +116,12 @@ export async function runTool(tool, params) {
 
 async function waitLoad(tabId, timeoutMs) {
   return new Promise((resolve) => {
-    const onEvent = (source, method) => {
-      if (source.tabId === tabId && method === "Page.loadEventFired") {
+    // Page.loadEventFired fires PER FRAME with a frameId — a subframe's load
+    // (ads, iframes) previously resolved the wait early, long before the main
+    // document finished. Only resolve on the MAIN frame (frameId === loaderId
+    // is the CDP marker for the top document's load).
+    const onEvent = (source, method, params) => {
+      if (source.tabId === tabId && method === "Page.loadEventFired" && params?.frameId === params?.loaderId) {
         chrome.debugger.onEvent.removeListener(onEvent);
         resolve();
       }
