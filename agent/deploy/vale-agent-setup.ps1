@@ -100,8 +100,21 @@ $exe = Join-Path $InstallDir "vale-agent.exe"
 $cfg = Join-Path $InstallDir "config.yaml"
 Write-Host "`n[1/7] vale-agent binary"
 # Re-download every run so fixes to the binary take effect, and kill any stray
-# instance first so the exe file is not locked by a running process.
+# instance first so the exe file is not locked by a running process. This
+# includes the legacy 0.8.x vale-command.exe: it holds port 18080 and would
+# keep the OLD server serving the device after this install.
 Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
+# Legacy 0.8.x autostart: the ValeCommand service + tasks. The SCM starts the
+# service before the ValeAgent boot task at every restart and wins the port,
+# so the new server dies on bind. The boot task below is the canonical
+# autostart — drop the service and the old tasks.
+sc.exe stop ValeCommand 2>&1 | Out-Null
+sc.exe delete ValeCommand 2>&1 | Out-Null
+schtasks /End /TN ValeCommand 2>&1 | Out-Null
+schtasks /Delete /TN ValeCommand /F 2>&1 | Out-Null
+schtasks /End /TN ValeCommandTray 2>&1 | Out-Null
+schtasks /Delete /TN ValeCommandTray /F 2>&1 | Out-Null
 if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-agent.exe" $exe -Force }
 # Tray app: re-download on updates too. The NSIS installer bundles it for fresh
 # installs, but the script path must fetch it so an update also refreshes the

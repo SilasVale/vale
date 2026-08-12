@@ -29,6 +29,7 @@ cp "$VALEEXE" "$TRAYEXE" \
    "$ROOT/agent/deploy/run-setup.bat" \
    "$ROOT/agent/deploy/fix-tunnel.ps1" \
    "$ROOT/agent/deploy/vale-agent-install.nsi" \
+   "$ROOT/agent/deploy/vale-agent.ico" \
    "$ROOT/index/public/vale-agent/vale-browser-control.zip" "$STAGE/"
 
 echo "=== building ValeAgent-Setup.exe (makensis) ==="

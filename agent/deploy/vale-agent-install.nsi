@@ -89,19 +89,29 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install" SEC01
-  ; Stop any running vale-agent first, otherwise its exe is locked and
-  ; copying the new binaries fails with "cannot open file for writing"
-  ; (the re-install case). The setup script also kills it, but that runs
-  ; after this copy step.
-  ; In silent mode (auto-upgrade from the tray) vale-tray.exe is NOT killed:
-  ; the tray that launched this installer exits itself right after starting
-  ; it, and a fresh tray is relaunched below once the copy is done.
+  ; Stop every vale binary first — a running instance locks its exe (the
+  ; copy below would fail) AND holds port 18080, so the restarted boot task
+  ; cannot bind. This includes the legacy 0.8.x vale-command.exe: an upgrade
+  ; that leaves it running silently keeps the OLD server serving the device
+  ; while the new one dies on bind. Vale-tray is killed in silent mode too —
+  ; the tray that launched this installer exits right after starting it, and
+  ; a fresh tray is relaunched below once the copy is done.
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
+  nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
+  nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
   nsExec::ExecToLog 'schtasks /End /TN ValeAgent'
-  ${IfNot} ${Silent}
-    nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
-    nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray'
-  ${EndIf}
+  nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray'
+  ; Legacy 0.8.x autostart leftovers. The ValeCommand service (sc create from
+  ; the old installer) is started by the SCM BEFORE the ValeAgent boot task
+  ; at every restart, grabs port 18080, and the new server then fails to
+  ; bind — the device keeps serving the old version. The boot task is the
+  ; canonical autostart since 1.0; drop the service and the old tasks.
+  nsExec::ExecToLog 'sc stop ValeCommand'
+  nsExec::ExecToLog 'sc delete ValeCommand'
+  nsExec::ExecToLog 'schtasks /End /TN ValeCommand'
+  nsExec::ExecToLog 'schtasks /Delete /TN ValeCommand /F'
+  nsExec::ExecToLog 'schtasks /End /TN ValeCommandTray'
+  nsExec::ExecToLog 'schtasks /Delete /TN ValeCommandTray /F'
   Sleep 1000
 
   SetOutPath "$INSTDIR"
@@ -160,10 +170,16 @@ Section "Install" SEC01
     ; (user + systemprofile configs), fixes config.yaml name, restarts
     ; cloudflared. Idempotent; safe on fresh installs.
     nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\fix-tunnel.ps1"'
-    ; Restart the vale-agent service task — the end above stopped it, and the
-    ; tray relaunch alone does not start the server. Without this the user had
-    ; to start it manually after every upgrade.
-    nsExec::ExecToLog 'schtasks /Run /TN ValeAgent'
+    ; Restart the server. Do NOT schtasks /Run here: a task registered for an
+    ; older install dir (a silent /D= upgrade) would boot the OLD binaries
+    ; and hold the port forever. Delete the task and start the new exe
+    ; directly — its startup self-heal re-registers the ValeAgent boot task
+    ; pointing at THIS dir (with the unlimited ExecutionTimeLimit).
+    nsExec::ExecToLog 'schtasks /End /TN ValeAgent'
+    nsExec::ExecToLog 'schtasks /Delete /TN ValeAgent /F'
+    Exec '"$INSTDIR\vale-agent.exe" "$INSTDIR\config.yaml"'
+    ; Tray: keep the registered ValeAgentTray task (it carries the user
+    ; principal; a missing task falls back to starting the exe directly).
     nsExec::ExecToLog 'schtasks /Query /TN ValeAgentTray'
     Pop $0
     ${If} $0 != 0

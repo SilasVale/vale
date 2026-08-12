@@ -672,7 +672,7 @@ mod tests {
     }
 
     fn seed(buf: &OutputBuf, sid: &str, data: &[u8], dropped: u64) {
-        let mut store = recover_guard(&buf);
+        let mut store = recover_guard(buf);
         let entry = store.live.entry(sid.to_string()).or_default();
         entry.data.extend_from_slice(data);
         entry.dropped = dropped;

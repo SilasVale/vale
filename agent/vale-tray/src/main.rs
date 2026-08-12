@@ -209,7 +209,7 @@ fn restart_task() {
 /// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
 /// bumped alongside agent/Cargo.toml and index/src/index.js when a new
 /// installer is shipped.
-const LOCAL_VERSION: &str = "1.0.6";
+const LOCAL_VERSION: &str = "1.0.7";
 const VERSION_URL: &str = "https://agent.saisi.online/api/version";
 
 fn check_for_update() {
