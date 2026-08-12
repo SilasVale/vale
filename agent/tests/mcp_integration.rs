@@ -35,7 +35,7 @@ async fn list_tools_via_http() {
     let client = ().serve(transport).await.expect("connect client");
 
     let tools = client.list_tools(None).await.expect("list_tools");
-    assert_eq!(tools.tools.len(), 17, "16 terminal tools + agent_update");
+    assert_eq!(tools.tools.len(), 18, "16 terminal + agent_update + page_view");
     let _ = client.cancel().await;
 }
 

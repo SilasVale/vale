@@ -194,6 +194,13 @@ body {
   white-space: nowrap;
 }
 #status.error { color: var(--danger); }
+#session-count {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+  white-space: nowrap;
+}
+#session-count.hidden { display: none; }
 #conn-status.error { color: var(--danger); font-size: 12px; margin-top: 6px; }
 
 /* ---------- terminal ---------- */

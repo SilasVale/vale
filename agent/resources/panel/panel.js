@@ -157,11 +157,20 @@ function setStatus(text, isError = false) {
   el.classList.toggle("error", isError);
 }
 
-// ── Empty-state visibility ──────────────────────────────────────
+// ── Empty-state + statusbar visibility ──────────────────────────
 
 function refreshEmpty() {
   const hasAny = [...sessions.values()].some((s) => !s.savedOnly);
   $("#empty-state").classList.toggle("hidden", hasAny);
+}
+
+function refreshStatusbar() {
+  const live = [...sessions.values()].filter((s) => !s.savedOnly && !s.closed).length;
+  const closed = [...sessions.values()].filter((s) => s.closed).length;
+  const el = $("#session-count");
+  if (live + closed === 0) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  el.textContent = `${live} live · ${closed} closed`;
 }
 
 // ── Session management (adopt / close / tab) ────────────────────
@@ -259,7 +268,8 @@ function adoptSession(sid, label, idbRec = null) {
     existing.closedAt = null;
     if (existing.tab) {
       existing.tab.classList.remove("closed");
-      existing.tab.textContent = label;
+      const existingName = existing.tab.querySelector(".tab-name");
+      if (existingName) existingName.textContent = label; else existing.tab.textContent = label;
     }
     existing.term.reset();
     existing.term.options.disableStdin = false;
@@ -323,6 +333,7 @@ function adoptSession(sid, label, idbRec = null) {
   s.tab = renderTab(sid, label);
   diag(`adopt: ${sid} (${label})`);
   refreshEmpty();
+  refreshStatusbar();
   // Activate the first adopted session so its container is visible (the
   // .term-session is display:none until .active) — otherwise fit() on a
   // hidden container computes 0 dimensions and the session is invisible.
@@ -349,6 +360,7 @@ function markClosed(sid) {
   }
   if (sid === activeSid) setStatus("session closed");
   refreshEmpty();
+  refreshStatusbar();
 }
 
 // ── History backfill + live SSE ─────────────────────────────────
@@ -833,7 +845,11 @@ $("empty-serial").addEventListener("click", () => showModal("serial"));
 
 // Keyboard shortcuts: Ctrl/Cmd+N new PTY, Ctrl/Cmd+E export, Ctrl/Cmd+Shift+E
 // export all, Ctrl/Cmd+1..9 switch tab, Esc close modal, Ctrl/Cmd+W close tab.
+// Skip all Ctrl shortcuts while the session modal is open (typing in a field
+// must never trigger a session action behind the dialog).
 document.addEventListener("keydown", (e) => {
+  const modalOpen = !$("conn-modal").classList.contains("hidden");
+  if (modalOpen) return;
   const mod = e.ctrlKey || e.metaKey;
   if (!mod) return;
   const k = e.key.toLowerCase();
@@ -847,6 +863,11 @@ document.addEventListener("keydown", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") hideModal();
+  // Enter in the modal submits (fields are inputs inside the dialog).
+  else if (e.key === "Enter" && !$("conn-modal").classList.contains("hidden")) {
+    e.preventDefault();
+    connectModal();
+  }
 });
 
 if (!loadConfig()) {
