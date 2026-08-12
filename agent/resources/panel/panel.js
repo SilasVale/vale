@@ -57,6 +57,7 @@ let polling = false;
 let booted = false; // init() ran once — guards double-boot from loadConfig + saveConfig
 let sessions = new Map(); // sid → session record
 let activeSid = null;
+let modalConnecting = false; // single-flight for the SSH/serial modal submit
 
 // ── Auth / config ───────────────────────────────────────────────
 
@@ -212,7 +213,12 @@ function renderTab(sid, label) {
     const cur = (s && s.label) || sid;
     const next = prompt("Rename session:", cur);
     if (next && next.trim()) {
-      if (s) s.label = next.trim();
+      if (s) {
+        s.label = next.trim();
+        s.renamed = true; // force the next flush to persist (flushSession
+                          // early-returns when lines are unchanged)
+        flushSession(s);
+      }
       nameSpan.textContent = next.trim();
     }
   });
@@ -473,7 +479,11 @@ async function startSharedStream() {
                 s.term.write(new Uint8Array(frame.data));
                 s.renderedBytes += frame.data.length;
                 s.sseDirty = true;
-                ingestLines(s, new TextDecoder().decode(new Uint8Array(frame.data), { stream: true }));
+                // Persistent per-session decoder: a fresh TextDecoder per frame
+                // destroyed multi-byte UTF-8 split across frame boundaries
+                // (CJK → U+FFFD garbage in stored/exported lines).
+                if (!s.decoder) s.decoder = new TextDecoder();
+                ingestLines(s, s.decoder.decode(new Uint8Array(frame.data), { stream: true }));
               }
             }
           }
@@ -525,7 +535,8 @@ function scheduleFlush(s) {
 
 async function flushSession(s) {
   clearTimeout(s.flushTimer);
-  if (s.persistedSeq === s.lines.length) return;
+  if (s.persistedSeq === s.lines.length && !s.renamed) return;
+  s.renamed = false;
   // Bound what we persist: a single unbounded record could exceed the 5MB
   // localStorage quota and silently kill persistence for EVERY session.
   // Cap at the most recent 2000 lines per session (exports still read from
@@ -577,12 +588,19 @@ async function syncSession(sid) {
       if (Number(r.start) > from) {
         s.term.write(`\r\n[dropped ${Number(r.start) - from} bytes — missed while offline]\r\n`);
       }
-      // Only write what the server returned for THIS request's window; the
-      // server already returned [start,end), so render its text verbatim.
-      s.term.write(r.text);
-      // Advance to at least the server's end (SSE may already be ahead).
-      s.renderedBytes = Math.max(s.renderedBytes, Number(r.end) || from);
-      ingestLines(s, stripAnsi(r.text));
+      // SSE frames may have delivered part of this window WHILE the read was
+      // in flight (both serve the same buffer). Only write the tail the SSE
+      // hasn't covered yet — otherwise the same bytes render twice.
+      const end = Number(r.end) || from;
+      const covered = s.renderedBytes - from; // bytes SSE delivered in-flight
+      const text = covered > 0 ? r.text.slice(covered) : r.text;
+      if (text) {
+        s.term.write(text);
+        s.renderedBytes = Math.max(s.renderedBytes, end);
+        ingestLines(s, stripAnsi(text));
+      } else {
+        s.renderedBytes = Math.max(s.renderedBytes, end);
+      }
     }
     s.needSync = false;
     s.sseDirty = false;
@@ -762,6 +780,10 @@ function showModal(kind) {
 function hideModal() { $("#conn-modal").classList.add("hidden"); }
 
 async function connectModal() {
+  if (modalConnecting) return; // single-flight — Enter twice created 2 sessions
+  modalConnecting = true;
+  const connectBtn = $("#modal-connect");
+  if (connectBtn) connectBtn.disabled = true;
   const status = $("#modal-status");
   try {
     if (modalKind === "ssh") {
@@ -797,6 +819,9 @@ async function connectModal() {
   } catch (e) {
     status.textContent = String(e && e.message ? e.message : e);
     status.classList.add("error");
+  } finally {
+    modalConnecting = false;
+    if (connectBtn) connectBtn.disabled = false;
   }
 }
 
@@ -912,10 +937,13 @@ document.addEventListener("keydown", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") hideModal();
-  // Enter in the modal submits (fields are inputs inside the dialog).
-  else if (e.key === "Enter" && !$("conn-modal").classList.contains("hidden")) {
+  // Enter in the modal submits — BUT only when the focus is in a text FIELD.
+  // Enter on the Cancel/Connect button must let the button's own activation
+  // handle it (preventDefault here swallowed Cancel's click and CONNECTED).
+  else if (e.key === "Enter" && !$("conn-modal").classList.contains("hidden")
+           && e.target && e.target.tagName === "INPUT") {
     e.preventDefault();
-    connectModal();
+    if (!modalConnecting) connectModal();
   }
 });
 
