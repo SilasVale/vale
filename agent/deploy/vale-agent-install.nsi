@@ -135,11 +135,16 @@ Section "Install" SEC01
 
   ; 3. Swap the new binaries in (old ones were killed above, so Delete/Rename
   ;    cannot hit a locked file). Rename fails if the target exists, hence
-  ;    Delete first.
+  ;    Delete first. A failed swap must NOT exit 0 — the tray/tools would
+  ;    report 'install ok' while the device runs the OLD binary (or none).
   Delete "$INSTDIR\vale-agent.exe"
   Rename "$INSTDIR\vale-agent.exe.new" "$INSTDIR\vale-agent.exe"
+  IfErrors 0 +2
+  SetErrorLevel 3
   Delete "$INSTDIR\vale-tray.exe"
   Rename "$INSTDIR\vale-tray.exe.new" "$INSTDIR\vale-tray.exe"
+  IfErrors 0 +2
+  SetErrorLevel 3
 
   ; Persist the registration key so run-setup.bat can pass it to the setup
   ; script ($env:VALE_REG_KEY). Empty when the user left the field blank.

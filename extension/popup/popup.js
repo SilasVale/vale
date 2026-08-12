@@ -11,6 +11,10 @@ async function refresh() {
     $("pairCard").classList.add("hidden");
     $("device").textContent = s.device;
     $("tabCount").textContent = String(s.controlledTabs?.length || 0);
+    // Browser restart lost the session token — pairing must be redone (was
+    // a silent un-pair with no explanation).
+    const repair = $("needsRepair");
+    if (repair) repair.classList.toggle("hidden", !s.needsRepair);
   } else {
     $("pairedCard").classList.add("hidden");
     $("pairCard").classList.remove("hidden");

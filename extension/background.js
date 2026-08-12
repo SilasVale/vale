@@ -59,7 +59,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // async sendResponse
   }
   if (msg.type === "status") {
-    sendResponse({ wsState: state.wsState, device: state.pairedDevice?.device, controlledTabs: Object.keys(state.controlledTabs), error: state.error });
+    // needsRepair: the device name survived (storage.local) but the token
+    // (storage.session) was lost on browser restart — the pairing is gone
+    // but the user shouldn't think it's a fresh install.
+    const needsRepair = !state.pairedDevice?.token
+      && (await chrome.storage.local.get("valePlugin"))?.valePlugin?.device;
+    sendResponse({
+      wsState: state.wsState,
+      device: state.pairedDevice?.device,
+      controlledTabs: Object.keys(state.controlledTabs),
+      error: state.error,
+      needsRepair: !!needsRepair,
+    });
     return false;
   }
   if (msg.type === "openTab") {
