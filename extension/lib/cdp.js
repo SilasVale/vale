@@ -79,6 +79,13 @@ export async function ensureTab(device, proxyUrl) {
     await persistAttached();
     await chrome.debugger.sendCommand({ tabId }, "Page.enable");
     await chrome.debugger.sendCommand({ tabId }, "Runtime.enable");
+    // Scrub the ?token= out of the address bar/history once the tab has
+    // loaded — a 30-day plugin token must not linger in the URL.
+    try {
+      await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+        expression: `history.replaceState(null, "", location.pathname + location.search.replace(/([?&])token=[^&]*/, "$1").replace(/[?&]$/, ""))`,
+      });
+    } catch {}
   }
   return tabId;
 }

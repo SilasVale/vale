@@ -28,7 +28,13 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "keepalive" && state.wsState === "disconnected") connect();
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Sender gate: only the extension's OWN pages (popup/options) may drive
+  // these privileged actions (pairing, opening controlled tabs). Any future
+  // content-script or externally_connectable addition would otherwise let a
+  // webpage drive the debugger.
+  const own = sender?.id === chrome.runtime.id;
+  if (!own) return;
   if (msg.type === "pair") {
     // { code } → claim against the gateway, then connect the WS.
     (async () => {

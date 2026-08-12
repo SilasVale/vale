@@ -42,14 +42,15 @@ fn load_known_hosts() -> serde_json::Map<String, serde_json::Value> {
     }
 }
 
-fn save_known_hosts(map: &serde_json::Map<String, serde_json::Value>) {
+fn save_known_hosts(map: &serde_json::Map<String, serde_json::Value>) -> std::io::Result<()> {
     let p = known_hosts_path();
-    std::fs::write(&p, serde_json::to_string(map).unwrap_or_else(|_| "{}".into())).ok();
+    std::fs::write(&p, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
     }
+    Ok(())
 }
 
 impl client::Handler for SshHandler {
@@ -62,10 +63,18 @@ impl client::Handler for SshHandler {
         let fp = fingerprint_of(key);
         let mut hosts = load_known_hosts();
         match hosts.get(&self.trust_key) {
-            // First use — record and trust (TOFU).
+            // First use — record and trust (TOFU). FAIL CLOSED on persistence
+            // failure: a write error (read-only install dir, disk full) must
+            // not silently turn off MITM protection — every later connection
+            // would re-trust a fresh attacker key.
             None => {
                 hosts.insert(self.trust_key.clone(), serde_json::Value::String(fp));
-                save_known_hosts(&hosts);
+                save_known_hosts(&hosts).map_err(|e| {
+                    // No Io variant in russh::Error — UnknownKey is the closest
+                    // (aborts the connection like a host-key mismatch).
+                    let _ = e;
+                    russh::Error::UnknownKey
+                })?;
                 Ok(true)
             }
             // Known host — reject a changed key (possible MITM).
@@ -91,7 +100,14 @@ impl SshSession {
         username: &str,
         password: Option<&str>,
     ) -> Result<Self, DeviceError> {
-        let config = Arc::new(client::Config::default());
+        // A dead host (firewall DROP, blackholed) used to hang connect()
+        // forever — the terminal_open caller never got a timeout. 15s caps
+        // the TCP connect + key-exchange window; inactivity keeps the session
+        // alive (keepalive pings every 30s).
+        let mut cfg = client::Config::default();
+        cfg.inactivity_timeout = Some(std::time::Duration::from_secs(15));
+        cfg.keepalive_interval = Some(std::time::Duration::from_secs(30));
+        let config = Arc::new(cfg);
         // TOFU host-key verification — keyed by user@host:port so a changed
         // key (MITM) is rejected on later connections.
         let handler = SshHandler {
@@ -138,13 +154,26 @@ impl SshSession {
                                 KeyboardInteractiveAuthResponse::Success => { ki_ok = true; break; }
                                 KeyboardInteractiveAuthResponse::Failure { .. } => break,
                                 KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                                    // Answer exactly one non-empty prompt with
-                                    // the password; empty prompts get empty
-                                    // responses (russh requires equal lengths).
+                                    // Answer ONLY a password-looking prompt with
+                                    // the password — the first non-empty prompt
+                                    // may be an OTP/2FA challenge (Duo, TOTP),
+                                    // and sending the real password there is a
+                                    // credential leak to the wrong factor.
+                                    // A password prompt: hidden echo (p.echo
+                                    // false) + prompt text hints (password/
+                                    // passphrase/passcode). Empty prompts get
+                                    // empty responses (russh requires equal
+                                    // lengths).
                                     let responses: Vec<String> = prompts
                                         .iter()
-                                        .enumerate()
-                                        .map(|(i, p)| if i == 0 && !p.prompt.is_empty() { pass.to_string() } else { String::new() })
+                                        .map(|p| {
+                                            let t = p.prompt.to_lowercase();
+                                            let pass_like = !p.echo
+                                                && (t.contains("password")
+                                                    || t.contains("passphrase")
+                                                    || t.contains("passcode"));
+                                            if pass_like { pass.to_string() } else { String::new() }
+                                        })
                                         .collect();
                                     resp = handle
                                         .authenticate_keyboard_interactive_respond(responses)

@@ -59,6 +59,15 @@ async function connectInner() {
     ws = null;
   }
   const consoleOrigin = (await chrome.storage.local.get("consoleOrigin")).consoleOrigin || "https://api.saisi.online";
+  // Defensive: never send the plugin token over plaintext HTTP or to a
+  // non-origin value (a typo'd/spoofed consoleOrigin would exfiltrate it).
+  let originOk = false;
+  try { originOk = new URL(consoleOrigin).protocol === "https:"; } catch {}
+  if (!originOk) {
+    state.error = "consoleOrigin must be https:// — refusing to send the token";
+    scheduleReconnect();
+    return;
+  }
   let ticket;
   try {
     // Trade the plugin token for a one-time WS ticket.

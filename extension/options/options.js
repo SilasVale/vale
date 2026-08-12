@@ -9,7 +9,21 @@ async function load() {
 }
 
 $("save").addEventListener("click", async () => {
-  const value = ($("consoleOrigin").value.trim() || DEFAULT_ORIGIN).replace(/\/+$/, "");
+  let value = ($("consoleOrigin").value.trim() || DEFAULT_ORIGIN).replace(/\/+$/, "");
+  // https-only: an http:// origin would let a MITM steal the plugin token
+  // and pairing codes over cleartext; a lookalike domain exfiltrates them.
+  try {
+    const u = new URL(value);
+    if (u.protocol !== "https:") throw new Error("must be https://");
+    value = u.origin; // strip path/query — only the origin is used
+  } catch {
+    const s = $("saved");
+    s.textContent = "必须使用 https:// 地址";
+    s.classList.remove("hidden");
+    s.style.color = "#dc2626";
+    setTimeout(() => { s.classList.add("hidden"); s.style.color = ""; }, 3000);
+    return;
+  }
   await chrome.storage.local.set({ consoleOrigin: value });
   await chrome.runtime.sendMessage({ type: "optionsChanged" }).catch(() => {});
   const s = $("saved");
