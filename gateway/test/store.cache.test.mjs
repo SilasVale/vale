@@ -58,13 +58,19 @@ test("findUserByToken: token + user each cached", async () => {
   assert.equal(kv.counters.get, 2); // one token read + one user read, not 4
 });
 
-test("getAdminPassword: cached, refreshed by set", async () => {
+test("getAdminPassword: hashed (salt:hash), cached, verified, refreshed by set", async () => {
   const kv = makeKV({});
   assert.equal(await store.getAdminPassword(kv), "");
   await store.setAdminPassword(kv, "pw-1");
-  assert.equal(await store.getAdminPassword(kv), "pw-1"); // write-through hit
+  const stored1 = await store.getAdminPassword(kv);
+  // Never plaintext: stored as salt:pbkdf2hash.
+  assert.notEqual(stored1, "pw-1");
+  assert.match(stored1, /^[0-9a-f]+:[0-9a-f]+$/);
+  assert.equal(await store.verifyAdminPassword(kv, "pw-1"), true);
+  assert.equal(await store.verifyAdminPassword(kv, "wrong"), false);
   await store.setAdminPassword(kv, "pw-2");
-  assert.equal(await store.getAdminPassword(kv), "pw-2");
+  assert.equal(await store.verifyAdminPassword(kv, "pw-2"), true);
+  assert.equal(await store.verifyAdminPassword(kv, "pw-1"), false);
   assert.equal(kv.counters.get, 1); // first read only — subsequent reads cached
 });
 

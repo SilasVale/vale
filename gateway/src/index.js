@@ -31,7 +31,7 @@
  *   store.js / auth.js / device-fetch.js / mcp.js / plugin-hub.js  supporting modules
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, hasRegGrant, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, hasRegGrant, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.js";
 import { build101Response, deviceFetch } from "./device-fetch.js";
 import { handleMcp } from "./mcp.js";
@@ -491,9 +491,11 @@ async function handleConsole(request, env, url) {
     return jsonOk({ ok: true, id, enabled: u.enabled });
   }
 
-  // Admin password: view / change (stored in KV, viewable from the console)
+  // Admin password: presence / change. The raw password is NEVER returned
+  // (was plaintext before — a session holder could read it and impersonate
+  // the admin indefinitely).
   if (method === "GET" && path === `${ADMIN_BASE}/password`) {
-    return jsonOk({ password: await getAdminPassword(env) });
+    return jsonOk({ set: await hasAdminPassword(env) });
   }
   if (method === "PUT" && path === `${ADMIN_BASE}/password`) {
     const body = await readJson(request);
@@ -546,8 +548,7 @@ async function authRegister(request, env, secure) {
 }
 
 async function authLogin(request, env, secure) {
-  const ap = await getAdminPassword(env);
-  if (!ap) return jsonError(500, "Admin password not configured", "config_error");
+  if (!(await hasAdminPassword(env))) return jsonError(500, "Admin password not configured", "config_error");
   const body = await readJson(request);
   // Brute-force throttle: 5 consecutive failures lock the username for 30s
   // (exponential backoff would need the failure count; a flat lock is simple
@@ -564,8 +565,9 @@ async function authLogin(request, env, secure) {
   if (!user || !user.enabled) return jsonError(401, "Incorrect username or password", "authentication_error");
   let ok = false;
   if (user.id === ADMIN_ID) {
-    // The admin account logs in with the admin password (stored in KV, viewable/changeable from the console)
-    ok = (body.password || "") === ap;
+    // The admin account logs in with the admin password (stored HASHED —
+    // compare via verifyAdminPassword, never read the plaintext).
+    ok = await verifyAdminPassword(env, body.password || "");
   } else {
     ok = !!user.salt && !!user.passwordHash && (await verifyPassword(body.password || "", user.salt, user.passwordHash));
   }
@@ -604,6 +606,29 @@ async function handleGatewayImpl(request, env, url) {
   const opencodeGoKey = ukeys.OPENCODE_GO_API_KEY || null;
   const openRouterKey = ukeys.OPENROUTER_API_KEY || null;
   const qwenKey = ukeys.QWEN_API_KEY || null;
+
+  // Per-token rate limit: a valid token previously meant UNLIMITED upstream
+  // spend (Free-plan quota exhaustion + surprise billing). KV is
+  // eventually-consistent (~1s) — fine for a limiter, same as the probe one.
+  // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
+  if (env.KEYS && method === "POST" && (path.endsWith("/messages") || path.endsWith(COUNT_PATH))) {
+    const minuteKey = `rl-min:${token}:${Math.floor(Date.now() / 60000)}`;
+    const dayKey = `rl-day:${token}:${Math.floor(Date.now() / 86400000)}`;
+    const [minute, day] = await Promise.all([
+      (async () => Number(await env.KEYS.get(minuteKey)) || 0)(),
+      (async () => Number(await env.KEYS.get(dayKey)) || 0)(),
+    ]);
+    if (minute >= 60) {
+      return jsonError(429, "Rate limit: 60 requests/minute per token", "rate_limited");
+    }
+    if (day >= 5000) {
+      return jsonError(429, "Rate limit: 5000 requests/day per token", "rate_limited");
+    }
+    await Promise.all([
+      env.KEYS.put(minuteKey, String(minute + 1), { expirationTtl: 120 }),
+      env.KEYS.put(dayKey, String(day + 1), { expirationTtl: 90000 }),
+    ]);
+  }
 
   // GET /v1/models — list of prefixed models this gateway supports
   if (method === "GET" && path.endsWith("/models")) {
