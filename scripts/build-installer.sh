@@ -15,6 +15,18 @@ MAKENSIS="${MAKENSIS:-/home/zhengsaisi/tools/nsis/extracted/usr/bin/makensis}"
 NSISDIR="${NSISDIR:-/home/zhengsaisi/tools/nsis/extracted/usr/share/nsis}"
 TARGET="x86_64-pc-windows-msvc"
 
+# Repack the browser extension into its zip — the extension previously had NO
+# automated repack step (a lib/ edit shipped only if someone remembered to zip
+# by hand; the freshness guard excluded the zip).
+repack_extension() {
+  local z="$ROOT/index/public/vale-agent/vale-browser-control.zip"
+  rm -f "$z"
+  ( cd "$ROOT/extension" \
+      && zip -r -q "$z" manifest.json background.js popup/ options/ terminal/ lib/ icons/ README.md )
+  echo "  repacked extension zip"
+}
+repack_extension
+
 VALEEXE="$ROOT/agent/target/$TARGET/release/vale-agent.exe"
 TRAYEXE="$ROOT/agent/vale-tray/target/$TARGET/release/vale-tray.exe"
 for f in "$VALEEXE" "$TRAYEXE"; do
