@@ -104,10 +104,26 @@ impl SessionStore {
             // reset the cursor (it rode along from the live session).
             buf.cursor = 0;
             self.retain_seq += 1;
-            self.history.insert(
-                sid.to_string(),
-                RetainedSession { buf, kind: kind.to_string(), label: label.to_string(), closed_at_unix, seq: self.retain_seq },
-            );
+            match self.history.get_mut(sid) {
+                // Already retained (term_close ran, then the drainer's final
+                // tail arrived): MERGE — append the tail, keep the original
+                // start offset. A second retain_live that OVERWROTE the entry
+                // with only the post-close tail destroyed the full history.
+                Some(existing) => {
+                    // end_abs is derived (dropped + data.len()) — appending
+                    // the tail extends it automatically; original dropped/start
+                    // is preserved so reads from the beginning stay correct.
+                    existing.buf.data.extend_from_slice(&buf.data);
+                    existing.closed_at_unix = closed_at_unix;
+                    existing.seq = self.retain_seq;
+                }
+                None => {
+                    self.history.insert(
+                        sid.to_string(),
+                        RetainedSession { buf, kind: kind.to_string(), label: label.to_string(), closed_at_unix, seq: self.retain_seq },
+                    );
+                }
+            }
             self.enforce_history_caps();
             true
         } else {

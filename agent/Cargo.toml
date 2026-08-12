@@ -4,7 +4,7 @@ default-members = ["."]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.18"
+version = "1.0.19"
 
 [package]
 name = "vale-agent"

@@ -115,11 +115,14 @@ fn tool_open(
                         let mut store = recover_guard(&buf);
                         let entry = store.live.entry(sid_buf.clone()).or_default();
                         entry.data.extend_from_slice(&output.data);
-                        // Cap at 1 MB — evict oldest half if exceeded
+                        // Cap at 1 MB — evict oldest half if exceeded. The
+                        // cursor is ABSOLUTE (dropped+len); eviction advances
+                        // `dropped`, so the cursor is untouched — a leftover
+                        // saturating_sub(remove) here corrupted it and
+                        // re-delivered up to 524KB of already-read bytes.
                         if entry.data.len() > MAX_BUF_BYTES {
                             let remove = entry.data.len() - MAX_BUF_BYTES / 2;
                             entry.data.drain(..remove);
-                            entry.cursor = entry.cursor.saturating_sub(remove);
                             entry.dropped += remove as u64;
                         }
                         drop(store);
