@@ -157,7 +157,10 @@ if (-not (Test-Path $cfg)) {
 # Serve on a high port: dev tools (e.g. VS Code port-forwarding) commonly squat
 # the 127.0.0.1:3000/3001 loopback range, which would intercept the tunnel's
 # origin connection and break the panel. 18080 is well out of that range.
-(Get-Content $cfg) -replace 'port: 3000','port: 18080' -replace 'port: 3001','port: 18080' | Set-Content $cfg
+# ANCHORED port rewrite: the old unanchored -replace corrupted any port
+# starting with 3000/3001 (e.g. 30000 → 180800, u16 overflow) — the config
+# got quarantined and the device token regenerated, 401-ing every client.
+(Get-Content $cfg) -replace '^port: 3000$','port: 18080' -replace '^port: 3001$','port: 18080' | Set-Content $cfg
 
 # 2. cloudflared
 Write-Host "`n[2/7] cloudflared"
@@ -416,7 +419,10 @@ Write-Host ""
 Write-Host "Give it ~10 seconds for the tunnel to come up, then connect Claude Code to the MCP URL (or open the console at https://ai.saisi.online/)."
 
 # Write a result file the NSIS installer's finish page reads to show the token.
-if ($token -match 'token:\s*(\S+)') { $tokenVal = $Matches[1] } else { $tokenVal = "" }
+# Strip surrounding quotes: a quoted line (device_token: "<hex>") captured
+# the literal quotes before, so the registered/printed token diverged from
+# the real one and every MCP/panel client 401'd.
+if ($token -match 'token:\s*"?([^"\s]+)"?') { $tokenVal = $Matches[1] } else { $tokenVal = "" }
 @"
 TOKEN=$tokenVal
 MCP=https://$Hostname/mcp

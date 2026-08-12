@@ -9,13 +9,13 @@ Requires `cargo-xwin` for cross-compiling from Linux:
 cargo install cargo-xwin
 
 # Windows check (fast, run after touching Cargo.toml or feature-gated code)
-cargo xwin check -p vale-agent --target x86_64-pc-windows-msvc --features terminal
+cargo xwin check -p vale-agent --target x86_64-pc-windows-msvc --features terminal,keyring
 
 # Debug build
-cargo clean && cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --features terminal
+cargo clean && cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --features terminal,keyring
 
 # Release build
-cargo clean && cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --features terminal --release
+cargo clean && cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --features terminal,keyring --release
 ```
 
 Output binaries:
@@ -76,10 +76,10 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   leave the workspace green.
 - **Verification per change**: `cargo test` → `cargo clippy --all-targets`
   (target: zero warnings) → `cargo xwin check -p vale-agent
-  --target x86_64-pc-windows-msvc --features terminal`. After touching
-  feature-gated code, also run `cargo test --features terminal` and
-  `cargo clippy --features terminal --all-targets`. Smoke:
-  `cargo run --bin vale-agent --features terminal -- /tmp/ct.yaml`
+  --target x86_64-pc-windows-msvc --features terminal,keyring`. After touching
+  feature-gated code, also run `cargo test --features terminal,keyring` and
+  `cargo clippy --features terminal,keyring --all-targets`. Smoke:
+  `cargo run --bin vale-agent --features terminal,keyring -- /tmp/ct.yaml`
   then curl `/api/status` and `/api/tools/terminal_list` with the Bearer token
   from `/tmp/ct.yaml`.
 - **Feature-gating rule**: real terminal code is gated behind the `terminal`
@@ -94,7 +94,7 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   threads); keystrokes try_send drop-on-full.
 - **MCP tool additions**: define the tool in `src/plugins/<plugin>/tools.rs`;
   the registry caches it at register time — no other registration site.
-  Update the tool-count tests (13 terminal) if adding/removing.
+  Update the tool-count tests (16: 13 terminal_* + 3 secret_*) if adding/removing.
 
 ## vale-tray (Windows)
 

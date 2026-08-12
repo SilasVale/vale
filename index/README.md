@@ -14,7 +14,7 @@ wrangler deploy
 ```
 
 Then add the custom domain **<download-host>** in the Cloudflare
-dashboard (Workers → vale-command-index → Settings → Domains & Routes), same
+dashboard (Workers → vale-dist → Settings → Domains & Routes), same
 as the other Vale workers. `workers_dev: false` so only the custom
 domain is served.
 

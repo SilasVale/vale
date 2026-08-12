@@ -221,6 +221,7 @@ export async function recordChannelFailure(env) {
     // Invalidate the 5s stale cache immediately — otherwise this isolate's
     // health checks keep reporting ok for up to 5s after a trip.
     degradedCache = { at: 0, value: false };
+    console.error("[breaker] channel failure recorded (may open the circuit)");
   } catch (e) {
     console.error("[breaker] trip failed:", e.message);
   }

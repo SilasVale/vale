@@ -59,7 +59,8 @@ fn config_default_yaml_embedded() {
 #[test]
 fn config_default_impl() {
     let c = Config::default();
-    assert_eq!(c.server.port, 3000);
+    // 18080 is the canonical port (tunnel ingress + setup.ps1 agree).
+    assert_eq!(c.server.port, 18080);
     assert_eq!(c.server.name, "vale-agent");
 }
 

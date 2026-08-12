@@ -966,13 +966,22 @@ async function handleGatewayImpl(request, env, url) {
  */
 export async function handleGateway(request, env, url) {
   const started = Date.now();
+  // The model/channel is what identifies a failure — a 502 without it is
+  // un-actionable. Scan the raw body cheaply (the same scan the handler does).
+  let model = "";
+  try {
+    const clone = request.clone();
+    const text = await clone.text();
+    const scanned = scanTopLevelModel(text);
+    model = scanned.model || "";
+  } catch { /* empty model on read failure */ }
   const res = await handleGatewayImpl(request, env, url);
   try {
     // One structured line per /v1 request — tail-visible usage/health signal.
     console.log(JSON.stringify({
       ts: started, ms: Date.now() - started, status: res.status,
       key: String(request.headers.get("x-api-key") || "").slice(0, 8),
-      path: url.pathname,
+      path: url.pathname, model,
     }));
   } catch { /* log must never break the request */ }
   return res;
