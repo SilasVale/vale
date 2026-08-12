@@ -543,11 +543,14 @@ async function flushSession(s) {
   // the in-memory s.lines, which is unbounded).
   const MAX_PERSIST_LINES = 2000;
   const tail = s.lines.slice(-MAX_PERSIST_LINES);
+  // Mark truncation so a reloaded session shows the user history was capped
+  // (silent truncation hid pre-tail lines with no marker).
+  const truncated = s.lines.length > tail.length;
   try {
     localStorage.setItem(`valePanel:${s.sid}`, JSON.stringify({
       sid: s.sid, label: s.label, openedAt: s.openedAt, closedAt: s.closedAt,
       complete: s.complete, endAbs: s.renderedBytes,
-      persistedSeq: s.lines.length, lines: tail,
+      persistedSeq: s.lines.length, lines: tail, truncated,
     }));
     s.persistedSeq = s.lines.length;
   } catch (e) {
@@ -557,7 +560,7 @@ async function flushSession(s) {
       localStorage.setItem(`valePanel:${s.sid}`, JSON.stringify({
         sid: s.sid, label: s.label, openedAt: s.openedAt, closedAt: s.closedAt,
         complete: s.complete, endAbs: s.renderedBytes,
-        persistedSeq: s.lines.length, lines: tail.slice(-500),
+        persistedSeq: s.lines.length, lines: tail.slice(-500), truncated: true,
       }));
       s.persistedSeq = s.lines.length;
     } catch { /* memory-only is fine */ }
@@ -907,6 +910,9 @@ function mkSavedSession(sid, rec) {
     complete: true, syncInFlight: false, sseDirty: false, needSync: false, flushTimer: null,
   };
   renderLines(s);
+  if (rec.truncated) {
+    s.term.write("\r\n[history truncated to the most recent lines — earlier output is in the live session only]\r\n");
+  }
   return s;
 }
 

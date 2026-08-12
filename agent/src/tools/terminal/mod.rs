@@ -235,15 +235,23 @@ mod desktop_impl {
             };
 
             // Session cap: evict the OLDEST session when over MAX_SESSIONS
-            // (client-disconnect leak guard; keeps the device usable).
+            // (client-disconnect leak guard; keeps the device usable). Evict
+            // the session IDLE LONGEST (last_output oldest), not the OLDEST
+            // opened — an old-but-actively-watched session must survive.
             {
                 let mut inner = self.inner.lock().await;
                 while inner.sessions.len() >= MAX_SESSIONS {
-                    if let Some(oldest) = inner.sessions.first() {
-                        oldest.backend.close();
-                        inner.sessions.remove(0);
-                    } else {
-                        break;
+                    let idle = inner.sessions
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, s)| s.last_output)
+                        .map(|(i, _)| i);
+                    match idle {
+                        Some(i) => {
+                            inner.sessions[i].backend.close();
+                            inner.sessions.remove(i);
+                        }
+                        None => break,
                     }
                 }
                 inner.sessions.push(Session { id: id.clone(), kind, label, backend, last_output: std::time::Instant::now() });
