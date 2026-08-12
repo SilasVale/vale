@@ -24,6 +24,17 @@ const FLUSH_IDLE_MS = 60000;
 const LS_HOST = "valePanelHost";
 const LS_TOKEN = "valePanelToken";
 
+// Dark terminal with the teal brand accent — unified across live + saved.
+const TERM_THEME = {
+  background: "#1a1c20",
+  foreground: "#e8eaed",
+  cursor: "#0e9384",
+  cursorAccent: "#ffffff",
+  selectionBackground: "rgba(14,147,132,.35)",
+  black: "#1a1c20", red: "#f07178", green: "#7bd88f", yellow: "#ffd479",
+  blue: "#82aaff", magenta: "#c792ea", cyan: "#0e9384", white: "#e8eaed",
+};
+
 const $ = (id) => document.getElementById(id);
 const hostInput = $("host");
 const tokenInput = $("token");
@@ -146,25 +157,76 @@ function setStatus(text, isError = false) {
   el.classList.toggle("error", isError);
 }
 
+// ── Empty-state visibility ──────────────────────────────────────
+
+function refreshEmpty() {
+  const hasAny = [...sessions.values()].some((s) => !s.savedOnly);
+  $("#empty-state").classList.toggle("hidden", hasAny);
+}
+
 // ── Session management (adopt / close / tab) ────────────────────
 
 function renderTab(sid, label) {
   const tab = document.createElement("button");
   tab.className = "tab";
   tab.dataset.sid = sid;
-  tab.textContent = label || sid;
   tab.title = sid;
-  tab.addEventListener("click", (e) => {
-    if (e.target.closest(".tab-export")) { exportSession(sid); return; }
-    activate(sid);
-  });
+  // Kind dot (PTY=teal, SSH=blue, Serial=orange) + label + close + export.
+  const kindDot = document.createElement("span");
+  kindDot.className = "tab-dot";
+  kindDot.dataset.kind = kindOf(sid);
+  tab.appendChild(kindDot);
+  const nameSpan = document.createElement("span");
+  nameSpan.className = "tab-name";
+  nameSpan.textContent = label || sid;
+  tab.appendChild(nameSpan);
   const ex = document.createElement("span");
   ex.className = "tab-export";
   ex.textContent = "⤓";
   ex.title = "Export this session";
   tab.appendChild(ex);
+  const close = document.createElement("span");
+  close.className = "tab-close";
+  close.textContent = "✕";
+  close.title = "Close this session";
+  close.addEventListener("click", (e) => { e.stopPropagation(); closeSession(sid); });
+  tab.appendChild(close);
+  tab.addEventListener("click", (e) => {
+    if (e.target.closest(".tab-export")) { exportSession(sid); return; }
+    activate(sid);
+  });
+  // Double-click to rename (updates the label; kept in the session record).
+  tab.addEventListener("dblclick", (e) => {
+    e.stopPropagation();
+    const s = sessions.get(sid);
+    const cur = (s && s.label) || sid;
+    const next = prompt("Rename session:", cur);
+    if (next && next.trim()) {
+      if (s) s.label = next.trim();
+      nameSpan.textContent = next.trim();
+    }
+  });
   tabsEl.appendChild(tab);
   return tab;
+}
+
+/** Guess the session kind from the label (ssh/serial/shell) for the tab dot. */
+function kindOf(sid) {
+  const s = sessions.get(sid);
+  const label = (s && s.label) || sid || "";
+  if (/^ssh\b|@/.test(label)) return "ssh";
+  if (/^serial\b|^COM|^\/dev\/tty/.test(label)) return "serial";
+  return "pty";
+}
+
+/** Close a live session (backend) — NOT just detach. */
+async function closeSession(sid) {
+  const s = sessions.get(sid);
+  if (!s || s.savedOnly) return;
+  setStatus("closing…");
+  try { await callTool("terminal_close", { session_id: sid }); } catch {}
+  markClosed(sid);
+  setStatus("");
 }
 
 function activate(sid) {
@@ -175,12 +237,16 @@ function activate(sid) {
     sess.container.classList.toggle("active", id === sid);
     sess.tab.classList.toggle("active", id === sid);
   }
-  requestAnimationFrame(() => {
+  // Fit after the container is displayed (display:none → block) AND laid out.
+  // A single rAF can run before the browser has painted the newly-shown
+  // container, so fit() measures 0 → the terminal renders at default size and
+  // leaves blank space. Double-rAF guarantees the layout is final.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
     try { s.fit.fit(); } catch {}
     // Focus the newly activated session so keystrokes go straight to it —
     // without this the first keystroke can land nowhere (no focused terminal).
     try { s.term.focus(); } catch {}
-  });
+  }));
 }
 
 function adoptSession(sid, label, idbRec = null) {
@@ -213,13 +279,7 @@ function adoptSession(sid, label, idbRec = null) {
     fontFamily: 'monospace',
     disableStdin: false, // live sessions are writable — don't inherit the
                          // saved-session default of true
-    theme: {
-      background: "#ffffff",
-      foreground: "#1a1c20",
-      cursor: "#0e9384",
-      cursorAccent: "#ffffff",
-      selectionBackground: "rgba(14,147,132,.2)",
-    },
+    theme: TERM_THEME,
   });
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -227,6 +287,18 @@ function adoptSession(sid, label, idbRec = null) {
 
   term.onData((data) => {
     callTool("terminal_write", { session_id: sid, data }).catch(() => {});
+  });
+  // Sync the backend pty size whenever xterm re-fits (window resize, tab
+  // switch, zoom). Without this the pty keeps its initial rows×cols (e.g.
+  // 30×100) and clips the session to that grid — the "not full screen" bug.
+  // Debounced: fit() can fire multiple times per resize.
+  let resizeTimer = null;
+  term.onResize(({ cols, rows }) => {
+    if (resizeTimer) return; // in flight — next onResize picks up the latest
+    resizeTimer = setTimeout(() => {
+      resizeTimer = null;
+      try { callTool("terminal_resize", { session_id: sid, rows, cols }).catch(() => {}); } catch {}
+    }, 150);
   });
   // Clicking anywhere in the session focuses the terminal, so typing works
   // right away instead of requiring a precise click on the xterm viewport.
@@ -242,16 +314,17 @@ function adoptSession(sid, label, idbRec = null) {
   sessions.set(sid, s); // before any await
   s.tab = renderTab(sid, label);
   diag(`adopt: ${sid} (${label})`);
+  refreshEmpty();
   // Activate the first adopted session so its container is visible (the
   // .term-session is display:none until .active) — otherwise fit() on a
   // hidden container computes 0 dimensions and the session is invisible.
   if (activeSid === null) activate(sid);
-  // Fit after the container is laid out (requestAnimationFrame) so the xterm
-  // canvas fills the whole session area — without this a freshly adopted
-  // session renders at its default small size and leaves blank space below.
-  requestAnimationFrame(() => {
+  // Fit after the container is laid out (double requestAnimationFrame) so the
+  // xterm canvas fills the whole session area — a single rAF can still run
+  // before the container is displayed, rendering the terminal at default size.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
     try { s.fit.fit(); } catch {}
-  });
+  }));
   backfillAndAttach(sid, s, idbRec);
 }
 
@@ -263,9 +336,11 @@ function markClosed(sid) {
   s.term.options.disableStdin = true;
   if (s.tab) {
     s.tab.classList.add("closed");
-    s.tab.textContent = `${s.label || sid} [closed]`;
+    const name = s.tab.querySelector(".tab-name");
+    if (name) name.textContent = `${s.label || sid} [closed]`;
   }
   if (sid === activeSid) setStatus("session closed");
+  refreshEmpty();
 }
 
 // ── History backfill + live SSE ─────────────────────────────────
@@ -551,6 +626,92 @@ async function openSession() {
   } catch (e) { setStatus(String(e && e.message ? e.message : e), true); }
 }
 
+// ── SSH / Serial creation modal ─────────────────────────────────
+
+let modalKind = "ssh"; // "ssh" | "serial"
+
+function showModal(kind) {
+  modalKind = kind;
+  const title = kind === "ssh" ? "New SSH" : "New Serial";
+  $("#modal-title").textContent = title;
+  // Rebuild fields: ssh = host/port/user/pass; serial = port name.
+  const fields = $("#modal-fields");
+  fields.innerHTML = "";
+  const mk = (label, id, placeholder, value = "") => {
+    const l = document.createElement("label");
+    l.textContent = label;
+    fields.appendChild(l);
+    const i = document.createElement("input");
+    i.id = id;
+    i.placeholder = placeholder;
+    i.value = value;
+    i.autocomplete = "off";
+    fields.appendChild(i);
+  };
+  if (kind === "ssh") {
+    mk("Host", "ssh-host", "host.example.com");
+    mk("Port", "ssh-port", "22", "22");
+    mk("Username", "ssh-user", "user");
+    mk("Password (optional)", "ssh-pass", "leave empty for keychain");
+    $("#ssh-pass").type = "password";
+  } else {
+    mk("Port", "serial-port", "COM3 or /dev/ttyUSB0");
+    mk("Baud rate", "serial-baud", "115200", "115200");
+  }
+  $("#conn-modal").classList.remove("hidden");
+  const first = fields.querySelector("input");
+  if (first) setTimeout(() => first.focus(), 50);
+  $("#modal-status").textContent = "";
+}
+
+function hideModal() { $("#conn-modal").classList.add("hidden"); }
+
+async function connectModal() {
+  const status = $("#modal-status");
+  try {
+    if (modalKind === "ssh") {
+      const host = $("#ssh-host").value.trim();
+      const port = $("#ssh-port").value.trim() || "22";
+      const user = $("#ssh-user").value.trim();
+      const pass = $("#ssh-pass").value;
+      if (!host || !user) { status.textContent = "host + username required"; status.classList.add("error"); return; }
+      status.textContent = "Connecting SSH…";
+      status.classList.remove("error");
+      const target = `${user}@${host}:${port}`;
+      const sid = await callTool("terminal_open", { kind: "ssh", target, password: pass, rows: DEFAULT_ROWS, cols: DEFAULT_COLS });
+      if (typeof sid !== "string" || !sid) throw new Error("terminal_open returned no sid");
+      hideModal();
+      adoptSession(sid, `ssh ${user}@${host}`);
+      activeSid = null;
+      activate(sid);
+      setStatus("");
+    } else {
+      const port = $("#serial-port").value.trim();
+      const baud = $("#serial-baud").value.trim() || "115200";
+      if (!port) { status.textContent = "port required"; status.classList.add("error"); return; }
+      status.textContent = "Opening serial…";
+      status.classList.remove("error");
+      const sid = await callTool("terminal_open", { kind: "serial", target: `${port}?baud=${baud}`, rows: DEFAULT_ROWS, cols: DEFAULT_COLS });
+      if (typeof sid !== "string" || !sid) throw new Error("terminal_open returned no sid");
+      hideModal();
+      adoptSession(sid, `serial ${port}`);
+      activeSid = null;
+      activate(sid);
+      setStatus("");
+    }
+  } catch (e) {
+    status.textContent = String(e && e.message ? e.message : e);
+    status.classList.add("error");
+  }
+}
+
+// Modal button handlers
+$("new-ssh").addEventListener("click", () => showModal("ssh"));
+$("new-serial").addEventListener("click", () => showModal("serial"));
+$("modal-cancel").addEventListener("click", hideModal);
+$("modal-connect").addEventListener("click", connectModal);
+$("conn-modal").addEventListener("click", (e) => { if (e.target === e.currentTarget) hideModal(); });
+
 // ── Boot ────────────────────────────────────────────────────────
 
 async function init() {
@@ -610,14 +771,14 @@ function mkSavedSession(sid, rec) {
   const term = new window.Terminal({
     convertEol: true, disableStdin: true, scrollback: 20000, fontSize: 13,
     fontFamily: 'monospace',
-    theme: { background: "#ffffff", foreground: "#1a1c20", cursor: "#0e9384", selectionBackground: "rgba(14,147,132,.2)" },
+    theme: TERM_THEME,
   });
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(container);
-  requestAnimationFrame(() => {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
     try { fit.fit(); } catch {}
-  });
+  }));
   const s = {
     sid, term, fit, container, tab: null, closed: true, savedOnly: true,
     label: rec.label || sid, renderedBytes: rec.endAbs || 0,
@@ -632,6 +793,27 @@ function mkSavedSession(sid, rec) {
 saveBtn.addEventListener("click", saveConfig);
 newSessionBtn.addEventListener("click", openSession);
 exportAllBtn.addEventListener("click", exportAll);
+$("empty-pty").addEventListener("click", openSession);
+$("empty-ssh").addEventListener("click", () => showModal("ssh"));
+$("empty-serial").addEventListener("click", () => showModal("serial"));
+
+// Keyboard shortcuts: Ctrl/Cmd+N new PTY, Ctrl/Cmd+E export, Ctrl/Cmd+Shift+E
+// export all, Ctrl/Cmd+1..9 switch tab, Esc close modal, Ctrl/Cmd+W close tab.
+document.addEventListener("keydown", (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (!mod) return;
+  const k = e.key.toLowerCase();
+  if (k === "n") { e.preventDefault(); openSession(); }
+  else if (k === "e") { e.preventDefault(); if (e.shiftKey) exportAll(); else if (activeSid) exportSession(activeSid); }
+  else if (/^[1-9]$/.test(k)) {
+    const tabs = [...tabsEl.querySelectorAll(".tab")];
+    const t = tabs[Number(k) - 1];
+    if (t) activate(t.dataset.sid);
+  } else if (k === "w" && activeSid) { e.preventDefault(); closeSession(activeSid); }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideModal();
+});
 
 if (!loadConfig()) {
   setStatus("enter device hostname + token to connect");

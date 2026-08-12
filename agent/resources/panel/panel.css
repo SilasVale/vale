@@ -86,17 +86,30 @@ body {
   color: var(--accent-ink);
   border-color: var(--accent);
 }
-/* Per-tab export icon — muted, visible on hover. */
-.tab-export {
-  margin-left: 6px;
+/* Per-tab kind dot (PTY=teal, SSH=blue, Serial=orange) */
+.tab-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: var(--accent);
+}
+.tab-dot[data-kind="ssh"] { background: #4f6bed; }
+.tab-dot[data-kind="serial"] { background: #d97706; }
+.tab-name { white-space: nowrap; }
+/* Per-tab export + close — muted, visible on hover. */
+.tab-export, .tab-close {
+  margin-left: 5px;
   font-size: 11px;
   color: var(--faint);
   visibility: hidden;
   cursor: pointer;
 }
-.tab:hover .tab-export,
-.tab.active .tab-export { visibility: visible; }
+.tab:hover .tab-export, .tab:hover .tab-close,
+.tab.active .tab-export, .tab.active .tab-close { visibility: visible; }
 .tab-export:hover { color: var(--accent); }
+.tab-close:hover { color: var(--danger); }
 #toolbar-actions {
   display: flex;
   gap: 8px;
@@ -124,6 +137,43 @@ body {
   transition: all .15s ease;
 }
 #export-all:hover { color: var(--ink); border-color: var(--faint); }
+/* ---------- session creation modal ---------- */
+#conn-modal {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(28, 28, 30, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+#conn-modal.hidden { display: none; }
+.modal-card {
+  width: 100%; max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 24px 28px;
+}
+.modal-card h2 { font-size: 17px; font-weight: 650; margin: 0 0 14px; letter-spacing: -0.01em; }
+.modal-card label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--muted); }
+.modal-card input {
+  width: 100%; padding: 8px 12px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  font: 13px var(--font-mono); box-sizing: border-box; background: var(--surface);
+  outline: none;
+}
+.modal-card input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(14, 147, 132, 0.14); }
+.modal-actions { display: flex; gap: 8px; margin-top: 18px; }
+.modal-actions button {
+  flex: 1; padding: 8px 0; border-radius: var(--radius-sm);
+  font: 600 13px var(--font); cursor: pointer; border: 1px solid var(--line-strong);
+  background: var(--surface); color: var(--muted);
+}
+.modal-actions button:hover { color: var(--ink); border-color: var(--faint); }
+.modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.modal-actions button.primary:hover { background: var(--accent-ink); }
+#modal-status { font-size: 12px; color: var(--muted); margin-top: 12px; min-height: 16px; }
+#modal-status.error { color: var(--danger); }
+
 /* ---------- bottom status bar ---------- */
 #statusbar {
   flex: none;
@@ -151,17 +201,61 @@ body {
   flex: 1;
   min-height: 0;
   display: flex;
+  overflow: hidden;
 }
 .term-session {
   display: none;
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 10px 12px 12px;
+  /* Full-bleed: NO padding — xterm's fit() measures the container exactly,
+     and any padding would make the rendered grid slightly larger than the
+     available space, clipping the last line/column. The xterm viewport
+     itself gets the rounded corners + a hairline border. */
+  padding: 0;
 }
-.term-session.active { display: block; }
+.term-session.active { display: flex; flex-direction: column; }
 .term-session .xterm {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   border-radius: var(--radius);
   overflow: hidden;
+  border: 1px solid var(--line);
 }
+
+/* ---------- empty state ---------- */
+#empty-state {
+  flex: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+#empty-state.hidden { display: none; }
+.empty-card {
+  text-align: center;
+  padding: 40px 56px;
+  background: var(--surface-glass);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.empty-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px;
+  border-radius: 14px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 700; font-size: 26px;
+  margin-bottom: 12px;
+}
+.empty-card p { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+.empty-actions { display: flex; gap: 8px; justify-content: center; }
+.empty-actions button {
+  padding: 8px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink);
+  font: 600 13px var(--font); cursor: pointer;
+}
+.empty-actions button:hover { border-color: var(--accent); color: var(--accent-ink); }

@@ -45,12 +45,39 @@
       <select id="device-select"></select>
       <div id="tabs"></div>
       <div id="toolbar-actions">
-        <button id="new-session">New PTY</button>
-        <button id="export-all" title="Export all session logs">Export all</button>
+        <button id="new-session" title="New local shell">PTY</button>
+        <button id="new-ssh" title="New SSH connection">SSH</button>
+        <button id="new-serial" title="New serial connection">Serial</button>
+        <button id="export-all" title="Export all session logs">Export</button>
       </div>
     </div>
-    <div id="term-container"></div>
+    <div id="term-container">
+      <div id="empty-state" class="hidden">
+        <div class="empty-card">
+          <span class="empty-mark">V</span>
+          <p>No sessions yet</p>
+          <div class="empty-actions">
+            <button id="empty-pty">New PTY</button>
+            <button id="empty-ssh">New SSH</button>
+            <button id="empty-serial">New Serial</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="statusbar"><span id="status"></span></div>
+
+    <!-- Session creation modal (SSH / Serial) -->
+    <div id="conn-modal" class="hidden">
+      <div class="modal-card">
+        <h2 id="modal-title">New SSH</h2>
+        <div class="modal-fields" id="modal-fields"></div>
+        <div class="modal-actions">
+          <button id="modal-cancel">Cancel</button>
+          <button id="modal-connect" class="primary">Connect</button>
+        </div>
+        <div id="modal-status"></div>
+      </div>
+    </div>
   </div>
 
   <script src="vendor/xterm.min.js"></script>
