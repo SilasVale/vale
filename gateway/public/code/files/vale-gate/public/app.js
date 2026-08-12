@@ -61,10 +61,10 @@
       "route.or.backend": "OpenRouter", "route.or.desc": "openrouter.ai，透传用户自己的 key（经 openrouter-proxy 代理）",
       "route.none.label": "无前缀", "route.none.backend": "DeepSeek 官方（默认）", "route.none.desc": "兜底路由",
       "users.lede": "管理员密码、邀请码与用户列表。",
-      "adminpw.title": "管理员密码", "adminpw.desc": "控制台登录用的密码（也是会话签名钥匙）。改完需用新密码重新登录。",
+      "adminpw.title": "管理员密码", "adminpw.desc": "控制台登录用的密码。密码已加密存储，改完用新密码登录。",
       "adminpw.placeholder": "新密码（至少 8 位）", "adminpw.change": "修改密码",
       "adminpw.copied": "已复制管理员密码", "adminpw.copyFail": "复制失败，请手动选择",
-      "adminpw.short": "管理员密码至少 8 位", "adminpw.changed": "密码已修改，会话将失效，请用新密码重新登录。", "adminpw.changeFail": "修改失败",
+      "adminpw.short": "管理员密码至少 8 位", "adminpw.changed": "密码已修改，请用新密码登录。", "adminpw.changeFail": "修改失败",
       "invite.title": "邀请码", "invite.gen": "生成邀请码", "invite.new": "新邀请码：{code}（一次性，用完即焚）", "invite.genFail": "生成失败",
       "users.list": "用户列表",
       "user.enabled": "启用", "user.disabled": "禁用", "user.disableToast": "已禁用", "user.enableToast": "已启用",
@@ -146,10 +146,10 @@
       "route.or.backend": "OpenRouter", "route.or.desc": "openrouter.ai — user's own key, proxied via openrouter-proxy",
       "route.none.label": "default", "route.none.backend": "DeepSeek Official (default)", "route.none.desc": "fallback route",
       "users.lede": "Admin password, invite codes and the user list.",
-      "adminpw.title": "Admin password", "adminpw.desc": "The console login password (also the session signing key). Re-login with the new password after changing.",
+      "adminpw.title": "Admin password", "adminpw.desc": "The console login password. Stored hashed; log in with the new one after changing.",
       "adminpw.placeholder": "New password (min 8 chars)", "adminpw.change": "Change password",
       "adminpw.copied": "Admin password copied", "adminpw.copyFail": "Copy failed — select manually",
-      "adminpw.short": "Admin password must be at least 8 chars", "adminpw.changed": "Password changed; the session will expire — log in with the new password.", "adminpw.changeFail": "Change failed",
+      "adminpw.short": "Admin password must be at least 8 chars", "adminpw.changed": "Password changed — log in with the new one.", "adminpw.changeFail": "Change failed",
       "invite.title": "Invite codes", "invite.gen": "Generate invite", "invite.new": "New invite: {code} (one-time)", "invite.genFail": "Generation failed",
       "users.list": "Users",
       "user.enabled": "Enabled", "user.disabled": "Disabled", "user.disableToast": "Disabled", "user.enableToast": "Enabled",
@@ -197,6 +197,13 @@
     document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
     applyStaticText();
     renderLangToggles();
+    // Re-render the sidebar identity (role label was baked once at showApp
+    // and stayed in the old language after a toggle).
+    if (me) {
+      $("#side-user").innerHTML =
+        `<div class="name">${esc(me.username)}</div>` +
+        `<div class="role">${t(me.role === "admin" ? "role.admin" : "role.user")}</div>`;
+    }
     if (!$("#view-app").hidden) { const cur = $(".nav-item.active"); switchPanel(cur ? cur.dataset.panel : "overview"); }
   }
 
@@ -261,7 +268,7 @@
 
   /* ============ routing switchboard ============ */
   function switchboardHTML(routes) {
-    const ROUTE_KEY = { "og/": "og", "ds/": "ds", "or/": "or", none: "none" };
+    const ROUTE_KEY = { "og/": "og", "ds/": "ds", "qw/": "qw", "or/": "or", none: "none" };
     return routes
       .map((r) => {
         const key = ROUTE_KEY[r.prefix] || "none";

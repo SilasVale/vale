@@ -73,11 +73,18 @@ export async function callTool(tool, env, device, args) {
   // formatResult turns {image:...} into an MCP image block.
   const id = env.PLUGIN_HUB.idFromName(device.name);
   const hub = env.PLUGIN_HUB.get(id);
+  const headers = { "content-type": "application/json" };
+  // DO_AUTH gate: the DO 401s any request without x-do-auth when configured —
+  // WITHOUT this header the call failed silently (empty success result, no
+  // error) and browser tools appeared to do nothing.
+  if (env.DO_AUTH) headers["x-do-auth"] = env.DO_AUTH;
   const res = await hub.fetch("https://hub/call", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({ tool: tool.name, params: args, requestId: crypto.randomUUID() }),
   });
+  // Never let an auth failure masquerade as success.
+  if (res.status === 401) throw new Error("hub auth misconfigured (x-do-auth)");
   const j = await res.json().catch(() => ({}));
   if (res.status === 503) throw new Error("extension_offline — is the Vale extension running on the device browser?");
   if (j.error) throw new Error(`extension error: ${j.error}`);
