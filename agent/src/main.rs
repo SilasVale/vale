@@ -17,6 +17,11 @@ static LOG_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 fn log_line(line: &str) {
     if let Some(p) = LOG_FILE.get() {
         use std::io::Write as _;
+        // Rotation: startup.log grows forever (the agent runs indefinitely
+        // as a boot task) — rotate to startup.log.old once it passes 1MB.
+        if std::fs::metadata(p).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+            let _ = std::fs::rename(p, p.with_extension("log.old"));
+        }
         let _ = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

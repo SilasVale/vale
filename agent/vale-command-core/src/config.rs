@@ -54,7 +54,10 @@ impl Config {
 
 impl Default for ServerConfig {
     fn default() -> Self {
-        Self { host: "0.0.0.0".into(), port: 3000, name: "vale-agent".into(), device_token: None }
+        // 18080 is the canonical port everywhere else (config.yaml, tunnel
+        // ingress, setup.ps1) — a config omitting `port:` previously bound
+        // 3000 and the tunnel 502'd.
+        Self { host: "0.0.0.0".into(), port: 18080, name: "vale-agent".into(), device_token: None }
     }
 }
 

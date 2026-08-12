@@ -361,6 +361,18 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let result: serde_json::Value = match (method.as_str(), path.as_str()) {
         ("GET", "/api/spec") => api_spec(&state),
         ("GET", "/api/status") => api_status(&state).await,
+        // Read the tray's vale-update.log (promised by the tray's doc comment
+        // but never implemented) — lets a remote client see auto-update
+        // failures instead of asking the user to open files.
+        ("GET", "/api/logs") => {
+            let dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_default();
+            let log = dir.join("vale-update.log");
+            let text = std::fs::read_to_string(&log).unwrap_or_else(|_| String::new());
+            serde_json::json!({"ok": true, "log": text.chars().rev().take(64 * 1024).collect::<String>().chars().rev().collect::<String>()})
+        }
         ("GET", "/api/events/poll") => {
             let after: u64 = query_param(query_str.as_deref(), "after")
                 .and_then(|v| v.parse().ok())
