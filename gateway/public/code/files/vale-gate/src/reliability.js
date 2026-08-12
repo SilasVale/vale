@@ -109,6 +109,9 @@ export function passthroughTimeoutMs(env, kind) {
 // real and re-trips on failure.
 const BREAKER_DEGRADE_MS = 60000;
 const BREAKER_FAIL_THRESHOLD = 3;
+// True "consecutive" with bounded memory: failures older than this window
+// don't accumulate (a stale count of 2 from yesterday + 1 today must not trip).
+const BREAKER_WINDOW_MS = 10 * 60 * 1000;
 
 /** Durable Object holding the breaker state (single instance per channel name). */
 export class BreakerDO {
@@ -120,13 +123,20 @@ export class BreakerDO {
     const action = new URL(request.url).pathname;
     try {
       if (action === "/trip") {
-        // Record one hard failure; open the circuit only after N consecutive.
-        const count = Number((await this.state.storage.get("failCount")) || 0) + 1;
+        // Record one hard failure; open the circuit only after N CONSECUTIVE
+        // failures WITHIN the window (a stale count must not combine with a
+        // fresh one days later to trip).
+        const rec = await this.state.storage.get("fail");
+        let count = 0;
+        if (rec && typeof rec.count === "number" && Date.now() - rec.firstAt < BREAKER_WINDOW_MS) {
+          count = rec.count;
+        }
+        count += 1;
         if (count >= BREAKER_FAIL_THRESHOLD) {
           await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
-          await this.state.storage.delete("failCount");
+          await this.state.storage.delete("fail");
         } else {
-          await this.state.storage.put("failCount", count);
+          await this.state.storage.put("fail", { count, firstAt: rec?.firstAt || Date.now() });
         }
         return new Response("ok");
       }
@@ -135,12 +145,12 @@ export class BreakerDO {
         // degradedUntil is NOT cleared: while the circuit is open no real
         // request gets through, and the half-open probe that succeeds resets
         // the count for the next genuine failure.
-        await this.state.storage.delete("failCount");
+        await this.state.storage.delete("fail");
         return new Response("ok");
       }
       if (action === "/clear") {
         await this.state.storage.delete("degradedUntil");
-        await this.state.storage.delete("failCount");
+        await this.state.storage.delete("fail");
         return new Response("ok");
       }
       if (action === "/check") {

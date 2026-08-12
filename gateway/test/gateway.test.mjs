@@ -220,7 +220,7 @@ const never = (url, init) => new Promise((_, reject) => {
   });
 });
 
-test("og translate timeout: 502, breaker NOT tripped (slow ≠ dead)", async () => {
+test("og translate timeout: 502, counts 1 failure but does NOT trip (needs 3 within window)", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips });
   const res = await withFetch(never, () =>
@@ -228,7 +228,9 @@ test("og translate timeout: 502, breaker NOT tripped (slow ≠ dead)", async () 
   );
   assert.equal(res.status, 502);
   assert.match((await res.json()).error.message, /timeout/);
-  assert.equal(trips.length, 0); // timeout is zen's normal slow behavior — must NOT trip
+  // A timeout is recorded (blackholed channels hang instead of erroring) but
+  // a single one never trips — the BreakerDO needs 3 within 10 minutes.
+  assert.equal(trips.length, 1);
 });
 
 test("og translate network error: 502 and counts a breaker failure (1 of 3)", async () => {
