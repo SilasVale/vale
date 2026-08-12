@@ -33,6 +33,10 @@ pub struct SerialConfig {
     pub default_timeout_ms: u64,
 }
 
+/// DEAD CONFIG — browser automation (CDP/headless-Chrome) was retired; the
+/// browser extension + gateway MCP replaced it. Kept only so OLD config.yaml
+/// files with a `browser:` section still parse (serde(default) swallows the
+/// section; no production code reads these fields).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BrowserConfig {
