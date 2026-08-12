@@ -21,9 +21,19 @@ impl SshBackend {
         tx: mpsc::Sender<TermOutput>, sid: String,
     ) -> Result<Self, DeviceError> {
         let (user, host, port) = super::parse_ssh_target(target);
+        // Keychain fallback: an empty password param consults the OS keychain
+        // for a previously saved credential (secret_set under the same target
+        // key). Without this, terminal_open {kind:"ssh", target} failed with
+        // "no authentication method provided" even when a password was stored.
+        let mut pass = password.to_string();
+        if pass.is_empty() {
+            if let Ok(Some(stored)) = super::secret_get(target) {
+                pass = stored;
+            }
+        }
         let session = SshSession::connect(
             &host, port, &user,
-            if password.is_empty() { None } else { Some(password) },
+            if pass.is_empty() { None } else { Some(&pass) },
         ).await?;
 
         let (mut output_rx, write_tx, resize_tx) = session.open_shell(rows, cols).await?;
