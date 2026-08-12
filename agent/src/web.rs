@@ -111,11 +111,13 @@ impl Service<Request<Body>> for WebPanel {
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         let state = self.state.clone();
         Box::pin(async move {
-            let mut resp = handle_request(req, state).await;
-            resp.headers_mut().insert(
-                axum::http::HeaderName::from_static("access-control-allow-origin"),
-                axum::http::HeaderValue::from_static("*"),
-            );
+            let resp = handle_request(req, state).await;
+            // NO global `Access-Control-Allow-Origin: *`. That header is what
+            // let any third-party page fetch /panel/ and read the injected
+            // device token (the original reason it was removed). Without it,
+            // cross-origin JS cannot read panel responses at all; the panel
+            // itself is same-origin and needs no CORS. MCP clients (Claude
+            // Code) are not browsers and are unaffected.
             Ok(resp)
         })
     }
@@ -242,12 +244,13 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
-    // Handle CORS preflight
+    // Handle CORS preflight — same-origin only (no `*`): the panel fetches
+    // same-origin; anything cross-origin is not supposed to call this API.
     if method == Method::OPTIONS {
         let mut resp = built_response(StatusCode::OK, "", Body::empty());
         resp.headers_mut().insert(
             axum::http::HeaderName::from_static("access-control-allow-origin"),
-            axum::http::HeaderValue::from_static("*"),
+            axum::http::HeaderValue::from_static("null"),
         );
         resp.headers_mut().insert(
             axum::http::HeaderName::from_static("access-control-allow-methods"),
@@ -290,6 +293,30 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             axum::http::HeaderName::from_static("cache-control"),
             axum::http::HeaderValue::from_static("no-store"),
         );
+        // Zero-config token injection (re-enabled after the CORS * removal
+        // above made it safe again): embed the device token as a script
+        // fragment before </head>. Cross-origin fetch of this page now can't
+        // READ the response (no ACAO header), so the token can't leak to a
+        // third-party page. Host is pinned to the device's own domains.
+        if let Some(ref token) = state.config.server.device_token {
+            let host_ok = req
+                .headers()
+                .get(axum::http::header::HOST)
+                .and_then(|h| h.to_str().ok())
+                .map(|h| h.contains("agent.saisi.online") || h.starts_with("127.0.0.1") || h.starts_with("localhost"))
+                .unwrap_or(false);
+            if host_ok {
+                let inject = format!("<script>window.__PANEL_TOKEN__={token:?};</script>");
+                let html = include_str!("../resources/panel/index.html")
+                    .replacen("</head>", &format!("{inject}</head>"), 1);
+                let mut resp2 = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
+                resp2.headers_mut().insert(
+                    axum::http::HeaderName::from_static("cache-control"),
+                    axum::http::HeaderValue::from_static("no-store"),
+                );
+                return resp2;
+            }
+        }
         return resp;
     }
     if method == Method::GET && path.starts_with("/panel/") {
