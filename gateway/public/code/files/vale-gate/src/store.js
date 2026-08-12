@@ -333,11 +333,13 @@ export async function getAdminPassword(env) {
   const key = "auth:admin_password";
   const hit = cget(key);
   if (hit !== undefined) return hit;
-  if (!env.KEYS) return env.ADMIN_PASSWORD ? await hashPassword(env.ADMIN_PASSWORD, "legacy") : "";
+  if (!env.KEYS) return env.ADMIN_PASSWORD ? `legacy:${await hashPassword(env.ADMIN_PASSWORD, "legacy")}` : "";
   let v = await env.KEYS.get(key);
   if (!v && env.ADMIN_PASSWORD) {
-    // one-time migration from the Worker secret — store it HASHED.
-    v = await hashPassword(env.ADMIN_PASSWORD, "legacy");
+    // one-time migration from the Worker secret — store HASHED in the same
+    // `salt:hash` format verifyAdminPassword expects. A bare hash (no colon)
+    // made verification permanently fail — admin locked out of the console.
+    v = `legacy:${await hashPassword(env.ADMIN_PASSWORD, "legacy")}`;
     await env.KEYS.put(key, v);
   }
   v = v || "";

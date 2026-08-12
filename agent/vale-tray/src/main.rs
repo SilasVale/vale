@@ -247,7 +247,7 @@ try {{
   # Mutual exclusion with the hourly auto-update (both download to the same
   # ValeAgent-Setup.exe path; two silent installers would race). Same
   # 60-minute staleness rule as the auto path.
-  $busy = Join-Path $env:APPDATA 'ValeAgent\update-busy'
+  $busy = Join-Path $env:ProgramData "ValeAgent\update-busy"
   if (Test-Path $busy) {{
     try {{
       $age = (Get-Date) - (Get-Item $busy).LastWriteTime
@@ -314,7 +314,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $log = Join-Path '{2}' 'vale-update.log'
 function Log($m) {{ try {{ (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m | Out-File -FilePath $log -Append -Encoding utf8 }} catch {{}} }}
-$busy = Join-Path $env:APPDATA 'ValeAgent\update-busy'
+$busy = Join-Path $env:ProgramData "ValeAgent\update-busy"
 if (Test-Path $busy) {{
   # A marker left by a crashed update (power loss, hard kill) must not
   # disable auto-update forever — the legitimate in-flight window is at most

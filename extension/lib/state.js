@@ -17,8 +17,18 @@ export async function loadPairing() {
     chrome.storage.local.get(LS_KEY),
     chrome.storage.session.get(SESSION_KEY),
   ]);
-  const device = local[LS_KEY]?.device;
-  const token = sess[SESSION_KEY];
+  let device = local[LS_KEY]?.device;
+  let token = sess[SESSION_KEY];
+  if (!device && local[LS_KEY]?.token) {
+    // LEGACY MIGRATION: pre-1.0.27 stored {device, token} in storage.local.
+    // Move the token to session storage (never write it back to local).
+    device = local[LS_KEY].device;
+    token = local[LS_KEY].token;
+    await Promise.all([
+      chrome.storage.session.set({ [SESSION_KEY]: token }),
+      chrome.storage.local.set({ [LS_KEY]: { device } }),
+    ]);
+  }
   if (device && token) state.pairedDevice = { device, token };
   return state.pairedDevice;
 }
