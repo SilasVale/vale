@@ -151,6 +151,20 @@ test("hasRegKey always reads KV (one-time keys not cached)", async () => {
   assert.equal(kv.counters.get, 2);
 });
 
+test("consumeRegKey spends the key once and grants register handoff", async () => {
+  const kv = makeKV({ "regkey:xyz789": "1" });
+  assert.equal(await store.hasRegKey(kv, "xyz789"), true);
+  await store.consumeRegKey(kv, "xyz789");
+  // spent: neither the key itself nor repeated grants can re-harvest
+  assert.equal(await store.hasRegKey(kv, "xyz789"), false);
+  assert.equal(await store.hasRegKey(kv, "xyz789"), false); // no regeneration
+  assert.equal(kv.counters.get, 3);
+  // the one-time grant lets the same install finish registration
+  assert.equal(await store.hasRegGrant(kv, "xyz789"), true); // 4th get
+  await store.deleteRegGrant(kv, "xyz789");
+  assert.equal(await store.hasRegGrant(kv, "xyz789"), false);
+});
+
 test("listUsers reads raw (not cached)", async () => {
   const kv = makeKV({ "user:alice": user("alice"), "user:bob": user("bob") });
   const users = await store.listUsers(kv);

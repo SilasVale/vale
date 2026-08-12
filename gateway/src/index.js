@@ -31,7 +31,7 @@
  *   store.js / auth.js / device-fetch.js / mcp.js / plugin-hub.js  supporting modules
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, hasRegGrant, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.js";
 import { build101Response, deviceFetch } from "./device-fetch.js";
 import { handleMcp } from "./mcp.js";
@@ -171,25 +171,32 @@ async function handleConsole(request, env, url) {
   // the install runs headless on the device machine.
   if (method === "POST" && path === "/api/register") {
     const body = await readJson(request);
-    if (!(await hasRegKey(env, body.key))) {
+    // Accept either a live key or the short-lived grant issued when the key
+    // was spent at /api/install/tunnel-token (same install, both calls).
+    const keyOk = (await hasRegKey(env, body.key)) || (await hasRegGrant(env, body.key));
+    if (!keyOk) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
     let device;
     try { device = validateDevice(body); } catch (e) { return jsonError(400, e.message, "invalid_request"); }
     await upsertDevice(env, device);
     await deleteRegKey(env, body.key); // one-time — consumed only after success
+    await deleteRegGrant(env, body.key);
     return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
   }
 
   // Public: the Windows install fetches the Cloudflare tunnel API token with a
   // valid registration key (so tunnel setup needs no browser login and no
-  // token pasted on the machine). Validates but does NOT consume the key —
-  // consumption happens at /api/register when the device is registered.
+  // token pasted on the machine). This returns the ACCOUNT-LEVEL CF API
+  // token, so the key is SPENT here (first authenticated use) and a short-
+  // lived grant is issued in its place for /api/register — a leaked or
+  // stolen key can be used exactly once, not harvested repeatedly.
   if (method === "POST" && path === "/api/install/tunnel-token") {
     const body = await readJson(request);
     if (!(await hasRegKey(env, body.key))) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
+    await consumeRegKey(env, body.key);
     return jsonOk({ ok: true, apiToken: await getCfToken(env) });
   }
 
