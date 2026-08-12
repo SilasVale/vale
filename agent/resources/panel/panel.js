@@ -51,6 +51,7 @@ const panelMain = $("panel-main");
 let hostname = "";
 let token = "";
 let lastSeq = 0;
+let lastEpoch = 0; // agent boot epoch — reset the cursor when it changes
 let lastKnown = new Set();
 let polling = false;
 let booted = false; // init() ran once — guards double-boot from loadConfig + saveConfig
@@ -612,10 +613,14 @@ async function pollEvents() {
     const j = await res.json().catch(() => ({}));
     const events = Array.isArray(j.events) ? j.events : [];
     if (j.last_seq !== undefined) {
-      // Gap detection: if our cursor fell below the ring's oldest retained
-      // seq, events were evicted while we were away — surface it instead of
-      // silently missing session opens.
-      if (j.first_seq !== undefined && lastSeq > 0 && Number(j.first_seq) > lastSeq + 1) {
+      // Epoch change (agent restarted, seq re-seeded to 1): reset the cursor
+      // so the first post-restart events are not silently skipped.
+      if (j.epoch !== undefined && j.epoch !== lastEpoch) {
+        lastEpoch = j.epoch;
+        lastSeq = 0;
+      } else if (j.first_seq !== undefined && lastSeq > 0 && Number(j.first_seq) > lastSeq + 1) {
+        // Gap detection: cursor fell below the ring's oldest retained seq —
+        // events were evicted while we were away. Surface it.
         setStatus(`missed ${Number(j.first_seq) - lastSeq - 1} events while disconnected`);
       }
       lastSeq = Number(j.last_seq) || lastSeq;

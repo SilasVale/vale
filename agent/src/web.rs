@@ -432,20 +432,31 @@ where
     tokio::spawn(async move {
         use tokio::sync::broadcast::error::RecvError;
         loop {
-            match rx.recv().await {
-                Ok(item) => {
+            // Heartbeat: an idle stream emitted zero bytes while declaring
+            // keep-alive, so a silently-dropped connection was never detected
+            // and a reconnect missed every event during the outage. Send a
+            // comment frame every 30s of silence — it keeps the socket alive
+            // AND makes the client's read loop detect a dead connection.
+            match tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv()).await {
+                Ok(Ok(item)) => {
                     if tx.send(Ok(Bytes::from(encode(&item)))).await.is_err() {
                         break;
                     }
                 }
-                Err(RecvError::Lagged(n)) => {
+                Ok(Err(RecvError::Lagged(n))) => {
                     // Client gone: stop like the Ok branch, or this task keeps
                     // the broadcast subscription and a failing send forever.
                     if tx.send(Ok(Bytes::from(lagged(n)))).await.is_err() {
                         break;
                     }
                 }
-                Err(RecvError::Closed) => break,
+                Ok(Err(RecvError::Closed)) => break,
+                Err(_) => {
+                    // 30s of silence — heartbeat.
+                    if tx.send(Ok(Bytes::from(": ping\n\n"))).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -499,11 +510,10 @@ async fn api_status(state: &AppState) -> serde_json::Value {
 // ── Event polling ───────────────────────────────────────────
 
 fn api_events_poll(state: &AppState, after: u64) -> serde_json::Value {
-    let events = state.event_bus.recent(after);
-    // last_seq lets the panel advance its cursor even when no events match —
-    // without it the panel's lastSeq stays 0 and every poll re-fetches the
-    // whole ring (resurrecting closed sessions every 2s).
-    serde_json::json!({"ok": true, "events": events, "last_seq": state.event_bus.last_seq(), "first_seq": state.event_bus.first_seq()})
+    // Atomic snapshot: events + first/last seq under ONE lock — three
+    // separate calls could see different snapshots and skip an event forever.
+    let (events, first_seq, last_seq) = state.event_bus.poll_after(after);
+    serde_json::json!({"ok": true, "events": events, "first_seq": first_seq, "last_seq": last_seq, "epoch": state.event_bus.epoch()})
 }
 
 // ── Plugin Spec ───────────────────────────────────────────────

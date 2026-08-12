@@ -69,6 +69,17 @@ pub trait EventBus: Send + Sync {
     /// detect the gap instead of silently losing them.
     fn first_seq(&self) -> u64;
 
+    /// Server boot epoch (unix seconds) — a client detects an agent restart
+    /// (seq re-seeded to 1) and resets its cursor instead of silently
+    /// skipping the first batch of post-restart events.
+    fn epoch(&self) -> u64;
+
+    /// Atomic poll snapshot: events after `after`, plus first/last seq, under
+    /// ONE lock. Three separate recent()/last_seq()/first_seq() calls could
+    /// see different snapshots — an emit between them made a client skip an
+    /// event forever.
+    fn poll_after(&self, after: u64) -> (Vec<SeqEvent>, u64, u64);
+
     /// Forward terminal output to the desktop UI (no-op by default).
     fn emit_term_output(&self, _output: serde_json::Value) {}
 }
@@ -91,18 +102,26 @@ pub struct AppEventBus {
     log: Mutex<(VecDeque<SeqEvent>, u64)>,
     hook: Hook,
     term_hook: TermHook,
+    /// Boot time (unix seconds) — the seq cursor restarts at 1 per process,
+    /// so clients use this to detect an agent restart.
+    epoch: u64,
 }
 
 impl AppEventBus {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
         let (term_tx, _) = broadcast::channel(1024);
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         Self {
             tx,
             term_tx,
             log: Mutex::new((VecDeque::with_capacity(RING_CAP + 1), 1)),
             hook: Mutex::new(None),
             term_hook: Mutex::new(None),
+            epoch,
         }
     }
 
@@ -175,6 +194,18 @@ impl EventBus for AppEventBus {
     fn first_seq(&self) -> u64 {
         let guard = recover_guard(&self.log);
         guard.0.front().map(|e| e.seq).unwrap_or(0)
+    }
+
+    fn poll_after(&self, after: u64) -> (Vec<SeqEvent>, u64, u64) {
+        let guard = recover_guard(&self.log);
+        let events = guard.0.iter().filter(|e| e.seq > after).cloned().collect();
+        let first = guard.0.front().map(|e| e.seq).unwrap_or(0);
+        let last = guard.1.saturating_sub(1);
+        (events, first, last)
+    }
+
+    fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     fn emit_term_output(&self, output: serde_json::Value) {
