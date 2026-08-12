@@ -929,6 +929,20 @@ async function handleGatewayImpl(request, env, url) {
   // whole response and flushing it at once — that made thinking look frozen and
   // could time out long generations).
   if (body.stream) {
+    const ctype = upstream.headers?.get?.("content-type") || "";
+    if (ctype.includes("application/json") && !ctype.includes("text/event-stream")) {
+      // The upstream ignored stream:true and returned a plain JSON completion
+      // (a proxy/backend quirk, or a 200-wrapped error). Feeding JSON into the
+      // SSE parser produced an EMPTY Anthropic message — the whole answer was
+      // silently dropped. Buffer + translate as a one-shot SSE instead.
+      const json = await upstream.json().catch(() => null);
+      if (json) {
+        const oneShot = toSSE(toAnthropicResponse(json, upstreamModel));
+        return new Response(oneShot, {
+          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+        });
+      }
+    }
     // Extract the scalars the encoder needs, then drop the big body object so
     // the GC can reclaim it while the (potentially minutes-long) stream runs —
     // keeping a multi-MB parsed body resident the whole time pushes the Free

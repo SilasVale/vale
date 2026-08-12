@@ -134,7 +134,14 @@ async function callApi(path, init = {}) {
       ...(init.headers || {}),
     },
   });
-  if (res.status === 401) { setStatus("unauthorized — check token", true); throw new Error("unauthorized"); }
+  if (res.status === 401) {
+    setStatus("unauthorized — check token", true);
+    // Show the 'forget credentials' escape hatch: a stale localStorage token
+    // (revoked/rotated) otherwise loops 401 forever with no recovery UI.
+    const f = $("forget-creds");
+    if (f) f.classList.remove("hidden");
+    throw new Error("unauthorized");
+  }
   if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
   return res;
 }
@@ -917,6 +924,12 @@ function mkSavedSession(sid, rec) {
 }
 
 saveBtn.addEventListener("click", saveConfig);
+$("forget-creds").addEventListener("click", () => {
+  // Clear the stale credentials and show the form again (401-loop escape).
+  try { localStorage.removeItem(LS_TOKEN); localStorage.removeItem(LS_HOST); } catch {}
+  token = ""; hostname = "";
+  location.reload();
+});
 newSessionBtn.addEventListener("click", openSession);
 exportAllBtn.addEventListener("click", exportAll);
 $("empty-pty").addEventListener("click", openSession);
