@@ -27,10 +27,12 @@ done
 # Cargo.toml, deploy/* (ps1/bat/nsi/ico) and the extension zip. A stale tray
 # (LOCAL_VERSION drift) caused an hourly reinstall loop; a stale bundled
 # fix-tunnel.ps1 caused a tunnel misconfig. Fail loudly instead of packaging.
+# NOTE: the extension zip is intentionally EXCLUDED from the agent freshness
+# guard — it is repacked independently (no dependency on the exes) and would
+# otherwise always be newer than a freshly-built exe, blocking every build.
 NEWEST_IN="$(find "$ROOT/agent/src" "$ROOT/agent/vale-command-core" "$ROOT/agent/vale-tray" \
-  "$ROOT/agent/deploy" "$ROOT/index/public/vale-agent/vale-browser-control.zip" \
-  "$ROOT/agent/Cargo.toml" \
-  \( -name '*.rs' -o -name '*.toml' -o -name '*.ps1' -o -name '*.bat' -o -name '*.nsi' -o -name '*.ico' -o -name '*.zip' \) \
+  "$ROOT/agent/deploy" "$ROOT/agent/Cargo.toml" \
+  \( -name '*.rs' -o -name '*.toml' -o -name '*.ps1' -o -name '*.bat' -o -name '*.nsi' -o -name '*.ico' \) \
   -newer "$VALEEXE" -print | head -1)"
 if [ -n "$NEWEST_IN" ]; then
   echo "!! $NEWEST_IN is newer than the release vale-agent.exe — run ./scripts/build.sh agent (release) first"
