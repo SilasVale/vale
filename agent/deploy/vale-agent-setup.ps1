@@ -307,21 +307,28 @@ if (-not (Get-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue)
 Start-ScheduledTask -TaskName "ValeAgent" | Out-Null
 Start-Sleep -Seconds 2
 
-# Verify the agent actually serves on 18080 (local probe — the tunnel can lag
-# behind). The boot task's agent also writes startup.log next to its exe, so
-# if this probe fails the log has the reason.
+# Verify the agent actually listens on 18080 (a raw TCP probe is faster and
+# cannot hang like PS 5.1's Invoke-WebRequest; the tunnel can lag behind, so
+# probe locally). The boot task's agent also writes startup.log next to its
+# exe — on failure print it here so the install output carries the diagnosis.
 $agentOk = $false
 for ($i = 0; $i -lt 10; $i++) {
+    $c = New-Object System.Net.Sockets.TcpClient
     try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:18080/" -TimeoutSec 2 -UseBasicParsing
-        if ($r.StatusCode -eq 200) { $agentOk = $true; break }
+        $iar = $c.BeginConnect("127.0.0.1", 18080, $null, $null)
+        if ($iar.AsyncWaitHandle.WaitOne(2000) -and $c.Connected) { $agentOk = $true }
     } catch { }
+    $c.Close()
+    if ($agentOk) { break }
+    Write-Host "  (probe $($i+1)/10: agent not up yet...)"
     Start-Sleep -Seconds 2
 }
 if ($agentOk) {
     Write-Host "  OK: vale-agent serving on 127.0.0.1:18080"
 } else {
-    Write-Warning "  NOT serving on 18080 yet — vale-agent startup log at: $InstallDir\startup.log"
+    Write-Warning "  NOT serving on 18080 yet — vale-agent startup log:"
+    $sl = Join-Path $InstallDir "startup.log"
+    if (Test-Path $sl) { Get-Content $sl } else { Write-Warning "  (no startup.log at $sl)" }
 }
 
 # Tray app: register an at-logon task so the tray icon appears for the logged-in

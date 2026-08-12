@@ -169,7 +169,11 @@ fn main() {
 ///   4. point the `ValeAgentTray` logon task at this install dir's tray and
 ///      start it, so the tray icon always comes back.
 ///
-/// Uses schtasks / sc / PowerShell only — no new dependencies.
+/// CRITICAL: every child process runs with a hard timeout (run_bounded).
+/// An unbounded status() wait here dead-locked the agent on d1 — startup.log
+/// showed only "starting" and nothing else, so the server never bound and
+/// the device served 502 forever. Self-heal is best-effort: a stuck step
+/// must NEVER block the bind.
 #[cfg(windows)]
 fn self_heal() {
     let exe = match std::env::current_exe() {
@@ -193,18 +197,34 @@ fn self_heal() {
          | Where-Object {{ $_.Id -ne {self_pid} -and $_.Path -ne '{exe_str}' -and $_.Path -ne '{tray_str}' }} \
          | Stop-Process -Force"
     );
-    let _ = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])
-        .status();
+    run_bounded("self-heal: kill stale procs", {
+        let mut c = std::process::Command::new("powershell");
+        c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps]);
+        c
+    });
 
     // 2. Legacy service + tasks. The boot task below replaces them.
-    let _ = std::process::Command::new("sc.exe").args(["stop", "ValeCommand"]).status();
-    let _ = std::process::Command::new("sc.exe").args(["delete", "ValeCommand"]).status();
+    run_bounded("self-heal: sc stop ValeCommand", {
+        let mut c = std::process::Command::new("sc.exe");
+        c.args(["stop", "ValeCommand"]);
+        c
+    });
+    run_bounded("self-heal: sc delete ValeCommand", {
+        let mut c = std::process::Command::new("sc.exe");
+        c.args(["delete", "ValeCommand"]);
+        c
+    });
     for name in ["ValeCommand", "ValeCommandTray"] {
-        let _ = std::process::Command::new("schtasks").args(["/End", "/TN", name]).status();
-        let _ = std::process::Command::new("schtasks")
-            .args(["/Delete", "/TN", name, "/F"])
-            .status();
+        run_bounded(&format!("self-heal: schtasks /End {name}"), {
+            let mut c = std::process::Command::new("schtasks");
+            c.args(["/End", "/TN", name]);
+            c
+        });
+        run_bounded(&format!("self-heal: schtasks /Delete {name}"), {
+            let mut c = std::process::Command::new("schtasks");
+            c.args(["/Delete", "/TN", name, "/F"]);
+            c
+        });
     }
 
     // 3. Boot task at THIS install dir. ExecutionTimeLimit 0 = never kill the
@@ -216,19 +236,50 @@ fn self_heal() {
          -Principal (New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest) \
          -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0)) -Force"
     );
-    let _ = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
-        .status();
+    run_bounded("self-heal: Register-ScheduledTask ValeAgent", {
+        let mut c = std::process::Command::new("powershell");
+        c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script]);
+        c
+    });
 
     // 4. Tray logon task — point at this install dir (keeps the registered
     //    user principal on /Change) and start it so the icon comes back now.
     if tray.exists() {
-        let _ = std::process::Command::new("schtasks")
-            .args(["/Change", "/TN", "ValeAgentTray", "/TR", &format!("\"{tray_str}\"")])
-            .status();
-        let _ = std::process::Command::new("schtasks")
-            .args(["/Run", "/TN", "ValeAgentTray"])
-            .status();
+        run_bounded("self-heal: schtasks /Change ValeAgentTray", {
+            let mut c = std::process::Command::new("schtasks");
+            c.args(["/Change", "/TN", "ValeAgentTray", "/TR", &format!("\"{tray_str}\"")]);
+            c
+        });
+        run_bounded("self-heal: schtasks /Run ValeAgentTray", {
+            let mut c = std::process::Command::new("schtasks");
+            c.args(["/Run", "/TN", "ValeAgentTray"]);
+            c
+        });
+    }
+    log_line("self-heal: complete");
+}
+
+/// Run a Windows helper process with a hard 30s timeout. Self-heal must never
+/// block the bind: a stuck PowerShell/schtasks would otherwise dead-lock the
+/// agent at every boot (this actually happened on d1). Logs start/done/timeout
+/// to startup.log so a stuck step is visible next boot.
+#[cfg(windows)]
+fn run_bounded(what: &str, mut cmd: std::process::Command) {
+    use std::time::Duration;
+    use wait_timeout::ChildExt as _;
+
+    log_line(&format!("{what} …"));
+    match cmd.spawn() {
+        Ok(mut child) => match child.wait_timeout(Duration::from_secs(30)) {
+            Ok(Some(_)) => log_line(&format!("{what} ok")),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                log_line(&format!("{what} TIMED OUT — killed, continuing"));
+            }
+            Err(e) => log_line(&format!("{what} wait error: {e}")),
+        },
+        Err(e) => log_line(&format!("{what} spawn failed: {e}")),
     }
 }
 
