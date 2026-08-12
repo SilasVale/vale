@@ -60,6 +60,10 @@ pub trait EventBus: Send + Sync {
     /// Get recent events with seq > `after` (for polling).
     fn recent(&self, after: u64) -> Vec<SeqEvent>;
 
+    /// Highest seq emitted so far (0 when none) — poll clients advance their
+    /// cursor from this even when no events match.
+    fn last_seq(&self) -> u64;
+
     /// Forward terminal output to the desktop UI (no-op by default).
     fn emit_term_output(&self, _output: serde_json::Value) {}
 }
@@ -152,6 +156,15 @@ impl EventBus for AppEventBus {
     fn recent(&self, after: u64) -> Vec<SeqEvent> {
         let guard = recover_guard(&self.log);
         guard.0.iter().filter(|e| e.seq > after).cloned().collect()
+    }
+
+    /// Highest seq emitted so far (0 when none). Lets poll clients advance
+    /// their cursor even when no events match — the poll response must return
+    /// this, otherwise the panel's lastSeq stays 0 and every 2s poll re-fetches
+    /// the whole ring and resurrects closed sessions.
+    fn last_seq(&self) -> u64 {
+        let guard = recover_guard(&self.log);
+        guard.1.saturating_sub(1)
     }
 
     fn emit_term_output(&self, output: serde_json::Value) {

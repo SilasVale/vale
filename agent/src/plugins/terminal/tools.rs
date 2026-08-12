@@ -108,6 +108,8 @@ fn tool_open(
                     };
                     let mut rx = _rx;
                     while let Some(output) = rx.recv().await {
+                        // Mark active so the idle sweeper doesn't force-close it.
+                        mgr2.touch(&sid_buf).await;
                         // Poison recovery — dropping buffered output on a poisoned
                         // lock would silently lose terminal data.
                         let mut store = recover_guard(&buf);
@@ -127,9 +129,11 @@ fn tool_open(
                     }
                     // Session ended — retain the buffer in history instead of
                     // dropping it (terminal_close also retains; whichever runs
-                    // second is a no-op).
+                    // second is a no-op), and unregister the manager entry so
+                    // the dead session is not listed as live / written to a void.
                     recover_guard(&buf)
                         .retain_live(&sid_buf, &kind, &label);
+                    mgr2.term_unregister(&sid_buf).await;
                 });
                 Ok(json!(id))
             }
@@ -467,9 +471,13 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                             } else {
                                 String::from_utf8_lossy(raw).to_string()
                             };
-                            // Advance cursor only when no explicit offset was given
+                            // Advance cursor only when no explicit offset was given.
+                            // Cursor is an ABSOLUTE stream offset (the read path
+                            // consumes it as such at line 461) — storing the
+                            // relative data.len() here re-delivered up to 1MB of
+                            // already-read output after the first eviction.
                             if !explicit_offset {
-                                entry.cursor = entry.data.len();
+                                entry.cursor = entry.dropped as usize + entry.data.len();
                             }
                             (text, start, end, entry.dropped)
                         }

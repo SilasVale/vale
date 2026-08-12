@@ -299,11 +299,20 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         // READ the response (no ACAO header), so the token can't leak to a
         // third-party page. Host is pinned to the device's own domains.
         if let Some(ref token) = state.config.server.device_token {
+            // EXACT-match host allowlist. A substring/prefix match here was
+            // bypassable — e.g. Host: evil-agent.saisi.online.evil.com matches
+            // .contains("agent.saisi.online") and the token is handed to the
+            // attacker's page. Only the device's own domains + loopback get it.
             let host_ok = req
                 .headers()
                 .get(axum::http::header::HOST)
                 .and_then(|h| h.to_str().ok())
-                .map(|h| h.contains("agent.saisi.online") || h.starts_with("127.0.0.1") || h.starts_with("localhost"))
+                .map(|h| {
+                    let h = h.trim();
+                    h == "127.0.0.1" || h.starts_with("127.0.0.1:")
+                        || h == "localhost" || h.starts_with("localhost:")
+                        || h == "agent.saisi.online" || h.ends_with(".agent.saisi.online")
+                })
                 .unwrap_or(false);
             if host_ok {
                 let inject = format!("<script>window.__PANEL_TOKEN__={token:?};</script>");
@@ -491,7 +500,10 @@ async fn api_status(state: &AppState) -> serde_json::Value {
 
 fn api_events_poll(state: &AppState, after: u64) -> serde_json::Value {
     let events = state.event_bus.recent(after);
-    serde_json::json!({"ok": true, "events": events})
+    // last_seq lets the panel advance its cursor even when no events match —
+    // without it the panel's lastSeq stays 0 and every poll re-fetches the
+    // whole ring (resurrecting closed sessions every 2s).
+    serde_json::json!({"ok": true, "events": events, "last_seq": state.event_bus.last_seq()})
 }
 
 // ── Plugin Spec ───────────────────────────────────────────────
