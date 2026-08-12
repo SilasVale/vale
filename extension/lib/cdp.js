@@ -38,6 +38,18 @@ export async function ensureTab(device, proxyUrl) {
     const tabs = await chrome.tabs.query({ url: `*://*/api/devices/${device}/proxy/*` });
     tabId = tabs[0]?.id;
   }
+  if (!tabId && attached.size) {
+    // A tab we attached to navigated AWAY from the proxy URL (or was closed
+    // behind our back) — the attached set still holds a stale tabId and the
+    // next attach to it would throw "Another debugger is already attached".
+    // Detach our own stale attachments for this device before creating fresh.
+    const stale = [...attached].filter((id) => id !== state.controlledTabs[device]);
+    for (const id of stale) {
+      try { await chrome.debugger.detach({ tabId: id }); } catch {}
+      attached.delete(id);
+    }
+    await persistAttached();
+  }
   if (!tabId) {
     const tab = await chrome.tabs.create({ url: proxyUrl });
     tabId = tab.id;

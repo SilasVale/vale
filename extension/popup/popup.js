@@ -37,12 +37,18 @@ $("openTab").addEventListener("click", async () => {
 });
 
 $("openTerminal").addEventListener("click", () => {
-  // Terminal moved to a standalone web panel (no extension needed): open the
-  // panel at the console origin. The panel asks for the device hostname +
-  // token once and stores them in localStorage.
-  chrome.storage.local.get("consoleOrigin").then(({ consoleOrigin }) => {
-    const base = (consoleOrigin || "https://api.saisi.online").replace(/\/+$/, "");
-    chrome.tabs.create({ url: `${base}/panel/` });
+  // The terminal panel is served by the DEVICE (vale-agent at
+  // https://dN.agent.saisi.online/panel/), not the gateway console — the
+  // console origin + /panel/ was a dead link (gateway has no /panel route).
+  // Open the paired device's panel directly; fall back to the console's
+  // device list (where each device links its panel).
+  chrome.storage.local.get(["consoleOrigin", "pairedDevice"]).then(({ consoleOrigin, pairedDevice }) => {
+    if (pairedDevice?.hostname) {
+      chrome.tabs.create({ url: `https://${pairedDevice.hostname}/panel/` });
+      return;
+    }
+    const base = (consoleOrigin || "https://ai.saisi.online").replace(/\/+$/, "");
+    chrome.tabs.create({ url: `${base}/` });
   });
 });
 
