@@ -55,14 +55,17 @@ fn tool_open(
     ToolDef::new(
         "terminal_open",
         "Open a terminal connection. Kind: 'pty' (local shell; target optional — blank = default shell), 'ssh' (target=user@host:port), or 'serial' (target=port_name, optional ?baud=N e.g. /dev/ttyUSB0?baud=115200, default 115200). Returns session ID.",
-        json!({"type":"object","properties":{"kind":{"type":"string","enum":["pty","ssh","serial"]},"target":{"type":"string"},"password":{"type":"string"},"rows":{"type":"integer","description":"Initial terminal rows. Default 0 (backend default)."},"cols":{"type":"integer","description":"Initial terminal columns. Default 0 (backend default)."}},"required":["kind","target"]}),
+        json!({"type":"object","properties":{"kind":{"type":"string","enum":["pty","ssh","serial"]},"target":{"type":"string","description":"pty: optional (blank = default shell); ssh: user@host:port; serial: port_name (optional ?baud=N)"},"password":{"type":"string"},"rows":{"type":"integer","description":"Initial terminal rows. Default 0 (backend default)."},"cols":{"type":"integer","description":"Initial terminal columns. Default 0 (backend default)."}},"required":["kind"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let bus = bus.clone();
             let buf = buf.clone();
             async move {
                 let kind = require_str(&params, "kind")?;
-                let target = require_str(&params, "target")?;
+                // target is OPTIONAL (pty blank = default shell) — the schema
+                // used to mark it required, contradicting the description and
+                // breaking MCP clients that omit it for pty.
+                let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let password = params.get("password").and_then(|v| v.as_str()).unwrap_or_default().to_string();
                 let rows = params.get("rows").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
                 let cols = params.get("cols").and_then(|v| v.as_u64()).unwrap_or(0) as u16;

@@ -218,6 +218,35 @@ test("stream encoder: cache hits from last chunk surface in message_start", () =
   assert.match(sseOut, /"input_tokens":271/);
 });
 
+test("stream encoder: PARALLEL tool calls each get their own block, args not concatenated", () => {
+  const enc = new AnthropicStreamEncoder("og/m", "m");
+  // OpenAI's documented interleaved parallel-tool pattern (0,1,0,1): each
+  // tool's arguments arrive as split fragments.
+  const tc = (index, id, name, args) => ({ choices: [{ index, delta: { tool_calls: [{ index, id, function: { name, arguments: args } }] } }] });
+  enc.push(tc(0, "toolu_0", "bash", '{"c'));
+  enc.push(tc(1, "toolu_1", "read", '{"p'));
+  enc.push(tc(0, undefined, undefined, 'md":"ls"}'));
+  enc.push(tc(1, undefined, undefined, 'ath":"/etc"}'));
+  const sseOut = enc.finish();
+  // Exactly two tool_use blocks (count the EVENT line, not the type field —
+  // "content_block_start" appears twice per event: event name + type).
+  const starts = (sseOut.match(/event: content_block_start/g) || []).length;
+  assert.equal(starts, 2);
+  // Each tool's block carries its own name and a stop.
+  assert.match(sseOut, /"name":"bash"/);
+  assert.match(sseOut, /"name":"read"/);
+  assert.equal((sseOut.match(/event: content_block_stop/g) || []).length, 2);
+  // The concatenated args are separate per tool, not merged: parse the
+  // input_json_delta events and rebuild each tool's accumulated arguments.
+  const byTool = { 0: "", 1: "" };
+  for (const ev of sseOut.split("\n\n").filter((e) => e.includes("input_json_delta"))) {
+    const d = JSON.parse(ev.replace(/^event: [^\n]+\n/, "").replace(/^data: /, ""));
+    byTool[d.index] += d.delta.partial_json;
+  }
+  assert.equal(byTool[0], '{"cmd":"ls"}');   // tool 0's fragments joined alone
+  assert.equal(byTool[1], '{"path":"/etc"}'); // tool 1's fragments joined alone
+});
+
 // ── streamOgToAnthropic: upstream dies mid-stream → graceful close ──
 
 test("stream: upstream throw closes the stream gracefully (no hang)", async () => {

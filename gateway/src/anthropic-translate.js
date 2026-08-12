@@ -205,6 +205,8 @@ export class AnthropicStreamEncoder {
     this.blockIndex = -1;
     this.blockType = null;      // "thinking" | "text" | "tool_use"
     this.toolIdx = undefined;   // current OpenAI tool index (parallel calls)
+    this.nextToolBlockIdx = 0;  // running content-block index for tool blocks
+    this.toolBlockIdxMap = {};  // tool index → its content-block index
     this.openToolInputs = {};   // tool index → accumulated arguments string
     this.pending = [];
     this.lastStopReason = "end_turn";
@@ -257,6 +259,13 @@ export class AnthropicStreamEncoder {
     }
     // The client expects message_start to be the first event.
     if (!this.started) this.emitStart();
+    // Close EVERY open tool block (parallel calls leave several open).
+    for (const bi of new Set(Object.values(this.toolBlockIdxMap))) {
+      this.pending.push(sse("content_block_stop", { type: "content_block_stop", index: bi }));
+    }
+    this.toolBlockIdxMap = {};
+    this.blockIndex = -1;
+    this.blockType = null;
     if (this.blockIndex >= 0) this.closeBlock();
     this.pending.push(sse("message_delta", {
       type: "message_delta",
@@ -299,7 +308,9 @@ export class AnthropicStreamEncoder {
     if (!this.started) this.emitStart();
     if (this.blockType !== type) {
       this.closeBlock();
-      this.blockIndex += 1;
+      // Shared index counter — tool blocks allocate from the same sequence so
+      // text/thinking and tool blocks never collide on an index.
+      this.blockIndex = this.nextToolBlockIdx++;
       this.blockType = type;
       const contentBlock = type === "thinking" ? { ...block, signature: "" } : { ...block };
       this.pending.push(sse("content_block_start", {
@@ -338,26 +349,43 @@ export class AnthropicStreamEncoder {
   ensureToolBlock(idx, id, name, argsDelta) {
     if (!this.started) this.emitStart();
     // PARALLEL tool calls: OpenAI streams multiple tools with increasing
-    // indices (each new tool's first chunk carries its id/name). A NEW index
-    // must open its OWN content block — previously every tool after the first
-    // was silently folded into block 0 (the second call was lost and the
-    // args concatenated into invalid JSON).
-    if (this.toolIdx !== undefined && idx !== this.toolIdx) {
-      this.closeBlock(); // close the previous tool's block
-      this.blockType = null;
-      this.blockIndex = -1;
-    }
-    this.toolIdx = idx;
-    if (this.blockIndex >= 0 && this.blockType !== "tool_use") this.closeBlock();
-    if (this.blockType !== "tool_use") {
-      this.blockIndex += 1;
+    // indices (each new tool's first chunk carries its id/name). Each tool
+    // gets its OWN content block, indexed by its tool index (a running
+    // counter re-emitted duplicate indices on interleaved 0,1,0,1 streams —
+    // round-19). text/thinking blocks stay on the running blockIndex and
+    // close before a tool block opens.
+    if (this.blockType !== null && this.blockType !== "tool_use") this.closeBlock();
+    // If this tool already has a block, route to it (interleaved streams
+    // return to tool 0 after tool 1 started) — never re-open.
+    if (this.toolBlockIdxMap[idx] !== undefined) {
+      this.blockIndex = this.toolBlockIdxMap[idx];
       this.blockType = "tool_use";
-      this.pending.push(sse("content_block_start", {
-        type: "content_block_start",
-        index: this.blockIndex,
-        content_block: { type: "tool_use", id: id || "", name: name || "unknown", input: {} },
-      }));
+      if (name) this.toolName = name;
+      if (argsDelta) {
+        const cur = this.openToolInputs[idx] || "";
+        this.openToolInputs[idx] = cur + argsDelta;
+        this.pending.push(sse("content_block_delta", {
+          type: "content_block_delta",
+          index: this.blockIndex,
+          delta: { type: "input_json_delta", partial_json: argsDelta },
+        }));
+      }
+      return;
     }
+    // A NEW tool index ALWAYS opens a fresh block — even if the current
+    // block is another tool_use (interleaved streams switch tools).
+    if (this.blockType !== null && this.blockType !== "tool_use") this.closeBlock();
+    this.toolIdx = idx;
+    // Track this tool's dedicated block index (may interleave with text).
+    const toolBlockIdx = this.nextToolBlockIdx++;
+    this.toolBlockIdxMap[idx] = toolBlockIdx;
+    this.blockIndex = toolBlockIdx;
+    this.blockType = "tool_use";
+    this.pending.push(sse("content_block_start", {
+      type: "content_block_start",
+      index: this.blockIndex,
+      content_block: { type: "tool_use", id: id || "", name: name || "unknown", input: {} },
+    }));
     if (name) {
       // zen may repeat the name on later chunks; emit a partial_json delta only for args.
       this.toolName = name;
@@ -366,9 +394,11 @@ export class AnthropicStreamEncoder {
       const cur = this.openToolInputs[idx] || "";
       const next = cur + argsDelta;
       this.openToolInputs[idx] = next;
+      // Route the delta to THIS tool's block index (interleaved streams).
+      const deltaIdx = this.toolBlockIdxMap[idx] ?? this.blockIndex;
       this.pending.push(sse("content_block_delta", {
         type: "content_block_delta",
-        index: this.blockIndex,
+        index: deltaIdx,
         delta: { type: "input_json_delta", partial_json: argsDelta },
       }));
     }

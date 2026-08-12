@@ -259,7 +259,8 @@ try {{
       Log 'check: stale busy marker, clearing'
     }} catch {{}}
   }}
-  New-Item -ItemType File -Path $busy -Force | Out-Null
+  New-Item -ItemType Directory -Force -Path (Split-Path $busy -Parent) | Out-Null
+New-Item -ItemType File -Path $busy -Force | Out-Null
   # The old tray must be gone before the installer relaunches a fresh one,
   # otherwise two tray icons appear. Kill it now — the installer restarts it
   # via the ValeAgentTray scheduled task once the new binaries are in place.
@@ -325,6 +326,7 @@ if (Test-Path $busy) {{
     Log 'auto: stale busy marker, clearing'
   }} catch {{ return }}
 }}
+New-Item -ItemType Directory -Force -Path (Split-Path $busy -Parent) | Out-Null
 New-Item -ItemType File -Path $busy -Force | Out-Null
 function Restore-Tray {{
   try {{ schtasks /Run /TN ValeAgentTray 2>$null | Out-Null; Start-Sleep -Seconds 1 }} catch {{}}
