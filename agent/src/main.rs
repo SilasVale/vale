@@ -9,13 +9,35 @@ use std::sync::Arc;
 use vale_agent::state::AppState;
 use vale_agent::Config;
 
+/// Startup log file (set in main): every out!/eout! line also lands here, so
+/// a boot-task agent (no console) or a silent crash is diagnosable by reading
+/// this file instead of asking the user to screenshot a window.
+static LOG_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+fn log_line(line: &str) {
+    if let Some(p) = LOG_FILE.get() {
+        use std::io::Write as _;
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .and_then(|mut f| writeln!(f, "{line}"));
+    }
+}
+
 /// Write a line to stdout, ignoring errors — a Windows service process has
 /// no console, and println! would panic on the invalid handle, killing the
 /// server thread before it can bind the listener.
 macro_rules! out {
+    () => {{
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\n");
+        log_line("");
+    }};
     ($($arg:tt)*) => {{
         use std::io::Write as _;
-        let _ = writeln!(std::io::stdout(), $($arg)*);
+        let line = format!($($arg)*);
+        let _ = writeln!(std::io::stdout(), "{line}");
+        log_line(&line);
     }};
 }
 
@@ -23,7 +45,9 @@ macro_rules! out {
 macro_rules! eout {
     ($($arg:tt)*) => {{
         use std::io::Write as _;
-        let _ = writeln!(std::io::stderr(), $($arg)*);
+        let line = format!($($arg)*);
+        let _ = writeln!(std::io::stderr(), "{line}");
+        log_line(&line);
     }};
 }
 
@@ -52,6 +76,16 @@ fn init_tracing() {
 
 fn main() {
     init_tracing();
+
+    // Every out!/eout! line also goes to startup.log next to this exe, so a
+    // boot-task run (no console) is diagnosable after the fact.
+    #[cfg(windows)]
+    {
+        if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+            let _ = LOG_FILE.set(dir.join("startup.log"));
+            log_line(&format!("=== vale-agent {} starting ===", env!("CARGO_PKG_VERSION")));
+        }
+    }
 
     // If the Service Control Manager launched us, run as a Windows service.
     // service_dispatcher::start() succeeds only when the process was started by
@@ -236,9 +270,28 @@ async fn run_server(config_path: PathBuf) {
 
     tracing::info!("Starting MCP server...");
 
-    if let Err(e) = vale_agent::mcp::serve(state.config.clone(), state).await {
-        fatal(&format!("Server error: {e}"));
+    // Bind with retry: a stale process can hold port 18080 for a few seconds
+    // after a reboot/upgrade (SCM starting a legacy service, a lingering
+    // instance finishing shutdown). A single failed bind used to kill the
+    // agent permanently — device d1 stayed 502 after installs. Retry up to 5
+    // times, 3s apart; every attempt lands in startup.log. serve() returns
+    // only on shutdown (Ok) or an immediate startup failure (Err).
+    let mut last_err = None;
+    for attempt in 1..=5 {
+        match vale_agent::mcp::serve(state.config.clone(), state.clone()).await {
+            Ok(()) => return,
+            Err(e) => {
+                last_err = Some(e);
+                eout!("  Server bind attempt {attempt} failed: {}", last_err.as_ref().unwrap());
+                eout!("  retrying in 3s...");
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        }
     }
+    fatal(&format!(
+        "Server failed to start after 5 attempts: {}",
+        last_err.map(|e| e.to_string()).unwrap_or_else(|| "unknown error".into())
+    ));
 }
 
 // Generates `ffi_service_main`, an `extern "system" fn(u32, *mut *mut u16)`

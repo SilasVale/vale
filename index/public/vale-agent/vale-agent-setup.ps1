@@ -307,6 +307,23 @@ if (-not (Get-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue)
 Start-ScheduledTask -TaskName "ValeAgent" | Out-Null
 Start-Sleep -Seconds 2
 
+# Verify the agent actually serves on 18080 (local probe — the tunnel can lag
+# behind). The boot task's agent also writes startup.log next to its exe, so
+# if this probe fails the log has the reason.
+$agentOk = $false
+for ($i = 0; $i -lt 10; $i++) {
+    try {
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:18080/" -TimeoutSec 2 -UseBasicParsing
+        if ($r.StatusCode -eq 200) { $agentOk = $true; break }
+    } catch { }
+    Start-Sleep -Seconds 2
+}
+if ($agentOk) {
+    Write-Host "  OK: vale-agent serving on 127.0.0.1:18080"
+} else {
+    Write-Warning "  NOT serving on 18080 yet — vale-agent startup log at: $InstallDir\startup.log"
+}
+
 # Tray app: register an at-logon task so the tray icon appears for the logged-in
 # user (highest privileges so it can start/stop the SYSTEM ValeAgent task).
 $trayExe = Join-Path $InstallDir "vale-tray.exe"
@@ -374,7 +391,9 @@ $ErrorActionPreference = $oldEAP2
 if ($scCode -ne 0 -and $scCode -ne 1056) { throw "cloudflared service failed to start (exit $scCode)" }
 
 Start-Sleep -Seconds 2
-$token = (Select-String -Path $cfg -Pattern "auth_token:").Line
+# 1.0 renamed auth_token → device_token; both may appear depending on the
+# install that wrote config.yaml. Match either.
+$token = (Select-String -Path $cfg -Pattern "auth_token:|device_token:" | Select-Object -First 1).Line
 
 Write-Host "`n=== DONE ==="
 Write-Host "Device: https://$Hostname/     (status page; API + MCP need the token)"
@@ -387,7 +406,7 @@ Write-Host ""
 Write-Host "Give it ~10 seconds for the tunnel to come up, then connect Claude Code to the MCP URL (or open the console at https://ai.saisi.online/)."
 
 # Write a result file the NSIS installer's finish page reads to show the token.
-$tokenVal = ($token -split "auth_token:\s*")[1]
+if ($token -match 'token:\s*(\S+)') { $tokenVal = $Matches[1] } else { $tokenVal = "" }
 @"
 TOKEN=$tokenVal
 MCP=https://$Hostname/mcp
@@ -412,10 +431,12 @@ if ($env:VALE_REG_KEY) {
             -ContentType "application/json" -Body $regBody | Out-Null
         Write-Host "  registered $regName -> console (hostname/token auto-configured)."
     } catch {
+        $respDetail = $_.ErrorDetails.Message
         Write-Warning "  auto-register failed: $($_.Exception.Message)"
-        Write-Warning "  Add this device manually in the console: name=$regName host=$Hostname token (above)."
+        if ($respDetail) { Write-Warning "  server said: $respDetail" }
+        Write-Warning "  Add this device manually in the console: name=$regName host=$Hostname token=$tokenVal"
     }
     # The registration key is single-use — never leave it on disk where any
     # local user could read it and mint Cloudflare API tokens.
-    if (Test-Path $regKeyFile) { Remove-Item $regKeyFile -Force }
+    if ($regKeyFile -and (Test-Path $regKeyFile)) { Remove-Item $regKeyFile -Force }
 }
