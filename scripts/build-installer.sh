@@ -74,6 +74,22 @@ DEST="$ROOT/index/public/vale-agent"
 cp "$STAGE/ValeAgent-Setup.exe" "$DEST/ValeAgent-Setup.exe"
 cp "$VALEEXE" "$DEST/vale-agent.exe"
 cp "$TRAYEXE" "$DEST/vale-tray.exe"
+# Refresh the gateway's code-viewer mirror of the worker source — the public
+# /code/ viewer was drifting 1000+ lines behind live src with no pipeline step.
+CODE_DIR="$ROOT/gateway/public/code/files/vale-gate"
+if [ -d "$CODE_DIR" ]; then
+  cp "$ROOT/gateway/src/index.js" "$CODE_DIR/src/index.js"
+  cp "$ROOT/gateway/src/store.js" "$CODE_DIR/src/store.js"
+  cp "$ROOT/gateway/src/auth.js" "$CODE_DIR/src/auth.js"
+  cp "$ROOT/gateway/src/body-scan.js" "$CODE_DIR/src/body-scan.js"
+  cp "$ROOT/gateway/src/channels.js" "$CODE_DIR/src/channels.js"
+  cp "$ROOT/gateway/src/reliability.js" "$CODE_DIR/src/reliability.js"
+  cp "$ROOT/gateway/src/plugin-hub.js" "$CODE_DIR/src/plugin-hub.js"
+  cp "$ROOT/gateway/public/index.html" "$CODE_DIR/public/index.html"
+  cp "$ROOT/gateway/public/app.js" "$CODE_DIR/public/app.js"
+  cp "$ROOT/gateway/public/style.css" "$CODE_DIR/public/style.css"
+  echo "  synced code viewer mirror ($CODE_DIR)"
+fi
 # Keep the whole deploy set in sync — the site serves all of these, not just
 # the binaries. (fix-tunnel.ps1 was previously bundled into the installer but
 # never refreshed on the site, serving a stale copy to irm users.)

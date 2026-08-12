@@ -114,6 +114,10 @@ fn tool_open(
                         // lock would silently lose terminal data.
                         let mut store = recover_guard(&buf);
                         let entry = store.live.entry(sid_buf.clone()).or_default();
+                        // The frame's ABSOLUTE start offset, attached to the SSE
+                        // frame so the panel can skip bytes already delivered by
+                        // a concurrent terminal_read (dedup — see panel.js).
+                        let frame_start = entry.end_abs();
                         entry.data.extend_from_slice(&output.data);
                         // Cap at 1 MB — evict oldest half if exceeded. The
                         // cursor is ABSOLUTE (dropped+len); eviction advances
@@ -126,9 +130,12 @@ fn tool_open(
                             entry.dropped += remove as u64;
                         }
                         drop(store);
-                        if let Ok(v) = serde_json::to_value(&output) {
-                            bus2.emit_term_output(v);
+                        // Attach the start offset to the emitted frame.
+                        let mut framed = serde_json::to_value(&output).unwrap_or_default();
+                        if let Some(obj) = framed.as_object_mut() {
+                            obj.insert("start".into(), serde_json::json!(frame_start));
                         }
+                        bus2.emit_term_output(framed);
                     }
                     // Session ended — retain the buffer in history instead of
                     // dropping it (terminal_close also retains; whichever runs

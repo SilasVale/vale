@@ -31,7 +31,7 @@
  *   store.js / auth.js / device-fetch.js / mcp.js / plugin-hub.js  supporting modules
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, deleteRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, hasRegGrant, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.js";
 import { build101Response, deviceFetch } from "./device-fetch.js";
 import { handleMcp } from "./mcp.js";
@@ -171,25 +171,47 @@ async function handleConsole(request, env, url) {
   // the install runs headless on the device machine.
   if (method === "POST" && path === "/api/register") {
     const body = await readJson(request);
-    if (!(await hasRegKey(env, body.key))) {
+    // Accept either a live key or the short-lived grant issued when the key
+    // was spent at /api/install/tunnel-token (same install, both calls).
+    const keyOk = (await hasRegKey(env, body.key)) || (await hasRegGrant(env, body.key));
+    if (!keyOk) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
     let device;
     try { device = validateDevice(body); } catch (e) { return jsonError(400, e.message, "invalid_request"); }
     await upsertDevice(env, device);
     await deleteRegKey(env, body.key); // one-time — consumed only after success
+    await deleteRegGrant(env, body.key);
     return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
   }
 
   // Public: the Windows install fetches the Cloudflare tunnel API token with a
   // valid registration key (so tunnel setup needs no browser login and no
-  // token pasted on the machine). Validates but does NOT consume the key —
-  // consumption happens at /api/register when the device is registered.
+  // token pasted on the machine). This returns the ACCOUNT-LEVEL CF API
+  // token, so the key is SPENT here (first authenticated use) and a short-
+  // lived grant is issued in its place for /api/register — a leaked or
+  // stolen key can be used exactly once, not harvested repeatedly.
   if (method === "POST" && path === "/api/install/tunnel-token") {
     const body = await readJson(request);
-    if (!(await hasRegKey(env, body.key))) {
+    const k = String(body.key || "").toLowerCase();
+    if (!k || !(await hasRegKey(env, k))) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
+    // Single-flight: claim the key with a short TTL lock FIRST, then consume.
+    // hasRegKey→consume was check-then-act on eventually-consistent KV — two
+    // concurrent requests could both pass the check and both harvest the
+    // account-level CF token. The lock key makes the claim atomic-enough (KV
+    // put-if-absent is not available; a 30s TTL lock bounds the race).
+    const claim = await env.KEYS.get(`regclaim:${k}`);
+    if (claim) {
+      return jsonError(403, "Registration key already in use", "authorization_error");
+    }
+    await env.KEYS.put(`regclaim:${k}`, "1", { expirationTtl: 30 });
+    if (!(await hasRegKey(env, k))) {
+      await env.KEYS.delete(`regclaim:${k}`);
+      return jsonError(403, "Invalid or used registration key", "authorization_error");
+    }
+    await consumeRegKey(env, k);
     return jsonOk({ ok: true, apiToken: await getCfToken(env) });
   }
 
@@ -530,7 +552,10 @@ async function authLogin(request, env, secure) {
   // Brute-force throttle: 5 consecutive failures lock the username for 30s
   // (exponential backoff would need the failure count; a flat lock is simple
   // and stops online guessing of the 6-8 char passwords).
-  const lockKey = `login-lock:${String(body.username || "").toLowerCase()}`;
+  // Trim + lowercase: findUserByUsername trims, so an untrimmed key let
+  // "admin " variants bypass the lock while still reaching the real admin
+  // password check (brute-force bypass).
+  const lockKey = `login-lock:${String(body.username || "").trim().toLowerCase()}`;
   const locked = await env.KEYS.get(lockKey);
   if (locked) {
     return jsonError(429, "Too many attempts — try again in ~30s", "rate_limited");
@@ -610,7 +635,11 @@ async function handleGatewayImpl(request, env, url) {
     return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
   const rawText = await request.text();
-  if (rawText.length > MAX_BODY_BYTES) {
+  // The post-read guard must compare BYTES, not UTF-16 code units: a CJK/
+  // emoji body is up to 3 bytes per char, so a length check let ~3x the
+  // intended size through and blew the scan/parse CPU budget it exists to
+  // prevent. TextEncoder().encode().length is the cheap byte measure here.
+  if (new TextEncoder().encode(rawText).length > MAX_BODY_BYTES) {
     return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
   const { model: scannedModel } = scanTopLevelModel(rawText);
@@ -732,6 +761,12 @@ async function handleGatewayImpl(request, env, url) {
     if (route.kind === "opencode" && !opencodeGoKey) {
       return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
     }
+    // The og-native passthrough previously BYPASSED the circuit breaker — a
+    // dead channel kept getting routed (health lied, model=auto stuck on it).
+    // Check the breaker up front like the translate path does.
+    if (route.kind === "opencode" && await isChannelDegraded(env)) {
+      return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
+    }
     // og-native parsed the body above (web-search detection, image
     // pre-processing) — forward THAT (images must arrive described, deepseek
     // is text-only). ds/qw/or never parse: raw text with only the top-level
@@ -747,8 +782,9 @@ async function handleGatewayImpl(request, env, url) {
       body: forwardBody,
     }, { timeoutMs: passthroughTimeoutMs(env, route.kind) });
     if (!upstream) {
-      // Slow failure (timeout / network error) — single attempt, no retry, no
-      // breaker trip (passthrough channels have no breaker anyway).
+      // Slow failure (timeout / network error) — single attempt, no retry.
+      // A hard network failure counts toward the og breaker.
+      if (route.kind === "opencode" && detail?.startsWith("network error")) await recordChannelFailure(env);
       return jsonError(502, `upstream ${route.kind}: ${detail}`, "api_error");
     }
     if (!upstream.ok) {
@@ -757,8 +793,11 @@ async function handleGatewayImpl(request, env, url) {
         const err = await upstream.json();
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
       } catch { /* non-JSON error body */ }
+      // A real response resets the og consecutive-failure count.
+      if (route.kind === "opencode") await recordChannelSuccess(env);
       return jsonError(upstream.status, message, "api_error");
     }
+    if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
     headers.set("Access-Control-Allow-Origin", "*");
     return new Response(upstream.body, { status: upstream.status, headers });

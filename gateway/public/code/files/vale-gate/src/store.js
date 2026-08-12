@@ -415,11 +415,20 @@ export async function deleteDevice(env, name) {
  * install ($env:VALE_REG_KEY). The install script calls POST /api/register with
  * the key + the device's {name, hostname, token}, so a device appears in the
  * console without copying the token by hand. regkey:<code> → "1".
+ *
+ * Keys expire after 1h and are SPENT at their first authenticated use. The
+ * tunnel-token endpoint consumes the key (it hands back the account-level
+ * Cloudflare API token, so it must not be harvestable repeatedly) and issues
+ * a short-lived grant; /api/register accepts either the live key or the
+ * grant, so a real install (tunnel-token → register) completes on one key.
  */
+
+const REGKEY_TTL = 60 * 60;        // 1h — bounded window for a leaked key
+const REGGRANT_TTL = 15 * 60;      // 15 min — same-install register handoff
 
 export async function createRegKey(env) {
   const code = randomHex(8).toLowerCase();
-  if (env.KEYS) await env.KEYS.put(`regkey:${code}`, "1");
+  if (env.KEYS) await env.KEYS.put(`regkey:${code}`, "1", { expirationTtl: REGKEY_TTL });
   return code;
 }
 
@@ -428,9 +437,28 @@ export async function hasRegKey(env, code) {
   return !!(await env.KEYS.get(`regkey:${String(code).toLowerCase()}`));
 }
 
+export async function hasRegGrant(env, code) {
+  if (!env.KEYS || !code) return false;
+  return !!(await env.KEYS.get(`reggrant:${String(code).toLowerCase()}`));
+}
+
 export async function deleteRegKey(env, code) {
   if (!env.KEYS || !code) return;
   await env.KEYS.delete(`regkey:${String(code).toLowerCase()}`);
+}
+
+export async function deleteRegGrant(env, code) {
+  if (!env.KEYS || !code) return;
+  await env.KEYS.delete(`reggrant:${String(code).toLowerCase()}`);
+}
+
+/// Spend a registration key: delete it and issue a short-lived grant so the
+/// same install can still complete /api/register.
+export async function consumeRegKey(env, code) {
+  const k = String(code).toLowerCase();
+  if (!env.KEYS || !k) return;
+  await env.KEYS.delete(`regkey:${k}`);
+  await env.KEYS.put(`reggrant:${k}`, "1", { expirationTtl: REGGRANT_TTL });
 }
 
 /* ---------------- Plugin (extension) registry ----------------

@@ -465,6 +465,11 @@ async function startSharedStream() {
               if (!frame.session_id) { s.needSync = true; continue; }
               if (frame.session_id !== s.sid) continue;
               if (Array.isArray(frame.data)) {
+                // Dedup vs terminal_read: the server attaches the frame's
+                // absolute start offset; if a concurrent sync/backfill read
+                // already delivered these bytes (renderedBytes advanced past
+                // it), skip — otherwise the same bytes render twice.
+                if (typeof frame.start === "number" && frame.start < s.renderedBytes) continue;
                 s.term.write(new Uint8Array(frame.data));
                 s.renderedBytes += frame.data.length;
                 s.sseDirty = true;

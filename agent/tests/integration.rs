@@ -160,9 +160,11 @@ fn eventbus_ring_cap_and_resume() {
         bus.emit(&vale_agent::AgentEvent::ShellExec { command: format!("cmd{i}") });
     }
     let all = bus.recent(0);
-    assert_eq!(all.len(), 200);
-    assert_eq!(all[0].seq, 51); // seq 1–50 evicted
-    assert_eq!(all[199].seq, 250);
+    // Cap is 256 (was 200 — must match the broadcast channel cap so a Lagged
+    // subscriber can always catch up via poll); 250 events fit, none evicted.
+    assert_eq!(all.len(), 250);
+    assert_eq!(all[0].seq, 1);
+    assert_eq!(all[249].seq, 250);
     // A poller that saw seq 240 resumes with exactly the new 10 —
     // this is the bug the old skip(count)-on-ring design broke after 200 events.
     let tail = bus.recent(240);

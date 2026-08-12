@@ -85,7 +85,10 @@ pub trait EventBus: Send + Sync {
 }
 
 /// Max events retained in the ring buffer.
-const RING_CAP: usize = 200;
+// Must be >= the broadcast channel cap (256) so a Lagged subscriber can
+// always catch up by polling from its last seq — with 200 < 256, poll could
+// never replay the broadcast's retained window.
+const RING_CAP: usize = 256;
 
 /// Emit hook (e.g. Tauri event forwarding).
 type Hook = Mutex<Option<Box<dyn Fn(u64, &AgentEvent) + Send + Sync>>>;
