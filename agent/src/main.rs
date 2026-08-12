@@ -83,6 +83,14 @@ fn main() {
         return;
     }
 
+    // Legacy-install self-heal BEFORE the tunnel repair and the server bind:
+    // a 0.8.x install (vale-command.exe + ValeCommand service/tasks) can
+    // coexist with this binary and grab port 18080 first — the SCM starts
+    // its service before the ValeAgent boot task, so the new server dies on
+    // bind and the device silently keeps serving the old version.
+    #[cfg(windows)]
+    self_heal();
+
     // Self-heal the cloudflared tunnel on startup: if the bundled
     // fix-tunnel.ps1 exists (it repairs a legacy vale-command-dN tunnel +
     // *.command.saisi.online ingress to vale-agent-dN + *.agent.saisi.online,
@@ -107,6 +115,84 @@ fn main() {
 
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(run_server(config_path));
+}
+
+/// Windows boot self-heal — runs before the listener binds, idempotent.
+///
+/// A legacy 0.8.x install (vale-command.exe + the `ValeCommand` service and
+/// scheduled tasks) can coexist with this binary: the SCM starts the service
+/// before the `ValeAgent` boot task, the old process grabs port 18080, and
+/// this server dies on bind — the device silently keeps serving the old
+/// version after an upgrade. Repair that here:
+///   1. kill every vale binary that is not THIS install dir (incl. the
+///      legacy vale-command.exe, which is never this exe),
+///   2. drop the legacy `ValeCommand` service + tasks — the `ValeAgent` boot
+///      task is the canonical autostart (a service + task would race for the
+///      port at every boot),
+///   3. re-register the `ValeAgent` boot task pointing at this exe + config
+///      (fixes a manual file-copy update into a different dir; keeps the
+///      unlimited ExecutionTimeLimit so the server never dies after 72h),
+///   4. point the `ValeAgentTray` logon task at this install dir's tray and
+///      start it, so the tray icon always comes back.
+///
+/// Uses schtasks / sc / PowerShell only — no new dependencies.
+#[cfg(windows)]
+fn self_heal() {
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return, // no exe path, nothing to repair
+    };
+    let exe_str = exe.to_string_lossy().into_owned();
+    let install_dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let tray = install_dir.join("vale-tray.exe");
+    let tray_str = tray.to_string_lossy().into_owned();
+    let cfg_str = install_dir.join("config.yaml").to_string_lossy().into_owned();
+
+    // 1. Stale binaries from other installs (they lock the exe AND hold the
+    //    port). Runs as SYSTEM at boot; Stop-Process -Force is fine from
+    //    there. Processes at THIS install dir are never touched.
+    let ps = format!(
+        "Get-Process vale-agent,vale-command,vale-tray -ErrorAction SilentlyContinue \
+         | Where-Object {{ $_.Path -ne '{exe_str}' -and $_.Path -ne '{tray_str}' }} \
+         | Stop-Process -Force"
+    );
+    let _ = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])
+        .status();
+
+    // 2. Legacy service + tasks. The boot task below replaces them.
+    let _ = std::process::Command::new("sc.exe").args(["stop", "ValeCommand"]).status();
+    let _ = std::process::Command::new("sc.exe").args(["delete", "ValeCommand"]).status();
+    for name in ["ValeCommand", "ValeCommandTray"] {
+        let _ = std::process::Command::new("schtasks").args(["/End", "/TN", name]).status();
+        let _ = std::process::Command::new("schtasks")
+            .args(["/Delete", "/TN", name, "/F"])
+            .status();
+    }
+
+    // 3. Boot task at THIS install dir. ExecutionTimeLimit 0 = never kill the
+    //    task (the Task Scheduler default of 72h silently stops the server).
+    let script = format!(
+        "Register-ScheduledTask -TaskName 'ValeAgent' \
+         -Action (New-ScheduledTaskAction -Execute '{exe_str}' -Argument '\"{cfg_str}\"') \
+         -Trigger (New-ScheduledTaskTrigger -AtStartup) \
+         -Principal (New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest) \
+         -Settings (New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0)) -Force"
+    );
+    let _ = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .status();
+
+    // 4. Tray logon task — point at this install dir (keeps the registered
+    //    user principal on /Change) and start it so the icon comes back now.
+    if tray.exists() {
+        let _ = std::process::Command::new("schtasks")
+            .args(["/Change", "/TN", "ValeAgentTray", "/TR", &format!("\"{tray_str}\"")])
+            .status();
+        let _ = std::process::Command::new("schtasks")
+            .args(["/Run", "/TN", "ValeAgentTray"])
+            .status();
+    }
 }
 
 /// Load config (creating a default file + auth token if missing); persist and
