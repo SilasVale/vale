@@ -59,7 +59,10 @@ export function __clearCaches() {
 
 /* Route selection (model=auto): short-TTL cache — a switch must take effect
  * fast across isolates; 60s bounds staleness to a minute. */
-const ROUTE_CACHE_TTL = 60 * 1000;
+// 2s: a model=auto route switch must take effect nearly immediately across
+// isolates (was 60s — the user clicked 'switch channel' and the next request
+// on a different isolate still used the old route for a minute).
+const ROUTE_CACHE_TTL = 2 * 1000;
 const __rc = new Map(); // route:<id> -> { v, exp }
 function rcget(k) {
   const e = __rc.get(k);

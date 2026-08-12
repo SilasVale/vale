@@ -18,7 +18,7 @@
  * takes 45s to fail will simply fail again; retries only help fast 5xx/429s.
  * Returns { response, detail } where detail explains the failure for the 502.
  */
-export async function fetchWithRetry(url, init, { attempts = 3, backoffMs = 750, timeoutMs = 30000 } = {}) {
+export async function fetchWithRetry(url, init, { attempts = 3, backoffMs = 750, timeoutMs = 30000, idempotent = false } = {}) {
   let last = null;
   let detail = "";
   for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -31,11 +31,26 @@ export async function fetchWithRetry(url, init, { attempts = 3, backoffMs = 750,
     if (last.ok || !(last.status >= 500 || last.status === 429)) {
       return { response: last, detail: "" };
     }
+    // A 5xx AFTER the upstream processed the request may have billed the
+    // user's BYOK key — re-sending the identical POST double-charges. Only
+    // retry 5xx when the caller says the request is idempotent (safe probes).
+    // 429 (rate-limited, NOT processed) is always safe to retry.
+    if (last.status === 429) {
+      detail = `upstream 429 (retried ${attempt}/${attempts})`;
+      console.error(`[gateway] upstream 429 on attempt ${attempt}/${attempts} — retrying`);
+      if (attempt < attempts) {
+        await new Promise((r) => setTimeout(r, backoffMs * attempt));
+        continue;
+      }
+      return { response: last, detail };
+    }
+    if (!idempotent || attempt >= attempts) {
+      detail = `upstream ${last.status} (${idempotent ? `retried ${attempt}/${attempts}` : "not retried — POST may have been billed"})`;
+      return { response: last, detail };
+    }
     detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
     console.error(`[gateway] upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
-    if (attempt < attempts) {
-      await new Promise((r) => setTimeout(r, backoffMs * attempt));
-    }
+    await new Promise((r) => setTimeout(r, backoffMs * attempt));
   }
   return { response: last, detail };
 }

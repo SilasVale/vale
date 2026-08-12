@@ -258,54 +258,50 @@ test("og translate success resets the breaker failure count", async () => {
     },
   });
   let n = 0;
-  const res = await withFetch(async () => (++n === 1 ? new Response("boom", { status: 500 }) : new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } })), () =>
+  const res = await withFetch(async () => (++n, new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } })), () =>
     post(env, token, { model: "og/mimo-v2.5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(res.status, 200);
-  assert.equal(trips.length, 0); // 500 is retried, never a breaker failure
+  assert.equal(trips.length, 0);
   assert.equal(resets.length, 1); // success → count reset
 });
 
-test("og translate fast 500: retried via fetchWithRetry, breaker NOT tripped", async () => {
+test("og translate fast 500: NOT retried (billable POST), 502, breaker NOT tripped", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips, timeout: 1000 });
   let n = 0;
-  const res = await withFetch(async () => (++n === 1 ? new Response("boom", { status: 500 }) : new Response("{}", { status: 200, headers: { "content-type": "application/json" } })), () =>
+  const res = await withFetch(async () => (++n, new Response("boom", { status: 500 })), () =>
     post(env, token, { model: "og/mimo-v2.5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
   );
-  assert.equal(n, 2);
+  assert.equal(n, 1); // single attempt — re-sending would double-bill
   assert.equal(trips.length, 0);
-  assert.equal(res.status, 200);
+  assert.equal(res.status, 502);
 });
 
 // ── ds passthrough retries (absorb fast 5xx/429, never slow failures) ──
 
-test("ds passthrough: 500 then 200 → retried, client gets 200", async () => {
+test("ds passthrough: 500 → NOT retried (billable POST), single attempt", async () => {
   const { env, token } = gwEnv({ timeout: 1000 });
   let n = 0;
   let seen;
   const res = await withFetch(async (url, init) => {
     seen = { url, init };
-    return ++n === 1
-      ? new Response("boom", { status: 500 })
-      : new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    return ++n, new Response("boom", { status: 500 });
   }, () =>
     post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
   );
-  assert.equal(n, 2);
-  assert.equal(res.status, 200);
+  assert.equal(n, 1); // single attempt — re-sending would double-bill
+  assert.equal(res.status, 500);
   assert.equal(seen.url, "https://api.deepseek.com/anthropic/v1/messages");
-  const body = await res.json();
-  assert.equal(body.content[0].text, "ok");
 });
 
-test("ds passthrough: 500 ×3 → upstream status passed through (not wrapped as 502)", async () => {
+test("ds passthrough: 500 → upstream status passed through, single attempt", async () => {
   const { env, token } = gwEnv({ timeout: 1000 });
   let n = 0;
   const res = await withFetch(async () => (++n, new Response(JSON.stringify({ error: { message: "upstream busy" } }), { status: 500, headers: { "content-type": "application/json" } })), () =>
     post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
   );
-  assert.equal(n, 3);
+  assert.equal(n, 1);
   assert.equal(res.status, 500); // ds passthrough surfaces the upstream status
 });
 
@@ -337,14 +333,14 @@ test("og-native passthrough: missing OPENCODE_GO_API_KEY → 502 config_error (n
   assert.match(body.error.message, /OPENCODE_GO_API_KEY not configured/);
 });
 
-test("og translate: 500 ×3 → 502, breaker NOT tripped (fast 5xx stays with retries)", async () => {
+test("og translate: 500 → 502 single attempt (billable POST not retried)", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips, timeout: 1000 });
   let n = 0;
   const res = await withFetch(async () => (++n, new Response(JSON.stringify({ error: { message: "upstream busy" } }), { status: 500, headers: { "content-type": "application/json" } })), () =>
     post(env, token, { model: "og/mimo-v2.5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
   );
-  assert.equal(n, 3); // retried 3 attempts
+  assert.equal(n, 1); // single attempt — re-sending would double-bill
   assert.equal(res.status, 502);
   assert.equal(trips.length, 0); // fast 5xx must not trip the breaker
 });

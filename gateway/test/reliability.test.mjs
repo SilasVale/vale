@@ -51,26 +51,35 @@ test("network error: single attempt, no retry", async () => {
   });
 });
 
-test("fast 500 ×3: retried, detail says retried 3/3", async () => {
+test("fast 500 ×3 with idempotent: retried, detail says retried 3/3", async () => {
   await withFetch(async () => ok(500, { error: { message: "Internal server error" } }), async () => {
-    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000, idempotent: true });
     assert.equal(response.status, 500);
     assert.match(detail, /upstream 500 \(retried 3\/3\)/);
     assertFetchCalls(3);
   });
 });
 
-test("500 then 200: retry succeeds, no detail", async () => {
+test("500 ×3 NON-idempotent (billable POST): NOT retried — single attempt", async () => {
+  await withFetch(async () => ok(500, { error: { message: "Internal server error" } }), async () => {
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
+    assert.equal(response.status, 500);
+    assert.match(detail, /not retried — POST may have been billed/);
+    assertFetchCalls(1);
+  });
+});
+
+test("500 then 200 with idempotent: retry succeeds, no detail", async () => {
   let n = 0;
   await withFetch(async () => (++n === 1 ? ok(500) : ok(200, { id: "x" })), async () => {
-    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000, idempotent: true });
     assert.equal(response.status, 200);
     assert.equal(detail, "");
     assertFetchCalls(2);
   });
 });
 
-test("429 counts as retryable", async () => {
+test("429 counts as retryable (not processed — safe)", async () => {
   await withFetch(async () => ok(429), async () => {
     const { response } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
     assert.equal(response.status, 429);
