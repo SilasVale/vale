@@ -109,17 +109,26 @@ Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
 # service before the ValeAgent boot task at every restart and wins the port,
 # so the new server dies on bind. The boot task below is the canonical
 # autostart — drop the service and the old tasks.
-# NOTE: these legacy items usually don't exist, and schtasks/sc.exe write
-# their error to stderr on a missing item. Under $ErrorActionPreference=Stop
-# PS 5.1 turns that into a terminating NativeCommandError, so every command
-# must redirect stderr to $null (2>$null) — never 2>&1, which keeps it in the
-# error stream.
-sc.exe stop ValeCommand 2>$null
-sc.exe delete ValeCommand 2>$null
-schtasks /End /TN ValeCommand 2>$null
-schtasks /Delete /TN ValeCommand /F 2>$null
-schtasks /End /TN ValeCommandTray 2>$null
-schtasks /Delete /TN ValeCommandTray /F 2>$null
+# NOTE: these items usually don't exist, and schtasks/sc.exe print an error
+# on a missing item. Under $ErrorActionPreference=Stop, PS 5.1 turns that
+# into a TERMINATING NativeCommandError EVEN with 2>$null (proven on d1:
+# 'schtasks /End /TN ValeCommand 2>$null' aborted the script at [1/7]). The
+# only reliable combo is scoping EAP to Continue around the calls (stderr
+# discarded via 2>$null, no error record) and checking $LASTEXITCODE where
+# a real failure matters.
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    sc.exe stop ValeCommand 2>$null | Out-Null
+    sc.exe delete ValeCommand 2>$null | Out-Null
+    schtasks /End /TN ValeCommand 2>$null | Out-Null
+    schtasks /Delete /TN ValeCommand /F 2>$null | Out-Null
+    schtasks /End /TN ValeCommandTray 2>$null | Out-Null
+    schtasks /Delete /TN ValeCommandTray /F 2>$null | Out-Null
+    sc.exe delete ValeAgent 2>$null | Out-Null   # remove any old broken service
+} finally {
+    $ErrorActionPreference = $oldEAP
+}
 if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-agent.exe" $exe -Force }
 # Tray app: re-download on updates too. The NSIS installer bundles it for fresh
 # installs, but the script path must fetch it so an update also refreshes the
@@ -154,7 +163,13 @@ if (-not (Test-Path $cfg)) {
 Write-Host "`n[2/7] cloudflared"
 if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
     Write-Host "  installing via winget..."
-    winget install --id Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements
+    # Same PS 5.1 stderr trap as the legacy cleanup: winget writes to stderr
+    # on failure, which would abort under EAP=Stop — scope to Continue and
+    # check the exit code.
+    $oldEAP3 = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    winget install --id Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements 2>$null
+    $ErrorActionPreference = $oldEAP3
     if ($LASTEXITCODE -ne 0) { throw "winget install cloudflared failed (exit $LASTEXITCODE)" }
     # winget registers cloudflared in the registry PATH, but THIS session's
     # $env:PATH is a snapshot from process start. Rebuild it from the registry
@@ -279,7 +294,6 @@ Copy-Item (Join-Path $cfDir "$tunnelId.json") (Join-Path $sysCfDir "$tunnelId.js
 Write-Host "`n[6/7] vale-agent boot task"
 Stop-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue | Out-Null
 Unregister-ScheduledTask -TaskName "ValeAgent" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-sc.exe delete ValeAgent 2>$null   # remove any old broken service
 $action = New-ScheduledTaskAction -Execute $exe -Argument "`"$cfg`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
@@ -349,7 +363,11 @@ try {
     $ErrorActionPreference = $oldEAP
 }
 if ($LASTEXITCODE -ne 0) { throw "cloudflared service install failed (exit $LASTEXITCODE)" }
+$oldEAP2 = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 sc.exe start Cloudflared 2>$null
+$ErrorActionPreference = $oldEAP2
+if ($LASTEXITCODE -ne 0) { throw "cloudflared service failed to start (exit $LASTEXITCODE)" }
 
 Start-Sleep -Seconds 2
 $token = (Select-String -Path $cfg -Pattern "auth_token:").Line
