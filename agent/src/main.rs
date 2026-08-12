@@ -291,6 +291,11 @@ fn load_config(config_path: &PathBuf) -> Config {
         Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
     };
     if let Some(token) = token {
+        // A NEW token was generated — either a fresh install or the
+        // device_token line was dropped/emptied by a hand-edit. The latter
+        // silently 401s every remote client until they update; warn loudly.
+        eout!("  WARNING: no valid device_token in config — generated a NEW token.");
+        eout!("  Every client using the OLD token (console, MCP, panel) will 401 until updated.");
         let yaml = serde_yaml::to_string(&config).expect("serialize config");
         std::fs::write(config_path, &yaml).ok();
         out!("  Auth token: {token}  (saved to {})", config_path.display());
