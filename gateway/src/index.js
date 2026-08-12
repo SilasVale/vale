@@ -162,6 +162,19 @@ async function handleConsole(request, env, url) {
   if (method === "POST" && path === `${AUTH_BASE}/register`) return authRegister(request, env, secure);
   if (method === "POST" && path === `${AUTH_BASE}/login`) return authLogin(request, env, secure);
   if (method === "POST" && path === `${AUTH_BASE}/logout`) {
+    // Revoke the session server-side: the HMAC cookie alone was cleared
+    // client-side, but a copied cookie stayed valid for the full 24h. Blacklist
+    // the token hash in KV until its exp so it dies everywhere.
+    const cookie = parseCookie(request.headers.get("Cookie"))[SESSION_COOKIE];
+    if (cookie && env.KEYS) {
+      try {
+        const payload = JSON.parse(atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/")) || "{}");
+        if (payload.exp) {
+          const ttl = Math.max(1, Math.min(86400 * 2, Math.ceil((payload.exp * 1000 - Date.now()) / 1000)));
+          await env.KEYS.put(`sess-revoked:${cookie}`, "1", { expirationTtl: ttl });
+        }
+      } catch { /* malformed cookie — ignore */ }
+    }
     return jsonOk({ ok: true }, { "Set-Cookie": clearSessionCookieHeader(secure) });
   }
   if (method === "GET" && path === `${ADMIN_BASE}/public`) {
@@ -221,11 +234,32 @@ async function handleConsole(request, env, url) {
   // pairing code is the credential (same pattern as /api/register above).
   if (method === "POST" && path === `${PLUGIN_BASE}/pair/claim`) {
     const { code } = (await request.json().catch(() => ({}))) || {};
-    const device = await consumePairCode(env, String(code || ""));
-    if (!device) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    const c = String(code || "");
+    if (!c) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    // Single-flight: consumePairCode was check-then-act on eventually-
+    // consistent KV — two concurrent claims both passed and minted two
+    // 30-day device-control tokens from one code. A claim lock bounds it.
+    const claim = await env.KEYS.get(`pairclaim:${c}`);
+    if (claim) return jsonError(403, "Pairing code already in use", "authorization_error");
+    await env.KEYS.put(`pairclaim:${c}`, "1", { expirationTtl: 30 });
+    const device = await consumePairCode(env, c);
+    if (!device) {
+      await env.KEYS.delete(`pairclaim:${c}`);
+      return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    }
     const token = randomHex(16);
     await addPluginLink(env, token, device);
     return jsonOk({ token, device });
+  }
+
+  // Extension unpair: revoke the plugin token server-side (local-only unpair
+  // left a 30-day device-control credential valid after the user unpaired).
+  if (method === "POST" && path === `${PLUGIN_BASE}/revoke`) {
+    const auth = String(request.headers.get("authorization") || "");
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!token) return jsonError(401, "Missing plugin token", "authentication_error");
+    await removePluginLink(env, token);
+    return jsonOk({ ok: true });
   }
 
   // Public: the extension trades its plugin token for a one-time WS ticket
@@ -510,6 +544,11 @@ async function handleConsole(request, env, url) {
     const body = await readJson(request);
     const v = String(body?.password || "");
     if (v.length < 8) return jsonError(400, "Admin password must be at least 8 chars", "invalid_request");
+    // Require the CURRENT password: a hijacked session must not be able to
+    // rotate the password and permanently lock out the real admin.
+    if (!(await verifyAdminPassword(env, String(body?.currentPassword || "")))) {
+      return jsonError(403, "Current password is incorrect", "authentication_error");
+    }
     await setAdminPassword(env, v);
     return jsonOk({ ok: true, changed: true });
   }
@@ -529,6 +568,9 @@ async function requireSession(request, env) {
   const ap = await getAdminPassword(env);
   if (!ap) return null;
   const cookie = parseCookie(request.headers.get("Cookie"))[SESSION_COOKIE];
+  if (!cookie) return null;
+  // Revoked by logout (server-side blacklist — a copied cookie dies too).
+  if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) return null;
   const session = await verifySessionToken(sessionSecret(env, ap), cookie);
   if (!session) return null;
   const user = await getUser(env, session.uid);
@@ -558,6 +600,10 @@ async function authRegister(request, env, secure) {
 
 async function authLogin(request, env, secure) {
   if (!(await hasAdminPassword(env))) return jsonError(500, "Admin password not configured", "config_error");
+  // The session-signing key in fallback mode is the stored admin password
+  // HASH (same value requireSession uses) — getAdminPassword returns the
+  // hash, never the plaintext.
+  const ap = await getAdminPassword(env);
   const body = await readJson(request);
   // Brute-force throttle: 5 consecutive failures lock the username for 30s
   // (exponential backoff would need the failure count; a flat lock is simple
@@ -565,7 +611,11 @@ async function authLogin(request, env, secure) {
   // Trim + lowercase: findUserByUsername trims, so an untrimmed key let
   // "admin " variants bypass the lock while still reaching the real admin
   // password check (brute-force bypass).
-  const lockKey = `login-lock:${String(body.username || "").trim().toLowerCase()}`;
+  // Bind the lock to the CALLER (IP+username): a per-username-only key let
+  // any unauthenticated attacker POST 5 wrong passwords and hold the admin
+  // console login at 429 forever (permanent login-layer DoS).
+  const callerIp = request.headers?.get?.("cf-connecting-ip") || "unknown";
+  const lockKey = `login-lock:${callerIp}:${String(body.username || "").trim().toLowerCase()}`;
   const locked = await env.KEYS.get(lockKey);
   if (locked) {
     return jsonError(429, "Too many attempts — try again in ~30s", "rate_limited");

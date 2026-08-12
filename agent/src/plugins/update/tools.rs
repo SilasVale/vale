@@ -22,6 +22,23 @@ fn newer(remote: &str, local: &str) -> bool {
     parse_version(remote) > parse_version(local)
 }
 
+/// Convert a path to its Windows 8.3 short form (for NSIS /D= which must be
+/// unquoted). No-op on non-Windows / non-spaced paths.
+#[cfg(windows)]
+fn short_path(p: &std::path::Path) -> Option<String> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+    let wide: Vec<u16> = p.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    // First call returns the required buffer size.
+    let needed = unsafe { GetShortPathNameW(wide.as_ptr(), std::ptr::null_mut(), 0) };
+    if needed == 0 { return None; }
+    let mut buf = vec![0u16; needed as usize];
+    let n = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), needed) };
+    if n == 0 { return None; }
+    buf.truncate(n as usize);
+    Some(std::ffi::OsString::from_wide(&buf).to_string_lossy().into_owned())
+}
 /// The directory this exe lives in — where the installer lands and where the
 /// NSIS /D= install root points.
 fn install_dir() -> PathBuf {
@@ -91,7 +108,40 @@ pub fn agent_update() -> ToolDef {
                 }));
             }
 
-            // 2. Download the installer next to this exe (300s: a slow release
+            // 2. Guard against a concurrent update BEFORE the download — the
+            //    tray's auto-update and this MCP path both download to the
+            //    same ValeAgent-Setup.exe and spawn the same silent installer;
+            //    two installers racing would both taskkill vale-agent.exe and
+            //    copy into $INSTDIR (file-lock conflicts, half-updated
+            //    install). The marker lives in %ProgramData% (NOT %APPDATA%):
+            //    the agent runs as SYSTEM and the tray as the user, so
+            //    APPDATA resolves to DIFFERENT directories — the old guard
+            //    never fired across processes.
+            let busy = std::env::var_os("ProgramData")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
+                .join("ValeAgent")
+                .join("update-busy");
+            // Same 60-min staleness rule as the tray: a crashed update's
+            // marker must not block forever.
+            let stale = std::fs::metadata(&busy)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .map(|age| age.as_secs() > 3600)
+                .unwrap_or(false);
+            if busy.exists() && !stale {
+                return Err(DeviceError::Internal {
+                    message: "another update is already in progress".to_string(),
+                });
+            }
+            // Acquire the marker ourselves (with the staleness rule above).
+            if let Some(parent) = busy.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&busy, b"agent_update");
+
+            // 3. Download the installer next to this exe (300s: a slow release
             //    server / bandwidth-limited device shouldn't fail a real update,
             //    but must still terminate).
             let dir = install_dir();
@@ -110,24 +160,6 @@ pub fn agent_update() -> ToolDef {
             std::fs::write(&installer, &bytes)
                 .map_err(|e| DeviceError::Internal { message: format!("write installer failed: {e}") })?;
 
-            // 3. Guard against a concurrent update. The tray's auto-update and
-            //    this MCP path both download to the same ValeAgent-Setup.exe
-            //    and spawn the same silent installer; two installers racing
-            //    would both taskkill vale-agent.exe and copy into $INSTDIR
-            //    (file-lock conflicts, half-updated install). The tray leaves
-            //    %APPDATA%\ValeAgent\update-busy for its whole window — refuse
-            //    while it exists.
-            let busy = std::env::var_os("APPDATA")
-                .map(PathBuf::from)
-                .unwrap_or_default()
-                .join("ValeAgent")
-                .join("update-busy");
-            if busy.exists() {
-                return Err(DeviceError::Internal {
-                    message: "another update is already in progress".to_string(),
-                });
-            }
-
             // 4. Spawn the silent installer. This process runs elevated (SYSTEM
             //    task or admin console), so no UAC prompt is needed. The
             //    installer kills us mid-flight — hence the early return. If
@@ -136,8 +168,21 @@ pub fn agent_update() -> ToolDef {
             //    the next attempt re-downloads.
             #[cfg(windows)]
             {
+                // NSIS's /D= must be the LAST, UNQUOTED argument — Rust's
+                // Command quotes any arg containing a space, which mangles
+                // $INSTDIR for a spaced install dir (device left offline
+                // after a 'successful' upgrade). Convert to a short (8.3)
+                // path when the dir contains a space.
+                #[cfg(windows)]
+                let install_arg = if dir.to_string_lossy().contains(' ') {
+                    short_path(&dir).unwrap_or_else(|| dir.display().to_string())
+                } else {
+                    dir.display().to_string()
+                };
+                #[cfg(not(windows))]
+                let install_arg = dir.display().to_string();
                 match Command::new(&installer)
-                    .args(["/S", &format!("/D={}", dir.display())])
+                    .args(["/S", &format!("/D={install_arg}")])
                     .spawn()
                 {
                     Ok(_) => {}

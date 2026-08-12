@@ -72,11 +72,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === "unpair") {
-    clearPairing().then(() => {
-      disconnect();
-      state.error = null;
-      sendResponse({ ok: true });
-    }).catch((e) => sendResponse({ ok: false, error: String(e) }));
+    (async () => {
+      try {
+        // Revoke the token server-side FIRST (local-only unpair left a
+        // 30-day device-control credential valid), then clear locally.
+        const paired = state.pairedDevice;
+        if (paired?.token) {
+          await fetch(`${await consoleOrigin()}/api/plugins/revoke`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${paired.token}` },
+          }).catch(() => {});
+        }
+        await clearPairing();
+        disconnect();
+        state.error = null;
+        sendResponse({ ok: true });
+      } catch (e) { sendResponse({ ok: false, error: String(e) }); }
+    })();
     return true;
   }
   if (msg.type === "optionsChanged") {

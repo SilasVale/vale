@@ -4,7 +4,7 @@ default-members = ["."]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.27"
+version = "1.0.28"
 
 [package]
 name = "vale-agent"
@@ -51,6 +51,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # Windows service (SCM protocol). Ignored entirely on Linux/macOS builds.
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 rmcp = { version = "2", features = ["client", "transport-streamable-http-client-reqwest"] }
