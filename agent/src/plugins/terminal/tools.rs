@@ -310,11 +310,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let mut quiet_since: Option<Instant> = None;
                     let mut result = String::new();
 
+                    let mut truncated = false;
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         let (chunk, chunk_len) = recover_guard(&buf)
                             .live.get(&sid)
                             .map(|e| {
+                                // Eviction advanced `dropped` past our read
+                                // cursor → output was dropped (1MB burst).
+                                if e.dropped as usize > read_abs { truncated = true; }
                                 let s = e.slice_from(read_abs);
                                 (String::from_utf8_lossy(s).to_string(), s.len())
                             })
@@ -336,7 +340,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         }
                     }
                     bus.emit(&AgentEvent::ShellExec { command });
-                    Ok(json!({"text": result}))
+                    // Surface truncation honestly: a >1MB burst evicted output
+                    // the model would otherwise treat as complete.
+                    Ok(json!({"text": result, "truncated": truncated}))
                 } else {
                     // ── Local shell mode with enforced timeout (tokio::process) ──
                     let (shell, flag) = if cfg!(target_os = "windows") {
@@ -500,7 +506,10 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                                 // History reads never advance any cursor.
                                 (text, start, end, entry.dropped)
                             }
-                            None => (String::new(), 0usize, 0usize, 0u64),
+                            // Neither live nor history: the session was evicted
+                            // by history caps, or never existed. Mark it so a
+                            // client can distinguish 'no data' from 'gone'.
+                            None => return Ok(json!({"text": "", "start": 0, "end": 0, "evicted": true})),
                         },
                     }
                 };
