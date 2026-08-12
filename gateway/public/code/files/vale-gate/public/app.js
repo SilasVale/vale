@@ -563,18 +563,23 @@
   }
 
   /* ============ users (admin) ============ */
-  let adminPw = "", pwRevealed = false;
+  let adminPw = "", pwRevealed = false, adminPwSet = false;
 
   function renderAdminPw() {
-    $("#admin-pw-value").textContent = pwRevealed ? adminPw : maskToken(adminPw);
-    $("#btn-pw-reveal").textContent = pwRevealed ? t("btn.hide") : t("btn.show");
+    // The password is stored hashed — never revealed or copied. Show only
+    // whether one is configured.
+    $("#admin-pw-value").textContent = adminPwSet ? "•••••• (set)" : "— (not set)";
+    const reveal = $("#btn-pw-reveal");
+    if (reveal) reveal.style.display = "none";
   }
 
   async function loadUsers() {
     const { res, data } = await api("/api/admin/users");
     if (!res.ok) return;
     const pw = await api("/api/admin/password");
-    if (pw.res.ok) { adminPw = pw.data.password || ""; pwRevealed = false; renderAdminPw(); }
+    // The raw password is never exposed anymore (stored hashed); the panel
+    // shows only whether one is set.
+    if (pw.res.ok) { adminPw = ""; adminPwSet = !!pw.data.set; pwRevealed = false; renderAdminPw(); }
     $("#users-list").innerHTML = data.users
       .map((u) => `
         <div class="user-row" data-id="${esc(u.id)}">
@@ -619,19 +624,17 @@
       }
     });
 
-    $("#btn-pw-reveal").addEventListener("click", () => { pwRevealed = !pwRevealed; renderAdminPw(); });
-    $("#btn-pw-copy").addEventListener("click", async () => {
-      if (!adminPw) return;
-      try { await navigator.clipboard.writeText(adminPw); toast(t("adminpw.copied")); }
-      catch { toast(t("adminpw.copyFail"), true); }
-    });
+    // Reveal/copy removed: the password is stored hashed and never exposed.
+    const revealBtn = $("#btn-pw-reveal"), copyBtn = $("#btn-pw-copy");
+    if (revealBtn) revealBtn.style.display = "none";
+    if (copyBtn) copyBtn.style.display = "none";
     $("#btn-pw-change").addEventListener("click", async () => {
       const v = $("#admin-pw-new").value;
       const msg = $("#pw-msg"); msg.hidden = true;
       if (v.length < 8) { msg.hidden = false; msg.textContent = t("adminpw.short"); return; }
       const { res, data } = await api("/api/admin/password", { method: "PUT", body: JSON.stringify({ password: v }) });
       if (res.ok) {
-        adminPw = v; pwRevealed = true; renderAdminPw();
+        adminPwSet = true; renderAdminPw();
         $("#admin-pw-new").value = "";
         msg.hidden = false; msg.textContent = t("adminpw.changed");
         toast(t("adminpw.title") + " " + t("key.saved"));
