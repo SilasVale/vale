@@ -109,13 +109,20 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
-          version: "1.0.23",
+          version: "1.0.24",
           download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
     }
-    const consoleUrl = (env && env.CONSOLE_URL) || "https://<console-host>";
+    const pathname = new URL(request.url).pathname;
+    // A missing binary must 404, not return the download PAGE as 200 HTML —
+    // devices silently downloaded HTML as ValeAgent-Setup.exe and the agent
+    // never started. Only "/" and "/index.html" render the page.
+    if (pathname !== "/" && pathname !== "/index.html") {
+      return new Response("Not Found", { status: 404 });
+    }
+    const consoleUrl = (env && env.CONSOLE_URL) || "https://ai.saisi.online";
     return new Response(PAGE(consoleUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
