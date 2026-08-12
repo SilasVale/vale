@@ -128,15 +128,20 @@ export class BreakerDO {
         // fresh one days later to trip).
         const rec = await this.state.storage.get("fail");
         let count = 0;
+        let firstAt = Date.now();
         if (rec && typeof rec.count === "number" && Date.now() - rec.firstAt < BREAKER_WINDOW_MS) {
           count = rec.count;
+          firstAt = rec.firstAt; // inside the window — keep the anchor
         }
+        // Outside the window: re-anchor to NOW. Keeping the stale anchor made
+        // the next /trip see an expired window again, reset to 0, and the
+        // circuit NEVER tripped.
         count += 1;
         if (count >= BREAKER_FAIL_THRESHOLD) {
           await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
           await this.state.storage.delete("fail");
         } else {
-          await this.state.storage.put("fail", { count, firstAt: rec?.firstAt || Date.now() });
+          await this.state.storage.put("fail", { count, firstAt });
         }
         return new Response("ok");
       }

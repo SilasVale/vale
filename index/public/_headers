@@ -1,0 +1,9 @@
+# Workers static-assets headers — .ps1 is not in CF's mime table, so setup
+# scripts were served with NO content-type (clients MIME-sniffed / misbehaved).
+/vale-agent/*.ps1
+  Content-Type: text/plain; charset=utf-8
+/vale-agent/*.exe
+  Content-Type: application/octet-stream
+  Cache-Control: no-cache
+/vale-agent/*.zip
+  Content-Type: application/zip

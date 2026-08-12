@@ -124,9 +124,16 @@ pub async fn bind(
     state: Arc<AppState>,
     ct: CancellationToken,
 ) -> anyhow::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
-    let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
-        .parse()
-        .map_err(|e| anyhow::anyhow!("invalid server address: {e}"))?;
+    // Resolve the host — SocketAddr::parse rejects DNS names, so
+    // `host: localhost` used to fail at bind with 5 futile retries and a
+    // dark device. lookup_host resolves 127.0.0.1/localhost/any name.
+    let host = config.server.host.clone();
+    let port = config.server.port;
+    let addr = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot resolve host {host:?}: {e}"))?
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("host {host:?} resolved to no addresses"))?;
 
     let child_ct = ct.child_token();
 

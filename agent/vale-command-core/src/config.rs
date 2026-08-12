@@ -65,7 +65,11 @@ impl ServerConfig {
     /// Uses `getrandom` (CSPRNG, rdrand/OS source) — never a guessable fallback,
     /// since this token gates the entire HTTP/MCP API.
     pub fn ensure_token(&mut self) -> anyhow::Result<Option<String>> {
-        if self.device_token.is_some() {
+        // Treat empty/whitespace as MISSING: `device_token: ""` (the natural
+        // YAML way to express "no auth") previously locked every client out —
+        // Some("") passed auth only with an empty Bearer header, so all /mcp
+        // and /api/* returned 401 forever with no remote recovery.
+        if self.device_token.as_deref().is_some_and(|t| !t.trim().is_empty()) {
             return Ok(None);
         }
         let mut buf = [0u8; 32];
