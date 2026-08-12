@@ -115,10 +115,55 @@ impl SshSession {
                     reason: format!("password auth failed: {e}"),
                 })?;
             if !auth.success() {
-                return Err(DeviceError::SshConnectFailed {
-                    host: host.to_string(),
-                    reason: "password authentication rejected".into(),
-                });
+                // Keyboard-interactive fallback: servers with UsePAM /
+                // AD / LDAP / 2FA sshd may reject the password method
+                // outright and offer only keyboard-interactive. Answer a
+                // single password prompt with the same password (bounded —
+                // a 2FA/OTP second prompt cannot be answered by a
+                // single-password UI).
+                use russh::client::KeyboardInteractiveAuthResponse;
+                use russh::MethodKind;
+                let mut ki_ok = false;
+                if let russh::client::AuthResult::Failure { remaining_methods, .. } = auth {
+                    if remaining_methods.contains(&MethodKind::KeyboardInteractive) {
+                        let mut resp = handle
+                            .authenticate_keyboard_interactive_start(username, None)
+                            .await
+                            .map_err(|e| DeviceError::SshConnectFailed {
+                                host: host.to_string(),
+                                reason: format!("keyboard-interactive start failed: {e}"),
+                            })?;
+                        for _ in 0..4 {
+                            match resp {
+                                KeyboardInteractiveAuthResponse::Success => { ki_ok = true; break; }
+                                KeyboardInteractiveAuthResponse::Failure { .. } => break,
+                                KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                                    // Answer exactly one non-empty prompt with
+                                    // the password; empty prompts get empty
+                                    // responses (russh requires equal lengths).
+                                    let responses: Vec<String> = prompts
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, p)| if i == 0 && !p.prompt.is_empty() { pass.to_string() } else { String::new() })
+                                        .collect();
+                                    resp = handle
+                                        .authenticate_keyboard_interactive_respond(responses)
+                                        .await
+                                        .map_err(|e| DeviceError::SshConnectFailed {
+                                            host: host.to_string(),
+                                            reason: format!("keyboard-interactive respond failed: {e}"),
+                                        })?;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !ki_ok {
+                    return Err(DeviceError::SshConnectFailed {
+                        host: host.to_string(),
+                        reason: "password authentication rejected (password or keyboard-interactive)".into(),
+                    });
+                }
             }
         } else {
             return Err(DeviceError::SshConnectFailed {

@@ -193,10 +193,25 @@ async function handleConsole(request, env, url) {
   // stolen key can be used exactly once, not harvested repeatedly.
   if (method === "POST" && path === "/api/install/tunnel-token") {
     const body = await readJson(request);
-    if (!(await hasRegKey(env, body.key))) {
+    const k = String(body.key || "").toLowerCase();
+    if (!k || !(await hasRegKey(env, k))) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
-    await consumeRegKey(env, body.key);
+    // Single-flight: claim the key with a short TTL lock FIRST, then consume.
+    // hasRegKey→consume was check-then-act on eventually-consistent KV — two
+    // concurrent requests could both pass the check and both harvest the
+    // account-level CF token. The lock key makes the claim atomic-enough (KV
+    // put-if-absent is not available; a 30s TTL lock bounds the race).
+    const claim = await env.KEYS.get(`regclaim:${k}`);
+    if (claim) {
+      return jsonError(403, "Registration key already in use", "authorization_error");
+    }
+    await env.KEYS.put(`regclaim:${k}`, "1", { expirationTtl: 30 });
+    if (!(await hasRegKey(env, k))) {
+      await env.KEYS.delete(`regclaim:${k}`);
+      return jsonError(403, "Invalid or used registration key", "authorization_error");
+    }
+    await consumeRegKey(env, k);
     return jsonOk({ ok: true, apiToken: await getCfToken(env) });
   }
 
@@ -537,7 +552,10 @@ async function authLogin(request, env, secure) {
   // Brute-force throttle: 5 consecutive failures lock the username for 30s
   // (exponential backoff would need the failure count; a flat lock is simple
   // and stops online guessing of the 6-8 char passwords).
-  const lockKey = `login-lock:${String(body.username || "").toLowerCase()}`;
+  // Trim + lowercase: findUserByUsername trims, so an untrimmed key let
+  // "admin " variants bypass the lock while still reaching the real admin
+  // password check (brute-force bypass).
+  const lockKey = `login-lock:${String(body.username || "").trim().toLowerCase()}`;
   const locked = await env.KEYS.get(lockKey);
   if (locked) {
     return jsonError(429, "Too many attempts — try again in ~30s", "rate_limited");
