@@ -29,7 +29,7 @@
 
   --fill: #f1f1ef;        /* 浅灰填充:auth-tabs / nav hover / badges / model-tag */
 
-  --radius: 16px;
+  --radius: 14px;
   --radius-sm: 10px;
   --radius-lg: 20px;
   --shadow: 0 2px 10px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.03);

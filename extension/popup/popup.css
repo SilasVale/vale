@@ -20,25 +20,26 @@ body{
   padding:12px; display:flex; flex-direction:column; gap:10px;
 }
 button{font-family:inherit;font-size:13px;cursor:pointer;border:1px solid var(--border-strong);
-  background:var(--card);color:var(--text);border-radius:10px;padding:6px 12px;
+  background:var(--card);color:var(--text);border-radius:var(--radius-sm);padding:6px 12px;
   transition:background .15s,color .15s,border-color .15s}
 button:hover{background:var(--accent-bg);border-color:var(--accent)}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button.primary:hover{background:var(--accent-hover)}
 button.danger:hover{background:var(--red-bg);border-color:var(--red);color:var(--red)}
-input{font-family:inherit;font-size:13px;border:1px solid var(--border-strong);border-radius:10px;padding:6px 10px;color:var(--text);background:var(--card)}
+input{font-family:inherit;font-size:13px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:6px 10px;color:var(--text);background:var(--card)}
 input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(14,147,132,.18)}
 
 header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .logo{display:flex;align-items:center;gap:7px;font-weight:600;font-size:13px}
 .logo .mark{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;
-  border-radius:5px;background:#1d1d1f;color:#fff;font-weight:700;font-size:11px;line-height:1}
+  border-radius:var(--radius-sm);background:#1d1d1f;color:#fff;font-weight:700;font-size:11px;line-height:1}
 .pill{font-size:11px;font-weight:600;border-radius:99px;padding:2px 8px;background:var(--accent-bg);color:var(--accent)}
 .pill.connected{background:var(--green-bg);color:var(--green)}
 .pill.disconnected{background:var(--red-bg);color:var(--red)}
 .pill.connecting{background:rgba(191,91,0,.08);color:#bf5b00}
 
-.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;
+.card{background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+  border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;display:flex;flex-direction:column;gap:8px;
   box-shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04)}
 .row{display:flex;justify-content:space-between;gap:8px}
 .label{color:var(--text2)}
