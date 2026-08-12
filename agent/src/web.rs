@@ -571,8 +571,8 @@ mod tests {
         let resp = handle_request(req("GET", "/api/spec"), state()).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        // terminal + update plugins
-        assert_eq!(v["plugins"].as_array().unwrap().len(), 2);
+        // terminal + update + design plugins
+        assert_eq!(v["plugins"].as_array().unwrap().len(), 3);
     }
 
     #[tokio::test]

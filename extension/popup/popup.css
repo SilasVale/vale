@@ -5,7 +5,7 @@
   --accent:#0e9384; --accent-ink:#0b7a6e; --accent-soft:#e7f5f2;
   --ink:#1d1d1f; --muted:#6e6e73; --faint:#86868b;
   --radius:14px; --radius-sm:10px; --radius-lg:20px;
-  --green:#2ea043; --green-bg:#e6f4ea; --red:#dc2626; --red-bg:#fef2f2;
+  --green:#0e9384; --green-bg:#e7f5f2; --red:#dc2626; --red-bg:#fef2f2;
   --font:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Inter,sans-serif;
   --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;
   /* Legacy aliases */
