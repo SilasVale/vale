@@ -81,7 +81,15 @@ pub fn page_view() -> ToolDef {
             let body = resp.text().await
                 .map_err(|e| DeviceError::Internal { message: format!("read {url}: {e}") })?;
             let truncated = body.len() > MAX_PAGE_BYTES;
-            let text = if truncated { &body[..MAX_PAGE_BYTES] } else { &body[..] };
+            // char-boundary-safe truncation: slicing a String at a fixed byte
+            // index PANICS when it lands inside a multi-byte UTF-8 char.
+            let text = if truncated {
+                let mut end = MAX_PAGE_BYTES;
+                while end > 0 && !body.is_char_boundary(end) { end -= 1; }
+                &body[..end]
+            } else {
+                &body[..]
+            };
 
             Ok(json!({
                 "page": page,

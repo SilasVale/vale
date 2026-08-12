@@ -187,6 +187,9 @@ pub fn agent_update() -> ToolDef {
                 {
                     Ok(_) => {}
                     Err(e) => {
+                        // Clear the busy marker on failure — a leftover marker
+                        // blocked retries for up to an hour.
+                        let _ = std::fs::remove_file(&busy);
                         let _ = std::fs::remove_file(&installer);
                         return Err(DeviceError::Internal {
                             message: format!("installer failed to start: {e}"),

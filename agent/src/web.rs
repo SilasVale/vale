@@ -290,29 +290,33 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             // attacker's page. Only the device's own single-level subdomain
             // (dN.agent.saisi.online — a multi-level attacker subdomain like
             // evil.agent.saisi.online is REJECTED), the apex, or loopback.
+            // NOTE: d1.agent.saisi.online has THREE dots — an earlier
+            // "count() == 2" check made the subdomain branch unsatisfiable and
+            // silently killed token injection for real devices (round-19).
             let host_ok = req
                 .headers()
                 .get(axum::http::header::HOST)
                 .and_then(|h| h.to_str().ok())
                 .map(|h| {
                     let h = h.trim();
-                    h == "127.0.0.1" || h.starts_with("127.0.0.1:")
-                        || h == "localhost" || h.starts_with("localhost:")
-                        || h == "agent.saisi.online"
-                        || (h.ends_with(".agent.saisi.online")
-                            && h.matches('.').count() == 2
-                            && h.split('.').next().map(|d| d.starts_with("d")).unwrap_or(false))
+                    let host = h.split(':').next().unwrap_or(h); // strip :port
+                    host == "127.0.0.1" || host == "localhost"
+                        || host == "agent.saisi.online"
+                        || (host.ends_with(".agent.saisi.online")
+                            && host.matches('.').count() == 3
+                            && host.split('.').next().map(|d| d.starts_with("d")).unwrap_or(false))
                 })
                 .unwrap_or(false);
             if host_ok {
-                // serde_json::to_string escapes < > as < > — Debug
-                // formatting ({:?}) left them raw, so a non-hex token
-                // containing </script> could break out of the script element
-                // and run attacker JS on the device origin.
-                let inject = format!(
-                    "<script>window.__PANEL_TOKEN__={};</script>",
-                    serde_json::to_string(token).unwrap_or_else(|_| "\"\"".into())
-                );
+                // serde_json escapes quotes but NOT < > (no escape_html
+                // feature), so a non-hex token containing </script> could
+                // break out of the script element and run attacker JS on the
+                // device origin. Escape < > manually.
+                let escaped = serde_json::to_string(token)
+                    .unwrap_or_else(|_| "\"\"".into())
+                    .replace('<', "\\u003c")
+                    .replace('>', "\\u003e");
+                let inject = format!("<script>window.__PANEL_TOKEN__={escaped};</script>");
                 let html = include_str!("../resources/panel/index.html")
                     .replacen("</head>", &format!("{inject}</head>"), 1);
                 let mut resp2 = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
@@ -566,6 +570,52 @@ mod tests {
             .header("Authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap()
+    }
+
+    fn req_with_host(path: &str, host: &str) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(path)
+            .header(axum::http::header::HOST, host)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn panel_token_injection_host_gate() {
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into());
+        let st = Arc::new(AppState::new(cfg));
+        // The device's own subdomain MUST inject (3 dots + d prefix).
+        let ok = handle_request(req_with_host("/panel/", "d1.agent.saisi.online"), st.clone()).await;
+        let body = axum::body::to_bytes(ok.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("window.__PANEL_TOKEN__"), "device host must inject");
+
+        // Apex + loopback inject too.
+        for h in ["agent.saisi.online", "127.0.0.1:18080", "localhost"] {
+            let r = handle_request(req_with_host("/panel/", h), st.clone()).await;
+            let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+            assert!(String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"), "{h} must inject");
+        }
+
+        // Multi-level attacker subdomain + suffix-spoof MUST NOT inject.
+        for h in ["evil.agent.saisi.online", "agent.saisi.online.evil.com", "evil.com", "d1.agent.saisi.online.evil.com"] {
+            let r = handle_request(req_with_host("/panel/", h), st.clone()).await;
+            let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+            assert!(!String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"), "{h} must NOT inject");
+        }
+    }
+
+    #[tokio::test]
+    async fn panel_token_injection_escapes_script_close() {
+        // A non-hex token containing </script> must be escaped, not raw.
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some("abc</script><script>alert(1)</script>xyz".into());
+        let st = Arc::new(AppState::new(cfg));
+        let r = handle_request(req_with_host("/panel/", "127.0.0.1:18080"), st).await;
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let html = String::from_utf8_lossy(&b);
+        assert!(html.contains("\\u003c/script\\u003e"), "must escape </script>: {html}");
     }
 
     async fn json_body(resp: Response) -> serde_json::Value {
