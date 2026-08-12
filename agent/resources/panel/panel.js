@@ -50,15 +50,17 @@ let activeSid = null;
 
 function loadConfig() {
   // Same-origin mode: served by vale-agent at /panel/ — hostname is this
-  // device's own domain. The token is entered once and kept in localStorage
-  // (the backend no longer injects window.__PANEL_TOKEN__ — it leaked the
-  // device token to any page that could fetch /panel/, fixed 2026-08-12).
+  // device's own domain. The token is injected by the backend as
+  // window.__PANEL_TOKEN__ (zero-config; safe because the API no longer
+  // sends Access-Control-Allow-Origin: *, so a third-party page cannot read
+  // it). A stored token is still honored when present (hostname + token from
+  // a previous session).
   const sameOrigin = location.pathname.startsWith("/panel");
   if (sameOrigin) {
     hostname = location.host;
     hostInput.value = hostname;
     hostInput.disabled = true;
-    token = localStorage.getItem(LS_TOKEN) || "";
+    token = window.__PANEL_TOKEN__ || localStorage.getItem(LS_TOKEN) || "";
     if (token) {
       tokenInput.value = token;
       connForm.classList.add("hidden");
