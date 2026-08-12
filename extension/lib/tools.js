@@ -7,7 +7,13 @@ export let CONSOLE_ORIGIN = "";
 export function setConsoleOrigin(o) { CONSOLE_ORIGIN = o; }
 
 function proxyUrl(device) {
-  return `${CONSOLE_ORIGIN}/api/devices/${device}/proxy/`;
+  // The gateway proxy requires an admin session cookie OR a plugin token;
+  // a top-level navigation can't carry an Authorization header, so pass the
+  // plugin token as ?token= (gateway accepts it for proxy top-level nav and
+  // sets Cache-Control: no-store). The plugin token is scoped to this device.
+  const t = state.pairedDevice?.token || "";
+  const q = t ? `?token=${encodeURIComponent(t)}` : "";
+  return `${CONSOLE_ORIGIN}/api/devices/${device}/proxy/${q}`;
 }
 
 async function evaluate(tabId, expr) {
