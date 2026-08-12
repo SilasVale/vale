@@ -148,6 +148,12 @@ Section "Install" SEC01
 
   ; Persist the registration key so run-setup.bat can pass it to the setup
   ; script ($env:VALE_REG_KEY). Empty when the user left the field blank.
+  ; Silent installs (tray auto-upgrade) can't show the page — read the
+  ; environment variable instead (the console's 'set $env:VALE_REG_KEY then
+  ; install' flow).
+  ${If} ${Silent}
+    ReadEnvStr $REGKEY "VALE_REG_KEY"
+  ${EndIf}
   ${If} $REGKEY != ""
     FileOpen $6 "$INSTDIR\regkey.txt" w
     FileWrite $6 "$REGKEY"

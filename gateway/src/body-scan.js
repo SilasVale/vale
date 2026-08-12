@@ -132,30 +132,41 @@ const ESTIMATE_WALK_LIMIT = 1_000_000; // chars: beyond this, approximate
 const ESTIMATE_SAMPLE = 128 * 1024; // 128K chars sampled ≈ 1-2ms
 
 export function estimateTokens(jsonStr) {
-  const s = String(jsonStr);
+  // Strip base64 image/document payloads BEFORE estimating: image blocks are
+  // ~1.33 chars/byte, so counting them as text overestimated by ~580x — a
+  // screenshot-heavy conversation looked far beyond the 1M context and the
+  // client rejected requests / compacted prematurely. Each image gets a fixed
+  // allowance (~1600 tokens, the real vision cost).
+  let s = String(jsonStr);
+  const stripped = s.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, '"data":"<base64>"');
+  const images = (stripped.match(/"data":"<base64>"/g) || []).length;
+  s = stripped;
   const len = s.length;
-  if (len > ESTIMATE_WALK_LIMIT) {
-    // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
-    return Math.ceil(len / 3);
-  }
-  if (len > ESTIMATE_SAMPLE) {
-    // Sample the head (model + system prompt live there) and extrapolate.
+  const base = (() => {
+    if (len > ESTIMATE_WALK_LIMIT) {
+      // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
+      return Math.ceil(len / 3);
+    }
+    if (len > ESTIMATE_SAMPLE) {
+      // Sample the head (model + system prompt live there) and extrapolate.
+      let ascii = 0;
+      let other = 0;
+      for (let i = 0; i < ESTIMATE_SAMPLE; i++) {
+        if (s.charCodeAt(i) < 128) ascii += 1;
+        else other += 1;
+      }
+      const ratio = len / ESTIMATE_SAMPLE;
+      return Math.ceil((ascii * ratio) / 4 + (other * ratio) * 1.8);
+    }
     let ascii = 0;
     let other = 0;
-    for (let i = 0; i < ESTIMATE_SAMPLE; i++) {
-      if (s.charCodeAt(i) < 128) ascii += 1;
+    for (const ch of s) {
+      if (ch.charCodeAt(0) < 128) ascii += 1;
       else other += 1;
     }
-    const ratio = len / ESTIMATE_SAMPLE;
-    return Math.ceil((ascii * ratio) / 4 + (other * ratio) * 1.8);
-  }
-  let ascii = 0;
-  let other = 0;
-  for (const ch of s) {
-    if (ch.charCodeAt(0) < 128) ascii += 1;
-    else other += 1;
-  }
-  return Math.ceil(ascii / 4 + other * 1.8);
+    return Math.ceil(ascii / 4 + other * 1.8);
+  })();
+  return base + images * 1600; // ~1600 tokens per image (real vision cost)
 }
 
 

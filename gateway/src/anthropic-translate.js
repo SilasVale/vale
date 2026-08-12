@@ -204,6 +204,7 @@ export class AnthropicStreamEncoder {
     this.finished = false;
     this.blockIndex = -1;
     this.blockType = null;      // "thinking" | "text" | "tool_use"
+    this.toolIdx = undefined;   // current OpenAI tool index (parallel calls)
     this.openToolInputs = {};   // tool index → accumulated arguments string
     this.pending = [];
     this.lastStopReason = "end_turn";
@@ -336,7 +337,17 @@ export class AnthropicStreamEncoder {
 
   ensureToolBlock(idx, id, name, argsDelta) {
     if (!this.started) this.emitStart();
-    // Tools always open their own block; close any text/thinking block first.
+    // PARALLEL tool calls: OpenAI streams multiple tools with increasing
+    // indices (each new tool's first chunk carries its id/name). A NEW index
+    // must open its OWN content block — previously every tool after the first
+    // was silently folded into block 0 (the second call was lost and the
+    // args concatenated into invalid JSON).
+    if (this.toolIdx !== undefined && idx !== this.toolIdx) {
+      this.closeBlock(); // close the previous tool's block
+      this.blockType = null;
+      this.blockIndex = -1;
+    }
+    this.toolIdx = idx;
     if (this.blockIndex >= 0 && this.blockType !== "tool_use") this.closeBlock();
     if (this.blockType !== "tool_use") {
       this.blockIndex += 1;

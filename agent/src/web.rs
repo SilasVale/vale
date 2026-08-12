@@ -315,7 +315,14 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 })
                 .unwrap_or(false);
             if host_ok {
-                let inject = format!("<script>window.__PANEL_TOKEN__={token:?};</script>");
+                // serde_json::to_string escapes < > as < > — Debug
+                // formatting ({:?}) left them raw, so a non-hex token
+                // containing </script> could break out of the script element
+                // and run attacker JS on the device origin.
+                let inject = format!(
+                    "<script>window.__PANEL_TOKEN__={};</script>",
+                    serde_json::to_string(token).unwrap_or_else(|_| "\"\"".into())
+                );
                 let html = include_str!("../resources/panel/index.html")
                     .replacen("</head>", &format!("{inject}</head>"), 1);
                 let mut resp2 = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
