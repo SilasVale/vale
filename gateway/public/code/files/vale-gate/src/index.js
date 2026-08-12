@@ -448,7 +448,7 @@ async function handleConsole(request, env, url) {
       // Agent + tunnel health: probe the device's own /api/status through its
       // tunnel (cached 30s — the console polls every 30s already).
       const probe = await cachedDeviceProbe(env, d);
-      out[d.name] = { online: extOnline, agent_up: probe, tunnel_up: probe };
+      out[d.name] = { online: extOnline, agent_up: probe.agent, tunnel_up: probe.tunnel };
     }
     return jsonOk({ devices: out });
   }
@@ -922,15 +922,18 @@ const DEVICE_PROBE_TTL_MS = 30000;
 
 async function cachedDeviceProbe(env, device) {
   const hit = DEVICE_PROBE_CACHE.get(device.name);
-  if (hit && Date.now() - hit.at < DEVICE_PROBE_TTL_MS) return hit.ok;
-  let ok = false;
+  if (hit && Date.now() - hit.at < DEVICE_PROBE_TTL_MS) return hit;
+  // Probe through the tunnel; classify the failure: a tunnel-level error
+  // (1033/530 — origin unreachable) vs an agent-level error (HTTP response).
+  let state = { tunnel: false, agent: false, ts: Date.now() };
   try {
     const res = await deviceFetch(env, device, "/api/status");
-    ok = res.ok;
-  } catch { ok = false; }
+    state.tunnel = true;
+    state.agent = res.ok;
+  } catch { /* tunnel-level failure (1033/530/network) */ }
   if (DEVICE_PROBE_CACHE.size >= 64) DEVICE_PROBE_CACHE.clear();
-  DEVICE_PROBE_CACHE.set(device.name, { at: Date.now(), ok });
-  return ok;
+  DEVICE_PROBE_CACHE.set(device.name, state);
+  return state;
 }
 
 function validateDevice(body) {
@@ -1396,9 +1399,17 @@ export async function buildHealth(env) {
   };
 }
 
-/** Model usable for routing? In the whitelist and (og) breaker not open. */
+/** Model usable for routing? In the whitelist, (og) breaker not open, AND
+ *  the admin's key for that channel is configured — a channel without a key
+ *  502s every request, so model=auto must not route to it. */
 export async function isModelUsable(env, model) {
   if (!MODELS.some((m) => m.id === model)) return false;
+  const adminKeys = await getUserKeys(env, ADMIN_ID).catch(() => ({}));
+  const prefix = model.split("/")[0] + "/";
+  if (prefix === "og/" && !(adminKeys.OPENCODE_GO_API_KEY || env.OPENCODE_GO_API_KEY)) return false;
+  if (prefix === "ds/" && !(adminKeys.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY)) return false;
+  if (prefix === "qw/" && !(adminKeys.QWEN_API_KEY || env.QWEN_API_KEY)) return false;
+  if (prefix === "or/" && !(adminKeys.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY)) return false;
   if (model.startsWith("og/")) return !(await isChannelDegraded(env));
   return true;
 }
