@@ -110,14 +110,44 @@ pub fn agent_update() -> ToolDef {
             std::fs::write(&installer, &bytes)
                 .map_err(|e| DeviceError::Internal { message: format!("write installer failed: {e}") })?;
 
-            // 3. Spawn the silent installer. This process runs elevated (SYSTEM
+            // 3. Guard against a concurrent update. The tray's auto-update and
+            //    this MCP path both download to the same ValeAgent-Setup.exe
+            //    and spawn the same silent installer; two installers racing
+            //    would both taskkill vale-agent.exe and copy into $INSTDIR
+            //    (file-lock conflicts, half-updated install). The tray leaves
+            //    %APPDATA%\ValeAgent\update-busy for its whole window — refuse
+            //    while it exists.
+            let busy = std::env::var_os("APPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_default()
+                .join("ValeAgent")
+                .join("update-busy");
+            if busy.exists() {
+                return Err(DeviceError::Internal {
+                    message: "another update is already in progress".to_string(),
+                });
+            }
+
+            // 4. Spawn the silent installer. This process runs elevated (SYSTEM
             //    task or admin console), so no UAC prompt is needed. The
-            //    installer kills us mid-flight — hence the early return.
+            //    installer kills us mid-flight — hence the early return. If
+            //    the spawn fails (e.g. a truncated download that Windows
+            //    refuses to run), report it honestly and drop the bad file so
+            //    the next attempt re-downloads.
             #[cfg(windows)]
             {
-                let _ = Command::new(&installer)
+                match Command::new(&installer)
                     .args(["/S", &format!("/D={}", dir.display())])
-                    .spawn();
+                    .spawn()
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&installer);
+                        return Err(DeviceError::Internal {
+                            message: format!("installer failed to start: {e}"),
+                        });
+                    }
+                }
             }
 
             Ok(json!({
