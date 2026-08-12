@@ -89,13 +89,32 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install" SEC01
-  ; Stop every vale binary first — a running instance locks its exe (the
-  ; copy below would fail) AND holds port 18080, so the restarted boot task
-  ; cannot bind. This includes the legacy 0.8.x vale-command.exe: an upgrade
-  ; that leaves it running silently keeps the OLD server serving the device
-  ; while the new one dies on bind. Vale-tray is killed in silent mode too —
-  ; the tray that launched this installer exits right after starting it, and
-  ; a fresh tray is relaunched below once the copy is done.
+  SetOutPath "$INSTDIR"
+
+  ; 1. Copy the new binaries to .new temp names FIRST — before any process is
+  ;    killed. A copy that fails (disk full, AV scanning the fresh file,
+  ;    locked dest) aborts here while the OLD install keeps running, so an
+  ;    interrupted upgrade leaves the device online, not offline. A running
+  ;    exe cannot be overwritten, hence the temp name + swap below.
+  File "/oname=vale-agent.exe.new" "vale-agent.exe"
+  File "/oname=vale-tray.exe.new" "vale-tray.exe"
+  ; Support files — safe to write directly (never locked by a process).
+  File "vale-agent-setup.ps1"
+  File "run-setup.bat"
+  File "fix-tunnel.ps1"
+  ; Browser extension zip — extracted to $INSTDIR\extension\ by the setup
+  ; script so the terminal panel loads from the same install dir (Load
+  ; unpacked → $INSTDIR\extension). Updated together with the binaries on
+  ; every install/upgrade.
+  File "vale-browser-control.zip"
+
+  ; 2. NOW stop every vale binary. A running instance locks its exe AND holds
+  ;    port 18080, so the restarted boot task cannot bind. This includes the
+  ;    legacy 0.8.x vale-command.exe: an upgrade that leaves it running
+  ;    silently keeps the OLD server serving the device while the new one
+  ;    dies on bind. Vale-tray is killed in silent mode too — the tray that
+  ;    launched this installer exits right after starting it, and a fresh
+  ;    tray is relaunched below once the copy is done.
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
@@ -114,19 +133,13 @@ Section "Install" SEC01
   nsExec::ExecToLog 'schtasks /Delete /TN ValeCommandTray /F'
   Sleep 1000
 
-  SetOutPath "$INSTDIR"
-
-  ; Copy app + setup script + launcher + tray
-  File "/oname=vale-agent.exe" "vale-agent.exe"
-  File "vale-agent-setup.ps1"
-  File "run-setup.bat"
-  File "vale-tray.exe"
-  File "fix-tunnel.ps1"
-  ; Browser extension zip — extracted to $INSTDIR\extension\ by the setup
-  ; script so the terminal panel loads from the same install dir (Load
-  ; unpacked → $INSTDIR\extension). Updated together with the binaries on
-  ; every install/upgrade.
-  File "vale-browser-control.zip"
+  ; 3. Swap the new binaries in (old ones were killed above, so Delete/Rename
+  ;    cannot hit a locked file). Rename fails if the target exists, hence
+  ;    Delete first.
+  Delete "$INSTDIR\vale-agent.exe"
+  Rename "$INSTDIR\vale-agent.exe.new" "$INSTDIR\vale-agent.exe"
+  Delete "$INSTDIR\vale-tray.exe"
+  Rename "$INSTDIR\vale-tray.exe.new" "$INSTDIR\vale-tray.exe"
 
   ; Persist the registration key so run-setup.bat can pass it to the setup
   ; script ($env:VALE_REG_KEY). Empty when the user left the field blank.

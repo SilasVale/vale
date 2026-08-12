@@ -206,10 +206,10 @@ fn restart_task() {
 /// one. On any failure (user declined, network, UAC cancel, installer error)
 /// the PowerShell script restores the tray itself.
 ///
-/// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION must be
-/// bumped alongside agent/Cargo.toml and index/src/index.js when a new
-/// installer is shipped.
-const LOCAL_VERSION: &str = "1.0.7";
+/// Uses PowerShell (Windows built-in, no new deps). LOCAL_VERSION is derived
+/// at build time from agent/Cargo.toml by build.rs — never hand-maintained
+/// (a drift caused an hourly reinstall loop).
+const LOCAL_VERSION: &str = env!("VALE_AGENT_VERSION");
 const VERSION_URL: &str = "https://agent.saisi.online/api/version";
 
 fn check_for_update() {
@@ -244,6 +244,22 @@ try {{
   [System.Windows.Forms.MessageBox]::Show(
     "正在下载更新并静默升级，约需 1 分钟。期间服务会短暂中断，完成后托盘将自动重启。",
     "Vale Agent 更新", 'OK')
+  # Mutual exclusion with the hourly auto-update (both download to the same
+  # ValeAgent-Setup.exe path; two silent installers would race). Same
+  # 60-minute staleness rule as the auto path.
+  $busy = Join-Path $env:APPDATA 'ValeAgent\update-busy'
+  if (Test-Path $busy) {{
+    try {{
+      $age = (Get-Date) - (Get-Item $busy).LastWriteTime
+      if ($age.TotalMinutes -lt 60) {{
+        Log 'check: another update in progress'
+        [System.Windows.Forms.MessageBox]::Show("正在更新中，请稍候。", "Vale Agent 更新", 'OK')
+        return
+      }}
+      Log 'check: stale busy marker, clearing'
+    }} catch {{}}
+  }}
+  New-Item -ItemType File -Path $busy -Force | Out-Null
   # The old tray must be gone before the installer relaunches a fresh one,
   # otherwise two tray icons appear. Kill it now — the installer restarts it
   # via the ValeAgentTray scheduled task once the new binaries are in place.
@@ -258,10 +274,12 @@ try {{
   if ($p.ExitCode -ne 0) {{ throw "安装程序退出码 $($p.ExitCode)" }}
   Log 'update: install ok'
   Remove-Item $installer -Force -ErrorAction SilentlyContinue
+  Remove-Item $busy -Force -ErrorAction SilentlyContinue
   [System.Windows.Forms.MessageBox]::Show(
     "升级完成！已更新到 $($j.version)。", "Vale Agent 更新", 'OK')
 }} catch {{
   Log "update: FAILED - $($_.Exception.Message)"
+  Remove-Item $busy -Force -ErrorAction SilentlyContinue
   [System.Windows.Forms.MessageBox]::Show("升级失败：$($_.Exception.Message)", "Vale Agent 更新", 'OK')
   Restore-Tray
 }}
@@ -297,7 +315,16 @@ $ProgressPreference = 'SilentlyContinue'
 $log = Join-Path '{2}' 'vale-update.log'
 function Log($m) {{ try {{ (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $m | Out-File -FilePath $log -Append -Encoding utf8 }} catch {{}} }}
 $busy = Join-Path $env:APPDATA 'ValeAgent\update-busy'
-if (Test-Path $busy) {{ Log 'auto: another update in progress, skip'; return }}
+if (Test-Path $busy) {{
+  # A marker left by a crashed update (power loss, hard kill) must not
+  # disable auto-update forever — the legitimate in-flight window is at most
+  # ~6 min, so anything older than an hour is stale.
+  try {{
+    $age = (Get-Date) - (Get-Item $busy).LastWriteTime
+    if ($age.TotalMinutes -lt 60) {{ Log 'auto: another update in progress, skip'; return }}
+    Log 'auto: stale busy marker, clearing'
+  }} catch {{ return }}
+}}
 New-Item -ItemType File -Path $busy -Force | Out-Null
 function Restore-Tray {{
   try {{ schtasks /Run /TN ValeAgentTray 2>$null | Out-Null; Start-Sleep -Seconds 1 }} catch {{}}
