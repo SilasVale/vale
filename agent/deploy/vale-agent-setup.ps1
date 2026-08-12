@@ -109,12 +109,17 @@ Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
 # service before the ValeAgent boot task at every restart and wins the port,
 # so the new server dies on bind. The boot task below is the canonical
 # autostart — drop the service and the old tasks.
-sc.exe stop ValeCommand 2>&1 | Out-Null
-sc.exe delete ValeCommand 2>&1 | Out-Null
-schtasks /End /TN ValeCommand 2>&1 | Out-Null
-schtasks /Delete /TN ValeCommand /F 2>&1 | Out-Null
-schtasks /End /TN ValeCommandTray 2>&1 | Out-Null
-schtasks /Delete /TN ValeCommandTray /F 2>&1 | Out-Null
+# NOTE: these legacy items usually don't exist, and schtasks/sc.exe write
+# their error to stderr on a missing item. Under $ErrorActionPreference=Stop
+# PS 5.1 turns that into a terminating NativeCommandError, so every command
+# must redirect stderr to $null (2>$null) — never 2>&1, which keeps it in the
+# error stream.
+sc.exe stop ValeCommand 2>$null
+sc.exe delete ValeCommand 2>$null
+schtasks /End /TN ValeCommand 2>$null
+schtasks /Delete /TN ValeCommand /F 2>$null
+schtasks /End /TN ValeCommandTray 2>$null
+schtasks /Delete /TN ValeCommandTray /F 2>$null
 if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-agent.exe" $exe -Force }
 # Tray app: re-download on updates too. The NSIS installer bundles it for fresh
 # installs, but the script path must fetch it so an update also refreshes the
@@ -274,7 +279,7 @@ Copy-Item (Join-Path $cfDir "$tunnelId.json") (Join-Path $sysCfDir "$tunnelId.js
 Write-Host "`n[6/7] vale-agent boot task"
 Stop-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue | Out-Null
 Unregister-ScheduledTask -TaskName "ValeAgent" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-sc.exe delete ValeAgent 2>&1 | Out-Null   # remove any old broken service
+sc.exe delete ValeAgent 2>$null   # remove any old broken service
 $action = New-ScheduledTaskAction -Execute $exe -Argument "`"$cfg`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
@@ -322,26 +327,29 @@ try {
     # Remove any existing Cloudflared service: cloudflared uninstall first, then
     # force-kill the connector process (a hung cloudflared.exe keeps the service
     # from stopping, so sc delete alone can never remove it) and delete.
-    & $cloudflared service uninstall 2>&1 | Out-Null
+    # NOTE: `2>&1 | Out-Null` would still surface a NativeCommandError from
+    # stderr under PS 5.1 — every benign-failure command here must use 2>$null
+    # (errors land on stderr and are then checked via $LASTEXITCODE).
+    & $cloudflared service uninstall 2>$null
     for ($i = 0; $i -lt 10; $i++) {
-        sc.exe query Cloudflared 2>&1 | Out-Null
+        sc.exe query Cloudflared 2>$null
         if ($LASTEXITCODE -ne 0) { break }   # already gone
-        taskkill /F /IM cloudflared.exe 2>&1 | Out-Null
-        sc.exe delete Cloudflared 2>&1 | Out-Null
+        taskkill /F /IM cloudflared.exe 2>$null
+        sc.exe delete Cloudflared 2>$null
         Start-Sleep -Seconds 1
     }
-    sc.exe query Cloudflared 2>&1 | Out-Null
+    sc.exe query Cloudflared 2>$null
     if ($LASTEXITCODE -eq 0) { throw "Cloudflared service still exists - remove it manually (taskkill /F /IM cloudflared.exe; sc delete Cloudflared) then re-run." }
     # Leftover EventLog key from a previous install makes cloudflared fail the
     # event-logger registration and exit 1 even though the service installed
     # fine. Delete it first so the reinstall is clean.
-    reg delete "HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\Cloudflared" /f 2>&1 | Out-Null
+    reg delete "HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\Cloudflared" /f 2>$null
     & $cloudflared service install $tunnelToken
 } finally {
     $ErrorActionPreference = $oldEAP
 }
 if ($LASTEXITCODE -ne 0) { throw "cloudflared service install failed (exit $LASTEXITCODE)" }
-sc.exe start Cloudflared 2>&1 | Out-Null
+sc.exe start Cloudflared 2>$null
 
 Start-Sleep -Seconds 2
 $token = (Select-String -Path $cfg -Pattern "auth_token:").Line
