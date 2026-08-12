@@ -60,7 +60,15 @@ function loadConfig() {
     hostname = location.host;
     hostInput.value = hostname;
     hostInput.disabled = true;
-    token = window.__PANEL_TOKEN__ || localStorage.getItem(LS_TOKEN) || "";
+    // The injected token is the device's CURRENT token — always prefer it
+    // over a localStorage one, which may be stale (an old device token or a
+    // previous manual entry) and would 401 every request.
+    const injected = window.__PANEL_TOKEN__ || "";
+    const stored = localStorage.getItem(LS_TOKEN) || "";
+    token = injected || stored;
+    if (injected && injected !== stored) {
+      localStorage.setItem(LS_TOKEN, injected); // refresh the stale copy
+    }
     if (token) {
       tokenInput.value = token;
       connForm.classList.add("hidden");
