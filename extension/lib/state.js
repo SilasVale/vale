@@ -5,18 +5,34 @@ export const state = {
   controlledTabs: {},   // device → tabId
   error: null,
 };
-const LS_KEY = "valePlugin";
+// The plugin TOKEN lives in chrome.storage.session (in-memory, cleared when
+// the browser/profile closes) — a 30-day credential was previously written
+// plaintext to storage.local (profile disk) for anyone with file access.
+// The device NAME stays in local (non-sensitive, survives restart).
+const LS_KEY = "valePlugin";          // { device } — local
+const SESSION_KEY = "valePluginToken"; // token — session
 
 export async function loadPairing() {
-  const local = await chrome.storage.local.get(LS_KEY);
-  if (local[LS_KEY]) state.pairedDevice = local[LS_KEY];
+  const [local, sess] = await Promise.all([
+    chrome.storage.local.get(LS_KEY),
+    chrome.storage.session.get(SESSION_KEY),
+  ]);
+  const device = local[LS_KEY]?.device;
+  const token = sess[SESSION_KEY];
+  if (device && token) state.pairedDevice = { device, token };
   return state.pairedDevice;
 }
 export async function savePairing(p) {
   state.pairedDevice = p;
-  await chrome.storage.local.set({ [LS_KEY]: p });
+  await Promise.all([
+    chrome.storage.local.set({ [LS_KEY]: { device: p.device } }),
+    chrome.storage.session.set({ [SESSION_KEY]: p.token }),
+  ]);
 }
 export async function clearPairing() {
   state.pairedDevice = null;
-  await chrome.storage.local.remove(LS_KEY);
+  await Promise.all([
+    chrome.storage.local.remove(LS_KEY),
+    chrome.storage.session.remove(SESSION_KEY),
+  ]);
 }
