@@ -29,11 +29,6 @@
       "name": "public/style.css",
       "path": "files/vale-gate/public/style.css",
       "group": "vale-gate"
-    },
-    {
-      "name": "wrangler.jsonc",
-      "path": "files/vale-gate/wrangler.jsonc",
-      "group": "vale-gate"
     }
   ]
 }
