@@ -380,33 +380,58 @@ async function backfillAndAttach(sid, s, idbRec) {
       }
     }
   } catch { /* brand-new session → attach live */ }
-  if (!s.closed) s.es = attachStream(sid);
+  if (!s.closed) s.es = subscribeStream(sid);
 }
 
-/** SSE byte stream — one stream carries all sessions, filter by sid. */
-function attachStream(sid) {
-  let closed = false;
+/**
+ * Shared SSE byte stream — ONE connection carries ALL sessions, distributed
+ * by session_id. Previously every session opened its own /api/events/term
+ * connection (N sessions = N SSE sockets, plus a 3s reconnect each) — the
+ * server broadcasts to all subscribers, so this multiplied connections for
+ * no benefit. subscribeStream(sid) returns an unsubscribe handle.
+ */
+let streamStarted = false;
+
+function subscribeStream(sid) {
+  const s = sessions.get(sid);
   const lineDecoder = new TextDecoder("utf-8");
 
+  const onFrame = (frame) => {
+    if (!frame.session_id) { if (s) s.needSync = true; return; }
+    if (frame.session_id !== sid) return;
+    if (!s || !s.term) return;
+    if (Array.isArray(frame.data)) {
+      s.term.write(new Uint8Array(frame.data));
+      s.renderedBytes += frame.data.length;
+      s.sseDirty = true;
+      ingestLines(s, lineDecoder.decode(new Uint8Array(frame.data), { stream: true }));
+    }
+  };
+
+  const ensure = () => {
+    if (!streamStarted) { streamStarted = true; startSharedStream(); }
+  };
+  ensure();
+  return { close: () => { /* shared stream — nothing to tear down */ } };
+}
+
+async function startSharedStream() {
   const connect = async () => {
-    if (closed) return;
-    const s = sessions.get(sid);
-    if (!s) { closed = true; return; }
     try {
       const res = await fetch(`https://${hostname}/api/events/term`, {
         headers: { authorization: `Bearer ${token}` },
       });
       if (res.status === 401) {
-        if (activeSid === sid) setStatus("unauthorized — check token", true);
+        setStatus("unauthorized — check token", true);
       } else if (!res.ok) {
-        if (activeSid === sid) setStatus(`stream error ${res.status}`, true);
+        setStatus(`stream error ${res.status}`, true);
       }
       if (!res.ok || !res.body) { setTimeout(connect, 3000); return; }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       try {
-        while (!closed) {
+        while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -418,27 +443,28 @@ function attachStream(sid) {
             if (!dataLine) continue;
             let frame;
             try { frame = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
-            if (!frame.session_id) { s.needSync = true; continue; }
-            if (frame.session_id !== sid) continue;
-            if (Array.isArray(frame.data)) {
-              s.term.write(new Uint8Array(frame.data));
-              s.renderedBytes += frame.data.length;
-              s.sseDirty = true;
-              ingestLines(s, lineDecoder.decode(new Uint8Array(frame.data), { stream: true }));
+            // Dispatch to every live session.
+            for (const s of sessions.values()) {
+              if (s.closed || s.savedOnly || !s.term) continue;
+              if (!frame.session_id) { s.needSync = true; continue; }
+              if (frame.session_id !== s.sid) continue;
+              if (Array.isArray(frame.data)) {
+                s.term.write(new Uint8Array(frame.data));
+                s.renderedBytes += frame.data.length;
+                s.sseDirty = true;
+                ingestLines(s, new TextDecoder().decode(new Uint8Array(frame.data), { stream: true }));
+              }
             }
           }
         }
       } finally { await reader.cancel().catch(() => {}); }
     } catch {
-      if (closed) return;
-      if (activeSid === sid) setStatus("reconnecting…");
-      s.needSync = true;
+      setStatus("reconnecting…");
+      for (const s of sessions.values()) if (!s.closed) s.needSync = true;
     }
-    if (!closed) setTimeout(connect, 3000);
+    setTimeout(connect, 3000);
   };
-
   connect();
-  return { close: () => { closed = true; } };
 }
 
 // ── Line ingestion + local persistence (localStorage, no IDB needed) ──

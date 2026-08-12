@@ -7,7 +7,7 @@ use std::io::Read;
 use std::sync::Arc;
 
 pub struct SerialBackend {
-    write_tx: std::sync::mpsc::Sender<Vec<u8>>,
+    write_tx: std::sync::mpsc::SyncSender<Vec<u8>>,
     close_tx: std::sync::mpsc::Sender<()>,
 }
 
@@ -38,7 +38,10 @@ impl SerialBackend {
         };
         let port = Arc::new(tokio::sync::Mutex::new(port));
 
-        let (write_tx, write_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        // Bounded write queue (was unbounded — a stalled device could buffer
+        // keystrokes without limit). sync_channel(1024) + try_send below drops
+        // keystrokes when full, matching the documented channel policy.
+        let (write_tx, write_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1024);
         let (close_tx, close_rx) = std::sync::mpsc::channel::<()>();
 
         // Reader thread — owns its own Arc clone, no pool lock needed
@@ -88,7 +91,8 @@ impl SerialBackend {
 
 impl TermBackend for SerialBackend {
     fn write(&self, data: &[u8]) {
-        let _ = self.write_tx.send(data.to_vec());
+        // try_send: drop-on-full (never block the caller on a stalled device)
+        let _ = self.write_tx.try_send(data.to_vec());
     }
     fn resize(&self, _rows: u16, _cols: u16) {}
     fn close(&self) {

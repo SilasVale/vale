@@ -8,17 +8,69 @@ use tokio::sync::mpsc;
 
 use vale_agent_core::DeviceError;
 
-/// Minimal SSH handler that accepts all server keys.
-/// (Host-key verification is a known gap — TOFU/known-hosts is deferred.)
-struct SshHandler;
+/// SSH handler with trust-on-first-use host-key verification.
+///
+/// The first connection to a host records its key fingerprint in
+/// vale-known-hosts.json (next to the exe); later connections REJECT a
+/// changed key. Without this, any MITM could present its own key and capture
+/// the SSH password (the old handler accepted every key). Keyed by
+/// "user@host:port" so the same host under a different identity is not
+/// silently trusted.
+struct SshHandler {
+    /// Key to record on first use ("user@host:port").
+    trust_key: String,
+}
+
+fn fingerprint_of(key: &russh::keys::ssh_key::PublicKey) -> String {
+    // SHA-256 fingerprint, stable hex — mirrors ssh-keygen's fingerprint.
+    use russh::keys::ssh_key::HashAlg;
+    key.fingerprint(HashAlg::Sha256).to_string()
+}
+
+fn known_hosts_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_default()
+        .join("vale-known-hosts.json")
+}
+
+fn load_known_hosts() -> serde_json::Map<String, serde_json::Value> {
+    match std::fs::read_to_string(known_hosts_path()) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => serde_json::Map::new(),
+    }
+}
+
+fn save_known_hosts(map: &serde_json::Map<String, serde_json::Value>) {
+    let p = known_hosts_path();
+    std::fs::write(&p, serde_json::to_string(map).unwrap_or_else(|_| "{}".into())).ok();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
 impl client::Handler for SshHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _key: &russh::keys::ssh_key::PublicKey,
+        key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let fp = fingerprint_of(key);
+        let mut hosts = load_known_hosts();
+        match hosts.get(&self.trust_key) {
+            // First use — record and trust (TOFU).
+            None => {
+                hosts.insert(self.trust_key.clone(), serde_json::Value::String(fp));
+                save_known_hosts(&hosts);
+                Ok(true)
+            }
+            // Known host — reject a changed key (possible MITM).
+            Some(stored) => Ok(stored.as_str() == Some(fp.as_str())),
+        }
     }
 }
 
@@ -40,8 +92,13 @@ impl SshSession {
         password: Option<&str>,
     ) -> Result<Self, DeviceError> {
         let config = Arc::new(client::Config::default());
+        // TOFU host-key verification — keyed by user@host:port so a changed
+        // key (MITM) is rejected on later connections.
+        let handler = SshHandler {
+            trust_key: format!("{username}@{host}:{port}"),
+        };
         let mut handle: Handle<SshHandler> =
-            connect(config, format!("{host}:{port}"), SshHandler)
+            connect(config, format!("{host}:{port}"), handler)
                 .await
                 .map_err(|e| DeviceError::SshConnectFailed {
                     host: host.to_string(),
