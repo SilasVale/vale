@@ -244,26 +244,11 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
-    // Handle CORS preflight — same-origin only (no `*`): the panel fetches
-    // same-origin; anything cross-origin is not supposed to call this API.
-    if method == Method::OPTIONS {
-        let mut resp = built_response(StatusCode::OK, "", Body::empty());
-        resp.headers_mut().insert(
-            axum::http::HeaderName::from_static("access-control-allow-origin"),
-            axum::http::HeaderValue::from_static("null"),
-        );
-        resp.headers_mut().insert(
-            axum::http::HeaderName::from_static("access-control-allow-methods"),
-            axum::http::HeaderValue::from_static("GET, POST, OPTIONS"),
-        );
-        resp.headers_mut().insert(
-            axum::http::HeaderName::from_static("access-control-allow-headers"),
-            axum::http::HeaderValue::from_static("Content-Type"),
-        );
-        return resp;
-    }
-
     // Auth decision extracted synchronously (before the Send boundary).
+    // NOTE: no CORS preflight handler — the panel is same-origin (never
+    // preflights); cross-origin calls must NOT be allowed, and the gateway
+    // proxy adds its own ACAO when required. (The old handler advertised
+    // ACAO:null that real responses never granted — dead + misleading.)
     let needs_auth = method != Method::GET || path.starts_with("/api") || path == "/mcp";
 
     // SSE event stream — streaming, handled before body parsing
@@ -299,10 +284,12 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         // READ the response (no ACAO header), so the token can't leak to a
         // third-party page. Host is pinned to the device's own domains.
         if let Some(ref token) = state.config.server.device_token {
-            // EXACT-match host allowlist. A substring/prefix match here was
+            // EXACT host allowlist. A substring/prefix match here was
             // bypassable — e.g. Host: evil-agent.saisi.online.evil.com matches
             // .contains("agent.saisi.online") and the token is handed to the
-            // attacker's page. Only the device's own domains + loopback get it.
+            // attacker's page. Only the device's own single-level subdomain
+            // (dN.agent.saisi.online — a multi-level attacker subdomain like
+            // evil.agent.saisi.online is REJECTED), the apex, or loopback.
             let host_ok = req
                 .headers()
                 .get(axum::http::header::HOST)
@@ -311,7 +298,10 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                     let h = h.trim();
                     h == "127.0.0.1" || h.starts_with("127.0.0.1:")
                         || h == "localhost" || h.starts_with("localhost:")
-                        || h == "agent.saisi.online" || h.ends_with(".agent.saisi.online")
+                        || h == "agent.saisi.online"
+                        || (h.ends_with(".agent.saisi.online")
+                            && h.matches('.').count() == 2
+                            && h.split('.').next().map(|d| d.starts_with("d")).unwrap_or(false))
                 })
                 .unwrap_or(false);
             if host_ok {
