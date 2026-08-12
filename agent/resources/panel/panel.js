@@ -494,6 +494,10 @@ function stripAnsi(s) {
 
 function ingestLines(s, text) {
   if (!text) return;
+  // Normalize EVERY arrival path (live SSE previously bypassed stripAnsi):
+  // strip ANSI/VT escapes + normalize \r\n → \n so stored/exported lines are
+  // clean regardless of how the bytes arrived.
+  text = stripAnsi(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const chunks = text.split("\n");
   for (let i = 0; i < chunks.length; i++) {
     let line = chunks[i];
