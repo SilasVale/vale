@@ -61,6 +61,14 @@ foreach ($f in $files) {
         Set-Content $f $c -Encoding ascii
         Write-Host "  fixed: $f"
     }
+    # Diagnostic log — written next to the install dir so it can be fetched
+    # via the panel/API instead of asking the user to read files.
+    $logDir = Split-Path $hostFile -Parent
+    if ($logDir) {
+        $log = Join-Path $logDir "fix-tunnel.log"
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') file=$f changed=$changed newTunnel=$newTunnel hostname=$hostname" |
+            Out-File -FilePath $log -Append -Encoding utf8
+    }
 }
 
 # Also clean up legacy names in vale-agent's config.yaml: `name` should be
