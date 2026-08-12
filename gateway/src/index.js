@@ -281,10 +281,17 @@ async function handleConsole(request, env, url) {
       return await proxyDevice(request, env, d, proxyMatch[2] || "/");
     }
     const auth = String(request.headers.get("authorization") || "");
-    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "")
+      // ?token= is accepted ONLY for a top-level navigation by the extension
+      // (browser navigation cannot carry an Authorization header; the token
+      // is the plugin token, single-use-ish, scoped to this device).
+      || (url.searchParams.get("token") || "");
     const link = token ? await getPluginByToken(env, token) : null;
     if (link && link.device === deviceName) {
-      return await proxyDevice(request, env, d, proxyMatch[2] || "/");
+      // Never cache a response that carried a token in the URL.
+      const resp = await proxyDevice(request, env, d, proxyMatch[2] || "/");
+      resp.headers.set("Cache-Control", "no-store");
+      return resp;
     }
     return jsonError(401, "Not logged in or invalid plugin token", "authentication_error");
   }
