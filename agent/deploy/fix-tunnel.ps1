@@ -95,15 +95,26 @@ foreach ($cfg in $cfgCandidates) {
 # Ensure the tunnel has a real DNS route for the hostname (a bare CNAME is not
 # a route — without this the tunnel 530s with error 1033). --overwrite replaces
 # any pre-existing record with a proper tunnel route.
-& $cloudflared tunnel route dns $tunnelName $hostname 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "  !! route dns failed (exit $LASTEXITCODE) — add the Public Hostname in the dashboard"
+# NOTE: cloudflared logs its INF lines to stderr, which PS 5.1 turns into a
+# terminating NativeCommandError under EAP=Stop even with 2>&1 — scope EAP to
+# Continue and rely on the exit code, so a benign 'already configured' message
+# cannot abort the script BEFORE the cloudflared restart below.
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $cloudflared tunnel route dns $tunnelName $hostname 2>$null
+$routeCode = $LASTEXITCODE
+$ErrorActionPreference = $oldEAP
+if ($routeCode -ne 0) {
+    Write-Host "  !! route dns failed (exit $routeCode) — add the Public Hostname in the dashboard"
 } else {
     Write-Host "  route dns ok: $hostname → $tunnelName"
 }
 
 # Restart cloudflared so the new config takes effect
+$oldEAP2 = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 sc.exe stop cloudflared 2>$null | Out-Null
 Start-Sleep -Seconds 2
 sc.exe start cloudflared 2>$null | Out-Null
+$ErrorActionPreference = $oldEAP2
 Write-Host "  cloudflared restarted (tunnel $tunnelName → $newTunnel, hostname $hostname)"
