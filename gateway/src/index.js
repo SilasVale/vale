@@ -720,7 +720,7 @@ const __rlMin = new Map(); // `min:${token}:${minute}` → count
 const __rlDay = new Map(); // `day:${token}:${day}`   → count
 const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
 
-async function handleGatewayImpl(request, env, url) {
+async function handleGatewayImpl(request, env, url, preReadText = null) {
   const path = url.pathname;
   const method = request.method;
 
@@ -813,7 +813,9 @@ async function handleGatewayImpl(request, env, url) {
   if (declaredLen > MAX_BODY_BYTES) {
     return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
-  let rawText = await request.text();
+  // Reuse the body the log wrapper already read (round-55) — reading a
+  // multi-MB body twice on every /v1 request doubled the memory/CPU cost.
+  let rawText = preReadText !== null ? preReadText : await request.text();
   // The post-read guard must compare BYTES, not UTF-16 code units: a CJK/
   // emoji body is up to 3 bytes per char, so a length check let ~3x the
   // intended size through and blew the scan/parse CPU budget it exists to
@@ -821,8 +823,11 @@ async function handleGatewayImpl(request, env, url) {
   if (new TextEncoder().encode(rawText).length > MAX_BODY_BYTES) {
     return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
-  const { model: scannedModel } = scanTopLevelModel(rawText);
-  let model = scannedModel || "";
+  // The full scan result (model + value span) is reused by the passthrough
+  // model-swap below — re-scanning a multi-MB body just to replace the field
+  // doubled the scan CPU on every passthrough request (round-55).
+  const scanned = scanTopLevelModel(rawText);
+  let model = scanned.model || "";
   if (model === "auto") {
     // Claude Code 固定模型名 auto：按用户网页选择路由
     model = await resolveAutoModel(env, user.id);
@@ -1043,7 +1048,7 @@ async function handleGatewayImpl(request, env, url) {
     // every other passthrough channel uses Bearer.
     const forwardBody = body !== null
       ? JSON.stringify({ ...body, model: upstreamModel })
-      : rawWithModel(rawText, upstreamModel);
+      : rawWithModel(rawText, upstreamModel, scanned);
     const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
       method: "POST",
       headers: passthroughHeaders(bearerKey, { apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false }),
@@ -1178,15 +1183,16 @@ async function handleGatewayImpl(request, env, url) {
 export async function handleGateway(request, env, url) {
   const started = Date.now();
   // The model/channel is what identifies a failure — a 502 without it is
-  // un-actionable. Scan the raw body cheaply (the same scan the handler does).
+  // un-actionable. Read the raw body ONCE here and hand it to the impl —
+  // the old clone().text() re-read + re-scan of a multi-MB body on EVERY
+  // /v1 request was ~30MB extra memory + double the scan CPU (round-55).
+  let rawText = null;
   let model = "";
   try {
-    const clone = request.clone();
-    const text = await clone.text();
-    const scanned = scanTopLevelModel(text);
-    model = scanned.model || "";
+    rawText = await request.text();
+    model = scanTopLevelModel(rawText).model || "";
   } catch { /* empty model on read failure */ }
-  const res = await handleGatewayImpl(request, env, url);
+  const res = await handleGatewayImpl(request, env, url, rawText);
   try {
     // One structured line per /v1 request — tail-visible usage/health signal.
     console.log(JSON.stringify({
