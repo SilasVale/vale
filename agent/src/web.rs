@@ -493,11 +493,18 @@ where
 
 async fn sse_stream(state: Arc<AppState>) -> Response {
     let rx = state.event_bus.subscribe();
-    // SeqEvent serializes as {"seq":n,"event":{...}}
-    let encode = |event: &vale_agent_core::events::SeqEvent| format!("data: {}\n\n", serde_json::to_string(event).unwrap_or_default());
+    // SeqEvent serializes as {"seq":n,"event":{...}}. The `v` field is a
+    // protocol version anchor (round-54): clients ignore unknown fields, so
+    // this is purely a diagnostic marker — a future agent/client that needs
+    // to detect version drift can do so instead of silently mis-parsing.
+    let encode = |event: &vale_agent_core::events::SeqEvent| {
+        let mut obj = serde_json::to_value(event).unwrap_or_default();
+        if let Some(o) = obj.as_object_mut() { o.insert("v".into(), serde_json::json!(1)); }
+        format!("data: {}\n\n", obj)
+    };
     // Plain data frame so EventSource.onmessage fires; the client responds by
     // polling once from its last seq to catch up.
-    let lagged = |n: u64| format!("data: {{\"lagged\":{n}}}\n\n");
+    let lagged = |n: u64| format!("data: {{\"v\":1,\"lagged\":{n}}}\n\n");
     sse_response(rx, encode, lagged).await
 }
 
@@ -506,11 +513,16 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
     use tokio::sync::broadcast::error::RecvError;
     use tokio::sync::mpsc;
     let mut rx = state.event_bus.subscribe_term_output();
-    // {"session_id":"term-0","data":[104,101,...]}
-    let encode = |output: &serde_json::Value| format!("data: {}\n\n", serde_json::to_string(output).unwrap_or_default());
+    // {"v":1,"session_id":"term-0","data":[104,101,...]} — the v field is a
+    // protocol version anchor (round-54), same semantics as /api/events.
+    let encode = |output: &serde_json::Value| {
+        let mut obj = output.clone();
+        if let Some(o) = obj.as_object_mut() { o.insert("v".into(), serde_json::json!(1)); }
+        format!("data: {}\n\n", serde_json::to_string(&obj).unwrap_or_default())
+    };
     // Loss-tolerant stream; a lagged frame is ignored client-side (it has no
     // session_id). Keep the connection alive.
-    let lagged = |_n: u64| "data: {\"lagged\":true}\n\n".to_string();
+    let lagged = |_n: u64| "data: {\"v\":1,\"lagged\":true}\n\n".to_string();
 
     let (tx, mpsc_rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
     tokio::spawn(async move {
