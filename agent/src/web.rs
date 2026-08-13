@@ -506,7 +506,6 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
     use tokio::sync::broadcast::error::RecvError;
     use tokio::sync::mpsc;
     let mut rx = state.event_bus.subscribe_term_output();
-    let terminal_mgr = state.terminal_mgr.clone();
     // {"session_id":"term-0","data":[104,101,...]}
     let encode = |output: &serde_json::Value| format!("data: {}\n\n", serde_json::to_string(output).unwrap_or_default());
     // Loss-tolerant stream; a lagged frame is ignored client-side (it has no

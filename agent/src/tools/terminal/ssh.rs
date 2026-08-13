@@ -53,7 +53,10 @@ impl SshBackend {
 
 impl TermBackend for SshBackend {
     fn write(&self, data: &[u8]) {
-        // try_send: keystrokes must never block — drop when full
+        // try_send: keystrokes must never block — drop when full. (The
+        // round-53 'drop-oldest' idea doesn't apply: tokio mpsc Sender has
+        // no try_recv, and a full 16-slot channel on a keystroke stream is
+        // practically unreachable — the consumer drains faster than typing.)
         let _ = self.write_tx.try_send(data.to_vec());
     }
     fn resize(&self, rows: u16, cols: u16) {
