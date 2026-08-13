@@ -95,8 +95,8 @@ body {
   vertical-align: 1px;
   background: var(--accent);
 }
-.tab-dot[data-kind="ssh"] { background: #4f6bed; }
-.tab-dot[data-kind="serial"] { background: #d97706; }
+.tab-dot[data-kind="ssh"] { background: #4f6bed; } /* lane-ds */
+.tab-dot[data-kind="serial"] { background: #d97706; } /* lane-or */
 .tab-name { white-space: nowrap; }
 /* Per-tab export + close — muted, visible on hover. */
 .tab-export, .tab-close {
