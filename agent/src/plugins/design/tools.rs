@@ -95,8 +95,9 @@ pub fn page_view() -> ToolDef {
         "page_view",
         "View a Vale page's design by fetching its HTML/CSS. \
          Pages: status (/), panel (/panel/), panel-js, panel-css, panel-html, \
-         console (gateway page), console-css (gateway style.css), download \
-         (download site), popup-css, popup-html, options-css, options-html, \
+         console (gateway page), console-css (gateway style.css), console-js, \
+         download (download site), popup-css, popup-html, options-css, \
+         options-html, terminal-css, terminal-html, \
          Returns up to 64KB of source — read the CSS tokens (--accent, --bg, \
          radii, glass) and HTML structure to evaluate the design. Use target \
          '127.0.0.1:18080' (default) or a remote host.",

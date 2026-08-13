@@ -206,11 +206,13 @@ Section "Install" SEC01
     nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
     nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgent /F 2>NUL'
     ; Start the server HIDDEN, ASYNC. Exec on a console app would create a
-    ; visible black window. Start-Process via -EncodedCommand avoids ALL
-    ; quoting: the PS command is a base64-UTF16LE blob (no quotes to mangle
-    ; through nsExec's CreateProcess argv parsing, no cmd %VAR% expansion),
-    ; and $args carries the paths.
-    nsExec::ExecToLog 'powershell -NoProfile -EncodedCommand UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAJABhAHIAZwBzAFsAMABdACAALQBBAHIAZwB1AG0AZQBuAHQATABpAHMAdAAgACQAYQByAGcAcwBbADEAXQAgAC0AVwBpAG4AZABvAHcAUwB0AHkAbABlACAASABpAGQAZABlAG4A $INSTDIR\vale-agent.exe $INSTDIR\config.yaml'
+    ; visible black window. The paths go via ENVIRONMENT VARIABLES (VA_EXE /
+    ; VA_CFG) — -EncodedCommand with trailing args is a HARD parse error in
+    ; Windows PowerShell 5.1 ("CommandAlreadySpecified" — the round-38 bug
+    ; that left the device offline after every silent upgrade), and quoting
+    ; paths through nsExec's CreateProcess argv is fragile. The PS command
+    ; (fixed, no args) reads the env vars.
+    nsExec::ExecToLog 'cmd /c set VA_EXE=$INSTDIR\vale-agent.exe& set VA_CFG=$INSTDIR\config.yaml& powershell -NoProfile -EncodedCommand UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAJABlAG4AdgA6AFYAQQBfAEUAWABFACAALQBBAHIAZwB1AG0AZQBuAHQATABpAHMAdAAgACQAZQBuAHYAOgBWAEQAXwBDAEYARwAgAC0AVwBpAG4AZABvAHcAUwB0AHkAbABlACAASABpAGQAZABlAG4A'
     ; Tray: keep the registered ValeAgentTray task (it carries the user
     ; principal; a missing task OR a failing /Run falls back to starting the
     ; exe directly — a disabled/stale-principal task must not leave the tray
@@ -218,12 +220,12 @@ Section "Install" SEC01
     nsExec::ExecToLog 'cmd /c schtasks /Query /TN ValeAgentTray 2>NUL'
     Pop $0
     ${If} $0 != 0
-      nsExec::ExecToLog 'powershell -NoProfile -EncodedCommand UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAJABhAHIAZwBzAFsAMABdACAALQBXAGkAbgBkAG8AdwBTAHQAeQBsAGUAIABIAGkAZABkAGUAbgA= $INSTDIR\vale-tray.exe'
+      nsExec::ExecToLog 'cmd /c set VA_EXE=$INSTDIR\vale-tray.exe& powershell -NoProfile -EncodedCommand UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAJABlAG4AdgA6AFYAQQBfAEUAWABFACAALQBXAGkAbgBkAG8AdwBTAHQAeQBsAGUAIABIAGkAZABkAGUAbgA='
     ${Else}
       nsExec::ExecToLog 'cmd /c schtasks /Run /TN ValeAgentTray 2>NUL'
       Pop $0
       ${If} $0 != 0
-        nsExec::ExecToLog 'powershell -NoProfile -EncodedCommand UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAJABhAHIAZwBzAFsAMABdACAALQBXAGkAbgBkAG8AdwBTAHQAeQBsAGUAIABIAGkAZABkAGUAbgA= $INSTDIR\vale-tray.exe'
+        nsExec::ExecToLog 'cmd /c set VA_EXE=$INSTDIR\vale-tray.exe& powershell -NoProfile -EncodedCommand UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAJABlAG4AdgA6AFYAQQBfAEUAWABFACAALQBXAGkAbgBkAG8AdwBTAHQAeQBsAGUAIABIAGkAZABkAGUAbgA='
       ${EndIf}
     ${EndIf}
   ${EndIf}

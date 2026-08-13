@@ -65,7 +65,8 @@ const PAGE = (consoleUrl) => `<!doctype html>
   .steps { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }
   .step { display: flex; gap: 14px; align-items: flex-start; background: var(--surface-glass);
           backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
-          border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px; } /* glass card: 20px like other surfaces */
+          border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px;
+          box-shadow: var(--shadow-lg); } /* glass card: 20px + shadow-lg like other surfaces */
   .step .n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
              color: #fff; display: flex; align-items: center; justify-content: center;
              font: 700 13px/1 var(--font); margin-top: 1px; }

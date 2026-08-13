@@ -234,7 +234,7 @@ async function handleConsole(request, env, url) {
     if (claim) {
       return jsonError(403, "Registration key already in use", "authorization_error");
     }
-    await env.KEYS.put(`regclaim:${k}`, "1", { expirationTtl: 30 });
+    await env.KEYS.put(`regclaim:${k}`, "1", { expirationTtl: 60 });
     if (!(await hasRegKey(env, k))) {
       await env.KEYS.delete(`regclaim:${k}`);
       return jsonError(403, "Invalid or used registration key", "authorization_error");
@@ -254,7 +254,7 @@ async function handleConsole(request, env, url) {
     // 30-day device-control tokens from one code. A claim lock bounds it.
     const claim = await env.KEYS.get(`pairclaim:${c}`);
     if (claim) return jsonError(403, "Pairing code already in use", "authorization_error");
-    await env.KEYS.put(`pairclaim:${c}`, "1", { expirationTtl: 30 });
+    await env.KEYS.put(`pairclaim:${c}`, "1", { expirationTtl: 60 });
     const device = await consumePairCode(env, c);
     if (!device) {
       await env.KEYS.delete(`pairclaim:${c}`);
@@ -696,7 +696,7 @@ async function authLogin(request, env, secure) {
     const fails = Number(await env.KEYS.get(lockKey + ":n")) || 0;
     const next = fails + 1;
     if (next >= 5) {
-      await env.KEYS.put(lockKey, "1", { expirationTtl: 30 });
+      await env.KEYS.put(lockKey, "1", { expirationTtl: 60 });
       await env.KEYS.delete(lockKey + ":n");
     } else {
       await env.KEYS.put(lockKey + ":n", String(next), { expirationTtl: 60 });
@@ -870,10 +870,30 @@ async function handleGatewayImpl(request, env, url) {
   // is only the search backend. Requires this user's DEEPSEEK_API_KEY. ds/ and
   // or/ requests pass through untouched (ds/ handles web_search natively).
   if (isMessages && (route.type === "translate" || route.kind === "opencode")) {
-    body = JSON.parse(rawText);
+    // CPU guard: parsing a multi-MB body into an object graph blows the Free
+    // plan's 10ms budget (Error 1102) — but web_search detection and image
+    // preprocessing NEED the object. The translate path MUST parse (it
+    // reshapes the request), so the scan-skip ONLY applies to the native
+    // opencode PASSTHROUGH (deepseek-v4-flash, route.type === "passthrough"):
+    // scan the RAW text for the triggers ("web_search" tool, image blocks)
+    // BEFORE parsing — a plain text-only request (the common case) skips the
+    // parse entirely. Translate models (minimax/mimo/kimi) always parse.
+    if (route.kind === "opencode" && route.type === "passthrough") {
+      const needsParse =
+        rawText.includes('"web_search"') ||
+        rawText.includes('"type":"image"') ||
+        rawText.includes('"type": "image"');
+      if (!needsParse) {
+        body = null;
+      } else {
+        body = JSON.parse(rawText);
+      }
+    } else {
+      body = JSON.parse(rawText);
+    }
     const isWebSearch = (
-      (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
-      (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
+      (Array.isArray(body?.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
+      (body?.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
     );
     if (isWebSearch) {
       if (!deepseekKey) {
@@ -893,9 +913,12 @@ async function handleGatewayImpl(request, env, url) {
     // carries image blocks and the target model isn't on the vision-capable
     // allowlist, describe each image with the configured vision model (default
     // og/mimo-v2.5) and swap the image blocks for that text, so any model can
-    // answer image questions. count_tokens skips this.
-    const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
-    if (prep.changed) body.messages = prep.messages;
+    // answer image questions. count_tokens skips this. (body is null when the
+    // raw scan found no web_search/image triggers — nothing to preprocess.)
+    if (body) {
+      const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
+      if (prep.changed) body.messages = prep.messages;
+    }
   }
 
   // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
