@@ -44,6 +44,40 @@ fn parse_target(t: &str) -> Result<(String, u16), DeviceError> {
     Ok((host, port))
 }
 
+/// Replace a `name = "value"` assignment (e.g. the panel's injected
+/// window.__PANEL_TOKEN__) with `<redacted>` — a design review must never
+/// receive a live credential.
+fn redact_tokens(s: &str) -> String {
+    const PATTERN: &str = "__PANEL_TOKEN__";
+    if !s.contains(PATTERN) {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(idx) = rest.find(PATTERN) {
+        out.push_str(&rest[..idx]);
+        rest = &rest[idx..];
+        let after = &rest[PATTERN.len()..];
+        // Find the opening quote of the value, then the closing quote.
+        match after.find('"') {
+            Some(q) => match after[q + 1..].find('"') {
+                Some(c) => {
+                    let end = q + 1 + c;
+                    out.push_str(&rest[..PATTERN.len()]);
+                    out.push_str(&after[..=q]);
+                    out.push_str("<redacted>");
+                    out.push('"');
+                    rest = &after[end + 1..];
+                }
+                None => { out.push_str(rest); rest = ""; break; }
+            },
+            None => { out.push_str(rest); rest = ""; break; }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `page_view` — fetch a Vale page's HTML/CSS so the AI can read its design.
 ///
 /// The device has no browser, so "seeing" the design means reading the source.
@@ -112,14 +146,19 @@ pub fn page_view() -> ToolDef {
                     (body, len > MAX_PAGE_BYTES)
                 }
             };
+            // Redact any injected device token before returning: the panel
+            // HTML embeds window.__PANEL_TOKEN__ = "<token>", which a design
+            // review must never see (a leaked review output = device control).
+            // The agent's own token is also never part of a design diff.
+            let redacted = redact_tokens(&body);
             // char-boundary-safe truncation: slicing a String at a fixed byte
             // index PANICS when it lands inside a multi-byte UTF-8 char.
             let text = if truncated {
                 let mut end = MAX_PAGE_BYTES;
-                while end > 0 && !body.is_char_boundary(end) { end -= 1; }
-                &body[..end]
+                while end > 0 && !redacted.is_char_boundary(end) { end -= 1; }
+                &redacted[..end]
             } else {
-                &body[..]
+                &redacted[..]
             };
 
             Ok(json!({

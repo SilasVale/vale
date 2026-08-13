@@ -151,10 +151,12 @@ mod desktop_impl {
             };
             // Idle sweeper: force-close sessions that have been silent for the
             // TTL (client disconnected, backend stalled). Best-effort — never
-            // blocks open/close.
-            {
+            // blocks open/close. Only spawn when a tokio runtime is active —
+            // unit tests construct the manager outside one and tokio::spawn
+            // would panic ("no reactor running").
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
                 let mgr2 = mgr.clone();
-                tokio::spawn(async move {
+                drop(runtime.spawn(async move {
                     let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
                     tick.tick().await; // first tick fires immediately — skip
                     loop {
@@ -172,7 +174,7 @@ mod desktop_impl {
                             inner.sessions.remove(i);
                         }
                     }
-                });
+                }));
             }
             mgr
         }
@@ -182,6 +184,18 @@ mod desktop_impl {
             let mut inner = self.inner.lock().await;
             if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
                 s.last_output = std::time::Instant::now();
+            }
+        }
+
+        /// Client-liveness keepalive for ALL live sessions: the panel's SSE
+        /// connection is open → someone is watching → no session may be
+        /// reaped as "idle" (see sse_term_stream's 60s tick). Cheap: one
+        /// lock + N field writes; call at most once a minute.
+        pub async fn term_touch_all(&self) {
+            let mut inner = self.inner.lock().await;
+            let now = std::time::Instant::now();
+            for s in inner.sessions.iter_mut() {
+                s.last_output = now;
             }
         }
 

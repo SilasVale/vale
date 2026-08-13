@@ -39,7 +39,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .pill{font-size:11px;font-weight:600;border-radius:99px;padding:2px 8px;background:var(--accent-bg);color:var(--accent)}
 .pill.connected{background:var(--green-bg);color:var(--green)}
 .pill.disconnected{background:var(--red-bg);color:var(--red)}
-.pill.connecting{background:rgba(191,91,0,.08);color:#bf5b00}
+.pill.connecting{background:rgba(217,119,6,.08);color:#d97706}/* warn amber = --lane-or, brand token */
 
 .card{background:var(--surface-glass);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
   border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;display:flex;flex-direction:column;gap:8px;
