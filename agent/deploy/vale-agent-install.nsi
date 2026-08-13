@@ -227,6 +227,12 @@ Section "Install" SEC01
     ; (user + systemprofile configs), fixes config.yaml name, restarts
     ; cloudflared. Idempotent; safe on fresh installs.
     nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\fix-tunnel.ps1"'
+    ; Loopback bind on upgrade (security, 1.0.63+): an OLD config.yaml still
+    ; says host: 0.0.0.0 (the embedded default before 1.0.63) and setup.ps1
+    ; only rewrites it on fresh installs — without this, an upgrade keeps
+    ; serving the API to the LAN (Host-spoof RCE, round-47). Rewrite it here
+    ; on every silent upgrade; idempotent.
+    nsExec::ExecToLog 'powershell -NoProfile -Command "(Get-Content -Raw \"$INSTDIR\config.yaml\") -replace ''^host: 0\.0\.0\.0$''m,''host: 127.0.0.2'' | Set-Content -NoNewline \"$INSTDIR\config.yaml\""'
     ; Restart the server. Do NOT schtasks /Run here: a task registered for an
     ; older install dir (a silent /D= upgrade) would boot the OLD binaries
     ; and hold the port forever. Delete the task and start the new exe
