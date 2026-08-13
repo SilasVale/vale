@@ -118,19 +118,19 @@ Section "Install" SEC01
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
-  nsExec::ExecToLog 'schtasks /End /TN ValeAgent'
-  nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray'
+  nsExec::ExecToLog 'schtasks /End /TN ValeAgent 2>NUL'
+  nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray 2>NUL'
   ; Legacy 0.8.x autostart leftovers. The ValeCommand service (sc create from
   ; the old installer) is started by the SCM BEFORE the ValeAgent boot task
   ; at every restart, grabs port 18080, and the new server then fails to
   ; bind — the device keeps serving the old version. The boot task is the
   ; canonical autostart since 1.0; drop the service and the old tasks.
-  nsExec::ExecToLog 'sc stop ValeCommand'
-  nsExec::ExecToLog 'sc delete ValeCommand'
-  nsExec::ExecToLog 'schtasks /End /TN ValeCommand'
-  nsExec::ExecToLog 'schtasks /Delete /TN ValeCommand /F'
-  nsExec::ExecToLog 'schtasks /End /TN ValeCommandTray'
-  nsExec::ExecToLog 'schtasks /Delete /TN ValeCommandTray /F'
+  nsExec::ExecToLog 'sc stop ValeCommand 2>NUL'
+  nsExec::ExecToLog 'sc delete ValeCommand 2>NUL'
+  nsExec::ExecToLog 'schtasks /End /TN ValeCommand 2>NUL'
+  nsExec::ExecToLog 'schtasks /Delete /TN ValeCommand /F 2>NUL'
+  nsExec::ExecToLog 'schtasks /End /TN ValeCommandTray 2>NUL'
+  nsExec::ExecToLog 'schtasks /Delete /TN ValeCommandTray /F 2>NUL'
   Sleep 1000
 
   ; 3. Swap the new binaries in (old ones were killed above, so Delete/Rename
@@ -199,26 +199,30 @@ Section "Install" SEC01
     ; and hold the port forever. Delete the task and start the new exe
     ; directly — its startup self-heal re-registers the ValeAgent boot task
     ; pointing at THIS dir (with the unlimited ExecutionTimeLimit).
-    nsExec::ExecToLog 'schtasks /End /TN ValeAgent'
-    nsExec::ExecToLog 'schtasks /Delete /TN ValeAgent /F'
+    ; 2>NUL on every schtasks call: silent auto-upgrade runs in a visible
+    ; console and a missing task (ValeAgentTray on some installs) printed
+    ; "错误: 指定的服务未安装。(1060)" + "系统找不到指定的文件" noise —
+    ; the upgrade output looked like a failure when it was fine.
+    nsExec::ExecToLog 'schtasks /End /TN ValeAgent 2>NUL'
+    nsExec::ExecToLog 'schtasks /Delete /TN ValeAgent /F 2>NUL'
     Exec '"$INSTDIR\vale-agent.exe" "$INSTDIR\config.yaml"'
     ; Tray: keep the registered ValeAgentTray task (it carries the user
     ; principal; a missing task falls back to starting the exe directly).
-    nsExec::ExecToLog 'schtasks /Query /TN ValeAgentTray'
+    nsExec::ExecToLog 'schtasks /Query /TN ValeAgentTray 2>NUL'
     Pop $0
     ${If} $0 != 0
       Exec '"$INSTDIR\vale-tray.exe"'
     ${Else}
-      nsExec::ExecToLog 'schtasks /Run /TN ValeAgentTray'
+      nsExec::ExecToLog 'schtasks /Run /TN ValeAgentTray 2>NUL'
     ${EndIf}
   ${EndIf}
 SectionEnd
 
 Section "Uninstall"
   ; Stop and remove the scheduled tasks + cloudflared service (best effort)
-  nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray'
-  nsExec::ExecToLog 'schtasks /Delete /TN ValeAgentTray /F'
-  nsExec::ExecToLog 'schtasks /End /TN ValeAgent'
+  nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray 2>NUL'
+  nsExec::ExecToLog 'schtasks /Delete /TN ValeAgentTray /F 2>NUL'
+  nsExec::ExecToLog 'schtasks /End /TN ValeAgent 2>NUL'
   nsExec::ExecToLog 'schtasks /Delete /TN ValeAgent /F'
   nsExec::ExecToLog 'sc stop Cloudflared'
   nsExec::ExecToLog 'sc delete Cloudflared'
