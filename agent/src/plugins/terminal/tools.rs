@@ -1261,16 +1261,19 @@ mod tests {
     #[tokio::test]
     async fn read_merges_spill_and_memory() {
         let (tools, buf) = seeded_tools();
-        seed(&buf, "s1", b"tail", 10); // 10 bytes evicted, memory holds "tail"
+        // Unique sid (round-56): the spill files live in a shared %TEMP%
+        // dir keyed by sid — concurrent tests reusing "s1" raced on the
+        // same file (one test's remove_file killed the other's data).
+        seed(&buf, "spill-s1", b"tail", 10); // 10 bytes evicted, memory holds "tail"
         // Write the evicted head to the spill file the way the drainer does.
         use std::io::Write;
-        let p = spill_path("s1");
+        let p = spill_path("spill-s1");
         let _ = std::fs::create_dir_all(p.parent().unwrap());
         let mut f = std::fs::File::create(&p).unwrap();
         f.write_all(b"0123456789").unwrap();
         // offset 6 → spill [6,10) = "6789" + memory "tail" = "6789tail";
         // end_abs = dropped(10) + memory(4) = 14.
-        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 6, "clean": false})).await;
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "spill-s1", "offset": 6, "clean": false})).await;
         assert_eq!(out["text"], "6789tail");
         assert_eq!(out["start"], 6);
         assert_eq!(out["end"], 14);
