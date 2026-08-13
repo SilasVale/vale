@@ -138,24 +138,46 @@ Section "Install" SEC01
   ;    after a Delete left the device with NO exe at all, offline with no
   ;    recovery), then rename .new → exe. If the swap fails, restore .bak so
   ;    the device keeps running the old version (online beats updated).
+  ; A stale .bak from a previously crashed install must be dropped BEFORE the
+  ; swap — NSIS Rename fails when the destination exists, so a leftover .bak
+  ; would break the first Rename and abort the whole upgrade (round-46 M#4).
+  ; At this point both the current exe and the .new binary exist, so the
+  ; .bak is by definition stale garbage.
+  Delete "$INSTDIR\vale-agent.exe.bak"
   IfFileExists "$INSTDIR\vale-agent.exe" 0 +3
     Rename "$INSTDIR\vale-agent.exe" "$INSTDIR\vale-agent.exe.bak"
     IfErrors 0 +2
     SetErrorLevel 3
   Rename "$INSTDIR\vale-agent.exe.new" "$INSTDIR\vale-agent.exe"
-  IfErrors 0 +3
-    Rename "$INSTDIR\vale-agent.exe.bak" "$INSTDIR\vale-agent.exe"  ; roll back
+  IfErrors 0 agentSwapOk
+    ; Swap failed — roll back to the old exe (online beats updated).
+    Rename "$INSTDIR\vale-agent.exe.bak" "$INSTDIR\vale-agent.exe"
+    IfErrors 0 agentSwapDone
+    ; Rollback failed too — the .bak may hold the ONLY working exe (e.g. AV
+    ; scanning the fresh file). Keep it: the old unconditional Delete would
+    ; have destroyed the last good copy and left the device offline with no
+    ; recovery (round-46 High #2).
     SetErrorLevel 3
-  Delete "$INSTDIR\vale-agent.exe.bak"
+    Goto agentSwapDone
+  agentSwapOk:
+    ; Swap succeeded — the .bak is a stale copy now.
+    Delete "$INSTDIR\vale-agent.exe.bak"
+  agentSwapDone:
+  Delete "$INSTDIR\vale-tray.exe.bak"
   IfFileExists "$INSTDIR\vale-tray.exe" 0 +3
     Rename "$INSTDIR\vale-tray.exe" "$INSTDIR\vale-tray.exe.bak"
     IfErrors 0 +2
     SetErrorLevel 3
   Rename "$INSTDIR\vale-tray.exe.new" "$INSTDIR\vale-tray.exe"
-  IfErrors 0 +3
-    Rename "$INSTDIR\vale-tray.exe.bak" "$INSTDIR\vale-tray.exe"  ; roll back
+  IfErrors 0 traySwapOk
+    ; Same safe-swap semantics as vale-agent.exe above.
+    Rename "$INSTDIR\vale-tray.exe.bak" "$INSTDIR\vale-tray.exe"
+    IfErrors 0 traySwapDone
     SetErrorLevel 3
-  Delete "$INSTDIR\vale-tray.exe.bak"
+    Goto traySwapDone
+  traySwapOk:
+    Delete "$INSTDIR\vale-tray.exe.bak"
+  traySwapDone:
 
   ; Persist the registration key so run-setup.bat can pass it to the setup
   ; script ($env:VALE_REG_KEY). Empty when the user left the field blank.

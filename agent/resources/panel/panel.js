@@ -47,7 +47,13 @@ const TERM_THEME = {
   brightCyan: "#0f766e", brightWhite: "#6e6e73",
 };
 
-const $ = (id) => document.getElementById(id);
+// getElementById takes a bare id — a leading "#" (used by several callers)
+// made it return null and threw TypeError inside refreshEmpty()/showModal()
+// at runtime ("Cannot read properties of null (reading 'classList')"), which
+// aborted adoptSession BEFORE activate() — sessions rendered into a
+// display:none container (blank terminal) and were never activated again
+// (dedup kept skipping them). Strip the "#" so both spellings work.
+const $ = (id) => document.getElementById(String(id).replace(/^#/, ""));
 const hostInput = $("host");
 const tokenInput = $("token");
 const saveBtn = $("save");
