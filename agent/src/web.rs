@@ -352,10 +352,25 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // Extract query params before consuming body
     let query_str = req.uri().query().map(|q| q.to_string());
 
-    // Read body for API requests
-    let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
-        .await
-        .unwrap_or_default();
+    // Read body for API requests. >1MB must FAIL LOUDLY, not degrade to an
+    // empty body — the old unwrap_or_default() turned an oversized
+    // terminal_execute/write into a "successful" call that ran NOTHING
+    // (silent data loss; round-59). The gateway's ok/data.ok double-check
+    // turns this 413 into a stable error code downstream.
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => {
+            return built_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "application/json",
+                Body::from(serde_json::json!({
+                    "ok": false,
+                    "error": "request body exceeds 1 MB limit",
+                    "code": "payload_too_large",
+                }).to_string()),
+            );
+        }
+    };
     let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
     let result: serde_json::Value = match (method.as_str(), path.as_str()) {
@@ -424,7 +439,7 @@ async fn api_call_tool(state: &AppState, tool_name: &str, body: &str) -> serde_j
     };
     match tool.handler.call(params).await {
         Ok(result) => serde_json::json!({"ok": true, "result": result}),
-        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+        Err(e) => serde_json::json!({"ok": false, "error": e.to_string(), "code": e.code()}),
     }
 }
 

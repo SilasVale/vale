@@ -29,3 +29,21 @@ pub enum DeviceError {
     #[error("Internal error: {message}")]
     Internal { message: String },
 }
+
+impl DeviceError {
+    /// Stable machine-readable code (round-59): the transport carries the
+    /// variant name so clients route on the code, not on message text.
+    pub fn code(&self) -> &'static str {
+        match self {
+            DeviceError::SshConnectFailed { .. } => "ssh_connect_failed",
+            DeviceError::SshTimeout { .. } => "ssh_timeout",
+            DeviceError::SerialPortNotFound { .. } => "serial_port_not_found",
+            DeviceError::SerialPortNotOpen { .. } => "serial_port_not_open",
+            DeviceError::SessionNotFound { .. } => "session_not_found",
+            DeviceError::SessionBusy { .. } => "session_busy",
+            DeviceError::InvalidParams { .. } => "invalid_params",
+            DeviceError::Keychain { .. } => "keychain",
+            DeviceError::Internal { .. } => "internal",
+        }
+    }
+}

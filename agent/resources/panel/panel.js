@@ -194,6 +194,10 @@ function saveConfig() {
 async function callApi(path, init = {}) {
   const res = await fetch(`https://${hostname}${path}`, {
     ...init,
+    // round-59: a hung tool call (agent busy/stalled) would otherwise leave
+    // syncInFlight set forever → output frozen until manual refresh. 30s hard
+    // timeout → the existing catch → needSync retry path recovers.
+    signal: AbortSignal.timeout(30_000),
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${token}`,
@@ -579,6 +583,16 @@ function subscribeStream(sid) {
 }
 
 async function startSharedStream() {
+  // Jittered exponential backoff (round-59): a fixed 3s reconnect had every
+  // open tab lockstep-bombing a restarting agent (10 tabs = 20 streams ×
+  // every 3s). Base ×2 capped at 30s, ±50% jitter, reset on a successful
+  // frame (all tabs desync naturally).
+  let attempt = 0;
+  const backoff = () => {
+    const base = Math.min(3000 * Math.pow(2, attempt), 30000);
+    attempt += 1;
+    return base * (0.5 + Math.random() * 0.5);
+  };
   const connect = async () => {
     try {
       const res = await fetch(`https://${hostname}/api/events/term`, {
@@ -589,7 +603,7 @@ async function startSharedStream() {
       } else if (!res.ok) {
         setStatus(`stream error ${res.status}`, true);
       }
-      if (!res.ok || !res.body) { setTimeout(connect, 3000); return; }
+      if (!res.ok || !res.body) { setTimeout(connect, backoff()); return; }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -597,15 +611,20 @@ async function startSharedStream() {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          // First bytes received → connection healthy → reset the backoff.
+          attempt = 0;
           buffer += decoder.decode(value, { stream: true });
           let idx;
           while ((idx = buffer.indexOf("\n\n")) !== -1) {
             const raw = buffer.slice(0, idx);
             buffer = buffer.slice(idx + 2);
-            const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
-            if (!dataLine) continue;
+            // SSE spec: an event may carry MULTIPLE data: lines which must be
+            // joined. The server emits single lines today, but joining is
+            // spec-compliant and future-proof (round-59).
+            const dataText = raw.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5)).join("");
+            if (!dataText.trim()) continue;
             let frame;
-            try { frame = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
+            try { frame = JSON.parse(dataText.trim()); } catch { continue; }
             // Dispatch to every live session.
             for (const s of sessions.values()) {
               if (s.closed || s.savedOnly || !s.term) continue;
@@ -634,7 +653,7 @@ async function startSharedStream() {
       setStatus("reconnecting…");
       for (const s of sessions.values()) if (!s.closed) s.needSync = true;
     }
-    setTimeout(connect, 3000);
+    setTimeout(connect, backoff());
   };
   connect();
 }

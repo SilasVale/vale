@@ -156,12 +156,14 @@ async function callTerminalTool(name, env, device, args) {
   // DEAD CODE: "Session not found" sailed back to the model as a successful
   // tool result. Check the agent's own ok flag.
   if (!ok || data.ok === false) {
-    // The agent's DeviceError variants surface in the error message
-    // ("Session not found: x", "Session busy ...", "SSH ... timed out") —
-    // map them to stable codes so the model can decide reopen-vs-retry
-    // (round-57; the agent's structured error channel lands next).
+    // The agent now ships a typed `code` (round-59: DeviceError variant →
+    // stable code); fall back to message-text guessing only for older
+    // agents that predate it.
     const msg = data?.error || `Device returned ${resp.status}`;
-    const code = /Session not found/i.test(msg) ? SESSION_NOT_FOUND
+    const code = data?.code === "session_not_found" ? SESSION_NOT_FOUND
+      : data?.code === "session_busy" ? SESSION_BUSY
+      : data?.code === "ssh_timeout" ? TIMEOUT
+      : /Session not found/i.test(msg) ? SESSION_NOT_FOUND
       : /Session busy/i.test(msg) ? SESSION_BUSY
       : /timed out/i.test(msg) ? TIMEOUT
       : DEVICE_UNREACHABLE;
