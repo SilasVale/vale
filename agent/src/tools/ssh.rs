@@ -35,21 +35,28 @@ fn known_hosts_path() -> std::path::PathBuf {
         .join("vale-known-hosts.json")
 }
 
-fn load_known_hosts() -> serde_json::Map<String, serde_json::Value> {
-    match std::fs::read_to_string(known_hosts_path()) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
-        Err(_) => serde_json::Map::new(),
-    }
+/// Parse failure is an Err — the caller (check_server_key) fails the
+/// connection. A half-written file must NOT silently become an empty trust
+/// table (which would re-TOFU every host and re-open the MITM window the
+/// save-side fail-closed protects against) (round-57).
+fn load_known_hosts() -> Result<serde_json::Map<String, serde_json::Value>, std::io::Error> {
+    let s = std::fs::read_to_string(known_hosts_path())?;
+    serde_json::from_str(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+/// Atomic write (round-57): temp + rename in the same directory — the old
+/// std::fs::write (truncate + write) left a half-written file on power loss,
+/// which load then silently swallowed as an empty trust table.
 fn save_known_hosts(map: &serde_json::Map<String, serde_json::Value>) -> std::io::Result<()> {
     let p = known_hosts_path();
-    std::fs::write(&p, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))?;
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
     }
+    std::fs::rename(&tmp, &p)?;
     Ok(())
 }
 
@@ -61,7 +68,9 @@ impl client::Handler for SshHandler {
         key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
         let fp = fingerprint_of(key);
-        let mut hosts = load_known_hosts();
+        // A corrupt file (half write, disk error) FAILS the connection —
+        // re-TOFUing everything would silently re-open the MITM window.
+        let mut hosts = load_known_hosts().map_err(|_| russh::Error::UnknownKey)?;
         match hosts.get(&self.trust_key) {
             // First use — record and trust (TOFU). FAIL CLOSED on persistence
             // failure: a write error (read-only install dir, disk full) must
