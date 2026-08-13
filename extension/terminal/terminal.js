@@ -255,10 +255,11 @@ async function closeSession(sid) {
   // resurrected on every page load.
   idbDelete(sid).catch(() => {});
   if (activeSid === sid) {
-    // Prefer a LIVE session for the fallback — a [saved]/closed tombstone
-    // must not become the active target (round-55).
-    const live = [...sessions.values()].find((x) => !x.closed && !x.savedOnly);
-    const next = live ? live.sid : ([...sessions.keys()].pop() || null);
+    // Prefer a LIVE session for the fallback, MOST RECENTLY opened — the old
+    // find() took the FIRST (oldest) live session, sending the user back to
+    // the earliest tab instead of the one they were working in (round-56).
+    const live = [...sessions.entries()].reverse().find(([, x]) => !x.closed && !x.savedOnly);
+    const next = live ? live[0] : ([...sessions.keys()].pop() || null);
     activeSid = null;
     if (next) activate(next);
   }

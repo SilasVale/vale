@@ -35,10 +35,12 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // isolates within a minute instead of up to 24h. KV reads are cheap — a few
 // hundred per key per isolate per day.
 const AUTH_CACHE_TTL = 60 * 1000;
-// "devices:" joins the short-TTL set (round-55): a device registered via
-// /api/register on a COLD isolate stayed invisible on hot isolates for up to
-// 24h — /proxy and /mcp 404'd on the new device while the console showed it.
-const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:", "devices:"];
+// "devices:" + "plugins:" join the short-TTL set (round-55/56): a device
+// registered via /api/register (or a plugin token paired) on a COLD isolate
+// stayed invisible on hot isolates for up to 24h — /proxy and /mcp 404'd on
+// the new device. Plugin tokens gate chrome.debugger-level device control —
+// a revoked link must propagate within a minute, not a day.
+const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:", "devices:", "plugins:"];
 const __c = new Map(); // kvKey -> { v, exp }; v may be null (cached "not found")
 function cget(k) {
   const e = __c.get(k);

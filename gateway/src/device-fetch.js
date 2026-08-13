@@ -40,12 +40,13 @@ export async function deviceFetch(env, device, restPath, init = {}) {
   headers.set("Authorization", `Bearer ${device.token}`);
   let resp;
   try {
-    // Read paths (GET: panel resources, /api/status probes) are bounded —
-    // a blackholed tunnel used to hang the request forever, waiting on the
-    // platform's subrequest ceiling. Write paths (POST: terminal tools) are
-    // deliberately NOT bounded: a command is non-idempotent, retrying it
-    // would double-execute (round-55).
-    if (!init.method || init.method === "GET") {
+    // Read methods are bounded (round-55): a blackholed tunnel hung until
+    // the platform's subrequest ceiling. round-56: the bound applies to
+    // EVERY non-POST method — a cross-origin Authorization fetch triggers an
+    // OPTIONS preflight, and HEAD/OPTIONS on a dead tunnel hung just like
+    // GET did. POST (terminal tools, a command) is deliberately unbounded:
+    // non-idempotent, retrying would double-execute.
+    if (init.method !== "POST") {
       resp = await fetchWithTimeout(upstream.toString(), { ...init, headers }, 15000);
     } else {
       resp = await fetch(upstream.toString(), { ...init, headers });

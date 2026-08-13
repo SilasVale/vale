@@ -828,6 +828,10 @@ async function handleGatewayImpl(request, env, url, preReadText = null) {
   // doubled the scan CPU on every passthrough request (round-55).
   const scanned = scanTopLevelModel(rawText);
   let model = scanned.model || "";
+  // The log wrapper reads the same model — a module var avoids a duplicate
+  // scan of the body on the 10ms budget (round-56). Workers isolate per
+  // request, so no cross-request hazard.
+  LAST_GATEWAY_MODEL = model;
   if (model === "auto") {
     // Claude Code 固定模型名 auto：按用户网页选择路由
     model = await resolveAutoModel(env, user.id);
@@ -1180,25 +1184,31 @@ async function handleGatewayImpl(request, env, url, preReadText = null) {
  * persistent storage on the Free plan, but enough to see who used what and
  * which channel misbehaves.
  */
+// Set by handleGatewayImpl during the request; read by the log wrapper.
+// Workers isolate per request — no cross-request hazard (round-56: the
+// wrapper's own scanTopLevelModel was a duplicate O(n) pass on a multi-MB
+// body, right on the 10ms Free-plan budget line).
+let LAST_GATEWAY_MODEL = "";
+
 export async function handleGateway(request, env, url) {
   const started = Date.now();
-  // The model/channel is what identifies a failure — a 502 without it is
-  // un-actionable. Read the raw body ONCE here and hand it to the impl —
-  // the old clone().text() re-read + re-scan of a multi-MB body on EVERY
-  // /v1 request was ~30MB extra memory + double the scan CPU (round-55).
+  // Read the raw body ONCE here and hand it to the impl (round-55: the old
+  // clone().text() re-read + re-scan on every /v1 request was ~30MB extra
+  // memory + double the scan CPU). The impl scans it for routing AND the
+  // model swap — that single scan result is also the log's model (round-56).
   let rawText = null;
-  let model = "";
   try {
     rawText = await request.text();
-    model = scanTopLevelModel(rawText).model || "";
-  } catch { /* empty model on read failure */ }
+  } catch { /* impl will re-try; a broken stream fails there with a clear error */ }
+  LAST_GATEWAY_MODEL = "";
   const res = await handleGatewayImpl(request, env, url, rawText);
   try {
     // One structured line per /v1 request — tail-visible usage/health signal.
     console.log(JSON.stringify({
       ts: started, ms: Date.now() - started, status: res.status,
       key: String(request.headers.get("x-api-key") || "").slice(0, 8),
-      path: url.pathname, model,
+      path: url.pathname,
+      model: LAST_GATEWAY_MODEL,
     }));
   } catch { /* log must never break the request */ }
   return res;
