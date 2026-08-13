@@ -187,6 +187,22 @@ fn self_heal() {
     };
     let exe_str = exe.to_string_lossy().into_owned();
     let install_dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    // 0. Half-swap recovery (round-57): the NSIS upgrade swaps via
+    //    exe → .bak then .new → exe — a power cut between the two renames
+    //    leaves ONLY .bak + .new (no exe), the boot task fails to start the
+    //    agent, and the device is offline with no recovery (self_heal never
+    //    ran because the exe couldn't start). This runs from the BOOT task
+    //    wrapper (which exists independently), so it can repair before the
+    //    exe itself is needed. Idempotent, same naming as the NSIS swap.
+    let bak = install_dir.join("vale-agent.exe.bak");
+    let new = install_dir.join("vale-agent.exe.new");
+    if !exe.exists() && bak.exists() {
+        let _ = std::fs::rename(&bak, &exe);
+    }
+    if exe.exists() && new.exists() {
+        let _ = std::fs::rename(&new, &exe);
+        let _ = std::fs::remove_file(&bak); // stale copy now
+    }
     let tray = install_dir.join("vale-tray.exe");
     let tray_str = tray.to_string_lossy().into_owned();
     let cfg_str = install_dir.join("config.yaml").to_string_lossy().into_owned();
