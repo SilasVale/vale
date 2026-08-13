@@ -733,24 +733,17 @@ async function init() {
   // force-closes any session with no OUTPUT for 15 min. Installed at the top
   // so the late-return paths (no live sessions, no saved) can't skip it —
   // a session auto-opened by the empty-state path would otherwise die
-  // unwatched. Pings the most-recent LIVE session (skips closed/savedOnly):
-  // pinging a dead activeSid (shell exited, history tab viewed) would leave
-  // every other silent live session without a keepalive.
+  // unwatched. Pings EVERY open live session (round-55): H3 (round-54)
+  // stopped the drainer touching sessions on output, so pinging only the
+  // active session reaped any other session the user was watching (a long
+  // build in tab B while tab A was focused) after 15min of quiet. This
+  // terminal is a device-level viewer: every live session has a tab. Skips
+  // closed/savedOnly (a dead session needs no keepalive); never mutates
+  // activeSid (round-53).
   setInterval(() => {
-    let target = null;
-    if (activeSid) {
-      const s = sessions.get(activeSid);
-      if (s && !s.closed && !s.savedOnly) target = activeSid;
-    }
-    if (!target) {
-      // Fall back to the newest live session WITHOUT mutating activeSid
-      // (round-53): re-pointing it without activate() desyncs the UI tab
-      // from the pinged session.
-      const live = [...sessions.values()].filter((x) => !x.closed && !x.savedOnly);
-      if (live.length) target = live[live.length - 1].sid;
-    }
-    if (target) {
-      callTool("terminal_select", { session_id: target }).catch(() => {});
+    const live = [...sessions.values()].filter((x) => !x.closed && !x.savedOnly);
+    for (const s of live) {
+      callTool("terminal_select", { session_id: s.sid }).catch(() => {});
     }
   }, 30000);
 
