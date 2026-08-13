@@ -24,15 +24,18 @@ const FLUSH_IDLE_MS = 60000;
 const LS_HOST = "valePanelHost";
 const LS_TOKEN = "valePanelToken";
 
-// Dark terminal with the teal brand accent — unified across live + saved.
+// Light terminal — white background, dark ink — per the confirmed Apple-style
+// design spec ("xterm 白底墨字保留", docs/superpowers/specs/2026-08-11-
+// apple-style-unification-design.md). A dark block on the light panel was a
+// spec deviation introduced in a later commit; revert to the confirmed theme.
 const TERM_THEME = {
-  background: "#1a1c20",
-  foreground: "#e8eaed",
+  background: "#ffffff",
+  foreground: "#1d1d1f",
   cursor: "#0e9384",
   cursorAccent: "#ffffff",
-  selectionBackground: "rgba(14,147,132,.35)",
-  black: "#1a1c20", red: "#f07178", green: "#7bd88f", yellow: "#ffd479",
-  blue: "#82aaff", magenta: "#c792ea", cyan: "#0e9384", white: "#e8eaed",
+  selectionBackground: "rgba(14,147,132,.2)",
+  black: "#1d1d1f", red: "#d64545", green: "#1a7f37", yellow: "#9a6700",
+  blue: "#0b5394", magenta: "#8250df", cyan: "#0e9384", white: "#6e6e73",
 };
 
 const $ = (id) => document.getElementById(id);

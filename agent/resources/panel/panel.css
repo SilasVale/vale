@@ -13,6 +13,8 @@
   --accent: #0e9384;
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
+  --lane-ds: #4f6bed;   /* SSH tab dot (console --lane-ds) */
+  --lane-or: #d97706;   /* serial tab dot (console --lane-or) */
   --danger: #dc2626;
   --radius: 14px;
   --radius-sm: 10px;
@@ -95,8 +97,8 @@ body {
   vertical-align: 1px;
   background: var(--accent);
 }
-.tab-dot[data-kind="ssh"] { background: #4f6bed; } /* lane-ds */
-.tab-dot[data-kind="serial"] { background: #d97706; } /* lane-or */
+.tab-dot[data-kind="ssh"] { background: var(--lane-ds); }
+.tab-dot[data-kind="serial"] { background: var(--lane-or); }
 .tab-name { white-space: nowrap; }
 /* Per-tab export + close — muted, visible on hover. */
 .tab-export, .tab-close {
