@@ -475,20 +475,31 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // into the multi-line continuation prompt (>>), so the
                     // command never executes. Unix shells accept either.
                     let cmd_with_nl = append_command_newline(&command);
-                    terminal_mgr.term_write(&sid, &cmd_with_nl).await?;
-                    // Audit trail: command started — AFTER the write succeeded.
-                    // A command that never reached the shell (session reaped
-                    // mid-write) must not leave a dangling start that crash
-                    // recovery later reports as "interrupted" (round-55).
-                    logger.log_command_start(&sid, &command);
-                    // Busy guard (round-55): a second concurrent execute on
-                    // this session would share one buffer cursor and interleave
-                    // reads + marker ownership — refuse instead.
+                    // Busy guard FIRST (round-56): acquiring the per-session
+                    // execute lock must happen BEFORE the command reaches the
+                    // shell. The old order wrote the command + logged start
+                    // first — on refusal the command still sat in the shell's
+                    // input queue and executed anyway, and the audit trail
+                    // held a dangling start with no end (misreported as
+                    // interrupted on the next boot).
                     if !terminal_mgr.term_try_execute(&sid).await {
                         return Err(DeviceError::InvalidParams {
                             message: "execute already in progress on this session".into(),
                         });
                     }
+                    // Write the command; on failure (session reaped mid-write)
+                    // release the lock — the command never ran, nothing to
+                    // audit, and the next execute must not bounce off a stale
+                    // busy flag.
+                    if let Err(e) = terminal_mgr.term_write(&sid, &cmd_with_nl).await {
+                        terminal_mgr.term_release_execute(&sid).await;
+                        return Err(e);
+                    }
+                    // Audit trail: command started — AFTER the write succeeded.
+                    // A command that never reached the shell must not leave a
+                    // dangling start that crash recovery reports as
+                    // "interrupted" (round-55).
+                    logger.log_command_start(&sid, &command);
 
                     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
                     let quiet_dur = std::time::Duration::from_millis(quiet_ms);
@@ -696,11 +707,23 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 break;
                             }
                         }
-                        // Pipes can close while the child still runs (a
-                        // daemonized grandchild holding them open is rare);
-                        // the exit check is the authoritative done signal.
+                        // Periodically probe the exit status — the authoritative
+                        // done signal (round-56): a daemonized grandchild
+                        // holding the pipes open keeps rx open forever, and the
+                        // old is_closed-only check never fired, misreporting a
+                        // finished command as TIMEOUT. Close rx on exit so the
+                        // two pipe_reader tasks stop blocking (round-55 leaked
+                        // 2 tasks + 2 fds per execute in this case).
+                        if let Ok(Some(_)) = child.try_wait() {
+                            rx.close();
+                            break;
+                        }
                         if rx.is_closed() {
-                            if let Ok(Some(_)) = child.try_wait() { break; }
+                            // Both pipes closed, child still running — yield
+                            // ~10ms instead of hot-spinning the select (the
+                            // old loop burned a full core, millions of
+                            // iterations/sec, until exit or deadline).
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                         }
                     }
 
