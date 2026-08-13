@@ -54,14 +54,13 @@ $("openTerminal").addEventListener("click", () => {
     const base = (consoleOrigin || "https://api.saisi.online").replace(/\/+$/, "");
     if (device) {
       chrome.storage.session.get("valePluginToken").then(({ valePluginToken }) => {
-        if (!valePluginToken) {
-          // Token is gone (browser restart clears session storage) — the
-          // gateway would 401 the panel bootstrap with no recovery UI.
-          // Don't navigate; surface the re-pair prompt instead.
-          showError("browser restarted — re-pair to open the terminal");
-          return;
-        }
-        chrome.tabs.create({ url: `${base}/api/devices/${device}/proxy/panel/?token=${encodeURIComponent(valePluginToken)}` });
+        const q = valePluginToken ? `?token=${encodeURIComponent(valePluginToken)}` : "";
+        // A tokenless navigation still works: the persistent per-device
+        // vale_pt_<device> cookie (30-day, HttpOnly) survives restarts and
+        // authenticates the panel; if the cookie is also gone, the gateway
+        // serves a readable re-pair page (not a raw 401) — never block the
+        // Terminal button on a missing session token.
+        chrome.tabs.create({ url: `${base}/api/devices/${device}/proxy/panel/${q}` });
       });
       return;
     }

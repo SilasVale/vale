@@ -349,7 +349,13 @@ async function handleConsole(request, env, url) {
     // name in its key — one origin-wide cookie would let a later-opened
     // device's page steal an earlier device's terminal (cross-device hijack)
     // and would clobber a multi-device pairing.
-    const cookieToken = parseCookie(request.headers.get("cookie") || "")[`vale_pt_${deviceName}`] || "";
+    // The cookie was written with encodeURIComponent — decode on read so a
+    // future non-hex token charset (base64 +/=, etc.) still matches the
+    // plugin-link map (hex tokens are a no-op, but the decode must exist).
+    let cookieToken = "";
+    try {
+      cookieToken = decodeURIComponent(parseCookie(request.headers.get("cookie") || "")[`vale_pt_${deviceName}`] || "");
+    } catch { /* malformed — treat as absent */ }
     const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "") || qToken || cookieToken;
     const link = token ? await getPluginByToken(env, token) : null;
     if (link && link.device === deviceName) {
@@ -1225,12 +1231,15 @@ function rewriteDeviceBody(text, name) {
     const re = new RegExp(`(["'\`}])(?!${already})${escaped}`, "g");
     out = out.replace(re, `$1${prefix}${p}`);
   }
-  // NOTE: window.__PANEL_TOKEN__ is intentionally left INTACT in proxied
-  // HTML. Direct same-origin mode and the admin-session proxy flow both need
-  // it (the admin flow has no plugin token); panel.js ignores it in proxy
-  // mode (an extension F5 relies on the per-device cookie instead), so
-  // leaving it is safe — the gateway never accepts the device token on
-  // /proxy/*, and the panel never sends it there.
+  // Strip the agent's injected device token from proxied HTML. Direct
+  // same-origin HTML never passes through this function (it only runs in
+  // proxyDevice for /proxy/*), and the admin session-cookie flow authenticates
+  // BEFORE any token parsing — so stripping costs nothing functionally, and
+  // it prevents an extension user from reading the PERMANENT device token off
+  // a console-origin page (DOM/devtools/XSS) and keeping direct control of
+  // /api/tools/* and /mcp after the plugin-link TTL or unpair — the exact
+  // revocation scope the plugin token exists to enforce.
+  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*"[^"]*"/g, "window.__PANEL_TOKEN__=\"\"");
   return out;
 }
 
