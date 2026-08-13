@@ -7,6 +7,7 @@
   --radius:14px; --radius-sm:10px; --radius-lg:20px;
   --surface-glass:rgba(255,255,255,.72);
   --shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
+  --shadow-lg:0 12px 32px rgba(0,0,0,0.12);
   --danger:#dc2626; --danger-soft:#fef2f2;
   --lane-or:#d97706; --lane-or-soft:rgba(217,119,6,.08); /* warn amber (console --lane-or) */
   --red:var(--danger); --red-bg:var(--danger-soft);
@@ -44,7 +45,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 
 .card{background:var(--surface-glass);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
   border:1px solid var(--border);border-radius:var(--radius-lg);padding:10px 12px;display:flex;flex-direction:column;gap:8px; /* glass card: 20px like other surfaces */
-  box-shadow:var(--shadow)}
+  box-shadow:var(--shadow-lg)}
 .row{display:flex;justify-content:space-between;gap:8px}
 .label{color:var(--text2)}
 .mono{font-family:var(--mono);font-size:12px;word-break:break-all;text-align:right}
