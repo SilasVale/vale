@@ -21,17 +21,18 @@ export async function loadPairing() {
   let token = sess[SESSION_KEY];
   // LEGACY MIGRATION: pre-1.0.27 stored {device, token} in storage.local, and
   // round-34+ (v:2) writes {device, token} to local deliberately (so Unpair can
-  // revoke after a restart). Only migrate records WITHOUT the v:2 marker —
-  // stripping a fresh v:2 token (on every restart, when session is empty)
-  // resurfaced the post-restart revoke gap after one restart.
-  if (!token && local[LS_KEY]?.token && local[LS_KEY]?.v !== 2) {
-    // Move the legacy token to session storage (never write it back to local).
+  // revoke after a restart). Both write the token to local, so the migration
+  // only needs to surface the token into session storage when session is empty
+  // — it must NEVER strip the local token (a v-less round-34-era 1.0.47 record
+  // is indistinguishable from pre-1.0.27, and stripping it resurfaced the
+  // post-restart revoke gap after one restart).
+  if (!token && local[LS_KEY]?.token) {
     device = local[LS_KEY].device;
     token = local[LS_KEY].token;
-    await Promise.all([
-      chrome.storage.session.set({ [SESSION_KEY]: token }),
-      chrome.storage.local.set({ [LS_KEY]: { device } }),
-    ]);
+    await chrome.storage.session.set({ [SESSION_KEY]: token });
+    // Keep the local token (needed for post-restart revoke); just refresh
+    // the version marker so the record is recognized as current.
+    await chrome.storage.local.set({ [LS_KEY]: { device, token, v: 2 } });
   }
   if (device && token) state.pairedDevice = { device, token };
   return state.pairedDevice;

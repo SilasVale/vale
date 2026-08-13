@@ -101,7 +101,12 @@ async function connectInner() {
       if (!state.pairedDevice) { try { sock.close(); } catch {} return; } // unpaired while connecting
       backoffMs = 1000;
       state.wsState = "connected";
-      state.error = null;
+      // Do NOT unconditionally clear state.error — a pending revoke-failure
+      // ("revoke failed — unpair not completed") must survive a reconnect
+      // when the network recovers (the popup shows it via the 2s refresh);
+      // clearing it here would wipe the message exactly when the user needs
+      // it. Only connection errors clear it (set on the failure path).
+      if (!state.error || !/revoke failed/i.test(state.error)) state.error = null;
       wsSend({ type: "hello", device: pairing.device });
       startHeartbeat();
     };
