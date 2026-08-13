@@ -83,7 +83,20 @@ impl PtyBackend {
                 } else {
                     true
                 };
-                if done { break; }
+                if done {
+                    // The child exited NATURALLY (user typed `exit`, pty EOF)
+                    // — drop the slot so a later close() cannot SIGKILL a
+                    // reaped (possibly pid-recycled) pid (round-50). With the
+                    // slot empty, close() below skips the kill entirely.
+                    if let Ok(mut guard) = child_reap.lock() {
+                        if let Some(c) = guard.as_mut() {
+                            if matches!(c.try_wait(), Ok(Some(_)) | Err(_)) {
+                                guard.take();
+                            }
+                        }
+                    }
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             tracing::debug!("[vale-agent] PTY reaper: shell exited: {sid}");
@@ -117,11 +130,14 @@ impl TermBackend for PtyBackend {
         // Handles drop with the backend, closing the HPCON cleanly.
         if let Ok(mut guard) = self.child.lock() {
             if let Some(c) = guard.as_mut() {
-                let _ = c.kill();
-                // The pty master fd closes with the backend, so the reader
-                // thread observes EOF and the drainer finishes — no orphan.
-                // (portable-pty's Child has no pid() to taskkill /T; killing
-                // the direct child + fd close covers the practical cases.)
+                // If the shell already exited NATURALLY the reaper dropped
+                // the slot (or is about to) — killing a reaped pid is a
+                // use-after-reap hazard (the OS may have recycled it).
+                // try_wait once: still running → kill; already exited →
+                // leave it for the reaper (round-50).
+                if matches!(c.try_wait(), Ok(None)) {
+                    let _ = c.kill();
+                }
             }
         }
     }
