@@ -338,21 +338,32 @@ async function handleConsole(request, env, url) {
     // device terminal control via /proxy/* for the 30-day plugin-link TTL.
     // Sec-Fetch-Mode is set by browsers on every fetch/navigation and cannot
     // be spoofed cross-origin (it is a forbidden header for fetch()).
-    if (qToken && !auth && String(request.headers.get("sec-fetch-mode") || "") !== "navigate") {
+    const isNav = String(request.headers.get("sec-fetch-mode") || "") === "navigate";
+    if (qToken && !auth && !isNav) {
       return jsonError(401, "Invalid plugin token", "authentication_error");
     }
-    const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "") || qToken;
+    // The bootstrap navigation pins the token as a cookie (below) so the
+    // panel's RELATIVE subresources (panel.css/panel.js/vendor/* — link and
+    // script tags cannot carry ?token= or an Authorization header) and an F5 /
+    // history-forward reload (top-level navigation, no token in the URL after
+    // panel.js strips it) all authenticate. HttpOnly so page JS can't read it;
+    // the panel's own fetches still send the Authorization header too.
+    const cookieToken = parseCookie(request.headers.get("cookie") || "").vale_pt || "";
+    const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "") || qToken || cookieToken;
     const link = token ? await getPluginByToken(env, token) : null;
     if (link && link.device === deviceName) {
       // Never cache a response that carried a token in the URL.
       const resp = await proxyDevice(request, env, d, proxyMatch[2] || "/");
       resp.headers.set("Cache-Control", "no-store");
+      if (qToken && isNav) {
+        resp.headers.append("Set-Cookie", `vale_pt=${encodeURIComponent(qToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
+      }
       return resp;
     }
     // A top-level navigation with a bad/expired token gets a readable page
     // (with a re-pair hint) instead of a raw JSON 401 — the panel's own
     // recovery UI can never load if the bootstrap navigation itself 401s.
-    if (!auth && String(request.headers.get("sec-fetch-mode") || "") === "navigate") {
+    if (!auth && isNav) {
       return new Response(
         `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vale — session expired</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;color:#1d1d1f;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:32px 40px;max-width:400px;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.12)}h1{font-size:18px;margin:0 0 8px}p{color:#6e6e73;font-size:14px;margin:0 0 4px}.mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:10px;background:#1d1d1f;color:#fff;font-weight:700;font-size:24px;margin-bottom:14px}</style></head><body><div class="card"><span class="mark">V</span><h1>Device session expired</h1><p>This device pairing has expired or the browser was restarted.</p><p>Open the Vale extension and re-pair to access the terminal.</p></div></body></html>`,
         { status: 401, headers: { "content-type": "text/html; charset=utf-8" } }

@@ -5,9 +5,9 @@
   --accent:#0e9384; --accent-ink:#0b7a6e; --accent-soft:#e7f5f2;
   --ink:#1d1d1f; --muted:#6e6e73; --faint:#86868b;
   --radius:14px; --radius-sm:10px; --radius-lg:20px;
+  --danger:#dc2626; --danger-soft:#fef2f2;
   --surface-glass:rgba(255,255,255,.72);
   --shadow-lg: 0 12px 32px rgba(0,0,0,0.12);
-  --green:#0e9384; /* unified with popup — the brand accent, not GitHub green */
   --font:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Inter,sans-serif;
   /* Legacy aliases */
   --card:var(--surface); --border:var(--line); --border-strong:var(--line-strong);

@@ -59,7 +59,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
                  text-decoration: none; font-size: 14px; font-weight: 600; padding: 10px 18px; border-radius: var(--radius-sm);
                  transition: background .15s ease, transform .15s ease; }
   .install-btn:hover { background: var(--accent-ink); transform: translateY(-1px); }
-  .install-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .install-btn:focus-visible { box-shadow: 0 0 0 3px rgba(14, 147, 132, 0.14); outline: none; } /* unified .14 focus ring */
   .install-note { color: var(--faint); font-size: 12px; }
 
   .steps { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }
@@ -117,7 +117,7 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
-          version: "1.0.37",
+          version: "1.0.38",
           download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
