@@ -92,12 +92,27 @@ export async function callTool(tool, env, device, args) {
 }
 
 async function callTerminalTool(name, env, device, args) {
+  // Every terminal tool on the device is reachable here (round-54: only 5 of
+  // 16 were mapped — write/read/resize/select/history/list_ports/diag/secret
+  // were invisible to MCP clients through the console). Keep in sync with
+  // TERMINAL_TOOLS in mcp-tools.js.
   const toolPath = {
     terminal_open: "/api/tools/terminal_open",
     terminal_screen: "/api/tools/terminal_screen",
     terminal_execute: "/api/tools/terminal_execute",
+    terminal_write: "/api/tools/terminal_write",
+    terminal_read: "/api/tools/terminal_read",
+    terminal_resize: "/api/tools/terminal_resize",
+    terminal_select: "/api/tools/terminal_select",
+    terminal_history: "/api/tools/terminal_history",
     terminal_list: "/api/tools/terminal_list",
+    terminal_list_ports: "/api/tools/terminal_list_ports",
     terminal_close: "/api/tools/terminal_close",
+    terminal_diag_write: "/api/tools/terminal_diag_write",
+    terminal_diag_read: "/api/tools/terminal_diag_read",
+    secret_set: "/api/tools/secret_set",
+    secret_get: "/api/tools/secret_get",
+    secret_delete: "/api/tools/secret_delete",
   }[name];
   if (!toolPath) throw new Error(`Unknown terminal tool: ${name}`);
   const body = { ...args };
@@ -105,7 +120,9 @@ async function callTerminalTool(name, env, device, args) {
   if (name === "terminal_execute") {
     body.command = body.input;
     delete body.input;
-    body.quiet_ms = body.quiet_ms ?? 400;
+    // Default must match the agent (200) — a gateway-side 400 invented a
+    // different quiet window than the device actually uses (round-54).
+    body.quiet_ms = body.quiet_ms ?? 200;
   }
   const { ok, resp } = await deviceFetch(env, device, toolPath, {
     method: "POST",

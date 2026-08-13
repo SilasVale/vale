@@ -106,8 +106,8 @@ test("mcp: tools/call terminal_execute → device /api/tools/terminal_execute wi
     // pings the session itself, so each execute is exactly ONE device fetch.
     assert.equal(calls.length, 2);
     assert.equal(calls[0].url, "https://d1.agent.saisi.online/api/tools/terminal_execute");
-    assert.deepEqual(JSON.parse(calls[0].init.body), { command: "ls -la", session_id: "s-1", quiet_ms: 400 }); // device + input stripped, input→command
-    assert.deepEqual(JSON.parse(calls[1].init.body), { command: "pwd", session_id: "s-1", quiet_ms: 400 });   // default quiet_ms
+    assert.deepEqual(JSON.parse(calls[0].init.body), { command: "ls -la", session_id: "s-1", quiet_ms: 400 }); // device + input stripped, input→command, explicit quiet_ms passed through
+    assert.deepEqual(JSON.parse(calls[1].init.body), { command: "pwd", session_id: "s-1", quiet_ms: 200 });   // default quiet_ms matches the agent
     assert.equal(calls[0].init.headers.get("authorization"), "Bearer devtok"); // device token injected server-side
     assert.equal(calls[0].init.headers.get("host"), null);   // host/cookie stripped
     assert.equal(calls[0].init.headers.get("cookie"), null);
@@ -132,4 +132,42 @@ test("mcp: GET → 200 text/event-stream keepalive stream; cancel() clears the t
   assert.equal(res.headers.get("cache-control"), "no-cache");
   assert.ok(res.body instanceof ReadableStream);
   await res.body.cancel(); // must not throw; underlying source cancel() clears the keepalive interval
+});
+
+// ── Contract: gateway tool list vs agent /api/spec (round-54) ──
+// The gateway's TERMINAL_TOOLS mirror the agent's /api/spec (the single
+// source of truth). When the agent gains/loses a tool, refresh THIS snapshot
+// AND the toolPath map in mcp.js — the test fails loudly on drift instead of
+// silently hiding tools from console MCP clients (11 tools were missing
+// before round-54).
+
+test("contract: every agent terminal tool is registered in the gateway list", async () => {
+  const { allMcpTools } = await import("../src/mcp-tools.js");
+  const names = allMcpTools().map((t) => t.name);
+  // Snapshot of agent /api/spec tool names (agent/src/plugins/terminal/tools.rs).
+  const AGENT_SPEC_TOOLS = [
+    "terminal_open", "terminal_write", "terminal_close", "terminal_list",
+    "terminal_execute", "terminal_list_ports", "terminal_resize",
+    "terminal_select", "terminal_read", "terminal_screen",
+    "terminal_history", "terminal_diag_write", "terminal_diag_read",
+    "secret_set", "secret_get", "secret_delete",
+  ];
+  for (const t of AGENT_SPEC_TOOLS) {
+    assert.ok(names.includes(t), `gateway MCP list missing agent tool: ${t}`);
+  }
+  // No extras that the device cannot serve.
+  const ALLOWED_EXTRA = ["browser_open", "browser_snapshot", "browser_screenshot", "browser_click", "browser_type", "browser_wait", "browser_close"];
+  for (const n of names) {
+    assert.ok(AGENT_SPEC_TOOLS.includes(n) || ALLOWED_EXTRA.includes(n), `unexpected gateway tool: ${n}`);
+  }
+});
+
+test("contract: terminal_execute schema/quiet default match the agent", async () => {
+  const { allMcpTools } = await import("../src/mcp-tools.js");
+  const t = allMcpTools().find((t) => t.name === "terminal_execute");
+  assert.ok(t, "terminal_execute registered");
+  // The gateway exposes `input` (mapped to the agent's `command` in mcp.js);
+  // quiet_ms default must be the agent's 200ms, not a gateway invention.
+  assert.equal(t.inputSchema.properties.quiet_ms.description.includes("200"), true);
+  assert.equal(t.inputSchema.required.join(","), "device,session_id,input");
 });
