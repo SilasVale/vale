@@ -5,7 +5,7 @@
 // 24h cache: distinct tokens per distinct user and one consistent devices payload keep
 // tests from stepping on each other's cached entries.
 //
-// terminal_send is asserted through the real deviceFetch path by stubbing globalThis.fetch
+// terminal_execute is asserted through the real deviceFetch path by stubbing globalThis.fetch
 // (ESM namespace exports are frozen, so monkey-patching deviceFetch itself is not possible;
 // stubbing fetch exercises the full handleMcp → callTool → deviceFetch pipeline unchanged).
 import test from "node:test";
@@ -81,7 +81,7 @@ test("mcp: notifications/initialized + notifications/cancelled → 202 empty bod
 
 // ── tools/call body mapping (through the real deviceFetch) ─────
 
-test("mcp: tools/call terminal_send → device /api/tools/terminal_execute with mapped body", async () => {
+test("mcp: tools/call terminal_execute → device /api/tools/terminal_execute with mapped body", async () => {
   const env = makeEnv();
   const calls = [];
   const realFetch = globalThis.fetch;
@@ -92,12 +92,12 @@ test("mcp: tools/call terminal_send → device /api/tools/terminal_execute with 
   };
   try {
     // explicit quiet_ms
-    let res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_send", arguments: { device: "d1", session_id: "s-1", input: "ls -la", quiet_ms: 400 } }, id: 2 }), env);
+    let res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls -la", quiet_ms: 400 } }, id: 2 }), env);
     assert.equal(res.status, 200);
     let data = await res.json();
     assert.equal(data.result.content[0].type, "text");
     // quiet_ms defaults to 400 when omitted
-    res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_send", arguments: { device: "d1", session_id: "s-1", input: "pwd" } }, id: 3 }), env);
+    res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "pwd" } }, id: 3 }), env);
     assert.equal(res.status, 200);
     data = await res.json();
     assert.ok(data.result.content[0].text.includes("pwd"));

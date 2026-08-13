@@ -56,6 +56,9 @@ async function connectInner() {
     // Mark it stale right away: while we await the ticket fetch below, `ws`
     // must not still point at the closing socket, or its onclose would see
     // `ws === sock` and schedule a spurious reconnect + duplicate fetch.
+    // ALSO stop the heartbeat — the old socket's onclose is a no-op (ws
+    // already nulled), so its interval was never cleared (leak per reconnect).
+    stopHeartbeat();
     ws = null;
   }
   const consoleOrigin = (await chrome.storage.local.get("consoleOrigin")).consoleOrigin || "https://api.saisi.online";

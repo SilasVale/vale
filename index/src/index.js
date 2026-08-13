@@ -109,7 +109,7 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
-          version: "1.0.32",
+          version: "1.0.33",
           download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
@@ -122,7 +122,7 @@ export default {
     if (pathname !== "/" && pathname !== "/index.html") {
       return new Response("Not Found", { status: 404 });
     }
-    const consoleUrl = (env && env.CONSOLE_URL) || "https://ai.saisi.online";
+    const consoleUrl = (env && env.CONSOLE_URL) || "https://api.saisi.online";
     return new Response(PAGE(consoleUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });

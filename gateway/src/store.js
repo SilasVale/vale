@@ -76,6 +76,20 @@ function rcset(k, v) {
 }
 function rcdel(k) { __rc.delete(k); }
 
+// Per-key single-flight queue: concurrent read-modify-write on the same KV
+// blob (ukeys:<id>, devices:v1, plugins:v1) previously LOST updates — two
+// requests both read the pre-write value and the second put clobbered the
+// first's record. Serializing per key makes same-isolate writes atomic
+// (Workers isolates are single-threaded; the queue bridges the awaits).
+const __locks = new Map();
+function withKeyLock(key, fn) {
+  const prev = __locks.get(key) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  __locks.set(key, next.catch(() => {}));
+  if (__locks.size > 512) __locks.delete(__locks.keys().next().value); // bound
+  return next;
+}
+
 async function getJSON(env, key) {
   if (!env.KEYS) return null;
   const raw = await env.KEYS.get(key);
@@ -227,18 +241,31 @@ export async function setUserEnabled(env, id, enabled) {
 }
 
 export async function regenerateToken(env, id) {
-  const u = await getJSON(env, `user:${id}`);
-  if (!u) throw new Error("User not found");
-  if (u.token) {
-    await env.KEYS.delete(`token:${u.token}`);
-    cdel(`token:${u.token}`);
-  }
-  u.token = generateGatewayToken();
-  await env.KEYS.put(`user:${id}`, JSON.stringify(u));
-  await env.KEYS.put(`token:${u.token}`, id);
-  cset(`user:${id}`, u);
-  cset(`token:${u.token}`, id);
-  return u.token;
+  return withKeyLock(`user:${id}`, async () => {
+    const u = await getJSON(env, `user:${id}`);
+    if (!u) throw new Error("User not found");
+    if (u.token) {
+      await env.KEYS.delete(`token:${u.token}`);
+      cdel(`token:${u.token}`);
+    }
+    u.token = generateGatewayToken();
+    await env.KEYS.put(`user:${id}`, JSON.stringify(u));
+    await env.KEYS.put(`token:${u.token}`, id);
+    cset(`user:${id}`, u);
+    cset(`token:${u.token}`, id);
+    // A concurrent regenerate could have left a survivor mapping (token:T2
+    // still live after T3 won) — sweep any other mapping for this user.
+    const newToken = u.token;
+    try {
+      const list = await env.KEYS.list({ prefix: "token:" });
+      for (const k of list.keys || []) {
+        if (k.name === `token:${newToken}`) continue;
+        const v = await env.KEYS.get(k.name);
+        if (v === id) { await env.KEYS.delete(k.name); cdel(k.name); }
+      }
+    } catch { /* best-effort sweep */ }
+    return newToken;
+  });
 }
 
 /* ---- Per-user backend keys ---- */
@@ -259,19 +286,23 @@ export async function getUserKeys(env, id) {
 }
 
 export async function setUserKey(env, id, name, value) {
-  const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
-  ukeys[name] = String(value).trim();
-  await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
-  cset(`ukeys:${id}`, ukeys);
-  return ukeys;
+  return withKeyLock(`ukeys:${id}`, async () => {
+    const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
+    ukeys[name] = String(value).trim();
+    await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
+    cset(`ukeys:${id}`, ukeys);
+    return ukeys;
+  });
 }
 
 export async function deleteUserKey(env, id, name) {
-  const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
-  delete ukeys[name];
-  await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
-  cset(`ukeys:${id}`, ukeys);
-  return ukeys;
+  return withKeyLock(`ukeys:${id}`, async () => {
+    const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
+    delete ukeys[name];
+    await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
+    cset(`ukeys:${id}`, ukeys);
+    return ukeys;
+  });
 }
 
 /* ---- Per-user route selection (model=auto) ---- */
@@ -419,20 +450,24 @@ export async function getDevice(env, name) {
 }
 
 export async function upsertDevice(env, device) {
-  // read-modify-write: merge against raw KV so a stale cache can't drop
-  // devices added by another isolate; saveDevices then refreshs the cache
-  const devs = await readDevicesRaw(env);
-  const i = devs.findIndex((d) => d.name === device.name);
-  if (i >= 0) devs[i] = device; else devs.push(device);
-  await saveDevices(env, devs);
-  return device;
+  // Serialized RMW: two concurrent writes used to both read [] and the
+  // second save clobbered the first's device (registry loss → proxy 404).
+  return withKeyLock(DEVICES_KEY, async () => {
+    const devs = await readDevicesRaw(env);
+    const i = devs.findIndex((d) => d.name === device.name);
+    if (i >= 0) devs[i] = device; else devs.push(device);
+    await saveDevices(env, devs);
+    return device;
+  });
 }
 
 export async function deleteDevice(env, name) {
-  const devs = await readDevicesRaw(env);
-  const out = devs.filter((d) => d.name !== name);
-  await saveDevices(env, out);
-  return out.length !== devs.length;
+  return withKeyLock(DEVICES_KEY, async () => {
+    const devs = await readDevicesRaw(env);
+    const out = devs.filter((d) => d.name !== name);
+    await saveDevices(env, out);
+    return out.length !== devs.length;
+  });
 }
 
 /* ---- Device registration keys ----
@@ -511,9 +546,11 @@ export async function savePluginLinks(env, map) {
 export const PLUGIN_LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export async function addPluginLink(env, token, device) {
-  const map = await listPluginLinks(env);
-  map[token] = { device, createdAt: Date.now(), expiresAt: Date.now() + PLUGIN_LINK_TTL_MS };
-  await savePluginLinks(env, map);
+  return withKeyLock(PLUGIN_KEY, async () => {
+    const map = await listPluginLinks(env);
+    map[token] = { device, createdAt: Date.now(), expiresAt: Date.now() + PLUGIN_LINK_TTL_MS };
+    await savePluginLinks(env, map);
+  });
 }
 export async function getPluginByToken(env, token) {
   const map = await listPluginLinks(env);
@@ -528,8 +565,10 @@ export async function getPluginByToken(env, token) {
   return link;
 }
 export async function removePluginLink(env, token) {
-  const map = await listPluginLinks(env);
-  if (map[token]) { delete map[token]; await savePluginLinks(env, map); }
+  return withKeyLock(PLUGIN_KEY, async () => {
+    const map = await listPluginLinks(env);
+    if (map[token]) { delete map[token]; await savePluginLinks(env, map); }
+  });
 }
 
 // One-time pairing code (console admin generates; extension claims).

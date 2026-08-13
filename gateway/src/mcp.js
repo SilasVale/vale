@@ -95,14 +95,14 @@ async function callTerminalTool(name, env, device, args) {
   const toolPath = {
     terminal_open: "/api/tools/terminal_open",
     terminal_screen: "/api/tools/terminal_screen",
-    terminal_send: "/api/tools/terminal_execute",
+    terminal_execute: "/api/tools/terminal_execute",
     terminal_list: "/api/tools/terminal_list",
     terminal_close: "/api/tools/terminal_close",
   }[name];
   if (!toolPath) throw new Error(`Unknown terminal tool: ${name}`);
   const body = { ...args };
   delete body.device;
-  if (name === "terminal_send") {
+  if (name === "terminal_execute") {
     body.command = body.input;
     delete body.input;
     body.quiet_ms = body.quiet_ms ?? 400;
