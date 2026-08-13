@@ -41,7 +41,7 @@ const STATUS_PAGE: &str = concat!(
     ".mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:10px;background:#1d1d1f;color:#fff;font-weight:700;font-size:22px}",
     "h1{font-size:22px;margin:14px 0 4px;font-weight:650;letter-spacing:-.01em}",
     "p{color:#6e6e73;font-size:13px;margin:4px 0}",
-    "code{background:#e7f5f2;color:#0b7a6e;padding:1px 6px;border-radius:6px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:12px}",
+    "code{background:#e7f5f2;color:#0b7a6e;padding:1px 6px;border-radius:5px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:12px}",
     "</style></head>",
     "<body><div class=\"card\"><span class=\"mark\">V</span><h1>vale-agent</h1>",
     "<p>MCP endpoint: <code>/mcp</code></p>",
@@ -535,6 +535,14 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
             tokio::select! {
                 _ = tick.tick() => {
                     terminal_mgr.term_touch_all().await;
+                    // Also SEND a heartbeat byte — dead-client detection
+                    // depends on a send failing (the 5s bounded send into the
+                    // full mpsc). On a silent session nothing else is ever
+                    // sent, so without this ping a closed tab/intermediary
+                    // kill would leave the task + broadcast subscription
+                    // alive forever, calling term_touch_all every 60s and
+                    // permanently neutering the idle sweeper.
+                    if send_bounded(Bytes::from(": ping\n\n")).await { break; }
                 }
                 msg = rx.recv() => {
                     match msg {

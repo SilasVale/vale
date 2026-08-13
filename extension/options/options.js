@@ -20,7 +20,7 @@ $("save").addEventListener("click", async () => {
     const s = $("saved");
     s.textContent = "必须使用 https:// 地址";
     s.classList.remove("hidden");
-    s.style.color = "#dc2626";
+    s.style.color = "var(--danger)";
     setTimeout(() => { s.classList.add("hidden"); s.style.color = ""; }, 3000);
     return;
   }
