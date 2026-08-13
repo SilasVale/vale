@@ -202,10 +202,16 @@ function activate(sid) {
   }
   highlightTabs();
   // Fit + resize after the container is visible (hidden containers measure 0).
-  requestAnimationFrame(() => {
+  // Double-rAF: a single rAF can run before the browser has painted the
+  // newly-shown container, so fit() measures 0 and the terminal stays at the
+  // default 80x24 grid with blank space — the "half screen" bug the agent
+  // panel fixed the same way (panel.js:389-394). Saved/history sessions have
+  // no ResizeObserver (adoptHistorySession sets observer:null), so this is
+  // their ONLY fit — it must be correct.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
     doResize(sid);
     try { s.term.focus(); } catch {}
-  });
+  }));
 }
 
 /**
@@ -716,11 +722,30 @@ setTimeout(pollHistory, HISTORY_POLL_MS); // closed sessions retained in history
 })();
 // Flush everything to IndexedDB when the tab goes hidden / unloads — a crash
 // can lose at most the lines since the last snapshot (≤ FLUSH_IDLE_MS of output).
+// Debounced refit of all sessions — shared by visibilitychange + resize.
+let refitTimer = null;
+function refitAll() {
+  for (const [sid, s] of sessions) {
+    if (s.term) { try { s.fit.fit(); } catch {} }
+  }
+}
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     for (const s of sessions.values()) flushSession(s);
+  } else {
+    // Returning to the tab: the container may have been resized or the layout
+    // reflowed while hidden — refit every session so xterm fills the window.
+    clearTimeout(refitTimer);
+    refitTimer = setTimeout(refitAll, 200);
   }
 });
 window.addEventListener("pagehide", () => {
   for (const s of sessions.values()) flushSession(s);
+});
+// Window resize (browser zoom, maximized toggle): debounce and refit all
+// sessions — otherwise a saved/history session (no ResizeObserver) keeps its
+// old cell grid and leaves white space or clips content (panel.js refitAll).
+window.addEventListener("resize", () => {
+  clearTimeout(refitTimer);
+  refitTimer = setTimeout(refitAll, 150);
 });
