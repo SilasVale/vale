@@ -3,7 +3,25 @@
 //! exists.
 
 use vale_agent_core::Config;
+use std::io::Write;
 use std::path::Path;
+
+/// Atomic file write (round-57): temp file in the SAME directory + rename.
+/// Windows rename is atomic on the same volume (MoveFileEx); the old
+/// std::fs::write (truncate + write) left a half-written config on power
+/// loss, which the next boot quarantined and replaced with a FRESH token —
+/// every client 401'd with no recovery path.
+pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = dir.join(format!(".{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("config")));
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(contents)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
 
 /// Load the config at `path`, creating a default file first if it doesn't
 /// exist; if the primary file fails to parse, try `fallback`.
@@ -20,7 +38,7 @@ pub fn load_or_create(
     log: &dyn Fn(&str),
 ) -> anyhow::Result<(Config, Option<String>)> {
     if !path.exists() {
-        std::fs::write(path, crate::DEFAULT_CONFIG_YAML)?;
+        atomic_write(path, crate::DEFAULT_CONFIG_YAML.as_bytes())?;
         log(&format!("  Created default config: {}", path.display()));
     }
     let mut config = match Config::load(path) {
@@ -35,7 +53,23 @@ pub fn load_or_create(
             log("     Quarantining the bad file as config.yaml.bad and writing a fresh default.");
             let bad = path.with_extension("yaml.bad");
             let _ = std::fs::rename(path, &bad);
-            std::fs::write(path, crate::DEFAULT_CONFIG_YAML)?;
+            atomic_write(path, crate::DEFAULT_CONFIG_YAML.as_bytes())?;
+            // Round-57: the old device_token lives in the quarantined file —
+            // a crash window (half-written config) must NOT rotate the token
+            // and 401 every client. Recover it into the fresh default.
+            if let Ok(bad_text) = std::fs::read_to_string(&bad) {
+                if let Ok(old) = serde_yaml::from_str::<vale_agent_core::Config>(&bad_text) {
+                    if let Some(tok) = old.server.device_token {
+                        if tok.len() >= 16 {
+                            let mut fresh = Config::load(path)?;
+                            fresh.server.device_token = Some(tok);
+                            atomic_write(path, serde_yaml::to_string(&fresh).unwrap_or_default().as_bytes())?;
+                            log("     Recovered the previous device_token from the quarantined config.");
+                            return Ok((fresh, None));
+                        }
+                    }
+                }
+            }
             Config::load(path)?
         }
     };

@@ -3,7 +3,7 @@
 //! Runs as a plain console process, or on Windows as the `ValeCommand` service
 //! when launched by the Service Control Manager.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use vale_agent::state::AppState;
@@ -290,7 +290,7 @@ fn run_bounded(what: &str, mut cmd: std::process::Command) {
 
 /// Load config (creating a default file + auth token if missing); persist and
 /// print a freshly generated token.
-fn load_config(config_path: &PathBuf) -> Config {
+fn load_config(config_path: &Path) -> Config {
     let (config, token) = match vale_agent::bootstrap::load_or_create(config_path, None, &|msg| eout!("{msg}")) {
         Ok(v) => v,
         Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
@@ -302,7 +302,9 @@ fn load_config(config_path: &PathBuf) -> Config {
         eout!("  WARNING: no valid device_token in config — generated a NEW token.");
         eout!("  Every client using the OLD token (console, MCP, panel) will 401 until updated.");
         let yaml = serde_yaml::to_string(&config).expect("serialize config");
-        std::fs::write(config_path, &yaml).ok();
+        // Atomic write (round-57): a half-written config on power loss would
+        // quarantine on next boot and rotate the token again.
+        let _ = vale_agent::bootstrap::atomic_write(config_path, yaml.as_bytes());
         out!("  Auth token: {token}  (saved to {})", config_path.display());
     }
     config
