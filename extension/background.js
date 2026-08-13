@@ -134,13 +134,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           } catch (e) {
             clearTimeout(timer);
             // Revoke FAILED (network/abort) — keep the local pairing so the
-            // user can retry; report instead of fake success.
-            sendResponse({ ok: false, error: `revoke failed: ${String(e && e.message || e)} — unpair not completed` });
+            // user can retry; report instead of fake success. Set state.error
+            // so the popup's 2s status refresh does NOT wipe the message.
+            state.error = `revoke failed: ${String(e && e.message || e)} — unpair not completed`;
+            sendResponse({ ok: false, error: state.error });
             return;
           }
           clearTimeout(timer);
           if (!res.ok) {
-            sendResponse({ ok: false, error: `revoke failed (HTTP ${res.status}) — unpair not completed` });
+            state.error = `revoke failed (HTTP ${res.status}) — unpair not completed`;
+            sendResponse({ ok: false, error: state.error });
             return;
           }
         }
