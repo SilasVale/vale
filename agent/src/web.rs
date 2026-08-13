@@ -38,7 +38,7 @@ const STATUS_PAGE: &str = concat!(
     "<!doctype html><html><head><meta charset=\"utf-8\"><title>vale-agent</title>",
     "<style>body{background:#f5f5f7;color:#1d1d1f;font-family:-apple-system,'SF Pro Text','PingFang SC','Segoe UI',sans-serif;margin:0;display:flex;justify-content:center;padding:12vh 24px}",
     ".card{background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);border:1px solid rgba(0,0,0,.08);border-radius:20px;box-shadow:0 12px 32px rgba(0,0,0,.12);padding:32px;max-width:480px;width:100%}",
-    ".mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:#1d1d1f;color:#fff;font-weight:700;font-size:22px}",
+    ".mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:10px;background:#1d1d1f;color:#fff;font-weight:700;font-size:22px}",
     "h1{font-size:22px;margin:14px 0 4px;font-weight:650;letter-spacing:-.01em}",
     "p{color:#6e6e73;font-size:13px;margin:4px 0}",
     "code{background:#e7f5f2;color:#0b7a6e;padding:1px 6px;border-radius:6px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:12px}",
@@ -503,13 +503,65 @@ async fn sse_stream(state: Arc<AppState>) -> Response {
 
 /// SSE stream of raw terminal output (TermOutput JSON frames).
 async fn sse_term_stream(state: Arc<AppState>) -> Response {
-    let rx = state.event_bus.subscribe_term_output();
+    use tokio::sync::broadcast::error::RecvError;
+    use tokio::sync::mpsc;
+    let mut rx = state.event_bus.subscribe_term_output();
+    let terminal_mgr = state.terminal_mgr.clone();
     // {"session_id":"term-0","data":[104,101,...]}
     let encode = |output: &serde_json::Value| format!("data: {}\n\n", serde_json::to_string(output).unwrap_or_default());
     // Loss-tolerant stream; a lagged frame is ignored client-side (it has no
     // session_id). Keep the connection alive.
     let lagged = |_n: u64| "data: {\"lagged\":true}\n\n".to_string();
-    sse_response(rx, encode, lagged).await
+
+    let (tx, mpsc_rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
+    tokio::spawn(async move {
+        // Client-liveness heartbeat, SERVER-side: while this SSE connection
+        // is open, someone is watching the panel — even if their tab is
+        // backgrounded (Safari pauses JS timers in hidden tabs, Chrome can
+        // freeze them, so the panel's own 30s terminal_select ping stops).
+        // An established connection is NOT paused by hidden-tab timer
+        // suspension, so every 60s we touch all live sessions here — a
+        // watched-but-silent session (vim, a long quiet build) survives the
+        // 15-min idle sweeper, and a disconnected client (connection closed
+        // → send_bounded fails → loop breaks) stops the keepalive so the
+        // sweeper still reaps.
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            let send_bounded = async |bytes: Bytes| {
+                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes))).await
+                    .map(|r| r.is_err())
+                    .unwrap_or(true)
+            };
+            tokio::select! {
+                _ = tick.tick() => {
+                    terminal_mgr.term_touch_all().await;
+                }
+                msg = rx.recv() => {
+                    match msg {
+                        Ok(item) => {
+                            if send_bounded(Bytes::from(encode(&item))).await { break; }
+                        }
+                        Err(RecvError::Lagged(n)) => {
+                            if send_bounded(Bytes::from(lagged(n))).await { break; }
+                        }
+                        Err(RecvError::Closed) => break,
+                    }
+                }
+            }
+        }
+    });
+
+    let body = Body::from_stream(MpscStream { rx: mpsc_rx });
+    let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("cache-control"),
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("connection"),
+        axum::http::HeaderValue::from_static("keep-alive"),
+    );
+    resp
 }
 
 // ── Status ────────────────────────────────────────────────────

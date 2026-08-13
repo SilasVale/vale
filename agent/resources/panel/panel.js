@@ -87,6 +87,15 @@ function loadConfig() {
     const injected = window.__PANEL_TOKEN__ || "";
     const stored = localStorage.getItem(LS_TOKEN) || "";
     token = urlToken || injected || stored;
+    // A ?token= in the address bar is a live plugin token — strip it from
+    // history/address bar so a later screenshot, tab restore or history sync
+    // cannot leak device control. (The gateway only accepts ?token= on a
+    // top-level navigation, and this panel was just that navigation.)
+    if (urlToken) {
+      try {
+        history.replaceState(null, "", location.pathname);
+      } catch {}
+    }
     if (!urlToken && injected && injected !== stored) {
       localStorage.setItem(LS_TOKEN, injected); // refresh the stale copy
     }
@@ -274,10 +283,19 @@ async function closeSession(sid) {
     markClosed(sid);
     setStatus("");
   } catch (e) {
-    // A failed backend close must NOT mark the session closed — pollList
-    // would resurrect it and the tab flickers between [closed] and live
-    // forever (the "cannot close" bug). Surface the failure instead.
-    setStatus(`close failed: ${String(e && e.message || e)} — session still open`, true);
+    const msg = String(e && e.message || e);
+    // "session not found" means it is ALREADY gone (the idle sweeper reaped
+    // it, the shell exited, or a double-clicked ✕ — the second close). That
+    // is a success, not an error: remove the UI remnants.
+    if (/not found|unknown session/i.test(msg)) {
+      removeSession(sid);
+      setStatus("");
+      return;
+    }
+    // A genuine failure must NOT mark the session closed — pollList would
+    // resurrect it and the tab flickers between [closed] and live forever
+    // (the "cannot close" bug). Surface the failure instead.
+    setStatus(`close failed: ${msg} — session still open`, true);
   }
 }
 
@@ -661,12 +679,19 @@ async function syncSession(sid) {
       // covered is a BYTE count but r.text is the server's UTF-8-decoded
       // (lossy) string — slicing it by UTF-16 code units lands mid-character
       // whenever an SSE frame crossed a multibyte boundary, dropping or
-      // corrupting CJK/emoji at the seam. Slice at the byte level instead:
-      // encode, skip covered bytes, decode.
+      // corrupting CJK/emoji at the seam. Slice at the byte level: encode,
+      // skip covered bytes, decode. If covered lands mid-character, back up
+      // to the previous char boundary — those bytes were already delivered
+      // by SSE (renderedBytes advanced past them), so skipping them is
+      // correct, not lossy.
       let text = r.text;
       if (covered > 0) {
         const enc = new TextEncoder().encode(r.text);
-        text = new TextDecoder("utf-8").decode(enc.subarray(Math.min(covered, enc.length)));
+        let cut = Math.min(covered, enc.length);
+        // UTF-8 continuation bytes are 0b10xxxxxx — step back to a leading
+        // byte so the slice starts at a character boundary.
+        while (cut > 0 && (enc[cut] & 0xc0) === 0x80) cut--;
+        text = new TextDecoder("utf-8").decode(enc.subarray(cut));
       }
       if (text) {
         s.term.write(text);
