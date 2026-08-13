@@ -892,13 +892,33 @@ async function handleGatewayImpl(request, env, url) {
       // property named "messages" inside the tools array cannot truncate it
       // (round-42 Medium: the first-"messages" anchor cut the region off).
       const toolsStart = rawText.indexOf('"tools":[');
-      const toolsRegion = toolsStart >= 0
-        ? rawText.slice(toolsStart, rawText.indexOf('"messages"', toolsStart))
-        : "";
+      // Bound the region at the tools array's CLOSING bracket — searching for
+      // the next '"messages"' still truncates at a tool schema property named
+      // "messages" (round-43 Medium), cutting off a later web_search
+      // declaration. A naive bracket count is fine: tool schemas may nest
+      // braces, so scan depth-aware from the opening '['.
+      let toolsRegion = "";
+      if (toolsStart >= 0) {
+        let depth = 0;
+        let end = -1;
+        for (let i = toolsStart + 8; i < rawText.length; i++) {
+          const ch = rawText[i];
+          if (ch === '[' || ch === '{') depth++;
+          else if (ch === ']' || ch === '}') { depth--; if (depth < 0) { end = i; break; } }
+        }
+        toolsRegion = end > 0 ? rawText.slice(toolsStart, end + 1) : "";
+      }
       const lastUserStart = rawText.lastIndexOf('"role":"user"');
       const lastUserMsg = lastUserStart >= 0 ? rawText.slice(lastUserStart) : rawText;
+      // Parse if the LAST user message has a NEW image (needs describing) OR
+      // any HISTORY image exists (needs the placeholder swap — a text-only
+      // follow-up asking about a turn-1 screenshot must still get the
+      // described context, not the raw base64). Both cases parse ONCE; the
+      // vision call only fires for the last message's image (preprocessImages
+      // swaps history images to placeholders without calling vision).
       const needsParse =
         /"type"\s*:\s*"image"/.test(lastUserMsg) ||
+        /"type"\s*:\s*"image"/.test(rawText) ||
         /"web_search"/.test(toolsRegion);
       if (!needsParse) {
         body = null;
@@ -1449,7 +1469,14 @@ async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
   const visionModel = env.VISION_MODEL || "og/mimo-v2.5";
   let changed = false;
   const out = [];
-  for (const m of messages) {
+  // Only the LAST user message's images are NEW (the client re-sends history
+  // images every turn — describing all of them per turn fires N vision calls
+  // and re-parses multi-MB bodies: the 1102 regression). Historical images
+  // get a placeholder WITHOUT a vision call (they were described on their
+  // own turn; the placeholder keeps the context slot without re-invoking).
+  const lastUserIdx = messages.map((m) => m.role === "user").lastIndexOf(true);
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
     if (m.role !== "user" || typeof m.content !== "object" || !Array.isArray(m.content)) {
       out.push(m);
       continue;
@@ -1458,11 +1485,16 @@ async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
       out.push(m);
       continue;
     }
+    const isLastUser = i === lastUserIdx;
     const newContent = [];
     for (const b of m.content) {
       if (b.type === "image") {
-        const desc = await describeImage(env, ukeys, b.source, visionModel);
-        newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
+        if (isLastUser) {
+          const desc = await describeImage(env, ukeys, b.source, visionModel);
+          newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
+        } else {
+          newContent.push({ type: "text", text: "[历史图片 — 见之前的描述]" });
+        }
         changed = true;
       } else {
         newContent.push(b);
