@@ -229,9 +229,13 @@ fn tool_open(
                     mgr2.term_unregister(&sid_buf).await;
                     // Audit trail: session closed (round-54), then release
                     // the logger's fd for this session (round-59) — the files
-                    // map must not grow with every session ever seen.
+                    // map must not grow with every session ever seen — and
+                    // drop its spill file (round-60; the retained history
+                    // entry carries the tail, the spill's head is unreachable
+                    // once the session is gone).
                     logger2.log_status(&sid_buf, "closed");
                     logger2.close_session(&sid_buf);
+                    remove_spill(&sid_buf);
                     // Backend-initiated death (SSH channel EOF, serial read
                     // error, pty EOF) — emit the event so clients learn the
                     // session died and WHY, instead of discovering it only via
@@ -414,6 +418,21 @@ fn read_spill(sid: &str, start: usize, end: usize) -> Vec<u8> {
             bytes[s..e].to_vec()
         })
         .unwrap_or_default()
+}
+
+/// Remove a session's spill file (round-60): append_spill had NO deletion
+/// path anywhere — closed sessions and evicted history entries left orphan
+/// files in %TEMP%/vale forever (sid is per-boot unique, so they only ever
+/// accumulated). Call when the session's last reference disappears (drainer
+/// close, history eviction). Idempotent; a missing file is fine.
+fn remove_spill(sid: &str) {
+    let _ = std::fs::remove_file(spill_path(sid));
+}
+
+/// Public alias for mod.rs (history eviction calls it under a different
+/// module path).
+pub(crate) fn remove_spill_for(sid: &str) {
+    remove_spill(sid);
 }
 
 /// Map a session kind to its close/death event (round-54): the same
@@ -627,7 +646,10 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // wait ended (marker = command really finished, idle =
                     // quiet period elapsed, timeout = deadline) and exit_code
                     // is the shell's own exit status when a marker was seen.
+                    // `kind` unifies the two execute modes for the model
+                    // (round-60); old clients keep parsing `text`.
                     Ok(json!({
+                        "kind": "session",
                         "text": result,
                         "truncated": truncated,
                         "timed_out": timed_out,
@@ -827,7 +849,14 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // its own SSE stream (round-54, dsh sanitize.ts).
                     let result = clean_terminal_output(result.as_bytes());
                     bus.emit(&AgentEvent::ShellExec { command });
-                    Ok(json!(result))
+                    // Unified shape (round-60): same `kind`/`output`/truncated
+                    // contract as the session mode; stdout/stderr stay as
+                    // attached fields for old parsers.
+                    Ok(json!({
+                        "kind": "local",
+                        "text": result,
+                        "truncated": truncated,
+                    }))
                 }
             }
         },
@@ -1414,7 +1443,9 @@ mod tests {
         // and must work — the stub only affects terminal_open/write/resize.
         let (tools, _buf) = seeded_tools();
         let out = call(find(&tools, "terminal_execute"), json!({"command": "echo stub-ok"})).await;
-        let text = out.as_str().unwrap_or_default();
+        // Unified shape (round-60): {"kind":"local","text":...,"truncated":...}.
+        assert_eq!(out["kind"], "local");
+        let text = out["text"].as_str().unwrap_or_default();
         assert!(text.contains("stub-ok"), "expected echo output in result, got: {text}");
     }
 

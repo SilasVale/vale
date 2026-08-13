@@ -142,7 +142,13 @@ impl SessionStore {
         };
         while self.history.len() > self.max_history_sessions {
             match oldest_key(&self.history) {
-                Some(k) => { self.history.remove(&k); }
+                Some(k) => {
+                    self.history.remove(&k);
+                    // Evicted history entry — its spill head is unreachable
+                    // (terminal_read returns evicted:true); drop the file
+                    // (round-60: spill had no deletion path anywhere).
+                    crate::plugins::terminal::tools::remove_spill_for(&k);
+                }
                 None => break,
             }
         }
@@ -152,6 +158,7 @@ impl SessionStore {
                 Some(k) => {
                     total -= self.history.get(&k).map(|h| h.buf.end_abs() as u64).unwrap_or(0);
                     self.history.remove(&k);
+                    crate::plugins::terminal::tools::remove_spill_for(&k);
                 }
                 None => break,
             }
