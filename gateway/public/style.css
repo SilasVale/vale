@@ -23,6 +23,10 @@
 
   --danger: #dc2626;
   --danger-soft: #fef2f2;
+  --danger-line: #fecaca;  /* danger border / hover (was a bare literal) */
+  --danger-hover: #fee2e2;
+  --chip-bg: #141417;      /* dark token chips (was a bare literal) */
+  --chip-ink: #d8f5f0;
   --warn-soft: #fffbeb;
   --warn-line: #fde68a;
   --warn-ink: #92400e;
@@ -134,7 +138,7 @@ pre code { background: none; color: inherit; padding: 0; }
   margin-top: 6px;
   padding: 10px 12px;
   border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
-  font: 14px var(--font-body); color: var(--ink); background: #fff;
+  font: 14px var(--font-body); color: var(--ink); background: var(--surface);
   outline: none;
 }
 .auth-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(14, 147, 132, 0.14); }
@@ -179,11 +183,11 @@ button { font-family: var(--font-body); }
 }
 .btn-ghost:hover { border-color: var(--ink); color: var(--ink); }
 .btn-danger {
-  border: 1px solid #fecaca;
+  border: 1px solid var(--danger-line);
   background: var(--danger-soft); color: var(--danger);
   padding: 0 14px;
 }
-.btn-danger:hover { background: #fee2e2; }
+.btn-danger:hover { background: var(--danger-hover); }
 .btn-block { display: block; width: 100%; }
 .danger-text { color: var(--danger); }
 .btn-mini {
@@ -268,7 +272,7 @@ button { font-family: var(--font-body); }
 .token-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .token {
   flex: 1; min-width: 220px;
-  background: #141417; color: #d8f5f0;
+  background: var(--chip-bg); color: var(--chip-ink);
   padding: 10px 14px; border-radius: var(--radius-sm);
   font-size: 13.5px; letter-spacing: 0.02em;
   word-break: break-all;
@@ -374,7 +378,7 @@ button { font-family: var(--font-body); }
 .modal-card .key-actions { margin-top: 14px; }
 .pair-code {
   font-size: 26px; font-weight: 700; letter-spacing: 0.14em; text-align: center;
-  background: #141417; color: #d8f5f0;
+  background: var(--chip-bg); color: var(--chip-ink);
   border-radius: var(--radius-sm);
   padding: 14px 10px; margin: 14px 0 2px;
 }

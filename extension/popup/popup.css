@@ -5,7 +5,10 @@
   --accent:#0e9384; --accent-ink:#0b7a6e; --accent-soft:#e7f5f2;
   --ink:#1d1d1f; --muted:#6e6e73; --faint:#86868b;
   --radius:14px; --radius-sm:10px; --radius-lg:20px;
-  --green:#0e9384; --green-bg:#e7f5f2; --red:#dc2626; --red-bg:#fef2f2;
+  --surface-glass:rgba(255,255,255,.72);
+  --shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
+  --danger:#dc2626; --danger-soft:#fef2f2;
+  --green:#0e9384; --green-bg:#e7f5f2; --red:var(--danger); --red-bg:var(--danger-soft);
   --font:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Inter,sans-serif;
   --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;
   /* Legacy aliases */
@@ -27,7 +30,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button.primary:hover{background:var(--accent-hover)}
 button.danger:hover{background:var(--red-bg);border-color:var(--red);color:var(--red)}
 input{font-family:inherit;font-size:13px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:6px 10px;color:var(--text);background:var(--card)}
-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(14,147,132,.18)}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(14,147,132,.14)}
 
 header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .logo{display:flex;align-items:center;gap:7px;font-weight:600;font-size:13px}
@@ -38,9 +41,9 @@ header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .pill.disconnected{background:var(--red-bg);color:var(--red)}
 .pill.connecting{background:rgba(191,91,0,.08);color:#bf5b00}
 
-.card{background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+.card{background:var(--surface-glass);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
   border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;display:flex;flex-direction:column;gap:8px;
-  box-shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04)}
+  box-shadow:var(--shadow)}
 .row{display:flex;justify-content:space-between;gap:8px}
 .label{color:var(--text2)}
 .mono{font-family:var(--mono);font-size:12px;word-break:break-all;text-align:right}
