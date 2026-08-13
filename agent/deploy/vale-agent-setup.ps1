@@ -119,13 +119,13 @@ Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
 $oldEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
-    sc.exe stop ValeCommand 2>NUL
-    sc.exe delete ValeCommand 2>NUL
-    schtasks /End /TN ValeCommand 2>NUL
-    schtasks /Delete /TN ValeCommand /F 2>NUL
-    schtasks /End /TN ValeCommandTray 2>NUL
-    schtasks /Delete /TN ValeCommandTray /F 2>NUL
-    sc.exe delete ValeAgent 2>NUL   # remove any old broken service
+    sc.exe stop ValeCommand 2>$null
+    sc.exe delete ValeCommand 2>$null
+    schtasks /End /TN ValeCommand 2>$null
+    schtasks /Delete /TN ValeCommand /F 2>$null
+    schtasks /End /TN ValeCommandTray 2>$null
+    schtasks /Delete /TN ValeCommandTray /F 2>$null
+    sc.exe delete ValeAgent 2>$null   # remove any old broken service
 } finally {
     $ErrorActionPreference = $oldEAP
 }
@@ -171,7 +171,7 @@ if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
     # check the exit code.
     $oldEAP3 = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    winget install --id Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements 2>NUL
+    winget install --id Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements 2>$null
     $ErrorActionPreference = $oldEAP3
     if ($LASTEXITCODE -ne 0) { throw "winget install cloudflared failed (exit $LASTEXITCODE)" }
     # winget registers cloudflared in the registry PATH, but THIS session's
@@ -374,20 +374,20 @@ try {
     # 2>$null can leak on sc.exe under EAP=Continue, so redirect to NUL
     # (cmd-style) instead of $null — the file redirect is outside the PS
     # error stream entirely.
-    & $cloudflared service uninstall 2>NUL
+    & $cloudflared service uninstall 2>$null
     for ($i = 0; $i -lt 10; $i++) {
-        sc.exe query Cloudflared 2>NUL
+        sc.exe query Cloudflared 2>$null
         if ($LASTEXITCODE -ne 0) { break }   # already gone
-        taskkill /F /IM cloudflared.exe 2>NUL
-        sc.exe delete Cloudflared 2>NUL
+        taskkill /F /IM cloudflared.exe 2>$null
+        sc.exe delete Cloudflared 2>$null
         Start-Sleep -Seconds 1
     }
-    sc.exe query Cloudflared 2>NUL
+    sc.exe query Cloudflared 2>$null
     if ($LASTEXITCODE -eq 0) { throw "Cloudflared service still exists - remove it manually (taskkill /F /IM cloudflared.exe; sc delete Cloudflared) then re-run." }
     # Leftover EventLog key from a previous install makes cloudflared fail the
     # event-logger registration and exit 1 even though the service installed
     # fine. Delete it first so the reinstall is clean.
-    reg delete "HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\Cloudflared" /f 2>NUL
+    reg delete "HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\Cloudflared" /f 2>$null
     & $cloudflared service install $tunnelToken
 } finally {
     $ErrorActionPreference = $oldEAP
@@ -395,7 +395,7 @@ try {
 if ($LASTEXITCODE -ne 0) { throw "cloudflared service install failed (exit $LASTEXITCODE)" }
 $oldEAP2 = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-sc.exe start Cloudflared 2>NUL
+sc.exe start Cloudflared 2>$null
 $scCode = $LASTEXITCODE
 $ErrorActionPreference = $oldEAP2
 # 1056 = ERROR_SERVICE_ALREADY_RUNNING. cloudflared's `service install`
