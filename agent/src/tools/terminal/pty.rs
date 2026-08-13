@@ -20,6 +20,8 @@ pub struct PtyBackend {
     /// Child process — polled by the reaper thread so exits are waited on
     /// (no zombies/orphans). Never taken; kill() on close, reaper reaps.
     child: Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>>,
+    /// Natural-exit code captured by the reaper (round-60).
+    exit_code: Arc<Mutex<Option<i32>>>,
 }
 
 impl PtyBackend {
@@ -72,18 +74,32 @@ impl PtyBackend {
         // Reaper thread: polls try_wait every 100ms so shell exits are
         // actually reaped (try_wait itself performs the wait). NEVER holds
         // the lock across a blocking call — close()'s kill() needs the lock.
+        // The shell's exit code when it dies naturally — captured by the
+        // reaper, read via TermBackend::exit_code (round-60: the panel/audit
+        // can distinguish a clean `exit` from a crash).
+        let exit_slot: Arc<Mutex<Option<i32>>> = Arc::new(Mutex::new(None));
+        let exit_slot_reap = exit_slot.clone();
         let child_reap = child_slot.clone();
         std::thread::spawn(move || {
             loop {
-                let done = if let Ok(mut guard) = child_reap.lock() {
+                let (done, code) = if let Ok(mut guard) = child_reap.lock() {
                     match guard.as_mut() {
-                        Some(c) => matches!(c.try_wait(), Ok(Some(_)) | Err(_)),
-                        None => true,
+                        Some(c) => match c.try_wait() {
+                            Ok(Some(status)) => (true, Some(status.exit_code() as i32)),
+                            Ok(None) => (false, None),
+                            Err(_) => (true, None),
+                        },
+                        None => (true, None),
                     }
                 } else {
-                    true
+                    (true, None)
                 };
                 if done {
+                    if let Some(code) = code {
+                        if let Ok(mut slot) = exit_slot_reap.lock() {
+                            *slot = Some(code);
+                        }
+                    }
                     // The child exited NATURALLY (user typed `exit`, pty EOF)
                     // — drop the slot so a later close() cannot SIGKILL a
                     // reaped (possibly pid-recycled) pid (round-50). With the
@@ -107,6 +123,7 @@ impl PtyBackend {
             master: Arc::new(Mutex::new(master)),
             _slave: slave,
             child: child_slot,
+            exit_code: exit_slot,
         })
     }
 }
@@ -140,6 +157,9 @@ impl TermBackend for PtyBackend {
                 }
             }
         }
+    }
+    fn exit_code(&self) -> Option<i32> {
+        self.exit_code.lock().ok().and_then(|g| *g)
     }
     fn terminate(&self) {
         // Kill the whole process tree (the shell AND its descendants), not
