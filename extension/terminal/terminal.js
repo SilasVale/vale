@@ -52,6 +52,9 @@ const termContainer = $("term-container");
 const newSessionBtn = $("new-session");
 const exportAllBtn = $("export-all");
 const statusEl = $("status");
+const sessionCountEl = $("session-count");
+const emptyStateEl = $("empty-state");
+const toastEl = $("toast");
 
 const pairing = await loadPairing();
 const origin = String(((await chrome.storage.local.get("consoleOrigin")).consoleOrigin || DEFAULT_ORIGIN)).replace(/\/+$/, "");
@@ -72,6 +75,28 @@ let polling = false;       // re-entrancy guard: never stack polls
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
   statusEl.classList.toggle("error", isError);
+}
+
+/** Transient feedback (round-54): same pattern as the console — the CSS
+ *  animation handles slide-in/stay/fade; just re-trigger on repeat calls. */
+function toast(msg) {
+  toastEl.hidden = false;
+  toastEl.textContent = msg;
+  toastEl.style.animation = "none";
+  void toastEl.offsetWidth; // restart the animation
+  toastEl.style.animation = "";
+  setTimeout(() => { toastEl.hidden = true; }, 3300);
+}
+
+/** Bottom-bar session count + empty-state card (round-54): the terminal
+ *  page previously had neither — no way to see how many sessions exist at a
+ *  glance, and a blank area with no affordance when every tab is closed. */
+function updateChrome() {
+  const live = [...sessions.values()].filter((s) => !s.savedOnly);
+  sessionCountEl.textContent = live.length
+    ? `${live.length} session${live.length === 1 ? "" : "s"}`
+    : "";
+  emptyStateEl.hidden = sessions.size !== 0;
 }
 
 /** POST /api/tools/<name> through the proxy; returns the `result` field. */
@@ -152,6 +177,7 @@ async function exportSession(sid) {
   }
   const text = sessionLogText(s, sid);
   download(`vale-term-${sid}.txt`, text);
+  toast("Session exported");
 }
 
 async function exportAll() {
@@ -165,26 +191,68 @@ async function exportAll() {
   }
   const stamp = fmtTs(Date.now()).replace(/[-: ]/g, "");
   download(`vale-terminal-log-${stamp}.txt`, parts.join("\n"));
+  toast(`Exported ${sessions.size} session${sessions.size === 1 ? "" : "s"}`);
 }
 
-function renderTab(sid, label) {
+function renderTab(sid, label, kind) {
   const tab = document.createElement("button");
   tab.className = "tab";
   tab.dataset.sid = sid;
-  tab.textContent = label || sid;
   tab.title = sid;
   tab.addEventListener("click", (e) => {
     if (e.target.closest(".tab-export")) { exportSession(sid); return; }
+    if (e.target.closest(".tab-close")) { closeSession(sid); return; }
     activate(sid);
   });
+  // Session-kind dot (round-54): teal = PTY, lane colors for ssh/serial —
+  // same semantics as the panel's tab dots.
+  const dot = document.createElement("span");
+  dot.className = "tab-dot";
+  if (kind) dot.dataset.kind = kind;
+  tab.appendChild(dot);
+  // Name is a child span so per-tab actions can update it without nuking
+  // the dot/export/close children (markClosed previously overwrote
+  // textContent and lost the structure).
+  const name = document.createElement("span");
+  name.className = "tab-name";
+  name.textContent = label || sid;
+  tab.appendChild(name);
   // Per-tab export icon (⤓) — visible on hover via CSS.
   const ex = document.createElement("span");
   ex.className = "tab-export";
   ex.textContent = "⤓";
   ex.title = "Export this session";
   tab.appendChild(ex);
+  // Per-tab close (✕) — closes the session on the device and drops the tab.
+  const cl = document.createElement("span");
+  cl.className = "tab-close";
+  cl.textContent = "✕";
+  cl.title = "Close this session";
+  tab.appendChild(cl);
   tabsEl.appendChild(tab);
   return tab;
+}
+
+/** Close a session on the device and drop its tab (round-54: the extension
+ *  terminal previously had no close affordance at all — tabs only died when
+ *  the device side closed them). The device close is best-effort: a session
+ *  already dead on the device reports the error, but the tab still goes. */
+async function closeSession(sid) {
+  const s = sessions.get(sid);
+  if (!s) return;
+  try {
+    await callTool("terminal_close", { session_id: sid });
+  } catch { /* already closed on the device — dropping the tab is enough */ }
+  if (s.es) s.es.close();
+  try { s.term.dispose(); } catch {}
+  sessions.delete(sid);
+  s.tab.remove();
+  if (activeSid === sid) {
+    const next = [...sessions.keys()].pop() || null;
+    activeSid = null;
+    if (next) activate(next);
+  }
+  updateChrome();
 }
 
 function highlightTabs() {
@@ -375,8 +443,9 @@ function adoptSession(sid, label, idbRec = null) {
     flushTimer: null,
   };
   sessions.set(sid, s); // before any await — activate() and the poll guard see it immediately
-  s.tab = renderTab(sid, label);
+  s.tab = renderTab(sid, label, s.kind);
   callTool("terminal_diag_write", { line: `adopt: ${sid} (${s.kind}:${label})` }).catch(() => {});
+  updateChrome();
   backfillAndAttach(sid, s, null);
 }
 
@@ -432,10 +501,12 @@ function markClosed(sid) {
   s.term.options.disableStdin = true; // typing into a dead session is pointless
   if (s.tab) {
     s.tab.classList.add("closed");
-    s.tab.textContent = `${s.label || sid} [closed]`;
+    const name = s.tab.querySelector(".tab-name");
+    if (name) name.textContent = `${s.label || sid} [closed]`;
     s.tab.title = `${sid} (closed on device)`;
   }
   if (sid === activeSid) setStatus("session closed");
+  updateChrome();
 }
 
 // ── Line ingestion + IndexedDB flush ────────────────────────────
@@ -584,7 +655,7 @@ async function adoptHistorySession(h, idbRec) {
     syncInFlight: false, sseDirty: false, needSync: false, flushTimer: null,
   };
   sessions.set(h.id, s); // before any await
-  s.tab = renderTab(h.id, `${s.label} [saved]`);
+  s.tab = renderTab(h.id, `${s.label} [saved]`, h.kind);
   s.tab.classList.add("closed");
   await backfillAndAttach(h.id, s, idbRec);
 }
@@ -743,6 +814,7 @@ function pruneIdb(records) {
 
 newSessionBtn.addEventListener("click", () => openSession("shell"));
 exportAllBtn.addEventListener("click", () => exportAll());
+$("empty-new").addEventListener("click", () => openSession("shell"));
 
 init();
 // Start discovery after init's adopt pass; the dedup guard in adoptSession

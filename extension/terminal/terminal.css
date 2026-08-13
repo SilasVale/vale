@@ -13,10 +13,17 @@
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
   --danger: #dc2626;
+  --lane-ds: #4f6bed;   /* SSH tab dot (panel/console --lane-ds) */
+  --lane-or: #d97706;   /* serial tab dot (panel/console --lane-or) */
   --radius: 14px;
   --radius-sm: 10px;
+  --radius-lg: 20px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
   --font: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
           "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono",
+               Consolas, "PingFang SC", "Microsoft YaHei", monospace;
 }
 
 html, body {
@@ -79,16 +86,30 @@ body {
   color: var(--accent-ink);
   border-color: var(--accent);
 }
-.tab-export {
-  margin-left: 6px;
+/* Session kind dot (round-54): same semantics as the panel — teal = PTY,
+   lane colors for ssh/serial; a closed tab's dot greys with the text. */
+.tab-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: var(--accent);
+}
+.tab-dot[data-kind="ssh"] { background: var(--lane-ds); }
+.tab-dot[data-kind="serial"] { background: var(--lane-or); }
+.tab-name { white-space: nowrap; }
+.tab-export, .tab-close {
+  margin-left: 5px;
   font-size: 11px;
   color: var(--faint);
   visibility: hidden;
   cursor: pointer;
 }
-.tab:hover .tab-export,
-.tab.active .tab-export { visibility: visible; }
+.tab:hover .tab-export, .tab:hover .tab-close,
+.tab.active .tab-export, .tab.active .tab-close { visibility: visible; }
 .tab-export:hover { color: var(--accent); }
+.tab-close:hover { color: var(--danger); }
 #new-session {
   background: var(--accent);
   color: #ffffff;
@@ -111,21 +132,46 @@ body {
   transition: all .15s ease;
 }
 #export-all:hover { color: var(--ink); border-color: var(--faint); }
-#status {
-  color: var(--muted);
-  font-size: 12px;
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-#status.error { color: var(--danger); }
 
 #term-container {
   flex: 1;
   min-height: 0;
   display: flex;
+  /* Center the empty state inside the terminal area. */
+  align-items: center;
+  justify-content: center;
 }
+/* Empty state (round-54): V mark + CTA, aligned with the panel's empty-card. */
+.empty-card {
+  text-align: center;
+  padding: 40px 56px;
+  background: var(--surface-glass);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  max-width: 340px;
+}
+.empty-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px;
+  border-radius: 16px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+.empty-card h3 { margin: 0 0 6px; font-size: 16px; color: var(--ink); }
+.empty-card p { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+.empty-actions { display: flex; gap: 8px; justify-content: center; }
+.empty-actions button {
+  padding: 8px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink);
+  font: 600 13px var(--font); cursor: pointer;
+}
+.empty-actions button:hover { border-color: var(--accent); color: var(--accent-ink); }
 .term-session {
   display: none;
   flex: 1;
@@ -142,3 +188,45 @@ body {
   overflow: hidden;
   border: 1px solid var(--line);
 }
+
+/* Bottom statusbar (round-54): session count + status, same glass treatment
+   as the toolbar — the panel's statusbar layout. */
+#statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 16px;
+  background: var(--surface-glass);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-top: 1px solid var(--line);
+}
+#status {
+  color: var(--muted);
+  font-size: 12px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+#status.error { color: var(--danger); }
+#session-count {
+  color: var(--faint);
+  font: 12px var(--font-mono);
+  white-space: nowrap;
+}
+
+/* Toast (round-54): same pattern as the console — slide-in + stay + fade. */
+.toast {
+  position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: #fff;
+  padding: 10px 18px; border-radius: var(--radius-sm);
+  font-size: 13px; box-shadow: var(--shadow-lg);
+  z-index: 50;
+  pointer-events: none;
+  animation: toast-in .16s ease-out, toast-out .6s ease-in 2.6s forwards;
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
+@keyframes toast-out { to { opacity: 0; transform: translate(-50%, 8px); } }
