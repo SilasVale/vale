@@ -12,13 +12,24 @@
   --lane-or:#d97706; --lane-or-soft:rgba(217,119,6,.08); /* warn amber (console --lane-or) */
   --red:var(--danger); --red-bg:var(--danger-soft);
   --font:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Inter,sans-serif;
-  --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;
+  /* --font-mono: canonical name (round-54); the stack ends in named fonts +
+     CJK fonts, NOT a bare `monospace` — bare monospace falls back to SimSun
+     for CJK glyphs on Windows (the dsh UI research flagged this). */
+  --font-mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,"PingFang SC","Microsoft YaHei",sans-serif;
   /* Legacy aliases */
+  --mono:var(--font-mono);
   --card:var(--surface); --border:var(--line); --border-strong:var(--line-strong);
   --accent-hover:var(--accent-ink); --accent-bg:var(--accent-soft);
   --text:var(--ink); --text2:var(--muted); --text3:var(--faint);
 }
 *{box-sizing:border-box;margin:0;padding:0}
+/* Unified focus ring + slim scrollbar (round-54): the same visual language
+   across every Vale surface — teal ring on keyboard focus, 8px scrollbars. */
+:focus-visible{outline:2px solid rgba(14,147,132,.45);outline-offset:2px}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-thumb{background:rgba(0,0,0,.16);border-radius:4px}
+*::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,.28)}
+*::-webkit-scrollbar-track{background:transparent}
 body{
   width:300px; font-family:var(--font); font-size:13px; line-height:1.5;
   background:var(--bg); color:var(--text);

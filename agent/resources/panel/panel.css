@@ -23,8 +23,15 @@
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
   --font: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
           "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
-  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas, monospace;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
+/* Unified focus ring + slim scrollbar (round-54): every Vale surface uses
+   the same teal keyboard-focus ring and 8px scrollbars. */
+:focus-visible { outline: 2px solid rgba(14,147,132,.45); outline-offset: 2px; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
+*::-webkit-scrollbar-track { background: transparent; }
 
 html, body {
   height: 100%;

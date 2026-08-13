@@ -14,6 +14,13 @@
   --accent-hover:var(--accent-ink);
   --text:var(--ink); --text2:var(--muted); --text3:var(--faint);
 }
+/* Unified focus ring + slim scrollbar (round-54): every Vale surface uses
+   the same teal keyboard-focus ring and 8px scrollbars. */
+:focus-visible { outline: 2px solid rgba(14,147,132,.45); outline-offset: 2px; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
+*::-webkit-scrollbar-track { background: transparent; }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);font-size:14px;line-height:1.5;background:var(--bg);color:var(--text);
   display:flex;justify-content:center;padding:48px 16px}
