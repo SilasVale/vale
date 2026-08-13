@@ -142,13 +142,12 @@ export function estimateTokens(jsonStr) {
   // screenshot-heavy conversation looked far beyond the 1M context and the
   // client rejected requests / compacted prematurely. Each image gets a fixed
   // allowance (~1600 tokens, the real vision cost).
-  let s = String(jsonStr);
+  const s = String(jsonStr);
   const len = s.length;
   // CPU budget (round-55): the base64 strip regex walked the WHOLE body —
-  // on a 4-10MB body that alone was ~20-60ms of the 10ms Free-plan budget,
-  // and the follow-up image-count match walked it a SECOND time. Bodies over
-  // 2 MB get their HEAD stripped + counted and the result extrapolated by
-  // length (same sampling stance as the token estimate below).
+  // on a 4-10MB body that alone was ~20-60ms of the 10ms Free-plan budget.
+  // Bodies over 2 MB get their HEAD stripped + counted and the result
+  // extrapolated by length (same sampling stance as the token estimate).
   const str = len > 2_000_000 ? s.slice(0, 2_000_000) : s;
   const sampledLen = str.length;
   let images = 0;
@@ -183,7 +182,14 @@ export function estimateTokens(jsonStr) {
     return Math.ceil(ascii / 4 + other * 1.8);
   })();
   // Image count from the head, scaled (ratio is 1 when no windowing applied).
-  return base + Math.round(images * ratio) * 1600; // ~1600 tokens per image
+  // round-56 fix: with a >2MB window the old code charged the window's tail
+  // (base64 bytes beyond the window) as TEXT — a 1.3MB screenshot was ~440k
+  // tokens instead of 1600 (~280x). Scale the head's image count to the full
+  // body: base64 images outside the window are then charged per-image, not
+  // as text. (Text outside the window is still approximated by len/3 when
+  // len > ESTIMATE_WALK_LIMIT — the ±20% stance of the module doc.)
+  const imagesFull = Math.max(images, Math.round(images * ratio));
+  return base + imagesFull * 1600; // ~1600 tokens per image
 }
 
 

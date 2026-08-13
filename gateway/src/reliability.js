@@ -186,11 +186,6 @@ export class BreakerDO {
         await this.state.storage.delete("succ");
         return new Response("ok");
       }
-      if (action === "/clear") {
-        await this.state.storage.delete("degradedUntil");
-        await this.state.storage.delete("fail");
-        return new Response("ok");
-      }
       if (action === "/check") {
         const degradedUntil = (await this.state.storage.get("degradedUntil")) || 0;
         return new Response(degradedUntil > Date.now() ? "1" : "0");
