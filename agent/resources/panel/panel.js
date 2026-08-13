@@ -42,9 +42,9 @@ const TERM_THEME = {
   black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",
   blue: "#1d4ed8", magenta: "#7c3aed", cyan: "#0f766e", white: "#44403c",
   // Brights tuned for white bg: >=4.5:1 (WCAG AA) against #ffffff.
-  brightBlack: "#4b5563", brightRed: "#dc2626", brightGreen: "#16a34a",
+  brightBlack: "#4b5563", brightRed: "#dc2626", brightGreen: "#15803d",
   brightYellow: "#a16207", brightBlue: "#2563eb", brightMagenta: "#9333ea",
-  brightCyan: "#0e9384", brightWhite: "#6e6e73",
+  brightCyan: "#0f766e", brightWhite: "#6e6e73",
 };
 
 const $ = (id) => document.getElementById(id);

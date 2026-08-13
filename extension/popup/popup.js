@@ -16,11 +16,16 @@ async function refresh() {
     $("pairCard").classList.add("hidden");
     $("device").textContent = s.device || s.pairedDeviceName;
     $("tabCount").textContent = String(s.controlledTabs?.length || 0);
-    // Browser restart lost the session token — show the re-pair hint but
-    // KEEP the paired card (the Terminal button still works via the 30-day
-    // cookie; the hint explains the lost session token).
+    // needsRepair = cookie AND token both gone — the paired card's actions
+    // would dead-end on the re-pair page. Show the pair form (with its code
+    // input) so re-pairing is actually reachable, instead of a text-only
+    // hint with no affordance.
     const repair = $("needsRepair");
     if (repair) repair.classList.toggle("hidden", !s.needsRepair);
+    if (s.needsRepair) {
+      $("pairedCard").classList.add("hidden");
+      $("pairCard").classList.remove("hidden");
+    }
   } else {
     $("pairedCard").classList.add("hidden");
     $("pairCard").classList.remove("hidden");
