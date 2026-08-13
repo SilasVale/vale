@@ -52,6 +52,30 @@ deploy_worker() {
   echo "=== [deploy] ${name} (${dir}/) ==="
   ( cd "$ROOT/$dir" \
       && CLOUDFLARE_API_TOKEN="$token" wrangler deploy )
+  # Post-publish smoke (round-58): a stale/placeholder sha256 in index.js
+  # ships silently and locks EVERY device's agent_update (integrity check
+  # fails) until someone notices. Assert the live /api/version matches the
+  # source constants right after deploy — fail loudly at publish time.
+  if [[ "$dir" == "index" ]]; then
+    local want_version want_sha
+    want_version="$(grep -oP 'version: "\K[0-9.]+' "$ROOT/index/src/index.js" | head -1)"
+    want_sha="$(grep -oP 'sha256: "\K[0-9a-f]{64}' "$ROOT/index/src/index.js" | head -1)"
+    if [[ -z "$want_sha" || "$want_sha" == *placeholder* || "$want_sha" =~ ^0+$ ]]; then
+      echo "  !! index/src/index.js sha256 is missing/all-zero/placeholder — devices would be locked out of updates"
+      exit 1
+    fi
+    local live
+    live="$(curl -s -m 30 https://agent.saisi.online/api/version)"
+    if ! echo "$live" | grep -q "\"version\":\"$want_version\""; then
+      echo "  !! live version mismatch: want $want_version, got: $live"
+      exit 1
+    fi
+    if ! echo "$live" | grep -q "\"sha256\":\"$want_sha\""; then
+      echo "  !! live sha256 mismatch: want $want_sha, got: $live"
+      exit 1
+    fi
+    echo "  ok: /api/version smoke passed (v$want_version)"
+  fi
 }
 
 cmd="${1:-agent}"
