@@ -46,13 +46,17 @@ function showError(msg) {
 $("pair").addEventListener("click", async () => {
   const code = $("code").value.trim();
   if (!code) return;
-  const r = await chrome.runtime.sendMessage({ type: "pair", code });
+  let r;
+  try { r = await chrome.runtime.sendMessage({ type: "pair", code }); }
+  catch { showError("background not responding — reload the extension"); return; }
   if (r?.ok) { $("code").value = ""; await refresh(); }
   else showError(r?.error || "pair failed");
 });
 
 $("openTab").addEventListener("click", async () => {
-  const r = await chrome.runtime.sendMessage({ type: "openTab" });
+  let r;
+  try { r = await chrome.runtime.sendMessage({ type: "openTab" }); }
+  catch { showError("background not responding — reload the extension"); return; }
   if (!r?.ok) showError(r?.error || "open failed");
 });
 
@@ -85,7 +89,9 @@ $("openTerminal").addEventListener("click", () => {
 });
 
 $("unpair").addEventListener("click", async () => {
-  const r = await chrome.runtime.sendMessage({ type: "unpair" });
+  let r;
+  try { r = await chrome.runtime.sendMessage({ type: "unpair" }); }
+  catch { showError("background not responding — reload the extension"); return; }
   if (r?.ok) { showError(""); await refresh(); }
   else showError(r?.error || "unpair failed");
 });
