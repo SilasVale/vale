@@ -41,18 +41,22 @@ $("openTab").addEventListener("click", async () => {
 });
 
 $("openTerminal").addEventListener("click", () => {
-  // The terminal panel is served by the DEVICE (vale-agent at
-  // https://dN.agent.saisi.online/panel/), not the gateway console — the
-  // console origin + /panel/ was a dead link (gateway has no /panel route).
-  // Open the paired device's panel directly; fall back to the console's
-  // device list (where each device links its panel).
+  // The terminal panel is served through the GATEWAY proxy
+  // (/api/devices/<name>/proxy/panel/) — the console origin + /panel/ was a
+  // dead link (gateway has no /panel route) and the device's own hostname is
+  // never stored. The gateway authenticates proxied API calls with the
+  // PLUGIN TOKEN (session storage, not local): browser navigation cannot
+  // carry an Authorization header, so the token goes in the URL as ?token=
+  // (the panel reads it and sends Bearer on every fetch; gateway accepts
+  // ?token= only for this top-level navigation).
   chrome.storage.local.get(["consoleOrigin", "valePlugin"]).then(({ consoleOrigin, valePlugin }) => {
-    // pairedDevice.hostname NEVER exists (pairing stores {device, token} only)
-    // — this branch was dead. Route through the gateway proxy like openTab.
     const device = valePlugin?.device;
     const base = (consoleOrigin || "https://api.saisi.online").replace(/\/+$/, "");
     if (device) {
-      chrome.tabs.create({ url: `${base}/api/devices/${device}/proxy/panel/` });
+      chrome.storage.session.get("valePluginToken").then(({ valePluginToken }) => {
+        const q = valePluginToken ? `?token=${encodeURIComponent(valePluginToken)}` : "";
+        chrome.tabs.create({ url: `${base}/api/devices/${device}/proxy/panel/${q}` });
+      });
       return;
     }
     chrome.tabs.create({ url: `${base}/` });

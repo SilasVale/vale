@@ -1179,9 +1179,13 @@ function rewriteDeviceBody(text, name) {
   let out = text;
   for (const p of PANEL_ROOT_PATHS) {
     const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // A quote/backtick followed by a root path that isn't already the proxy
-    // prefix → insert the prefix between them (avoids double-rewriting).
-    const re = new RegExp(`(["'\`])(?!${already})${escaped}`, "g");
+    // A quote/backtick OR template-interpolation close (}) followed by a
+    // root path that isn't already the proxy prefix → insert the prefix
+    // between them (avoids double-rewriting). The } case matters: panel.js
+    // builds `https://${hostname}/api/events/term` where the path follows a
+    // `}` — without it the SSE stream URL was never rewritten and the
+    // proxied panel froze ("stream error 404", no needSync recovery).
+    const re = new RegExp(`(["'\`}])(?!${already})${escaped}`, "g");
     out = out.replace(re, `$1${prefix}${p}`);
   }
   return out;
