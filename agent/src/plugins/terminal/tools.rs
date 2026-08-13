@@ -20,14 +20,15 @@ pub(super) fn build(
     bus: &Arc<dyn EventBus>,
     output_buf: &OutputBuf,
     diag: &DiagStore,
+    logger: &crate::session_log::SessionLogger,
 ) -> Vec<ToolDef> {
     vec![
-        tool_open(terminal_mgr, bus, output_buf),
+        tool_open(terminal_mgr, bus, output_buf, logger),
         tool_write(terminal_mgr),
         tool_close(terminal_mgr, bus, output_buf),
         tool_list(terminal_mgr),
         tool_history(terminal_mgr, output_buf),
-        tool_execute(terminal_mgr, bus, output_buf),
+        tool_execute(terminal_mgr, bus, output_buf, logger),
         tool_list_ports(serial_pool),
         tool_resize(terminal_mgr),
         tool_select(terminal_mgr),
@@ -48,10 +49,12 @@ fn tool_open(
     terminal_mgr: &Arc<TerminalManager>,
     bus: &Arc<dyn EventBus>,
     output_buf: &OutputBuf,
+    logger: &crate::session_log::SessionLogger,
 ) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let bus = bus.clone();
     let buf = output_buf.clone();
+    let logger = logger.clone();
     ToolDef::new(
         "terminal_open",
         "Open a terminal connection. Kind: 'pty' (local shell; target optional — blank = default shell), 'ssh' (target=user@host:port), or 'serial' (target=port_name, optional ?baud=N e.g. /dev/ttyUSB0?baud=115200, default 115200). Returns session ID.",
@@ -60,6 +63,7 @@ fn tool_open(
             let terminal_mgr = terminal_mgr.clone();
             let bus = bus.clone();
             let buf = buf.clone();
+            let logger = logger.clone();
             async move {
                 let kind = require_str(&params, "kind")?;
                 // target is OPTIONAL (pty blank = default shell) — the schema
@@ -79,6 +83,8 @@ fn tool_open(
                     inject_marker,
                 };
                 let (id, _rx) = terminal_mgr.term_open(&req).await?;
+                // Audit trail: session opened (round-54).
+                logger.log_status(&id, "opened");
                 // Prompt-marker injection (round-54): teach the PTY shell to
                 // emit OSC 133;D;<exit-code> right before each prompt, so the
                 // execute wait-loop can distinguish "command finished" from
@@ -139,6 +145,7 @@ fn tool_open(
                 // Capture metadata BEFORE the recv loop, while the session is
                 // still registered in the manager — retained history needs it.
                 let mgr2 = terminal_mgr.clone();
+                let logger2 = logger.clone();
                 tokio::spawn(async move {
                     // Metadata for the retained history entry (kind/label).
                     let (kind, label) = {
@@ -150,6 +157,9 @@ fn tool_open(
                     };
                     let mut rx = _rx;
                     while let Some(output) = rx.recv().await {
+                        // Audit trail: every output chunk (lossy text, capped
+                        // inside the logger) (round-54).
+                        logger2.log_output(&sid_buf, String::from_utf8_lossy(&output.data).to_string());
                         // Deliberately NO touch here (round-54): output
                         // activity is not presence. Touching on every chunk
                         // kept abandoned high-output sessions (`tail -f`,
@@ -192,6 +202,8 @@ fn tool_open(
                     recover_guard(&buf)
                         .retain_live(&sid_buf, &kind, &label);
                     mgr2.term_unregister(&sid_buf).await;
+                    // Audit trail: session closed (round-54).
+                    logger2.log_status(&sid_buf, "closed");
                     // Backend-initiated death (SSH channel EOF, serial read
                     // error, pty EOF) — emit the event so clients learn the
                     // session died and WHY, instead of discovering it only via
@@ -356,10 +368,11 @@ fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
 
 // ── Execute ──────────────────────────────────────
 
-fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf) -> ToolDef {
+fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf, logger: &crate::session_log::SessionLogger) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let buf = output_buf.clone();
     let bus = bus.clone();
+    let logger = logger.clone();
     ToolDef::new(
         "terminal_execute",
         "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Returns stdout, stderr, exit code (local) or accumulated terminal output (session) with wait_reason and exit_code.",
@@ -368,6 +381,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
             let terminal_mgr = terminal_mgr.clone();
             let buf = buf.clone();
             let bus = bus.clone();
+            let logger = logger.clone();
             async move {
                 let command = require_str(&params, "command")?;
                 let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(30);
@@ -388,6 +402,8 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // into the multi-line continuation prompt (>>), so the
                     // command never executes. Unix shells accept either.
                     let cmd_with_nl = append_command_newline(&command);
+                    // Audit trail: command started (round-54).
+                    logger.log_command_start(&sid, &command);
                     terminal_mgr.term_write(&sid, &cmd_with_nl).await?;
 
                     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
@@ -482,6 +498,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             break;
                         }
                     }
+                    // Audit trail: command ended, with the shell's exit code
+                    // (marker) and the reason the wait stopped (round-54).
+                    logger.log_command_end(&sid, marker_code, Some(wait_reason));
                     bus.emit(&AgentEvent::ShellExec { command });
                     // Surface truncation honestly: a >1MB burst evicted output
                     // the model would otherwise treat as complete. timed_out
@@ -855,7 +874,12 @@ mod tests {
         let mgr = Arc::new(TerminalManager::new(serial.clone()));
         let buf: OutputBuf = Arc::new(std::sync::Mutex::new(SessionStore::new()));
         let diag: DiagStore = Arc::new(std::sync::Mutex::new(DiagBuf::default()));
-        let tools = build(&mgr, &serial, &bus, &buf, &diag);
+        // Session logger in a scratch dir — the audit trail is exercised
+        // through the same full path as production (round-54).
+        let log_dir = std::env::temp_dir().join(format!("vale-sesslog-tools-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&log_dir);
+        let logger = crate::session_log::SessionLogger::new(log_dir);
+        let tools = build(&mgr, &serial, &bus, &buf, &diag, &logger);
         (tools, buf)
     }
 

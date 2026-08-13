@@ -253,6 +253,18 @@ pub struct TerminalPlugin {
     bus: Arc<dyn EventBus>,
     output_buf: OutputBuf,
     diag: DiagStore,
+    logger: crate::session_log::SessionLogger,
+}
+
+/// Install dir of the audit log — next to the exe, same place as
+/// vale-known-hosts.json (the only location guaranteed writable and stable
+/// across upgrades).
+fn log_dir() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_default()
+        .join("sessions")
 }
 
 impl TerminalPlugin {
@@ -261,10 +273,23 @@ impl TerminalPlugin {
         serial_pool: Arc<SerialPool>,
         bus: Arc<dyn EventBus>,
     ) -> Self {
+        // Crash recovery (round-54): a command that never finished (agent
+        // died mid-execute) gets a synthetic command/end{interrupted} in its
+        // audit file. The command may STILL be running on the device as an
+        // orphan — the log says so instead of pretending it vanished.
+        let logger = crate::session_log::SessionLogger::new(log_dir());
+        let interrupted = logger.recover_interrupted();
+        if !interrupted.is_empty() {
+            tracing::info!(
+                "[vale-agent] session log recovery: {} interrupted session(s) marked: {:?}",
+                interrupted.len(), interrupted
+            );
+        }
         Self {
             terminal_mgr, serial_pool, bus,
             output_buf: Arc::new(std::sync::Mutex::new(SessionStore::new())),
             diag: Arc::new(std::sync::Mutex::new(DiagBuf::default())),
+            logger,
         }
     }
 }
@@ -277,7 +302,7 @@ impl Plugin for TerminalPlugin {
     }
 
     fn tools(&self) -> Vec<ToolDef> {
-        tools::build(&self.terminal_mgr, &self.serial_pool, &self.bus, &self.output_buf, &self.diag)
+        tools::build(&self.terminal_mgr, &self.serial_pool, &self.bus, &self.output_buf, &self.diag, &self.logger)
     }
 }
 
