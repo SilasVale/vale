@@ -13,9 +13,26 @@
     <div id="tabs"></div>
     <button id="new-session">New PTY</button>
     <button id="export-all" title="Export all session logs">Export all</button>
-    <span id="status"></span>
   </div>
-  <div id="term-container"></div>
+  <div id="term-container">
+    <div id="empty-state" class="empty-card" hidden>
+      <span class="empty-mark">
+        <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true">
+          <path d="M20 16 L32 48 L44 16" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <h3>No terminal sessions</h3>
+      <p>Open a local shell on this device to get started.</p>
+      <div class="empty-actions">
+        <button id="empty-new">New PTY</button>
+      </div>
+    </div>
+  </div>
+  <div id="statusbar">
+    <span id="status"></span>
+    <span id="session-count"></span>
+  </div>
+  <div id="toast" class="toast" hidden></div>
   <script src="vendor/xterm.min.js"></script>
   <script src="vendor/xterm-addon-fit.min.js"></script>
   <script type="module" src="terminal.js"></script>
