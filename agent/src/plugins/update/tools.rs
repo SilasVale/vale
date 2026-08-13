@@ -157,8 +157,17 @@ pub fn agent_update() -> ToolDef {
                 .bytes()
                 .await
                 .map_err(|e| DeviceError::Internal { message: format!("download failed: {e}") })?;
-            std::fs::write(&installer, &bytes)
-                .map_err(|e| DeviceError::Internal { message: format!("write installer failed: {e}") })?;
+            // A failed write (e.g. the installer is locked by AV scanning or a
+            // previous run) must NOT leave the busy marker — the caller's
+            // retry loop then bounces off "already in progress" for up to an
+            // hour (observed live: write failed on a locked exe, updates
+            // blocked 60 min). Drop the marker with the same cleanup the
+            // spawn-failure path uses.
+            if let Err(e) = std::fs::write(&installer, &bytes) {
+                let _ = std::fs::remove_file(&busy);
+                let _ = std::fs::remove_file(&installer);
+                return Err(DeviceError::Internal { message: format!("write installer failed: {e}") });
+            }
 
             // 4. Spawn the silent installer. This process runs elevated (SYSTEM
             //    task or admin console), so no UAC prompt is needed. The
