@@ -35,7 +35,10 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // isolates within a minute instead of up to 24h. KV reads are cheap — a few
 // hundred per key per isolate per day.
 const AUTH_CACHE_TTL = 60 * 1000;
-const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:"];
+// "devices:" joins the short-TTL set (round-55): a device registered via
+// /api/register on a COLD isolate stayed invisible on hot isolates for up to
+// 24h — /proxy and /mcp 404'd on the new device while the console showed it.
+const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:", "devices:"];
 const __c = new Map(); // kvKey -> { v, exp }; v may be null (cached "not found")
 function cget(k) {
   const e = __c.get(k);
@@ -533,12 +536,20 @@ export async function consumeRegKey(env, code) {
 const PLUGIN_KEY = "plugins:v1";
 
 export async function listPluginLinks(env) {
+  // Cached like every other KV read (round-55): the WS ticket path used to
+  // read + parse the whole plugin table on EVERY ticket — the same pattern
+  // devices:v1 follows (24h write-through cache).
+  const cached = cget(PLUGIN_KEY);
+  if (cached !== undefined) return cached;
   const raw = await env.KEYS.get(PLUGIN_KEY);
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return {}; }
+  let map = {};
+  if (raw) { try { map = JSON.parse(raw); } catch { map = {}; } }
+  cset(PLUGIN_KEY, map);
+  return map;
 }
 export async function savePluginLinks(env, map) {
   await env.KEYS.put(PLUGIN_KEY, JSON.stringify(map));
+  cset(PLUGIN_KEY, map); // write-through — same-isolate reads stay fresh
 }
 // Plugin links expire after PLUGIN_LINK_TTL_MS (30 days) — a leaked extension
 // token must not grant permanent remote control of a device's browser

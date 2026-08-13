@@ -57,7 +57,11 @@ export async function handleMcp(request, env) {
       const result = await callTool(tool, env, device, args);
       return mcpJson({ content: formatResult(result) }, id);
     } catch (e) {
-      return mcpError(-32603, `Tool ${name} failed: ${e.message}`, id);
+      // Stable error code in data (round-55): a flat "-32603 Tool failed: ..."
+      // string hides whether the device is offline / the session is gone / a
+      // timeout / the extension is offline — the model needs the distinction
+      // to retry smartly.
+      return mcpError(-32603, `Tool ${name} failed: ${e.message}`, id, e.code);
     }
   }
   return mcpError(-32601, `Method not found: ${method}`, id);
@@ -86,9 +90,18 @@ export async function callTool(tool, env, device, args) {
   // Never let an auth failure masquerade as success.
   if (res.status === 401) throw new Error("hub auth misconfigured (x-do-auth)");
   const j = await res.json().catch(() => ({}));
-  if (res.status === 503) throw new Error("extension_offline — is the Vale extension running on the device browser?");
+  if (res.status === 503) throw ToolErr(EXTENSION_OFFLINE, "extension_offline — is the Vale extension running on the device browser?");
   if (j.error) throw new Error(`extension error: ${j.error}`);
   return j.result;
+}
+
+// Stable error codes (round-55) — carried in the JSON-RPC error data so MCP
+// clients can distinguish failure classes and retry smartly.
+export const DEVICE_UNREACHABLE = "DEVICE_UNREACHABLE";
+export const EXTENSION_OFFLINE = "EXTENSION_OFFLINE";
+export const TIMEOUT = "TIMEOUT";
+function ToolErr(code, message) {
+  return Object.assign(new Error(message), { code });
 }
 
 async function callTerminalTool(name, env, device, args) {
@@ -124,14 +137,18 @@ async function callTerminalTool(name, env, device, args) {
     // different quiet window than the device actually uses (round-54).
     body.quiet_ms = body.quiet_ms ?? 200;
   }
-  const { ok, resp } = await deviceFetch(env, device, toolPath, {
+  const { ok, resp, error } = await deviceFetch(env, device, toolPath, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!resp) throw new Error("Device unreachable");
+  if (!resp) {
+    // Distinct code for a timeout vs a hard unreachable (round-55).
+    const code = /timeout/i.test(String(error || "")) ? TIMEOUT : DEVICE_UNREACHABLE;
+    throw ToolErr(code, error || "Device unreachable");
+  }
   const data = await resp.json().catch(() => ({}));
-  if (!ok) throw new Error(data?.error || `Device returned ${resp.status}`);
+  if (!ok) throw ToolErr(DEVICE_UNREACHABLE, data?.error || `Device returned ${resp.status}`);
   // No heartbeat here (round-54): the agent's own execute wait-loop pings
   // the session every poll, and the panel pings terminal_select every 30s —
   // the MCP path is covered by the execute loop. The gateway simulating
@@ -155,8 +172,10 @@ function formatResult(result) {
 function mcpJson(result, id) {
   return new Response(JSON.stringify({ jsonrpc: "2.0", result, id }), { headers: { "content-type": "application/json" } });
 }
-function mcpError(code, message, id) {
-  return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id }), { headers: { "content-type": "application/json" } });
+function mcpError(code, message, id, data) {
+  const error = { code, message };
+  if (data) error.data = { code: data };
+  return new Response(JSON.stringify({ jsonrpc: "2.0", error, id }), { headers: { "content-type": "application/json" } });
 }
 
 function mcpSseStream() {

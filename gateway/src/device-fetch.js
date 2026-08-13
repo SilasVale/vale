@@ -30,6 +30,8 @@ export function build101Response(resp) {
  * injection, host/cookie stripped). Returns { status, ok, resp } — resp is
  * undefined when the device is unreachable, with `error` carrying the reason.
  */
+import { fetchWithTimeout } from "./reliability.js";
+
 export async function deviceFetch(env, device, restPath, init = {}) {
   const upstream = new URL(`https://${device.hostname}${restPath}`);
   const headers = new Headers(init.headers || {});
@@ -38,7 +40,16 @@ export async function deviceFetch(env, device, restPath, init = {}) {
   headers.set("Authorization", `Bearer ${device.token}`);
   let resp;
   try {
-    resp = await fetch(upstream.toString(), { ...init, headers });
+    // Read paths (GET: panel resources, /api/status probes) are bounded —
+    // a blackholed tunnel used to hang the request forever, waiting on the
+    // platform's subrequest ceiling. Write paths (POST: terminal tools) are
+    // deliberately NOT bounded: a command is non-idempotent, retrying it
+    // would double-execute (round-55).
+    if (!init.method || init.method === "GET") {
+      resp = await fetchWithTimeout(upstream.toString(), { ...init, headers }, 15000);
+    } else {
+      resp = await fetch(upstream.toString(), { ...init, headers });
+    }
   } catch (e) {
     return { status: 502, ok: false, error: `Device unreachable: ${e.message}` };
   }
