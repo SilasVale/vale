@@ -12,13 +12,26 @@ pub struct SerialBackend {
 }
 
 impl SerialBackend {
+    /// `data_bits`/`parity`/`stop_bits` override the target-string framing
+    /// (round-54: serial framing like 8E1/7N2 was never reachable from
+    /// terminal_open — SerialPool supported it, nothing passed it through).
+    #[allow(clippy::too_many_arguments)]
     pub async fn open(
         pool: Arc<SerialPool>,
         target: &str,
+        data_bits: Option<u8>,
+        parity: Option<String>,
+        stop_bits: Option<u8>,
         tx: tokio::sync::mpsc::Sender<TermOutput>, sid: String,
     ) -> Result<Self, DeviceError> {
-        let (port_name, baud) = super::parse_serial_target(target);
-        tracing::debug!("[vale-agent] Serial: opening {port_name} at {baud} baud");
+        let cfg = super::parse_serial_config(target);
+        let port_name = cfg.port;
+        let baud = cfg.baud;
+        // Explicit parameters win over the target string's framing.
+        let data_bits = data_bits.or(cfg.data_bits);
+        let parity = parity.or(cfg.parity);
+        let stop_bits = stop_bits.or(cfg.stop_bits);
+        tracing::debug!("[vale-agent] Serial: opening {port_name} at {baud} baud (data_bits={data_bits:?} parity={parity:?} stop_bits={stop_bits:?})");
 
         // Open in pool, then take ownership out — session owns the port,
         // so reads/writes never contend on the shared pool lock. The open
@@ -27,7 +40,7 @@ impl SerialBackend {
             let pool = pool.clone();
             let port_name = port_name.clone();
             tokio::task::spawn_blocking(move || {
-                let (port_id, _) = pool.open(port_name, Some(baud), None, None, None)?;
+                let (port_id, _) = pool.open(port_name, Some(baud), data_bits, parity, stop_bits)?;
                 pool.take_port(&port_id)
                     .ok_or_else(|| DeviceError::SerialPortNotOpen { id: port_id.clone() })
             })

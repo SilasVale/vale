@@ -57,8 +57,8 @@ fn tool_open(
     let logger = logger.clone();
     ToolDef::new(
         "terminal_open",
-        "Open a terminal connection. Kind: 'pty' (local shell; target optional — blank = default shell), 'ssh' (target=user@host:port), or 'serial' (target=port_name, optional ?baud=N e.g. /dev/ttyUSB0?baud=115200, default 115200). Returns session ID.",
-        json!({"type":"object","properties":{"kind":{"type":"string","enum":["pty","ssh","serial"]},"target":{"type":"string","description":"pty: optional (blank = default shell); ssh: user@host:port; serial: port_name (optional ?baud=N)"},"password":{"type":"string"},"rows":{"type":"integer","description":"Initial terminal rows. Default 0 (backend default)."},"cols":{"type":"integer","description":"Initial terminal columns. Default 0 (backend default)."}},"required":["kind"]}),
+        "Open a terminal connection. Kind: 'pty' (local shell; target optional — blank = default shell), 'ssh' (target=user@host:port), or 'serial' (target=port_name, optional ?baud=N&parity=E&data=8&stop=1 e.g. /dev/ttyUSB0?baud=9600&parity=even&data=8&stop=1, default 115200 8N1). Returns session ID.",
+        json!({"type":"object","properties":{"kind":{"type":"string","enum":["pty","ssh","serial"]},"target":{"type":"string","description":"pty: optional (blank = default shell); ssh: user@host:port; serial: port_name (optional ?baud=N&parity=E&data=8&stop=1)"},"password":{"type":"string"},"rows":{"type":"integer","description":"Initial terminal rows. Default 0 (backend default)."},"cols":{"type":"integer","description":"Initial terminal columns. Default 0 (backend default)."},"data_bits":{"type":"integer","description":"(serial) Data bits 5-8. Overrides the target string."},"parity":{"type":"string","description":"(serial) Parity: none|odd|even. Overrides the target string."},"stop_bits":{"type":"integer","description":"(serial) Stop bits 1 or 2. Overrides the target string."}},"required":["kind"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let bus = bus.clone();
@@ -74,6 +74,9 @@ fn tool_open(
                 let rows = params.get("rows").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
                 let cols = params.get("cols").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
                 let inject_marker = params.get("inject_marker").and_then(|v| v.as_bool()).unwrap_or(true);
+                let data_bits = params.get("data_bits").and_then(|v| v.as_u64()).map(|v| v as u8);
+                let parity = params.get("parity").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let stop_bits = params.get("stop_bits").and_then(|v| v.as_u64()).map(|v| v as u8);
                 let req = crate::tools::terminal::TermOpenRequest {
                     kind: kind.clone(),
                     target: target.clone(),
@@ -81,6 +84,9 @@ fn tool_open(
                     rows,
                     cols,
                     inject_marker,
+                    data_bits,
+                    parity,
+                    stop_bits,
                 };
                 let (id, _rx) = terminal_mgr.term_open(&req).await?;
                 // Audit trail: session opened (round-54).
@@ -228,14 +234,23 @@ fn tool_write(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     ToolDef::new(
         "terminal_write",
-        "Write raw data to a terminal session. Sends bytes exactly as given. For shell commands on Unix devices (serial/ssh to Linux), the command must end with a newline (\\n) — otherwise the shell joins it with whatever is typed next, mangling both. For Windows PowerShell use \\r\\n. Control characters (e.g. \\u0003 for Ctrl+C) are sent verbatim and need no newline.",
-        json!({"type":"object","properties":{"session_id":{"type":"string"},"data":{"type":"string"}},"required":["session_id","data"]}),
+        "Write data to a terminal session. `data` is UTF-8 text (JSON strings cannot carry arbitrary bytes); use `data_base64` for binary frames (control bytes, non-UTF-8 serial protocols) — it is decoded and written exactly as given. For shell commands on Unix devices (serial/ssh to Linux), the command must end with a newline (\\n) — otherwise the shell joins it with whatever is typed next, mangling both. For Windows PowerShell use \\r\\n. Control characters (e.g. \\u0003 for Ctrl+C) are sent verbatim and need no newline.",
+        json!({"type":"object","properties":{"session_id":{"type":"string"},"data":{"type":"string","description":"UTF-8 text to write. Required unless data_base64 is given."},"data_base64":{"type":"string","description":"Base64-encoded bytes to write (for binary frames that JSON strings cannot carry). Takes precedence over data."}},"required":["session_id"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
-                let data = require_str(&params, "data")?;
-                terminal_mgr.term_write(&session_id, &data).await?;
+                // data_base64 wins — it is the only path that can carry
+                // arbitrary bytes (round-54); `data` is UTF-8 text.
+                let bytes: Vec<u8> = if let Some(b64) = params.get("data_base64").and_then(|v| v.as_str()) {
+                    use base64::Engine as _;
+                    base64::engine::general_purpose::STANDARD.decode(b64)
+                        .map_err(|e| DeviceError::InvalidParams { message: format!("data_base64: {e}") })?
+                } else {
+                    let data = require_str(&params, "data")?;
+                    data.into_bytes()
+                };
+                terminal_mgr.term_write_bytes(&session_id, &bytes).await?;
                 Ok(json!("OK"))
             }
         },
@@ -502,6 +517,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // (marker) and the reason the wait stopped (round-54).
                     logger.log_command_end(&sid, marker_code, Some(wait_reason));
                     bus.emit(&AgentEvent::ShellExec { command });
+                    // Strip ANSI/OSC noise for the model — the MCP text path
+                    // must be printable text (the prompt markers were already
+                    // stripped during the wait); the panel keeps raw bytes
+                    // via its own SSE stream (round-54, dsh sanitize.ts).
+                    let result = clean_terminal_output(result.as_bytes());
                     // Surface truncation honestly: a >1MB burst evicted output
                     // the model would otherwise treat as complete. timed_out
                     // distinguishes "command finished" from "deadline hit and
@@ -579,6 +599,10 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         // result (round-54).
                         result.push_str(&format!("\nTIMEOUT: killed after {timeout_secs}s — output above is partial"));
                     }
+                    // Strip ANSI/OSC noise for the model — the MCP text path
+                    // must be printable text, the panel keeps raw bytes via
+                    // its own SSE stream (round-54, dsh sanitize.ts).
+                    let result = clean_terminal_output(result.as_bytes());
                     bus.emit(&AgentEvent::ShellExec { command });
                     Ok(json!(result))
                 }
@@ -651,8 +675,8 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
     let buf = output_buf.clone();
     ToolDef::new(
         "terminal_read",
-        "Read buffered output from a terminal session. Non-destructive: uses a cursor so repeating the call without `offset` returns only new output since last read. `offset` is an ABSOLUTE byte offset into the session's byte stream (see `start`/`end` in the response); `offset: 0` re-reads from the beginning. Reads work on closed sessions (retained history). Set `clean: true` to strip ANSI escapes and normalize line endings for AI readability.",
-        json!({"type":"object","properties":{"session_id":{"type":"string"},"offset":{"type":"integer","description":"ABSOLUTE byte offset to start reading from. 0 = beginning. Default = last cursor position."},"clean":{"type":"boolean","description":"Strip ANSI escapes and normalize \\r\\n → \\n. Default false."}},"required":["session_id"]}),
+        "Read buffered output from a terminal session. Non-destructive: uses a cursor so repeating the call without `offset` returns only new output since last read. `offset` is an ABSOLUTE byte offset into the session's byte stream (see `start`/`end` in the response); `offset: 0` re-reads from the beginning. Reads work on closed sessions (retained history). ANSI escapes are stripped and line endings normalized by default (AI-readable); pass `clean: false` for raw bytes.",
+        json!({"type":"object","properties":{"session_id":{"type":"string"},"offset":{"type":"integer","description":"ABSOLUTE byte offset to start reading from. 0 = beginning. Default = last cursor position."},"clean":{"type":"boolean","description":"Strip ANSI escapes and normalize \\r\\n → \\n. Default true (round-54: the MCP text path must be printable text; the panel uses its own raw SSE stream)."}},"required":["session_id"]}),
         move |params: Value| {
             let buf = buf.clone();
             async move {
@@ -662,7 +686,7 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                     // Live session, or retained history (closed).
                     let explicit_offset = params.get("offset").is_some();
                     let offset = params.get("offset").and_then(|v| v.as_u64()).map(|o| o as usize);
-                    let clean = params.get("clean").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let clean = params.get("clean").and_then(|v| v.as_bool()).unwrap_or(true);
                     match store.live.get_mut(&session_id) {
                         Some(entry) => {
                             let offset = offset.unwrap_or(entry.cursor);

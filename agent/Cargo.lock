@@ -3800,6 +3800,7 @@ version = "1.0.72"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "bytes",
  "futures",
  "getrandom 0.2.17",

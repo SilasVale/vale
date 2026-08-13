@@ -52,6 +52,15 @@ pub struct TermOpenRequest {
     /// Only applies to PTY sessions with a known shell (bash / PowerShell).
     #[serde(default = "default_true")]
     pub inject_marker: bool,
+    /// Serial framing — 8E1/7E1/7N2 etc. (round-54: SerialPool already
+    /// supported these but nothing passed them through).
+    #[serde(default)]
+    pub data_bits: Option<u8>,
+    /// "even" | "odd" | "none"
+    #[serde(default)]
+    pub parity: Option<String>,
+    #[serde(default)]
+    pub stop_bits: Option<u8>,
 }
 
 fn default_true() -> bool { true }
@@ -84,16 +93,42 @@ pub fn parse_ssh_target(target: &str) -> (String, String, u16) {
 /// Parse a serial target into (port_name, baud_rate).
 /// Accepted forms: `port_name`, `port_name?baud=115200`. Default baud: 115200.
 pub fn parse_serial_target(target: &str) -> (String, u32) {
+    let cfg = parse_serial_config(target);
+    (cfg.port, cfg.baud)
+}
+
+/// Full serial configuration from a target string —
+/// `port_name?baud=115200&parity=even&data=8&stop=1` (round-54: the framing
+/// params SerialPool supports were never reachable from terminal_open).
+#[derive(Debug, Clone, Default)]
+pub struct SerialTargetConfig {
+    pub port: String,
+    pub baud: u32,
+    pub data_bits: Option<u8>,
+    pub parity: Option<String>,
+    pub stop_bits: Option<u8>,
+}
+
+pub fn parse_serial_config(target: &str) -> SerialTargetConfig {
     let target = target.trim();
+    let mut cfg = SerialTargetConfig { baud: 115200, ..Default::default() };
     if let Some((port, params)) = target.split_once('?') {
-        let baud = params.split('&')
-            .find(|p| p.starts_with("baud="))
-            .and_then(|p| p[5..].parse().ok())
-            .unwrap_or(115200);
-        (port.to_string(), baud)
+        cfg.port = port.to_string();
+        for kv in params.split('&') {
+            if let Some((k, v)) = kv.split_once('=') {
+                match (k, v) {
+                    ("baud", v) => cfg.baud = v.parse().unwrap_or(115200),
+                    ("data", v) => cfg.data_bits = v.parse().ok(),
+                    ("parity", v) => cfg.parity = Some(v.to_lowercase()),
+                    ("stop", v) => cfg.stop_bits = v.parse().ok(),
+                    _ => {}
+                }
+            }
+        }
     } else {
-        (target.to_string(), 115200)
+        cfg.port = target.to_string();
     }
+    cfg
 }
 
 /// Common backend interface — one call site for write/resize/close no matter
@@ -231,7 +266,7 @@ mod desktop_impl {
                 }
                 "serial" => {
                     let be = serial::SerialBackend::open(
-                        self.serial_pool.clone(), &req.target, tx, id.clone(),
+                        self.serial_pool.clone(), &req.target, req.data_bits, req.parity.clone(), req.stop_bits, tx, id.clone(),
                     ).await?;
                     let label = format!("serial:{}", req.target.split('?').next().unwrap_or(&req.target));
                     (Box::new(be) as Box<dyn TermBackend>, label)
@@ -306,10 +341,16 @@ mod desktop_impl {
         }
 
         pub async fn term_write(&self, sid: &str, data: &str) -> Result<(), DeviceError> {
+            self.term_write_bytes(sid, data.as_bytes()).await
+        }
+
+        /// Write arbitrary bytes (base64 path from terminal_write) — the
+        /// only way to reach non-UTF-8 serial frames (round-54).
+        pub async fn term_write_bytes(&self, sid: &str, data: &[u8]) -> Result<(), DeviceError> {
             let mut inner = self.inner.lock().await;
             let s = inner.sessions.iter_mut().find(|s| s.id == sid)
                 .ok_or(DeviceError::Internal { message: format!("session not found: {sid}") })?;
-            s.backend.write(data.as_bytes());
+            s.backend.write(data);
             // Activity = heartbeat (round-49): typing into a session is liveness.
             s.last_output = std::time::Instant::now();
             Ok(())
@@ -451,6 +492,31 @@ mod tests {
         assert_eq!(parse_serial_target("COM3?baud=xyz"), ("COM3".into(), 115200));
     }
 
+    #[test]
+    fn parse_serial_full_framing() {
+        let cfg = parse_serial_config("COM4?baud=9600&parity=even&data=8&stop=1");
+        assert_eq!(cfg.port, "COM4");
+        assert_eq!(cfg.baud, 9600);
+        assert_eq!(cfg.parity.as_deref(), Some("even"));
+        assert_eq!(cfg.data_bits, Some(8));
+        assert_eq!(cfg.stop_bits, Some(1));
+    }
+
+    #[test]
+    fn parse_serial_defaults_8n1() {
+        let cfg = parse_serial_config("/dev/ttyUSB0?baud=115200");
+        assert_eq!(cfg.port, "/dev/ttyUSB0");
+        assert_eq!(cfg.baud, 115200);
+        assert!(cfg.parity.is_none() && cfg.data_bits.is_none() && cfg.stop_bits.is_none());
+    }
+
+    #[test]
+    fn parse_serial_unknown_params_ignored() {
+        let cfg = parse_serial_config("COM7?baud=57600&flow=hardware");
+        assert_eq!(cfg.baud, 57600);
+        assert!(cfg.data_bits.is_none());
+    }
+
     /// Real PTY round-trip (needs a local shell, so Linux/macOS only).
     #[cfg(all(feature = "terminal", not(target_os = "windows")))]
     #[tokio::test]
@@ -465,6 +531,9 @@ mod tests {
                 rows: 24,
                 cols: 80,
                 inject_marker: true,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
             })
             .await
             .expect("open pty");
