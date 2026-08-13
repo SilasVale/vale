@@ -475,9 +475,20 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // into the multi-line continuation prompt (>>), so the
                     // command never executes. Unix shells accept either.
                     let cmd_with_nl = append_command_newline(&command);
-                    // Audit trail: command started (round-54).
-                    logger.log_command_start(&sid, &command);
                     terminal_mgr.term_write(&sid, &cmd_with_nl).await?;
+                    // Audit trail: command started — AFTER the write succeeded.
+                    // A command that never reached the shell (session reaped
+                    // mid-write) must not leave a dangling start that crash
+                    // recovery later reports as "interrupted" (round-55).
+                    logger.log_command_start(&sid, &command);
+                    // Busy guard (round-55): a second concurrent execute on
+                    // this session would share one buffer cursor and interleave
+                    // reads + marker ownership — refuse instead.
+                    if !terminal_mgr.term_try_execute(&sid).await {
+                        return Err(DeviceError::InvalidParams {
+                            message: "execute already in progress on this session".into(),
+                        });
+                    }
 
                     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
                     let quiet_dur = std::time::Duration::from_millis(quiet_ms);
@@ -499,17 +510,24 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
 
                     let mut truncated = false;
                     let mut timed_out = false;
+                    // Poll cadence: 50ms keeps output responsiveness; the
+                    // liveness heartbeat only needs ~1s granularity — a
+                    // term_select every 50ms hammered the manager lock
+                    // for no benefit (round-55).
+                    let mut ticks: u64 = 0;
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        // Client-liveness heartbeat: the 15-min idle sweeper
-                        // kills sessions with no OUTPUT — a long quiet command
-                        // (build, sleep 600, interactive SSH) would be reaped
-                        // mid-execute even though the MCP client is actively
-                        // waiting on this execute (round-49). Touch the session
-                        // every poll so an in-flight execute is always alive;
-                        // a genuinely abandoned session still dies via the
+                        ticks += 1;
+                        // Client-liveness heartbeat every 1s: the 15-min idle
+                        // sweeper kills sessions with no OUTPUT — a long quiet
+                        // command (build, sleep 600, interactive SSH) would be
+                        // reaped mid-execute even though the MCP client is
+                        // actively waiting on this execute (round-49). A
+                        // genuinely abandoned session still dies via the
                         // sweeper once the execute returns.
-                        let _ = terminal_mgr.term_select(&sid).await;
+                        if ticks.is_multiple_of(20) {
+                            let _ = terminal_mgr.term_select(&sid).await;
+                        }
                         let (chunk, chunk_len) = recover_guard(&buf)
                             .live.get(&sid)
                             .map(|e| {
@@ -574,6 +592,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // Audit trail: command ended, with the shell's exit code
                     // (marker) and the reason the wait stopped (round-54).
                     logger.log_command_end(&sid, marker_code, Some(wait_reason));
+                    // Release the per-session execute lock (round-55) — the
+                    // only exit path from the wait loop.
+                    terminal_mgr.term_release_execute(&sid).await;
                     bus.emit(&AgentEvent::ShellExec { command });
                     // Strip ANSI/OSC noise for the model — the MCP text path
                     // must be printable text (the prompt markers were already

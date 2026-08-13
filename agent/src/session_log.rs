@@ -132,16 +132,31 @@ impl SessionLogger {
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
             let Some(sid) = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
             let Ok(content) = std::fs::read_to_string(&path) else { continue };
-            // Track the positions of the last command/start and command/end.
+            // Track the positions of the last command/start and command/end,
+            // and the file's max seq — the in-memory counter restarted at 0
+            // after restart, so post-restart events re-used seqs that already
+            // existed on disk (violating the "per-session monotonic seq"
+            // contract; event-sourced consumers would mis-correlate). Seed
+            // the counter from the file's last event (round-55).
             let mut last_start = None;
             let mut last_end = None;
+            let mut max_seq = 0u64;
             for (i, line) in content.lines().enumerate() {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                    if let Some(seq) = v.get("seq").and_then(|s| s.as_u64()) {
+                        max_seq = max_seq.max(seq);
+                    }
                     match v.get("kind").and_then(|k| k.as_str()) {
                         Some("command/start") => last_start = Some(i),
                         Some("command/end") => last_end = Some(i),
                         _ => {}
                     }
+                }
+            }
+            if max_seq > 0 {
+                if let Ok(mut seqs) = self.seq.lock() {
+                    let slot = seqs.entry(sid.clone()).or_insert(0);
+                    *slot = max_seq;
                 }
             }
             // A start after the last end = the command never finished (the

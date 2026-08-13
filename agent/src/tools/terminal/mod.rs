@@ -183,6 +183,10 @@ mod desktop_impl {
         /// the FIRST session in vec order on a tie; opened_at spares the
         /// oldest-opened.
         opened_at: std::time::Instant,
+        /// An execute wait-loop is running on this session (round-55): two
+        /// concurrent executes share one buffer cursor and would interleave
+        /// reads + marker ownership.
+        busy: bool,
     }
 
     /// Sessions idle this long (no output) are force-closed. Guards against a
@@ -344,7 +348,7 @@ mod desktop_impl {
                         None => break,
                     }
                 }
-                inner.sessions.push(Session { id: id.clone(), kind, label, backend, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now() });
+                inner.sessions.push(Session { id: id.clone(), kind, label, backend, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now(), busy: false });
             }
             Ok((id, rx))
         }
@@ -433,6 +437,27 @@ mod desktop_impl {
                 .ok_or(DeviceError::Internal { message: format!("session not found: {sid}") })?;
             s.backend.terminate();
             Ok(())
+        }
+
+        /// Try to acquire the per-session execute lock (round-55): a second
+        /// concurrent execute on the same session would share one buffer
+        /// cursor and interleave reads + marker ownership — refuse instead.
+        pub async fn term_try_execute(&self, sid: &str) -> bool {
+            let mut inner = self.inner.lock().await;
+            match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) => {
+                    if s.busy { false } else { s.busy = true; true }
+                }
+                None => false,
+            }
+        }
+
+        /// Release the per-session execute lock (all exit paths of execute).
+        pub async fn term_release_execute(&self, sid: &str) {
+            let mut inner = self.inner.lock().await;
+            if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
+                s.busy = false;
+            }
         }
 
         pub async fn term_list(&self) -> Vec<TermSessionInfo> {
