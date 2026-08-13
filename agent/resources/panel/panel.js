@@ -81,12 +81,23 @@ function loadConfig() {
     hostname = location.host;
     hostInput.value = hostname;
     hostInput.disabled = true;
-    // Token precedence: URL ?token= (proxy mode, extension-opened) >
-    // injected (agent-served) > localStorage (revisited session).
+    // PROXY mode: this page is served through the console at
+    // /api/devices/<name>/proxy/panel/. The gateway authenticates every
+    // proxied request with the PER-DEVICE vale_pt_<name> cookie (set on the
+    // bootstrap navigation; HttpOnly, so this JS cannot read it — but the
+    // cookie rides along on every same-origin fetch, so no Authorization
+    // header is needed). window.__PANEL_TOKEN__ here would be the DEVICE
+    // token (the agent injects it because the proxy strips the Host header)
+    // — sending it as Bearer would 401 (the gateway only accepts plugin
+    // tokens on /proxy/*). Never use it in proxy mode.
+    // Token precedence: URL ?token= (first navigation) > stored > injected
+    // (agent-served, non-proxy only). In proxy mode the cookie is the
+    // credential and ?token= is only present on the very first load.
+    const isProxy = /\/proxy\/panel/.test(location.pathname);
     const urlToken = new URLSearchParams(location.search).get("token") || "";
-    const injected = window.__PANEL_TOKEN__ || "";
+    const injected = (isProxy ? "" : window.__PANEL_TOKEN__) || "";
     const stored = localStorage.getItem(LS_TOKEN) || "";
-    token = urlToken || injected || stored;
+    token = urlToken || stored || injected;
     // A ?token= in the address bar is a live plugin token — strip it from
     // history/address bar so a later screenshot, tab restore or history sync
     // cannot leak device control. (The gateway only accepts ?token= on a

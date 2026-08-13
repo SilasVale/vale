@@ -342,13 +342,14 @@ async function handleConsole(request, env, url) {
     if (qToken && !auth && !isNav) {
       return jsonError(401, "Invalid plugin token", "authentication_error");
     }
-    // The bootstrap navigation pins the token as a cookie (below) so the
-    // panel's RELATIVE subresources (panel.css/panel.js/vendor/* — link and
-    // script tags cannot carry ?token= or an Authorization header) and an F5 /
-    // history-forward reload (top-level navigation, no token in the URL after
-    // panel.js strips it) all authenticate. HttpOnly so page JS can't read it;
-    // the panel's own fetches still send the Authorization header too.
-    const cookieToken = parseCookie(request.headers.get("cookie") || "").vale_pt || "";
+    // Bootstrap-navigation reload support: the navigation pins the plugin
+    // token in a PER-DEVICE cookie so the panel's relative subresources
+    // (panel.css/js/vendor/*) and an F5/history-forward reload authenticate.
+    // The cookie is scoped to THIS device's proxy path and carries the device
+    // name in its key — one origin-wide cookie would let a later-opened
+    // device's page steal an earlier device's terminal (cross-device hijack)
+    // and would clobber a multi-device pairing.
+    const cookieToken = parseCookie(request.headers.get("cookie") || "")[`vale_pt_${deviceName}`] || "";
     const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "") || qToken || cookieToken;
     const link = token ? await getPluginByToken(env, token) : null;
     if (link && link.device === deviceName) {
@@ -356,7 +357,9 @@ async function handleConsole(request, env, url) {
       const resp = await proxyDevice(request, env, d, proxyMatch[2] || "/");
       resp.headers.set("Cache-Control", "no-store");
       if (qToken && isNav) {
-        resp.headers.append("Set-Cookie", `vale_pt=${encodeURIComponent(qToken)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`);
+        // Per-device path scope + per-device name: a leaked cookie only ever
+        // authenticates THIS device's proxy, and never leaves this subtree.
+        resp.headers.append("Set-Cookie", `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
       }
       return resp;
     }
@@ -1222,6 +1225,12 @@ function rewriteDeviceBody(text, name) {
     const re = new RegExp(`(["'\`}])(?!${already})${escaped}`, "g");
     out = out.replace(re, `$1${prefix}${p}`);
   }
+  // Strip the agent's injected device token from the proxied HTML: on an
+  // F5/reload the panel would otherwise fall through to window.__PANEL_TOKEN__
+  // (the DEVICE token) and send it as the Authorization header — the gateway
+  // only accepts plugin tokens on /proxy/*, so it 401'd into the "check
+  // token" dead end. The plugin token lives in the per-device cookie instead.
+  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*"[^"]*"/g, "window.__PANEL_TOKEN__=\"\"");
   return out;
 }
 

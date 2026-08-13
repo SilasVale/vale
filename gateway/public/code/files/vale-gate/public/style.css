@@ -127,7 +127,7 @@ pre code { background: none; color: inherit; padding: 0; }
 }
 .auth-tab {
   border: none; background: transparent; cursor: pointer;
-  padding: 8px 0; border-radius: 8px;
+  padding: 8px 0; border-radius: var(--radius-sm);
   font: 500 14px var(--font-body); color: var(--muted);
   transition: background 0.15s, color 0.15s;
 }
@@ -192,7 +192,7 @@ button { font-family: var(--font-body); }
 .danger-text { color: var(--danger); }
 .btn-mini {
   height: 30px; padding: 0 12px;
-  font-size: 12px; border-radius: 8px;
+  font-size: 12px; border-radius: var(--radius-sm);
   line-height: 1;
 }
 
@@ -291,7 +291,7 @@ button { font-family: var(--font-body); }
 }
 .lane-port {
   width: 42px; height: 30px; flex-shrink: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-mono); font-weight: 700; font-size: 13px;
   color: #fff;
