@@ -705,44 +705,24 @@ async function syncSession(sid) {
   if (!s.needSync && !s.sseDirty) return;
   s.syncInFlight = true;
   try {
-    // Snapshot the cursor NOW; SSE bytes arriving while the read is in
-    // flight also advance renderedBytes — never regress it, or the same
-    // bytes get written twice (duplicated lines in the terminal + export).
+    // Snapshot the cursor NOW; SSE frames arriving while the read is in
+    // flight carry an absolute `start` and are deduped by it (frame.start <
+    // renderedBytes → skip), so the read window below is the authoritative
+    // recovery for anything SSE evicted or never delivered. The old
+    // covered-cut (assumed in-flight SSE bytes are a contiguous PREFIX of
+    // the read window) silently dropped bytes when the broadcast channel
+    // evicted the MIDDLE of the window while the connection was down —
+    // round-50 High: undelivered bytes were cut and never rendered.
     const from = s.renderedBytes;
     const r = await callTool("terminal_read", { session_id: sid, offset: from, clean: false });
     if (r && typeof r.text === "string" && r.text) {
       if (Number(r.start) > from) {
         s.term.write(`\r\n[dropped ${Number(r.start) - from} bytes — missed while offline]\r\n`);
       }
-      // SSE frames may have delivered part of this window WHILE the read was
-      // in flight (both serve the same buffer). Only write the tail the SSE
-      // hasn't covered yet — otherwise the same bytes render twice.
       const end = Number(r.end) || from;
-      const covered = s.renderedBytes - from; // bytes SSE delivered in-flight
-      // covered is a BYTE count but r.text is the server's UTF-8-decoded
-      // (lossy) string — slicing it by UTF-16 code units lands mid-character
-      // whenever an SSE frame crossed a multibyte boundary, dropping or
-      // corrupting CJK/emoji at the seam. Slice at the byte level: encode,
-      // skip covered bytes, decode. If covered lands mid-character, back up
-      // to the previous char boundary — those bytes were already delivered
-      // by SSE (renderedBytes advanced past them), so skipping them is
-      // correct, not lossy.
-      let text = r.text;
-      if (covered > 0) {
-        const enc = new TextEncoder().encode(r.text);
-        let cut = Math.min(covered, enc.length);
-        // UTF-8 continuation bytes are 0b10xxxxxx — step back to a leading
-        // byte so the slice starts at a character boundary.
-        while (cut > 0 && (enc[cut] & 0xc0) === 0x80) cut--;
-        text = new TextDecoder("utf-8").decode(enc.subarray(cut));
-      }
-      if (text) {
-        s.term.write(text);
-        s.renderedBytes = Math.max(s.renderedBytes, end);
-        ingestLines(s, stripAnsi(text));
-      } else {
-        s.renderedBytes = Math.max(s.renderedBytes, end);
-      }
+      s.term.write(r.text);
+      s.renderedBytes = Math.max(s.renderedBytes, end);
+      ingestLines(s, stripAnsi(r.text));
     }
     s.needSync = false;
     s.sseDirty = false;
