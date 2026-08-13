@@ -144,7 +144,11 @@ test("BreakerDO: reset clears the failure count, no trip on later single failure
   const do_ = breakerDO();
   await do_.fetch(new Request("https://breaker/trip"));
   await do_.fetch(new Request("https://breaker/trip"));
-  await do_.fetch(new Request("https://breaker/reset")); // a success between failures
+  // round-55: ONE success must not zero the count (a channel alternating
+  // fail/success would never accumulate the 3 consecutive failures the
+  // breaker needs) — two consecutive successes clear it.
+  await do_.fetch(new Request("https://breaker/reset")); // success #1 — count kept
+  await do_.fetch(new Request("https://breaker/reset")); // success #2 — count cleared
   assert.equal(await check(do_), "0");
   await do_.fetch(new Request("https://breaker/trip"));
   assert.equal(await check(do_), "0"); // count restarted, 1/3

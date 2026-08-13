@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.js";
-import { createPairCode, consumePairCode, addPluginLink, getPluginByToken, removePluginLink, createWsTicket, consumeWsTicket } from "../src/store.js";
+import { createPairCode, consumePairCode, addPluginLink, getPluginByToken, removePluginLink, createWsTicket, consumeWsTicket, __clearCaches } from "../src/store.js";
 
 // Full worker fetch: pair/claim + ws-ticket are public (no admin session) —
 // the extension has no session cookie. Asserted by behavior, not source order.
@@ -98,6 +98,10 @@ test("pair/claim: no admin session required (public route)", async () => {
 test("ws-ticket: valid plugin token → 200, unknown token → 401 (public route)", async () => {
   const env = makeEnv();
   const kv = env.KEYS;
+  // round-55: the plugin map is write-through cached now — a direct KV put
+  // must clear the cache or the earlier add/remove tests' cached (empty) map
+  // wins and the valid token 401s.
+  __clearCaches();
   await kv.put("plugins:v1", JSON.stringify({ "tok-d1": { device: "d1", createdAt: 1 } }));
   const ok = await apiFetch(env, "/api/plugins/ws-ticket", {
     headers: { authorization: "Bearer tok-d1", "content-type": "application/json" },
