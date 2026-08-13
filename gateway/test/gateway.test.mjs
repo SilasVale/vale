@@ -438,6 +438,28 @@ test("estimateTokens: large body approximates instead of walking", () => {
   assert.ok(estimateTokens(big) > 0);
 });
 
+test("estimateTokens: base64 images counted per-image, not as text (round-57)", () => {
+  // A 1.3MB base64 screenshot: the old code charged it as ~440k text tokens
+  // (~280x). It must be ~1600 (real vision cost) + small text overhead.
+  const img = "A".repeat(1_300_000); // ~1.3MB base64
+  const body = JSON.stringify({ model: "ds", messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: img } }] }] });
+  const est = estimateTokens(body);
+  assert.ok(est < 10_000, `image body estimated too high: ${est}`);
+  assert.ok(est >= 1600, `image body underestimated: ${est}`);
+});
+
+test("estimateTokens: large body with images outside the 2MB window", () => {
+  // Windowed body: 2MB of text + a 1.3MB image beyond the sampled window.
+  // The image must still be charged per-image (~1600), not as text.
+  const text = "t".repeat(2_000_000);
+  const img = "B".repeat(1_300_000);
+  const body = JSON.stringify({ model: "ds", messages: [{ role: "user", content: text }, { role: "user", content: [{ type: "image", source: { type: "base64", data: img } }] }] });
+  const est = estimateTokens(body);
+  // 2M chars text ≈ 500k tokens + 1600 per image (allow generous margin).
+  assert.ok(est < 700_000, `windowed image body estimated too high: ${est}`);
+  assert.ok(est > 400_000, `windowed text underestimated: ${est}`);
+});
+
 test("scanTopLevelModel: model after system/tools (Claude Code field order)", () => {
   // Claude Code sends system + tools BEFORE model — the scanner must not let
   // earlier fields break top-level key detection (regression: model → null,
