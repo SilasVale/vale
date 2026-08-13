@@ -154,6 +154,12 @@ export function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
         try {
           chunk = await reader.read();
         } catch (e) {
+          // Mid-stream upstream death AFTER content was emitted must NOT be
+          // fabricated into a clean completed message — emit an error event
+          // so the client retries instead of showing an empty turn.
+          if (buffer || encoderStream.started) {
+            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream died mid-response" } })}\n\n`));
+          }
           const tail = encoderStream.finish(buffer);
           if (tail) controller.enqueue(encoder.encode(tail));
           controller.close();

@@ -15,10 +15,10 @@ export function jsonOk(data, extraHeaders = {}) {
   return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json", ...CORS_HEADERS, ...extraHeaders } });
 }
 
-export function jsonError(status, message, type) {
+export function jsonError(status, message, type, extraHeaders = {}) {
   return new Response(JSON.stringify({ type: "error", error: { type, message } }), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS, ...extraHeaders },
   });
 }
 

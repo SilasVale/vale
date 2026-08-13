@@ -114,10 +114,11 @@ impl AppEventBus {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(256);
         let (term_tx, _) = broadcast::channel(1024);
-        let epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        // Per-boot NONCE, not wall-clock seconds: a same-second restart was
+        // undetectable and the panel silently skipped the fresh boot's events.
+        let mut e = [0u8; 8];
+        let _ = getrandom::getrandom(&mut e);
+        let epoch = u64::from_le_bytes(e);
         Self {
             tx,
             term_tx,

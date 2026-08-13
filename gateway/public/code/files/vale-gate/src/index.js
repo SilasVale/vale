@@ -106,7 +106,7 @@ export default {
       }
       if (request.method === "POST" && path === "/api/vale-probe") {
         if (await probeRateLimited(env, request)) {
-          return jsonError(429, "probe rate limit exceeded", "rate_limited");
+          return jsonError(429, "probe rate limit exceeded", "rate_limit_error");
         }
         const body = await readJson(request);
         return await valeProbe(env, String(body.model || ""));
@@ -618,7 +618,7 @@ async function authLogin(request, env, secure) {
   const lockKey = `login-lock:${callerIp}:${String(body.username || "").trim().toLowerCase()}`;
   const locked = await env.KEYS.get(lockKey);
   if (locked) {
-    return jsonError(429, "Too many attempts — try again in ~30s", "rate_limited");
+    return jsonError(429, "Too many attempts — try again in ~30s", "rate_limit_error");
   }
   const user = await findUserByUsername(env, body.username);
   if (!user || !user.enabled) return jsonError(401, "Incorrect username or password", "authentication_error");
@@ -670,7 +670,9 @@ async function handleGatewayImpl(request, env, url) {
   // spend (Free-plan quota exhaustion + surprise billing). KV is
   // eventually-consistent (~1s) — fine for a limiter, same as the probe one.
   // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
-  if (env.KEYS && method === "POST" && (path.endsWith("/messages") || path.endsWith(COUNT_PATH))) {
+  // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
+  // the double-count that halved the effective budget for Claude Code turns.
+  if (env.KEYS && method === "POST" && path.endsWith("/messages") && !path.endsWith(COUNT_PATH)) {
     const minuteKey = `rl-min:${token}:${Math.floor(Date.now() / 60000)}`;
     const dayKey = `rl-day:${token}:${Math.floor(Date.now() / 86400000)}`;
     const [minute, day] = await Promise.all([
@@ -678,10 +680,10 @@ async function handleGatewayImpl(request, env, url) {
       (async () => Number(await env.KEYS.get(dayKey)) || 0)(),
     ]);
     if (minute >= 60) {
-      return jsonError(429, "Rate limit: 60 requests/minute per token", "rate_limited");
+      return jsonError(429, "Rate limit: 60 requests/minute per token", "rate_limit_error");
     }
     if (day >= 5000) {
-      return jsonError(429, "Rate limit: 5000 requests/day per token", "rate_limited");
+      return jsonError(429, "Rate limit: 5000 requests/day per token", "rate_limit_error");
     }
     await Promise.all([
       env.KEYS.put(minuteKey, String(minute + 1), { expirationTtl: 120 }),
@@ -877,13 +879,26 @@ async function handleGatewayImpl(request, env, url) {
     }
     if (!upstream.ok) {
       let message = `Upstream ${upstream.status}`;
+      let type = "api_error";
+      let extra = {};
       try {
         const err = await upstream.json();
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
+        // Forward the upstream's OWN error.type (Claude Code keys retry and
+        // auth flows off it) — a DeepSeek 429 rate_limit_error collapsed to
+        // api_error was NON-retryable for the client. Whitelist the known
+        // Anthropic types; unknown → api_error.
+        const upType = err.error?.type || err.type;
+        const KNOWN = ["rate_limit_error", "overloaded_error", "authentication_error",
+          "invalid_request_error", "permission_error", "not_found_error", "request_too_large", "api_error"];
+        if (upType && KNOWN.includes(upType)) type = upType;
+        // Carry Retry-After so the client paces against the upstream limit.
+        const ra = upstream.headers?.get?.("retry-after");
+        if (ra) extra = { "retry-after": ra };
       } catch { /* non-JSON error body */ }
       // A real response resets the og consecutive-failure count.
       if (route.kind === "opencode") await recordChannelSuccess(env);
-      return jsonError(upstream.status, message, "api_error");
+      return jsonError(upstream.status, message, type, extra);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
@@ -937,11 +952,19 @@ async function handleGatewayImpl(request, env, url) {
       // silently dropped. Buffer + translate as a one-shot SSE instead.
       const json = await upstream.json().catch(() => null);
       if (json) {
+        // A 200-wrapped OpenAI ERROR envelope ({error:{...}}) must NOT become
+        // a silent empty assistant message — surface it.
+        if (json.error || !Array.isArray(json.choices) || json.choices.length === 0) {
+          return jsonError(502, json.error?.message || json.message || "upstream returned an error envelope", "api_error");
+        }
         const oneShot = toSSE(toAnthropicResponse(json, upstreamModel));
         return new Response(oneShot, {
           headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
         });
       }
+      // Parse failed AND the body was consumed — a fall-through to the SSE
+      // translator would read an empty stream and fabricate an empty message.
+      return jsonError(502, "upstream returned invalid JSON", "api_error");
     }
     // Extract the scalars the encoder needs, then drop the big body object so
     // the GC can reclaim it while the (potentially minutes-long) stream runs —
@@ -954,7 +977,13 @@ async function handleGatewayImpl(request, env, url) {
       headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
     });
   }
-  const anthropicRes = toAnthropicResponse(await upstream.json(), upstreamModel);
+  const upJson = await upstream.json().catch(() => null);
+  // A 200-wrapped OpenAI error envelope must not become an empty assistant
+  // message (silent failure, no retry signal).
+  if (!upJson || upJson.error || !Array.isArray(upJson.choices) || upJson.choices.length === 0) {
+    return jsonError(502, upJson?.error?.message || upJson?.message || "upstream returned an invalid response", "api_error");
+  }
+  const anthropicRes = toAnthropicResponse(upJson, upstreamModel);
   return jsonOk(anthropicRes);
 }
 

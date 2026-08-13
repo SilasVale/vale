@@ -135,11 +135,7 @@ async function callApi(path, init = {}) {
     },
   });
   if (res.status === 401) {
-    setStatus("unauthorized — check token", true);
-    // Show the 'forget credentials' escape hatch: a stale localStorage token
-    // (revoked/rotated) otherwise loops 401 forever with no recovery UI.
-    const f = $("forget-creds");
-    if (f) f.classList.remove("hidden");
+    onUnauthorized();
     throw new Error("unauthorized");
   }
   if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
@@ -156,6 +152,17 @@ async function callTool(name, body = {}) {
 
 function diag(line) {
   callTool("terminal_diag_write", { line }).catch(() => {});
+}
+
+function onUnauthorized() {
+  setStatus("unauthorized — check token", true);
+  // Reveal the escape hatch: #conn-form is display:none in booted state, so
+  // the button inside it was unreachable — a stale/rotated token previously
+  // 401-looped with NO recovery UI.
+  const form = $("conn-form");
+  if (form) form.classList.remove("hidden");
+  const f = $("forget-creds");
+  if (f) f.classList.remove("hidden");
 }
 
 function setStatus(text, isError = false) {
@@ -175,7 +182,8 @@ function refreshEmpty() {
 
 function refreshStatusbar() {
   const live = [...sessions.values()].filter((s) => !s.savedOnly && !s.closed).length;
-  const closed = [...sessions.values()].filter((s) => s.closed).length;
+  // Saved-only history records are NOT 'closed' sessions — exclude them.
+  const closed = [...sessions.values()].filter((s) => s.closed && !s.savedOnly).length;
   const el = $("#session-count");
   if (live + closed === 0) { el.classList.add("hidden"); return; }
   el.classList.remove("hidden");
@@ -451,7 +459,7 @@ async function startSharedStream() {
         headers: { authorization: `Bearer ${token}` },
       });
       if (res.status === 401) {
-        setStatus("unauthorized — check token", true);
+        onUnauthorized();
       } else if (!res.ok) {
         setStatus(`stream error ${res.status}`, true);
       }
@@ -850,18 +858,27 @@ async function init() {
   opt.textContent = hostname;
   deviceSelect.appendChild(opt);
 
-  // Restore saved sessions from localStorage.
+  // Restore saved sessions from localStorage — capped at the 20 most recent
+  // (records were unbounded; ~20 × 300KB exhausted the 5MB quota silently and
+  // killed ALL persistence).
+  const savedKeys = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (k && k.startsWith("valePanel:")) {
-      const sid = k.slice("valePanel:".length);
-      const rec = loadSaved(sid);
-      if (rec && !sessions.has(sid)) {
-        const s = mkSavedSession(sid, rec);
-        sessions.set(sid, s);
-        s.tab = renderTab(sid, `${s.label || sid} [saved]`);
-        s.tab.classList.add("closed");
-      }
+    if (k && k.startsWith("valePanel:")) savedKeys.push(k);
+  }
+  savedKeys.sort((a, b) => {
+    const ra = loadSaved(a), rb = loadSaved(b);
+    return (rb?.openedAt || 0) - (ra?.openedAt || 0);
+  });
+  for (const k of savedKeys.slice(20)) localStorage.removeItem(k); // prune old
+  for (const k of savedKeys.slice(0, 20)) {
+    const sid = k.slice("valePanel:".length);
+    const rec = loadSaved(sid);
+    if (rec && !sessions.has(sid)) {
+      const s = mkSavedSession(sid, rec);
+      sessions.set(sid, s);
+      s.tab = renderTab(sid, `${s.label || sid} [saved]`);
+      s.tab.classList.add("closed");
     }
   }
 
