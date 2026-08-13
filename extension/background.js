@@ -47,6 +47,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const j = await res.json().catch(() => ({}));
         if (j.token) {
           await savePairing({ device: j.device, token: j.token });
+          // A successful re-pair is a fresh start — clear any stale error
+          // (a leftover "revoke failed — unpair not completed" from the old
+          // pairing must not haunt the new healthy one).
+          state.error = null;
           connect();
           sendResponse({ ok: true, device: j.device });
         } else {

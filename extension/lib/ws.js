@@ -88,7 +88,14 @@ async function connectInner() {
     ticket = j.ticket;
   } catch (e) {
     if (!state.pairedDevice) return; // unpaired while fetching the ticket
-    state.error = String(e);
+    // Do NOT overwrite a pending revoke-failure: the reconnect storm after a
+    // network drop would otherwise replace "revoke failed — unpair not
+    // completed" with "Failed to fetch" within seconds, and onopen would
+    // then clear it (its guard only preserves /revoke failed/i) — the user
+    // loses the one message that says the old credential is still live.
+    if (!state.error || !/revoke failed/i.test(state.error)) {
+      state.error = String(e);
+    }
     scheduleReconnect();
     return;
   }
