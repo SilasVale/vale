@@ -502,6 +502,8 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // dangling start that crash recovery reports as
                     // "interrupted" (round-55).
                     logger.log_command_start(&sid, &command);
+                    // For the audit duration (round-58): wall-clock start.
+                    let cmd_started = Instant::now();
 
                     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
                     let quiet_dur = std::time::Duration::from_millis(quiet_ms);
@@ -604,7 +606,8 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     }
                     // Audit trail: command ended, with the shell's exit code
                     // (marker) and the reason the wait stopped (round-54).
-                    logger.log_command_end(&sid, marker_code, Some(wait_reason));
+                    logger.log_command_end(&sid, marker_code, Some(wait_reason),
+                        Some(cmd_started.elapsed().as_millis() as u64));
                     // Release the per-session execute lock (round-55) — the
                     // only exit path from the wait loop.
                     terminal_mgr.term_release_execute(&sid).await;
@@ -705,9 +708,18 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             chunk = rx.recv() => {
                                 if let Some(c) = chunk {
                                     append_chunk(&mut captured, &mut truncated, c);
+                                } else {
+                                    // Both pipes closed but the child still runs
+                                    // (`sh -c 'exec >/dev/null 2>&1; sleep 100'`)
+                                    // — recv() returns None IMMEDIATELY every
+                                    // round, and select! keeps picking the only
+                                    // ready branch, starving the 50ms probe and
+                                    // hot-spinning try_wait at full core. Yield
+                                    // briefly (round-58: round-57 dropped the
+                                    // old is_closed throttle and re-opened the
+                                    // burn).
+                                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                                 }
-                                // None = both pipes closed — the child has no
-                                // more output; fall through to the exit check.
                             }
                             // Periodic wakeup so the exit probe below runs even
                             // when NO output ever arrives — a daemonized
