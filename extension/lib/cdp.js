@@ -79,13 +79,17 @@ export async function ensureTab(device, proxyUrl) {
     await persistAttached();
     await chrome.debugger.sendCommand({ tabId }, "Page.enable");
     await chrome.debugger.sendCommand({ tabId }, "Runtime.enable");
-    // Scrub the ?token= out of the address bar/history once the tab has
-    // loaded — a 30-day plugin token must not linger in the URL.
-    try {
-      await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+    // Scrub the ?token= out of the address bar/history ONCE THE PAGE HAS
+    // LOADED — the old code ran immediately after attach (before the
+    // navigation committed), so it never ran OR stripped the token before the
+    // proxy could authenticate the request.
+    chrome.debugger.onEvent.addListener(function scrubOnLoad(source, method) {
+      if (source.tabId !== tabId || method !== "Page.loadEventFired") return;
+      chrome.debugger.onEvent.removeListener(scrubOnLoad);
+      chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
         expression: `history.replaceState(null, "", location.pathname + location.search.replace(/([?&])token=[^&]*/, "$1").replace(/[?&]$/, ""))`,
-      });
-    } catch {}
+      }).catch(() => {});
+    });
   }
   return tabId;
 }
