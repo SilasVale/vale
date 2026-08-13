@@ -879,10 +879,19 @@ async function handleGatewayImpl(request, env, url) {
     // BEFORE parsing — a plain text-only request (the common case) skips the
     // parse entirely. Translate models (minimax/mimo/kimi) always parse.
     if (route.kind === "opencode" && route.type === "passthrough") {
+      // Precise triggers — scan ONLY the current request's tools/tool_choice
+      // region and the LAST message (the freshly-sent one): a web_search
+      // declaration or an image block anywhere in HISTORY must not force a
+      // full parse on every follow-up (that defeated the 1102 fix — history
+      // persists and re-triggered parse on the largest bodies). The tools
+      // array appears before "messages" in Anthropic requests, so the
+      // tools-region scan is a bounded prefix search; image detection is
+      // scoped to the tail (current user message).
+      const toolsRegion = rawText.slice(0, Math.max(0, rawText.indexOf('"messages"')));
+      const lastMsg = rawText.slice(Math.max(0, rawText.length - 4000));
       const needsParse =
-        rawText.includes('"web_search"') ||
-        rawText.includes('"type":"image"') ||
-        rawText.includes('"type": "image"');
+        /"web_search"/.test(toolsRegion) ||
+        /"type"\s*:\s*"image"/.test(lastMsg);
       if (!needsParse) {
         body = null;
       } else {

@@ -212,7 +212,7 @@ Section "Install" SEC01
     ; that left the device offline after every silent upgrade), and quoting
     ; paths through nsExec's CreateProcess argv is fragile. The PS command
     ; (fixed, no args) reads the env vars.
-    nsExec::ExecToLog 'cmd /c set VA_EXE=$INSTDIR\vale-agent.exe& set VA_CFG=$INSTDIR\config.yaml& powershell -NoProfile -EncodedCommand UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAJABlAG4AdgA6AFYAQQBfAEUAWABFACAALQBBAHIAZwB1AG0AZQBuAHQATABpAHMAdAAgACQAZQBuAHYAOgBWAEQAXwBDAEYARwAgAC0AVwBpAG4AZABvAHcAUwB0AHkAbABlACAASABpAGQAZABlAG4A'
+    nsExec::ExecToLog 'cmd /c set VA_EXE=$INSTDIR\vale-agent.exe& set VA_CFG=$INSTDIR\config.yaml& powershell -NoProfile -EncodedCommand UwB0AGEAcgB0AC0AUAByAG8AYwBlAHMAcwAgAC0ARgBpAGwAZQBQAGEAdABoACAAJABlAG4AdgA6AFYAQQBfAEUAWABFACAALQBBAHIAZwB1AG0AZQBuAHQATABpAHMAdAAgACQAZQBuAHYAOgBWAEEAXwBDAEYARwAgAC0AVwBpAG4AZABvAHcAUwB0AHkAbABlACAASABpAGQAZABlAG4A'
     ; Tray: keep the registered ValeAgentTray task (it carries the user
     ; principal; a missing task OR a failing /Run falls back to starting the
     ; exe directly — a disabled/stale-principal task must not leave the tray
