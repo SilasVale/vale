@@ -47,7 +47,14 @@ pub struct TermOpenRequest {
     pub rows: u16,
     #[serde(default)]
     pub cols: u16,
+    /// Inject a prompt-marker (OSC 133;D) into a PTY shell so execute can tell
+    /// "command finished" from "output paused" (round-54, dsh pollReadiness).
+    /// Only applies to PTY sessions with a known shell (bash / PowerShell).
+    #[serde(default = "default_true")]
+    pub inject_marker: bool,
 }
+
+fn default_true() -> bool { true }
 
 /// A chunk of terminal output sent to the frontend
 #[derive(Debug, Clone, Serialize)]
@@ -457,6 +464,7 @@ mod tests {
                 password: String::new(),
                 rows: 24,
                 cols: 80,
+                inject_marker: true,
             })
             .await
             .expect("open pty");

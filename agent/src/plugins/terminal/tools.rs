@@ -69,14 +69,53 @@ fn tool_open(
                 let password = params.get("password").and_then(|v| v.as_str()).unwrap_or_default().to_string();
                 let rows = params.get("rows").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
                 let cols = params.get("cols").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                let inject_marker = params.get("inject_marker").and_then(|v| v.as_bool()).unwrap_or(true);
                 let req = crate::tools::terminal::TermOpenRequest {
                     kind: kind.clone(),
                     target: target.clone(),
                     password,
                     rows,
                     cols,
+                    inject_marker,
                 };
                 let (id, _rx) = terminal_mgr.term_open(&req).await?;
+                // Prompt-marker injection (round-54): teach the PTY shell to
+                // emit OSC 133;D;<exit-code> right before each prompt, so the
+                // execute wait-loop can distinguish "command finished" from
+                // "output paused" (the 200ms-silence heuristic misread a
+                // `sleep 0.5 && echo done` as complete before it finished).
+                // bash: PROMPT_COMMAND runs right before the prompt, $? still
+                // holds the previous command's exit code; the existing
+                // PROMPT_COMMAND (if any) is preserved. PowerShell: the
+                // Prompt function emits the same sequence, keeping the
+                // default "PS path>" text. Only PTY sessions with a KNOWN
+                // shell get this — a custom shell target or SSH/serial are
+                // untouched (unknown syntax, must not corrupt the session).
+                if kind == "pty" && inject_marker {
+                    let (inject, injectable) = if cfg!(windows) {
+                        // target blank → default powershell.exe; a custom
+                        // target may be cmd.exe or anything else — only the
+                        // default gets the PS Prompt function (cmd has no
+                        // prompt hook, falls back to idle detection).
+                        // CRLF: PowerShell only recognizes a command on \r\n.
+                        let cmd = std::path::Path::new(&target)
+                            .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
+                        if cmd.is_empty() || cmd.eq_ignore_ascii_case("powershell.exe") || cmd.eq_ignore_ascii_case("pwsh.exe") {
+                            (r#"function global:Prompt { Write-Host -NoNewline ("`e]133;D;" + $LASTEXITCODE + "`a"); "PS " + $(Get-Location) + "> " }"#.to_string() + "\r\n", true)
+                        } else { (String::new(), false) }
+                    } else {
+                        let cmd = std::path::Path::new(&target)
+                            .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
+                        if cmd.is_empty() || cmd == "bash" || cmd == "sh" {
+                            (r#"export PROMPT_COMMAND="printf '\033]133;D;$?\007';$PROMPT_COMMAND""#.to_string() + "\n", true)
+                        } else { (String::new(), false) }
+                    };
+                    if injectable {
+                        // The shell echoes the injection line itself; the
+                        // first prompt after it carries the marker.
+                        let _ = terminal_mgr.term_write(&id, &inject).await;
+                    }
+                }
                 // Emit event based on kind
                 match kind.as_str() {
                     "ssh" => {
@@ -297,6 +336,23 @@ pub fn append_command_newline(command: &str) -> String {
     }
 }
 
+/// Find a complete prompt marker — `ESC ] 133 ; D ; <exit-code> BEL` — in
+/// `data`, returning (start, end, exit_code) over the WHOLE sequence.
+/// The marker may be split across chunks, so it is searched over the
+/// un-finalized tail; an incomplete sequence returns None and the caller
+/// keeps waiting for the next chunk.
+fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
+    const PREFIX: &[u8] = b"\x1b]133;D;";
+    let start = data.windows(PREFIX.len()).position(|w| w == PREFIX)?;
+    let mut i = start + PREFIX.len();
+    let digits_start = i;
+    while i < data.len() && data[i].is_ascii_digit() { i += 1; }
+    if i == digits_start { return None; } // prefix but no digits yet
+    if i >= data.len() || data[i] != 0x07 { return None; }
+    let code: i32 = std::str::from_utf8(&data[digits_start..i]).ok()?.parse().ok()?;
+    Some((start, i + 1, code))
+}
+
 
 // ── Execute ──────────────────────────────────────
 
@@ -306,7 +362,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
     let bus = bus.clone();
     ToolDef::new(
         "terminal_execute",
-        "Run a command. If `session_id` is given, writes the command to that session and waits for output (quiet-period detection). Otherwise spawns a local shell with enforced timeout. Returns stdout, stderr, exit code (local) or accumulated terminal output (session).",
+        "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Returns stdout, stderr, exit code (local) or accumulated terminal output (session) with wait_reason and exit_code.",
         json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."}},"required":["command"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
@@ -336,8 +392,21 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
 
                     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
                     let quiet_dur = std::time::Duration::from_millis(quiet_ms);
+                    // Marker-confirm window (dsh handoffGraceMs): once the
+                    // prompt marker arrives, wait this long before returning —
+                    // bash prints the prompt and then hands the tty back, and
+                    // a too-eager return could race that handoff.
+                    let marker_confirm = std::time::Duration::from_millis(300);
                     let mut quiet_since: Option<Instant> = None;
                     let mut result = String::new();
+                    // Marker scanner state: the OSC 133;D;N BEL sequence may
+                    // span chunks, so the last 64 bytes stay un-finalized until
+                    // they cannot be a marker prefix anymore.
+                    let mut pending: Vec<u8> = Vec::new();
+                    let mut marker_code: Option<i32> = None;
+                    let mut marker_seen_at: Option<Instant> = None;
+                    // Every exit path below assigns it (marker / idle / timeout).
+                    let wait_reason: &str;
 
                     let mut truncated = false;
                     let mut timed_out = false;
@@ -359,18 +428,46 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 // cursor → output was dropped (1MB burst).
                                 if e.dropped as usize > read_abs { truncated = true; }
                                 let s = e.slice_from(read_abs);
-                                (String::from_utf8_lossy(s).to_string(), s.len())
+                                (s.to_vec(), s.len())
                             })
                             .unwrap_or_default();
-                        if !chunk.is_empty() {
-                            result.push_str(&chunk);
+                        if chunk_len > 0 {
                             read_abs += chunk_len;
+                            pending.extend_from_slice(&chunk);
+                            // Strip complete markers out of the un-finalized
+                            // tail (multiple can appear in one chunk).
+                            while let Some((start, end, code)) = find_prompt_marker(&pending) {
+                                if start > 0 {
+                                    result.push_str(&String::from_utf8_lossy(&pending[..start]));
+                                }
+                                pending.drain(..end);
+                                marker_code = Some(code);
+                                marker_seen_at = Some(Instant::now());
+                            }
+                            // Finalize everything that can no longer be a
+                            // marker prefix.
+                            let keep = pending.len().saturating_sub(64);
+                            if keep > 0 {
+                                result.push_str(&String::from_utf8_lossy(&pending[..keep]));
+                                pending.drain(..keep);
+                            }
                             quiet_since = None;
                         } else if quiet_since.is_none() {
                             quiet_since = Some(Instant::now());
                         }
-                        if let Some(qs) = quiet_since {
+                        // The marker is the AUTHORITATIVE "command finished"
+                        // signal (dsh pollReadiness): while its confirm window
+                        // runs, a quiet gap must not trigger the idle path —
+                        // the command may be done and the marker chunk simply
+                        // not read yet.
+                        if let Some(at) = marker_seen_at {
+                            if at.elapsed() >= marker_confirm {
+                                wait_reason = "marker";
+                                break;
+                            }
+                        } else if let Some(qs) = quiet_since {
                             if qs.elapsed() >= quiet_dur {
+                                wait_reason = "idle";
                                 break;
                             }
                         }
@@ -381,6 +478,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             // session itself stays open (round-54).
                             let _ = terminal_mgr.term_terminate(&sid).await;
                             timed_out = true;
+                            wait_reason = "timeout";
                             break;
                         }
                     }
@@ -388,8 +486,17 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // Surface truncation honestly: a >1MB burst evicted output
                     // the model would otherwise treat as complete. timed_out
                     // distinguishes "command finished" from "deadline hit and
-                    // command aborted" (round-54).
-                    Ok(json!({"text": result, "truncated": truncated, "timed_out": timed_out}))
+                    // command aborted" (round-54); wait_reason says WHY the
+                    // wait ended (marker = command really finished, idle =
+                    // quiet period elapsed, timeout = deadline) and exit_code
+                    // is the shell's own exit status when a marker was seen.
+                    Ok(json!({
+                        "text": result,
+                        "truncated": truncated,
+                        "timed_out": timed_out,
+                        "wait_reason": wait_reason,
+                        "exit_code": marker_code,
+                    }))
                 } else {
                     // ── Local shell mode with enforced timeout (tokio::process) ──
                     let (shell, flag) = if cfg!(target_os = "windows") {
@@ -1088,5 +1195,60 @@ mod tests {
         // A lone continuation byte is replaced, not dropped silently.
         let input = b"ab\x80cd";
         assert_eq!(clean_terminal_output(input), "ab\u{FFFD}cd");
+    }
+
+    // ── prompt-marker scanner (round-54) ──────────────────────────
+
+    #[test]
+    fn marker_found_in_stream() {
+        // "ok\n" + marker(exit 0) + prompt text.
+        let data = b"ok\n\x1b]133;D;0\x07PS C:\\>";
+        let (start, end, code) = super::find_prompt_marker(data).unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(&data[start..end], b"\x1b]133;D;0\x07");
+    }
+
+    #[test]
+    fn marker_with_nonzero_exit() {
+        let data = b"\x1b]133;D;127\x07";
+        let (start, end, code) = super::find_prompt_marker(data).unwrap();
+        assert_eq!(code, 127);
+        assert_eq!(&data[start..end], b"\x1b]133;D;127\x07");
+    }
+
+    #[test]
+    fn marker_prefix_incomplete_returns_none() {
+        // Prefix split across chunks: digits and BEL not there yet.
+        assert_eq!(super::find_prompt_marker(b"\x1b]133;D;"), None);
+        assert_eq!(super::find_prompt_marker(b"ok\n\x1b]133;D;0"), None);
+        assert_eq!(super::find_prompt_marker(b"x\x1b]133;D;"), None);
+    }
+
+    #[test]
+    fn marker_complete_wins_over_trailing_incomplete() {
+        // A complete marker is found even when an incomplete prefix follows
+        // (the scanner is position-independent; the caller drains the whole
+        // marker and re-scans, so the trailing prefix stays pending).
+        let data = b"\x1b]133;D;0\x07x\x1b]133;D;";
+        let (start, end, code) = super::find_prompt_marker(data).unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(&data[start..end], b"\x1b]133;D;0\x07");
+    }
+
+    #[test]
+    fn marker_not_found_in_plain_output() {
+        // ANSI colors and OSC titles do not match the 133;D; prefix.
+        assert_eq!(super::find_prompt_marker(b"hello world\n"), None);
+        assert_eq!(super::find_prompt_marker(b"\x1b[01;32mok\x1b[00m\n"), None);
+        assert_eq!(super::find_prompt_marker(b"\x1b]0;title\x07"), None);
+    }
+
+    #[test]
+    fn marker_found_with_text_after() {
+        // Marker then more prompt text — only the sequence is returned.
+        let data = b"done\x1b]133;D;3\x07user@host:~$ ";
+        let (start, end, code) = super::find_prompt_marker(data).unwrap();
+        assert_eq!(code, 3);
+        assert_eq!(&data[start..end], b"\x1b]133;D;3\x07");
     }
 }
