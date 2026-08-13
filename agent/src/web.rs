@@ -359,14 +359,33 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // turns this 413 into a stable error code downstream.
     let body_bytes = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
         Ok(b) => b,
-        Err(_) => {
+        Err(e) => {
+            // Distinguish a genuine size violation from a transport error
+            // (client dropped mid-body) — both were lumped into 413 +
+            // "exceeds limit", lying about a disconnect (round-60).
+            // axum::Error is a boxed error; walk the source chain for the
+            // LengthLimitError marker (its Display is "length limit exceeded").
+            let mut too_large = false;
+            let mut src: Option<&(dyn std::error::Error + 'static)> = Some(&e);
+            while let Some(s) = src {
+                if s.to_string().contains("length limit") {
+                    too_large = true;
+                    break;
+                }
+                src = s.source();
+            }
+            let (status, code, msg) = if too_large {
+                (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", "request body exceeds 1 MB limit")
+            } else {
+                (StatusCode::BAD_REQUEST, "body_read_error", "failed to read request body")
+            };
             return built_response(
-                StatusCode::PAYLOAD_TOO_LARGE,
+                status,
                 "application/json",
                 Body::from(serde_json::json!({
                     "ok": false,
-                    "error": "request body exceeds 1 MB limit",
-                    "code": "payload_too_large",
+                    "error": msg,
+                    "code": code,
                 }).to_string()),
             );
         }

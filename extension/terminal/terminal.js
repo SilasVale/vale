@@ -374,6 +374,14 @@ async function startSharedStream() {
             const s = sessions.get(frame.session_id);
             if (!s || s.closed || s.streamClosed || !s.term) continue;
             if (Array.isArray(frame.data)) {
+              // Dedup vs terminal_read (round-60): the server attaches the
+              // frame's absolute start offset — if a concurrent sync/backfill
+              // read already delivered these bytes (renderedBytes advanced
+              // past it), skip, or the same bytes render twice. This is the
+              // ONLY correct dedup: slicing the clean TEXT by raw byte
+              // offsets (the round-59 covered-cut) was a unit mismatch that
+              // silently dropped bytes on every sync.
+              if (typeof frame.start === "number" && frame.start < s.renderedBytes) continue;
               s.term.write(new Uint8Array(frame.data));
               s.renderedBytes += frame.data.length; // absolute byte coverage
               s.sseDirty = true;
@@ -500,7 +508,9 @@ async function backfillAndAttach(sid, s, idbRec) {
       }
       if (hist.text) {
         s.term.write(hist.text);
-        s.renderedBytes = Number(hist.end) || s.renderedBytes;
+        // round-60: a stale hist.end must not REGRESS the cursor (a
+        // concurrent SSE frame may have advanced it).
+        s.renderedBytes = Math.max(s.renderedBytes || 0, Number(hist.end) || 0);
         ingestLines(s, hist.text);
         scheduleFlush(s);
       }
@@ -612,26 +622,14 @@ async function syncSession(sid) {
       if (Number(r.start) > s.renderedBytes) {
         s.term.write(`\r\n[dropped ${Number(r.start) - s.renderedBytes} bytes of output — missed while offline]\r\n`);
       }
-      // round-59: SSE frames may have advanced renderedBytes WHILE this read
-      // was in flight (reconnect window). The response's byte range starts at
-      // r.start — skip the prefix the SSE already delivered, and never let a
-      // stale r.end REGRESS the cursor (that broke the frame.start dedup and
-      // re-rendered + re-ingested bytes).
-      const covered = s.renderedBytes - (Number(r.start) || 0);
-      if (covered > 0) {
-        const enc = new TextEncoder().encode(r.text);
-        let cut = Math.min(covered, enc.length);
-        while (cut > 0 && (enc[cut] & 0xc0) === 0x80) cut--; // UTF-8 boundary
-        r.text = new TextDecoder("utf-8").decode(enc.subarray(cut));
-      }
-      if (r.text) {
-        s.term.write(r.text);
-        s.renderedBytes = Math.max(s.renderedBytes, Number(r.end) || s.renderedBytes);
-        ingestLines(s, r.text);
-        scheduleFlush(s);
-      } else {
-        s.renderedBytes = Math.max(s.renderedBytes, Number(r.end) || s.renderedBytes);
-      }
+      // round-60: write the FULL text — the read started at renderedBytes and
+      // the SSE frame.start dedup above skips anything already delivered, so
+      // no prefix-slicing is needed (slicing clean text by raw byte offsets
+      // was the round-59 unit mismatch that dropped bytes every sync).
+      s.term.write(r.text);
+      s.renderedBytes = Math.max(s.renderedBytes, Number(r.end) || s.renderedBytes);
+      ingestLines(s, r.text);
+      scheduleFlush(s);
     }
     s.needSync = false;
     s.sseDirty = false;
