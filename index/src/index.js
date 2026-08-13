@@ -48,7 +48,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
   .wrap { max-width: 760px; margin: 0 auto; padding: 56px 24px 44px; }
   .brand { display: flex; align-items: center; gap: 14px; }
   .brand .mark { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
-                 border-radius: var(--radius-sm); background: #1d1d1f; color: #fff; font-size: 24px; font-weight: 700; }
+                 border-radius: var(--radius-sm); background: var(--ink); color: #fff; font-size: 24px; font-weight: 700; }
   .brand .name { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
   .brand .tag { font: 12px/1 var(--font-mono); color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
   .lede { color: var(--muted); margin-top: 12px; font-size: 14px; max-width: 640px; }
@@ -117,7 +117,7 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
-          version: "1.0.43",
+          version: "1.0.44",
           download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }

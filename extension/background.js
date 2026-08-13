@@ -59,33 +59,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // async sendResponse
   }
   if (msg.type === "status") {
-    // needsRepair: the device name survived (storage.local) but the token
-    // (storage.session) was lost on browser restart — the pairing is gone
-    // but the user shouldn't think it's a fresh install.
-    const needsRepair = !state.pairedDevice?.token
-      && (await chrome.storage.local.get("valePlugin"))?.valePlugin?.device;
-    // pairedDeviceName: the device name survives in storage.local even after
-    // a browser restart clears the session token — the popup shows the
-    // paired card + Terminal (the 30-day cookie authenticates) instead of
-    // forcing a re-pair.
-    const pairedDeviceName = state.pairedDevice?.device
-      || (await chrome.storage.local.get("valePlugin"))?.valePlugin?.device;
-    sendResponse({
-      wsState: state.wsState,
-      device: state.pairedDevice?.device,
-      pairedDeviceName,
-      controlledTabs: Object.keys(state.controlledTabs),
-      error: state.error,
-      needsRepair: !!needsRepair,
-    });
-    return false;
+    // NOTE: the listener itself is NOT async — `await` here would be a
+    // SyntaxError (V8) that kills the whole service worker (round-30
+    // regression). Wrap the async work in an IIFE and return true so the
+    // message channel stays open until sendResponse fires.
+    (async () => {
+      try {
+        const local = await chrome.storage.local.get("valePlugin");
+        const name = local?.valePlugin?.device || "";
+        // needsRepair: the device name survived (storage.local) but the
+        // token (storage.session) was lost on browser restart — the pairing
+        // is gone but the user shouldn't think it's a fresh install.
+        const needsRepair = !state.pairedDevice?.token && !!name;
+        // pairedDeviceName: the device name survives in storage.local even
+        // after a browser restart clears the session token — the popup
+        // shows the paired card + Terminal (the 30-day cookie
+        // authenticates) instead of forcing a re-pair.
+        const pairedDeviceName = state.pairedDevice?.device || name;
+        sendResponse({
+          wsState: state.wsState,
+          device: state.pairedDevice?.device,
+          pairedDeviceName,
+          controlledTabs: Object.keys(state.controlledTabs),
+          error: state.error,
+          needsRepair,
+        });
+      } catch (e) {
+        sendResponse({ wsState: state.wsState, device: state.pairedDevice?.device, pairedDeviceName: "", controlledTabs: [], error: String(e), needsRepair: false });
+      }
+    })();
+    return true; // async sendResponse
   }
   if (msg.type === "openTab") {
-    const d = state.pairedDevice?.device;
-    if (!d) { sendResponse({ ok: false, error: "not paired" }); return false; }
     (async () => {
-      chrome.tabs.create({ url: `${await consoleOrigin()}/api/devices/${d}/proxy/` });
-      sendResponse({ ok: true });
+      try {
+        // After a restart the device name survives in storage.local even
+        // though state.pairedDevice is null (token is gone) — the paired
+        // card now shows, so Open tab must work in that state too.
+        const d = state.pairedDevice?.device
+          || (await chrome.storage.local.get("valePlugin"))?.valePlugin?.device;
+        if (!d) { sendResponse({ ok: false, error: "not paired" }); return; }
+        chrome.tabs.create({ url: `${await consoleOrigin()}/api/devices/${d}/proxy/` });
+        sendResponse({ ok: true });
+      } catch (e) { sendResponse({ ok: false, error: String(e) }); }
     })();
     return true;
   }
