@@ -13,7 +13,6 @@
 //! break the terminal itself.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -68,12 +67,19 @@ fn unix_now() -> u64 {
 pub struct SessionLogger {
     dir: PathBuf,
     seq: std::sync::Arc<Mutex<HashMap<String, u64>>>,
+    /// Persistent per-session writers (round-58): batch output chunks, flush
+    /// on command boundaries. Bounded — capped at the session count.
+    files: std::sync::Arc<Mutex<HashMap<String, std::io::BufWriter<std::fs::File>>>>,
 }
 
 impl SessionLogger {
     pub fn new(dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&dir);
-        Self { dir, seq: std::sync::Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            dir,
+            seq: std::sync::Arc::new(Mutex::new(HashMap::new())),
+            files: std::sync::Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     /// Directory holding the JSONL files (exposed for tests).
@@ -94,23 +100,56 @@ impl SessionLogger {
     pub fn log(&self, sid: &str, ev: SessionEvent) {
         let seq = self.next_seq(sid);
         let ev = SessionEvent { seq, ..ev };
-        let path = self.dir.join(format!("{sid}.jsonl"));
         let line = serde_json::to_string(&ev).unwrap_or_default();
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-            // New file → write the version header FIRST (round-56). A future
-            // format change reads the header and knows whether it can parse
-            // the file, instead of assuming the old shape.
-            if f.metadata().map(|m| m.len() == 0).unwrap_or(false) {
-                let _ = writeln!(f, "{}", serde_json::json!({
-                    "type": "session", "version": 1, "id": sid,
-                    "createdAt": std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs()).unwrap_or(0),
-                }));
+        // Per-session persistent writer (round-58): the old open→append→drop
+        // per 4KiB chunk was 3 syscalls × 100-256 chunks/s × 16 sessions —
+        // thousands of syscalls/s on the device CPU. The writer batches and
+        // flushes on flush() (called at command/status boundaries by
+        // log_command_end/log_status) or when the buffer fills.
+        let mut f = self.files.lock().unwrap_or_else(|p| p.into_inner());
+        let writer = f.entry(sid.to_string()).or_insert_with(|| {
+            let path = self.dir.join(format!("{sid}.jsonl"));
+            match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                Ok(file) => {
+                    let mut w = std::io::BufWriter::new(file);
+                    // New file → write the version header FIRST (round-56).
+                    if w.get_ref().metadata().map(|m| m.len() == 0).unwrap_or(false) {
+                        let _ = writeln!(w, "{}", serde_json::json!({
+                            "type": "session", "version": 1, "id": sid,
+                            "createdAt": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs()).unwrap_or(0),
+                        }));
+                    }
+                    w
+                }
+                Err(_) => {
+                    tracing::warn!("[vale-agent] session log open failed: {sid}");
+                    // Unwritable fallback: keep the session alive, drop the
+                    // audit trail for it (same best-effort stance as before).
+                    // /dev/null on Unix, NUL on Windows — a File that discards.
+                    let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+                    std::io::BufWriter::new(std::fs::OpenOptions::new().write(true).open(null).unwrap())
+                }
             }
-            let _ = writeln!(f, "{line}");
-        } else {
-            tracing::warn!("[vale-agent] session log write failed: {}", path.display());
+        });
+        use std::io::Write;
+        let _ = writeln!(writer, "{line}");
+        // Flush eagerly on command boundaries (command/end, status) so the
+        // audit trail is durable at the points that matter; output chunks
+        // ride the BufWriter until it fills or the next boundary. A crash
+        // loses only the buffered tail, never a command skeleton (round-58).
+        if ev.kind != "output" {
+            let _ = writer.flush();
+        }
+    }
+
+    /// Flush all session writers (called on shutdown paths if any).
+    pub fn flush_all(&self) {
+        use std::io::Write;
+        let mut f = self.files.lock().unwrap_or_else(|p| p.into_inner());
+        for w in f.values_mut() {
+            let _ = w.flush();
         }
     }
 
@@ -291,6 +330,9 @@ mod tests {
         logger.log_command_start("s2", "done");
         logger.log_command_end("s2", Some(0), Some("marker"));
 
+        // BufWriter (round-58): recovery replays DISK state — flush buffered
+        // output first so seq-seeding sees the full stream.
+        logger.flush_all();
         let affected = logger.recover_interrupted();
         assert_eq!(affected, vec!["s1"]);
 
@@ -320,6 +362,8 @@ mod tests {
         let dir = temp_dir("cap");
         let logger = SessionLogger::new(dir.clone());
         logger.log_output("s1", "x".repeat(10_000));
+        // Output events batch in the BufWriter (round-58) — flush before read.
+        logger.flush_all();
         let content = std::fs::read_to_string(dir.join("s1.jsonl")).unwrap();
         // Last line is the event (first is the version header).
         let ev: serde_json::Value = content.lines().last().map(|l| serde_json::from_str(l).unwrap()).unwrap();

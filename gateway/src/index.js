@@ -727,6 +727,8 @@ async function handleGatewayImpl(request, env, url, preReadText = null, ctx = { 
   // Auth: x-api-key = the user's gateway token
   const token = request.headers.get("x-api-key") || "";
   const user = await findUserByToken(env, token);
+  // For the log wrapper (round-58): resolved user id, not the token prefix.
+  ctx.user = user?.id || "";
   if (!user || !user.enabled) {
     return jsonError(401, "Missing or invalid x-api-key", "authentication_error");
   }
@@ -1202,13 +1204,17 @@ export async function handleGateway(request, env, url) {
   try {
     rawText = await request.text();
   } catch { /* impl will re-try; a broken stream fails there with a clear error */ }
-  const ctx = { model: "" };
+  const ctx = { model: "", user: "" };
   const res = await handleGatewayImpl(request, env, url, rawText, ctx);
   try {
     // One structured line per /v1 request — tail-visible usage/health signal.
+    // round-58: log the resolved user id instead of the x-api-key prefix —
+    // the key's first 8 chars (~48bit entropy) leak token material and
+    // cross-correlate requests across logs; findUserByToken already resolved
+    // the user in the impl.
     console.log(JSON.stringify({
       ts: started, ms: Date.now() - started, status: res.status,
-      key: String(request.headers.get("x-api-key") || "").slice(0, 8),
+      user: ctx.user,
       path: url.pathname,
       model: ctx.model,
     }));

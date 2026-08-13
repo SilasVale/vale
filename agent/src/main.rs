@@ -321,7 +321,15 @@ fn load_config(config_path: &Path) -> Config {
         // Atomic write (round-57): a half-written config on power loss would
         // quarantine on next boot and rotate the token again.
         let _ = vale_agent::bootstrap::atomic_write(config_path, yaml.as_bytes());
-        out!("  Auth token: {token}  (saved to {})", config_path.display());
+        // Mask the token in startup.log (round-58): the full token is the
+        // device's only credential — a support-shared log must not leak it.
+        // The console reads the token from config.yaml, not from logs.
+        let masked = if token.len() > 8 {
+            format!("{}…{}", &token[..4], &token[token.len() - 4..])
+        } else {
+            "********".to_string()
+        };
+        out!("  Auth token: {masked}  (saved to {})", config_path.display());
     }
     config
 }

@@ -156,11 +156,17 @@ export function estimateTokens(jsonStr) {
   let searchFrom = 0;
   let idx;
   const DATA_KEY = '"data":"';
+  // Base64 charset via charCode ranges (round-58): the old per-char regex
+  // test on a 12MB all-base64 body was ~12M regex calls — alone enough to
+  // eat the 10ms Free-plan budget. Range compares are ~10x faster, same
+  // semantics (A-Z a-z 0-9 + / =).
+  const isB64 = (c) =>
+    (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 43 || c === 47 || c === 61;
   while ((idx = s.indexOf(DATA_KEY, searchFrom)) !== -1) {
     // Only count when it looks like a base64 payload (long alnum run).
     let j = idx + DATA_KEY.length;
     const start = j;
-    while (j < len && /[A-Za-z0-9+/=]/.test(s[j])) j += 1;
+    while (j < len && isB64(s.charCodeAt(j))) j += 1;
     if (j - start >= 512) {
       images += 1;
       removedChars += j - start;
