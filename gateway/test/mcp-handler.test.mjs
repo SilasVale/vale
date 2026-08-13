@@ -102,20 +102,15 @@ test("mcp: tools/call terminal_execute → device /api/tools/terminal_execute wi
     data = await res.json();
     assert.ok(data.result.content[0].text.includes("pwd"));
 
-    // Each execute is followed by a best-effort terminal_select heartbeat
-    // (keeps the agent's idle sweeper from killing quiet MCP sessions) —
-    // so 2 tool calls + 2 heartbeats = 4 device fetches, ordered
-    // execute → heartbeat → execute → heartbeat.
-    assert.equal(calls.length, 4);
+    // No gateway heartbeat since round-54: the agent's execute wait-loop
+    // pings the session itself, so each execute is exactly ONE device fetch.
+    assert.equal(calls.length, 2);
     assert.equal(calls[0].url, "https://d1.agent.saisi.online/api/tools/terminal_execute");
     assert.deepEqual(JSON.parse(calls[0].init.body), { command: "ls -la", session_id: "s-1", quiet_ms: 400 }); // device + input stripped, input→command
-    assert.deepEqual(JSON.parse(calls[2].init.body), { command: "pwd", session_id: "s-1", quiet_ms: 400 });   // default quiet_ms
+    assert.deepEqual(JSON.parse(calls[1].init.body), { command: "pwd", session_id: "s-1", quiet_ms: 400 });   // default quiet_ms
     assert.equal(calls[0].init.headers.get("authorization"), "Bearer devtok"); // device token injected server-side
     assert.equal(calls[0].init.headers.get("host"), null);   // host/cookie stripped
     assert.equal(calls[0].init.headers.get("cookie"), null);
-    // heartbeat calls hit terminal_select with the session_id
-    assert.equal(calls[1].url, "https://d1.agent.saisi.online/api/tools/terminal_select");
-    assert.deepEqual(JSON.parse(calls[1].init.body), { session_id: "s-1" });
   } finally {
     globalThis.fetch = realFetch;
   }
