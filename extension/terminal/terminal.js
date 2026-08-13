@@ -103,6 +103,9 @@ function updateChrome() {
 async function callTool(name, body = {}) {
   const res = await fetch(`${proxy}/api/tools/${name}`, {
     method: "POST",
+    // round-59: a hung read must not pin syncInFlight forever (output
+    // freeze); 30s hard timeout → existing catch → needSync retry.
+    signal: AbortSignal.timeout(30_000),
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${pairing.token}`,
@@ -315,6 +318,15 @@ function attachStream(sid) {
 }
 
 async function startSharedStream() {
+  // Jittered exponential backoff (round-59): fixed 3s reconnects made every
+  // open tab lockstep-bomb a restarting agent. Base ×2 capped at 30s, ±50%
+  // jitter, reset on healthy bytes.
+  let attempt = 0;
+  const backoff = () => {
+    const base = Math.min(3000 * Math.pow(2, attempt), 30000);
+    attempt += 1;
+    return base * (0.5 + Math.random() * 0.5);
+  };
   const connect = async () => {
     // Streams UTF-8 bytes to text WITHOUT emitting replacement chars for
     // multi-byte chars split across frames (stream:true holds partial state).
@@ -331,7 +343,7 @@ async function startSharedStream() {
         if (activeSid && statusEl.textContent === "reconnecting…") setStatus("");
       }
       if (!res.ok || !res.body) {
-        setTimeout(connect, 3000);
+        setTimeout(connect, backoff());
         return;
       }
       const reader = res.body.getReader();
@@ -341,6 +353,7 @@ async function startSharedStream() {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          attempt = 0; // healthy bytes → reset the backoff (round-59)
           buffer += decoder.decode(value, { stream: true });
           // SSE events are separated by blank lines; a data line may be split
           // across read chunks, so only consume complete events.
@@ -377,8 +390,8 @@ async function startSharedStream() {
     } catch {
       for (const s of sessions.values()) if (!s.closed) s.needSync = true;
     }
-    // Stream dropped or rejected → reconnect, matching EventSource behavior.
-    setTimeout(connect, 3000);
+    // Stream dropped or rejected → reconnect with jittered backoff (round-59).
+    setTimeout(connect, backoff());
   };
   connect();
 }
@@ -599,10 +612,26 @@ async function syncSession(sid) {
       if (Number(r.start) > s.renderedBytes) {
         s.term.write(`\r\n[dropped ${Number(r.start) - s.renderedBytes} bytes of output — missed while offline]\r\n`);
       }
-      s.term.write(r.text);
-      s.renderedBytes = Number(r.end) || s.renderedBytes;
-      ingestLines(s, r.text);
-      scheduleFlush(s);
+      // round-59: SSE frames may have advanced renderedBytes WHILE this read
+      // was in flight (reconnect window). The response's byte range starts at
+      // r.start — skip the prefix the SSE already delivered, and never let a
+      // stale r.end REGRESS the cursor (that broke the frame.start dedup and
+      // re-rendered + re-ingested bytes).
+      const covered = s.renderedBytes - (Number(r.start) || 0);
+      if (covered > 0) {
+        const enc = new TextEncoder().encode(r.text);
+        let cut = Math.min(covered, enc.length);
+        while (cut > 0 && (enc[cut] & 0xc0) === 0x80) cut--; // UTF-8 boundary
+        r.text = new TextDecoder("utf-8").decode(enc.subarray(cut));
+      }
+      if (r.text) {
+        s.term.write(r.text);
+        s.renderedBytes = Math.max(s.renderedBytes, Number(r.end) || s.renderedBytes);
+        ingestLines(s, r.text);
+        scheduleFlush(s);
+      } else {
+        s.renderedBytes = Math.max(s.renderedBytes, Number(r.end) || s.renderedBytes);
+      }
     }
     s.needSync = false;
     s.sseDirty = false;

@@ -227,8 +227,11 @@ fn tool_open(
                     recover_guard(&buf)
                         .retain_live(&sid_buf, &kind, &label);
                     mgr2.term_unregister(&sid_buf).await;
-                    // Audit trail: session closed (round-54).
+                    // Audit trail: session closed (round-54), then release
+                    // the logger's fd for this session (round-59) — the files
+                    // map must not grow with every session ever seen.
                     logger2.log_status(&sid_buf, "closed");
+                    logger2.close_session(&sid_buf);
                     // Backend-initiated death (SSH channel EOF, serial read
                     // error, pty EOF) — emit the event so clients learn the
                     // session died and WHY, instead of discovering it only via
@@ -703,7 +706,6 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         }
                     };
                     loop {
-                        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                         tokio::select! {
                             chunk = rx.recv() => {
                                 if let Some(c) = chunk {
@@ -729,10 +731,19 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             // cases — `sh -c 'sleep 100 & exit 0'` was falsely
                             // reported as TIMEOUT).
                             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
-                            _ = tokio::time::sleep(remaining) => {
-                                timed_out = true;
-                                break;
-                            }
+                        }
+                        // Deadline check OUTSIDE the select (round-59): select!
+                        // picks the FIRST ready branch in declaration order —
+                        // after both pipes EOF, rx.recv() is Ready(None) every
+                        // round, so the None branch always wins and a sleep
+                        // branch declared after it NEVER fires (verified: the
+                        // timeout branch did not trigger once in 60 rounds).
+                        // The timeout contract ("kill the command at the
+                        // deadline") was silently broken for pipe-closed
+                        // commands; a plain instant compare cannot starve.
+                        if std::time::Instant::now() >= deadline {
+                            timed_out = true;
+                            break;
                         }
                         // Exit probe — the authoritative done signal (round-56):
                         // the child exited but a daemon grandchild keeps rx

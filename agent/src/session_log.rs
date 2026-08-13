@@ -156,6 +156,19 @@ impl SessionLogger {
         }
     }
 
+    /// Close a session's writer — flush + drop the fd (round-59). The files
+    /// map had NO eviction path: every session ever seen (including closed
+    /// ones) kept an open fd + BufWriter for the process lifetime. Call on
+    /// session close/eviction to bound the map by the concurrent session
+    /// count (hard cap 16).
+    pub fn close_session(&self, sid: &str) {
+        use std::io::Write;
+        let mut f = self.files.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(mut w) = f.remove(sid) {
+            let _ = w.flush();
+        }
+    }
+
     pub fn log_command_start(&self, sid: &str, command: &str) {
         self.log(sid, SessionEvent::command_start(0, command));
     }

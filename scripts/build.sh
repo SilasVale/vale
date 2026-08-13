@@ -65,7 +65,15 @@ deploy_worker() {
       exit 1
     fi
     local live
-    live="$(curl -s -m 30 https://agent.saisi.online/api/version)"
+    # Edge propagation has a few seconds' delay after wrangler returns — a
+    # single curl could hit a stale POP and false-fail the deploy. Retry
+    # briefly before giving up (round-59).
+    live=""
+    for _ in 1 2 3 4 5; do
+      live="$(curl -s -m 30 https://agent.saisi.online/api/version)"
+      echo "$live" | grep -q "\"version\":\"$want_version\"" && break
+      sleep 3
+    done
     if ! echo "$live" | grep -q "\"version\":\"$want_version\""; then
       echo "  !! live version mismatch: want $want_version, got: $live"
       exit 1

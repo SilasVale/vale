@@ -201,12 +201,23 @@ export function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
         // forever (the old code had no per-read timeout once headers
         // landed). Any byte resets the 60s clock; a stall → error event.
         let chunk;
+        let timer;
         try {
           chunk = await Promise.race([
             reader.read(),
-            new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error("stream idle"), { name: "IdleError" })), 60_000)),
+            new Promise((_, reject) => {
+              // Hold the handle (round-59, aligning with withIdleWatchdog):
+              // a completed read must clear it or the isolate is kept alive
+              // up to 60s per read.
+              timer = setTimeout(() => reject(Object.assign(new Error("stream idle"), { name: "IdleError" })), 60_000);
+            }),
           ]);
+          clearTimeout(timer);
         } catch (e) {
+          clearTimeout(timer);
+          // Stop pulling from the dead upstream (round-59): without cancel
+          // its bytes kept flowing into the closed controller.
+          await reader.cancel().catch(() => {});
           if (e.name === "IdleError") {
             if (buffer || encoderStream.started) {
               controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream idle (no bytes for 60s)" } })}\n\n`));
