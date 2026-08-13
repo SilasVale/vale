@@ -110,11 +110,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         // Revoke the token server-side FIRST (local-only unpair left a
         // 30-day device-control credential valid), then clear locally.
+        // After a browser restart state.pairedDevice is null (session token
+        // cleared) but the LEGACY local copy or the current local record may
+        // still hold the token — and the gateway's HttpOnly vale_pt cookie
+        // keeps it live for 30 days — so read the token from every source we
+        // can before giving up.
         const paired = state.pairedDevice;
-        if (paired?.token) {
+        let revokeToken = paired?.token;
+        if (!revokeToken) {
+          try { revokeToken = (await chrome.storage.local.get("valePlugin"))?.valePlugin?.token || ""; } catch {}
+        }
+        if (revokeToken) {
           await fetch(`${await consoleOrigin()}/api/plugins/revoke`, {
             method: "POST",
-            headers: { authorization: `Bearer ${paired.token}` },
+            headers: { authorization: `Bearer ${revokeToken}` },
           }).catch(() => {});
         }
         await clearPairing();
