@@ -205,13 +205,14 @@ Section "Install" SEC01
     ; the upgrade output looked like a failure when it was fine.
     nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
     nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgent /F 2>NUL'
-    ; Start the server HIDDEN, ASYNC. Everything clever (EncodedCommand with
-    ; env vars / cmd chains) proved fragile or hung on real devices — this is
-    ; the SIMPLEST reliable form: a detached PowerShell that Start-Processes
-    ; the agent with an explicit working directory and hidden window, and
-    ; returns immediately. The agent's startup self-heal re-registers the
-    ; boot task.
-    nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath ''$INSTDIR\vale-agent.exe'' -ArgumentList ''$INSTDIR\config.yaml'' -WorkingDirectory ''$INSTDIR'' -WindowStyle Hidden"'
+    ; Start the server. Every indirection (cmd chains, EncodedCommand env
+    ; vars, PS Start-Process) hung or failed on real devices and left the
+    ; device offline. The ONLY form proven to work is NSIS's native Exec:
+    ; async (returns immediately), inherits the SetOutPath CWD (so the
+    ; relative config.yaml resolves), and the agent's self-heal re-registers
+    ; the boot task. A console window appears briefly (the agent is a console
+    ; app) — acceptable; the device staying online matters more.
+    Exec '"$INSTDIR\vale-agent.exe" "$INSTDIR\config.yaml"'
     ; Tray: keep the registered ValeAgentTray task (it carries the user
     ; principal; a missing task OR a failing /Run falls back to starting the
     ; exe directly — a disabled/stale-principal task must not leave the tray
@@ -219,12 +220,12 @@ Section "Install" SEC01
     nsExec::ExecToLog 'cmd /c schtasks /Query /TN ValeAgentTray 2>NUL'
     Pop $0
     ${If} $0 != 0
-      nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath ''$INSTDIR\vale-tray.exe'' -WorkingDirectory ''$INSTDIR'' -WindowStyle Hidden"'
+      Exec '"$INSTDIR\vale-tray.exe"'
     ${Else}
       nsExec::ExecToLog 'cmd /c schtasks /Run /TN ValeAgentTray 2>NUL'
       Pop $0
       ${If} $0 != 0
-        nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath ''$INSTDIR\vale-tray.exe'' -WorkingDirectory ''$INSTDIR'' -WindowStyle Hidden"'
+        Exec '"$INSTDIR\vale-tray.exe"'
       ${EndIf}
     ${EndIf}
   ${EndIf}
