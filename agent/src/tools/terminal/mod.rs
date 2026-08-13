@@ -73,21 +73,41 @@ pub struct TermOutput {
 }
 
 /// Parse an SSH target into (user, host, port).
-/// Accepted forms: `user@host`, `user@host:port`, `host`, `host:port`.
-/// Defaults: user = "root", port = 22.
+/// Accepted forms: `user@host`, `user@host:port`, `host`, `host:port`,
+/// `[v6]`, `user@[v6]:port`. Defaults: user = "root", port = 22.
+/// A bare IPv6 (`user@fe80::1`, no brackets) has two+ colons — the old
+/// rsplit_once silently parsed `user@fe80::1` as host `user@fe80` port `1`
+/// and connected to a nonexistent host (round-54).
 pub fn parse_ssh_target(target: &str) -> (String, String, u16) {
     let target = target.trim();
     let (user_host, port) = if let Some((uh, p)) = target.rsplit_once(':') {
-        (uh, p.parse::<u16>().unwrap_or(22))
+        if uh.ends_with(']') {
+            // Bracket form — the tail after the colon is the port.
+            (uh, p.parse::<u16>().unwrap_or(22))
+        } else if target.matches(':').count() >= 2 {
+            // Bare IPv6 without brackets — no port in the address.
+            (target, 22)
+        } else {
+            (uh, p.parse::<u16>().unwrap_or(22))
+        }
     } else {
         (target, 22)
     };
     let (user, host) = if let Some((u, h)) = user_host.split_once('@') {
-        (u.to_string(), h.to_string())
+        (u.to_string(), strip_v6_brackets(h))
     } else {
-        ("root".to_string(), user_host.to_string())
+        ("root".to_string(), strip_v6_brackets(user_host))
     };
     (user, host, port)
+}
+
+/// `[::1]` → `::1`; anything else unchanged.
+fn strip_v6_brackets(h: &str) -> String {
+    if let Some(inner) = h.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        inner.to_string()
+    } else {
+        h.to_string()
+    }
 }
 
 /// Parse a serial target into (port_name, baud_rate).
@@ -474,6 +494,31 @@ mod tests {
         assert_eq!(
             parse_ssh_target("example.com:2222"),
             ("root".into(), "example.com".into(), 2222)
+        );
+    }
+
+    #[test]
+    fn parse_ssh_ipv6_bracketed_with_port() {
+        assert_eq!(
+            parse_ssh_target("user@[fe80::1]:2222"),
+            ("user".into(), "fe80::1".into(), 2222)
+        );
+    }
+
+    #[test]
+    fn parse_ssh_ipv6_bracketed_default_port() {
+        assert_eq!(
+            parse_ssh_target("[::1]"),
+            ("root".into(), "::1".into(), 22)
+        );
+    }
+
+    #[test]
+    fn parse_ssh_ipv6_bare_no_port_mangling() {
+        // `user@fe80::1` must NOT become host `user@fe80` port `1` (round-54).
+        assert_eq!(
+            parse_ssh_target("user@fe80::1"),
+            ("user".into(), "fe80::1".into(), 22)
         );
     }
 

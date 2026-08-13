@@ -217,12 +217,7 @@ fn tool_open(
                     // client-initiated close goes through tool_close which
                     // already emits; this is a no-op for the double-run (the
                     // event is harmless on an already-closed session).
-                    let ev = match kind.as_str() {
-                        "ssh" => AgentEvent::SshDisconnect { session_id: sid_buf.clone() },
-                        "serial" => AgentEvent::SerialClose { port_id: sid_buf.clone() },
-                        _ => AgentEvent::TermClose { session_id: sid_buf.clone() },
-                    };
-                    bus2.emit(&ev);
+                    bus2.emit(&close_event(&kind, &sid_buf));
                 });
                 Ok(json!(id))
             }
@@ -281,11 +276,7 @@ fn tool_close(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, outp
                 let label = meta.as_ref().map(|m| m.label.clone()).unwrap_or_default();
                 recover_guard(&buf)
                     .retain_live(&session_id, &kind, &label);
-                match kind.as_str() {
-                    "ssh" => bus.emit(&AgentEvent::SshDisconnect { session_id: session_id.clone() }),
-                    "serial" => bus.emit(&AgentEvent::SerialClose { port_id: session_id.clone() }),
-                    _ => bus.emit(&AgentEvent::TermClose { session_id: session_id.clone() }),
-                };
+                bus.emit(&close_event(&kind, &session_id));
                 Ok(json!(format!("Closed terminal session {session_id}")))
             }
         },
@@ -353,6 +344,18 @@ fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> 
 /// terminal session. Windows PowerShell only ends a command on CRLF (\r\n) — a
 /// bare \n leaves the shell in the multi-line continuation prompt (>>) and the
 /// command never runs. Unix shells accept a bare \n.
+/// Map a session kind to its close/death event (round-54): the same
+/// three-way mapping used to live in the drainer AND tool_close — a new
+/// session type added in only one place would emit the wrong event, and
+/// retain_live's idempotency silently masked the mismatch.
+fn close_event(kind: &str, sid: &str) -> AgentEvent {
+    match kind {
+        "ssh" => AgentEvent::SshDisconnect { session_id: sid.to_string() },
+        "serial" => AgentEvent::SerialClose { port_id: sid.to_string() },
+        _ => AgentEvent::TermClose { session_id: sid.to_string() },
+    }
+}
+
 pub fn append_command_newline(command: &str) -> String {
     if command.ends_with('\n') || command.ends_with('\r') {
         command.to_string()
