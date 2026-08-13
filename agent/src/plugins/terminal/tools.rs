@@ -111,8 +111,14 @@ fn tool_open(
                     };
                     let mut rx = _rx;
                     while let Some(output) = rx.recv().await {
-                        // Mark active so the idle sweeper doesn't force-close it.
-                        mgr2.touch(&sid_buf).await;
+                        // Deliberately NO touch here (round-54): output
+                        // activity is not presence. Touching on every chunk
+                        // kept abandoned high-output sessions (`tail -f`,
+                        // `yes`) alive forever — only the 16-session cap ever
+                        // reaped them. Presence is explicit: the panel pings
+                        // terminal_select every 30s, the MCP execute wait-loop
+                        // pings every poll, term_write/resize touch. A session
+                        // nobody watches is reaped by the 15-min idle sweeper.
                         // Poison recovery — dropping buffered output on a poisoned
                         // lock would silently lose terminal data.
                         let mut store = recover_guard(&buf);

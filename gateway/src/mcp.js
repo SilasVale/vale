@@ -115,22 +115,11 @@ async function callTerminalTool(name, env, device, args) {
   if (!resp) throw new Error("Device unreachable");
   const data = await resp.json().catch(() => ({}));
   if (!ok) throw new Error(data?.error || `Device returned ${resp.status}`);
-  // Client-liveness heartbeat: the agent's idle sweeper kills any session
-  // with no OUTPUT for 15 min (vim, a quiet build, sleep 600). The panel
-  // pings terminal_select every 30s; the MCP path had NO equivalent, so a
-  // session used by Claude Code silently died mid-command (round-47).
-  // Terminal calls here are the MCP heartbeat — refresh the session so the
-  // sweeper knows the client is alive. Best-effort: a failure (session
-  // already reaped) must not mask the tool's own result.
-  if (name !== "terminal_list" && name !== "terminal_open") {
-    try {
-      await deviceFetch(env, device, "/api/tools/terminal_select", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ session_id: body.session_id }),
-      });
-    } catch { /* best-effort heartbeat */ }
-  }
+  // No heartbeat here (round-54): the agent's own execute wait-loop pings
+  // the session every poll, and the panel pings terminal_select every 30s —
+  // the MCP path is covered by the execute loop. The gateway simulating
+  // presence was a workaround for the old model where output activity kept
+  // sessions alive; presence now comes from the agent-side loops only.
   return data;
 }
 

@@ -336,13 +336,16 @@ mod desktop_impl {
         }
 
         pub async fn term_select(&self, sid: &str) -> Result<(), DeviceError> {
-            // Client-liveness heartbeat: the panel pings every live session
-            // with terminal_select every 30s, and the idle sweeper (15 min
-            // without OUTPUT) must not kill a watched-but-silent session
-            // (vim, a long quiet build). Advancing last_output here keeps an
-            // actively-pinged session alive; a disconnected client stops
-            // pinging and the sweeper reaps it as intended. (Lock is already
-            // held — touch() would re-lock and deadlock.)
+            // Client-liveness heartbeat — the ONLY presence signal besides
+            // write/resize: the panel pings the active session every 30s and
+            // the MCP execute wait-loop pings every poll, so the idle sweeper
+            // (15 min without OUTPUT) must not kill a watched-but-silent
+            // session (vim, a long quiet build). Advancing last_output here
+            // keeps an actively-pinged session alive; a disconnected client
+            // stops pinging and the sweeper reaps it as intended. Output
+            // alone does NOT keep a session alive (round-54: an abandoned
+            // `tail -f` must be reaped). (Lock is already held — touch()
+            // would re-lock and deadlock.)
             let mut inner = self.inner.lock().await;
             if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
                 s.last_output = std::time::Instant::now();
