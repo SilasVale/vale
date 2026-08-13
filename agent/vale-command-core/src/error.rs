@@ -14,9 +14,6 @@ pub enum DeviceError {
     #[error("Invalid parameters: {message}")]
     InvalidParams { message: String },
 
-    #[error("Timeout: {message}")]
-    Timeout { message: String },
-
     #[error("Keychain error: {reason}")]
     Keychain { reason: String },
 
