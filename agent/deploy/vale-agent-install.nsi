@@ -205,17 +205,18 @@ Section "Install" SEC01
     ; the upgrade output looked like a failure when it was fine.
     nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
     nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgent /F 2>NUL'
-    ; Start the server HIDDEN: Exec on a console app (vale-agent.exe) makes
-    ; Windows create a visible black window that stays open forever — the
-    ; auto-upgrade looked like it left a console behind. Start-Process
-    ; -WindowStyle Hidden spawns it with no window.
-    nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath \"$INSTDIR\vale-agent.exe\" -ArgumentList '\''$INSTDIR\config.yaml'\'' -WindowStyle Hidden"'
+    ; Start the server HIDDEN, ASYNC: Exec on a console app (vale-agent.exe)
+    ; makes Windows create a visible black window that stays open forever,
+    ; and a PowerShell Start-Process with nested quotes is fragile through
+    ; nsExec (CreateProcess argv parsing). `cmd /c start "" /b` returns
+    ; immediately, spawns in the parent's (absent) console → NO window.
+    nsExec::ExecToLog 'cmd /c start "" /b "$INSTDIR\vale-agent.exe" "$INSTDIR\config.yaml"'
     ; Tray: keep the registered ValeAgentTray task (it carries the user
     ; principal; a missing task falls back to starting the exe directly).
     nsExec::ExecToLog 'cmd /c schtasks /Query /TN ValeAgentTray 2>NUL'
     Pop $0
     ${If} $0 != 0
-      nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath \"$INSTDIR\vale-tray.exe\" -WindowStyle Hidden"'
+      nsExec::ExecToLog 'cmd /c start "" /b "$INSTDIR\vale-tray.exe"'
     ${Else}
       nsExec::ExecToLog 'cmd /c schtasks /Run /TN ValeAgentTray 2>NUL'
     ${EndIf}
