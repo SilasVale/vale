@@ -940,15 +940,24 @@ async function handleGatewayImpl(request, env, url) {
     // VERIFIED (2026-08-13): zen implements web_search NATIVELY only for
     // deepseek-v4-flash. Translate-path models (mimo-v2.5/minimax/kimi/glm)
     // do NOT search — the forced tool_choice makes them fabricate a query and
-    // return a plain text answer with no web_search_tool_result. So any
-    // web_search request is FORCED to the native search-capable model. The
-    // scan uses body (parsed when web_search was detected above) — toolsRegion
-    // only exists inside the opencode-passthrough branch.
-    const bodyHasWebSearch = Array.isArray(body?.tools) &&
-      body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"));
-    if (bodyHasWebSearch && body) {
+    // return a plain text answer with no web_search_tool_result. So a REAL
+    // search request is FORCED to the native search-capable model.
+    // Trigger: ONLY a forced tool_choice naming web_search — Claude Code
+    // DECLARES web_search_20250305 in the tools array of EVERY ordinary turn,
+    // so a declaration-only check silently hijacked the user's model on
+    // every request (round-46 High). The tool_choice check is the true
+    // search intent.
+    const webSearchToolChoice = body?.tool_choice &&
+      ((body.tool_choice.type === "tool" && body.tool_choice.name === "web_search") ||
+       (body.tool_choice.type === "any" && Array.isArray(body.tool_choice.tools) &&
+        body.tool_choice.tools.some((t) => t?.name === "web_search")));
+    if (webSearchToolChoice && body) {
       const searchModel = "og/deepseek-v4-flash";
-      if (model !== searchModel) {
+      // Swap when the route is NOT already the native search-capable
+      // passthrough (covers the translate path AND US_PROXY=1 where the
+      // flagship model would otherwise ride the broken chat/completions
+      // translation — round-46 Medium #3).
+      if (route.type !== "passthrough" || route.upstream !== OG_ZEN_ANTHROPIC) {
         model = searchModel;
         effectiveModel = searchModel;
         body.model = "deepseek-v4-flash";
