@@ -144,52 +144,58 @@ export function estimateTokens(jsonStr) {
   // allowance (~1600 tokens, the real vision cost).
   const s = String(jsonStr);
   const len = s.length;
-  // CPU budget (round-55): the base64 strip regex walked the WHOLE body —
-  // on a 4-10MB body that alone was ~20-60ms of the 10ms Free-plan budget.
-  // Bodies over 2 MB get their HEAD stripped + counted and the result
-  // extrapolated by length (same sampling stance as the token estimate).
-  const str = len > 2_000_000 ? s.slice(0, 2_000_000) : s;
-  const sampledLen = str.length;
+
+  // Image scan over the WHOLE body (round-57): counting `"data":"` fields
+  // with indexOf jumps is O(n) but far cheaper than the old full-string
+  // regex + match passes (a few dozen indexOf hops for real bodies), and it
+  // is the ONLY way to see images BEYOND a 2MB sampling window — windowed
+  // bodies' tail images were previously charged as text (~280x over the
+  // real vision cost) or silently missed.
   let images = 0;
-  const stripped = str.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, () => {
-    images += 1;
-    return '"data":"<base64>"';
-  });
-  const ratio = len / sampledLen;
+  let removedChars = 0; // ALL base64 chars (the scan sees the whole body)
+  let searchFrom = 0;
+  let idx;
+  const DATA_KEY = '"data":"';
+  while ((idx = s.indexOf(DATA_KEY, searchFrom)) !== -1) {
+    // Only count when it looks like a base64 payload (long alnum run).
+    let j = idx + DATA_KEY.length;
+    const start = j;
+    while (j < len && /[A-Za-z0-9+/=]/.test(s[j])) j += 1;
+    if (j - start >= 512) {
+      images += 1;
+      removedChars += j - start;
+      searchFrom = j;
+    } else {
+      searchFrom = idx + DATA_KEY.length;
+    }
+  }
+
+  // Text estimate: subtract ALL base64 bytes (the scan covered the full
+  // body) — the per-image 1600 charge replaces them.
+  const textLen = len - removedChars;
+  if (textLen <= 0) return images * 1600;
   const base = (() => {
-    if (len > ESTIMATE_WALK_LIMIT) {
+    if (textLen > ESTIMATE_WALK_LIMIT) {
       // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
-      return Math.ceil(len / 3);
+      return Math.ceil(textLen / 3);
     }
-    if (len > ESTIMATE_SAMPLE) {
-      // Sample the head (model + system prompt live there) and extrapolate.
-      let ascii = 0;
-      let other = 0;
-      const n = Math.min(ESTIMATE_SAMPLE, sampledLen);
-      for (let i = 0; i < n; i++) {
-        if (stripped.charCodeAt(i) < 128) ascii += 1;
-        else other += 1;
-      }
-      const r = len / n;
-      return Math.ceil((ascii * r) / 4 + (other * r) * 1.8);
-    }
+    // Sample the head (model + system prompt live there), strip its base64,
+    // and extrapolate the TEXT density to the full textLen. Sampling stays
+    // bounded (round-55/57: walking a multi-MB body blows the 10ms budget).
+    const sample = s.slice(0, Math.min(ESTIMATE_SAMPLE, len));
+    const stripped = sample.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, '"data":"<base64>"');
     let ascii = 0;
     let other = 0;
-    for (const ch of stripped) {
-      if (ch.charCodeAt(0) < 128) ascii += 1;
+    for (let i = 0; i < stripped.length; i++) {
+      if (stripped.charCodeAt(i) < 128) ascii += 1;
       else other += 1;
     }
-    return Math.ceil(ascii / 4 + other * 1.8);
+    // stripped contains the <base64> markers (18 chars each) — their text
+    // density is negligible; extrapolate by the stripped length.
+    const r = textLen / stripped.length;
+    return Math.ceil((ascii * r) / 4 + (other * r) * 1.8);
   })();
-  // Image count from the head, scaled (ratio is 1 when no windowing applied).
-  // round-56 fix: with a >2MB window the old code charged the window's tail
-  // (base64 bytes beyond the window) as TEXT — a 1.3MB screenshot was ~440k
-  // tokens instead of 1600 (~280x). Scale the head's image count to the full
-  // body: base64 images outside the window are then charged per-image, not
-  // as text. (Text outside the window is still approximated by len/3 when
-  // len > ESTIMATE_WALK_LIMIT — the ±20% stance of the module doc.)
-  const imagesFull = Math.max(images, Math.round(images * ratio));
-  return base + imagesFull * 1600; // ~1600 tokens per image
+  return base + images * 1600; // ~1600 tokens per image (real vision cost)
 }
 
 

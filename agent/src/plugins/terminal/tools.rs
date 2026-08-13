@@ -681,49 +681,60 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let mut truncated = false;
                     let mut timed_out = false;
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+                    // Capture tail append + truncation — shared by the live
+                    // receive path and the final drain before exit (round-57).
+                    let append_chunk = |captured: &mut Vec<u8>, truncated: &mut bool, c: Vec<u8>| {
+                        if captured.len() + c.len() > MAX_LOCAL_BYTES {
+                            let keep = MAX_LOCAL_BYTES / 2;
+                            if captured.len() > keep {
+                                captured.drain(..captured.len() - keep);
+                            }
+                            *truncated = true;
+                        }
+                        captured.extend_from_slice(&c);
+                        if captured.len() > MAX_LOCAL_BYTES {
+                            captured.drain(..captured.len() - MAX_LOCAL_BYTES);
+                            *truncated = true;
+                        }
+                    };
                     loop {
                         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                         tokio::select! {
                             chunk = rx.recv() => {
                                 if let Some(c) = chunk {
-                                    if captured.len() + c.len() > MAX_LOCAL_BYTES {
-                                        let keep = MAX_LOCAL_BYTES / 2;
-                                        if captured.len() > keep {
-                                            captured.drain(..captured.len() - keep);
-                                        }
-                                        truncated = true;
-                                    }
-                                    captured.extend_from_slice(&c);
-                                    if captured.len() > MAX_LOCAL_BYTES {
-                                        captured.drain(..captured.len() - MAX_LOCAL_BYTES);
-                                        truncated = true;
-                                    }
+                                    append_chunk(&mut captured, &mut truncated, c);
                                 }
                                 // None = both pipes closed — the child has no
                                 // more output; fall through to the exit check.
                             }
+                            // Periodic wakeup so the exit probe below runs even
+                            // when NO output ever arrives — a daemonized
+                            // grandchild holding the pipes open keeps rx.recv()
+                            // pending forever (round-57: the probe sat AFTER the
+                            // select, which never woke in pure-silent daemon
+                            // cases — `sh -c 'sleep 100 & exit 0'` was falsely
+                            // reported as TIMEOUT).
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
                             _ = tokio::time::sleep(remaining) => {
                                 timed_out = true;
                                 break;
                             }
                         }
-                        // Periodically probe the exit status — the authoritative
-                        // done signal (round-56): a daemonized grandchild
-                        // holding the pipes open keeps rx open forever, and the
-                        // old is_closed-only check never fired, misreporting a
-                        // finished command as TIMEOUT. Close rx on exit so the
-                        // two pipe_reader tasks stop blocking (round-55 leaked
-                        // 2 tasks + 2 fds per execute in this case).
+                        // Exit probe — the authoritative done signal (round-56):
+                        // the child exited but a daemon grandchild keeps rx
+                        // open forever.
                         if let Ok(Some(_)) = child.try_wait() {
+                            // Drain whatever the exit flushed out (round-57):
+                            // skipping this silently dropped up to 16 chunks
+                            // (~128KB) of tail output with truncated unset.
+                            while let Ok(c) = rx.try_recv() {
+                                append_chunk(&mut captured, &mut truncated, c);
+                            }
+                            // Close rx so the two pipe_reader tasks stop
+                            // blocking (round-55 leaked 2 tasks + 2 fds per
+                            // execute in the daemon case).
                             rx.close();
                             break;
-                        }
-                        if rx.is_closed() {
-                            // Both pipes closed, child still running — yield
-                            // ~10ms instead of hot-spinning the select (the
-                            // old loop burned a full core, millions of
-                            // iterations/sec, until exit or deadline).
-                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                         }
                     }
 
@@ -770,15 +781,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         }
                         // Drain whatever the kill flushed out (bounded).
                         while let Ok(c) = rx.try_recv() {
-                            if captured.len() + c.len() > MAX_LOCAL_BYTES {
-                                captured.drain(..captured.len().saturating_sub(MAX_LOCAL_BYTES / 2));
-                                truncated = true;
-                            }
-                            captured.extend_from_slice(&c);
-                            if captured.len() > MAX_LOCAL_BYTES {
-                                captured.drain(..captured.len() - MAX_LOCAL_BYTES);
-                                truncated = true;
-                            }
+                            append_chunk(&mut captured, &mut truncated, c);
                         }
                     }
                     // Reap whatever exited (may be None if the group is stuck).
