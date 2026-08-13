@@ -2,7 +2,16 @@
 const $ = (id) => document.getElementById(id);
 
 async function refresh() {
-  const s = await chrome.runtime.sendMessage({ type: "status" });
+  // The background service worker can be dead (boot crash, mid-update
+  // reload) — sendMessage then rejects. Surface it instead of silently
+  // freezing on stale state with unhandled rejections every 2s.
+  let s;
+  try {
+    s = await chrome.runtime.sendMessage({ type: "status" });
+  } catch (e) {
+    showError("extension background not responding — reload the extension");
+    return;
+  }
   const pill = $("wsState");
   pill.textContent = s.wsState;
   pill.className = `pill ${s.wsState}`;
@@ -10,22 +19,18 @@ async function refresh() {
   // restart the session TOKEN is cleared (chrome.storage.session) but the
   // device name persists; the Terminal button still works (the 30-day
   // per-device cookie authenticates a tokenless navigation). Hiding the
-  // card on a missing token made the round-29 fix unreachable.
+  // card on a missing token made the round-29 fix unreachable, and
+  // needsRepair = missing session token alone (which is EVERY restart — the
+  // extension cannot read the HttpOnly cookie) would hide a perfectly
+  // working card. So the paired card STAYS; the re-pair hint is shown when
+  // the token is gone, and re-pairing is a manual Unpair → pair flow.
   if (s.device || s.pairedDeviceName) {
     $("pairedCard").classList.remove("hidden");
     $("pairCard").classList.add("hidden");
     $("device").textContent = s.device || s.pairedDeviceName;
     $("tabCount").textContent = String(s.controlledTabs?.length || 0);
-    // needsRepair = cookie AND token both gone — the paired card's actions
-    // would dead-end on the re-pair page. Show the pair form (with its code
-    // input) so re-pairing is actually reachable, instead of a text-only
-    // hint with no affordance.
     const repair = $("needsRepair");
     if (repair) repair.classList.toggle("hidden", !s.needsRepair);
-    if (s.needsRepair) {
-      $("pairedCard").classList.add("hidden");
-      $("pairCard").classList.remove("hidden");
-    }
   } else {
     $("pairedCard").classList.add("hidden");
     $("pairCard").classList.remove("hidden");

@@ -19,8 +19,11 @@ export async function loadPairing() {
   ]);
   let device = local[LS_KEY]?.device;
   let token = sess[SESSION_KEY];
-  if (!device && local[LS_KEY]?.token) {
+  if (!token && local[LS_KEY]?.token) {
     // LEGACY MIGRATION: pre-1.0.27 stored {device, token} in storage.local.
+    // (The old record always has BOTH device and token — the guard must test
+    // the TOKEN's absence, not the device's, or the migration never fires and
+    // the plaintext token stays on disk forever.)
     // Move the token to session storage (never write it back to local).
     device = local[LS_KEY].device;
     token = local[LS_KEY].token;
