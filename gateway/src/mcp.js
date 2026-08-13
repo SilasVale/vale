@@ -148,7 +148,18 @@ async function callTerminalTool(name, env, device, args) {
     throw ToolErr(code, error || "Device unreachable");
   }
   const data = await resp.json().catch(() => ({}));
-  if (!ok) throw ToolErr(DEVICE_UNREACHABLE, data?.error || `Device returned ${resp.status}`);
+  if (!ok) {
+    // The agent's DeviceError variants surface in the error message
+    // ("Session not found: x", "Session busy ...", "SSH ... timed out") —
+    // map them to stable codes so the model can decide reopen-vs-retry
+    // (round-57; the agent's structured error channel lands next).
+    const msg = data?.error || `Device returned ${resp.status}`;
+    const code = /Session not found/i.test(msg) ? "SESSION_NOT_FOUND"
+      : /Session busy/i.test(msg) ? "SESSION_BUSY"
+      : /timed out/i.test(msg) ? TIMEOUT
+      : DEVICE_UNREACHABLE;
+    throw ToolErr(code, msg);
+  }
   // No heartbeat here (round-54): the agent's own execute wait-loop pings
   // the session every poll, and the panel pings terminal_select every 30s —
   // the MCP path is covered by the execute loop. The gateway simulating

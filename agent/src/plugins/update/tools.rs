@@ -255,6 +255,18 @@ pub fn agent_update() -> ToolDef {
                 }
             }
 
+            // Clear the busy marker on SUCCESS too (round-57): the old code
+            // only removed it on failure — every successful update left the
+            // marker behind and the NEXT agent_update (or tray check) bounced
+            // off "another update is already in progress" for up to 60 min
+            // (stale-reclaim self-healed it, i.e. each upgrade shipped with a
+            // built-in one-hour lock). The process dies right after this
+            // return, so the timing is irrelevant to the installer.
+            #[cfg(windows)]
+            let _ = std::fs::remove_file(&busy);
+            #[cfg(not(windows))]
+            let _ = std::fs::remove_file(&busy);
+
             Ok(json!({
                 "status": "upgrading",
                 "current": local,

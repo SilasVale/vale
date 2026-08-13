@@ -487,9 +487,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // held a dangling start with no end (misreported as
                     // interrupted on the next boot).
                     if !terminal_mgr.term_try_execute(&sid).await {
-                        return Err(DeviceError::InvalidParams {
-                            message: "execute already in progress on this session".into(),
-                        });
+                        return Err(DeviceError::SessionBusy { id: sid.clone() });
                     }
                     // Write the command; on failure (session reaped mid-write)
                     // release the lock — the command never ran, nothing to
