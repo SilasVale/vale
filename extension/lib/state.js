@@ -50,6 +50,15 @@ export async function savePairing(p) {
     chrome.storage.session.set({ [SESSION_KEY]: p.token }),
   ]);
 }
+/** Set state.error WITHOUT clobbering a pending "revoke failed — unpair not
+ *  completed" warning: every error writer (ws.js ticket/reconnect, cdp.js
+ *  detach, tools.js browser_close, background) must go through this so the
+ *  one security-relevant message survives until the user resolves it. */
+export function setStateError(msg) {
+  if (!state.error || !/revoke failed/i.test(state.error)) {
+    state.error = msg || null;
+  }
+}
 export async function clearPairing() {
   state.pairedDevice = null;
   await Promise.all([

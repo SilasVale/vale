@@ -30,6 +30,8 @@ const PAGES: &[(&str, PageSource)] = &[
     ("popup-html", PageSource::Embedded(include_str!("../../../../extension/popup/popup.html"))),
     ("options-css", PageSource::Embedded(include_str!("../../../../extension/options/options.css"))),
     ("options-html", PageSource::Embedded(include_str!("../../../../extension/options/options.html"))),
+    ("terminal-css", PageSource::Embedded(include_str!("../../../../extension/terminal/terminal.css"))),
+    ("terminal-html", PageSource::Embedded(include_str!("../../../../extension/terminal/terminal.html"))),
 ];
 
 /// Max bytes returned per page — enough to see tokens/structure without
@@ -94,7 +96,7 @@ pub fn page_view() -> ToolDef {
         "View a Vale page's design by fetching its HTML/CSS. \
          Pages: status (/), panel (/panel/), panel-js, panel-css, panel-html, \
          console (gateway page), console-css (gateway style.css), download \
-         (download site), popup-css, popup-html, options-css, options-html \
+         (download site), popup-css, popup-html, options-css, options-html, \
          Returns up to 64KB of source — read the CSS tokens (--accent, --bg, \
          radii, glass) and HTML structure to evaluate the design. Use target \
          '127.0.0.1:18080' (default) or a remote host.",
@@ -105,7 +107,8 @@ pub fn page_view() -> ToolDef {
                     "type": "string",
                     "enum": ["status", "panel", "panel-js", "panel-css", "panel-html",
                              "console", "console-css", "console-js", "download",
-                             "popup-css", "popup-html", "options-css", "options-html"],
+                             "popup-css", "popup-html", "options-css", "options-html",
+                             "terminal-css", "terminal-html"],
                     "description": "Which page to fetch."
                 },
                 "target": {

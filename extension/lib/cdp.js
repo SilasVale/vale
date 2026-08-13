@@ -1,4 +1,4 @@
-import { state } from "./state.js";
+import { state, setStateError } from "./state.js";
 
 // TabIds we attached chrome.debugger to ourselves. Duplicate attach throws
 // "Another debugger is already attached to this tab", so track our own attach
@@ -67,7 +67,7 @@ export async function ensureTab(device, proxyUrl) {
         const tab = await chrome.tabs.create({ url: proxyUrl });
         tabId = tab.id;
         state.controlledTabs[device] = tabId;
-        state.error = null; // stale detach error from the closed tab
+        setStateError(null); // stale detach error from the closed tab
         await chrome.debugger.attach({ tabId }, "1.3");
       } else if (s.includes("Another debugger is already attached")) {
         throw new Error("DevTools or another extension is attached to the controlled tab — close DevTools on it");
@@ -109,5 +109,5 @@ function deviceForTab(tabId) {
 chrome.debugger.onDetach.addListener(({ tabId }, reason) => {
   attached.delete(tabId);
   persistAttached().catch(() => {});
-  if (deviceForTab(tabId)) state.error = `debugger detached: ${reason}`;
+  if (deviceForTab(tabId)) setStateError(`debugger detached: ${reason}`);
 });
