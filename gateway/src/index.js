@@ -63,15 +63,28 @@ const PLUGIN_BASE = "/api/plugins";
 const PROBE_RATE_LIMIT = 60; // probes per minute, per IP
 const PROBE_RATE_WINDOW_MS = 60000;
 
+// In-memory per-IP probe counters (per isolate) — the KV version cost 1
+// read + 1 write per probe call; probes are user-invoked but this keeps the
+// "no per-request KV writes" invariant (KV quota). Each bucket's first call
+// per IP reads KV once; nothing is written.
+const __probeRate = new Map(); // `ip:${bucket}` → count
+
 export async function probeRateLimited(env, request) {
   try {
     const ip = (request?.headers?.get?.("cf-connecting-ip")) || "unknown";
     const bucket = Math.floor(Date.now() / PROBE_RATE_WINDOW_MS);
     const key = `probe-rate:${ip}:${bucket}`;
-    const cur = Number(await env.KEYS.get(key)) || 0;
-    if (cur >= PROBE_RATE_LIMIT) return true;
-    await env.KEYS.put(key, String(cur + 1), { expirationTtl: 120 });
-    return false;
+    const hit = __probeRate.get(key);
+    if (hit !== undefined) {
+      if (hit >= PROBE_RATE_LIMIT) return true;
+      __probeRate.set(key, hit + 1);
+      return false;
+    }
+    let cur = 0;
+    try { cur = Number(await env.KEYS.get(key)) || 0; } catch {}
+    __probeRate.set(key, cur + 1);
+    if (__probeRate.size > 4096) __probeRate.delete(__probeRate.keys().next().value);
+    return cur >= PROBE_RATE_LIMIT;
   } catch { return false; } // fail-open on KV errors, like the breaker
 }
 
@@ -615,6 +628,18 @@ async function authLogin(request, env, secure) {
   // any unauthenticated attacker POST 5 wrong passwords and hold the admin
   // console login at 429 forever (permanent login-layer DoS).
   const callerIp = request.headers?.get?.("cf-connecting-ip") || "unknown";
+  // Per-IP in-memory burst gate BEFORE the KV lock path: a brute-force loop
+  // otherwise burns 2-3 KV WRITES per failed login — ~400 attempts exhaust
+  // the Free-plan daily write quota (1000). >10 failures/min from one IP
+  // short-circuits with no KV traffic; the KV lock below still handles the
+  // sustained case.
+  const gk = `login:${callerIp}:${Math.floor(Date.now() / 60000)}`;
+  const gate = (__loginGate.get(gk) || 0) + 1;
+  __loginGate.set(gk, gate);
+  if (__loginGate.size > 4096) __loginGate.delete(__loginGate.keys().next().value);
+  if (gate > 10) {
+    return jsonError(429, "Too many attempts — try again in a moment", "rate_limit_error");
+  }
   const lockKey = `login-lock:${callerIp}:${String(body.username || "").trim().toLowerCase()}`;
   const locked = await env.KEYS.get(lockKey);
   if (locked) {
@@ -657,6 +682,7 @@ async function authLogin(request, env, secure) {
 // once to inherit other isolates' counts.
 const __rlMin = new Map(); // `min:${token}:${minute}` → count
 const __rlDay = new Map(); // `day:${token}:${day}`   → count
+const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
 
 async function handleGatewayImpl(request, env, url) {
   const path = url.pathname;
