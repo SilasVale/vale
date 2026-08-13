@@ -22,6 +22,9 @@ impl TerminalManager {
     pub async fn term_write(&self, _sid: &str, _data: &str) -> Result<(), DeviceError> {
         Err(disabled_err())
     }
+    pub async fn term_write_bytes(&self, _sid: &str, _data: &[u8]) -> Result<(), DeviceError> {
+        Err(disabled_err())
+    }
     pub async fn term_close(&self, _sid: &str) -> Result<String, DeviceError> {
         Err(disabled_err())
     }

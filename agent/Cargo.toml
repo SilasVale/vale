@@ -52,6 +52,11 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 # spawning it (an AI-triggerable RCE path must not trust the transport alone).
 sha2 = "0.10"
 
+# Binary writes to terminal sessions (terminal_write data_base64) — a JSON
+# string argument goes through UTF-8 validation, so non-UTF-8 serial frames
+# (control bytes, binary protocols) need an explicit base64 path (round-54).
+base64 = "0.22"
+
 # Windows-only: lets the headless binary register itself as the `ValeCommand`
 # Windows service (SCM protocol). Ignored entirely on Linux/macOS builds.
 [target.'cfg(windows)'.dependencies]
