@@ -98,6 +98,15 @@ echo "  ok: $STAGE/ValeAgent-Setup.exe"
 # worker before it ships.)
 SHA256="$(sha256sum "$STAGE/ValeAgent-Setup.exe" | cut -d' ' -f1)"
 sed -i "s/sha256: \"[0-9a-f]*\"/sha256: \"$SHA256\"/" "$ROOT/index/src/index.js"
+# Fail-loud guard (round-55): the old sed pattern [0-9a-f]* could not match
+# the letter-containing placeholder "sha256-placeholder" — sed exited 0, the
+# placeholder shipped verbatim, and every agent_update died on the integrity
+# check until someone hand-edited index.js. Any leftover placeholder text
+# means the replace silently failed; refuse to continue.
+if grep -q "placeholder" "$ROOT/index/src/index.js"; then
+  echo "!! sha256 placeholder not replaced in index/src/index.js — fix the sed pattern"
+  exit 1
+fi
 echo "  ok: sha256 $SHA256 → index/src/index.js"
 
 DEST="$ROOT/index/public/vale-agent"
