@@ -20,6 +20,7 @@ const PAGES: &[(&str, PageSource)] = &[
     ("status", PageSource::Local("/")),
     ("panel", PageSource::Local("/panel/")),
     ("panel-js", PageSource::Local("/panel/panel.js")),
+    ("console-js", PageSource::Remote("https://api.saisi.online/app.js")),
     ("panel-css", PageSource::Local("/panel/panel.css")),
     ("panel-html", PageSource::Local("/panel/")),
     ("console", PageSource::Remote("https://api.saisi.online/")),
@@ -103,7 +104,7 @@ pub fn page_view() -> ToolDef {
                 "page": {
                     "type": "string",
                     "enum": ["status", "panel", "panel-js", "panel-css", "panel-html",
-                             "console", "console-css", "download",
+                             "console", "console-css", "console-js", "download",
                              "popup-css", "popup-html", "options-css", "options-html"],
                     "description": "Which page to fetch."
                 },

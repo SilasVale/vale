@@ -111,20 +111,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Revoke the token server-side FIRST (local-only unpair left a
         // 30-day device-control credential valid), then clear locally.
         // After a browser restart state.pairedDevice is null (session token
-        // cleared) but the LEGACY local copy or the current local record may
-        // still hold the token — and the gateway's HttpOnly vale_pt cookie
-        // keeps it live for 30 days — so read the token from every source we
-        // can before giving up.
+        // cleared) but the local record now carries the token too (state.js
+        // savePairing) — so the revoke always has a credential to send, and
+        // a failed revoke is REPORTED (never silently swallowed: a network
+        // error or 5xx leaves the 30-day plugin link + vale_pt cookie live,
+        // and telling the user "unpaired" would be a lie).
         const paired = state.pairedDevice;
         let revokeToken = paired?.token;
         if (!revokeToken) {
           try { revokeToken = (await chrome.storage.local.get("valePlugin"))?.valePlugin?.token || ""; } catch {}
         }
         if (revokeToken) {
-          await fetch(`${await consoleOrigin()}/api/plugins/revoke`, {
-            method: "POST",
-            headers: { authorization: `Bearer ${revokeToken}` },
-          }).catch(() => {});
+          const ctl = new AbortController();
+          const timer = setTimeout(() => ctl.abort(), 10000); // bounded — a blackholed origin must not hang Unpair
+          let res;
+          try {
+            res = await fetch(`${await consoleOrigin()}/api/plugins/revoke`, {
+              method: "POST",
+              headers: { authorization: `Bearer ${revokeToken}` },
+              signal: ctl.signal,
+            });
+          } catch (e) {
+            clearTimeout(timer);
+            // Revoke FAILED (network/abort) — keep the local pairing so the
+            // user can retry; report instead of fake success.
+            sendResponse({ ok: false, error: `revoke failed: ${String(e && e.message || e)} — unpair not completed` });
+            return;
+          }
+          clearTimeout(timer);
+          if (!res.ok) {
+            sendResponse({ ok: false, error: `revoke failed (HTTP ${res.status}) — unpair not completed` });
+            return;
+          }
         }
         await clearPairing();
         disconnect();

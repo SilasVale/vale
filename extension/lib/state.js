@@ -38,7 +38,12 @@ export async function loadPairing() {
 export async function savePairing(p) {
   state.pairedDevice = p;
   await Promise.all([
-    chrome.storage.local.set({ [LS_KEY]: { device: p.device } }),
+    // The token ALSO goes to storage.local (in addition to session) — Unpair
+    // must be able to revoke it server-side after a browser restart clears
+    // the session storage. Exposure is equivalent to the gateway's HttpOnly
+    // vale_pt cookie (30-day terminal control); a local copy lets the user
+    // actually revoke that credential.
+    chrome.storage.local.set({ [LS_KEY]: { device: p.device, token: p.token } }),
     chrome.storage.session.set({ [SESSION_KEY]: p.token }),
   ]);
 }
