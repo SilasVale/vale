@@ -142,14 +142,27 @@ export function withIdleWatchdog(upstreamBody, idleMs = 60_000) {
   return new ReadableStream({
     async pull(controller) {
       let chunk;
+      let timer;
       try {
         chunk = await Promise.race([
           reader.read(),
-          new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error("stream idle"), { name: "IdleError" })), idleMs)),
+          new Promise((_, reject) => {
+            // round-58: hold the timer handle so a completed read clears it —
+            // an un-cleared timer kept the isolate alive 60s per idle-hit.
+            timer = setTimeout(() => reject(Object.assign(new Error("stream idle"), { name: "IdleError" })), idleMs);
+          }),
         ]);
+        clearTimeout(timer);
       } catch (e) {
+        clearTimeout(timer);
         if (e.name === "IdleError") {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream idle (no bytes for 60s)" } })}\n\n`));
+          // Same error-frame shape as the translate path (round-58): the
+          // passthrough previously emitted a bare data: frame with no
+          // event: error header — clients keyed on the event type missed it.
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream idle (no bytes for 60s)" } })}\n\n`));
+          // Stop pulling from the dead upstream (round-58): without cancel
+          // its bytes kept flowing into the closed controller.
+          reader.cancel().catch(() => {});
         }
         controller.close();
         return;

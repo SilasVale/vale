@@ -171,3 +171,37 @@ test("contract: terminal_execute schema/quiet default match the agent", async ()
   assert.equal(t.inputSchema.properties.quiet_ms.description.includes("200"), true);
   assert.equal(t.inputSchema.required.join(","), "device,session_id,input");
 });
+
+// round-58: agent tool errors are HTTP 200 + {"ok":false,"error":...} — the
+// gateway must map them to stable codes instead of returning them as success.
+test("mcp: agent error (200 + ok:false) → SESSION_NOT_FOUND code", async () => {
+  const env = makeEnv();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    return new Response(JSON.stringify({ ok: false, error: "Session not found: s-1" }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls" } }, id: 9 }), env);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.error.code, -32603);
+    assert.equal(data.error.data.code, "SESSION_NOT_FOUND");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("mcp: agent error (200 + ok:false) → SESSION_BUSY code", async () => {
+  const env = makeEnv();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    return new Response(JSON.stringify({ ok: false, error: "Session busy (another execute in progress): s-1" }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls" } }, id: 10 }), env);
+    const data = await res.json();
+    assert.equal(data.error.data.code, "SESSION_BUSY");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

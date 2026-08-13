@@ -6,7 +6,7 @@
 ## 背景
 
 Vale 全家桶的 6 处页面各有各的样式语言,品牌色不统一:
-- **网关控制台**(gateway/public):暖白底 + 青绿 #0e9384 + Space Grotesk —— 最完整的一套
+- **网关控制台**(gateway/public):暖白底 + 青绿(现 #0b7a6e,AA 修订后)+ Space Grotesk —— 最完整的一套
 - **vale-agent 面板**(agent/resources/panel):浅蓝 #5b6cf0,无毛玻璃
 - **index 下载站**(index/src/index.js 内嵌):蓝紫渐变 #5b6cf0→#8a6ff0
 - **扩展 popup / options / terminal**(extension/):灰蓝,简陋
@@ -24,11 +24,11 @@ Vale 全家桶的 6 处页面各有各的样式语言,品牌色不统一:
   --surface-glass: rgba(255,255,255,0.72);  /* 毛玻璃 */
   --ink: #1d1d1f;           /* 苹果墨黑 */
   --muted: #6e6e73;         /* 次级文字 */
-  --faint: #86868b;
+  --faint: #6e6e73;         /* AA 修订(2026-08-12):#86868b → #6e6e73,白底文字 3.62→5.07:1 */
   --line: rgba(0,0,0,0.08); /* 细分隔线 */
   --line-strong: rgba(0,0,0,0.14);
 
-  --accent: #0e9384;        /* Vale 青绿(保留品牌色) */
+  --accent: #0b7a6e;        /* AA 修订(2026-08-12):#0e9384 → #0b7a6e,白字 3.80→5.22:1;品牌青绿保留为 --accent-ink 的旧值注释 */
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
   --danger: #dc2626;

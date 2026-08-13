@@ -1094,6 +1094,9 @@ async function handleGatewayImpl(request, env, url, preReadText = null, ctx = { 
     if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
     headers.set("Access-Control-Allow-Origin", "*");
+    // The watchdog can inject an error frame, so the original content-length
+    // no longer holds — drop it and let the runtime use chunked (round-58).
+    headers.delete("content-length");
     // Idle watchdog (round-57): the passthrough relays the body raw — a
     // dead relay stream used to hang the client forever.
     return new Response(withIdleWatchdog(upstream.body), { status: upstream.status, headers });

@@ -100,6 +100,8 @@ export async function callTool(tool, env, device, args) {
 export const DEVICE_UNREACHABLE = "DEVICE_UNREACHABLE";
 export const EXTENSION_OFFLINE = "EXTENSION_OFFLINE";
 export const TIMEOUT = "TIMEOUT";
+export const SESSION_NOT_FOUND = "SESSION_NOT_FOUND";
+export const SESSION_BUSY = "SESSION_BUSY";
 function ToolErr(code, message) {
   return Object.assign(new Error(message), { code });
 }
@@ -148,14 +150,19 @@ async function callTerminalTool(name, env, device, args) {
     throw ToolErr(code, error || "Device unreachable");
   }
   const data = await resp.json().catch(() => ({}));
-  if (!ok) {
+  // round-58: deviceFetch's `ok` is the HTTP status — the agent returns
+  // tool errors as HTTP 200 + {"ok":false,"error":...} (web.rs api_call_tool),
+  // so the old `if (!ok)` never fired and the error-code mapping below was
+  // DEAD CODE: "Session not found" sailed back to the model as a successful
+  // tool result. Check the agent's own ok flag.
+  if (!ok || data.ok === false) {
     // The agent's DeviceError variants surface in the error message
     // ("Session not found: x", "Session busy ...", "SSH ... timed out") —
     // map them to stable codes so the model can decide reopen-vs-retry
     // (round-57; the agent's structured error channel lands next).
     const msg = data?.error || `Device returned ${resp.status}`;
-    const code = /Session not found/i.test(msg) ? "SESSION_NOT_FOUND"
-      : /Session busy/i.test(msg) ? "SESSION_BUSY"
+    const code = /Session not found/i.test(msg) ? SESSION_NOT_FOUND
+      : /Session busy/i.test(msg) ? SESSION_BUSY
       : /timed out/i.test(msg) ? TIMEOUT
       : DEVICE_UNREACHABLE;
     throw ToolErr(code, msg);
