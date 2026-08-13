@@ -22,6 +22,8 @@
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::time::{Duration, Instant};
 
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -289,6 +291,11 @@ New-Item -ItemType File -Path $busy -Force | Out-Null
     );
     let _ = Command::new("powershell")
         .args(["-NoProfile", "-Command", &ps])
+        // CREATE_NO_WINDOW: the update script must run WITHOUT a visible
+        // console — an auto-upgrade popping a black cmd window with
+        // schtasks/sc noise (1060, "找不到文件", an Administrator password
+        // prompt) looked like a failure. No console = no window.
+        .creation_flags(0x08000000)
         .spawn();
     // Do NOT exit here — the tray stays alive. In the upgrade path the
     // PowerShell kills this tray (Stop-Process vale-tray) before running the
@@ -366,6 +373,9 @@ try {{
     );
     let _ = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &ps])
+        // CREATE_NO_WINDOW: the auto-update check must run silently (see
+        // check_for_update) — no black console window.
+        .creation_flags(0x08000000)
         .spawn();
 }
 

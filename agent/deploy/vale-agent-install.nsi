@@ -205,13 +205,17 @@ Section "Install" SEC01
     ; the upgrade output looked like a failure when it was fine.
     nsExec::ExecToLog 'schtasks /End /TN ValeAgent 2>NUL'
     nsExec::ExecToLog 'schtasks /Delete /TN ValeAgent /F 2>NUL'
-    Exec '"$INSTDIR\vale-agent.exe" "$INSTDIR\config.yaml"'
+    ; Start the server HIDDEN: Exec on a console app (vale-agent.exe) makes
+    ; Windows create a visible black window that stays open forever — the
+    ; auto-upgrade looked like it left a console behind. Start-Process
+    ; -WindowStyle Hidden spawns it with no window.
+    nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath \"$INSTDIR\vale-agent.exe\" -ArgumentList '\''$INSTDIR\config.yaml'\'' -WindowStyle Hidden"'
     ; Tray: keep the registered ValeAgentTray task (it carries the user
     ; principal; a missing task falls back to starting the exe directly).
     nsExec::ExecToLog 'schtasks /Query /TN ValeAgentTray 2>NUL'
     Pop $0
     ${If} $0 != 0
-      Exec '"$INSTDIR\vale-tray.exe"'
+      nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath \"$INSTDIR\vale-tray.exe\" -WindowStyle Hidden"'
     ${Else}
       nsExec::ExecToLog 'schtasks /Run /TN ValeAgentTray 2>NUL'
     ${EndIf}
@@ -223,7 +227,7 @@ Section "Uninstall"
   nsExec::ExecToLog 'schtasks /End /TN ValeAgentTray 2>NUL'
   nsExec::ExecToLog 'schtasks /Delete /TN ValeAgentTray /F 2>NUL'
   nsExec::ExecToLog 'schtasks /End /TN ValeAgent 2>NUL'
-  nsExec::ExecToLog 'schtasks /Delete /TN ValeAgent /F'
+  nsExec::ExecToLog 'schtasks /Delete /TN ValeAgent /F 2>NUL'
   nsExec::ExecToLog 'sc stop Cloudflared'
   nsExec::ExecToLog 'sc delete Cloudflared'
   Delete "$INSTDIR\vale-agent.exe"
