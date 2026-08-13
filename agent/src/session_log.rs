@@ -97,6 +97,17 @@ impl SessionLogger {
         let path = self.dir.join(format!("{sid}.jsonl"));
         let line = serde_json::to_string(&ev).unwrap_or_default();
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            // New file → write the version header FIRST (round-56). A future
+            // format change reads the header and knows whether it can parse
+            // the file, instead of assuming the old shape.
+            if f.metadata().map(|m| m.len() == 0).unwrap_or(false) {
+                let _ = writeln!(f, "{}", serde_json::json!({
+                    "type": "session", "version": 1, "id": sid,
+                    "createdAt": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs()).unwrap_or(0),
+                }));
+            }
             let _ = writeln!(f, "{line}");
         } else {
             tracing::warn!("[vale-agent] session log write failed: {}", path.display());
@@ -120,6 +131,59 @@ impl SessionLogger {
         self.log(sid, SessionEvent::status(0, status));
     }
 
+    /// Replay a session file, skipping the version header. Returns the parsed
+    /// events (for recovery/fold) — or None if the file has no events.
+    fn read_events(&self, sid: &str) -> Option<(Vec<serde_json::Value>, u64)> {
+        let path = self.dir.join(format!("{sid}.jsonl"));
+        let content = std::fs::read_to_string(&path).ok()?;
+        let mut events = Vec::new();
+        let mut max_seq = 0u64;
+        for line in content.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            // Header line — not an event.
+            if v.get("type").and_then(|t| t.as_str()) == Some("session") { continue; }
+            if let Some(seq) = v.get("seq").and_then(|s| s.as_u64()) {
+                max_seq = max_seq.max(seq);
+            }
+            events.push(v);
+        }
+        Some((events, max_seq))
+    }
+
+    /// Public read of a session's events (for /api/sessions UI — round-56).
+    pub fn events_of(&self, sid: &str) -> Vec<serde_json::Value> {
+        self.read_events(sid).map(|(e, _)| e).unwrap_or_default()
+    }
+
+    /// Fold a session's last event into a terminal state (round-56): the
+    /// panel's history can show "last activity / final status" instead of
+    /// nothing.
+    pub fn terminal_state_of(&self, sid: &str) -> Option<serde_json::Value> {
+        let (events, _) = self.read_events(sid)?;
+        let last = events.last()?;
+        Some(serde_json::json!({
+            "kind": last.get("kind").and_then(|k| k.as_str()).unwrap_or(""),
+            "ts": last.get("ts").and_then(|t| t.as_u64()).unwrap_or(0),
+            "reason": last.get("reason").and_then(|r| r.as_str()),
+            "exit_code": last.get("exit_code").and_then(|c| c.as_i64()),
+        }))
+    }
+
+    /// List all session files (id → terminal state) for /api/sessions.
+    pub fn list_sessions(&self) -> Vec<(String, serde_json::Value)> {
+        let mut out = Vec::new();
+        let Ok(entries) = std::fs::read_dir(&self.dir) else { return out };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+            let Some(sid) = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
+            if let Some(state) = self.terminal_state_of(&sid) {
+                out.push((sid, state));
+            }
+        }
+        out
+    }
+
     /// Crash recovery: replay every session file; a file whose last
     /// `command/start` has no paired `command/end` gets a synthetic
     /// `command/end { reason: interrupted }` appended. Returns the affected
@@ -131,32 +195,26 @@ impl SessionLogger {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
             let Some(sid) = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
-            let Ok(content) = std::fs::read_to_string(&path) else { continue };
-            // Track the positions of the last command/start and command/end,
-            // and the file's max seq — the in-memory counter restarted at 0
-            // after restart, so post-restart events re-used seqs that already
-            // existed on disk (violating the "per-session monotonic seq"
-            // contract; event-sourced consumers would mis-correlate). Seed
-            // the counter from the file's last event (round-55).
-            let mut last_start = None;
-            let mut last_end = None;
-            let mut max_seq = 0u64;
-            for (i, line) in content.lines().enumerate() {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                    if let Some(seq) = v.get("seq").and_then(|s| s.as_u64()) {
-                        max_seq = max_seq.max(seq);
-                    }
-                    match v.get("kind").and_then(|k| k.as_str()) {
-                        Some("command/start") => last_start = Some(i),
-                        Some("command/end") => last_end = Some(i),
-                        _ => {}
-                    }
-                }
-            }
+            let Some((events, max_seq)) = self.read_events(&sid) else { continue };
+            // Seed the in-memory counter from the file's max seq — the
+            // counter restarted at 0 after restart, so post-restart events
+            // re-used seqs that already existed on disk (violating the
+            // "per-session monotonic seq" contract; event-sourced consumers
+            // would mis-correlate) (round-55).
             if max_seq > 0 {
                 if let Ok(mut seqs) = self.seq.lock() {
                     let slot = seqs.entry(sid.clone()).or_insert(0);
                     *slot = max_seq;
+                }
+            }
+            // Track the positions of the last command/start and command/end.
+            let mut last_start = None;
+            let mut last_end = None;
+            for (i, v) in events.iter().enumerate() {
+                match v.get("kind").and_then(|k| k.as_str()) {
+                    Some("command/start") => last_start = Some(i),
+                    Some("command/end") => last_end = Some(i),
+                    _ => {}
                 }
             }
             // A start after the last end = the command never finished (the
@@ -193,14 +251,17 @@ mod tests {
 
         let content = std::fs::read_to_string(dir.join("s1.jsonl")).unwrap();
         let lines: Vec<serde_json::Value> = content.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0]["seq"], 1);
-        assert_eq!(lines[1]["seq"], 2);
-        assert_eq!(lines[2]["seq"], 3);
-        assert_eq!(lines[2]["exit_code"], 0);
-        assert_eq!(lines[2]["reason"], "marker");
+        // 1 version header + 3 events (round-56).
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0]["type"], "session");
+        assert_eq!(lines[0]["version"], 1);
+        assert_eq!(lines[1]["seq"], 1);
+        assert_eq!(lines[2]["seq"], 2);
+        assert_eq!(lines[3]["seq"], 3);
+        assert_eq!(lines[3]["exit_code"], 0);
+        assert_eq!(lines[3]["reason"], "marker");
         // Optional fields are omitted, not null.
-        assert!(lines[0].get("exit_code").is_none());
+        assert!(lines[1].get("exit_code").is_none());
     }
 
     #[test]
@@ -211,9 +272,9 @@ mod tests {
         logger.log_command_start("b", "y");
         logger.log_command_start("a", "z");
         let content = std::fs::read_to_string(dir.join("a.jsonl")).unwrap();
-        assert_eq!(content.lines().count(), 2);
+        assert_eq!(content.lines().count(), 3); // header + 2 events
         let content_b = std::fs::read_to_string(dir.join("b.jsonl")).unwrap();
-        assert_eq!(content_b.lines().count(), 1);
+        assert_eq!(content_b.lines().count(), 2); // header + 1 event
     }
 
     #[test]
@@ -256,7 +317,8 @@ mod tests {
         let logger = SessionLogger::new(dir.clone());
         logger.log_output("s1", "x".repeat(10_000));
         let content = std::fs::read_to_string(dir.join("s1.jsonl")).unwrap();
-        let ev: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+        // Last line is the event (first is the version header).
+        let ev: serde_json::Value = content.lines().last().map(|l| serde_json::from_str(l).unwrap()).unwrap();
         let text = ev["text"].as_str().unwrap();
         assert!(text.len() < 5000, "capped text too long: {}", text.len());
         assert!(text.contains("truncated"));

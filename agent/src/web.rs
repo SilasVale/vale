@@ -361,6 +361,21 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let result: serde_json::Value = match (method.as_str(), path.as_str()) {
         ("GET", "/api/spec") => api_spec(&state),
         ("GET", "/api/status") => api_status(&state).await,
+        // Audit trail: session list with terminal state (round-56). The
+        // logger lives in the terminal plugin's private field — read the
+        // same directory directly (cheap: one file per session).
+        ("GET", "/api/sessions") => {
+            let dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_default()
+                .join("sessions");
+            let logger = crate::session_log::SessionLogger::new(dir);
+            let list: serde_json::Value = logger.list_sessions().iter().map(|(sid, state)| {
+                serde_json::json!({ "id": sid, "state": state })
+            }).collect();
+            serde_json::json!({ "ok": true, "sessions": list })
+        },
         // Read the tray's vale-update.log (promised by the tray's doc comment
         // but never implemented) — lets a remote client see auto-update
         // failures instead of asking the user to open files.
