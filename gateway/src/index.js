@@ -1462,14 +1462,15 @@ async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
   const visionModel = env.VISION_MODEL || "og/mimo-v2.5";
   let changed = false;
   const out = [];
-  // Only the LAST user message's images are NEW (the client re-sends history
-  // images every turn — describing all of them per turn fires N vision calls
-  // and re-parses multi-MB bodies: the 1102 regression). Historical images
-  // get a placeholder WITHOUT a vision call (they were described on their
-  // own turn; the placeholder keeps the context slot without re-invoking).
-  const lastUserIdx = messages.map((m) => m.role === "user").lastIndexOf(true);
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
+  // Every image block gets a REAL description (round-43's placeholder carried
+  // no content — a turn-2 follow-up about a turn-1 screenshot was answered
+  // blind because the description existed only in the forwarded body, never
+  // in the client transcript). describeImage has a KV cache (keyed by the
+  // base64 data hash), so re-sent history images hit the cache — no vision
+  // call, no extra cost. Image conversations parse every turn (they must, to
+  // swap history images for their cached descriptions) — acceptable: image
+  // sessions are rare and the 1102 risk is bounded to them.
+  for (const m of messages) {
     if (m.role !== "user" || typeof m.content !== "object" || !Array.isArray(m.content)) {
       out.push(m);
       continue;
@@ -1478,16 +1479,11 @@ async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
       out.push(m);
       continue;
     }
-    const isLastUser = i === lastUserIdx;
     const newContent = [];
     for (const b of m.content) {
       if (b.type === "image") {
-        if (isLastUser) {
-          const desc = await describeImage(env, ukeys, b.source, visionModel);
-          newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
-        } else {
-          newContent.push({ type: "text", text: "[历史图片 — 见之前的描述]" });
-        }
+        const desc = await describeImage(env, ukeys, b.source, visionModel);
+        newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
         changed = true;
       } else {
         newContent.push(b);
@@ -1498,10 +1494,32 @@ async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
   return { messages: out, changed };
 }
 
+/** Cheap hex hash (FNV-1a) for the image description cache key. */
+function hashHex(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
 async function describeImage(env, ukeys, source, visionModel) {
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
   if (!data) return "(图片数据为空)";
+  // KV description cache: the client re-sends the same base64 image every
+  // turn, so a per-image cache turns N vision calls per follow-up into 1.
+  // Keyed by a short hash of the payload (hex, no special chars).
+  const cacheKey = data.length > 16
+    ? `img-desc:${visionModel}:${hashHex(data).slice(0, 24)}`
+    : "";
+  if (cacheKey && env.KEYS) {
+    try {
+      const hit = await env.KEYS.get(cacheKey);
+      if (hit) return hit;
+    } catch {}
+  }
   const prefix = visionModel.split("/")[0];
   const route = pickRoute(prefix, env);
   const upstreamModel = stripBracket(route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel);
@@ -1549,7 +1567,11 @@ async function describeImage(env, ukeys, source, visionModel) {
   if (!resp.ok) return `(图片描述失败：${resp.status})`;
   let json;
   try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
-  return (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
+  const desc = (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
+  if (cacheKey && env.KEYS) {
+    try { await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 }); } catch {}
+  }
+  return desc;
 }
 
 /* ---------------- Public endpoints: health / vale-cli / installers ---------------- */
