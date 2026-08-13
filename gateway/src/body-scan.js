@@ -9,16 +9,21 @@
 
 // Request body cap: Claude Code 1M-context bodies run ~4-10MB; anything larger
 // would blow the Workers Free plan's 10ms CPU budget just to scan/parse it.
-export const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
+// 12 MB (was 20 MB, round-55): 20 MB bodies were themselves blowing the budget
+// on the scan — 10 MB is the practical 1M-context ceiling, 12 MB leaves margin
+// without letting a budget-buster through.
+export const MAX_BODY_BYTES = 12 * 1024 * 1024; // 12 MB
 
 /**
  * Replace the top-level "model" value in a raw JSON body without parsing it.
  * Re-scans for the field's value span (cheap O(n), no object graph) and
  * rebuilds only that slice. Falls back to the unchanged body if the field
- * can't be located.
+ * can't be located. Pass a prior scan result to skip the second pass
+ * (round-55: the handler already scanned for routing; re-scanning a multi-MB
+ * body just to swap the model doubled the CPU).
  */
-export function rawWithModel(raw, newModel) {
-  const { valueStart, valueEnd } = scanTopLevelModel(raw);
+export function rawWithModel(raw, newModel, scanned) {
+  const { valueStart, valueEnd } = scanned || scanTopLevelModel(raw);
   if (valueStart < 0 || valueEnd <= valueStart) return raw;
   return raw.slice(0, valueStart) + JSON.stringify(newModel) + raw.slice(valueEnd);
 }
@@ -138,10 +143,20 @@ export function estimateTokens(jsonStr) {
   // client rejected requests / compacted prematurely. Each image gets a fixed
   // allowance (~1600 tokens, the real vision cost).
   let s = String(jsonStr);
-  const stripped = s.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, '"data":"<base64>"');
-  const images = (stripped.match(/"data":"<base64>"/g) || []).length;
-  s = stripped;
   const len = s.length;
+  // CPU budget (round-55): the base64 strip regex walked the WHOLE body —
+  // on a 4-10MB body that alone was ~20-60ms of the 10ms Free-plan budget,
+  // and the follow-up image-count match walked it a SECOND time. Bodies over
+  // 2 MB get their HEAD stripped + counted and the result extrapolated by
+  // length (same sampling stance as the token estimate below).
+  const str = len > 2_000_000 ? s.slice(0, 2_000_000) : s;
+  const sampledLen = str.length;
+  let images = 0;
+  const stripped = str.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, () => {
+    images += 1;
+    return '"data":"<base64>"';
+  });
+  const ratio = len / sampledLen;
   const base = (() => {
     if (len > ESTIMATE_WALK_LIMIT) {
       // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
@@ -151,22 +166,24 @@ export function estimateTokens(jsonStr) {
       // Sample the head (model + system prompt live there) and extrapolate.
       let ascii = 0;
       let other = 0;
-      for (let i = 0; i < ESTIMATE_SAMPLE; i++) {
-        if (s.charCodeAt(i) < 128) ascii += 1;
+      const n = Math.min(ESTIMATE_SAMPLE, sampledLen);
+      for (let i = 0; i < n; i++) {
+        if (stripped.charCodeAt(i) < 128) ascii += 1;
         else other += 1;
       }
-      const ratio = len / ESTIMATE_SAMPLE;
-      return Math.ceil((ascii * ratio) / 4 + (other * ratio) * 1.8);
+      const r = len / n;
+      return Math.ceil((ascii * r) / 4 + (other * r) * 1.8);
     }
     let ascii = 0;
     let other = 0;
-    for (const ch of s) {
+    for (const ch of stripped) {
       if (ch.charCodeAt(0) < 128) ascii += 1;
       else other += 1;
     }
     return Math.ceil(ascii / 4 + other * 1.8);
   })();
-  return base + images * 1600; // ~1600 tokens per image (real vision cost)
+  // Image count from the head, scaled (ratio is 1 when no windowing applied).
+  return base + Math.round(images * ratio) * 1600; // ~1600 tokens per image
 }
 
 
