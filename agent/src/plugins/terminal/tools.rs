@@ -127,10 +127,14 @@ fn tool_open(
                             // Single-quoted outer: a double-quoted RHS expands
                             // $? AT ASSIGNMENT TIME (a fresh session's value,
                             // always 0), freezing the exit code — every failed
-                            // command reported 0 (round-55). The marker string
-                            // stays literal; the old PROMPT_COMMAND is joined
-                            // outside the quotes so it expands now.
-                            (r#"export PROMPT_COMMAND='printf "\033]133;D;$?\007";'"$PROMPT_COMMAND""#.to_string() + "\n", true)
+                            // command reported 0 (round-55).
+                            // NO old-PROMPT_COMMAND concat (round-57): joining
+                            // it outside the quotes re-parsed the user's
+                            // existing value — quotes/backticks/$() inside it
+                            // executed as new shell code on every PTY open,
+                            // and the value was actually LOST anyway (the
+                            // expand-at-assignment semantics discarded it).
+                            (r#"export PROMPT_COMMAND='printf "\033]133;D;$?\007"'"#.to_string() + "\n", true)
                         } else { (String::new(), false) }
                     };
                     if injectable {

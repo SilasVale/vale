@@ -235,7 +235,10 @@ Section "Install" SEC01
     ; Match the on-disk format EXACTLY: the embedded config.yaml writes
     ; `host: "0.0.0.0"` (quoted) — the old anchor matched nothing and
     ; legacy devices stayed bound to 0.0.0.0 after upgrade (round-53).
-    nsExec::ExecToLog 'powershell -NoProfile -Command "(Get-Content -Raw \"$INSTDIR\config.yaml\") -replace ''^host: ""?0\.0\.0\.0""?$''m,''host: ""127.0.0.2""'' | Set-Content -NoNewline \"$INSTDIR\config.yaml\""'
+    ; Atomic rewrite (round-57): Set-Content truncated + wrote in place — a
+    ; power cut mid-write left a half config the next boot quarantined and
+    ; rotated the token (every client 401). Write temp + Move-Item -Force.
+    nsExec::ExecToLog 'powershell -NoProfile -Command "$p=\"$INSTDIR\config.yaml\"; $t=\"$INSTDIR\.config.yaml.tmp\"; (Get-Content -Raw $p) -replace ''^host: ""?0\.0\.0\.0""?$''m,''host: ""127.0.0.2'''' | Set-Content -NoNewline $t; Move-Item -Force $t $p"'
     ; Restart the server. Do NOT schtasks /Run here: a task registered for an
     ; older install dir (a silent /D= upgrade) would boot the OLD binaries
     ; and hold the port forever. Delete the task and start the new exe
