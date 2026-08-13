@@ -253,11 +253,36 @@ function kindOf(sid) {
 /** Close a live session (backend) — NOT just detach. */
 async function closeSession(sid) {
   const s = sessions.get(sid);
-  if (!s || s.savedOnly) return;
+  if (!s) return;
+  // Saved-only records (localStorage history) have no backend session — the
+  // ✕ on a [saved] tab previously did NOTHING (early return), leaving
+  // unremovable tabs. "Close" dismisses the record: tab + stored lines.
+  if (s.savedOnly) { removeSession(sid); return; }
   setStatus("closing…");
   try { await callTool("terminal_close", { session_id: sid }); } catch {}
   markClosed(sid);
   setStatus("");
+}
+
+/** Drop a session from the UI entirely (tab + container + storage). */
+function removeSession(sid) {
+  const s = sessions.get(sid);
+  if (!s) return;
+  sessions.delete(sid);
+  if (s.tab) s.tab.remove();
+  if (s.container) s.container.remove();
+  if (s.es) { try { s.es.close(); } catch {} }
+  try { localStorage.removeItem(`valePanel:${sid}`); } catch {}
+  // If the removed session was active, move focus to another live session
+  // (or back to the empty state) — otherwise the container shows nothing.
+  if (activeSid === sid) {
+    activeSid = null;
+    const next = [...sessions.values()].find((x) => !x.savedOnly && !x.closed)
+      || [...sessions.values()][0];
+    if (next) activate(next.sid);
+  }
+  refreshEmpty();
+  refreshStatusbar();
 }
 
 function activate(sid) {
@@ -314,6 +339,11 @@ function adoptSession(sid, label, idbRec = null) {
     fontFamily: 'monospace',
     disableStdin: false, // live sessions are writable — don't inherit the
                          // saved-session default of true
+    // Reflow the buffer when the viewport resizes: a session adopted while
+    // its container is hidden (display:none) opens at the default 80×24; when
+    // it is activated and fit() grows the viewport, WITHOUT this the text
+    // stays in the top-left — the "half screen" bug. xterm defaults it false.
+    reflowOnResize: true,
     theme: TERM_THEME,
   });
   const fit = new window.FitAddon.FitAddon();
@@ -918,6 +948,10 @@ function mkSavedSession(sid, rec) {
   const term = new window.Terminal({
     convertEol: true, disableStdin: true, scrollback: 20000, fontSize: 13,
     fontFamily: 'monospace',
+    // Same reflow as live sessions: saved records render at the default
+    // 80×24 in a hidden container; on activate the viewport grows and the
+    // buffer must reflow to fill the whole screen (not half).
+    reflowOnResize: true,
     theme: TERM_THEME,
   });
   const fit = new window.FitAddon.FitAddon();
