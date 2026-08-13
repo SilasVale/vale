@@ -43,7 +43,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .pill.connecting{background:var(--lane-or-soft);color:var(--lane-or)}
 
 .card{background:var(--surface-glass);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
-  border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;display:flex;flex-direction:column;gap:8px;
+  border:1px solid var(--border);border-radius:var(--radius-lg);padding:10px 12px;display:flex;flex-direction:column;gap:8px; /* glass card: 20px like other surfaces */
   box-shadow:var(--shadow)}
 .row{display:flex;justify-content:space-between;gap:8px}
 .label{color:var(--text2)}
