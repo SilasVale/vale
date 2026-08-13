@@ -667,8 +667,10 @@ async function handleGatewayImpl(request, env, url) {
   const qwenKey = ukeys.QWEN_API_KEY || null;
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
-  // spend (Free-plan quota exhaustion + surprise billing). KV is
-  // eventually-consistent (~1s) — fine for a limiter, same as the probe one.
+  // spend (Free-plan quota exhaustion + surprise billing). KV get-then-put
+  // has a TOCTOU (concurrent requests can overshoot by the concurrency), so
+  // the thresholds are set ~20% below the real budget — overshoot stays
+  // inside the actual cap.
   // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
   // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
   // the double-count that halved the effective budget for Claude Code turns.
@@ -679,11 +681,11 @@ async function handleGatewayImpl(request, env, url) {
       (async () => Number(await env.KEYS.get(minuteKey)) || 0)(),
       (async () => Number(await env.KEYS.get(dayKey)) || 0)(),
     ]);
-    if (minute >= 60) {
-      return jsonError(429, "Rate limit: 60 requests/minute per token", "rate_limit_error");
+    if (minute >= 48) {
+      return jsonError(429, "Rate limit: ~60 requests/minute per token", "rate_limit_error");
     }
-    if (day >= 5000) {
-      return jsonError(429, "Rate limit: 5000 requests/day per token", "rate_limit_error");
+    if (day >= 4000) {
+      return jsonError(429, "Rate limit: ~5000 requests/day per token", "rate_limit_error");
     }
     await Promise.all([
       env.KEYS.put(minuteKey, String(minute + 1), { expirationTtl: 120 }),
