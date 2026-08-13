@@ -35,20 +35,23 @@ pub struct SessionEvent {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// command/end only: wall-clock duration of the command in ms (round-58).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
 }
 
 impl SessionEvent {
     pub fn command_start(seq: u64, command: &str) -> Self {
-        Self { seq, ts: unix_now(), kind: "command/start".into(), command: Some(command.to_string()), text: None, exit_code: None, reason: None, status: None }
+        Self { seq, ts: unix_now(), kind: "command/start".into(), command: Some(command.to_string()), text: None, exit_code: None, reason: None, status: None, duration_ms: None }
     }
     pub fn output(seq: u64, text: String) -> Self {
-        Self { seq, ts: unix_now(), kind: "output".into(), command: None, text: Some(text), exit_code: None, reason: None, status: None }
+        Self { seq, ts: unix_now(), kind: "output".into(), command: None, text: Some(text), exit_code: None, reason: None, status: None, duration_ms: None }
     }
     pub fn command_end(seq: u64, exit_code: Option<i32>, reason: Option<&str>) -> Self {
-        Self { seq, ts: unix_now(), kind: "command/end".into(), command: None, text: None, exit_code, reason: reason.map(|s| s.to_string()), status: None }
+        Self { seq, ts: unix_now(), kind: "command/end".into(), command: None, text: None, exit_code, reason: reason.map(|s| s.to_string()), status: None, duration_ms: None }
     }
     pub fn status(seq: u64, status: &str) -> Self {
-        Self { seq, ts: unix_now(), kind: "status".into(), command: None, text: None, exit_code: None, reason: None, status: Some(status.to_string()) }
+        Self { seq, ts: unix_now(), kind: "status".into(), command: None, text: None, exit_code: None, reason: None, status: Some(status.to_string()), duration_ms: None }
     }
 }
 
@@ -163,8 +166,10 @@ impl SessionLogger {
         let text = if text.len() > 4096 { format!("{}…[truncated {} bytes]", &text[..4096], text.len() - 4096) } else { text };
         self.log(sid, SessionEvent::output(0, text));
     }
-    pub fn log_command_end(&self, sid: &str, exit_code: Option<i32>, reason: Option<&str>) {
-        self.log(sid, SessionEvent::command_end(0, exit_code, reason));
+    pub fn log_command_end(&self, sid: &str, exit_code: Option<i32>, reason: Option<&str>, duration_ms: Option<u64>) {
+        let mut ev = SessionEvent::command_end(0, exit_code, reason);
+        ev.duration_ms = duration_ms;
+        self.log(sid, ev);
     }
     pub fn log_status(&self, sid: &str, status: &str) {
         self.log(sid, SessionEvent::status(0, status));
@@ -265,7 +270,7 @@ impl SessionLogger {
             // the device as an orphan).
             if let Some(start) = last_start {
                 if last_end.map(|e| e < start).unwrap_or(true) {
-                    self.log_command_end(&sid, None, Some("interrupted"));
+                    self.log_command_end(&sid, None, Some("interrupted"), None);
                     affected.push(sid);
                 }
             }
@@ -290,7 +295,7 @@ mod tests {
         let logger = SessionLogger::new(dir.clone());
         logger.log_command_start("s1", "echo hi");
         logger.log_output("s1", "hi\n".to_string());
-        logger.log_command_end("s1", Some(0), Some("marker"));
+        logger.log_command_end("s1", Some(0), Some("marker"), None);
 
         let content = std::fs::read_to_string(dir.join("s1.jsonl")).unwrap();
         let lines: Vec<serde_json::Value> = content.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
@@ -328,7 +333,7 @@ mod tests {
         logger.log_output("s1", "running\n".to_string());
         // s1 has an open command; s2 completed normally.
         logger.log_command_start("s2", "done");
-        logger.log_command_end("s2", Some(0), Some("marker"));
+        logger.log_command_end("s2", Some(0), Some("marker"), None);
 
         // BufWriter (round-58): recovery replays DISK state — flush buffered
         // output first so seq-seeding sees the full stream.
@@ -352,7 +357,7 @@ mod tests {
         let dir = temp_dir("multi");
         let logger = SessionLogger::new(dir.clone());
         logger.log_command_start("s1", "a");
-        logger.log_command_end("s1", Some(0), Some("marker"));
+        logger.log_command_end("s1", Some(0), Some("marker"), None);
         logger.log_command_start("s1", "b");
         assert_eq!(logger.recover_interrupted(), vec!["s1"]);
     }

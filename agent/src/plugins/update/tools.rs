@@ -276,3 +276,29 @@ pub fn agent_update() -> ToolDef {
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_parsing_handles_missing_pieces() {
+        assert_eq!(parse_version("0.9"), vec![0, 9]);
+        assert_eq!(parse_version("1.0.72"), vec![1, 0, 72]);
+        assert_eq!(parse_version(""), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn newer_compares_part_by_part() {
+        assert!(newer("1.0.73", "1.0.72"));
+        assert!(newer("1.1.0", "1.0.99"));
+        assert!(!newer("1.0.72", "1.0.72"));
+        assert!(!newer("0.9.9", "1.0.0"));
+    }
+
+    #[test]
+    fn hex_encode_lowercase_padded() {
+        assert_eq!(hex_encode(&[0x00, 0xab, 0xff]), "00abff");
+        assert_eq!(hex_encode(b""), "");
+    }
+}
