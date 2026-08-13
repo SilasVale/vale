@@ -233,7 +233,15 @@ fn tool_open(
                     // drop its spill file (round-60; the retained history
                     // entry carries the tail, the spill's head is unreachable
                     // once the session is gone).
-                    logger2.log_status(&sid_buf, "closed");
+                    // The PTY's natural exit code (round-60): distinguishes a
+                    // clean `exit` from a crash for the audit trail. SSH/serial
+                    // have no process → None, logged as plain closed.
+                    let exit_code = mgr2.term_exit_code(&sid_buf).await;
+                    if let Some(code) = exit_code {
+                        logger2.log_status(&sid_buf, &format!("exited:{code}"));
+                    } else {
+                        logger2.log_status(&sid_buf, "closed");
+                    }
                     logger2.close_session(&sid_buf);
                     remove_spill(&sid_buf);
                     // Backend-initiated death (SSH channel EOF, serial read
@@ -474,8 +482,8 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
     let logger = logger.clone();
     ToolDef::new(
         "terminal_execute",
-        "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Returns stdout, stderr, exit code (local) or accumulated terminal output (session) with wait_reason and exit_code.",
-        json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."}},"required":["command"]}),
+        "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Returns {kind, text, wait_reason, exit_code, truncated} (session) or {kind, text, truncated} (local). `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
+        json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."}},"required":["command"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let buf = buf.clone();
@@ -489,6 +497,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                 if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()) {
                     // ── Session-aware mode: write + wait for output ──
                     let sid = session_id.to_string();
+                    // Background mode (round-60): write the command and return
+                    // IMMEDIATELY — no wait loop, no busy lock. The caller
+                    // collects output via terminal_read with the returned
+                    // cursor, so long-running commands (builds, tail -f) don't
+                    // block an MCP call or trip the busy guard.
+                    let run_in_background = params.get("run_in_background").and_then(|v| v.as_bool()).unwrap_or(false);
                     // Absolute position of the first post-command byte.
                     // All tracking is byte-exact against the raw buffer, so
                     // UTF-8 lossy conversion and 1MB eviction can never
@@ -524,6 +538,20 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // dangling start that crash recovery reports as
                     // "interrupted" (round-55).
                     logger.log_command_start(&sid, &command);
+                    // Background mode: return immediately with the read cursor
+                    // so the caller can collect output incrementally. No wait
+                    // loop, no busy lock held (round-60).
+                    if run_in_background {
+                        let start = recover_guard(&buf)
+                            .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
+                        return Ok(json!({
+                            "kind": "session",
+                            "status": "running",
+                            "job": sid,
+                            "read_from": start,
+                            "hint": "collect output with terminal_read offset=read_from; command may still be running",
+                        }));
+                    }
                     // For the audit duration (round-58): wall-clock start.
                     let cmd_started = Instant::now();
 

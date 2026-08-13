@@ -162,6 +162,9 @@ pub trait TermBackend: Send + Sync {
     /// PTY kills its process group, SSH sends ^C to the remote shell, serial
     /// has no process concept and does nothing.
     fn terminate(&self);
+    /// Natural-exit code of the backend process, if it exited on its own
+    /// (PTY only; SSH/serial return None) (round-60).
+    fn exit_code(&self) -> Option<i32> { None }
 }
 
 #[cfg(feature = "terminal")]
@@ -458,6 +461,13 @@ mod desktop_impl {
             if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
                 s.busy = false;
             }
+        }
+
+        /// The backend's natural exit code (PTY only; None for SSH/serial or
+        /// a session that is still running) (round-60).
+        pub async fn term_exit_code(&self, sid: &str) -> Option<i32> {
+            let inner = self.inner.lock().await;
+            inner.sessions.iter().find(|s| s.id == sid).and_then(|s| s.backend.exit_code())
         }
 
         pub async fn term_list(&self) -> Vec<TermSessionInfo> {
