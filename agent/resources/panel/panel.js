@@ -1013,12 +1013,14 @@ async function init() {
       if (s && !s.closed && !s.savedOnly) target = activeSid;
     }
     if (!target) {
-      // Fall back to the most recently opened live session.
+      // Fall back to the most recently opened live session. Do NOT mutate
+      // activeSid here (round-53): re-pointing it without activate() leaves
+      // the UI showing the old tab while the heartbeat pings another — the
+      // visible tab and the pinged session diverge. The heartbeat alone
+      // keeps the newest live session alive; the UI switch stays with the
+      // user (click) or the new-session path.
       const live = [...sessions.values()].filter((x) => !x.closed && !x.savedOnly);
-      if (live.length) {
-        target = live[live.length - 1].sid;
-        activeSid = target; // re-point — the dead-active tab is gone
-      }
+      if (live.length) target = live[live.length - 1].sid;
     }
     if (target) {
       callTool("terminal_select", { session_id: target }).catch(() => {});

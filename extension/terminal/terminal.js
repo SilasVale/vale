@@ -672,11 +672,11 @@ async function init() {
       if (s && !s.closed && !s.savedOnly) target = activeSid;
     }
     if (!target) {
+      // Fall back to the newest live session WITHOUT mutating activeSid
+      // (round-53): re-pointing it without activate() desyncs the UI tab
+      // from the pinged session.
       const live = [...sessions.values()].filter((x) => !x.closed && !x.savedOnly);
-      if (live.length) {
-        target = live[live.length - 1].sid;
-        activeSid = target; // re-point — the dead-active tab is gone
-      }
+      if (live.length) target = live[live.length - 1].sid;
     }
     if (target) {
       callTool("terminal_select", { session_id: target }).catch(() => {});

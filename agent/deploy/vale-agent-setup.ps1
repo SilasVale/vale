@@ -165,7 +165,11 @@ if (-not (Test-Path $cfg)) {
 # tunnel (ingress 127.0.0.2:18080) or locally on the device. A 0.0.0.0 bind
 # exposed the whole API to the LAN and the /panel/ Host gate (which must
 # accept Host: dN.agent... for the tunnel) is spoofable — LAN RCE as SYSTEM.
-(Get-Content $cfg) -replace '^host: 0\.0\.0\.0$','host: 127.0.0.2' | Set-Content $cfg
+# Match the on-disk format EXACTLY: the embedded config.yaml writes
+# `host: "0.0.0.0"` (quoted), so the anchor must allow optional quotes —
+# the old `^host: 0\.0\.0\.0$` matched nothing and legacy devices stayed
+# bound to 0.0.0.0 after install (round-53).
+(Get-Content $cfg) -replace '^host: "?0\.0\.0\.0"?$','host: "127.0.0.2"' | Set-Content $cfg
 
 # 2. cloudflared
 Write-Host "`n[2/7] cloudflared"
