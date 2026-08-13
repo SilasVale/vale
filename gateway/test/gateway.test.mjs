@@ -358,19 +358,14 @@ test("ds passthrough: timeout → 502 single attempt, no retry (slow ≠ flaky)"
 
 // ── web_search on an og model ──────────────────────────────────
 
-test("og web_search: search via DeepSeek, answer via zen chat/completions", async () => {
+test("og web_search: forwarded to zen natively (no DeepSeek fallback)", async () => {
   const { env, token } = gwEnv();
   const calls = [];
   const res = await withFetch(async (url, init) => {
     calls.push(String(url));
-    if (calls.length === 1) {
-      assert.ok(String(url).includes("api.deepseek.com/anthropic"), "search must go through DeepSeek official");
-      return new Response(JSON.stringify({
-        type: "message",
-        content: [{ type: "web_search_tool_result", content: [{ title: "A", url: "https://a" }] }],
-        usage: { input_tokens: 10, output_tokens: 5 },
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    }
+    // The web_search tool rides through untouched — zen implements the
+    // Anthropic web_search server tool natively (verified 2026-08-13), so
+    // the gateway no longer intercepts and searches via DeepSeek.
     assert.equal(String(url), "https://opencode.ai/zen/go/v1/chat/completions");
     return new Response(JSON.stringify({ choices: [{ message: { content: "search answer" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
   }, () =>
@@ -381,7 +376,7 @@ test("og web_search: search via DeepSeek, answer via zen chat/completions", asyn
       messages: [{ role: "user", content: "query: what's new" }],
     }),
   );
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
   assert.equal(res.status, 200);
   const body = await res.json();
   const text = body.content.find((b) => b.type === "text");
