@@ -928,22 +928,15 @@ async function handleGatewayImpl(request, env, url) {
     } else {
       body = JSON.parse(rawText);
     }
-    const isWebSearch = (
-      (Array.isArray(body?.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
-      (body?.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
-    );
-    if (isWebSearch) {
-      if (!deepseekKey) {
-        return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
-      }
-      const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
-      if (body.stream) {
-        return new Response(toSSE(res), {
-          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
-        });
-      }
-      return jsonOk(res);
-    }
+    // Web search is handled NATIVELY by opencode zen (verified 2026-08-13:
+    // og/deepseek-v4-flash returns server_tool_use + web_search_tool_result +
+    // a text answer for a web_search_20250305 tool). The old DeepSeek-fallback
+    // interception (runWebSearch/ogWebSearchAnswer) is REMOVED — web_search
+    // requests flow through the passthrough/translate path untouched and zen
+    // performs the search itself. (The needsParse trigger above still parses
+    // the body when web_search is declared, so preprocessImages can run for
+    // mixed image+search requests; a pure search request parses once and is
+    // forwarded — no DeepSeek key required.)
 
     // ---- Gateway-side vision pre-processing ----
     // Text-only models (deepseek, minimax, ...) can't see images. When a request
@@ -1558,115 +1551,6 @@ async function describeImage(env, ukeys, source, visionModel) {
   try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
   return (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
 }
-
-/* ---------------- Gateway web search (og model answers, DeepSeek searches) ---------------- */
-
-/** Pull the search query out of the nested web-search request Claude Code sends. */
-function extractWebSearchQuery(messages) {
-  const last = [...(messages || [])].reverse().find((m) => m.role === "user");
-  let text = "";
-  if (last) {
-    if (typeof last.content === "string") text = last.content;
-    else text = (last.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ");
-  }
-  const m = text.match(/query:?\s*([\s\S]*)/i);
-  return (m ? m[1].trim() : text.trim()) || "latest news";
-}
-
-/**
- * Execute the search via DeepSeek official (its Anthropic endpoint implements
- * Anthropic's web_search server tool server-side), then have the requested og/
- * model answer from the results. Returns an Anthropic-format message whose content
- * carries the server_tool_use + web_search_tool_result blocks (so Claude Code's
- * parser sees real results) plus the og/ model's text answer.
- */
-async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey) {
-  const query = extractWebSearchQuery(body.messages);
-  const searchUrl = "https://api.deepseek.com/anthropic" + VERIFY_PATH;
-
-  let searchJson = {};
-  try {
-    const sr = await fetchWithTimeout(searchUrl, {
-      method: "POST",
-      headers: passthroughHeaders(deepseekKey),
-      body: JSON.stringify({
-        model: "deepseek-v4-flash",
-        max_tokens: 500,
-        tools: [{ name: "web_search", type: "web_search_20250305" }],
-        tool_choice: { type: "tool", name: "web_search" },
-        messages: [{ role: "user", content: query }],
-      }),
-    }, upstreamTimeoutMs(env));
-    if (sr.ok) searchJson = await sr.json();
-  } catch {}
-
-  const serverToolUses = (searchJson.content || []).filter((b) => b.type === "server_tool_use");
-  const resultBlocks = (searchJson.content || []).filter((b) => b.type === "web_search_tool_result");
-
-  let answer = await ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks);
-  if (!answer) {
-    // Fall back to DeepSeek's own summary if the og/ model didn't produce one.
-    answer = (searchJson.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-  }
-
-  return {
-    id: crypto.randomUUID(),
-    type: "message",
-    role: "assistant",
-    model: body.model,
-    content: [...serverToolUses, ...resultBlocks, { type: "text", text: answer }],
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: {
-      input_tokens: searchJson.usage?.input_tokens || 0,
-      output_tokens: (searchJson.usage?.output_tokens || 0) + Math.ceil(answer.length / 4),
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-      server_tool_use: { web_search_requests: serverToolUses.length },
-    },
-  };
-}
-
-/** Ask the requested og/ model to answer the query from the search result titles/URLs. */
-async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks) {
-  if (!opencodeGoKey) return "";
-  const resultsText = resultBlocks
-    .map((rb) => (rb.content || []).map((r) => `- ${r.title}\n  ${r.url}`).join("\n"))
-    .join("\n");
-  const req = {
-    model: upstreamModel,
-    max_tokens: 500,
-    messages: [{
-      role: "user",
-      content: `用户查询：${query}\n\n以下是网络搜索结果：\n${resultsText || "(无结果)"}\n\n请根据这些搜索结果，用中文简要、准确地回答用户的问题。如果信息不足，请说明。`,
-    }],
-  };
-  try {
-    // Always the OpenAI-format endpoint: this sends an OpenAI body (toOpenAIRequest).
-    // For native-Anthropic og models the request route's upstream is now /v1/messages,
-    // which would reject an OpenAI body — so pin the chat/completions URL explicitly.
-    // NOTE: intentionally direct (not via US_PROXY) — web_search is a gateway
-    // background operation, not a user-routed request.
-    const resp = await fetchWithTimeout(OG_ZEN_CHAT, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
-    }, upstreamTimeoutMs(env));
-    if (!resp.ok) {
-      console.error(`ogWebSearchAnswer: zen ${resp.status}`);
-      return "";
-    }
-    const json = await resp.json();
-    const text = (json.choices?.[0]?.message?.content || "").trim();
-    if (!text) console.error("ogWebSearchAnswer: empty content from zen");
-    return text;
-  } catch (e) {
-    console.error("ogWebSearchAnswer error:", e.message);
-    return "";
-  }
-}
-
-
 
 /* ---------------- Public endpoints: health / vale-cli / installers ---------------- */
 
