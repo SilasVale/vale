@@ -32,6 +32,9 @@ const PAGES: &[(&str, PageSource)] = &[
     ("options-html", PageSource::Embedded(include_str!("../../../../extension/options/options.html"))),
     ("terminal-css", PageSource::Embedded(include_str!("../../../../extension/terminal/terminal.css"))),
     ("terminal-html", PageSource::Embedded(include_str!("../../../../extension/terminal/terminal.html"))),
+    ("terminal-js", PageSource::Embedded(include_str!("../../../../extension/terminal/terminal.js"))),
+    ("popup-js", PageSource::Embedded(include_str!("../../../../extension/popup/popup.js"))),
+    ("options-js", PageSource::Embedded(include_str!("../../../../extension/options/options.js"))),
 ];
 
 /// Max bytes returned per page — enough to see tokens/structure without
@@ -97,7 +100,7 @@ pub fn page_view() -> ToolDef {
          Pages: status (/), panel (/panel/), panel-js, panel-css, panel-html, \
          console (gateway page), console-css (gateway style.css), console-js, \
          download (download site), popup-css, popup-html, options-css, \
-         options-html, terminal-css, terminal-html, \
+         options-html, terminal-css, terminal-html, terminal-js, popup-js, options-js \
          Returns up to 64KB of source — read the CSS tokens (--accent, --bg, \
          radii, glass) and HTML structure to evaluate the design. Use target \
          '127.0.0.1:18080' (default) or a remote host.",
@@ -109,7 +112,7 @@ pub fn page_view() -> ToolDef {
                     "enum": ["status", "panel", "panel-js", "panel-css", "panel-html",
                              "console", "console-css", "console-js", "download",
                              "popup-css", "popup-html", "options-css", "options-html",
-                             "terminal-css", "terminal-html"],
+                             "terminal-css", "terminal-html", "terminal-js", "popup-js", "options-js"],
                     "description": "Which page to fetch."
                 },
                 "target": {
