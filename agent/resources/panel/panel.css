@@ -126,7 +126,9 @@ body {
   transition: all .15s ease;
 }
 #new-session:hover { background: var(--accent-ink); }
-#export-all {
+/* Ghost toolbar buttons (SSH / Serial / Export) — previously #new-ssh and
+   #new-serial were unstyled native buttons, visually breaking the toolbar. */
+#new-ssh, #new-serial, #export-all {
   background: var(--surface);
   color: var(--muted);
   border: 1px solid var(--line-strong);
@@ -136,7 +138,10 @@ body {
   font: inherit;
   transition: all .15s ease;
 }
-#export-all:hover { color: var(--ink); border-color: var(--faint); }
+#new-ssh:hover, #new-serial:hover, #export-all:hover {
+  color: var(--ink);
+  border-color: var(--faint);
+}
 /* ---------- session creation modal ---------- */
 #conn-modal {
   position: fixed; inset: 0; z-index: 50;
@@ -250,7 +255,7 @@ body {
 .empty-mark {
   display: inline-flex; align-items: center; justify-content: center;
   width: 56px; height: 56px;
-  border-radius: 14px;
+  border-radius: var(--radius-sm); /* brand mark radius: unified 10px across surfaces */
   background: var(--ink);
   color: #fff;
   font-weight: 700; font-size: 26px;

@@ -5,6 +5,8 @@
   --accent:#0e9384; --accent-ink:#0b7a6e; --accent-soft:#e7f5f2;
   --ink:#1d1d1f; --muted:#6e6e73; --faint:#86868b;
   --radius:14px; --radius-sm:10px; --radius-lg:20px;
+  --surface-glass:rgba(255,255,255,.72);
+  --shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
   --shadow-lg: 0 12px 32px rgba(0,0,0,0.12);
   --green:#2ea043;
   --font:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Inter,sans-serif;
@@ -16,14 +18,14 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);font-size:14px;line-height:1.5;background:var(--bg);color:var(--text);
   display:flex;justify-content:center;padding:48px 16px}
-.card{background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+.card{background:var(--surface-glass);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
   border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px 28px;
   width:100%;max-width:420px;display:flex;flex-direction:column;gap:10px;
   box-shadow:var(--shadow-lg)}
 h1{font-size:17px;font-weight:650;letter-spacing:-0.01em}
 label{color:var(--text2);font-size:13px}
 input{font-family:inherit;font-size:14px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:8px 12px;background:var(--card)}
-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(14,147,132,.18)}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(14,147,132,.14)}
 .hint{color:var(--text3);font-size:12px}
 .row{display:flex;align-items:center;gap:10px;margin-top:4px}
 button{font-family:inherit;font-size:14px;cursor:pointer;border:1px solid var(--accent);background:var(--accent);
