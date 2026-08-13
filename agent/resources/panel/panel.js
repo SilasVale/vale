@@ -68,18 +68,26 @@ function loadConfig() {
   // sends Access-Control-Allow-Origin: *, so a third-party page cannot read
   // it). A stored token is still honored when present (hostname + token from
   // a previous session).
-  const sameOrigin = location.pathname.startsWith("/panel");
+  // PROXY mode: served through the console at
+  // /api/devices/<name>/proxy/panel/?token=<pluginToken> (the browser
+  // extension's Terminal button). The gateway authenticates Bearer <plugin
+  // token> on every proxied API call, so the token comes from the URL query
+  // and hostname is the console's own domain. The sameOrigin gate previously
+  // only matched "/panel" and missed this pathname — the page fell into
+  // standalone mode, asked for credentials, and froze (SSE 404).
+  const sameOrigin = location.pathname.startsWith("/panel")
+    || /\/proxy\/panel/.test(location.pathname);
   if (sameOrigin) {
     hostname = location.host;
     hostInput.value = hostname;
     hostInput.disabled = true;
-    // The injected token is the device's CURRENT token — always prefer it
-    // over a localStorage one, which may be stale (an old device token or a
-    // previous manual entry) and would 401 every request.
+    // Token precedence: URL ?token= (proxy mode, extension-opened) >
+    // injected (agent-served) > localStorage (revisited session).
+    const urlToken = new URLSearchParams(location.search).get("token") || "";
     const injected = window.__PANEL_TOKEN__ || "";
     const stored = localStorage.getItem(LS_TOKEN) || "";
-    token = injected || stored;
-    if (injected && injected !== stored) {
+    token = urlToken || injected || stored;
+    if (!urlToken && injected && injected !== stored) {
       localStorage.setItem(LS_TOKEN, injected); // refresh the stale copy
     }
     if (token) {
@@ -258,10 +266,19 @@ async function closeSession(sid) {
   // ✕ on a [saved] tab previously did NOTHING (early return), leaving
   // unremovable tabs. "Close" dismisses the record: tab + stored lines.
   if (s.savedOnly) { removeSession(sid); return; }
+  // Already closed (backend gone) — the ✕ removes the UI remnants.
+  if (s.closed) { removeSession(sid); return; }
   setStatus("closing…");
-  try { await callTool("terminal_close", { session_id: sid }); } catch {}
-  markClosed(sid);
-  setStatus("");
+  try {
+    await callTool("terminal_close", { session_id: sid });
+    markClosed(sid);
+    setStatus("");
+  } catch (e) {
+    // A failed backend close must NOT mark the session closed — pollList
+    // would resurrect it and the tab flickers between [closed] and live
+    // forever (the "cannot close" bug). Surface the failure instead.
+    setStatus(`close failed: ${String(e && e.message || e)} — session still open`, true);
+  }
 }
 
 /** Drop a session from the UI entirely (tab + container + storage). */
@@ -641,7 +658,16 @@ async function syncSession(sid) {
       // hasn't covered yet — otherwise the same bytes render twice.
       const end = Number(r.end) || from;
       const covered = s.renderedBytes - from; // bytes SSE delivered in-flight
-      const text = covered > 0 ? r.text.slice(covered) : r.text;
+      // covered is a BYTE count but r.text is the server's UTF-8-decoded
+      // (lossy) string — slicing it by UTF-16 code units lands mid-character
+      // whenever an SSE frame crossed a multibyte boundary, dropping or
+      // corrupting CJK/emoji at the seam. Slice at the byte level instead:
+      // encode, skip covered bytes, decode.
+      let text = r.text;
+      if (covered > 0) {
+        const enc = new TextEncoder().encode(r.text);
+        text = new TextDecoder("utf-8").decode(enc.subarray(Math.min(covered, enc.length)));
+      }
       if (text) {
         s.term.write(text);
         s.renderedBytes = Math.max(s.renderedBytes, end);
@@ -919,6 +945,19 @@ async function init() {
   setInterval(pollEvents, POLL_EVENTS_MS);
   setInterval(pollList, POLL_LIST_MS);
   setInterval(syncAll, SYNC_MS);
+  // Client-liveness heartbeat: the backend's idle sweeper force-closes any
+  // session with no OUTPUT for 15 min (last_output only advances on data) —
+  // a watched-but-silent session (vim, `sleep 600`, a long quiet build) was
+  // killed while the user was looking at it. terminal_select touches the
+  // session's last_output, so pinging every live session every 30s keeps
+  // watched sessions alive (a genuinely disconnected client stops pinging
+  // and the sweeper still reaps it).
+  setInterval(() => {
+    for (const [sid, s] of sessions) {
+      if (s.closed || s.savedOnly) continue;
+      callTool("terminal_select", { session_id: sid }).catch(() => {});
+    }
+  }, 30000);
   window.addEventListener("pagehide", () => { for (const s of sessions.values()) flushSession(s); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") for (const s of sessions.values()) flushSession(s);
@@ -935,7 +974,10 @@ async function init() {
 let refitTimer = null;
 function refitAll() {
   for (const [sid, s] of sessions) {
-    if (s.term && !s.complete) {
+    // Fit EVERY session — saved-only records (complete=true) were skipped,
+    // so a [saved] terminal never reflowed on window resize and stayed at
+    // its initial grid (the "half screen" issue for history tabs).
+    if (s.term) {
       try { s.fit.fit(); } catch {}
     }
   }

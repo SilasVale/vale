@@ -17,6 +17,10 @@ const PAGE = (consoleUrl) => `<!doctype html>
 <link rel="icon" href="${FAVICON}">
 <style>
   :root {
+    /* Canonical Vale tokens (match panel.css / console style.css — the
+       previous block renamed --accent-ink→--accent-hover, --font→--sans,
+       --font-mono→--mono and held the shadow-lg value under --shadow, so
+       cross-surface token diffs misled designers). */
     --bg: #f5f5f7;
     --surface: #ffffff;
     --surface-glass: rgba(255,255,255,0.72);
@@ -26,23 +30,27 @@ const PAGE = (consoleUrl) => `<!doctype html>
     --muted: #6e6e73;
     --faint: #86868b;
     --accent: #0e9384;
-    --accent-hover: #0b7a6e;
+    --accent-ink: #0b7a6e;
+    --accent-soft: #e7f5f2;
+    --danger: #dc2626;
     --radius: 14px;
     --radius-sm: 10px;
-    --shadow: 0 12px 32px rgba(0,0,0,0.12);
-    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    --sans: -apple-system, "SF Pro Text", "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --radius-lg: 20px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-lg: 0 12px 32px rgba(0,0,0,0.12);
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --font: -apple-system, "SF Pro Text", "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { -webkit-text-size-adjust: 100%; }
-  body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--sans); min-height: 100vh; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font); min-height: 100vh; }
 
   .wrap { max-width: 760px; margin: 0 auto; padding: 56px 24px 44px; }
   .brand { display: flex; align-items: center; gap: 14px; }
   .brand .mark { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
-                 border-radius: 12px; background: #1d1d1f; color: #fff; font-size: 24px; font-weight: 700; }
+                 border-radius: var(--radius-sm); background: #1d1d1f; color: #fff; font-size: 24px; font-weight: 700; }
   .brand .name { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
-  .brand .tag { font: 12px/1 var(--mono); color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .brand .tag { font: 12px/1 var(--font-mono); color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
   .lede { color: var(--muted); margin-top: 12px; font-size: 14px; max-width: 640px; }
   .lede a { color: var(--accent); }
 
@@ -50,7 +58,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
   .install-btn { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff;
                  text-decoration: none; font-size: 14px; font-weight: 600; padding: 10px 18px; border-radius: var(--radius-sm);
                  transition: background .15s ease, transform .15s ease; }
-  .install-btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+  .install-btn:hover { background: var(--accent-ink); transform: translateY(-1px); }
   .install-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .install-note { color: var(--faint); font-size: 12px; }
 
@@ -60,11 +68,11 @@ const PAGE = (consoleUrl) => `<!doctype html>
           border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px 16px; }
   .step .n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
              color: #fff; display: flex; align-items: center; justify-content: center;
-             font: 700 13px/1 var(--sans); margin-top: 1px; }
+             font: 700 13px/1 var(--font); margin-top: 1px; }
   .step .body { color: var(--ink); font-size: 14px; }
-  .step code { font: 12px/1.5 var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+  .step code { font: 12px/1.5 var(--font-mono); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
 
-  .mono { font-family: var(--mono); }
+  .mono { font-family: var(--font-mono); }
 
   footer { max-width: 760px; margin: 0 auto; padding: 0 24px 44px; color: var(--faint); font-size: 12px;
            display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -109,7 +117,7 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
-          version: "1.0.34",
+          version: "1.0.35",
           download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }

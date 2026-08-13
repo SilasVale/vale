@@ -316,9 +316,16 @@ mod desktop_impl {
         }
 
         pub async fn term_select(&self, sid: &str) -> Result<(), DeviceError> {
-            // Headless/MCP has no notion of a focused session — validate existence only
-            let inner = self.inner.lock().await;
-            if inner.sessions.iter().any(|s| s.id == sid) {
+            // Client-liveness heartbeat: the panel pings every live session
+            // with terminal_select every 30s, and the idle sweeper (15 min
+            // without OUTPUT) must not kill a watched-but-silent session
+            // (vim, a long quiet build). Advancing last_output here keeps an
+            // actively-pinged session alive; a disconnected client stops
+            // pinging and the sweeper reaps it as intended. (Lock is already
+            // held — touch() would re-lock and deadlock.)
+            let mut inner = self.inner.lock().await;
+            if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
+                s.last_output = std::time::Instant::now();
                 Ok(())
             } else {
                 Err(DeviceError::Internal { message: format!("session not found: {sid}") })
