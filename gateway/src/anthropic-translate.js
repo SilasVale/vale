@@ -129,6 +129,39 @@ const STREAM_STOP_MAP = { stop: "end_turn", tool_calls: "tool_use", function_cal
  * stream. `upstreamBody` is a ReadableStream of OpenAI SSE (`data: {...}\n\n`,
  * terminated by `data: [DONE]`). Returns a ReadableStream emitting Anthropic SSE.
  */
+/**
+ * Wrap a passthrough SSE body with the idle watchdog (round-57): a relay
+ * that stops sending bytes WITHOUT closing the stream would hang the client
+ * forever (the old passthrough had no per-read timeout once headers landed).
+ * Any byte resets the 60s clock; a stall re-emits the torn-stream error so
+ * the client can retry. Returns a new ReadableStream.
+ */
+export function withIdleWatchdog(upstreamBody, idleMs = 60_000) {
+  const reader = upstreamBody.getReader();
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async pull(controller) {
+      let chunk;
+      try {
+        chunk = await Promise.race([
+          reader.read(),
+          new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error("stream idle"), { name: "IdleError" })), idleMs)),
+        ]);
+      } catch (e) {
+        if (e.name === "IdleError") {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream idle (no bytes for 60s)" } })}\n\n`));
+        }
+        controller.close();
+        return;
+      }
+      const { done, value } = chunk;
+      if (done) { controller.close(); return; }
+      controller.enqueue(value);
+    },
+    cancel() { reader.cancel().catch(() => {}); },
+  });
+}
+
 export function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
   const encoder = new TextEncoder();
   const encoderStream = new AnthropicStreamEncoder(clientModel, upstreamModel);
@@ -150,10 +183,26 @@ export function streamOgToAnthropic(upstreamBody, clientModel, upstreamModel) {
         // mid-stream (network drop, 5xx body cut) must end the Anthropic SSE
         // gracefully — close open blocks and emit message_stop instead of
         // leaving the client hanging on a torn stream.
+        // Idle watchdog (round-57, dsh idleWatchdog): a relay that stops
+        // sending bytes WITHOUT closing the stream would hang the request
+        // forever (the old code had no per-read timeout once headers
+        // landed). Any byte resets the 60s clock; a stall → error event.
         let chunk;
         try {
-          chunk = await reader.read();
+          chunk = await Promise.race([
+            reader.read(),
+            new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error("stream idle"), { name: "IdleError" })), 60_000)),
+          ]);
         } catch (e) {
+          if (e.name === "IdleError") {
+            if (buffer || encoderStream.started) {
+              controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream idle (no bytes for 60s)" } })}\n\n`));
+            }
+            const tail = encoderStream.finish(buffer);
+            if (tail) controller.enqueue(encoder.encode(tail));
+            controller.close();
+            return;
+          }
           // Mid-stream upstream death AFTER content was emitted must NOT be
           // fabricated into a clean completed message — emit an error event
           // so the client retries instead of showing an empty turn.

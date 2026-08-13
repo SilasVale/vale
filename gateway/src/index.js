@@ -36,7 +36,7 @@ import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, ses
 import { build101Response, deviceFetch } from "./device-fetch.js";
 import { handleMcp } from "./mcp.js";
 import { PluginHubDO } from "./plugin-hub.js";
-import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE } from "./anthropic-translate.js";
+import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, withIdleWatchdog, AnthropicStreamEncoder, sse, toSSE } from "./anthropic-translate.js";
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.js";
 import { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES } from "./body-scan.js";
 import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.js";
@@ -1094,7 +1094,9 @@ async function handleGatewayImpl(request, env, url, preReadText = null, ctx = { 
     if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
     headers.set("Access-Control-Allow-Origin", "*");
-    return new Response(upstream.body, { status: upstream.status, headers });
+    // Idle watchdog (round-57): the passthrough relays the body raw — a
+    // dead relay stream used to hang the client forever.
+    return new Response(withIdleWatchdog(upstream.body), { status: upstream.status, headers });
   }
 
   // Translation route (og, non-native models only): Anthropic → OpenAI → zen/go,
