@@ -205,20 +205,26 @@ Section "Install" SEC01
     ; the upgrade output looked like a failure when it was fine.
     nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
     nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgent /F 2>NUL'
-    ; Start the server HIDDEN, ASYNC: Exec on a console app (vale-agent.exe)
-    ; makes Windows create a visible black window that stays open forever,
-    ; and a PowerShell Start-Process with nested quotes is fragile through
-    ; nsExec (CreateProcess argv parsing). `cmd /c start "" /b` returns
-    ; immediately, spawns in the parent's (absent) console → NO window.
-    nsExec::ExecToLog 'cmd /c start "" /b "$INSTDIR\vale-agent.exe" "$INSTDIR\config.yaml"'
+    ; Start the server HIDDEN, ASYNC. Exec on a console app would create a
+    ; visible black window; `cmd /c start` expands %VAR% in the path (a % in
+    ; $INSTDIR corrupts the launch), so use PowerShell Start-Process with
+    ; SINGLE quotes around the path — PS does not expand % inside single
+    ; quotes and the argv has no nested double quotes to mangle.
+    nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath '\''$INSTDIR\vale-agent.exe'\'' -ArgumentList '\''$INSTDIR\config.yaml'\'' -WindowStyle Hidden"'
     ; Tray: keep the registered ValeAgentTray task (it carries the user
-    ; principal; a missing task falls back to starting the exe directly).
+    ; principal; a missing task OR a failing /Run falls back to starting the
+    ; exe directly — a disabled/stale-principal task must not leave the tray
+    ; dead after an upgrade).
     nsExec::ExecToLog 'cmd /c schtasks /Query /TN ValeAgentTray 2>NUL'
     Pop $0
     ${If} $0 != 0
-      nsExec::ExecToLog 'cmd /c start "" /b "$INSTDIR\vale-tray.exe"'
+      nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath '\''$INSTDIR\vale-tray.exe'\'' -WindowStyle Hidden"'
     ${Else}
       nsExec::ExecToLog 'cmd /c schtasks /Run /TN ValeAgentTray 2>NUL'
+      Pop $0
+      ${If} $0 != 0
+        nsExec::ExecToLog 'powershell -NoProfile -Command "Start-Process -FilePath '\''$INSTDIR\vale-tray.exe'\'' -WindowStyle Hidden"'
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 SectionEnd

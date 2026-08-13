@@ -1,6 +1,6 @@
 import { ensureTab, send } from "./cdp.js";
 import { ELEMENTS_SCRIPT } from "./elements.js";
-import { state } from "./state.js";
+import { state, setStateError } from "./state.js";
 
 // consoleOrigin is read async in background.js and injected into this module.
 export let CONSOLE_ORIGIN = "";
@@ -153,7 +153,7 @@ export async function runTool(tool, params) {
     case "browser_close": {
       await chrome.tabs.remove(tabId);
       delete state.controlledTabs[device];
-      state.error = null; // a stale detach error must not survive a clean close
+      setStateError(null); // a stale detach error must not survive a clean close
       return { closed: true };
     }
     default: throw new Error(`unknown browser tool: ${tool}`);
