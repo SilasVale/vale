@@ -131,11 +131,14 @@ body {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 6px 8px 8px;
+  /* Full-bleed like the panel: no padding — xterm's fit() measures the
+     container exactly; the viewport gets the radius + hairline border. */
+  padding: 0;
 }
 .term-session.active { display: block; }
 .term-session .xterm {
   height: 100%;
   border-radius: var(--radius);
   overflow: hidden;
+  border: 1px solid var(--line);
 }
