@@ -124,6 +124,7 @@ mod desktop_impl {
     struct TerminalInner {
         sessions: Vec<Session>,
         next_id: u32,
+        boot_prefix: String, // per-boot sid prefix (restart-safe ids)
     }
 
     #[derive(Clone)]
@@ -134,8 +135,18 @@ mod desktop_impl {
 
     impl TerminalManager {
         pub fn new(serial_pool: Arc<crate::tools::serial::SerialPool>) -> Self {
+            // Per-boot sid prefix: session ids were `term-{N}` from an
+            // in-memory counter, so after an agent restart the SAME ids were
+            // minted again — the panel's resurrection logic then matched the
+            // new sessions against OLD records and froze them (dedup on a
+            // reused sid). A random prefix makes every boot's ids unique.
+            let boot_prefix: String = {
+                let mut buf = [0u8; 3];
+                let _ = getrandom::getrandom(&mut buf);
+                buf.iter().map(|b| format!("{b:02x}")).collect()
+            };
             let mgr = Self {
-                inner: std::sync::Arc::new(tokio::sync::Mutex::new(TerminalInner { sessions: Vec::new(), next_id: 0 })),
+                inner: std::sync::Arc::new(tokio::sync::Mutex::new(TerminalInner { sessions: Vec::new(), next_id: 0, boot_prefix })),
                 serial_pool,
             };
             // Idle sweeper: force-close sessions that have been silent for the
@@ -180,7 +191,9 @@ mod desktop_impl {
         ) -> Result<(String, mpsc::Receiver<TermOutput>), DeviceError> {
             let id = {
                 let mut inner = self.inner.lock().await;
-                let id = format!("term-{}", inner.next_id);
+                // Unique across boots: the prefix rotates every restart, so a
+                // reused sid can never freeze the panel's resurrection logic.
+                let id = format!("term-{}-{}", inner.boot_prefix, inner.next_id);
                 inner.next_id += 1;
                 id
             };
