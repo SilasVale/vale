@@ -67,7 +67,7 @@ async function connectInner() {
   let originOk = false;
   try { originOk = new URL(consoleOrigin).protocol === "https:"; } catch {}
   if (!originOk) {
-    state.error = "consoleOrigin must be https:// — refusing to send the token";
+    setStateError("consoleOrigin must be https:// — refusing to send the token");
     scheduleReconnect();
     return;
   }
@@ -81,7 +81,7 @@ async function connectInner() {
     const j = await res.json().catch(() => ({}));
     if (!state.pairedDevice) return; // unpaired while fetching the ticket
     if (!j.ticket) {
-      state.error = `ws-ticket failed (${res.status}${j.error ? ": " + j.error : ""})`;
+      setStateError(`ws-ticket failed (${res.status}${j.error ? ": " + j.error : ""})`);
       scheduleReconnect();
       return;
     }
@@ -93,9 +93,7 @@ async function connectInner() {
     // completed" with "Failed to fetch" within seconds, and onopen would
     // then clear it (its guard only preserves /revoke failed/i) — the user
     // loses the one message that says the old credential is still live.
-    if (!state.error || !/revoke failed/i.test(state.error)) {
-      state.error = String(e);
-    }
+    setStateError(String(e));
     scheduleReconnect();
     return;
   }
@@ -133,7 +131,7 @@ async function connectInner() {
       try { sock.close(); } catch {}
     };
   } catch (e) {
-    state.error = String(e);
+    setStateError(String(e));
     scheduleReconnect();
   }
 }

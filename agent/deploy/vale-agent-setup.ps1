@@ -370,10 +370,10 @@ try {
     # from stopping, so sc delete alone can never remove it) and delete.
     # NOTE: `2>&1 | Out-Null` would still surface a NativeCommandError from
     # stderr under PS 5.1 — every benign-failure command here must use 2>$null
-    # (errors land on stderr and are then checked via $LASTEXITCODE). Even
-    # 2>$null can leak on sc.exe under EAP=Continue, so redirect to NUL
-    # (cmd-style) instead of $null — the file redirect is outside the PS
-    # error stream entirely.
+    # (errors land on stderr and are then checked via $LASTEXITCODE).
+    # NEVER use `2>NUL` here: in PS 5.1 that makes Out-File write a FILE named
+    # NUL ("要求 FileStream 打开一个不是文件的设备") and aborts the script —
+    # the round-38 interactive-install failure. 2>$null is the only safe form.
     & $cloudflared service uninstall 2>$null
     for ($i = 0; $i -lt 10; $i++) {
         sc.exe query Cloudflared 2>$null
