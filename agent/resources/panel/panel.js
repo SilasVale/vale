@@ -84,20 +84,23 @@ function loadConfig() {
     // PROXY mode: this page is served through the console at
     // /api/devices/<name>/proxy/panel/. The gateway authenticates every
     // proxied request with the PER-DEVICE vale_pt_<name> cookie (set on the
-    // bootstrap navigation; HttpOnly, so this JS cannot read it — but the
-    // cookie rides along on every same-origin fetch, so no Authorization
-    // header is needed). window.__PANEL_TOKEN__ here would be the DEVICE
-    // token (the agent injects it because the proxy strips the Host header)
-    // — sending it as Bearer would 401 (the gateway only accepts plugin
-    // tokens on /proxy/*). Never use it in proxy mode.
-    // Token precedence: URL ?token= (first navigation) > stored > injected
-    // (agent-served, non-proxy only). In proxy mode the cookie is the
-    // credential and ?token= is only present on the very first load.
+    // bootstrap navigation; HttpOnly — the cookie rides along on every
+    // same-origin fetch, so the panel needs NO JS-visible token here).
+    // window.__PANEL_TOKEN__ would be the DEVICE token (the agent injects
+    // it because the proxy strips the Host header) — sending it as Bearer
+    // would 401 (the gateway only accepts plugin tokens on /proxy/*), and
+    // a stale localStorage value from a previous console-origin visit is
+    // likewise a device token: ignore both in proxy mode.
     const isProxy = /\/proxy\/panel/.test(location.pathname);
     const urlToken = new URLSearchParams(location.search).get("token") || "";
     const injected = (isProxy ? "" : window.__PANEL_TOKEN__) || "";
+    // Token precedence (DIRECT mode): injected (agent-served, always fresh)
+    // > URL ?token= > stored (localStorage, may be stale after rotation).
+    // Proxy mode: urlToken on the first navigation only; the cookie is the
+    // credential and the panel boots with an EMPTY token (the gateway falls
+    // back to the cookie when no Authorization header is sent).
     const stored = localStorage.getItem(LS_TOKEN) || "";
-    token = urlToken || stored || injected;
+    token = isProxy ? (urlToken || "") : (injected || urlToken || stored);
     // A ?token= in the address bar is a live plugin token — strip it from
     // history/address bar so a later screenshot, tab restore or history sync
     // cannot leak device control. (The gateway only accepts ?token= on a
@@ -107,7 +110,18 @@ function loadConfig() {
         history.replaceState(null, "", location.pathname);
       } catch {}
     }
-    if (!urlToken && injected && injected !== stored) {
+    // Boot in proxy mode EVEN with no JS-visible token: the per-device
+    // cookie authenticates every request (the gateway's auth fallback).
+    // A dead-end "enter the device token" form here could never succeed —
+    // the gateway only accepts plugin tokens on /proxy/*.
+    if (isProxy) {
+      tokenInput.value = "";
+      connForm.classList.add("hidden");
+      panelMain.classList.remove("hidden");
+      if (!booted) { booted = true; init(); }
+      return true;
+    }
+    if (injected && injected !== stored) {
       localStorage.setItem(LS_TOKEN, injected); // refresh the stale copy
     }
     if (token) {
