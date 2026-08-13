@@ -12,7 +12,7 @@ use vale_agent_core::{recover_guard, AgentEvent, DeviceError, EventBus, ToolDef}
 use crate::plugins::{require_str, to_value_or_empty};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::{parse_serial_target, parse_ssh_target, TerminalManager};
-use super::{clean_terminal_output, DiagStore, OutputBuf, RetainedSession};
+use super::{clean_terminal_output, DiagStore, OutputBuf, RetainedSession, SessionBuf};
 
 pub(super) fn build(
     terminal_mgr: &Arc<TerminalManager>,
@@ -190,6 +190,10 @@ fn tool_open(
                         // re-delivered up to 524KB of already-read bytes.
                         if entry.data.len() > MAX_BUF_BYTES {
                             let remove = entry.data.len() - MAX_BUF_BYTES / 2;
+                            // Spill the evicted bytes BEFORE dropping them —
+                            // they are the only copy of the stream's head;
+                            // terminal_read merges spill + memory (round-54).
+                            append_spill(&sid_buf, &entry.data[..remove]);
                             entry.data.drain(..remove);
                             entry.dropped += remove as u64;
                         }
@@ -340,10 +344,60 @@ fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> 
     )
 }
 
+// ── Spill file (round-54, dsh OutputCollector) ─────────────────
+// The in-memory session buffer caps at 1 MB; evicted bytes were DROPPED —
+// a >1MB burst (build log, dd) made everything before the tail
+// unrecoverable. Evicted bytes now append to a per-session spill file
+// (%TEMP%/vale/<sid>.spill) and terminal_read merges spill + memory, so
+// the stream reads continuously from any absolute offset.
+
 /// Append the platform-appropriate line terminator to a command sent to a
 /// terminal session. Windows PowerShell only ends a command on CRLF (\r\n) — a
 /// bare \n leaves the shell in the multi-line continuation prompt (>>) and the
 /// command never runs. Unix shells accept a bare \n.
+pub fn append_command_newline(command: &str) -> String {
+    if command.ends_with('\n') || command.ends_with('\r') {
+        command.to_string()
+    } else if cfg!(target_os = "windows") {
+        format!("{command}\r\n")
+    } else {
+        format!("{command}\n")
+    }
+}
+
+fn spill_path(sid: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join("vale").join(format!("{sid}.spill"))
+}
+
+fn append_spill(sid: &str, bytes: &[u8]) {
+    use std::io::Write;
+    let p = spill_path(sid);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).append(true);
+    if p.exists() {
+        opts.create(true);
+    } else {
+        // Exclusive first creation: a pre-existing file could be a symlink
+        // planted by another local process — refuse to follow it.
+        opts.create_new(true);
+    }
+    if let Ok(mut f) = opts.open(&p) {
+        let _ = f.write_all(bytes);
+    }
+}
+
+/// Read absolute bytes [start, end) that live in the spill file (everything
+/// before the in-memory window). Best-effort: a missing file yields nothing.
+fn read_spill(sid: &str, start: usize, end: usize) -> Vec<u8> {
+    std::fs::read(spill_path(sid))
+        .map(|bytes| {
+            let s = start.min(bytes.len());
+            let e = end.min(bytes.len());
+            bytes[s..e].to_vec()
+        })
+        .unwrap_or_default()
+}
+
 /// Map a session kind to its close/death event (round-54): the same
 /// three-way mapping used to live in the drainer AND tool_close — a new
 /// session type added in only one place would emit the wrong event, and
@@ -353,16 +407,6 @@ fn close_event(kind: &str, sid: &str) -> AgentEvent {
         "ssh" => AgentEvent::SshDisconnect { session_id: sid.to_string() },
         "serial" => AgentEvent::SerialClose { port_id: sid.to_string() },
         _ => AgentEvent::TermClose { session_id: sid.to_string() },
-    }
-}
-
-pub fn append_command_newline(command: &str) -> String {
-    if command.ends_with('\n') || command.ends_with('\r') {
-        command.to_string()
-    } else if cfg!(target_os = "windows") {
-        format!("{command}\r\n")
-    } else {
-        format!("{command}\n")
     }
 }
 
@@ -684,24 +728,36 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
             let buf = buf.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
-                let (text, start, end, dropped) = {
+                let (text, start, end, dropped, spilled) = {
                     let mut store = recover_guard(&buf);
                     // Live session, or retained history (closed).
                     let explicit_offset = params.get("offset").is_some();
                     let offset = params.get("offset").and_then(|v| v.as_u64()).map(|o| o as usize);
                     let clean = params.get("clean").and_then(|v| v.as_bool()).unwrap_or(true);
+                    // Merge spill + memory so the stream reads continuously
+                    // from any absolute offset (round-54): bytes before the
+                    // eviction window live in the spill file.
+                    let merged = |entry: &SessionBuf, offset: usize| {
+                        let in_mem_start = entry.dropped as usize;
+                        let spilled = offset < in_mem_start;
+                        let mut raw = if spilled {
+                            read_spill(&session_id, offset, in_mem_start)
+                        } else {
+                            Vec::new()
+                        };
+                        let rel = offset.saturating_sub(in_mem_start).min(entry.data.len());
+                        raw.extend_from_slice(&entry.data[rel..]);
+                        let text = if clean {
+                            clean_terminal_output(&raw)
+                        } else {
+                            String::from_utf8_lossy(&raw).to_string()
+                        };
+                        (text, offset, entry.end_abs(), entry.dropped, spilled)
+                    };
                     match store.live.get_mut(&session_id) {
                         Some(entry) => {
                             let offset = offset.unwrap_or(entry.cursor);
-                            let rel = offset.saturating_sub(entry.dropped as usize).min(entry.data.len());
-                            let start = entry.dropped as usize + rel;
-                            let end = entry.end_abs();
-                            let raw = &entry.data[rel..];
-                            let text = if clean {
-                                clean_terminal_output(raw)
-                            } else {
-                                String::from_utf8_lossy(raw).to_string()
-                            };
+                            let r = merged(entry, offset);
                             // Advance cursor only when no explicit offset was given.
                             // Cursor is an ABSOLUTE stream offset (the read path
                             // consumes it as such at line 461) — storing the
@@ -710,23 +766,13 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                             if !explicit_offset {
                                 entry.cursor = entry.dropped as usize + entry.data.len();
                             }
-                            (text, start, end, entry.dropped)
+                            r
                         }
                         None => match store.history.get(&session_id) {
                             Some(h) => {
-                                let entry = &h.buf;
-                                let offset = offset.unwrap_or(entry.cursor);
-                                let rel = offset.saturating_sub(entry.dropped as usize).min(entry.data.len());
-                                let start = entry.dropped as usize + rel;
-                                let end = entry.end_abs();
-                                let raw = &entry.data[rel..];
-                                let text = if clean {
-                                    clean_terminal_output(raw)
-                                } else {
-                                    String::from_utf8_lossy(raw).to_string()
-                                };
+                                let offset = offset.unwrap_or(h.buf.cursor);
                                 // History reads never advance any cursor.
-                                (text, start, end, entry.dropped)
+                                merged(&h.buf, offset)
                             }
                             // Neither live nor history: the session was evicted
                             // by history caps, or never existed. Mark it so a
@@ -735,11 +781,14 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                         },
                     }
                 };
+                let mut out = json!({"text": text, "start": start, "end": end});
                 if dropped > 0 {
-                    Ok(json!({"text": text, "start": start, "end": end, "dropped": dropped}))
-                } else {
-                    Ok(json!({"text": text, "start": start, "end": end}))
+                    out["dropped"] = json!(dropped);
                 }
+                if spilled {
+                    out["spill"] = json!(spill_path(&session_id).to_string_lossy());
+                }
+                Ok(out)
             }
         },
     )
@@ -1049,11 +1098,36 @@ mod tests {
         let (tools, buf) = seeded_tools();
         // 10 bytes evicted from the front; data holds "hello world" (11 bytes).
         seed(&buf, "s1", b"hello world", 10);
-        // offset 6 absolute → rel = 6-10 clamped to 0 → start 10, text whole.
+        // No spill file (seed sets dropped directly) — the read starts at the
+        // requested offset and yields whatever the spill yields (nothing) +
+        // the in-memory window (round-54: the old clamp silently re-pointed
+        // the read to the in-memory window start).
+        let p = spill_path("s1");
+        let _ = std::fs::remove_file(&p);
         let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 6})).await;
         assert_eq!(out["text"], "hello world");
-        assert_eq!(out["start"], 10);
+        assert_eq!(out["start"], 6);
         assert_eq!(out["end"], 21);
+    }
+
+    #[tokio::test]
+    async fn read_merges_spill_and_memory() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"tail", 10); // 10 bytes evicted, memory holds "tail"
+        // Write the evicted head to the spill file the way the drainer does.
+        use std::io::Write;
+        let p = spill_path("s1");
+        let _ = std::fs::create_dir_all(p.parent().unwrap());
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(b"0123456789").unwrap();
+        // offset 6 → spill [6,10) = "6789" + memory "tail" = "6789tail";
+        // end_abs = dropped(10) + memory(4) = 14.
+        let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 6, "clean": false})).await;
+        assert_eq!(out["text"], "6789tail");
+        assert_eq!(out["start"], 6);
+        assert_eq!(out["end"], 14);
+        assert_eq!(out["spill"], p.to_string_lossy().as_ref());
+        let _ = std::fs::remove_file(&p);
     }
 
     #[tokio::test]
