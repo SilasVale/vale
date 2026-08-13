@@ -64,9 +64,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // but the user shouldn't think it's a fresh install.
     const needsRepair = !state.pairedDevice?.token
       && (await chrome.storage.local.get("valePlugin"))?.valePlugin?.device;
+    // pairedDeviceName: the device name survives in storage.local even after
+    // a browser restart clears the session token — the popup shows the
+    // paired card + Terminal (the 30-day cookie authenticates) instead of
+    // forcing a re-pair.
+    const pairedDeviceName = state.pairedDevice?.device
+      || (await chrome.storage.local.get("valePlugin"))?.valePlugin?.device;
     sendResponse({
       wsState: state.wsState,
       device: state.pairedDevice?.device,
+      pairedDeviceName,
       controlledTabs: Object.keys(state.controlledTabs),
       error: state.error,
       needsRepair: !!needsRepair,

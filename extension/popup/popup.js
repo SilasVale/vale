@@ -6,13 +6,19 @@ async function refresh() {
   const pill = $("wsState");
   pill.textContent = s.wsState;
   pill.className = `pill ${s.wsState}`;
-  if (s.device) {
+  // Show the paired card whenever we know the DEVICE — after a browser
+  // restart the session TOKEN is cleared (chrome.storage.session) but the
+  // device name persists; the Terminal button still works (the 30-day
+  // per-device cookie authenticates a tokenless navigation). Hiding the
+  // card on a missing token made the round-29 fix unreachable.
+  if (s.device || s.pairedDeviceName) {
     $("pairedCard").classList.remove("hidden");
     $("pairCard").classList.add("hidden");
-    $("device").textContent = s.device;
+    $("device").textContent = s.device || s.pairedDeviceName;
     $("tabCount").textContent = String(s.controlledTabs?.length || 0);
-    // Browser restart lost the session token — pairing must be redone (was
-    // a silent un-pair with no explanation).
+    // Browser restart lost the session token — show the re-pair hint but
+    // KEEP the paired card (the Terminal button still works via the 30-day
+    // cookie; the hint explains the lost session token).
     const repair = $("needsRepair");
     if (repair) repair.classList.toggle("hidden", !s.needsRepair);
   } else {
