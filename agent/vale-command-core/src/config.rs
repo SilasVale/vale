@@ -61,7 +61,15 @@ impl Default for ServerConfig {
         // 18080 is the canonical port everywhere else (config.yaml, tunnel
         // ingress, setup.ps1) — a config omitting `port:` previously bound
         // 3000 and the tunnel 502'd.
-        Self { host: "0.0.0.0".into(), port: 18080, name: "vale-agent".into(), device_token: None }
+        // Loopback bind: the server is only ever reached via the cloudflared
+        // tunnel (ingress 127.0.0.2:18080) or locally (browser on the device,
+        // page_view). Binding 0.0.0.0 exposed the whole API to the LAN, and
+        // the /panel/ Host gate (which must accept Host: <device>.agent... for
+        // the tunnel) is trivially spoofable with curl — a LAN client could
+        // read the injected __PANEL_TOKEN__ and get RCE as SYSTEM.
+        // 127.0.0.2 is cloudflared's canonical ingress for this tunnel;
+        // 127.0.0.1 covers localhost. Nothing else is reachable.
+        Self { host: "127.0.0.2".into(), port: 18080, name: "vale-agent".into(), device_token: None }
     }
 }
 

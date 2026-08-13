@@ -35,7 +35,7 @@ fn config_partial_loads_with_defaults() {
     let yaml = "server:\n  port: 4000\n";
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(config.server.port, 4000);
-    assert_eq!(config.server.host, "0.0.0.0"); // default
+    assert_eq!(config.server.host, "127.0.0.2"); // default (loopback — LAN-safe)
     assert_eq!(config.serial.default_baud_rate, 115200); // whole section defaulted
     assert_eq!(config.browser.page_load_timeout_secs, 30);
 }
