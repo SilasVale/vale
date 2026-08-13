@@ -3813,6 +3813,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "serialport",
+ "sha2 0.10.9",
  "tokio",
  "tokio-util",
  "tower",

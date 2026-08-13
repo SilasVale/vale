@@ -70,6 +70,12 @@ if ! grep -q "version: \"$VERSION\"" "$ROOT/index/src/index.js"; then
   echo "!! index/src/index.js version constant != agent/Cargo.toml ($VERSION) — bump index first"
   exit 1
 fi
+# The sha256 field must exist (agent_update verifies the installer against
+# it); its value is regenerated below after makensis produces the exe.
+if ! grep -q 'sha256: "' "$ROOT/index/src/index.js"; then
+  echo "!! index/src/index.js sha256 field missing — add it (agent verifies installer integrity against it)"
+  exit 1
+fi
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
@@ -85,6 +91,14 @@ echo "=== building ValeAgent-Setup.exe (makensis) ==="
 (cd "$STAGE" && NSISDIR="$NSISDIR" "$MAKENSIS" vale-agent-install.nsi >/dev/null 2>&1) \
   || { echo "!! makensis failed"; exit 1; }
 echo "  ok: $STAGE/ValeAgent-Setup.exe"
+
+# Publish the installer's SHA-256 into the index worker's /api/version — the
+# agent's agent_update verifies the download against it before spawning.
+# (Deploy order in build.sh deploy: installer → index, so the hash is in the
+# worker before it ships.)
+SHA256="$(sha256sum "$STAGE/ValeAgent-Setup.exe" | cut -d' ' -f1)"
+sed -i "s/sha256: \"[0-9a-f]*\"/sha256: \"$SHA256\"/" "$ROOT/index/src/index.js"
+echo "  ok: sha256 $SHA256 → index/src/index.js"
 
 DEST="$ROOT/index/public/vale-agent"
 cp "$STAGE/ValeAgent-Setup.exe" "$DEST/ValeAgent-Setup.exe"

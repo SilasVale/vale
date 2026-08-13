@@ -1,11 +1,21 @@
 //! Tool builders for the update plugin.
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 #[cfg(windows)]
 use std::process::Command;
 
 use vale_agent_core::{DeviceError, ToolDef};
+
+/// Lowercase hex encoding (sha256 digest display/comparison).
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
 
 /// Release info endpoint — must match index/src/index.js VERSION.
 const VERSION_URL: &str = "https://agent.saisi.online/api/version";
@@ -94,6 +104,11 @@ pub fn agent_update() -> ToolDef {
                 .map_err(|e| DeviceError::Internal { message: format!("bad version response: {e}") })?;
             let remote = j.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let download = j.get("download").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            // Integrity anchor: the sha256 of ValeAgent-Setup.exe, published
+            // by the release server and verified against the downloaded bytes
+            // BEFORE spawn (round-54 — the installer is AI-triggerable code
+            // execution at SYSTEM; trust cannot rest on the transport alone).
+            let expected_sha256 = j.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
             if remote.is_empty() || download.is_empty() {
                 return Err(DeviceError::Internal {
                     message: "release server returned no version/download".to_string(),
@@ -123,23 +138,40 @@ pub fn agent_update() -> ToolDef {
                 .join("ValeAgent")
                 .join("update-busy");
             // Same 60-min staleness rule as the tray: a crashed update's
-            // marker must not block forever.
-            let stale = std::fs::metadata(&busy)
+            // marker must not block forever. The marker is acquired
+            // ATOMICALLY (create_new) — the old exists()+write check-then-act
+            // let two concurrent agent_update calls both pass the check and
+            // write the same installer file (round-54).
+            let stale_of = || std::fs::metadata(&busy)
                 .and_then(|m| m.modified())
                 .ok()
                 .and_then(|t| t.elapsed().ok())
                 .map(|age| age.as_secs() > 3600)
                 .unwrap_or(false);
-            if busy.exists() && !stale {
-                return Err(DeviceError::Internal {
-                    message: "another update is already in progress".to_string(),
-                });
-            }
-            // Acquire the marker ourselves (with the staleness rule above).
             if let Some(parent) = busy.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let _ = std::fs::write(&busy, b"agent_update");
+            let mut reclaimed = false;
+            loop {
+                match std::fs::OpenOptions::new().write(true).create_new(true).open(&busy) {
+                    Ok(_) => break, // marker acquired
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        // Reclaim a stale (crashed) marker ONCE; a reclaim
+                        // that fails (locked/denied) must not spin forever.
+                        if !reclaimed && stale_of() {
+                            let _ = std::fs::remove_file(&busy);
+                            reclaimed = true;
+                            continue;
+                        }
+                        return Err(DeviceError::Internal {
+                            message: "another update is already in progress".to_string(),
+                        });
+                    }
+                    Err(e) => return Err(DeviceError::Internal {
+                        message: format!("update busy marker: {e}"),
+                    }),
+                }
+            }
 
             // 3. Download the installer next to this exe (300s: a slow release
             //    server / bandwidth-limited device shouldn't fail a real update,
@@ -157,6 +189,22 @@ pub fn agent_update() -> ToolDef {
                 .bytes()
                 .await
                 .map_err(|e| DeviceError::Internal { message: format!("download failed: {e}") })?;
+            // Integrity check BEFORE it touches disk or spawns: the download
+            // must match the hash the release server published. HTML-polluted
+            // 404 pages and truncated transfers both landed on devices as
+            // ValeAgent-Setup.exe before; a poisoned/corrupt file is deleted
+            // and the call fails loudly instead of running (round-54).
+            if !expected_sha256.is_empty() {
+                let actual = hex_encode(&Sha256::digest(&bytes));
+                if actual != expected_sha256 {
+                    let _ = std::fs::remove_file(&busy);
+                    return Err(DeviceError::Internal {
+                        message: format!(
+                            "installer integrity check failed (sha256 {actual} != published {expected_sha256})"
+                        ),
+                    });
+                }
+            }
             // A failed write (e.g. the installer is locked by AV scanning or a
             // previous run) must NOT leave the busy marker — the caller's
             // retry loop then bounces off "already in progress" for up to an
