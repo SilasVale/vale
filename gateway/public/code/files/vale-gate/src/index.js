@@ -1225,12 +1225,12 @@ function rewriteDeviceBody(text, name) {
     const re = new RegExp(`(["'\`}])(?!${already})${escaped}`, "g");
     out = out.replace(re, `$1${prefix}${p}`);
   }
-  // Strip the agent's injected device token from the proxied HTML: on an
-  // F5/reload the panel would otherwise fall through to window.__PANEL_TOKEN__
-  // (the DEVICE token) and send it as the Authorization header — the gateway
-  // only accepts plugin tokens on /proxy/*, so it 401'd into the "check
-  // token" dead end. The plugin token lives in the per-device cookie instead.
-  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*"[^"]*"/g, "window.__PANEL_TOKEN__=\"\"");
+  // NOTE: window.__PANEL_TOKEN__ is intentionally left INTACT in proxied
+  // HTML. Direct same-origin mode and the admin-session proxy flow both need
+  // it (the admin flow has no plugin token); panel.js ignores it in proxy
+  // mode (an extension F5 relies on the per-device cookie instead), so
+  // leaving it is safe — the gateway never accepts the device token on
+  // /proxy/*, and the panel never sends it there.
   return out;
 }
 

@@ -119,6 +119,12 @@ function loadConfig() {
       connForm.classList.add("hidden");
       panelMain.classList.remove("hidden");
       if (!booted) { booted = true; init(); }
+      // The gateway may 401 if the per-device cookie died (expired/evicted)
+      // — the panel then shows the impossible "unauthorized" form. Re-open
+      // the terminal via the extension (which re-pins the cookie).
+      // (A typed device token would SHADOW the cookie in the gateway's
+      // auth || qToken || cookie chain — never send it in proxy mode.)
+      token = "";
       return true;
     }
     if (injected && injected !== stored) {

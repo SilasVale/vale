@@ -8,6 +8,7 @@
   --surface-glass:rgba(255,255,255,.72);
   --shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);
   --danger:#dc2626; --danger-soft:#fef2f2;
+  --lane-or:#d97706; --lane-or-soft:rgba(217,119,6,.08); /* warn amber (console --lane-or) */
   --red:var(--danger); --red-bg:var(--danger-soft);
   --font:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",Inter,sans-serif;
   --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;
@@ -35,11 +36,11 @@ input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(14
 header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .logo{display:flex;align-items:center;gap:7px;font-weight:600;font-size:13px}
 .logo .mark{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;
-  border-radius:6px;background:#1d1d1f;color:#fff;font-weight:700;font-size:11px;line-height:1} /* 18px mark: radius must be < half-side for a rounded square */
+  border-radius:6px;background:#1d1d1f;color:#fff;font-weight:700;font-size:11px;line-height:1} /* 18px mark: 6px < half-side keeps a rounded square (10px would cap to a circle) */
 .pill{font-size:11px;font-weight:600;border-radius:99px;padding:2px 8px;background:var(--accent-bg);color:var(--accent)}
 .pill.connected{background:var(--accent-bg);color:var(--accent)}
 .pill.disconnected{background:var(--red-bg);color:var(--red)}
-.pill.connecting{background:rgba(217,119,6,.08);color:#d97706}
+.pill.connecting{background:var(--lane-or-soft);color:var(--lane-or)}
 
 .card{background:var(--surface-glass);backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
   border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;display:flex;flex-direction:column;gap:8px;
