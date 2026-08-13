@@ -28,14 +28,23 @@ const LS_TOKEN = "valePanelToken";
 // design spec ("xterm 白底墨字保留", docs/superpowers/specs/2026-08-11-
 // apple-style-unification-design.md). A dark block on the light panel was a
 // spec deviation introduced in a later commit; revert to the confirmed theme.
+//
+// The bright palette (8-15) MUST be set: xterm draws bold text with index<8
+// at index+8 (drawBoldTextInBrightColors default true) and falls back to the
+// dark Tango bright colors when they are unset — bright green #8ae234 etc.
+// are nearly invisible on white (1.2-1.6:1 contrast).
 const TERM_THEME = {
   background: "#ffffff",
   foreground: "#1d1d1f",
   cursor: "#0e9384",
   cursorAccent: "#ffffff",
   selectionBackground: "rgba(14,147,132,.2)",
-  black: "#1d1d1f", red: "#d64545", green: "#1a7f37", yellow: "#9a6700",
-  blue: "#0b5394", magenta: "#8250df", cyan: "#0e9384", white: "#6e6e73",
+  black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",
+  blue: "#1d4ed8", magenta: "#7c3aed", cyan: "#0f766e", white: "#44403c",
+  // Brights tuned for white bg: >=4.5:1 (WCAG AA) against #ffffff.
+  brightBlack: "#4b5563", brightRed: "#dc2626", brightGreen: "#16a34a",
+  brightYellow: "#a16207", brightBlue: "#2563eb", brightMagenta: "#9333ea",
+  brightCyan: "#0e9384", brightWhite: "#6e6e73",
 };
 
 const $ = (id) => document.getElementById(id);
