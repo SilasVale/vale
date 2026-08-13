@@ -47,6 +47,11 @@ serde_yaml = "0.9"
 # cross-compile pure-Rust — native-tls pulls Windows schannel and breaks xwin.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
+# Installer integrity check (agent_update): the release server publishes the
+# SHA-256 of ValeAgent-Setup.exe; the agent verifies the download before
+# spawning it (an AI-triggerable RCE path must not trust the transport alone).
+sha2 = "0.10"
+
 # Windows-only: lets the headless binary register itself as the `ValeCommand`
 # Windows service (SCM protocol). Ignored entirely on Linux/macOS builds.
 [target.'cfg(windows)'.dependencies]

@@ -115,11 +115,16 @@ export default {
   async fetch(request, env) {
     // Version endpoint for the vale-tray "check for updates" menu item.
     // Bump VERSION alongside agent/Cargo.toml when a new installer is shipped.
+    // sha256: the agent's agent_update tool verifies the downloaded installer
+    // against this hash before spawning it (integrity anchor for an
+    // AI-triggerable RCE path). Re-generated automatically by
+    // scripts/build-installer.sh — do not edit by hand.
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
           version: "1.0.72",
           download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
+          sha256: "sha256-placeholder",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
