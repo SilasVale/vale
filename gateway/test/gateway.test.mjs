@@ -358,16 +358,23 @@ test("ds passthrough: timeout → 502 single attempt, no retry (slow ≠ flaky)"
 
 // ── web_search on an og model ──────────────────────────────────
 
-test("og web_search: forwarded to zen natively (no DeepSeek fallback)", async () => {
+test("og web_search: forced to deepseek-v4-flash native (translate models can't search)", async () => {
   const { env, token } = gwEnv();
   const calls = [];
   const res = await withFetch(async (url, init) => {
     calls.push(String(url));
-    // The web_search tool rides through untouched — zen implements the
-    // Anthropic web_search server tool natively (verified 2026-08-13), so
-    // the gateway no longer intercepts and searches via DeepSeek.
-    assert.equal(String(url), "https://opencode.ai/zen/go/v1/chat/completions");
-    return new Response(JSON.stringify({ choices: [{ message: { content: "search answer" }, finish_reason: "stop" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    // A web_search request on ANY og model is forced to the native
+    // /v1/messages passthrough with model=deepseek-v4-flash — the only model
+    // zen implements web_search for (verified 2026-08-13).
+    assert.equal(String(url), "https://opencode.ai/zen/go/v1/messages");
+    const sent = JSON.parse(String(init.body));
+    assert.equal(sent.model, "deepseek-v4-flash");
+    return new Response(JSON.stringify({
+      type: "message",
+      content: [{ type: "server_tool_use", name: "web_search", input: { query: "what's new" } },
+                { type: "text", text: "search answer" }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
   }, () =>
     post(env, token, {
       model: "og/mimo-v2.5", max_tokens: 100, stream: false,

@@ -892,13 +892,33 @@ async function handleGatewayImpl(request, env, url) {
       // property named "messages" inside the tools array cannot truncate it
       // (round-42 Medium: the first-"messages" anchor cut the region off).
       const toolsStart = rawText.indexOf('"tools":[');
-      const toolsRegion = toolsStart >= 0
-        ? rawText.slice(toolsStart, rawText.indexOf('"messages"', toolsStart))
-        : "";
+      // Bound the region at the tools array's CLOSING bracket — searching for
+      // the next '"messages"' still truncates at a tool schema property named
+      // "messages" (round-43 Medium), cutting off a later web_search
+      // declaration. A naive bracket count is fine: tool schemas may nest
+      // braces, so scan depth-aware from the opening '['.
+      let toolsRegion = "";
+      if (toolsStart >= 0) {
+        let depth = 0;
+        let end = -1;
+        for (let i = toolsStart + 8; i < rawText.length; i++) {
+          const ch = rawText[i];
+          if (ch === '[' || ch === '{') depth++;
+          else if (ch === ']' || ch === '}') { depth--; if (depth < 0) { end = i; break; } }
+        }
+        toolsRegion = end > 0 ? rawText.slice(toolsStart, end + 1) : "";
+      }
       const lastUserStart = rawText.lastIndexOf('"role":"user"');
       const lastUserMsg = lastUserStart >= 0 ? rawText.slice(lastUserStart) : rawText;
+      // Parse if the LAST user message has a NEW image (needs describing) OR
+      // any HISTORY image exists (needs the placeholder swap — a text-only
+      // follow-up asking about a turn-1 screenshot must still get the
+      // described context, not the raw base64). Both cases parse ONCE; the
+      // vision call only fires for the last message's image (preprocessImages
+      // swaps history images to placeholders without calling vision).
       const needsParse =
         /"type"\s*:\s*"image"/.test(lastUserMsg) ||
+        /"type"\s*:\s*"image"/.test(rawText) ||
         /"web_search"/.test(toolsRegion);
       if (!needsParse) {
         body = null;
@@ -908,22 +928,15 @@ async function handleGatewayImpl(request, env, url) {
     } else {
       body = JSON.parse(rawText);
     }
-    const isWebSearch = (
-      (Array.isArray(body?.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
-      (body?.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
-    );
-    if (isWebSearch) {
-      if (!deepseekKey) {
-        return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
-      }
-      const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
-      if (body.stream) {
-        return new Response(toSSE(res), {
-          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
-        });
-      }
-      return jsonOk(res);
-    }
+    // Web search is handled NATIVELY by opencode zen (verified 2026-08-13:
+    // og/deepseek-v4-flash returns server_tool_use + web_search_tool_result +
+    // a text answer for a web_search_20250305 tool). The old DeepSeek-fallback
+    // interception (runWebSearch/ogWebSearchAnswer) is REMOVED — web_search
+    // requests flow through the passthrough/translate path untouched and zen
+    // performs the search itself. (The needsParse trigger above still parses
+    // the body when web_search is declared, so preprocessImages can run for
+    // mixed image+search requests; a pure search request parses once and is
+    // forwarded — no DeepSeek key required.)
 
     // ---- Gateway-side vision pre-processing ----
     // Text-only models (deepseek, minimax, ...) can't see images. When a request
@@ -1449,6 +1462,14 @@ async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
   const visionModel = env.VISION_MODEL || "og/mimo-v2.5";
   let changed = false;
   const out = [];
+  // Every image block gets a REAL description (round-43's placeholder carried
+  // no content — a turn-2 follow-up about a turn-1 screenshot was answered
+  // blind because the description existed only in the forwarded body, never
+  // in the client transcript). describeImage has a KV cache (keyed by the
+  // base64 data hash), so re-sent history images hit the cache — no vision
+  // call, no extra cost. Image conversations parse every turn (they must, to
+  // swap history images for their cached descriptions) — acceptable: image
+  // sessions are rare and the 1102 risk is bounded to them.
   for (const m of messages) {
     if (m.role !== "user" || typeof m.content !== "object" || !Array.isArray(m.content)) {
       out.push(m);
@@ -1473,10 +1494,36 @@ async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
   return { messages: out, changed };
 }
 
+/** Cheap hex hash (FNV-1a) for the image description cache key. */
+function hashHex(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
 async function describeImage(env, ukeys, source, visionModel) {
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
   if (!data) return "(图片数据为空)";
+  // KV description cache: the client re-sends the same base64 image every
+  // turn, so a per-image cache turns N vision calls per follow-up into 1.
+  // Keyed by a short hash of the payload (hex, no special chars).
+  // User-scoped cache key (the shared KEYS namespace must never serve one
+  // user's image content to another — round-45 Medium #1). hashHex is 32-bit,
+  // so use TWO independent FNV passes for ~64 bits of key space (no .slice
+  // illusion — the old slice(0,24) was a no-op on an 8-char hex).
+  const h1 = hashHex(data);
+  const h2 = hashHex(visionModel + ":" + data);
+  const cacheKey = data.length > 16 ? `img-desc:${h1}${h2}` : "";
+  if (cacheKey && env.KEYS) {
+    try {
+      const hit = await env.KEYS.get(cacheKey);
+      if (hit) return hit;
+    } catch {}
+  }
   const prefix = visionModel.split("/")[0];
   const route = pickRoute(prefix, env);
   const upstreamModel = stripBracket(route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel);
@@ -1524,117 +1571,12 @@ async function describeImage(env, ukeys, source, visionModel) {
   if (!resp.ok) return `(图片描述失败：${resp.status})`;
   let json;
   try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
-  return (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
-}
-
-/* ---------------- Gateway web search (og model answers, DeepSeek searches) ---------------- */
-
-/** Pull the search query out of the nested web-search request Claude Code sends. */
-function extractWebSearchQuery(messages) {
-  const last = [...(messages || [])].reverse().find((m) => m.role === "user");
-  let text = "";
-  if (last) {
-    if (typeof last.content === "string") text = last.content;
-    else text = (last.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ");
+  const desc = (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
+  if (cacheKey && env.KEYS) {
+    try { await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 }); } catch {}
   }
-  const m = text.match(/query:?\s*([\s\S]*)/i);
-  return (m ? m[1].trim() : text.trim()) || "latest news";
+  return desc;
 }
-
-/**
- * Execute the search via DeepSeek official (its Anthropic endpoint implements
- * Anthropic's web_search server tool server-side), then have the requested og/
- * model answer from the results. Returns an Anthropic-format message whose content
- * carries the server_tool_use + web_search_tool_result blocks (so Claude Code's
- * parser sees real results) plus the og/ model's text answer.
- */
-async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey) {
-  const query = extractWebSearchQuery(body.messages);
-  const searchUrl = "https://api.deepseek.com/anthropic" + VERIFY_PATH;
-
-  let searchJson = {};
-  try {
-    const sr = await fetchWithTimeout(searchUrl, {
-      method: "POST",
-      headers: passthroughHeaders(deepseekKey),
-      body: JSON.stringify({
-        model: "deepseek-v4-flash",
-        max_tokens: 500,
-        tools: [{ name: "web_search", type: "web_search_20250305" }],
-        tool_choice: { type: "tool", name: "web_search" },
-        messages: [{ role: "user", content: query }],
-      }),
-    }, upstreamTimeoutMs(env));
-    if (sr.ok) searchJson = await sr.json();
-  } catch {}
-
-  const serverToolUses = (searchJson.content || []).filter((b) => b.type === "server_tool_use");
-  const resultBlocks = (searchJson.content || []).filter((b) => b.type === "web_search_tool_result");
-
-  let answer = await ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks);
-  if (!answer) {
-    // Fall back to DeepSeek's own summary if the og/ model didn't produce one.
-    answer = (searchJson.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-  }
-
-  return {
-    id: crypto.randomUUID(),
-    type: "message",
-    role: "assistant",
-    model: body.model,
-    content: [...serverToolUses, ...resultBlocks, { type: "text", text: answer }],
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: {
-      input_tokens: searchJson.usage?.input_tokens || 0,
-      output_tokens: (searchJson.usage?.output_tokens || 0) + Math.ceil(answer.length / 4),
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-      server_tool_use: { web_search_requests: serverToolUses.length },
-    },
-  };
-}
-
-/** Ask the requested og/ model to answer the query from the search result titles/URLs. */
-async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks) {
-  if (!opencodeGoKey) return "";
-  const resultsText = resultBlocks
-    .map((rb) => (rb.content || []).map((r) => `- ${r.title}\n  ${r.url}`).join("\n"))
-    .join("\n");
-  const req = {
-    model: upstreamModel,
-    max_tokens: 500,
-    messages: [{
-      role: "user",
-      content: `用户查询：${query}\n\n以下是网络搜索结果：\n${resultsText || "(无结果)"}\n\n请根据这些搜索结果，用中文简要、准确地回答用户的问题。如果信息不足，请说明。`,
-    }],
-  };
-  try {
-    // Always the OpenAI-format endpoint: this sends an OpenAI body (toOpenAIRequest).
-    // For native-Anthropic og models the request route's upstream is now /v1/messages,
-    // which would reject an OpenAI body — so pin the chat/completions URL explicitly.
-    // NOTE: intentionally direct (not via US_PROXY) — web_search is a gateway
-    // background operation, not a user-routed request.
-    const resp = await fetchWithTimeout(OG_ZEN_CHAT, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
-    }, upstreamTimeoutMs(env));
-    if (!resp.ok) {
-      console.error(`ogWebSearchAnswer: zen ${resp.status}`);
-      return "";
-    }
-    const json = await resp.json();
-    const text = (json.choices?.[0]?.message?.content || "").trim();
-    if (!text) console.error("ogWebSearchAnswer: empty content from zen");
-    return text;
-  } catch (e) {
-    console.error("ogWebSearchAnswer error:", e.message);
-    return "";
-  }
-}
-
-
 
 /* ---------------- Public endpoints: health / vale-cli / installers ---------------- */
 
