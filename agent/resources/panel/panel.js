@@ -997,13 +997,15 @@ async function init() {
   // session with no OUTPUT for 15 min (last_output only advances on data) —
   // a watched-but-silent session (vim, `sleep 600`, a long quiet build) was
   // killed while the user was looking at it. terminal_select touches the
-  // session's last_output, so pinging every live session every 30s keeps
-  // watched sessions alive (a genuinely disconnected client stops pinging
-  // and the sweeper still reaps it).
+  // session's last_output.
+  // ONLY the ACTIVE session is pinged (round-51): pollList auto-adopts
+  // EVERY session on the device (this is a device-wide viewer), so pinging
+  // all of them kept orphaned MCP sessions alive forever while the tab sat
+  // open — the sweeper could never reap anything. The session the user is
+  // actually looking at survives; everything else stays eligible for reaping.
   setInterval(() => {
-    for (const [sid, s] of sessions) {
-      if (s.closed || s.savedOnly) continue;
-      callTool("terminal_select", { session_id: sid }).catch(() => {});
+    if (activeSid) {
+      callTool("terminal_select", { session_id: activeSid }).catch(() => {});
     }
   }, 30000);
   window.addEventListener("pagehide", () => { for (const s of sessions.values()) flushSession(s); });
