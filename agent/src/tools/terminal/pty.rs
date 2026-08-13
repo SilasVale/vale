@@ -118,6 +118,10 @@ impl TermBackend for PtyBackend {
         if let Ok(mut guard) = self.child.lock() {
             if let Some(c) = guard.as_mut() {
                 let _ = c.kill();
+                // The pty master fd closes with the backend, so the reader
+                // thread observes EOF and the drainer finishes — no orphan.
+                // (portable-pty's Child has no pid() to taskkill /T; killing
+                // the direct child + fd close covers the practical cases.)
             }
         }
     }

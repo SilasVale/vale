@@ -8,22 +8,23 @@
 const TERMINAL_TOOLS = [
   {
     name: "terminal_open",
-    description: "Open a terminal session on a device (PTY shell / SSH / serial). kind: pty|ssh|serial; target: cmd or host; returns session_id.",
+    description: "Open a terminal session on a device. kind: pty (target optional — blank = default shell) | ssh (target=user@host:port) | serial (target=port, optional ?baud=N). Returns session_id.",
     inputSchema: {
       type: "object",
       properties: {
         device: { type: "string", description: "Device name from the console Devices list" },
         kind: { type: "string", enum: ["pty", "ssh", "serial"] },
-        target: { type: "string", description: "For pty: command (e.g. powershell). For ssh: host. For serial: port." },
+        target: { type: "string", description: "pty: optional (blank = default shell); ssh: user@host:port; serial: port_name (?baud=N optional)" },
+        password: { type: "string", description: "SSH password (optional — keychain/file store fallback)" },
         rows: { type: "integer" },
         cols: { type: "integer" },
       },
-      required: ["device", "kind", "target"],
+      required: ["device", "kind"],
     },
   },
   {
     name: "terminal_screen",
-    description: "Get the current on-screen text of a terminal session (tail of the output buffer, ANSI-stripped). Use after terminal_send to see the result.",
+    description: "Get the current on-screen text of a terminal session (tail of the output buffer, ANSI-stripped). Use after terminal_execute to see the result.",
     inputSchema: {
       type: "object",
       properties: {
@@ -35,7 +36,7 @@ const TERMINAL_TOOLS = [
     },
   },
   {
-    name: "terminal_send",
+    name: "terminal_execute",
     description: "Send input to a terminal session and wait for output to stabilize (quiet period), then return the accumulated screen text. Use for command-and-observe.",
     inputSchema: {
       type: "object",

@@ -46,12 +46,15 @@ $("openTerminal").addEventListener("click", () => {
   // console origin + /panel/ was a dead link (gateway has no /panel route).
   // Open the paired device's panel directly; fall back to the console's
   // device list (where each device links its panel).
-  chrome.storage.local.get(["consoleOrigin", "pairedDevice"]).then(({ consoleOrigin, pairedDevice }) => {
-    if (pairedDevice?.hostname) {
-      chrome.tabs.create({ url: `https://${pairedDevice.hostname}/panel/` });
+  chrome.storage.local.get(["consoleOrigin", "valePlugin"]).then(({ consoleOrigin, valePlugin }) => {
+    // pairedDevice.hostname NEVER exists (pairing stores {device, token} only)
+    // — this branch was dead. Route through the gateway proxy like openTab.
+    const device = valePlugin?.device;
+    const base = (consoleOrigin || "https://api.saisi.online").replace(/\/+$/, "");
+    if (device) {
+      chrome.tabs.create({ url: `${base}/api/devices/${device}/proxy/panel/` });
       return;
     }
-    const base = (consoleOrigin || "https://ai.saisi.online").replace(/\/+$/, "");
     chrome.tabs.create({ url: `${base}/` });
   });
 });

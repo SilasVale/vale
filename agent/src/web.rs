@@ -450,25 +450,28 @@ where
             // and a reconnect missed every event during the outage. Send a
             // comment frame every 30s of silence — it keeps the socket alive
             // AND makes the client's read loop detect a dead connection.
+            // The mpsc is bounded (128); a client that stopped reading fills
+            // it and tx.send blocks FOREVER (leak: the task + broadcast
+            // subscription survive a silently-dead client). Bound each send
+            // at 5s — a full channel means the client is gone.
+            let send_bounded = async |bytes: Bytes| {
+                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes))).await
+                    .map(|r| r.is_err())
+                    .unwrap_or(true)
+            };
             match tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv()).await {
                 Ok(Ok(item)) => {
-                    if tx.send(Ok(Bytes::from(encode(&item)))).await.is_err() {
-                        break;
-                    }
+                    if send_bounded(Bytes::from(encode(&item))).await { break; }
                 }
                 Ok(Err(RecvError::Lagged(n))) => {
                     // Client gone: stop like the Ok branch, or this task keeps
                     // the broadcast subscription and a failing send forever.
-                    if tx.send(Ok(Bytes::from(lagged(n)))).await.is_err() {
-                        break;
-                    }
+                    if send_bounded(Bytes::from(lagged(n))).await { break; }
                 }
                 Ok(Err(RecvError::Closed)) => break,
                 Err(_) => {
                     // 30s of silence — heartbeat.
-                    if tx.send(Ok(Bytes::from(": ping\n\n"))).await.is_err() {
-                        break;
-                    }
+                    if send_bounded(Bytes::from(": ping\n\n")).await { break; }
                 }
             }
         }
