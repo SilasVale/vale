@@ -220,26 +220,36 @@ function activate(sid) {
  * the gateway with the plugin token in the Authorization header. Reconnects
  * like EventSource would (3s backoff), surfacing the state in the status line.
  */
+// ONE shared SSE stream carries ALL sessions, dispatched by session_id —
+// a per-session connection multiplied sockets for no benefit (the server
+// broadcasts every frame to every subscriber; round-49: N sessions = N
+// sockets each receiving all frames, N× uplink + CPU). attachStream(sid)
+// just subscribes the session to the shared stream; a `close` marks the
+// session closed so the shared dispatcher skips it.
+let streamStarted = false;
 function attachStream(sid) {
-  let closed = false;
-  // Streams UTF-8 bytes to text WITHOUT emitting replacement chars for
-  // multi-byte chars split across frames (stream:true holds partial state).
-  const lineDecoder = new TextDecoder("utf-8");
+  if (!streamStarted) {
+    streamStarted = true;
+    startSharedStream();
+  }
+  return { close: () => { const s = sessions.get(sid); if (s) s.streamClosed = true; } };
+}
 
+async function startSharedStream() {
   const connect = async () => {
-    if (closed) return;
-    const s = sessions.get(sid);
-    if (!s) { closed = true; return; }
+    // Streams UTF-8 bytes to text WITHOUT emitting replacement chars for
+    // multi-byte chars split across frames (stream:true holds partial state).
+    const lineDecoders = new Map(); // per-session persistent decoder
     try {
       const res = await fetch(`${proxy}/api/events/term`, {
         headers: { authorization: `Bearer ${pairing.token}` },
       });
       if (res.status === 401) {
-        if (activeSid === sid) setStatus("not paired / invalid token", true);
+        if (activeSid) setStatus("not paired / invalid token", true);
       } else if (!res.ok) {
-        if (activeSid === sid) setStatus(`stream error ${res.status}`, true);
+        if (activeSid) setStatus(`stream error ${res.status}`, true);
       } else {
-        if (activeSid === sid && statusEl.textContent === "reconnecting…") setStatus("");
+        if (activeSid && statusEl.textContent === "reconnecting…") setStatus("");
       }
       if (!res.ok || !res.body) {
         setTimeout(connect, 3000);
@@ -249,7 +259,7 @@ function attachStream(sid) {
       const decoder = new TextDecoder();
       let buffer = "";
       try {
-        while (!closed) {
+        while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -263,16 +273,22 @@ function attachStream(sid) {
             if (!dataLine) continue;
             let frame;
             try { frame = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
-            // One stream carries every session's output — keep only ours.
-            // `{lagged:true}` frames have no session_id and mean this consumer
-            // was too slow — the sync loop will recover the gap.
-            if (!frame.session_id) { s.needSync = true; continue; }
-            if (frame.session_id !== sid) continue;
+            // Dispatch to every live session. `{lagged:true}` frames have no
+            // session_id → every session needs a sync to recover the gap.
+            if (!frame.session_id) {
+              for (const s of sessions.values()) if (!s.closed) s.needSync = true;
+              continue;
+            }
+            const s = sessions.get(frame.session_id);
+            if (!s || s.closed || s.streamClosed || !s.term) continue;
             if (Array.isArray(frame.data)) {
               s.term.write(new Uint8Array(frame.data));
               s.renderedBytes += frame.data.length; // absolute byte coverage
               s.sseDirty = true;
-              ingestLines(s, lineDecoder.decode(new Uint8Array(frame.data), { stream: true }));
+              // Persistent per-session decoder: a fresh TextDecoder per frame
+              // destroyed multi-byte UTF-8 split across frame boundaries.
+              if (!lineDecoders.has(frame.session_id)) lineDecoders.set(frame.session_id, new TextDecoder());
+              ingestLines(s, lineDecoders.get(frame.session_id).decode(new Uint8Array(frame.data), { stream: true }));
             }
           }
         }
@@ -280,16 +296,12 @@ function attachStream(sid) {
         await reader.cancel().catch(() => {});
       }
     } catch {
-      if (closed) return; // intentional close via markClosed — not an error
-      if (activeSid === sid) setStatus("reconnecting…");
-      s.needSync = true; // dropped stream → sync loop recovers the gap
+      for (const s of sessions.values()) if (!s.closed) s.needSync = true;
     }
     // Stream dropped or rejected → reconnect, matching EventSource behavior.
-    if (!closed) setTimeout(connect, 3000);
+    setTimeout(connect, 3000);
   };
-
   connect();
-  return { close: () => { closed = true; } };
 }
 
 /** Create the xterm + tab for a session and wire it to the device.
@@ -343,7 +355,7 @@ function adoptSession(sid, label, idbRec = null) {
 
   const s = {
     sid, term, fit, es: null, container, observer, resizeTimer: null,
-    tab: null, closed: false, label,
+    tab: null, closed: false, streamClosed: false, label,
     // Byte-offset sync model: `renderedBytes` is the single source of truth
     // for "how much of this session's byte stream has been written to the
     // xterm". It only ever advances by raw spans — SSE frame.data.length and
@@ -565,7 +577,7 @@ async function adoptHistorySession(h, idbRec) {
 
   const s = {
     sid: h.id, term, fit, es: null, container, observer: null, resizeTimer: null,
-    tab: null, closed: true, savedOnly: true,
+    tab: null, closed: true, streamClosed: true, savedOnly: true,
     renderedBytes: 0, lines: [], pendingLine: "", persistedSeq: 0,
     openedAt: idbRec?.openedAt || Date.now(), closedAt: idbRec?.closedAt || Date.now(),
     complete: true, kind: h.kind || "", label: h.label || h.id,
