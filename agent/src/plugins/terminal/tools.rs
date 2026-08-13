@@ -110,16 +110,27 @@ fn tool_open(
                         // default gets the PS Prompt function (cmd has no
                         // prompt hook, falls back to idle detection).
                         // CRLF: PowerShell only recognizes a command on \r\n.
+                        // PS 5.1 (the default PTY shell) does NOT support the
+                        // `e backtick-escape — use [char]27/[char]7 instead
+                        // (round-55: the old `e form emitted a literal 'e',
+                        // the marker scanner never matched on the main
+                        // platform).
                         let cmd = std::path::Path::new(&target)
                             .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
                         if cmd.is_empty() || cmd.eq_ignore_ascii_case("powershell.exe") || cmd.eq_ignore_ascii_case("pwsh.exe") {
-                            (r#"function global:Prompt { Write-Host -NoNewline ("`e]133;D;" + $LASTEXITCODE + "`a"); "PS " + $(Get-Location) + "> " }"#.to_string() + "\r\n", true)
+                            (r#"function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"#.to_string() + "\r\n", true)
                         } else { (String::new(), false) }
                     } else {
                         let cmd = std::path::Path::new(&target)
                             .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
                         if cmd.is_empty() || cmd == "bash" || cmd == "sh" {
-                            (r#"export PROMPT_COMMAND="printf '\033]133;D;$?\007';$PROMPT_COMMAND""#.to_string() + "\n", true)
+                            // Single-quoted outer: a double-quoted RHS expands
+                            // $? AT ASSIGNMENT TIME (a fresh session's value,
+                            // always 0), freezing the exit code — every failed
+                            // command reported 0 (round-55). The marker string
+                            // stays literal; the old PROMPT_COMMAND is joined
+                            // outside the quotes so it expands now.
+                            (r#"export PROMPT_COMMAND='printf "\033]133;D;$?\007";'"$PROMPT_COMMAND""#.to_string() + "\n", true)
                         } else { (String::new(), false) }
                     };
                     if injectable {
