@@ -658,6 +658,18 @@ async function openSession(label) {
 }
 
 async function init() {
+  // Client-liveness heartbeat FIRST (round-51/52): the agent's idle sweeper
+  // force-closes any session with no OUTPUT for 15 min. Installed at the top
+  // so the late-return paths (no live sessions, no saved) can't skip it —
+  // a session auto-opened by the empty-state path would otherwise die
+  // unwatched. Pings ONLY the active session; everything else stays
+  // eligible for reaping.
+  setInterval(() => {
+    if (activeSid) {
+      callTool("terminal_select", { session_id: activeSid }).catch(() => {});
+    }
+  }, 30000);
+
   // The pairing fixes one device; the select exists for future multi-device.
   const opt = document.createElement("option");
   opt.value = pairing.device;
@@ -698,18 +710,6 @@ async function init() {
   const last = existing[existing.length - 1]?.id || [...sessions.keys()][0];
   activeSid = null;
   activate(last);
-
-  // Client-liveness heartbeat (round-51): the agent's idle sweeper force-
-  // closes any session with no OUTPUT for 15 min. The panel and MCP-execute
-  // were covered; this page had NO keepalive, so a watched-but-silent
-  // session (idle prompt, long quiet output) was reaped mid-viewing and the
-  // next keystroke hit 'session not found'. Ping ONLY the active session —
-  // like the agent panel, everything else stays eligible for reaping.
-  setInterval(() => {
-    if (activeSid) {
-      callTool("terminal_select", { session_id: activeSid }).catch(() => {});
-    }
-  }, 30000);
 }
 
 /** Bound the IndexedDB store: drop the oldest-closed records beyond caps. */
