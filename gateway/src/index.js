@@ -1531,6 +1531,13 @@ function hashHex(str) {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
+/** Cache a successful image description (never cache failures/empties). */
+async function cacheImageDesc(cacheKey, env, desc) {
+  if (!cacheKey || !env?.KEYS) return;
+  if (!desc || /图片描述失败|图片描述为空/.test(desc)) return;
+  try { await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 }); } catch {}
+}
+
 async function describeImage(env, ukeys, source, visionModel) {
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
@@ -1578,7 +1585,9 @@ async function describeImage(env, ukeys, source, visionModel) {
     let json;
     try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
     const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-    return text || "(图片描述为空)";
+    const descPt = text || "(图片描述为空)";
+    await cacheImageDesc(cacheKey, env, descPt);
+    return descPt;
   }
 
   // og/ vision model (opencode zen) — needs the Anthropic→OpenAI translation,
@@ -1599,9 +1608,7 @@ async function describeImage(env, ukeys, source, visionModel) {
   let json;
   try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
   const desc = (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
-  if (cacheKey && env.KEYS) {
-    try { await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 }); } catch {}
-  }
+  await cacheImageDesc(cacheKey, env, desc);
   return desc;
 }
 
