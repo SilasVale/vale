@@ -515,16 +515,14 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
 
     let (tx, mpsc_rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
     tokio::spawn(async move {
-        // Client-liveness heartbeat, SERVER-side: while this SSE connection
-        // is open, someone is watching the panel — even if their tab is
-        // backgrounded (Safari pauses JS timers in hidden tabs, Chrome can
-        // freeze them, so the panel's own 30s terminal_select ping stops).
-        // An established connection is NOT paused by hidden-tab timer
-        // suspension, so every 60s we touch all live sessions here — a
-        // watched-but-silent session (vim, a long quiet build) survives the
-        // 15-min idle sweeper, and a disconnected client (connection closed
-        // → send_bounded fails → loop breaks) stops the keepalive so the
-        // sweeper still reaps.
+        // Dead-client detection only — NO session keepalive here. The panel's
+        // 30s terminal_select heartbeat (panel.js) already touches every live
+        // session it watches; touching ALL sessions from the SSE tick
+        // disabled the idle sweeper for the whole device while ANY tab was
+        // open (round-49: an orphaned MCP ssh to prod was never reaped while
+        // a panel tab sat open) and stamped every last_output equal, breaking
+        // the eviction tiebreak. The 60s ping below only keeps the
+        // connection alive (a closed tab → send fails → loop breaks).
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             let send_bounded = async |bytes: Bytes| {
@@ -534,14 +532,8 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
             };
             tokio::select! {
                 _ = tick.tick() => {
-                    terminal_mgr.term_touch_all().await;
-                    // Also SEND a heartbeat byte — dead-client detection
-                    // depends on a send failing (the 5s bounded send into the
-                    // full mpsc). On a silent session nothing else is ever
-                    // sent, so without this ping a closed tab/intermediary
-                    // kill would leave the task + broadcast subscription
-                    // alive forever, calling term_touch_all every 60s and
-                    // permanently neutering the idle sweeper.
+                    // Heartbeat byte — dead-client detection depends on a
+                    // send failing (the 5s bounded send into the full mpsc).
                     if send_bounded(Bytes::from(": ping\n\n")).await { break; }
                 }
                 msg = rx.recv() => {

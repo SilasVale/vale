@@ -323,6 +323,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let mut truncated = false;
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        // Client-liveness heartbeat: the 15-min idle sweeper
+                        // kills sessions with no OUTPUT — a long quiet command
+                        // (build, sleep 600, interactive SSH) would be reaped
+                        // mid-execute even though the MCP client is actively
+                        // waiting on this execute (round-49). Touch the session
+                        // every poll so an in-flight execute is always alive;
+                        // a genuinely abandoned session still dies via the
+                        // sweeper once the execute returns.
+                        let _ = terminal_mgr.term_select(&sid).await;
                         let (chunk, chunk_len) = recover_guard(&buf)
                             .live.get(&sid)
                             .map(|e| {

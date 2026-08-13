@@ -194,18 +194,6 @@ mod desktop_impl {
             }
         }
 
-        /// Client-liveness keepalive for ALL live sessions: the panel's SSE
-        /// connection is open → someone is watching → no session may be
-        /// reaped as "idle" (see sse_term_stream's 60s tick). Cheap: one
-        /// lock + N field writes; call at most once a minute.
-        pub async fn term_touch_all(&self) {
-            let mut inner = self.inner.lock().await;
-            let now = std::time::Instant::now();
-            for s in inner.sessions.iter_mut() {
-                s.last_output = now;
-            }
-        }
-
         /// Open a new terminal session. Returns (session_id, channel_receiver) for streaming output.
         pub async fn term_open(
             &self, req: &TermOpenRequest,
@@ -298,18 +286,23 @@ mod desktop_impl {
         }
 
         pub async fn term_resize(&self, sid: &str, rows: u16, cols: u16) -> Result<(), DeviceError> {
-            let inner = self.inner.lock().await;
-            let s = inner.sessions.iter().find(|s| s.id == sid)
+            let mut inner = self.inner.lock().await;
+            let s = inner.sessions.iter_mut().find(|s| s.id == sid)
                 .ok_or(DeviceError::Internal { message: format!("session not found: {sid}") })?;
             s.backend.resize(rows, cols);
+            // Activity = heartbeat: a client actively resizing is alive — the
+            // 15-min idle sweeper must not kill it (round-49).
+            s.last_output = std::time::Instant::now();
             Ok(())
         }
 
         pub async fn term_write(&self, sid: &str, data: &str) -> Result<(), DeviceError> {
-            let inner = self.inner.lock().await;
-            let s = inner.sessions.iter().find(|s| s.id == sid)
+            let mut inner = self.inner.lock().await;
+            let s = inner.sessions.iter_mut().find(|s| s.id == sid)
                 .ok_or(DeviceError::Internal { message: format!("session not found: {sid}") })?;
             s.backend.write(data.as_bytes());
+            // Activity = heartbeat (round-49): typing into a session is liveness.
+            s.last_output = std::time::Instant::now();
             Ok(())
         }
 
