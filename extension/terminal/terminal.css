@@ -1,3 +1,11 @@
+/* Unified focus ring + slim scrollbar (round-54): same teal ring and
+   8px scrollbars as every other Vale surface. */
+:focus-visible { outline: 2px solid rgba(14,147,132,.45); outline-offset: 2px; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
+*::-webkit-scrollbar-track { background: transparent; }
+
 /* Vale extension terminal — Apple-style light, unified brand tokens. */
 
 :root {
@@ -23,7 +31,7 @@
   --font: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
           "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "Cascadia Code", "JetBrains Mono",
-               Consolas, "PingFang SC", "Microsoft YaHei", monospace;
+               Consolas, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 html, body {
