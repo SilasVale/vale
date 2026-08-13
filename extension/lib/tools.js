@@ -70,6 +70,17 @@ async function clickByPath(tabId, el) {
   // getBoundingClientRect() returns VIEWPORT coords — after scrollIntoView the
   // element is on-screen, so these are directly usable by dispatchMouseEvent.
   const x = found.x + found.width / 2, y = found.y + found.height / 2;
+  // Hit-test: a fixed overlay/modal at this point would intercept the click —
+  // elementFromPoint tells us what is ACTUALLY at the target coords.
+  const hit = await evaluate(tabId, `(() => {
+    const e = document.elementFromPoint(${x}, ${y});
+    if (!e) return null;
+    const target = document.querySelector(${JSON.stringify(el.path)});
+    return (e === target || target?.contains(e) || e?.contains(target)) ? true : { tag: e.tagName, text: (e.textContent || '').slice(0, 40) };
+  })()`);
+  if (hit && hit !== true) {
+    throw new Error(`click intercepted by ${hit.tag || "element"} ("${hit.text || ""}") — an overlay is covering the target`);
+  }
   await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
   await send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
 }
@@ -88,12 +99,23 @@ export async function runTool(tool, params) {
         throw new Error(`unsupported URL scheme: ${u.protocol} — only http(s) allowed`);
       }
       await send(tabId, "Page.navigate", { url: u.href });
-      await waitLoad(tabId, 30_000);
+      // 5s cap: SPA/fragment navigations never fire loadEventFired, so the
+      // full 30s stall was the norm for them; 5s is enough for a real load.
+      await waitLoad(tabId, 5_000);
       return snapshot(tabId);
     }
     case "browser_snapshot": return snapshot(tabId);
     case "browser_screenshot": {
-      const { data } = await send(tabId, "Page.captureScreenshot", { format: "png", captureBeyondViewport: !!params.full_page });
+      // full_page on a very long page produced images the model API rejects —
+      // clamp the capture to 8000px tall (viewport width).
+      const shotParams = { format: "png", captureBeyondViewport: !!params.full_page };
+      if (params.full_page) {
+        const dims = await evaluate(tabId, `(() => { const s = document.scrollingElement || document.documentElement; return { w: s.clientWidth, h: s.scrollHeight }; })()`);
+        if (dims && dims.h > 8000) {
+          shotParams.captureBeyondViewport = false;
+        }
+      }
+      const { data } = await send(tabId, "Page.captureScreenshot", shotParams);
       return { image: { type: "image", data, mimeType: "image/png" } };
     }
     case "browser_click": {
@@ -105,6 +127,16 @@ export async function runTool(tool, params) {
       const { el } = await resolveRef(tabId, params.element_ref);
       const focused = await evaluate(tabId, reResolveExpr(el, "focus"));
       if (!focused) throw new Error("DOM changed — please re-snapshot");
+      // Element.focus() is a silent no-op on disabled/non-focusable elements —
+      // verify the ACTIVE element really is the target before typing, or the
+      // text goes nowhere (or into a different field).
+      const ok = await evaluate(tabId, `(() => {
+        const target = document.querySelector(${JSON.stringify(el.path)});
+        return document.activeElement === target ? true : { active: (document.activeElement?.tagName || '') + '#' + (document.activeElement?.id || '') };
+      })()`);
+      if (ok !== true) {
+        throw new Error(`type target not focused (active: ${ok?.active || "?"}) — click it first`);
+      }
       await send(tabId, "Input.insertText", { text: String(params.text) });
       return snapshot(tabId);
     }
