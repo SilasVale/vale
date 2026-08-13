@@ -268,6 +268,10 @@ function renderTab(sid, label) {
   tab.className = "tab";
   tab.dataset.sid = sid;
   tab.title = sid;
+  // ARIA tablist contract (round-56): tabs are keyboard/screen-reader
+  // navigable; aria-selected tracks the active session.
+  tab.setAttribute("role", "tab");
+  tab.setAttribute("aria-selected", "false");
   // Kind dot (PTY=teal, SSH=blue, Serial=orange) + label + close + export.
   const kindDot = document.createElement("span");
   kindDot.className = "tab-dot";
@@ -381,6 +385,8 @@ function activate(sid) {
   for (const [id, sess] of sessions) {
     sess.container.classList.toggle("active", id === sid);
     sess.tab.classList.toggle("active", id === sid);
+    // ARIA (round-56): aria-selected mirrors the active tab.
+    sess.tab.setAttribute("aria-selected", id === sid ? "true" : "false");
   }
   // Fit after the container is displayed (display:none → block) AND laid out.
   // A single rAF can run before the browser has painted the newly-shown
@@ -515,11 +521,19 @@ function renderLines(s) {
 
 async function backfillAndAttach(sid, s, idbRec) {
   if (idbRec) {
+    // Boot-epoch guard (round-56): the agent restarts and mints NEW sessions
+    // with REUSED sids (per-boot prefix rotates, but a same-prefix session
+    // id can repeat across boots). Old records seeding the new session's
+    // cursor would render a stale log; the read below would then start from
+    // a byte offset that no longer corresponds. Keep the lines as reference
+    // but reset the byte cursor to 0 — the read re-fetches from scratch.
+    const staleEpoch = idbRec.epoch && idbRec.epoch !== lastEpoch;
     s.lines = idbRec.lines || [];
     s.openedAt = idbRec.openedAt || s.openedAt;
     s.closedAt = idbRec.closedAt || null;
     s.persistedSeq = idbRec.persistedSeq || s.lines.length;
-    s.renderedBytes = idbRec.endAbs || 0;
+    s.renderedBytes = staleEpoch ? 0 : (idbRec.endAbs || 0);
+    if (staleEpoch) s.term.write(`\r\n[agent restarted — session history reset]\r\n`);
     renderLines(s);
   }
   try {
@@ -674,6 +688,7 @@ async function flushSession(s) {
       sid: s.sid, label: s.label, openedAt: s.openedAt, closedAt: s.closedAt,
       complete: s.complete, endAbs: s.renderedBytes,
       persistedSeq: s.lines.length, lines: tail, truncated,
+      epoch: lastEpoch, // round-56: agent boot epoch — stale records reset the cursor
     }));
     s.persistedSeq = s.lines.length;
   } catch (e) {
@@ -684,6 +699,7 @@ async function flushSession(s) {
         sid: s.sid, label: s.label, openedAt: s.openedAt, closedAt: s.closedAt,
         complete: s.complete, endAbs: s.renderedBytes,
         persistedSeq: s.lines.length, lines: tail.slice(-500), truncated: true,
+        epoch: lastEpoch, // round-56: agent boot epoch — stale records reset the cursor
       }));
       s.persistedSeq = s.lines.length;
     } catch { /* memory-only is fine */ }
@@ -1096,6 +1112,15 @@ document.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k === "n") { e.preventDefault(); openSession(); }
   else if (k === "e") { e.preventDefault(); if (e.shiftKey) exportAll(); else if (activeSid) exportSession(activeSid); }
+  else if (k === "tab") {
+    // Ctrl+Tab / Ctrl+Shift+Tab cycle through open tabs (round-56).
+    e.preventDefault();
+    const tabs = [...tabsEl.querySelectorAll(".tab")];
+    if (!tabs.length) return;
+    const idx = tabs.findIndex((t) => t.dataset.sid === activeSid);
+    const next = e.shiftKey ? (idx <= 0 ? tabs.length - 1 : idx - 1) : (idx + 1) % tabs.length;
+    activate(tabs[next].dataset.sid);
+  }
   else if (/^[1-9]$/.test(k)) {
     const tabs = [...tabsEl.querySelectorAll(".tab")];
     const t = tabs[Number(k) - 1];
