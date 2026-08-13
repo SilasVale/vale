@@ -161,6 +161,11 @@ if (-not (Test-Path $cfg)) {
 # starting with 3000/3001 (e.g. 30000 → 180800, u16 overflow) — the config
 # got quarantined and the device token regenerated, 401-ing every client.
 (Get-Content $cfg) -replace '^port: 3000$','port: 18080' -replace '^port: 3001$','port: 18080' | Set-Content $cfg
+# Loopback bind (security): the server is reached ONLY via the cloudflared
+# tunnel (ingress 127.0.0.2:18080) or locally on the device. A 0.0.0.0 bind
+# exposed the whole API to the LAN and the /panel/ Host gate (which must
+# accept Host: dN.agent... for the tunnel) is spoofable — LAN RCE as SYSTEM.
+(Get-Content $cfg) -replace '^host: 0\.0\.0\.0$','host: 127.0.0.2' | Set-Content $cfg
 
 # 2. cloudflared
 Write-Host "`n[2/7] cloudflared"

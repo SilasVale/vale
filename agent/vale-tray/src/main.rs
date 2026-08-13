@@ -543,7 +543,11 @@ fn main() {
                 ui.refresh(&tray);
                 last_refresh = Instant::now();
             }
-            if auto_update_enabled() && last_auto_check.elapsed() >= AUTO_CHECK_INTERVAL {
+            // No periodic auto-update: the hourly check caused surprise
+            // installs/restarts and user asked for push-only (updates happen
+            // via the MCP agent_update or the tray's manual 检查更新). The
+            // auto_update_enabled() toggle stays for the manual path.
+            if false && auto_update_enabled() && last_auto_check.elapsed() >= AUTO_CHECK_INTERVAL {
                 auto_update_check();
                 last_auto_check = Instant::now();
             }

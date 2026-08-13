@@ -813,7 +813,7 @@ async function handleGatewayImpl(request, env, url) {
   if (declaredLen > MAX_BODY_BYTES) {
     return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
-  const rawText = await request.text();
+  let rawText = await request.text();
   // The post-read guard must compare BYTES, not UTF-16 code units: a CJK/
   // emoji body is up to 3 bytes per char, so a length check let ~3x the
   // intended size through and blew the scan/parse CPU budget it exists to
@@ -841,7 +841,7 @@ async function handleGatewayImpl(request, env, url) {
   // KV 写透传后立即生效(同 isolate 零延迟)。
   const usProxy = await getGlobalSetting(env, "US_PROXY");
   const baseRoute = pickRoute(prefix2, env, usProxy);
-  const upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
+  let upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
   // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
@@ -937,6 +937,42 @@ async function handleGatewayImpl(request, env, url) {
     // the body when web_search is declared, so preprocessImages can run for
     // mixed image+search requests; a pure search request parses once and is
     // forwarded — no DeepSeek key required.)
+    // VERIFIED (2026-08-13): zen implements web_search NATIVELY only for
+    // deepseek-v4-flash. Translate-path models (mimo-v2.5/minimax/kimi/glm)
+    // do NOT search — the forced tool_choice makes them fabricate a query and
+    // return a plain text answer with no web_search_tool_result. So a REAL
+    // search request is FORCED to the native search-capable model.
+    // Trigger: ONLY a forced tool_choice naming web_search — Claude Code
+    // DECLARES web_search_20250305 in the tools array of EVERY ordinary turn,
+    // so a declaration-only check silently hijacked the user's model on
+    // every request (round-46 High). The tool_choice check is the true
+    // search intent.
+    const webSearchToolChoice = body?.tool_choice &&
+      ((body.tool_choice.type === "tool" && body.tool_choice.name === "web_search") ||
+       (body.tool_choice.type === "any" && Array.isArray(body.tool_choice.tools) &&
+        body.tool_choice.tools.some((t) => t?.name === "web_search")));
+    if (webSearchToolChoice && body) {
+      const searchModel = "og/deepseek-v4-flash";
+      // Swap when the route is NOT already the native search-capable
+      // passthrough (covers the translate path AND US_PROXY=1 where the
+      // flagship model would otherwise ride the broken chat/completions
+      // translation — round-46 Medium #3).
+      if (route.type !== "passthrough" || route.upstream !== OG_ZEN_ANTHROPIC) {
+        model = searchModel;
+        effectiveModel = searchModel;
+        body.model = "deepseek-v4-flash";
+        upstreamModel = "deepseek-v4-flash";
+        // Rebuild rawText from the parsed body — the passthrough forwards
+        // rawWithModel(rawText, upstreamModel), which overwrites the top-level
+        // model with upstreamModel; both now say deepseek-v4-flash.
+        rawText = JSON.stringify(body);
+        // Re-point the (const) route object at the native passthrough so the
+        // web_search tool rides through to zen /v1/messages untouched.
+        route.type = "passthrough";
+        route.upstream = OG_ZEN_ANTHROPIC;
+        route.kind = "opencode";
+      }
+    }
 
     // ---- Gateway-side vision pre-processing ----
     // Text-only models (deepseek, minimax, ...) can't see images. When a request
@@ -1504,6 +1540,13 @@ function hashHex(str) {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
+/** Cache a successful image description (never cache failures/empties). */
+async function cacheImageDesc(cacheKey, env, desc) {
+  if (!cacheKey || !env?.KEYS) return;
+  if (!desc || /图片描述失败|图片描述为空/.test(desc)) return;
+  try { await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 }); } catch {}
+}
+
 async function describeImage(env, ukeys, source, visionModel) {
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
@@ -1551,7 +1594,9 @@ async function describeImage(env, ukeys, source, visionModel) {
     let json;
     try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
     const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-    return text || "(图片描述为空)";
+    const descPt = text || "(图片描述为空)";
+    await cacheImageDesc(cacheKey, env, descPt);
+    return descPt;
   }
 
   // og/ vision model (opencode zen) — needs the Anthropic→OpenAI translation,
@@ -1572,9 +1617,7 @@ async function describeImage(env, ukeys, source, visionModel) {
   let json;
   try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
   const desc = (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
-  if (cacheKey && env.KEYS) {
-    try { await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 }); } catch {}
-  }
+  await cacheImageDesc(cacheKey, env, desc);
   return desc;
 }
 
