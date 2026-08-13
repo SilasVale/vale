@@ -7,10 +7,10 @@
   --surface-glass: rgba(255, 255, 255, 0.72);
   --ink: #1d1d1f;
   --muted: #6e6e73;
-  --faint: #86868b;
+  --faint: #6e6e73;   /* darkened #86868b→#6e6e73: white-bg text 3.62→5.07:1 (AA) */
   --line: rgba(0, 0, 0, 0.08);
   --line-strong: rgba(0, 0, 0, 0.14);
-  --accent: #0e9384;
+  --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
   --lane-ds: #4f6bed;   /* SSH tab dot (console --lane-ds) */

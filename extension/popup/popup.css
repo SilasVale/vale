@@ -2,8 +2,8 @@
 :root{
   /* Canonical names (match the Vale spec) with legacy aliases below. */
   --bg:#f5f5f7; --surface:#fff; --line:rgba(0,0,0,0.08); --line-strong:rgba(0,0,0,0.14);
-  --accent:#0e9384; --accent-ink:#0b7a6e; --accent-soft:#e7f5f2;
-  --ink:#1d1d1f; --muted:#6e6e73; --faint:#86868b;
+  --accent:#0b7a6e; --accent-ink:#0b7a6e; --accent-soft:#e7f5f2; /* accent darkened for AA (5.22:1 on white) */
+  --ink:#1d1d1f; --muted:#6e6e73; --faint:#6e6e73; /* faint darkened #86868b→#6e6e73 (5.07:1) */
   --radius:14px; --radius-sm:10px; --radius-lg:20px;
   --surface-glass:rgba(255,255,255,.72);
   --shadow:0 1px 3px rgba(0,0,0,0.06),0 1px 2px rgba(0,0,0,0.04);

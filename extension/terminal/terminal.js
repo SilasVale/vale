@@ -27,7 +27,7 @@ const DEFAULT_ORIGIN = "https://api.saisi.online";
 const TERM_THEME = {
   background: "#ffffff",
   foreground: "#1d1d1f",
-  cursor: "#0e9384",
+  cursor: "#0b7a6e",
   cursorAccent: "#ffffff",
   selectionBackground: "rgba(14,147,132,.2)",
   black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",

@@ -36,7 +36,7 @@ const LS_TOKEN = "valePanelToken";
 const TERM_THEME = {
   background: "#ffffff",
   foreground: "#1d1d1f",
-  cursor: "#0e9384",
+  cursor: "#0b7a6e",
   cursorAccent: "#ffffff",
   selectionBackground: "rgba(14,147,132,.2)",
   black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",
@@ -549,21 +549,10 @@ async function backfillAndAttach(sid, s, idbRec) {
 let streamStarted = false;
 
 function subscribeStream(sid) {
-  const s = sessions.get(sid);
-  const lineDecoder = new TextDecoder("utf-8");
-
-  const onFrame = (frame) => {
-    if (!frame.session_id) { if (s) s.needSync = true; return; }
-    if (frame.session_id !== sid) return;
-    if (!s || !s.term) return;
-    if (Array.isArray(frame.data)) {
-      s.term.write(new Uint8Array(frame.data));
-      s.renderedBytes += frame.data.length;
-      s.sseDirty = true;
-      ingestLines(s, lineDecoder.decode(new Uint8Array(frame.data), { stream: true }));
-    }
-  };
-
+  // Shared SSE stream — ONE connection carries all sessions, dispatched by
+  // session_id inside startSharedStream. Per-session subscribes just make
+  // sure the shared stream is started; the frame dispatch there is the only
+  // writer (the old per-session onFrame here was dead code).
   const ensure = () => {
     if (!streamStarted) { streamStarted = true; startSharedStream(); }
   };
