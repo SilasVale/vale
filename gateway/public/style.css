@@ -255,7 +255,7 @@ button { font-family: var(--font-body); }
 
 /* ---------- badge ---------- */
 .badge { font-size: 12px; padding: 2px 10px; border-radius: 99px; font-weight: 500; }
-.badge.admin { background: var(--warn-soft); color: var(--lane-or); }
+.badge.admin { background: var(--warn-soft); color: var(--warn-ink); } /* AA 6.8:1 on warn-soft (lane-or was 3.07:1) */
 .badge.user { background: var(--fill); color: var(--muted); }
 .badge.ok { background: var(--accent-soft); color: var(--accent-ink); }
 .badge.empty { background: var(--fill); color: var(--muted); }

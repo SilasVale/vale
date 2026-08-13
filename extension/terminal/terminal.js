@@ -20,6 +20,22 @@ import { loadPairing } from "../lib/state.js";
 import { idbPut, idbGet, idbGetAll, idbDelete } from "./idb.js";
 
 const DEFAULT_ORIGIN = "https://api.saisi.online";
+// Light xterm theme with the FULL ANSI palette — same as the agent panel's
+// TERM_THEME. Without the 16 colors xterm falls back to dark Tango brights
+// (bright green #8ae234 etc.) which are nearly invisible on white
+// (1.2-1.6:1). Foreground uses the brand ink #1d1d1f, not #1a1c20.
+const TERM_THEME = {
+  background: "#ffffff",
+  foreground: "#1d1d1f",
+  cursor: "#0e9384",
+  cursorAccent: "#ffffff",
+  selectionBackground: "rgba(14,147,132,.2)",
+  black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",
+  blue: "#1d4ed8", magenta: "#7c3aed", cyan: "#0f766e", white: "#44403c",
+  brightBlack: "#4b5563", brightRed: "#dc2626", brightGreen: "#15803d",
+  brightYellow: "#a16207", brightBlue: "#2563eb", brightMagenta: "#9333ea",
+  brightCyan: "#0f766e", brightWhite: "#6e6e73",
+};
 const PTY_TARGET = "powershell"; // device runs Windows
 const DEFAULT_ROWS = 30;
 const DEFAULT_COLS = 100;
@@ -303,14 +319,8 @@ function adoptSession(sid, label, idbRec = null) {
     cursorBlink: true,
     scrollback: 20000,
     fontSize: 13,
-    fontFamily: 'monospace',
-    theme: {
-      background: "#ffffff",
-      foreground: "#1a1c20",
-      cursor: "#0e9384",
-      cursorAccent: "#ffffff",
-      selectionBackground: "rgba(14,147,132,.2)",
-    },
+    fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace',
+    theme: TERM_THEME,
   });
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
@@ -540,14 +550,8 @@ async function adoptHistorySession(h, idbRec) {
     disableStdin: true,
     scrollback: 20000,
     fontSize: 13,
-    fontFamily: 'monospace',
-    theme: {
-      background: "#ffffff",
-      foreground: "#1a1c20",
-      cursor: "#0e9384",
-      cursorAccent: "#ffffff",
-      selectionBackground: "rgba(14,147,132,.2)",
-    },
+    fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace',
+    theme: TERM_THEME,
   });
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
