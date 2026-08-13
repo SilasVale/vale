@@ -19,12 +19,13 @@ export async function loadPairing() {
   ]);
   let device = local[LS_KEY]?.device;
   let token = sess[SESSION_KEY];
-  if (!token && local[LS_KEY]?.token) {
-    // LEGACY MIGRATION: pre-1.0.27 stored {device, token} in storage.local.
-    // (The old record always has BOTH device and token — the guard must test
-    // the TOKEN's absence, not the device's, or the migration never fires and
-    // the plaintext token stays on disk forever.)
-    // Move the token to session storage (never write it back to local).
+  // LEGACY MIGRATION: pre-1.0.27 stored {device, token} in storage.local, and
+  // round-34+ (v:2) writes {device, token} to local deliberately (so Unpair can
+  // revoke after a restart). Only migrate records WITHOUT the v:2 marker —
+  // stripping a fresh v:2 token (on every restart, when session is empty)
+  // resurfaced the post-restart revoke gap after one restart.
+  if (!token && local[LS_KEY]?.token && local[LS_KEY]?.v !== 2) {
+    // Move the legacy token to session storage (never write it back to local).
     device = local[LS_KEY].device;
     token = local[LS_KEY].token;
     await Promise.all([
@@ -42,8 +43,9 @@ export async function savePairing(p) {
     // must be able to revoke it server-side after a browser restart clears
     // the session storage. Exposure is equivalent to the gateway's HttpOnly
     // vale_pt cookie (30-day terminal control); a local copy lets the user
-    // actually revoke that credential.
-    chrome.storage.local.set({ [LS_KEY]: { device: p.device, token: p.token } }),
+    // actually revoke that credential. v:2 marks records written by this
+    // savePairing so loadPairing's legacy migration never strips them.
+    chrome.storage.local.set({ [LS_KEY]: { device: p.device, token: p.token, v: 2 } }),
     chrome.storage.session.set({ [SESSION_KEY]: p.token }),
   ]);
 }

@@ -419,7 +419,7 @@ function adoptSession(sid, label, idbRec = null) {
     cursorBlink: true,
     scrollback: 20000,
     fontSize: 13,
-    fontFamily: 'monospace',
+    fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace',
     disableStdin: false, // live sessions are writable — don't inherit the
                          // saved-session default of true
     // Reflow the buffer when the viewport resizes: a session adopted while
@@ -1062,7 +1062,7 @@ function mkSavedSession(sid, rec) {
   termContainer.appendChild(container);
   const term = new window.Terminal({
     convertEol: true, disableStdin: true, scrollback: 20000, fontSize: 13,
-    fontFamily: 'monospace',
+    fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace',
     // Same reflow as live sessions: saved records render at the default
     // 80×24 in a hidden container; on activate the viewport grows and the
     // buffer must reflow to fill the whole screen (not half).
