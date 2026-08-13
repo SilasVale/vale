@@ -98,6 +98,9 @@ impl TermBackend for SerialBackend {
     fn close(&self) {
         let _ = self.close_tx.send(());
     }
+    // A serial port has no process to abort — a timed-out write to a device
+    // cannot be "killed". Nothing to do (the session stays open).
+    fn terminate(&self) {}
 }
 
 impl Drop for SerialBackend {

@@ -65,4 +65,9 @@ impl TermBackend for SshBackend {
     fn close(&self) {
         // The russh Handle drops with the backend, disconnecting the session
     }
+    fn terminate(&self) {
+        // ^C to the remote shell — interrupts the foreground command without
+        // dropping the connection (the session stays usable).
+        let _ = self.write_tx.try_send(vec![0x03]);
+    }
 }

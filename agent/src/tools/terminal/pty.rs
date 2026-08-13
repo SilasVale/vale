@@ -141,4 +141,32 @@ impl TermBackend for PtyBackend {
             }
         }
     }
+    fn terminate(&self) {
+        // Kill the whole process tree (the shell AND its descendants), not
+        // just the direct child — an execute-timeout on `make`/`agent_update`
+        // must not orphan the build/installer. forkpty makes the shell a
+        // session leader, so its pid == its process group id; killing -pid
+        // takes the group down. On Windows taskkill /T walks the tree.
+        if let Ok(mut guard) = self.child.lock() {
+            if let Some(c) = guard.as_mut() {
+                if matches!(c.try_wait(), Ok(None)) {
+                    let pid = c.process_id().unwrap_or_default();
+                    if pid > 0 {
+                        #[cfg(unix)]
+                        {
+                            let _ = std::process::Command::new("kill")
+                                .args(["-9", "--", &format!("-{pid}")])
+                                .spawn();
+                        }
+                        #[cfg(windows)]
+                        {
+                            let _ = std::process::Command::new("taskkill")
+                                .args(["/F", "/T", "/PID", &pid.to_string()])
+                                .spawn();
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

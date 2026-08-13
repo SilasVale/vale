@@ -95,6 +95,11 @@ pub trait TermBackend: Send + Sync {
     fn write(&self, data: &[u8]);
     fn resize(&self, rows: u16, cols: u16);
     fn close(&self);
+    /// Abort the currently-running foreground command WITHOUT closing the
+    /// session (an execute timeout must stop the command, not the shell):
+    /// PTY kills its process group, SSH sends ^C to the remote shell, serial
+    /// has no process concept and does nothing.
+    fn terminate(&self);
 }
 
 #[cfg(feature = "terminal")]
@@ -112,11 +117,9 @@ mod desktop_impl {
         /// Last time output was seen — used by the idle sweeper.
         last_output: std::time::Instant,
         /// When the session was opened — tiebreaker for eviction when
-        /// last_output is equal (term_touch_all refreshes every session with
-        /// the same Instant while the panel SSE is open, so min_by_key on
-        /// last_output alone would evict the FIRST session in vec order — the
-        /// oldest-opened — on a tie, the exact session the code comment says
-        /// must survive).
+        /// last_output is equal: min_by_key on last_output alone would evict
+        /// the FIRST session in vec order on a tie; opened_at spares the
+        /// oldest-opened.
         opened_at: std::time::Instant,
     }
 
@@ -264,9 +267,8 @@ mod desktop_impl {
                 let mut inner = self.inner.lock().await;
                 while inner.sessions.len() >= MAX_SESSIONS {
                     // Evict the session idle-longest; on a last_output tie
-                    // (term_touch_all stamps every session with the same
-                    // Instant while the panel SSE is open) fall back to the
-                    // OLDEST-opened — never the oldest-opened being spared.
+                    // fall back to the OLDEST-opened — an old-but-actively-
+                    // watched session must survive.
                     let idle = inner.sessions
                         .iter()
                         .enumerate()
@@ -348,6 +350,18 @@ mod desktop_impl {
             } else {
                 Err(DeviceError::Internal { message: format!("session not found: {sid}") })
             }
+        }
+
+        /// Abort the foreground command in a session (kill the PTY process
+        /// tree / ^C over SSH) — the session itself stays open. Called by the
+        /// session-mode execute path when its deadline fires, so a timed-out
+        /// command cannot keep running orphaned on the device.
+        pub async fn term_terminate(&self, sid: &str) -> Result<(), DeviceError> {
+            let mut inner = self.inner.lock().await;
+            let s = inner.sessions.iter_mut().find(|s| s.id == sid)
+                .ok_or(DeviceError::Internal { message: format!("session not found: {sid}") })?;
+            s.backend.terminate();
+            Ok(())
         }
 
         pub async fn term_list(&self) -> Vec<TermSessionInfo> {
@@ -454,6 +468,6 @@ mod tests {
             }
         }
         assert!(saw.contains("pty-roundtrip"), "pty output did not echo: {saw:?}");
-        mgr.term_close(&sid).await;
+        let _ = mgr.term_close(&sid).await;
     }
 }

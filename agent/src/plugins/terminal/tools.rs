@@ -334,6 +334,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let mut result = String::new();
 
                     let mut truncated = false;
+                    let mut timed_out = false;
                     loop {
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         // Client-liveness heartbeat: the 15-min idle sweeper
@@ -368,13 +369,21 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                         }
                         if Instant::now() >= deadline {
+                            // Timeout: abort the running command (kill the PTY
+                            // process tree / ^C over SSH) so a timed-out
+                            // command cannot keep running on the device. The
+                            // session itself stays open (round-54).
+                            let _ = terminal_mgr.term_terminate(&sid).await;
+                            timed_out = true;
                             break;
                         }
                     }
                     bus.emit(&AgentEvent::ShellExec { command });
                     // Surface truncation honestly: a >1MB burst evicted output
-                    // the model would otherwise treat as complete.
-                    Ok(json!({"text": result, "truncated": truncated}))
+                    // the model would otherwise treat as complete. timed_out
+                    // distinguishes "command finished" from "deadline hit and
+                    // command aborted" (round-54).
+                    Ok(json!({"text": result, "truncated": truncated, "timed_out": timed_out}))
                 } else {
                     // ── Local shell mode with enforced timeout (tokio::process) ──
                     let (shell, flag) = if cfg!(target_os = "windows") {
@@ -382,40 +391,62 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     } else {
                         ("sh", "-c")
                     };
-                    let child = tokio::process::Command::new(shell)
-                        .arg(flag)
+                    let mut cmd = tokio::process::Command::new(shell);
+                    cmd.arg(flag)
                         .arg(&command)
                         .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .spawn()
-                        .map_err(|e| DeviceError::Internal {
-                            message: format!("spawn failed: {e}"),
-                        })?;
-                    // Snapshot PID before consuming child in wait_with_output
+                        .stderr(std::process::Stdio::piped());
+                    // The command runs in its own process group (Unix) so a
+                    // timeout can kill the WHOLE tree — shell AND descendants.
+                    // Without this a timed-out `make` / `agent_update`
+                    // installer kept running orphaned on the device after
+                    // only the direct child died (round-54).
+                    #[cfg(unix)]
+                    cmd.process_group(0);
+                    let child = cmd.spawn().map_err(|e| DeviceError::Internal {
+                        message: format!("spawn failed: {e}"),
+                    })?;
+                    // Snapshot PID before consuming child in wait_with_output.
+                    // The future is boxed+pinned so the timeout branch can
+                    // RE-await it after killing the tree — wait_with_output
+                    // owns the child, and a plain select! branch that moves
+                    // the child into its future would make it unreachable.
                     let pid = child.id();
-                    let output = tokio::select! {
-                        result = child.wait_with_output() => result,
+                    let mut output_fut = Box::pin(child.wait_with_output());
+                    let (output, timed_out) = tokio::select! {
+                        o = &mut output_fut => (o, false),
                         _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)) => {
-                            // Kill the process tree by PID (async — no executor blocking)
+                            // Kill the process tree by PID (async — no executor
+                            // blocking). Unix: the command is its own
+                            // process-group leader (set above), so -pid takes
+                            // the whole group; Windows: /T walks the tree.
                             if let Some(pid) = pid {
                                 let pid_str = pid.to_string();
                                 #[cfg(unix)]
-                                { let _ = tokio::process::Command::new("kill").arg("-9").arg(&pid_str).output().await; }
+                                { let _ = tokio::process::Command::new("kill").args(["-9", "--", &format!("-{pid_str}")]).output().await; }
                                 #[cfg(windows)]
-                                { let _ = tokio::process::Command::new("taskkill").args(["/F", "/PID", &pid_str]).output().await; }
+                                { let _ = tokio::process::Command::new("taskkill").args(["/F", "/T", "/PID", &pid_str]).output().await; }
                             }
-                            return Err(DeviceError::Timeout {
-                                message: format!("command timed out after {timeout_secs}s"),
-                            });
+                            // Collect the partial output produced before the
+                            // kill — the tree is dead, so this returns at
+                            // once. A timeout must show what ran, not just
+                            // "timed out" (round-54).
+                            (output_fut.await, true)
                         }
-                    }
-                    .map_err(|e| DeviceError::Internal {
+                    };
+                    let output = output.map_err(|e| DeviceError::Internal {
                         message: format!("exec failed: {e}"),
                     })?;
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     let exit_code = output.status.code().unwrap_or(-1);
-                    let result = format!("Exit: {exit_code}\nStdout:\n{stdout}\nStderr:\n{stderr}");
+                    let mut result = format!("Exit: {exit_code}\nStdout:\n{stdout}\nStderr:\n{stderr}");
+                    if timed_out {
+                        // Explicit TIMEOUT marker: the output above is
+                        // PARTIAL — the model must not read it as a complete
+                        // result (round-54).
+                        result.push_str(&format!("\nTIMEOUT: killed after {timeout_secs}s — output above is partial"));
+                    }
                     bus.emit(&AgentEvent::ShellExec { command });
                     Ok(json!(result))
                 }

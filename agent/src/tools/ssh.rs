@@ -107,10 +107,11 @@ impl SshSession {
         // window is covered by an explicit 15s timeout here; otherwise a
         // blackholed address blocks for the OS connect timeout (Windows
         // ~21s, Linux up to ~130s).
-        let mut cfg = client::Config::default();
-        cfg.inactivity_timeout = Some(std::time::Duration::from_secs(15));
-        cfg.keepalive_interval = Some(std::time::Duration::from_secs(30));
-        let config = Arc::new(cfg);
+        let config = Arc::new(client::Config {
+            inactivity_timeout: Some(std::time::Duration::from_secs(15)),
+            keepalive_interval: Some(std::time::Duration::from_secs(30)),
+            ..Default::default()
+        });
         // TOFU host-key verification — keyed by user@host:port so a changed
         // key (MITM) is rejected on later connections.
         let handler = SshHandler {
