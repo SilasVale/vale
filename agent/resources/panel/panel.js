@@ -998,14 +998,30 @@ async function init() {
   // a watched-but-silent session (vim, `sleep 600`, a long quiet build) was
   // killed while the user was looking at it. terminal_select touches the
   // session's last_output.
-  // ONLY the ACTIVE session is pinged (round-51): pollList auto-adopts
+  // PING THE MOST-RECENT LIVE SESSION (round-51/52): pollList auto-adopts
   // EVERY session on the device (this is a device-wide viewer), so pinging
   // all of them kept orphaned MCP sessions alive forever while the tab sat
-  // open — the sweeper could never reap anything. The session the user is
-  // actually looking at survives; everything else stays eligible for reaping.
+  // open. But pinging only activeSid REGRESSED: when the active session
+  // dies backend-side (shell exit, SSH drop) or the user clicks a [saved]
+  // history tab, activeSid pins to a dead sid and every other silent live
+  // session loses its keepalive. Skip closed/savedOnly and ping the newest
+  // live session — the one the user most likely just switched to.
   setInterval(() => {
+    let target = null;
     if (activeSid) {
-      callTool("terminal_select", { session_id: activeSid }).catch(() => {});
+      const s = sessions.get(activeSid);
+      if (s && !s.closed && !s.savedOnly) target = activeSid;
+    }
+    if (!target) {
+      // Fall back to the most recently opened live session.
+      const live = [...sessions.values()].filter((x) => !x.closed && !x.savedOnly);
+      if (live.length) {
+        target = live[live.length - 1].sid;
+        activeSid = target; // re-point — the dead-active tab is gone
+      }
+    }
+    if (target) {
+      callTool("terminal_select", { session_id: target }).catch(() => {});
     }
   }, 30000);
   window.addEventListener("pagehide", () => { for (const s of sessions.values()) flushSession(s); });

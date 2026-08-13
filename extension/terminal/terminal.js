@@ -662,11 +662,24 @@ async function init() {
   // force-closes any session with no OUTPUT for 15 min. Installed at the top
   // so the late-return paths (no live sessions, no saved) can't skip it —
   // a session auto-opened by the empty-state path would otherwise die
-  // unwatched. Pings ONLY the active session; everything else stays
-  // eligible for reaping.
+  // unwatched. Pings the most-recent LIVE session (skips closed/savedOnly):
+  // pinging a dead activeSid (shell exited, history tab viewed) would leave
+  // every other silent live session without a keepalive.
   setInterval(() => {
+    let target = null;
     if (activeSid) {
-      callTool("terminal_select", { session_id: activeSid }).catch(() => {});
+      const s = sessions.get(activeSid);
+      if (s && !s.closed && !s.savedOnly) target = activeSid;
+    }
+    if (!target) {
+      const live = [...sessions.values()].filter((x) => !x.closed && !x.savedOnly);
+      if (live.length) {
+        target = live[live.length - 1].sid;
+        activeSid = target; // re-point — the dead-active tab is gone
+      }
+    }
+    if (target) {
+      callTool("terminal_select", { session_id: target }).catch(() => {});
     }
   }, 30000);
 
