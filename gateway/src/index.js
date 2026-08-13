@@ -879,24 +879,26 @@ async function handleGatewayImpl(request, env, url) {
     // BEFORE parsing — a plain text-only request (the common case) skips the
     // parse entirely. Translate models (minimax/mimo/kimi) always parse.
     if (route.kind === "opencode" && route.type === "passthrough") {
-      // Precise triggers. IMAGE: scan the WHOLE body for the image marker —
-      // base64 payloads are tens of KB to >1MB, so a tail window misses the
-      // "type":"image" marker that sits BEFORE the payload (round-41 High);
-      // a 4KB window caught only tiny icons. History is safe: previously
-      // described images were replaced with text, so any image marker in the
-      // body IS an undescribed current image. (base64 has no quotes, so
-      // "type":"image" cannot appear inside a payload.)
-      // WEB_SEARCH: scan only the tools region — a web_search declaration in
-      // HISTORY (persisted tool_use) must not force a parse on every
-      // follow-up. Locate the tools array structurally ("tools":[ ... ]),
-      // not by truncating at "messages" (a tool schema containing the
-      // literal "messages" cut the region off — round-41 Medium).
+      // Precise triggers. IMAGE: scan ONLY the LAST user message (from the
+      // last '"role":"user"' to the end) — the current image's
+      // "type":"image" marker always sits in the freshly-sent message,
+      // BEFORE its base64 payload (tens of KB to >1MB). History images
+      // (round-41's whole-body scan) re-triggered parse + re-described ALL
+      // past images on every follow-up — the 1102 regression. The client
+      // keeps original image blocks in its transcript, so only the last
+      // message is authoritative for "new image".
+      // WEB_SEARCH: scan only the tools region, anchored AFTER the tools
+      // array starts — indexOf('"messages"', toolsStart) so a schema
+      // property named "messages" inside the tools array cannot truncate it
+      // (round-42 Medium: the first-"messages" anchor cut the region off).
       const toolsStart = rawText.indexOf('"tools":[');
       const toolsRegion = toolsStart >= 0
-        ? rawText.slice(toolsStart, Math.max(toolsStart, rawText.indexOf('"messages"')))
+        ? rawText.slice(toolsStart, rawText.indexOf('"messages"', toolsStart))
         : "";
+      const lastUserStart = rawText.lastIndexOf('"role":"user"');
+      const lastUserMsg = lastUserStart >= 0 ? rawText.slice(lastUserStart) : rawText;
       const needsParse =
-        /"type"\s*:\s*"image"/.test(rawText) ||
+        /"type"\s*:\s*"image"/.test(lastUserMsg) ||
         /"web_search"/.test(toolsRegion);
       if (!needsParse) {
         body = null;

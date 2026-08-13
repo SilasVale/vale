@@ -879,19 +879,25 @@ async function handleGatewayImpl(request, env, url) {
     // BEFORE parsing — a plain text-only request (the common case) skips the
     // parse entirely. Translate models (minimax/mimo/kimi) always parse.
     if (route.kind === "opencode" && route.type === "passthrough") {
-      // Precise triggers — scan ONLY the current request's tools/tool_choice
-      // region and the LAST message (the freshly-sent one): a web_search
-      // declaration or an image block anywhere in HISTORY must not force a
-      // full parse on every follow-up (that defeated the 1102 fix — history
-      // persists and re-triggered parse on the largest bodies). The tools
-      // array appears before "messages" in Anthropic requests, so the
-      // tools-region scan is a bounded prefix search; image detection is
-      // scoped to the tail (current user message).
-      const toolsRegion = rawText.slice(0, Math.max(0, rawText.indexOf('"messages"')));
-      const lastMsg = rawText.slice(Math.max(0, rawText.length - 4000));
+      // Precise triggers. IMAGE: scan the WHOLE body for the image marker —
+      // base64 payloads are tens of KB to >1MB, so a tail window misses the
+      // "type":"image" marker that sits BEFORE the payload (round-41 High);
+      // a 4KB window caught only tiny icons. History is safe: previously
+      // described images were replaced with text, so any image marker in the
+      // body IS an undescribed current image. (base64 has no quotes, so
+      // "type":"image" cannot appear inside a payload.)
+      // WEB_SEARCH: scan only the tools region — a web_search declaration in
+      // HISTORY (persisted tool_use) must not force a parse on every
+      // follow-up. Locate the tools array structurally ("tools":[ ... ]),
+      // not by truncating at "messages" (a tool schema containing the
+      // literal "messages" cut the region off — round-41 Medium).
+      const toolsStart = rawText.indexOf('"tools":[');
+      const toolsRegion = toolsStart >= 0
+        ? rawText.slice(toolsStart, Math.max(toolsStart, rawText.indexOf('"messages"')))
+        : "";
       const needsParse =
-        /"web_search"/.test(toolsRegion) ||
-        /"type"\s*:\s*"image"/.test(lastMsg);
+        /"type"\s*:\s*"image"/.test(rawText) ||
+        /"web_search"/.test(toolsRegion);
       if (!needsParse) {
         body = null;
       } else {
