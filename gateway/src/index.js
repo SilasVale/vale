@@ -650,6 +650,14 @@ async function authLogin(request, env, secure) {
 
 /* ---------------- /v1/* gateway ---------------- */
 
+// In-memory per-token rate-limit counters (per isolate). The old KV
+// get-then-put counters cost 2 reads + 2 writes per /v1/messages request —
+// that alone burned the Free-plan daily KV WRITE quota (1000/day) at ~250
+// requests. Never written; each window's first request per token reads KV
+// once to inherit other isolates' counts.
+const __rlMin = new Map(); // `min:${token}:${minute}` → count
+const __rlDay = new Map(); // `day:${token}:${day}`   → count
+
 async function handleGatewayImpl(request, env, url) {
   const path = url.pathname;
   const method = request.method;
@@ -667,19 +675,42 @@ async function handleGatewayImpl(request, env, url) {
   const qwenKey = ukeys.QWEN_API_KEY || null;
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
-  // spend (Free-plan quota exhaustion + surprise billing). KV get-then-put
-  // has a TOCTOU (concurrent requests can overshoot by the concurrency), so
-  // the thresholds are set ~20% below the real budget — overshoot stays
-  // inside the actual cap.
+  // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
+  // MEMORY per isolate — the old get-then-put KV counters cost 2 reads + 2
+  // writes per /v1/messages request, which alone burned the Free-plan daily
+  // KV WRITE quota (1000/day) at ~250 requests and tripped the 90% usage
+  // alert. Each window's first request per token still reads KV once
+  // (inherits other isolates' counts); we never write. With 1-3 hot isolates
+  // overshoot is bounded (~48→~144/min worst case) — the thresholds already
+  // budget ~20% headroom, and a KV 429 can no longer 500 a chat request
+  // (all KV reads here are wrapped).
   // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
   // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
   // the double-count that halved the effective budget for Claude Code turns.
   if (env.KEYS && method === "POST" && path.endsWith("/messages") && !path.endsWith(COUNT_PATH)) {
     const minuteKey = `rl-min:${token}:${Math.floor(Date.now() / 60000)}`;
     const dayKey = `rl-day:${token}:${Math.floor(Date.now() / 86400000)}`;
+    const mk = `min:${token}:${Math.floor(Date.now() / 60000)}`;
+    const dk = `day:${token}:${Math.floor(Date.now() / 86400000)}`;
     const [minute, day] = await Promise.all([
-      (async () => Number(await env.KEYS.get(minuteKey)) || 0)(),
-      (async () => Number(await env.KEYS.get(dayKey)) || 0)(),
+      (async () => {
+        const hit = __rlMin.get(mk);
+        if (hit !== undefined) return hit;
+        let v = 0;
+        try { v = Number(await env.KEYS.get(minuteKey)) || 0; } catch {}
+        __rlMin.set(mk, v);
+        if (__rlMin.size > 4096) __rlMin.delete(__rlMin.keys().next().value);
+        return v;
+      })(),
+      (async () => {
+        const hit = __rlDay.get(dk);
+        if (hit !== undefined) return hit;
+        let v = 0;
+        try { v = Number(await env.KEYS.get(dayKey)) || 0; } catch {}
+        __rlDay.set(dk, v);
+        if (__rlDay.size > 4096) __rlDay.delete(__rlDay.keys().next().value);
+        return v;
+      })(),
     ]);
     if (minute >= 48) {
       return jsonError(429, "Rate limit: ~60 requests/minute per token", "rate_limit_error");
@@ -687,10 +718,8 @@ async function handleGatewayImpl(request, env, url) {
     if (day >= 4000) {
       return jsonError(429, "Rate limit: ~5000 requests/day per token", "rate_limit_error");
     }
-    await Promise.all([
-      env.KEYS.put(minuteKey, String(minute + 1), { expirationTtl: 120 }),
-      env.KEYS.put(dayKey, String(day + 1), { expirationTtl: 90000 }),
-    ]);
+    __rlMin.set(mk, minute + 1);
+    __rlDay.set(dk, day + 1);
   }
 
   // GET /v1/models — list of prefixed models this gateway supports
