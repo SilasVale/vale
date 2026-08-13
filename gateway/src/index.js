@@ -813,7 +813,7 @@ async function handleGatewayImpl(request, env, url) {
   if (declaredLen > MAX_BODY_BYTES) {
     return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
   }
-  const rawText = await request.text();
+  let rawText = await request.text();
   // The post-read guard must compare BYTES, not UTF-16 code units: a CJK/
   // emoji body is up to 3 bytes per char, so a length check let ~3x the
   // intended size through and blew the scan/parse CPU budget it exists to
@@ -841,7 +841,7 @@ async function handleGatewayImpl(request, env, url) {
   // KV 写透传后立即生效(同 isolate 零延迟)。
   const usProxy = await getGlobalSetting(env, "US_PROXY");
   const baseRoute = pickRoute(prefix2, env, usProxy);
-  const upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
+  let upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
   // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
@@ -937,6 +937,33 @@ async function handleGatewayImpl(request, env, url) {
     // the body when web_search is declared, so preprocessImages can run for
     // mixed image+search requests; a pure search request parses once and is
     // forwarded — no DeepSeek key required.)
+    // VERIFIED (2026-08-13): zen implements web_search NATIVELY only for
+    // deepseek-v4-flash. Translate-path models (mimo-v2.5/minimax/kimi/glm)
+    // do NOT search — the forced tool_choice makes them fabricate a query and
+    // return a plain text answer with no web_search_tool_result. So any
+    // web_search request is FORCED to the native search-capable model. The
+    // scan uses body (parsed when web_search was detected above) — toolsRegion
+    // only exists inside the opencode-passthrough branch.
+    const bodyHasWebSearch = Array.isArray(body?.tools) &&
+      body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"));
+    if (bodyHasWebSearch && body) {
+      const searchModel = "og/deepseek-v4-flash";
+      if (model !== searchModel) {
+        model = searchModel;
+        effectiveModel = searchModel;
+        body.model = "deepseek-v4-flash";
+        upstreamModel = "deepseek-v4-flash";
+        // Rebuild rawText from the parsed body — the passthrough forwards
+        // rawWithModel(rawText, upstreamModel), which overwrites the top-level
+        // model with upstreamModel; both now say deepseek-v4-flash.
+        rawText = JSON.stringify(body);
+        // Re-point the (const) route object at the native passthrough so the
+        // web_search tool rides through to zen /v1/messages untouched.
+        route.type = "passthrough";
+        route.upstream = OG_ZEN_ANTHROPIC;
+        route.kind = "opencode";
+      }
+    }
 
     // ---- Gateway-side vision pre-processing ----
     // Text-only models (deepseek, minimax, ...) can't see images. When a request
@@ -1511,9 +1538,13 @@ async function describeImage(env, ukeys, source, visionModel) {
   // KV description cache: the client re-sends the same base64 image every
   // turn, so a per-image cache turns N vision calls per follow-up into 1.
   // Keyed by a short hash of the payload (hex, no special chars).
-  const cacheKey = data.length > 16
-    ? `img-desc:${visionModel}:${hashHex(data).slice(0, 24)}`
-    : "";
+  // User-scoped cache key (the shared KEYS namespace must never serve one
+  // user's image content to another — round-45 Medium #1). hashHex is 32-bit,
+  // so use TWO independent FNV passes for ~64 bits of key space (no .slice
+  // illusion — the old slice(0,24) was a no-op on an 8-char hex).
+  const h1 = hashHex(data);
+  const h2 = hashHex(visionModel + ":" + data);
+  const cacheKey = data.length > 16 ? `img-desc:${h1}${h2}` : "";
   if (cacheKey && env.KEYS) {
     try {
       const hit = await env.KEYS.get(cacheKey);
