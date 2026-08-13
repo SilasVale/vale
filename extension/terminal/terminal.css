@@ -145,11 +145,20 @@ body {
   flex: 1;
   min-height: 0;
   display: flex;
-  /* Center the empty state inside the terminal area. */
+}
+/* Empty state (round-54): V mark + CTA, aligned with the panel's empty-card.
+   round-55: the centering lives HERE (flex:1 + own centering), not on the
+   container — container-level align-items:center stopped .term-session
+   stretching, collapsing the terminal to content height (the "half screen"
+   bug, maximized window left huge empty bands). */
+#empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
 }
-/* Empty state (round-54): V mark + CTA, aligned with the panel's empty-card. */
+#empty-state[hidden] { display: none; }
 .empty-card {
   text-align: center;
   padding: 40px 56px;

@@ -245,10 +245,20 @@ async function closeSession(sid) {
   } catch { /* already closed on the device — dropping the tab is enough */ }
   if (s.es) s.es.close();
   try { s.term.dispose(); } catch {}
+  if (s.observer) { try { s.observer.disconnect(); } catch {} }
   sessions.delete(sid);
   s.tab.remove();
+  // round-55: without this every close leaked a hidden disposed-xterm div
+  // (its ResizeObserver kept running; a same-sid re-adopt got two containers).
+  s.container.remove();
+  // round-55: without this the IndexedDB record survived and the [saved] tab
+  // resurrected on every page load.
+  idbDelete(sid).catch(() => {});
   if (activeSid === sid) {
-    const next = [...sessions.keys()].pop() || null;
+    // Prefer a LIVE session for the fallback — a [saved]/closed tombstone
+    // must not become the active target (round-55).
+    const live = [...sessions.values()].find((x) => !x.closed && !x.savedOnly);
+    const next = live ? live.sid : ([...sessions.keys()].pop() || null);
     activeSid = null;
     if (next) activate(next);
   }
@@ -387,8 +397,13 @@ function adoptSession(sid, label, idbRec = null) {
     existing.savedOnly = false;
     if (existing.tab) {
       existing.tab.classList.remove("closed");
-      existing.tab.textContent = label;
+      // round-55: textContent overwrite destroyed the dot/export/close child
+      // spans — the resurrected tab could never be closed from the UI again.
+      const name = existing.tab.querySelector(".tab-name");
+      if (name) name.textContent = label;
       existing.tab.title = sid;
+      const cl = existing.tab.querySelector(".tab-close");
+      if (cl) cl.style.display = ""; // re-show ✕ on resurrection
     }
     existing.term.reset();
     existing.term.options.disableStdin = false;
@@ -504,6 +519,10 @@ function markClosed(sid) {
     const name = s.tab.querySelector(".tab-name");
     if (name) name.textContent = `${s.label || sid} [closed]`;
     s.tab.title = `${sid} (closed on device)`;
+    // round-55: closing a dead session's ✕ is a no-op (terminal_close on an
+    // already-closed session) — hide it instead of offering a dead button.
+    const cl = s.tab.querySelector(".tab-close");
+    if (cl) cl.style.display = "none";
   }
   if (sid === activeSid) setStatus("session closed");
   updateChrome();
@@ -657,6 +676,10 @@ async function adoptHistorySession(h, idbRec) {
   sessions.set(h.id, s); // before any await
   s.tab = renderTab(h.id, `${s.label} [saved]`, h.kind);
   s.tab.classList.add("closed");
+  // round-55: a [saved] tab has no retained-history purge path — hide the ✕
+  // rather than offer a button that pollHistory rebuilds in 10s.
+  const cl = s.tab.querySelector(".tab-close");
+  if (cl) cl.style.display = "none";
   await backfillAndAttach(h.id, s, idbRec);
 }
 
