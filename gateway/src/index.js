@@ -720,7 +720,7 @@ const __rlMin = new Map(); // `min:${token}:${minute}` → count
 const __rlDay = new Map(); // `day:${token}:${day}`   → count
 const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
 
-async function handleGatewayImpl(request, env, url, preReadText = null) {
+async function handleGatewayImpl(request, env, url, preReadText = null, ctx = { model: "" }) {
   const path = url.pathname;
   const method = request.method;
 
@@ -828,10 +828,10 @@ async function handleGatewayImpl(request, env, url, preReadText = null) {
   // doubled the scan CPU on every passthrough request (round-55).
   const scanned = scanTopLevelModel(rawText);
   let model = scanned.model || "";
-  // The log wrapper reads the same model — a module var avoids a duplicate
-  // scan of the body on the 10ms budget (round-56). Workers isolate per
-  // request, so no cross-request hazard.
-  LAST_GATEWAY_MODEL = model;
+  // The log wrapper reads the same model via the per-request context
+  // (round-57) — avoids a duplicate scan on the 10ms budget AND keeps
+  // concurrent requests' log attribution correct.
+  ctx.model = model;
   if (model === "auto") {
     // Claude Code 固定模型名 auto：按用户网页选择路由
     model = await resolveAutoModel(env, user.id);
@@ -1184,31 +1184,28 @@ async function handleGatewayImpl(request, env, url, preReadText = null) {
  * persistent storage on the Free plan, but enough to see who used what and
  * which channel misbehaves.
  */
-// Set by handleGatewayImpl during the request; read by the log wrapper.
-// Workers isolate per request — no cross-request hazard (round-56: the
-// wrapper's own scanTopLevelModel was a duplicate O(n) pass on a multi-MB
-// body, right on the 10ms Free-plan budget line).
-let LAST_GATEWAY_MODEL = "";
-
 export async function handleGateway(request, env, url) {
   const started = Date.now();
   // Read the raw body ONCE here and hand it to the impl (round-55: the old
   // clone().text() re-read + re-scan on every /v1 request was ~30MB extra
   // memory + double the scan CPU). The impl scans it for routing AND the
-  // model swap — that single scan result is also the log's model (round-56).
+  // model swap — that single scan result is also the log's model. The model
+  // travels in a per-request context object (round-57: a module variable
+  // cross-talked between CONCURRENT requests — request A's log line could
+  // read request B's model after an await boundary).
   let rawText = null;
   try {
     rawText = await request.text();
   } catch { /* impl will re-try; a broken stream fails there with a clear error */ }
-  LAST_GATEWAY_MODEL = "";
-  const res = await handleGatewayImpl(request, env, url, rawText);
+  const ctx = { model: "" };
+  const res = await handleGatewayImpl(request, env, url, rawText, ctx);
   try {
     // One structured line per /v1 request — tail-visible usage/health signal.
     console.log(JSON.stringify({
       ts: started, ms: Date.now() - started, status: res.status,
       key: String(request.headers.get("x-api-key") || "").slice(0, 8),
       path: url.pathname,
-      model: LAST_GATEWAY_MODEL,
+      model: ctx.model,
     }));
   } catch { /* log must never break the request */ }
   return res;

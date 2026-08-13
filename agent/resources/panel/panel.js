@@ -527,7 +527,11 @@ async function backfillAndAttach(sid, s, idbRec) {
     // cursor would render a stale log; the read below would then start from
     // a byte offset that no longer corresponds. Keep the lines as reference
     // but reset the byte cursor to 0 — the read re-fetches from scratch.
-    const staleEpoch = idbRec.epoch && idbRec.epoch !== lastEpoch;
+    // Three-state compare (round-57): lastEpoch is 0 until the first pollEvents
+    // lands — every backfill before that would look stale and show a false
+    // "[agent restarted]" banner + reset the cursor. Only judge when BOTH
+    // sides are known.
+    const staleEpoch = lastEpoch !== 0 && idbRec.epoch && idbRec.epoch !== lastEpoch;
     s.lines = idbRec.lines || [];
     s.openedAt = idbRec.openedAt || s.openedAt;
     s.closedAt = idbRec.closedAt || null;

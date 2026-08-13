@@ -166,6 +166,10 @@ impl SessionLogger {
             "ts": last.get("ts").and_then(|t| t.as_u64()).unwrap_or(0),
             "reason": last.get("reason").and_then(|r| r.as_str()),
             "exit_code": last.get("exit_code").and_then(|c| c.as_i64()),
+            // round-57: a status event (opened/closed) folds to its VALUE —
+            // without it a new session's terminal state was just kind:"status"
+            // with no way to tell opened from closed.
+            "status": last.get("status").and_then(|s| s.as_str()),
         }))
     }
 

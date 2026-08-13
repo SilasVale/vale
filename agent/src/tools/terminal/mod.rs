@@ -356,7 +356,7 @@ mod desktop_impl {
         pub async fn term_resize(&self, sid: &str, rows: u16, cols: u16) -> Result<(), DeviceError> {
             let mut inner = self.inner.lock().await;
             let s = inner.sessions.iter_mut().find(|s| s.id == sid)
-                .ok_or(DeviceError::Internal { message: format!("session not found: {sid}") })?;
+                .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
             s.backend.resize(rows, cols);
             // Activity = heartbeat: a client actively resizing is alive — the
             // 15-min idle sweeper must not kill it (round-49).
@@ -373,7 +373,7 @@ mod desktop_impl {
         pub async fn term_write_bytes(&self, sid: &str, data: &[u8]) -> Result<(), DeviceError> {
             let mut inner = self.inner.lock().await;
             let s = inner.sessions.iter_mut().find(|s| s.id == sid)
-                .ok_or(DeviceError::Internal { message: format!("session not found: {sid}") })?;
+                .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
             s.backend.write(data);
             // Activity = heartbeat (round-49): typing into a session is liveness.
             s.last_output = std::time::Instant::now();
@@ -389,7 +389,7 @@ mod desktop_impl {
                 inner.sessions.remove(pos);
                 Ok(kind)
             } else {
-                Err(DeviceError::Internal { message: format!("session not found: {sid}") })
+                Err(DeviceError::SessionNotFound { id: sid.to_string() })
             }
         }
 
@@ -423,7 +423,7 @@ mod desktop_impl {
                 s.last_output = std::time::Instant::now();
                 Ok(())
             } else {
-                Err(DeviceError::Internal { message: format!("session not found: {sid}") })
+                Err(DeviceError::SessionNotFound { id: sid.to_string() })
             }
         }
 
@@ -434,7 +434,7 @@ mod desktop_impl {
         pub async fn term_terminate(&self, sid: &str) -> Result<(), DeviceError> {
             let mut inner = self.inner.lock().await;
             let s = inner.sessions.iter_mut().find(|s| s.id == sid)
-                .ok_or(DeviceError::Internal { message: format!("session not found: {sid}") })?;
+                .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
             s.backend.terminate();
             Ok(())
         }

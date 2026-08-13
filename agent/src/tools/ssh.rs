@@ -124,10 +124,7 @@ impl SshSession {
                     host: host.to_string(),
                     reason: format!("connect failed: {e}"),
                 }),
-                Err(_) => return Err(DeviceError::SshConnectFailed {
-                    host: host.to_string(),
-                    reason: "connect timed out after 15s".to_string(),
-                }),
+                Err(_) => return Err(DeviceError::SshTimeout { host: host.to_string() }),
             };
 
         // Authenticate
