@@ -18,7 +18,7 @@
   --accent-soft: #e7f5f2;
   --accent-tint: #99ded2;  /* tip note border */
 
-  --lane-og: #0e9384;   /* OpenCode Go */
+  --lane-og: #0b7a6e;   /* OpenCode Go (darkened with --accent for AA) */
   --lane-ds: #4f6bed;   /* DeepSeek */
   --lane-or: #d97706;   /* OpenRouter */
 
