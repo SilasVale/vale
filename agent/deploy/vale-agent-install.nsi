@@ -232,7 +232,10 @@ Section "Install" SEC01
     ; only rewrites it on fresh installs — without this, an upgrade keeps
     ; serving the API to the LAN (Host-spoof RCE, round-47). Rewrite it here
     ; on every silent upgrade; idempotent.
-    nsExec::ExecToLog 'powershell -NoProfile -Command "(Get-Content -Raw \"$INSTDIR\config.yaml\") -replace ''^host: 0\.0\.0\.0$''m,''host: 127.0.0.2'' | Set-Content -NoNewline \"$INSTDIR\config.yaml\""'
+    ; Match the on-disk format EXACTLY: the embedded config.yaml writes
+    ; `host: "0.0.0.0"` (quoted) — the old anchor matched nothing and
+    ; legacy devices stayed bound to 0.0.0.0 after upgrade (round-53).
+    nsExec::ExecToLog 'powershell -NoProfile -Command "(Get-Content -Raw \"$INSTDIR\config.yaml\") -replace ''^host: ""?0\.0\.0\.0""?$''m,''host: ""127.0.0.2""'' | Set-Content -NoNewline \"$INSTDIR\config.yaml\""'
     ; Restart the server. Do NOT schtasks /Run here: a task registered for an
     ; older install dir (a silent /D= upgrade) would boot the OLD binaries
     ; and hold the port forever. Delete the task and start the new exe

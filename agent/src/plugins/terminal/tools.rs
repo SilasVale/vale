@@ -147,6 +147,19 @@ fn tool_open(
                     recover_guard(&buf)
                         .retain_live(&sid_buf, &kind, &label);
                     mgr2.term_unregister(&sid_buf).await;
+                    // Backend-initiated death (SSH channel EOF, serial read
+                    // error, pty EOF) — emit the event so clients learn the
+                    // session died and WHY, instead of discovering it only via
+                    // terminal_list polling with no reason (round-53). A
+                    // client-initiated close goes through tool_close which
+                    // already emits; this is a no-op for the double-run (the
+                    // event is harmless on an already-closed session).
+                    let ev = match kind.as_str() {
+                        "ssh" => AgentEvent::SshDisconnect { session_id: sid_buf.clone() },
+                        "serial" => AgentEvent::SerialClose { port_id: sid_buf.clone() },
+                        _ => AgentEvent::TermClose { session_id: sid_buf.clone() },
+                    };
+                    bus2.emit(&ev);
                 });
                 Ok(json!(id))
             }

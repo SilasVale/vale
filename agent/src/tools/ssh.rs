@@ -101,9 +101,12 @@ impl SshSession {
         password: Option<&str>,
     ) -> Result<Self, DeviceError> {
         // A dead host (firewall DROP, blackholed) used to hang connect()
-        // forever — the terminal_open caller never got a timeout. 15s caps
-        // the TCP connect + key-exchange window; inactivity keeps the session
-        // alive (keepalive pings every 30s).
+        // forever — the terminal_open caller never got a timeout. The
+        // inactivity_timeout below is only armed AFTER the handshake
+        // (round-53 verified in russh), so the TCP connect + SSH-id exchange
+        // window is covered by an explicit 15s timeout here; otherwise a
+        // blackholed address blocks for the OS connect timeout (Windows
+        // ~21s, Linux up to ~130s).
         let mut cfg = client::Config::default();
         cfg.inactivity_timeout = Some(std::time::Duration::from_secs(15));
         cfg.keepalive_interval = Some(std::time::Duration::from_secs(30));
@@ -114,12 +117,17 @@ impl SshSession {
             trust_key: format!("{username}@{host}:{port}"),
         };
         let mut handle: Handle<SshHandler> =
-            connect(config, format!("{host}:{port}"), handler)
-                .await
-                .map_err(|e| DeviceError::SshConnectFailed {
+            match tokio::time::timeout(std::time::Duration::from_secs(15), connect(config, format!("{host}:{port}"), handler)).await {
+                Ok(Ok(h)) => h,
+                Ok(Err(e)) => return Err(DeviceError::SshConnectFailed {
                     host: host.to_string(),
                     reason: format!("connect failed: {e}"),
-                })?;
+                }),
+                Err(_) => return Err(DeviceError::SshConnectFailed {
+                    host: host.to_string(),
+                    reason: "connect timed out after 15s".to_string(),
+                }),
+            };
 
         // Authenticate
         if let Some(pass) = password {
