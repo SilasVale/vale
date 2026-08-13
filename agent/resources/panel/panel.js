@@ -228,7 +228,12 @@ function onUnauthorized() {
 function setStatus(text, isError = false) {
   // Before the main panel is shown, errors belong in the connection form
   // (the statusbar is hidden then); afterwards they go to the bottom bar.
-  const el = panelMain.classList.contains("hidden") ? $("conn-status") : statusEl;
+  // Null-guard: panelMain/statusEl/conn-status can be absent when the page
+  // is mid-boot or a proxy-mode load failed — setStatus must never throw
+  // (a thrown setStatus inside a closeSession catch replaced the real error
+  // with "Cannot read properties of null (reading 'classList')").
+  if (!panelMain || !statusEl) return;
+  const el = panelMain.classList.contains("hidden") ? ($("conn-status") || statusEl) : statusEl;
   el.textContent = text;
   el.classList.toggle("error", isError);
 }
