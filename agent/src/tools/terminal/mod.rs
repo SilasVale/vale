@@ -111,6 +111,13 @@ mod desktop_impl {
         backend: Box<dyn TermBackend>,
         /// Last time output was seen — used by the idle sweeper.
         last_output: std::time::Instant,
+        /// When the session was opened — tiebreaker for eviction when
+        /// last_output is equal (term_touch_all refreshes every session with
+        /// the same Instant while the panel SSE is open, so min_by_key on
+        /// last_output alone would evict the FIRST session in vec order — the
+        /// oldest-opened — on a tie, the exact session the code comment says
+        /// must survive).
+        opened_at: std::time::Instant,
     }
 
     /// Sessions idle this long (no output) are force-closed. Guards against a
@@ -268,10 +275,14 @@ mod desktop_impl {
             {
                 let mut inner = self.inner.lock().await;
                 while inner.sessions.len() >= MAX_SESSIONS {
+                    // Evict the session idle-longest; on a last_output tie
+                    // (term_touch_all stamps every session with the same
+                    // Instant while the panel SSE is open) fall back to the
+                    // OLDEST-opened — never the oldest-opened being spared.
                     let idle = inner.sessions
                         .iter()
                         .enumerate()
-                        .min_by_key(|(_, s)| s.last_output)
+                        .min_by_key(|(_, s)| (s.last_output, s.opened_at))
                         .map(|(i, _)| i);
                     match idle {
                         Some(i) => {
@@ -281,7 +292,7 @@ mod desktop_impl {
                         None => break,
                     }
                 }
-                inner.sessions.push(Session { id: id.clone(), kind, label, backend, last_output: std::time::Instant::now() });
+                inner.sessions.push(Session { id: id.clone(), kind, label, backend, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now() });
             }
             Ok((id, rx))
         }
