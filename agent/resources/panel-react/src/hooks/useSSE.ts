@@ -155,10 +155,9 @@ export function useSSE(
         const ctl = new AbortController();
         const abortTimer = setTimeout(() => ctl.abort(), 30000);
         const res = await fetch(`${proto}//${hostname}/api/events/term`, {
+          headers: { authorization: `Bearer ${token}` },
           signal: ctl.signal,
         }).finally(() => clearTimeout(abortTimer));
-          headers: { authorization: `Bearer ${token}` },
-        });
         if (res.status === 401) { setSseState("down"); setTimeout(connect, backoff()); return; }
         if (!res.ok || !res.body) { setSseState("down"); setTimeout(connect, backoff()); return; }
         const reader = res.body.getReader();
