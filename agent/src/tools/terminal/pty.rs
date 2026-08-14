@@ -156,25 +156,30 @@ impl TermBackend for PtyBackend {
         }
     }
     fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
-        // round-105: the trait default used the blocking write_all on the
-        // master fd — a full n_tty input queue (foreground process not
-        // reading stdin) blocked FOREVER with the execute busy flag stuck
-        // (R104-H1 only fixed SSH). Bounded retry with try_lock (never
-        // blocks the async worker — a lock held by a stalled write_all is
-        // exactly the case we must time out on) then a best-effort write.
+        // round-106: the round-105 version used the BLOCKING std Mutex::lock
+        // (only fails on poison) and a blocking write_all on the master fd —
+        // a full n_tty input queue (foreground process not reading stdin)
+        // blocked FOREVER, wedging the execute busy flag and a tokio worker.
+        // The master fd is a blocking ptmx; the only sound bounded path is
+        // to run the blocking write on a BLOCKING TASK and time out around
+        // it — the timeout abandons the stalled task (the fd stays valid;
+        // a later drain unblocks the write_all which then completes into a
+        // consumed buffer).
+        let writer = self.writer.clone();
         let d = data.to_vec();
         Box::pin(async move {
-            let mut delivered = false;
-            for _ in 0..5 {
-                if let Ok(mut w) = self.writer.lock() {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::task::spawn_blocking(move || {
+                    let mut w = writer.lock().unwrap_or_else(|p| p.into_inner());
                     let _ = w.write_all(&d);
                     let _ = w.flush();
-                    delivered = true;
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }),
+            ).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) => Err(format!("pty write task failed: {e}")),
+                Err(_) => Err("pty write timed out after 5s (input queue full)".into()),
             }
-            if delivered { Ok(()) } else { Err("pty write timed out (input queue full)".into()) }
         })
     }
     fn resize(&self, rows: u16, cols: u16) {

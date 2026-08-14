@@ -107,6 +107,26 @@ impl TermBackend for SerialBackend {
         // try_send: drop-on-full (never block the caller on a stalled device)
         let _ = self.write_tx.try_send(data.to_vec());
     }
+    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        // round-106: the trait default dropped the command when the 1024-slot
+        // channel was full (stalled device) — terminal_execute silently
+        // never ran and reported idle success. The channel is a std
+        // SyncSender — run the blocking send on a blocking task with a 5s
+        // bound (mirrors SSH/PTY).
+        let tx = self.write_tx.clone();
+        let d = data.to_vec();
+        Box::pin(async move {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::task::spawn_blocking(move || tx.send(d)),
+            ).await {
+                Ok(Ok(Ok(()))) => Ok(()),
+                Ok(Ok(Err(_))) => Err("serial write channel closed".into()),
+                Ok(Err(e)) => Err(format!("serial write task failed: {e}")),
+                Err(_) => Err("serial write timed out after 5s (device not draining)".into()),
+            }
+        })
+    }
     fn resize(&self, _rows: u16, _cols: u16) {}
     fn close(&self) {
         let _ = self.close_tx.send(());

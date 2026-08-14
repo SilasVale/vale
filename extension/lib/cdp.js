@@ -9,6 +9,9 @@ import { state, setStateError } from "./state.js";
 // errors with no recovery).
 const ATTACHED_KEY = "attachedTabs";
 const attached = new Set();
+// round-106: per-tab scrub-on-load listeners (removed before re-adding so
+// attach/reuse cycles don't leak listeners).
+const scrubListeners = new Map();
 let hydrated = null; // hydration promise — runs once, on first use
 
 async function hydrateAttached() {
@@ -167,10 +170,20 @@ async function ensureTabInner(device, proxyUrl) {
     // be on the proxy URL with the token) AND re-scrub on every load.
     const scrubExpr = `history.replaceState(null, "", location.pathname + location.search.replace(/([?&])token=[^&]*/, "$1").replace(/[?&]$/, ""))`;
     chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", { expression: scrubExpr }).catch(() => {});
-    chrome.debugger.onEvent.addListener(function scrubOnLoad(source, method) {
+    // round-106: the per-attach scrubOnLoad listener was never removed —
+    // every attach/reuse cycle added another listener (all matching the
+    // same tabId → N scrubs per load, listener leak across SW restarts).
+    // Track per-tab listeners and remove the old one before adding.
+    if (scrubListeners.has(tabId)) {
+      chrome.debugger.onEvent.removeListener(scrubListeners.get(tabId));
+      scrubListeners.delete(tabId);
+    }
+    const scrubOnLoad = (source, method) => {
       if (source.tabId !== tabId || method !== "Page.loadEventFired") return;
       chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", { expression: scrubExpr }).catch(() => {});
-    });
+    };
+    scrubListeners.set(tabId, scrubOnLoad);
+    chrome.debugger.onEvent.addListener(scrubOnLoad);
   } else {
     // round-88: the reuse path (SW-restart / query-hit) skipped the scrub —
     // ?token= survived the exact 'SW idled out mid-load' case the R84 fix
