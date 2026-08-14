@@ -26,8 +26,26 @@ export function TerminalPane({ session, registerWrite }: {
       cursorBlink: true,
       scrollback: 20000,
       fontSize: 13,
+      // round-83 (R82 review): reflowOnResize re-wraps the buffer on a grid
+      // change — without it, a session adopted while display:none (inactive)
+      // stayed at the 80x24 grid with blank space (the 'half screen' bug).
+      reflowOnResize: true as any, // xterm option (typed in newer @xterm/xterm; present at runtime)
       fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace',
-      theme: { background: "#ffffff", foreground: "#1d1d1f" },
+      // round-83: full 16-color palette (vanilla TERM_THEME) — xterm draws
+      // bold text with index<8 at index+8 and falls back to the dark Tango
+      // brights when unset, which are nearly invisible on white (1.2-1.6:1).
+      theme: {
+        background: "#ffffff",
+        foreground: "#1d1d1f",
+        cursor: "#0b7a6e",
+        cursorAccent: "#ffffff",
+        selectionBackground: "rgba(14,147,132,.2)",
+        black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",
+        blue: "#1d4ed8", magenta: "#7c3aed", cyan: "#0f766e", white: "#44403c",
+        brightBlack: "#4b5563", brightRed: "#dc2626", brightGreen: "#15803d",
+        brightYellow: "#a16207", brightBlue: "#2563eb", brightMagenta: "#9333ea",
+        brightCyan: "#0f766e", brightWhite: "#6e6e73",
+      },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -67,11 +85,16 @@ export function TerminalPane({ session, registerWrite }: {
     };
   }, [session.sid, registerWrite]);
 
-  // Refit when the pane becomes active (layout changed).
+  // Refit when the pane becomes active (layout changed) + on window
+  // resize/zoom/visibility (round-83 R82 review: browser resize left the
+  // canvas at its old grid — white space/clipped content until a tab switch).
   useEffect(() => {
+    const refit = () => { try { (termRef.current as any)?.fit?.(); } catch {} };
     if (session.active) {
-      const t = setTimeout(() => { try { (termRef.current as any)?.fit?.(); } catch {} }, 50);
-      return () => clearTimeout(t);
+      const t = setTimeout(refit, 50);
+      window.addEventListener("resize", refit);
+      document.addEventListener("visibilitychange", refit);
+      return () => { clearTimeout(t); window.removeEventListener("resize", refit); document.removeEventListener("visibilitychange", refit); };
     }
   }, [session.active]);
 

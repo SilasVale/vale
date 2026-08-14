@@ -80,8 +80,16 @@ export function useSessions(connected: boolean) {
   }, []);
 
   const closeSession = useCallback(async (sid: string) => {
-    await callTool("terminal_close", { session_id: sid }).catch(() => {});
-    setSessions((prev) => prev.map((s) => (s.sid === sid ? { ...s, closed: true, closedAt: Date.now() } : s)));
+    // round-83: a transient close failure must NOT mark the session closed —
+    // the old catch(() => {}) swallowed the error and the tab wedged
+    // (closed class, onClick disabled, SSE still streaming). On failure keep
+    // it open and surface the error.
+    try {
+      await callTool("terminal_close", { session_id: sid });
+      setSessions((prev) => prev.map((s) => (s.sid === sid ? { ...s, closed: true, closedAt: Date.now() } : s)));
+    } catch (e: any) {
+      setStatusState(`close failed — session still open: ${e.message}`);
+    }
   }, []);
 
   const activate = useCallback((sid: string) => {

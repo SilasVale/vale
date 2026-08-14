@@ -53,10 +53,13 @@ export function App() {
   const sseState = useSSE(connected, writeCallbacks, () => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid));
 
   function connect() {
-    if (!host || !token) { setConnError("host + token required"); return; }
-    localStorage.setItem(LS_HOST, host);
+    // round-83: normalize the host — pasting 'https://d1…' or a trailing
+    // slash built 'https://https://d1…' fetches (silent empty panel).
+    const h = host.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    if (!h || !token) { setConnError("host + token required"); return; }
+    localStorage.setItem(LS_HOST, h);
     localStorage.setItem(LS_TOKEN, token);
-    initTransport(host, token, () => { setConnected(false); setConnError("session expired — re-enter token"); });
+    initTransport(h, token, () => { setConnected(false); setConnError("session expired — re-enter token"); });
     setConnected(true);
     setConnError("");
   }
