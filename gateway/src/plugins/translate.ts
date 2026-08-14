@@ -27,7 +27,7 @@ import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passt
 import { rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
 import { jsonOk, jsonError, CORS_HEADERS } from "../http.ts";
 import { MODELS, OG_NATIVE_ANTHROPIC, OG_ZEN_ANTHROPIC, VERIFY_PATH } from "../channels.ts";
-import type { PluginContext } from "../registry.ts";
+import type { PluginContext } from "./registry.ts";
 
 const COUNT_PATH = "/v1/messages/count_tokens";
 
@@ -278,7 +278,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     const webSearchToolChoice = body?.tool_choice &&
       ((body.tool_choice.type === "tool" && body.tool_choice.name === "web_search") ||
        (body.tool_choice.type === "any" && Array.isArray(body.tool_choice.tools) &&
-        body.tool_choice.tools.some((t) => t?.name === "web_search")));
+        body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
     if (webSearchToolChoice && body) {
       const searchModel = "og/deepseek-v4-flash";
       // Swap when the route is NOT already the native search-capable
@@ -392,7 +392,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
       let type = "api_error";
       let extra = {};
       try {
-        const err = await upstream.json();
+        const err: any = await upstream.json();
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
         // Forward the upstream's OWN error.type (Claude Code keys retry and
         // auth flows off it) — a DeepSeek 429 rate_limit_error collapsed to
@@ -463,7 +463,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
       // (a proxy/backend quirk, or a 200-wrapped error). Feeding JSON into the
       // SSE parser produced an EMPTY Anthropic message — the whole answer was
       // silently dropped. Buffer + translate as a one-shot SSE instead.
-      const json = await upstream.json().catch(() => null);
+      const json: any = await upstream.json().catch(() => null);
       if (json) {
         // A 200-wrapped OpenAI ERROR envelope ({error:{...}}) must NOT become
         // a silent empty assistant message — surface it.
@@ -490,7 +490,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
       headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
     });
   }
-  const upJson = await upstream.json().catch(() => null);
+  const upJson: any = await upstream.json().catch(() => null);
   // A 200-wrapped OpenAI error envelope must not become an empty assistant
   // message (silent failure, no retry signal).
   if (!upJson || upJson.error || !Array.isArray(upJson.choices) || upJson.choices.length === 0) {
@@ -639,7 +639,7 @@ async function preprocessImages(messages: any, env: any, ukeys: any, model: stri
       out.push(m);
       continue;
     }
-    if (!m.content.some((b) => b.type === "image")) {
+    if (!m.content.some((b: any) => b.type === "image")) {
       out.push(m);
       continue;
     }
@@ -706,20 +706,20 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
     // or/ (openrouter) or ds/ (deepseek) vision model — Anthropic passthrough
     const bearerKey = route.kind === "openrouter" ? ukeys.OPENROUTER_API_KEY : ukeys.DEEPSEEK_API_KEY;
     if (!bearerKey) return "(图片描述失败：视觉模型后端未配置)";
-    let resp;
+    let resp: any;
     try {
       resp = await fetchWithTimeout(route.upstream, {
         method: "POST",
         headers: passthroughHeaders(bearerKey),
         body: JSON.stringify({ ...miniReq, model: upstreamModel }),
       }, upstreamTimeoutMs(env));
-    } catch (e) {
+    } catch (e: any) {
       return `(图片描述失败：${e.message})`;
     }
     if (!resp.ok) return `(图片描述失败：${resp.status})`;
-    let json;
+    let json: any;
     try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
-    const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
+    const text = (json.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n").trim();
     const descPt = text || "(图片描述为空)";
     await cacheImageDesc(cacheKey, env, descPt);
     return descPt;
@@ -729,18 +729,18 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
   // which now forwards image_url parts (see toOpenAIRequest).
   if (!ukeys.OPENCODE_GO_API_KEY) return "(图片描述失败：OPENCODE_GO_API_KEY 未配置)";
   const openaiReq = toOpenAIRequest(miniReq, upstreamModel);
-  let resp;
+  let resp: any;
   try {
     resp = await fetchWithTimeout(route.upstream, {
       method: "POST",
       headers: { Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify(openaiReq),
     }, upstreamTimeoutMs(env));
-  } catch (e) {
+  } catch (e: any) {
     return `(图片描述失败：${e.message})`;
   }
   if (!resp.ok) return `(图片描述失败：${resp.status})`;
-  let json;
+  let json: any;
   try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
   const desc = (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
   await cacheImageDesc(cacheKey, env, desc);
@@ -754,7 +754,7 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
  *  which the user lacks → 502 on every model=auto request. */
 export async function isModelUsable(env: any, model: string, uid: string): Promise<boolean> {
   if (!MODELS.some((m) => m.id === model)) return false;
-  const userKeys = await getUserKeys(env, uid).catch(() => ({}));
+  const userKeys: any = await getUserKeys(env, uid).catch(() => ({}));
   const prefix = model.split("/")[0] + "/";
   if (prefix === "og/" && !(userKeys.OPENCODE_GO_API_KEY || env.OPENCODE_GO_API_KEY)) return false;
   if (prefix === "ds/" && !(userKeys.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY)) return false;
