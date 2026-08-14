@@ -182,8 +182,19 @@ async function handleWsTicket(request: Request, env: any): Promise<Response> {
 async function handleWs(request: Request, env: any, url: URL): Promise<Response> {
   const device = url.searchParams.get("device") || "";
   const ticket = url.searchParams.get("ticket") || "";
+  // round-92: consumeWsTicket was check-then-delete on eventually-consistent
+  // KV — two concurrent /ws handshakes with the SAME ticket both passed and
+  // opened two sockets, one of which the hub then replaced (churn + a second
+  // socket that was briefly live). Same single-flight claim lock the pair/
+  // claim and reg-key routes already use.
+  const claim = await env.KEYS.get(`plgclaim:${ticket}`);
+  if (claim) return jsonError(403, "WS ticket already in use", "authorization_error");
+  await env.KEYS.put(`plgclaim:${ticket}`, "1", { expirationTtl: 60 });
   const ok = await consumeWsTicket(env, ticket);
-  if (!ok || ok !== device) return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
+  if (!ok || ok !== device) {
+    await env.KEYS.delete(`plgclaim:${ticket}`);
+    return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
+  }
   const d = await getDevice(env, device);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
   const id = env.PLUGIN_HUB.idFromName(device);
