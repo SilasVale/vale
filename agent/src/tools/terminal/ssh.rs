@@ -56,7 +56,7 @@ impl TermBackend for SshBackend {
         // Keystrokes must never block — drop when full (round-53).
         let _ = self.write_tx.try_send(data.to_vec());
     }
-    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
         // round-103: RELIABLE write for terminal_execute — the old
         // try_send dropped the whole command when the channel was full
         // (ssh channel task blocked on remote TCP backpressure), and the
@@ -65,13 +65,19 @@ impl TermBackend for SshBackend {
         // round-104: BOUNDED — an awaited send on a full channel hangs
         // forever when the remote never drains (foreground sleep 300 with a
         // full n_tty queue, wedged peer where keepalives keep inactivity
-        // from firing). A stuck write must fail (and release the execute
-        // busy flag) rather than brick the session; 5s is far beyond any
-        // legitimate drain pause.
+        // from firing).
+        // round-105: the timeout result is PROPAGATED (not discarded) — a
+        // dropped command must surface as an execute error, not a
+        // success-shaped 'idle' with an audit trail for a command that never
+        // reached the shell.
         let tx = self.write_tx.clone();
         let d = data.to_vec();
         Box::pin(async move {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(d)).await;
+            match tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(d)).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(_)) => Err("ssh write channel closed".into()),
+                Err(_) => Err("ssh write timed out after 5s (remote not draining)".into()),
+            }
         })
     }
     fn resize(&self, rows: u16, cols: u16) {

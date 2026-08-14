@@ -610,7 +610,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // input queue and executed anyway, and the audit trail
                     // held a dangling start with no end (misreported as
                     // interrupted on the next boot).
-                    if !terminal_mgr.term_try_execute(&sid).await {
+                    if !terminal_mgr.term_try_execute(&sid).await? {
                         return Err(DeviceError::SessionBusy { id: sid.clone() });
                     }
                     // Write the command; on failure (session reaped mid-write)
@@ -660,7 +660,27 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // a too-eager return could race that handoff.
                     let marker_confirm = std::time::Duration::from_millis(300);
                     let mut quiet_since: Option<Instant> = None;
+                    // round-105: the quiet path extends ONCE (marker-injected
+                    // PTYs: echo → quiet → marker at next prompt). A second
+                    // quiet expiry breaks idle — marker-less backends must
+                    // not loop to the deadline.
+                    let mut quiet_extended = false;
                     let mut result = String::new();
+                    // round-105: cap the session-mode result like the local
+                    // mode (1 MB tail) — the old code grew to the command's
+                    // TOTAL output; `yes` at 1MB/s for the 3600s deadline
+                    // OOM'd the agent. The tail is kept (most useful to the
+                    // model); `truncated` is set so the caller knows.
+                    const MAX_SESSION_BYTES: usize = 1_048_576;
+                    let mut append_result = |result: &mut String, truncated: &mut bool, s: &str| {
+                        if result.len() + s.len() > MAX_SESSION_BYTES {
+                            *truncated = true;
+                            let drop = result.len() + s.len() - MAX_SESSION_BYTES;
+                            let drop = drop.min(result.len());
+                            result.drain(..drop);
+                        }
+                        result.push_str(s);
+                    };
                     // Marker scanner state: the OSC 133;D;N BEL sequence may
                     // span chunks, so the last 64 bytes stay un-finalized until
                     // they cannot be a marker prefix anymore.
@@ -716,7 +736,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             // tail (multiple can appear in one chunk).
                             while let Some((start, end, code)) = find_prompt_marker(&pending) {
                                 if start > 0 {
-                                    result.push_str(&String::from_utf8_lossy(&pending[..start]));
+                                    append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..start]));
                                 }
                                 pending.drain(..end);
                                 marker_code = Some(code);
@@ -730,14 +750,24 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             // arriving within one poll; sustained output
                             // (a burst > 1 chunk or continuing past the
                             // confirm window) means the marker was fake.
-                            if marker_seen_at.is_some() && chunk.len() > 256 {
-                                marker_seen_at = None;
+                            // round-103/105: output AFTER a marker is either
+                            // the real prompt (small, within the confirm
+                            // window) or sustained fake-marker output. Reset
+                            // the confirm window when output CONTINUES past
+                            // the confirm window at any size (the R104
+                            // chunk>256 heuristic let small-chunk fake
+                            // markers through; the R103 any-output reset
+                            // killed real markers).
+                            if let Some(at) = marker_seen_at {
+                                if at.elapsed() >= marker_confirm {
+                                    marker_seen_at = None;
+                                }
                             }
                             // Finalize everything that can no longer be a
                             // marker prefix.
                             let keep = pending.len().saturating_sub(64);
                             if keep > 0 {
-                                result.push_str(&String::from_utf8_lossy(&pending[..keep]));
+                                append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]));
                                 pending.drain(..keep);
                             }
                             quiet_since = None;
@@ -756,20 +786,18 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                         } else if let Some(qs) = quiet_since {
                             if qs.elapsed() >= quiet_dur {
-                                // round-104: the quiet path broke ~200ms after
-                                // the last output — on a marker-injected PTY
-                                // the shell echoes the command, the tty goes
+                                // round-104/105: on a marker-injected PTY the
+                                // shell echoes the command, the tty goes
                                 // quiet, and the marker arrives only at the
-                                // NEXT prompt (command end). Breaking on
-                                // quiet returned premature success for every
-                                // command with a >200ms silent gap. If the
-                                // un-finalized window still holds a marker
-                                // PREFIX (or the command could still emit
-                                // one — we can't know), extend the quiet
-                                // wait once: give the marker up to
-                                // marker_confirm to complete.
-                                if pending.windows(b"\x1b]133;D;".len()).any(|w| w == b"\x1b]133;D;") {
-                                    quiet_since = None; // wait for the marker
+                                // NEXT prompt — breaking on quiet returned
+                                // premature success. Extend the quiet wait
+                                // ONCE (bounded — a marker-less backend must
+                                // not loop to the deadline): give the marker
+                                // up to marker_confirm to appear, then break
+                                // idle.
+                                if !quiet_extended {
+                                    quiet_extended = true;
+                                    quiet_since = Some(Instant::now());
                                 } else {
                                     wait_reason = "idle";
                                     break;
@@ -793,7 +821,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // ENTIRE output; marker-less SSH/serial always).
                     if !pending.is_empty() {
                         let keep = pending.len();
-                        result.push_str(&String::from_utf8_lossy(&pending[..keep]));
+                        append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]));
                         pending.clear();
                     }
                     // Audit trail: command ended, with the shell's exit code
@@ -1216,7 +1244,27 @@ fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
                             let start = if seen >= lines { i + 1 } else { 0 };
                             (clean_terminal_output(&data[start..end]), entry.dropped)
                         }
-                        None => (String::new(), 0u64),
+                        // round-105: a closed session lives in history —
+                        // terminal_read serves it; screen must too (an empty
+                        // screen misleads the model into 'no output').
+                        None => match store.history.get(&session_id) {
+                            Some(h) => {
+                                let data = &h.buf.data;
+                                let mut end = data.len();
+                                while end > 0 && (data[end - 1] == b'\n' || data[end - 1] == b'\r') {
+                                    end -= 1;
+                                }
+                                let mut seen = 0;
+                                let mut i = end;
+                                while i > 0 && seen < lines {
+                                    i -= 1;
+                                    if data[i] == b'\n' { seen += 1; }
+                                }
+                                let start = if seen >= lines { i + 1 } else { 0 };
+                                (clean_terminal_output(&data[start..end]), h.buf.dropped)
+                            }
+                            None => (String::new(), 0u64),
+                        },
                     }
                 };
                 if dropped > 0 {

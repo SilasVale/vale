@@ -54,10 +54,30 @@ test("hub /call: offline (no socket) → 503 extension_offline", async () => {
   assert.deepEqual(await res.json(), { error: "extension_offline" });
 });
 
+// round-105: every frame is token-revalidated (a socket with NO bound token
+// is closed) — tests that drive frames must bind a valid link first.
+async function boundHub(state, ws) {
+  const env = {
+    KEYS: {
+      async get(k) {
+        if (k === "plugins:v1") {
+          return JSON.stringify({ "tok-test": { device: "d1", createdAt: Date.now(), expiresAt: Date.now() + 86400000 * 30 } });
+        }
+        return null;
+      },
+      async put() {}, async delete() {},
+    },
+  };
+  const hub = new PluginHubDO(state, env);
+  // Simulate the hello that binds the token to this socket.
+  await state.storage.put(`ws-token:${ws.id || ""}`, "tok-test");
+  return hub;
+}
+
 test("hub /call: online → forwards request to the socket and resolves the response", async () => {
   const ws = fakeWs();
   const state = makeState([ws]);
-  const hub = new PluginHubDO(state, {});
+  const hub = await boundHub(state, ws);
   const p = hub.fetch(new Request("https://hub/call", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -79,7 +99,7 @@ test("hub /call: online → forwards request to the socket and resolves the resp
 test("hub webSocketMessage: ping → pong echoes t", async () => {
   const ws = fakeWs();
   const state = makeState([ws]);
-  const hub = new PluginHubDO(state, {});
+  const hub = await boundHub(state, ws);
   // round-94: webSocketMessage is async (token re-validation on every frame);
   // await it so the pong is actually sent before asserting.
   await hub.webSocketMessage(ws, JSON.stringify({ type: "ping", t: 42 }));

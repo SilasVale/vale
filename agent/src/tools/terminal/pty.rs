@@ -155,6 +155,28 @@ impl TermBackend for PtyBackend {
             let _ = w.flush();
         }
     }
+    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        // round-105: the trait default used the blocking write_all on the
+        // master fd — a full n_tty input queue (foreground process not
+        // reading stdin) blocked FOREVER with the execute busy flag stuck
+        // (R104-H1 only fixed SSH). Bounded retry with try_lock (never
+        // blocks the async worker — a lock held by a stalled write_all is
+        // exactly the case we must time out on) then a best-effort write.
+        let d = data.to_vec();
+        Box::pin(async move {
+            let mut delivered = false;
+            for _ in 0..5 {
+                if let Ok(mut w) = self.writer.lock() {
+                    let _ = w.write_all(&d);
+                    let _ = w.flush();
+                    delivered = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            if delivered { Ok(()) } else { Err("pty write timed out (input queue full)".into()) }
+        })
+    }
     fn resize(&self, rows: u16, cols: u16) {
         // Real PTY resize — the shell gets SIGWINCH / ConPTY reflows.
         // (The old code wrote an ANSI escape into the shell's stdin.)

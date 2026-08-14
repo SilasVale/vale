@@ -163,9 +163,11 @@ pub trait TermBackend: Send + Sync {
     /// drop-on-full — used by terminal_execute, where a dropped command
     /// silently never runs (and the wait loop reports success-like 'idle').
     /// Default = sync write (keystrokes); SSH overrides with an awaitable
-    /// send so backpressure never loses a command.
-    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move { self.write(data) })
+    /// send so backpressure never loses a command. The error (round-105) is
+    /// propagated so an undelivered command surfaces as an execute error
+    /// instead of a success-shaped 'idle'.
+    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move { self.write(data); Ok(()) })
     }
     fn resize(&self, rows: u16, cols: u16);
     fn close(&self);
@@ -405,7 +407,10 @@ mod desktop_impl {
             // round-103: reliable write (SSH overrides with an awaitable
             // send) — terminal_execute's command must not be dropped when
             // the transport is under backpressure.
-            backend.write_async(data).await;
+            // round-105: propagate the error — an undelivered command must
+            // fail the execute, not report success-shaped 'idle'.
+            backend.write_async(data).await
+                .map_err(|e| DeviceError::Internal { message: e })?;
             Ok(())
         }
 
@@ -479,13 +484,20 @@ mod desktop_impl {
         /// Try to acquire the per-session execute lock (round-55): a second
         /// concurrent execute on the same session would share one buffer
         /// cursor and interleave reads + marker ownership — refuse instead.
-        pub async fn term_try_execute(&self, sid: &str) -> bool {
+        pub async fn term_try_execute(&self, sid: &str) -> Result<bool, DeviceError> {
             let mut inner = self.inner.lock().await;
             match inner.sessions.iter_mut().find(|s| s.id == sid) {
                 Some(s) => {
-                    if s.busy { false } else { s.busy = true; true }
+                    if s.busy {
+                        Ok(false)
+                    } else {
+                        s.busy = true;
+                        Ok(true)
+                    }
                 }
-                None => false,
+                // round-105: a nonexistent session reported busy — clients
+                // retried forever. Distinguish.
+                None => Err(DeviceError::SessionNotFound { id: sid.to_string() }),
             }
         }
 
