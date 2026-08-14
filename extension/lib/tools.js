@@ -17,9 +17,14 @@ function proxyUrl(device) {
 }
 
 async function evaluate(tabId, expr) {
-  const { result } = await send(tabId, "Runtime.evaluate", { expression: expr, returnByValue: true });
-  if (result?.exceptionDetails) throw new Error(`page evaluate failed: ${result.exceptionDetails.text || "exception"}`);
-  return result?.value;
+  const resp = await send(tabId, "Runtime.evaluate", { expression: expr, returnByValue: true });
+  // round-94: CDP puts exceptionDetails at the TOP level of the
+  // Runtime.evaluate response, not inside `result` — the old check on
+  // result.exceptionDetails never fired, so page exceptions were silently
+  // treated as success (a broken snapshot/click script returned undefined
+  // instead of an error).
+  if (resp?.exceptionDetails) throw new Error(`page evaluate failed: ${resp.exceptionDetails.text || "exception"}`);
+  return resp?.result?.value;
 }
 async function snapshot(tabId) {
   const json = await evaluate(tabId, ELEMENTS_SCRIPT);

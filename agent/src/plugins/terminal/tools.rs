@@ -645,7 +645,16 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             .map(|e| {
                                 // Eviction advanced `dropped` past our read
                                 // cursor → output was dropped (1MB burst).
-                                if e.dropped as usize > read_abs { truncated = true; }
+                                // round-94: the cursor MUST jump forward to
+                                // `dropped`, not stay behind — slice_from
+                                // clamps to the in-memory window and the next
+                                // poll would re-read the window tail that was
+                                // already appended to `result`, duplicating
+                                // it on every poll while eviction continues.
+                                if e.dropped as usize > read_abs {
+                                    read_abs = e.dropped as usize;
+                                    truncated = true;
+                                }
                                 let s = e.slice_from(read_abs);
                                 (s.to_vec(), s.len())
                             })
@@ -1008,7 +1017,7 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
             let buf = buf.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
-                let (text, start, end, dropped, spilled) = {
+                let (text, raw, clean_out, start, end, dropped, spilled) = {
                     let mut store = recover_guard(&buf);
                     // Live session, or retained history (closed).
                     let explicit_offset = params.get("offset").is_some();
@@ -1032,7 +1041,8 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                         } else {
                             String::from_utf8_lossy(&raw).to_string()
                         };
-                        (text, offset, entry.end_abs(), entry.dropped, spilled)
+                        let raw_out = if clean { Vec::new() } else { raw.clone() };
+                        (text, raw_out, clean, offset, entry.end_abs(), entry.dropped, spilled)
                     };
                     match store.live.get_mut(&session_id) {
                         Some(entry) => {
@@ -1062,6 +1072,15 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                     }
                 };
                 let mut out = json!({"text": text, "start": start, "end": end});
+                // round-94: the panel's sync loop dedups against the SSE
+                // stream by BYTE delta — a lossy UTF-16 string can't be
+                // sliced byte-precisely (CJK/emoji diverged and dropped live
+                // characters). When clean:false, also return the raw BYTES
+                // (base64) so the panel can subarray the exact byte range.
+                if !clean_out && !raw.is_empty() {
+                    use base64::Engine as _;
+                    out["raw"] = json!(base64::engine::general_purpose::STANDARD.encode(&raw));
+                }
                 if dropped > 0 {
                     out["dropped"] = json!(dropped);
                 }

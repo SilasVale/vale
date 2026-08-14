@@ -50,7 +50,7 @@ export function useSSE(
         const from = cb.getRendered();
         callTool("terminal_read", { session_id: sid, offset: from, clean: false })
           .then((r: any) => {
-            if (!r || !r.text) return;
+            if (!r || (!r.text && !r.raw)) return;
             // round-88: dedup against the CURRENT rendered offset at RESPONSE
             // time — the server always returns start == the requested offset,
             // so comparing to the captured `from` was dead code (skip always
@@ -59,11 +59,35 @@ export function useSSE(
             // Compare against cb.getRendered() now: bytes the SSE frames
             // already delivered are skipped.
             const rendered = cb.getRendered();
+            // round-94: the skip delta is BYTES (the server's start/end are
+            // absolute byte offsets; renderedRef advances by Uint8Array byte
+            // length), but r.text.slice(skip) cut at UTF-16 code-unit index —
+            // on CJK/emoji output the two diverge and the slice dropped live
+            // characters while the read cursor skipped past them forever.
+            // Skip BYTE-precise: the server now returns the raw base64 payload
+            // (clean:false), decode it and subarray the exact byte range.
             const skip = Math.max(0, rendered - Number(r.start));
-            const txt = skip ? r.text.slice(skip) : r.text;
-            if (txt) cb.write(new TextEncoder().encode(txt));
+            if (r.raw) {
+              const bin = atob(r.raw);
+              const bytes = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              if (skip < bytes.length) cb.write(bytes.subarray(skip));
+            } else if (skip > 0) {
+              // No raw payload (clean path): best-effort re-encode — byte
+              // alignment via TextEncoder, still safe for CJK.
+              const bytes = new TextEncoder().encode(r.text);
+              cb.write(bytes.subarray(skip));
+            } else if (r.text) {
+              cb.write(new TextEncoder().encode(r.text));
+            }
           })
-          .catch(() => {});
+          .catch(() => {
+            // round-94: a failed sync read used to be swallowed — the gap
+            // between the last rendered offset and the next SSE frame's start
+            // was never re-fetched, so bytes vanished permanently on a
+            // transient failure. The next 5s tick retries from the same
+            // (un-advanced) rendered offset; nothing is lost.
+          });
       }
     }, 5_000);
 

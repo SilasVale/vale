@@ -96,6 +96,10 @@ export function TerminalPane({ session, registerWrite }: {
       const t = setTimeout(refit, 50);
       window.addEventListener("resize", refit);
       document.addEventListener("visibilitychange", refit);
+      // round-94: focus the terminal on activation — keystrokes previously
+      // landed nowhere (focus stayed on the toolbar/button that opened the
+      // session, and Enter/Space re-triggered it).
+      setTimeout(() => { try { termRef.current?.focus?.(); } catch {} }, 60);
       return () => { clearTimeout(t); window.removeEventListener("resize", refit); document.removeEventListener("visibilitychange", refit); };
     }
   }, [session.active]);
