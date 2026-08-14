@@ -1,0 +1,108 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { callApi, callTool } from "../lib/api";
+
+// Session state (migrated from panel.js) — the xterm instance + render
+// cursor live OUTSIDE React state (imperative, heavy); React tracks only the
+// session list + metadata. The term object is attached to a ref map so the
+// render cycle never re-creates it.
+
+export interface Session {
+  sid: string;
+  label: string;
+  kind: string;
+  closed: boolean;
+  savedOnly: boolean;
+  active: boolean;
+  openedAt: number;
+  closedAt: number | null;
+}
+
+interface SessionRuntime {
+  term: any;            // xterm Terminal
+  fit: any;             // FitAddon
+  container: HTMLDivElement | null;
+  renderedBytes: number;
+  needSync: boolean;
+  sseDirty: boolean;
+  syncInFlight: boolean;
+}
+
+const runtimes = new Map<string, SessionRuntime>();
+
+export function useSessions(connected: boolean) {
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [activeSid, setActiveSid] = useState<string | null>(null);
+  const [status, setStatusState] = useState("");
+  const pollRef = useRef<number | null>(null);
+
+  // Poll the session list while connected (the panel polls terminal_list
+  // every 3s to pick up sessions created by other clients).
+  useEffect(() => {
+    if (!connected) return;
+    const tick = async () => {
+      try {
+        const list = await callTool("terminal_list").catch(() => []);
+        const seen = new Set(list.map((s: any) => s.id));
+        setSessions((prev) => {
+          const next = [...prev];
+          for (const s of list as any[]) {
+            const existing = next.find((x) => x.sid === s.id);
+            if (!existing) next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null });
+          }
+          // Mark gone sessions closed (retained history shows as tombstone).
+          for (const s of next) if (!seen.has(s.sid) && !s.savedOnly) { s.closed = true; s.closedAt = s.closedAt || Date.now(); }
+          return next;
+        });
+      } catch { /* transient — next poll retries */ }
+    };
+    tick();
+    pollRef.current = window.setInterval(tick, 3000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [connected]);
+
+  const setStatus = useCallback((msg: string) => setStatusState(msg), []);
+
+  const openSession = useCallback(async (kind: string, target: string, extra: Record<string, unknown> = {}) => {
+    try {
+      const sid = await callTool("terminal_open", { kind, target, rows: 30, cols: 120, ...extra });
+      if (typeof sid !== "string" || !sid) throw new Error("terminal_open returned no sid");
+      setSessions((prev) => {
+        if (prev.some((s) => s.sid === sid)) return prev;
+        const label = kind === "ssh" ? target.split("@").pop() || target : kind === "serial" ? target.split("?")[0] : target || "shell";
+        return [...prev, { sid, label, kind, closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null }];
+      });
+      setActiveSid(sid);
+      return sid;
+    } catch (e: any) {
+      setStatusState(`open failed: ${e.message}`);
+      throw e;
+    }
+  }, []);
+
+  const closeSession = useCallback(async (sid: string) => {
+    await callTool("terminal_close", { session_id: sid }).catch(() => {});
+    setSessions((prev) => prev.map((s) => (s.sid === sid ? { ...s, closed: true, closedAt: Date.now() } : s)));
+  }, []);
+
+  const activate = useCallback((sid: string) => {
+    setActiveSid(sid);
+    setSessions((prev) => prev.map((s) => ({ ...s, active: s.sid === sid })));
+  }, []);
+
+  const exportSession = useCallback((sid: string) => {
+    // Pull the retained history text (terminal_read from 0, raw) and save.
+    callTool("terminal_read", { session_id: sid, offset: 0, clean: false })
+      .then((r: any) => {
+        const text = (r && r.text) || "";
+        const blob = new Blob([text], { type: "text/plain" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `${sid}.log`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      })
+      .catch(() => setStatusState("export failed"));
+  }, [setStatusState]);
+
+  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes };
+}
