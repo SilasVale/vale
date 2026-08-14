@@ -50,16 +50,18 @@ export function useSSE(
         const from = cb.getRendered();
         callTool("terminal_read", { session_id: sid, offset: from, clean: false })
           .then((r: any) => {
-            if (r && r.text && Number(r.start) <= from) {
-              // Read returned bytes at/after our offset — write only the
-              // not-yet-rendered part (r.start may lag behind if the read
-              // raced an SSE frame that already advanced the offset).
-              const skip = Math.max(0, from - Number(r.start));
-              const txt = skip ? r.text.slice(skip) : r.text;
-              if (txt) cb.write(new TextEncoder().encode(txt));
-            } else if (r && r.text) {
-              cb.write(new TextEncoder().encode(r.text));
-            }
+            if (!r || !r.text) return;
+            // round-88: dedup against the CURRENT rendered offset at RESPONSE
+            // time — the server always returns start == the requested offset,
+            // so comparing to the captured `from` was dead code (skip always
+            // 0), and SSE frames arriving DURING the read (which the server
+            // pushes before the read response) were re-written by the read.
+            // Compare against cb.getRendered() now: bytes the SSE frames
+            // already delivered are skipped.
+            const rendered = cb.getRendered();
+            const skip = Math.max(0, rendered - Number(r.start));
+            const txt = skip ? r.text.slice(skip) : r.text;
+            if (txt) cb.write(new TextEncoder().encode(txt));
           })
           .catch(() => {});
       }

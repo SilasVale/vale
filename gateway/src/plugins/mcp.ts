@@ -99,9 +99,17 @@ export default {
       handler: async (request: Request, env: any) => {
         const ap = await getAdminPassword(env);
         const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
-        const session = cookie && ap ? await verifySessionToken(env.SESSION_SECRET || ap, cookie) : null;
+        // round-88: the hand-rolled gate must match requireSession — the
+        // sess-revoked blacklist (a copied pre-logout cookie) and the
+        // enabled check were missing, so a logged-out admin's copied cookie
+        // kept reading the device inventory for up to 24h.
+        if (!cookie || !ap) return jsonError(401, "Not logged in", "authentication_error");
+        if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) {
+          return jsonError(401, "Not logged in", "authentication_error");
+        }
+        const session = await verifySessionToken(env.SESSION_SECRET || ap, cookie);
         const user = session ? await getUser(env, session.uid) : null;
-        if (!user || user.role !== "admin") {
+        if (!user || user.role !== "admin" || !user.enabled) {
           return jsonError(401, "Not logged in", "authentication_error");
         }
         return pluginStatus(request, env);
