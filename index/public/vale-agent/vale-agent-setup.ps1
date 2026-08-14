@@ -388,7 +388,12 @@ if (Test-Path $trayExe) {
 Write-Host "`n[7/7] cloudflared service"
 $oldEAPk = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$tunnelToken = (& $cloudflared tunnel token $tunnelName 2>&1 | Out-String).Trim()
+# 2>$null, NOT 2>&1: cloudflared writes INF logs to stderr (version notice,
+# "Installing cloudflared Windows service") — 2>&1 mixed them into stdout and
+# the token came out polluted ("illegal base64 data at input byte 182", live
+# on d1). With EAP=Continue (round-66) stderr no longer aborts, so discard it
+# and take ONLY the clean stdout token.
+$tunnelToken = (& $cloudflared tunnel token $tunnelName 2>$null | Out-String).Trim()
 $tk = $LASTEXITCODE
 $ErrorActionPreference = $oldEAPk
 if ($tk -ne 0) { throw "cloudflared tunnel token failed: $tunnelToken" }
