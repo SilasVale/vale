@@ -12,7 +12,7 @@ import type { Session } from "../hooks/useSessions";
 // skipped so the read's text doesn't double-render.
 export function TerminalPane({ session, registerWrite }: {
   session: Session;
-  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void) => void;
+  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -68,7 +68,7 @@ export function TerminalPane({ session, registerWrite }: {
       // caller in useSSE — here we just write + advance.
       term.write(bytes);
       renderedRef.current += bytes.length;
-    });
+    }, () => renderedRef.current);
 
     // Pull retained history so a resurrected session shows its tail.
     syncInFlightRef.current = true;

@@ -32,6 +32,12 @@ export function App() {
       const tok = isProxy ? (urlToken || "") : (injected || urlToken || stored);
       localStorage.setItem(LS_HOST, host);
       if (tok) localStorage.setItem(LS_TOKEN, tok);
+      // round-86: a same-origin visit with NO token (LAN IP / non-allowlisted
+      // host, empty storage) must show the conn form — the old code booted
+      // connected=true with a placeholder token, silently dead (every call
+      // 401'd into a noop, form unreachable). Proxy-mode cookie boot (no
+      // token) stays connected — the cookie is the credential there.
+      if (!tok && !isProxy) return false;
       initTransport(host, tok || " ", () => {});
       if (urlToken) { try { history.replaceState(null, "", location.pathname); } catch {} }
       return true;
@@ -46,11 +52,15 @@ export function App() {
 
   const sessions = useSessions(connected);
   // SSE: per-session xterm write callbacks registered by TerminalPane.
-  const writeCallbacks = useRef(new Map<string, (bytes: Uint8Array) => void>());
+  const writeCallbacks = useRef(new Map<string, { write: (bytes: Uint8Array) => void; getRendered: () => number }>());
   const registerWrite = useMemo(() =>
-    (sid: string, fn: (bytes: Uint8Array) => void) => { writeCallbacks.current.set(sid, fn); },
+    (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => { writeCallbacks.current.set(sid, { write: fn, getRendered }); },
   []);
-  const sseState = useSSE(connected, writeCallbacks, () => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid));
+  // round-86: stable getLiveSids ref — an inline arrow recreated the SSE
+  // effect every 3s poll (stream teardown/re-establish, dropped frames).
+  const getLiveSidsRef = useRef(() => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid));
+  getLiveSidsRef.current = () => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid);
+  const sseState = useSSE(connected, writeCallbacks, getLiveSidsRef);
 
   function connect() {
     // round-83: normalize the host — pasting 'https://d1…' or a trailing
