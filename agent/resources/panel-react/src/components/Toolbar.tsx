@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { callApi } from "../lib/api";
+
+
 
 // Toolbar: PTY / SSH / Serial quick-actions + Export + Settings. The SSH and
 // Serial modals are separate components (ConnModal); this renders the buttons

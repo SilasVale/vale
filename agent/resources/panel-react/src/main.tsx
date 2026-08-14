@@ -1,4 +1,4 @@
-import React from "react";
+// react-jsx: no React import needed
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 
