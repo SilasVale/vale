@@ -16,7 +16,11 @@ pub struct PtyBackend {
     /// mem::forget'ed everything — we keep the handles properly instead.)
     /// Wrapped so the backend can be `Sync` behind `Box<dyn TermBackend>`;
     /// the lock is never taken — the box only needs to stay alive.
-    _slave: Arc<Mutex<Box<dyn SlavePty + Send>>>,
+    /// round-87: Option so the reaper can TAKE it on natural exit — dropping
+    /// the fd lets the master reader see EOF (the old Arc-clone drop kept
+    /// the backend's reference, so the reader never EOF'd and the session
+    /// hung 'live' until the 15-min sweeper).
+    _slave: Arc<Mutex<Option<Box<dyn SlavePty + Send>>>>,
     /// Child process — polled by the reaper thread so exits are waited on
     /// (no zombies/orphans). Never taken; kill() on close, reaper reaps.
     child: Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>>,
@@ -50,7 +54,7 @@ impl PtyBackend {
         );
 
         let master: Box<dyn MasterPty + Send> = pair.master;
-        let slave: Arc<Mutex<Box<dyn SlavePty + Send>>> = Arc::new(Mutex::new(pair.slave));
+        let slave: Arc<Mutex<Option<Box<dyn SlavePty + Send>>>> = Arc::new(Mutex::new(Some(pair.slave)));
         let child_slot: Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>> =
             Arc::new(Mutex::new(Some(child)));
 
@@ -83,9 +87,10 @@ impl PtyBackend {
         // round-87: the reader thread never EOFs after a natural shell exit —
         // a PTY master read only returns EOF when ALL slave fds are closed,
         // and the backend's _slave kept one open until the session was
-        // dropped (15-min sweeper). The reaper now holds its own slave clone
-        // and DROPS it on exit, releasing the fd so the reader EOFs, the
-        // drainer finalizes the session, and the exit code is delivered.
+        // dropped (15-min sweeper). The reaper now TAKES the slave out of
+        // the shared slot on exit — dropping the fd releases the master read
+        // so the reader EOFs, the drainer finalizes the session, and the
+        // exit code is delivered.
         let slave_reap = slave.clone();
         std::thread::spawn(move || {
             loop {
@@ -118,9 +123,14 @@ impl PtyBackend {
                             }
                         }
                     }
-                    // Drop our slave fd clone — the reader's blocking read
-                    // sees EOF once ALL slave fds are gone (round-87).
-                    drop(slave_reap);
+                    // TAKE the slave out of the shared slot and drop it —
+                    // the reader's blocking read sees EOF once ALL slave fds
+                    // are gone (round-87). Unlike an Arc-clone drop, this
+                    // actually releases the fd (the backend's Arc would keep
+                    // it alive until the session is removed).
+                    if let Ok(mut guard) = slave_reap.lock() {
+                        guard.take();
+                    }
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
