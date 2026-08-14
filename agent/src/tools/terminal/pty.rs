@@ -191,6 +191,16 @@ impl TermBackend for PtyBackend {
         // master interrupts the foreground job (make, agent_update, sleep —
         // the same behavior SSH's terminate has with the remote shell) and
         // keeps the session usable, matching ssh.rs.
-        let _ = self.writer.lock().ok().map(|mut w| w.write_all(&[0x03]));
+        // round-97: try_lock, never block — a stalled write_all (n_tty input
+        // queue full, foreground process not reading stdin) holds the writer
+        // mutex forever, and terminate() IS the abort that is supposed to
+        // unblock that queue. Waiting on the lock would deadlock the
+        // execute-timeout path (term_terminate awaits forever). Best-effort:
+        // if the writer is busy, the queue is already full of bytes the
+        // foreground process isn't reading — ^C can't be delivered anyway
+        // until it does.
+        if let Ok(mut w) = self.writer.try_lock() {
+            let _ = w.write_all(&[0x03]);
+        }
     }
 }

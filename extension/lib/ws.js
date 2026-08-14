@@ -153,6 +153,15 @@ function handleFrame(frame) {
   if (frame.type === "request") {
     handleToolRequest(frame).then((result) => wsSend({ id: frame.id, type: "response", ok: true, result }))
       .catch((err) => wsSend({ id: frame.id, type: "response", ok: false, error: String(err?.message || err) }));
+    return;
+  }
+  // round-97: callPlugin (extension → hub request) sends {type:"request"}
+  // and awaits the hub's {type:"response"} frame — this branch was missing,
+  // so every callPlugin timed out at 65s. Resolve the pending promise.
+  if (frame.type === "response" && frame.id && pending.has(frame.id)) {
+    const { resolve } = pending.get(frame.id);
+    pending.delete(frame.id);
+    resolve(frame);
   }
 }
 // round-84: dead-peer detection — a half-open TCP path (WiFi drop, laptop
