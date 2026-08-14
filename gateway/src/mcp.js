@@ -129,6 +129,8 @@ async function callTerminalTool(name, env, device, args) {
     secret_set: "/api/tools/secret_set",
     secret_get: "/api/tools/secret_get",
     secret_delete: "/api/tools/secret_delete",
+    terminal_saved_connections: "/api/tools/terminal_saved_connections",
+    terminal_connect_saved: "/api/tools/terminal_connect_saved",
   }[name];
   if (!toolPath) throw new Error(`Unknown terminal tool: ${name}`);
   const body = { ...args };

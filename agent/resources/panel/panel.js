@@ -945,6 +945,44 @@ function showModal(kind) {
     i.autocomplete = "off";
     fields.appendChild(i);
   };
+  // Saved connections (round-70): a dropdown of the device's connection
+  // memory; selecting one pre-fills the fields for a fast reconnect.
+  callApi("/api/tools/terminal_saved_connections", { method: "POST", body: "{}" })
+    .then((j) => {
+      const list = (j && j.result && j.result.connections) || [];
+      const saved = list.filter((c) => (c.kind || "").startsWith(kind));
+      if (!saved.length) return;
+      const l = document.createElement("label");
+      l.textContent = "Saved connections";
+      fields.appendChild(l);
+      const sel = document.createElement("select");
+      sel.id = "saved-conn";
+      const blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "— pick a saved connection —";
+      sel.appendChild(blank);
+      for (const c of saved) {
+        const o = document.createElement("option");
+        o.value = JSON.stringify(c);
+        o.textContent = `${c.label || c.target} (${c.id})`;
+        sel.appendChild(o);
+      }
+      sel.addEventListener("change", () => {
+        const pick = JSON.parse(sel.value || "{}");
+        if (!pick.target) return;
+        if (kind === "ssh") {
+          const m = /^(.*)@(.*):(\d+)$/.exec(pick.target);
+          if (m) { $("#ssh-host").value = m[2]; $("#ssh-port").value = m[3]; $("#ssh-user").value = m[1]; }
+        } else {
+          const port = pick.target.split("?")[0];
+          $("#serial-port").value = port;
+          const b = /baud=(\d+)/.exec(pick.target || "");
+          if (b) $("#serial-baud").value = b[1];
+        }
+      });
+      fields.appendChild(sel);
+    })
+    .catch(() => {}); // saved list is best-effort — the modal still works
   if (kind === "ssh") {
     mk("Host", "ssh-host", "host.example.com");
     mk("Port", "ssh-port", "22", "22");

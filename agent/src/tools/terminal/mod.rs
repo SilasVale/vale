@@ -13,6 +13,8 @@
 
 mod secrets;
 #[cfg(feature = "terminal")]
+mod connections;
+#[cfg(feature = "terminal")]
 mod pty;
 #[cfg(feature = "terminal")]
 mod serial;
@@ -22,6 +24,8 @@ mod ssh;
 mod stub;
 
 pub use secrets::{secret_delete, secret_get, secret_list, secret_set};
+#[cfg(feature = "terminal")]
+pub use connections::{forget as conn_forget, list as conn_list, remember as conn_remember};
 
 use serde::{Deserialize, Serialize};
 

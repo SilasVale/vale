@@ -170,6 +170,24 @@ const TERMINAL_TOOLS = [
       required: ["device", "target"],
     },
   },
+  {
+    name: "terminal_saved_connections",
+    description: "List saved terminal connections on the device (successfully-opened sessions). Each entry: id (kind:target), kind, target, label, params — reconnect with terminal_connect_saved.",
+    inputSchema: {
+      type: "object",
+      properties: { device: { type: "string" } },
+      required: ["device"],
+    },
+  },
+  {
+    name: "terminal_connect_saved",
+    description: "Reconnect to a saved terminal connection by id (from terminal_saved_connections). Replays the saved params; returns the new session id.",
+    inputSchema: {
+      type: "object",
+      properties: { device: { type: "string" }, id: { type: "string" } },
+      required: ["device", "id"],
+    },
+  },
 ];
 
 const BROWSER_TOOLS = [
