@@ -59,8 +59,16 @@ async function ensureTabInner(device, proxyUrl) {
     // agent was working on.
     const candidate = [...attached][0];
     if (candidate !== undefined) {
-      try { await chrome.tabs.get(candidate); tabId = candidate; }
-      catch { /* tab gone — detach it below */ }
+      try {
+        // round-88: reuse ONLY the tab belonging to THIS device — a blind
+        // first-attached reuse handed a new device an old device's controlled
+        // tab (cross-device session takeover: the agent drove the wrong
+        // browser). Verify the URL still points at this device's proxy.
+        const t = await chrome.tabs.get(candidate);
+        if (t.url && t.url.includes(`/api/devices/${device}/proxy`)) {
+          tabId = candidate;
+        }
+      } catch { /* tab gone — detach it below */ }
     }
     if (!tabId) {
       // A tab we attached to navigated AWAY (or was closed) — detach our own

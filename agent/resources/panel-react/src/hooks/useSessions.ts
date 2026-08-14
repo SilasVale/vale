@@ -50,7 +50,24 @@ export function useSessions(connected: boolean) {
             if (!existing) next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null });
           }
           // Mark gone sessions closed (retained history shows as tombstone).
-          for (const s of next) if (!seen.has(s.sid) && !s.savedOnly) { s.closed = true; s.closedAt = s.closedAt || Date.now(); }
+          // round-88: a session that died server-side (PTY exit, SSH drop,
+          // serial error) must ALSO release focus — the R86 close-switching
+          // only covered the ✕ path, so a dead active tab kept the blinking
+          // cursor and swallowed keystrokes.
+          let deadActive = false;
+          for (const s of next) {
+            if (!seen.has(s.sid) && !s.savedOnly) {
+              if (s.active) deadActive = true;
+              s.closed = true;
+              s.closedAt = s.closedAt || Date.now();
+              s.active = false;
+            }
+          }
+          if (deadActive) {
+            const nextLive = next.find((s) => !s.closed);
+            if (nextLive) { setActiveSid(nextLive.sid); nextLive.active = true; }
+            else setActiveSid(null);
+          }
           return next;
         });
       } catch { /* transient — next poll retries */ }
@@ -100,7 +117,11 @@ export function useSessions(connected: boolean) {
             setActiveSid(nextLive.sid);
             return next.map((s) => ({ ...s, active: s.sid === nextLive.sid }));
           }
+          // round-88: no live session left — the closed one must NOT stay
+          // active (it kept its pane visible with a blinking cursor while
+          // no tab was highlighted).
           setActiveSid(null);
+          return next.map((s) => ({ ...s, active: false }));
         }
         return next;
       });

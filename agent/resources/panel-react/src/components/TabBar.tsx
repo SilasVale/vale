@@ -29,7 +29,7 @@ export function TabBar({ sessions, activeSid, onActivate, onClose, onExport }: {
             title="Export this session log"
             onClick={(e) => { e.stopPropagation(); onExport(s.sid); }}
           >⇩</span>
-          {!s.savedOnly && (
+          {!s.savedOnly && !s.closed && (
             <span
               className="tab-close"
               onClick={(e) => { e.stopPropagation(); onClose(s.sid); }}

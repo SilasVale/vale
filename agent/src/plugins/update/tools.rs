@@ -212,7 +212,10 @@ pub fn agent_update() -> ToolDef {
                         .map_err(|e| DeviceError::Internal { message: format!("download failed: {e}") })
                 }.await {
                     Ok(b) => b,
-                    Err(_) => {
+                    Err(e) => {
+                        // round-88: failures were swallowed — the caller was
+                        // told "upgrading" and nothing logged the failure.
+                        tracing::error!("[vale-agent] agent_update download failed: {e}");
                         let _ = std::fs::remove_file(&busy_bg);
                         return;
                     }
