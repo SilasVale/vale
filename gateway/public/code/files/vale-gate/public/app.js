@@ -724,6 +724,24 @@
     const box = $("#devices-list");
     if (!box || !box.querySelector(".user-row")) return;
     const { res, data } = await api("/api/plugins/status");
+    // round-85: the status endpoint is admin-session-gated (R83 security fix).
+    // A 401 here is "not logged in", NOT "device offline" — the old silent
+    // return left the device list showing stale/default "offline" badges.
+    // Surface the distinction so the user logs in instead of misreading the
+    // devices as down.
+    if (res.status === 401) {
+      const box2 = $("#devices-list");
+      if (box2) {
+        for (const row of box2.querySelectorAll(".user-row")) {
+          const badge = row.querySelector("[data-status]");
+          if (badge) {
+            badge.className = "badge empty";
+            badge.innerHTML = `<span class="dot"></span>${t("devices.need_login") || "log in to see status"}`;
+          }
+        }
+      }
+      return;
+    }
     if (!res.ok || !data?.devices) return;
     for (const [name, st] of Object.entries(data.devices)) {
       const row = box.querySelector(`.user-row[data-name="${name}"]`);
