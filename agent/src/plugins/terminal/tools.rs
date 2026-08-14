@@ -480,13 +480,25 @@ fn append_spill(sid: &str, bytes: &[u8]) {
 /// Read absolute bytes [start, end) that live in the spill file (everything
 /// before the in-memory window). Best-effort: a missing file yields nothing.
 fn read_spill(sid: &str, start: usize, end: usize) -> Vec<u8> {
-    std::fs::read(spill_path(sid))
-        .map(|bytes| {
-            let s = start.min(bytes.len());
-            let e = end.min(bytes.len());
-            bytes[s..e].to_vec()
-        })
-        .unwrap_or_default()
+    // round-110: the whole spill file was read into RAM then sliced — a
+    // log-streaming session accumulates hundreds of MB of spill, so a
+    // first no-offset read (cursor 0) OOM'd the agent and produced a
+    // response too big to traverse the gateway. Cap a single read at
+    // 1MB of spill, from the tail.
+    use std::io::{Read, Seek, SeekFrom};
+    const MAX_SPILL_READ: u64 = 1_048_576;
+    let Ok(mut f) = std::fs::File::open(spill_path(sid)) else { return Vec::new() };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let e = (end as u64).min(len);
+    let s = (start as u64).min(e);
+    // Read at most MAX_SPILL_READ bytes ending at `e`; if the window is
+    // beyond the cap, drop the older head (truncated by the caller's
+    // `truncated` flag path when end_abs reflects it).
+    let read_start = if e - s > MAX_SPILL_READ { e - MAX_SPILL_READ } else { s };
+    let _ = f.seek(SeekFrom::Start(read_start));
+    let mut out = Vec::with_capacity((e - read_start) as usize);
+    let _ = f.take(e - read_start).read_to_end(&mut out);
+    out
 }
 
 /// Remove a session's spill file (round-60): append_spill had NO deletion
@@ -743,12 +755,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         if ticks.is_multiple_of(20) {
                             let _ = terminal_mgr.term_select(&sid).await;
                         }
-                        let live_entry = recover_guard(&buf).live.contains_key(&sid);
-                        // round-109: the session died mid-execute (tab closed,
-                        // shell exited, backend EOF) — the live entry is gone.
-                        // marker-injected sessions would otherwise spin to the
-                        // deadline (up to 3600s) and return a bogus timeout.
-                        if !live_entry {
+                        // round-110: session liveness comes from the MANAGER
+                        // map, not the output buffer — the buffer entry is
+                        // created lazily on the first output chunk, so a
+                        // silent-but-alive session (serial modem, no-echo PTY)
+                        // would false-fire 'closed' before its first output.
+                        if terminal_mgr.term_info(&sid).await.is_none() {
                             wait_reason = "closed";
                             break;
                         }
@@ -801,7 +813,14 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             // markers through; the R103 any-output reset
                             // killed real markers).
                             if let Some(at) = marker_seen_at {
-                                if at.elapsed() >= marker_confirm {
+                                // round-110: a REAL marker's prompt can
+                                // render slowly (>300ms on a loaded device /
+                                // slow PS1). Only invalidate on SUSTAINED
+                                // output — a small single chunk (the prompt)
+                                // or a burst under 1KB across chunks is
+                                // tolerated; anything bigger is a fake
+                                // marker followed by real command output.
+                                if at.elapsed() >= marker_confirm && chunk.len() > 1024 {
                                     marker_seen_at = None;
                                     // round-107: output continuing past the
                                     // confirm window means the marker was
@@ -1358,8 +1377,11 @@ fn tool_diag_write(diag: &DiagStore) -> ToolDef {
             let diag = diag.clone();
             async move {
                 let line = require_str(&params, "line")?;
+                // round-110: a caller-supplied line up to the 1MB HTTP body
+                // limit × 200 ring entries = 200MB retained. Cap a line.
+                let capped = if line.len() > 4096 { &line[..4096] } else { &line };
                 let mut d = recover_guard(&diag);
-                d.push(format!("{} {line}", chrono_timestamp()));
+                d.push(format!("{} {capped}", chrono_timestamp()));
                 Ok(json!("ok"))
             }
         },
