@@ -722,6 +722,14 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 marker_code = Some(code);
                                 marker_seen_at = Some(Instant::now());
                             }
+                            // round-103: output AFTER a marker means the
+                            // 'marker' was a false positive (e.g. a literal
+                            // OSC 133 sequence in a log line) — the command
+                            // is still running. Reset the confirm window so
+                            // the wait doesn't end early on the fake marker.
+                            if marker_seen_at.is_some() && !pending.is_empty() {
+                                marker_seen_at = None;
+                            }
                             // Finalize everything that can no longer be a
                             // marker prefix.
                             let keep = pending.len().saturating_sub(64);
@@ -759,6 +767,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             wait_reason = "timeout";
                             break;
                         }
+                    }
+                    // round-103: flush the un-finalized marker window — the
+                    // last ≤64 bytes of real output sat in `pending` and were
+                    // DROPPED on the idle/timeout break (a short command's
+                    // ENTIRE output; marker-less SSH/serial always).
+                    if !pending.is_empty() {
+                        let keep = pending.len();
+                        result.push_str(&String::from_utf8_lossy(&pending[..keep]));
+                        pending.clear();
                     }
                     // Audit trail: command ended, with the shell's exit code
                     // (marker) and the reason the wait stopped (round-54).

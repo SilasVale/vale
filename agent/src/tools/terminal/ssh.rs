@@ -53,18 +53,20 @@ impl SshBackend {
 
 impl TermBackend for SshBackend {
     fn write(&self, data: &[u8]) {
-        // round-102: try_send dropped the payload when the channel was full
-        // (the ssh channel task blocked on remote TCP backpressure) — a
-        // terminal_execute COMMAND was silently lost and the wait loop
-        // reported a success-like 'idle'. Keystrokes may drop (never block),
-        // but a full channel here is rare enough that a bounded spin retry
-        // is cheaper than losing a command.
-        for _ in 0..8 {
-            if self.write_tx.try_send(data.to_vec()).is_ok() { return; }
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
-        // Still full after ~16ms — the session is wedged on backpressure;
-        // drop (a keystroke stream would never recover this fast anyway).
+        // Keystrokes must never block — drop when full (round-53).
+        let _ = self.write_tx.try_send(data.to_vec());
+    }
+    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        // round-103: RELIABLE write for terminal_execute — the old
+        // try_send dropped the whole command when the channel was full
+        // (ssh channel task blocked on remote TCP backpressure), and the
+        // wait loop reported a success-like 'idle'. Await the send instead;
+        // the caller (term_write_bytes) is async so no tokio worker blocks.
+        let tx = self.write_tx.clone();
+        let d = data.to_vec();
+        Box::pin(async move {
+            let _ = tx.send(d).await;
+        })
     }
     fn resize(&self, rows: u16, cols: u16) {
         let _ = self.resize_tx.try_send((rows, cols));
@@ -75,11 +77,11 @@ impl TermBackend for SshBackend {
     fn terminate(&self) {
         // ^C to the remote shell — interrupts the foreground command without
         // dropping the connection (the session stays usable).
-        // round-102: same bounded retry — a dropped ^C leaves the timed-out
-        // command running on the remote.
+        // round-102: bounded retry without blocking sleeps — a dropped ^C
+        // leaves the timed-out command running on the remote.
         for _ in 0..8 {
             if self.write_tx.try_send(vec![0x03]).is_ok() { return; }
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            std::thread::yield_now();
         }
     }
 }

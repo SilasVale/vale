@@ -37,6 +37,11 @@ export interface Device {
   name: string;
   hostname: string;
   token: string;
+  /// round-103: the device's proxy secret (X-Vale-Auth) — read from the
+  /// device at registration so the gateway proxy can present it and the
+  /// agent will inject the panel token ONLY for gateway-authenticated
+  /// requests (the R102 marker header was client-spoofable).
+  proxySecret?: string;
 }
 
 export interface PluginLink {
