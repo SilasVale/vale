@@ -21,7 +21,7 @@
  * just the entry points.
  */
 
-import { findUserByToken, getUserKeys, getGlobalSetting, getUserRoute } from "../store.ts";
+import { findUserByToken, getUserKeys, getGlobalSetting, getUserRoute, globalSettingEnabled } from "../store.ts";
 import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, toSSE } from "../anthropic-translate.ts";
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "../reliability.ts";
 import { rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
@@ -167,7 +167,10 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   const prefix2 = effectiveModel.split("/")[0];
   // 美国出口开关:控制台 KV 设置优先,回退 Worker secret(env.US_PROXY)。
   // KV 写透传后立即生效(同 isolate 零延迟)。
-  const usProxy = await getGlobalSetting(env, "US_PROXY");
+  const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
+  // round-94: normalize — an explicit OFF is persisted as "0" (truthy as a
+  // string); raw truthiness would treat it as ON.
+  const usProxy = globalSettingEnabled(usProxyRaw) ? "1" : null;
   const baseRoute = pickRoute(prefix2, env, usProxy);
   let upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key

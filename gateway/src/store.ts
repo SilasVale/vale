@@ -209,10 +209,20 @@ export async function createUser(env: Env, { username, password, inviteCode, rol
   if (await env.KEYS.get(`user:${name}`)) throw new Error("Username already taken");
 
   if (role !== "admin") {
-    if (!inviteCode || !(await env.KEYS.get(`invite:${String(inviteCode).trim()}`))) {
+    const code = String(inviteCode || "").trim();
+    // round-94: invite consumption was check-then-act on eventually-consistent
+    // KV — N parallel registrations with the SAME code all saw it present and
+    // all proceeded, minting N accounts from one one-time invite (each with
+    // its own rate-limit budget). Single-flight claim, same pattern as the
+    // pair/claim, reg-key and ws-ticket locks.
+    const claim = await env.KEYS.get(`invclaim:${code}`);
+    if (claim) throw new Error("Invite code already in use");
+    await env.KEYS.put(`invclaim:${code}`, "1", { expirationTtl: 60 });
+    if (!(await env.KEYS.get(`invite:${code}`))) {
+      await env.KEYS.delete(`invclaim:${code}`);
       throw new Error("Invalid invite code");
     }
-    await env.KEYS.delete(`invite:${String(inviteCode).trim()}`);
+    await env.KEYS.delete(`invite:${code}`);
   }
 
   const salt = randomHex(16);
@@ -376,15 +386,30 @@ export async function getGlobalSetting(env: Env, name: string): Promise<string |
   return v;
 }
 
+/** Normalize a global-setting value to a boolean: "0"/"false"/""/null are
+ *  off, anything else on. Consumers must use this instead of raw truthiness —
+ *  an explicit OFF is persisted as "0" (see setGlobalSetting) which is
+ *  truthy as a string. (round-94) */
+export function globalSettingEnabled(v: string | null | undefined): boolean {
+  return !(v === null || v === undefined || v === "" || v === "0" || v === "false");
+}
+
 export async function setGlobalSetting(env: Env, name: string, value: any): Promise<void> {
   const key = `settings:${name}`;
-  if (value === null || value === undefined || value === "" || value === "0" || value === "false") {
+  // round-94: an explicit OFF was stored as a KV delete — getGlobalSetting
+  // then fell back to the Worker var of the same name, so a setting with an
+  // env fallback (US_PROXY as a wrangler var) could be turned ON but never
+  // OFF (the toggle bounced straight back). Distinguish "no value set"
+  // (delete → env fallback) from "explicitly off" (persist "0", which
+  // shadows the var). getGlobalSetting's falsy handling treats "0" as off.
+  if (value === null || value === undefined || value === "") {
     await env.KEYS.delete(key);
     cdel(key);
     return;
   }
-  await env.KEYS.put(key, String(value));
-  cset(key, String(value)); // write-through：切换立即生效（同 isolate 零延迟）
+  const s = String(value);
+  await env.KEYS.put(key, s);
+  cset(key, s); // write-through：切换立即生效（同 isolate 零延迟）
 }
 
 /* ---- Admin password (stored hashed — never plaintext) ----

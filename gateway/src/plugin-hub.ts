@@ -101,20 +101,21 @@ export class PluginHubDO {
     this.state.storage.setAlarm(Date.now() + 65_000);
     let msg: any;
     try { msg = JSON.parse(message as string); } catch { return; }
-    if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: msg.t })); return; }
-    // round-92: the 30-day link TTL was enforced ONLY by alarm() — but every
-    // message (including the extension's 20s pings) resets the 65s alarm, so
-    // a live, pinging socket NEVER triggered it and an expired link kept
-    // browser_* control indefinitely (alarm() also closes every socket
-    // regardless of validity, so it couldn't keep a GOOD socket alive either).
-    // Re-validate the bound token on every real message instead.
-    if (msg.type === "hello" || msg.type === "request") {
+    // round-94: the round-92 re-validation only ran on 'hello'/'request'
+    // frames — but the extension sends 'hello' once per socket and NEVER
+    // sends 'request' (callPlugin is unused); its whole post-connect traffic
+    // is 20s 'ping's and 'response' answers to /call, both of which skipped
+    // the check. A live, pinging socket therefore kept browser_* control
+    // past the 30-day link TTL (the exact hole round-92 claimed to close).
+    // Validate the bound token on EVERY frame now — pings included.
+    if (msg.type !== "hello") {
       const tok = await this.state.storage.get(`ws-token:${(ws as any).id || ""}`);
       if (tok) {
         const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
         if (!link) { ws.close(4001, "link expired"); return; }
       }
     }
+    if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: msg.t })); return; }
     if (msg.type === "hello") {
       this.state.storage.put("lastSeen", Date.now());
       // round-88: remember the plugin TOKEN bound to this socket (the round-84
