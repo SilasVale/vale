@@ -385,6 +385,13 @@ async function startSharedStream() {
               // offsets (the round-59 covered-cut) was a unit mismatch that
               // silently dropped bytes on every sync.
               if (typeof frame.start === "number" && frame.start < s.renderedBytes) continue;
+              // round-68: while a sync/backfill read is in flight, DON'T
+              // advance renderedBytes here — the read returns CLEANED text
+              // (byte offsets don't line up with the text), so if the sync
+              // then writes its text and we ALSO wrote this frame, the same
+              // bytes render twice (the round-64 race). Skip the frame; the
+              // sync's read covers it.
+              if (s.syncInFlight) continue;
               s.term.write(new Uint8Array(frame.data));
               s.renderedBytes += frame.data.length; // absolute byte coverage
               s.sseDirty = true;
@@ -435,6 +442,9 @@ function adoptSession(sid, label, idbRec = null) {
     existing.complete = false;
     existing.closedAt = null;
     existing.savedOnly = false;
+    // round-68: the SSE gate skips streamClosed sessions — a resurrected
+    // session that kept the flag stayed SSE-muted forever (output frozen).
+    existing.streamClosed = false;
     if (existing.tab) {
       existing.tab.classList.remove("closed");
       // round-55: textContent overwrite destroyed the dot/export/close child
@@ -644,6 +654,9 @@ async function syncSession(sid) {
       // the SSE frame.start dedup above skips anything already delivered, so
       // no prefix-slicing is needed (slicing clean text by raw byte offsets
       // was the round-59 unit mismatch that dropped bytes every sync).
+      // round-68: while syncInFlight, the SSE handler skips frames instead
+      // of advancing renderedBytes, so the read's [start,end) is exactly the
+      // not-yet-rendered range — no double-render, no dropped bytes.
       s.term.write(r.text);
       s.renderedBytes = Math.max(s.renderedBytes, Number(r.end) || s.renderedBytes);
       ingestLines(s, r.text);
