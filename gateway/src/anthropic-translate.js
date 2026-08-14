@@ -274,10 +274,16 @@ export class AnthropicStreamEncoder {
     for (const bi of new Set(Object.values(this.toolBlockIdxMap))) {
       this.pending.push(sse("content_block_stop", { type: "content_block_stop", index: bi }));
     }
+    // round-68: close the open TEXT/THINKING block before resetting — the
+    // old order reset blockIndex to -1 first, so the final text block never
+    // got content_block_stop (every plain chat reply ended with an
+    // unterminated block; strict clients read it as truncated). Tool blocks
+    // were already closed above (the toolBlockIdxMap loop), so skip them —
+    // re-closing a finished tool block would emit a spurious stop.
+    if (this.blockType !== null && this.blockType !== "tool_use") this.closeBlock();
     this.toolBlockIdxMap = {};
     this.blockIndex = -1;
     this.blockType = null;
-    if (this.blockIndex >= 0) this.closeBlock();
     this.pending.push(sse("message_delta", {
       type: "message_delta",
       delta: { stop_reason: this.lastStopReason, stop_sequence: null },

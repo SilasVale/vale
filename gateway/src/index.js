@@ -207,6 +207,14 @@ async function handleConsole(request, env, url) {
     }
     let device;
     try { device = validateDevice(body); } catch (e) { return jsonError(400, e.message, "invalid_request"); }
+    // round-68: a one-time-key holder could upsert an EXISTING device name —
+    // the register endpoint silently replaced a production device's
+    // hostname/token, redirecting console terminal tools + the proxy to the
+    // attacker. Refuse when the name is already registered; re-registering
+    // an existing device is an admin action.
+    if (await getDevice(env, device.name)) {
+      return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+    }
     await upsertDevice(env, device);
     await deleteRegKey(env, body.key); // one-time — consumed only after success
     await deleteRegGrant(env, body.key);
@@ -1653,16 +1661,19 @@ export async function buildHealth(env) {
 }
 
 /** Model usable for routing? In the whitelist, (og) breaker not open, AND
- *  the admin's key for that channel is configured — a channel without a key
- *  502s every request, so model=auto must not route to it. */
-export async function isModelUsable(env, model) {
+ *  the REQUESTING user's key for that channel is configured — a channel
+ *  without a key 502s every request, so model=auto must not route to it.
+ *  round-68: the old code checked ADMIN_ID's keys — a BYOK user with only an
+ *  og key was told og was "unusable" (the admin lacks it) and routed to ds,
+ *  which the user lacks → 502 on every model=auto request. */
+export async function isModelUsable(env, model, uid) {
   if (!MODELS.some((m) => m.id === model)) return false;
-  const adminKeys = await getUserKeys(env, ADMIN_ID).catch(() => ({}));
+  const userKeys = await getUserKeys(env, uid).catch(() => ({}));
   const prefix = model.split("/")[0] + "/";
-  if (prefix === "og/" && !(adminKeys.OPENCODE_GO_API_KEY || env.OPENCODE_GO_API_KEY)) return false;
-  if (prefix === "ds/" && !(adminKeys.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY)) return false;
-  if (prefix === "qw/" && !(adminKeys.QWEN_API_KEY || env.QWEN_API_KEY)) return false;
-  if (prefix === "or/" && !(adminKeys.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY)) return false;
+  if (prefix === "og/" && !(userKeys.OPENCODE_GO_API_KEY || env.OPENCODE_GO_API_KEY)) return false;
+  if (prefix === "ds/" && !(userKeys.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY)) return false;
+  if (prefix === "qw/" && !(userKeys.QWEN_API_KEY || env.QWEN_API_KEY)) return false;
+  if (prefix === "or/" && !(userKeys.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY)) return false;
   if (model.startsWith("og/")) return !(await isChannelDegraded(env));
   return true;
 }
@@ -1678,7 +1689,7 @@ const DEFAULT_ROUTE_MODEL = "ds/deepseek-v4-flash";
  */
 export async function resolveAutoModel(env, uid) {
   const chosen = await getUserRoute(env, uid);
-  if (chosen && (await isModelUsable(env, chosen))) return chosen;
+  if (chosen && (await isModelUsable(env, chosen, uid))) return chosen;
   return DEFAULT_ROUTE_MODEL;
 }
 
