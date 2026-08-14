@@ -3,6 +3,7 @@
 //! Tools are the single source of truth for MCP and the Web API.
 
 pub mod design;
+pub mod mcp_client;
 pub mod terminal;
 pub mod update;
 
