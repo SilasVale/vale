@@ -56,7 +56,9 @@ export function reResolveExpr(el, mode) {
   // `Input.dispatchMouseEvent` fail with "params.x: mandatory field missing".
   steps += mode === "focus"
     ? "_el.focus();\n    return true;"
-    : "const r = _el.getBoundingClientRect();\n    return { x: r.x, y: r.y, width: r.width, height: r.height };";
+    : mode === "hit"
+      ? "return _el;" // element ref for hit-testing (shadow-chain aware)
+      : "const r = _el.getBoundingClientRect();\n    return { x: r.x, y: r.y, width: r.width, height: r.height };";
   return `(() => {\n  try {\n    ${steps}\n  } catch { return ${miss}; }\n})()`;
 }
 
@@ -72,10 +74,18 @@ async function clickByPath(tabId, el) {
   const x = found.x + found.width / 2, y = found.y + found.height / 2;
   // Hit-test: a fixed overlay/modal at this point would intercept the click —
   // elementFromPoint tells us what is ACTUALLY at the target coords.
+  // round-84: resolve the target through the shadow chain (el.path is null
+  // for shadow elements — document.querySelector(null) matched nothing and
+  // every shadow click falsely threw 'click intercepted').
   const hit = await evaluate(tabId, `(() => {
     const e = document.elementFromPoint(${x}, ${y});
     if (!e) return null;
-    const target = document.querySelector(${JSON.stringify(el.path)});
+    const chain = ${JSON.stringify(el.path ? [el.path, ...(el.shadowPath || [])] : (el.shadowPath || []))};
+    let target = null;
+    for (let i = 0; i < chain.length; i++) {
+      target = i === 0 ? document.querySelector(chain[i]) : target && target.shadowRoot ? target.shadowRoot.querySelector(chain[i]) : null;
+      if (!target) break;
+    }
     return (e === target || target?.contains(e) || e?.contains(target)) ? true : { tag: e.tagName, text: (e.textContent || '').slice(0, 40) };
   })()`);
   if (hit && hit !== true) {
@@ -130,8 +140,16 @@ export async function runTool(tool, params) {
       // Element.focus() is a silent no-op on disabled/non-focusable elements —
       // verify the ACTIVE element really is the target before typing, or the
       // text goes nowhere (or into a different field).
+      // round-84: resolve through the shadow chain (el.path is null for
+      // shadow elements — the old document.querySelector(null) comparison
+      // always threw 'type target not focused').
       const ok = await evaluate(tabId, `(() => {
-        const target = document.querySelector(${JSON.stringify(el.path)});
+        const chain = ${JSON.stringify(el.path ? [el.path, ...(el.shadowPath || [])] : (el.shadowPath || []))};
+        let target = null;
+        for (let i = 0; i < chain.length; i++) {
+          target = i === 0 ? document.querySelector(chain[i]) : target && target.shadowRoot ? target.shadowRoot.querySelector(chain[i]) : null;
+          if (!target) break;
+        }
         return document.activeElement === target ? true : { active: (document.activeElement?.tagName || '') + '#' + (document.activeElement?.id || '') };
       })()`);
       if (ok !== true) {
@@ -162,12 +180,20 @@ export async function runTool(tool, params) {
 
 async function waitLoad(tabId, timeoutMs) {
   return new Promise((resolve) => {
-    // Page.loadEventFired fires PER FRAME with a frameId — a subframe's load
-    // (ads, iframes) previously resolved the wait early, long before the main
-    // document finished. Only resolve on the MAIN frame (frameId === loaderId
-    // is the CDP marker for the top document's load).
+    // round-84: Page.loadEventFired has NO frameId/loaderId params (only
+    // timestamp), so the old `params?.frameId === params?.loaderId` filter
+    // was `undefined === undefined` — always true, and any subframe's load
+    // (ads, iframes) resolved the wait early. Page.frameStoppedLoading DOES
+    // carry a frameId: resolve only when it is the top frame's loaderId.
+    let loaderId = null;
     const onEvent = (source, method, params) => {
-      if (source.tabId === tabId && method === "Page.loadEventFired" && params?.frameId === params?.loaderId) {
+      if (source.tabId !== tabId) return;
+      if (method === "Page.frameStartedLoading") {
+        // The top frame's loaderId is reported on the FIRST frame event;
+        // capture it so a later frameStoppedLoading for the SAME loaderId is
+        // the main document's load.
+        if (!loaderId && params?.frameId) loaderId = params.frameId;
+      } else if (method === "Page.frameStoppedLoading" && params?.frameId === loaderId) {
         chrome.debugger.onEvent.removeListener(onEvent);
         resolve();
       }

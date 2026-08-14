@@ -48,6 +48,13 @@ export class PluginHubDO {
       const { tool, params, requestId } = await request.json() as { tool?: string; params?: any; requestId?: string };
       return this.callPlugin(tool || "", params, requestId || "");
     }
+    if (url.pathname === "/close-all") {
+      // round-84: the main worker calls this when a plugin link is revoked —
+      // close every live WS so a revoked link cannot keep browser_* control.
+      const sockets = this.state.getWebSockets() || [];
+      for (const ws of sockets) ws.close(4001, "revoked");
+      return Response.json({ ok: true, closed: sockets.length });
+    }
     if (url.pathname === "/status") {
       const sockets = this.state.getWebSockets?.() || [];
       return Response.json({ online: sockets.length > 0 });
@@ -93,7 +100,14 @@ export class PluginHubDO {
     let msg: any;
     try { msg = JSON.parse(message as string); } catch { return; }
     if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: msg.t })); return; }
-    if (msg.type === "hello") { this.state.storage.put("lastSeen", Date.now()); return; }
+    if (msg.type === "hello") {
+      this.state.storage.put("lastSeen", Date.now());
+      // round-84: remember the device bound to this socket so the alarm can
+      // re-validate the plugin link (a revoked/expired link must not keep
+      // browser_* control over a live socket).
+      this.state.storage.put(`ws-device:${(ws as any).id || ""}`, String(msg.device || "")).catch(() => {});
+      return;
+    }
     if (msg.type === "response" && msg.id) {
       const resolve = this.pending.get(msg.id);
       if (resolve) { this.pending.delete(msg.id); resolve(msg); }
