@@ -549,6 +549,18 @@ mod desktop_impl {
             let inner = self.inner.lock().await;
             inner.sessions.iter().find(|s| s.id == sid).map(|s| s.inject_marker).unwrap_or(false)
         }
+
+        /// round-109: correct the marker flag after open — the injection is
+        /// only actually performed for KNOWN shells (bash/sh/powershell);
+        /// a custom shell target must NOT get the quiet-never-break path
+        /// (it would hang every execute to the deadline). Called by the
+        /// open handler with the real injectable result.
+        pub async fn term_set_marker_injected(&self, sid: &str, injected: bool) {
+            let mut inner = self.inner.lock().await;
+            if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
+                s.inject_marker = injected;
+            }
+        }
     }
 }
 
