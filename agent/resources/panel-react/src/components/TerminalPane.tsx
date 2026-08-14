@@ -21,6 +21,8 @@ export function TerminalPane({ session, registerWrite }: {
 
   useEffect(() => {
     if (!containerRef.current) return;
+    // reflowOnResize is a real xterm option not in this @xterm/xterm's
+    // types — the whole options object is asserted so the option survives.
     const term = new Terminal({
       convertEol: true,
       cursorBlink: true,
@@ -29,7 +31,7 @@ export function TerminalPane({ session, registerWrite }: {
       // round-83 (R82 review): reflowOnResize re-wraps the buffer on a grid
       // change — without it, a session adopted while display:none (inactive)
       // stayed at the 80x24 grid with blank space (the 'half screen' bug).
-      reflowOnResize: true as any, // xterm option (typed in newer @xterm/xterm; present at runtime)
+      reflowOnResize: true,
       fontFamily: 'ui-monospace, "SF Mono", "JetBrains Mono", Consolas, monospace',
       // round-83: full 16-color palette (vanilla TERM_THEME) — xterm draws
       // bold text with index<8 at index+8 and falls back to the dark Tango
@@ -46,7 +48,7 @@ export function TerminalPane({ session, registerWrite }: {
         brightYellow: "#a16207", brightBlue: "#2563eb", brightMagenta: "#9333ea",
         brightCyan: "#0f766e", brightWhite: "#6e6e73",
       },
-    });
+    } as any);
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
