@@ -21,9 +21,10 @@ pub(super) fn build(
     output_buf: &OutputBuf,
     diag: &DiagStore,
     logger: &crate::session_log::SessionLogger,
+    buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
 ) -> Vec<ToolDef> {
     vec![
-        tool_open(terminal_mgr, bus, output_buf, logger),
+        tool_open(terminal_mgr, bus, output_buf, logger, buffer_limit),
         tool_write(terminal_mgr),
         tool_close(terminal_mgr, bus, output_buf),
         tool_list(terminal_mgr),
@@ -42,21 +43,24 @@ pub(super) fn build(
     ]
 }
 
-/// Max bytes per session buffer before evicting oldest half (round-68: was
-/// 1MB — a serial console scrolling GPON logs wrapped in seconds, losing the
-/// useful head; 8MB ≈ 16MB of recall with the spill file).
-const MAX_BUF_BYTES: usize = 8_388_608; // 8 MB
-
+/// Max bytes per session buffer before evicting oldest half — now runtime-
+/// configurable (round-69): an Arc<AtomicUsize> seeded from
+/// config.terminal.buffer_mb and writable via PUT /api/settings. Was a
+/// compile-time constant (1MB → 8MB round-68) — a serial console scrolling
+/// GPON logs wrapped in seconds, and the value was unchangeable without a
+/// rebuild.
 fn tool_open(
     terminal_mgr: &Arc<TerminalManager>,
     bus: &Arc<dyn EventBus>,
     output_buf: &OutputBuf,
     logger: &crate::session_log::SessionLogger,
+    buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
 ) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let bus = bus.clone();
     let buf = output_buf.clone();
     let logger = logger.clone();
+    let buffer_limit = buffer_limit.clone();
     ToolDef::new(
         "terminal_open",
         "Open a terminal connection. Kind: 'pty' (local shell; target optional — blank = default shell), 'ssh' (target=user@host:port), or 'serial' (target=port_name, optional ?baud=N&parity=E&data=8&stop=1 e.g. /dev/ttyUSB0?baud=9600&parity=even&data=8&stop=1, default 115200 8N1). Returns session ID.",
@@ -66,6 +70,7 @@ fn tool_open(
             let bus = bus.clone();
             let buf = buf.clone();
             let logger = logger.clone();
+            let buffer_limit = buffer_limit.clone();
             async move {
                 let kind = require_str(&params, "kind")?;
                 // target is OPTIONAL (pty blank = default shell) — the schema
@@ -203,13 +208,15 @@ fn tool_open(
                         // a concurrent terminal_read (dedup — see panel.js).
                         let frame_start = entry.end_abs();
                         entry.data.extend_from_slice(&output.data);
-                        // Cap at 1 MB — evict oldest half if exceeded. The
-                        // cursor is ABSOLUTE (dropped+len); eviction advances
-                        // `dropped`, so the cursor is untouched — a leftover
-                        // saturating_sub(remove) here corrupted it and
-                        // re-delivered up to 524KB of already-read bytes.
-                        if entry.data.len() > MAX_BUF_BYTES {
-                            let remove = entry.data.len() - MAX_BUF_BYTES / 2;
+                        // Cap at the runtime buffer limit (round-69) — evict
+                        // the oldest half if exceeded. The cursor is ABSOLUTE
+                        // (dropped+len); eviction advances `dropped`, so the
+                        // cursor is untouched — a leftover saturating_sub
+                        // (remove) here corrupted it and re-delivered up to
+                        // 524KB of already-read bytes.
+                        let max = buffer_limit.load(std::sync::atomic::Ordering::Relaxed);
+                        if entry.data.len() > max {
+                            let remove = entry.data.len() - max / 2;
                             // Spill the evicted bytes BEFORE dropping them —
                             // they are the only copy of the stream's head;
                             // terminal_read merges spill + memory (round-54).
@@ -1201,7 +1208,7 @@ mod tests {
         let log_dir = std::env::temp_dir().join(format!("vale-sesslog-tools-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&log_dir);
         let logger = crate::session_log::SessionLogger::new(log_dir);
-        let tools = build(&mgr, &serial, &bus, &buf, &diag, &logger);
+        let tools = build(&mgr, &serial, &bus, &buf, &diag, &logger, &Arc::new(std::sync::atomic::AtomicUsize::new(8 * 1024 * 1024)));
         (tools, buf)
     }
 
@@ -1274,11 +1281,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn screen_utf8_chinese_survives() {
+    async fn screen_utf8_multibyte_survives() {
         let (tools, buf) = seeded_tools();
-        seed(&buf, "s1", "你好世界\n第二行".as_bytes(), 0);
+        seed(&buf, "s1", "héllo wörld\nsécond líne".as_bytes(), 0);
         let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 10})).await;
-        assert_eq!(out["screen"], "你好世界\n第二行");
+        assert_eq!(out["screen"], "héllo wörld\nsécond líne");
     }
 
     // ── terminal_read (cursor) ──────────────────────────────────

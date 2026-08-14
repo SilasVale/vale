@@ -7,7 +7,20 @@ use std::path::Path;
 pub struct Config {
     pub server: ServerConfig,
     pub serial: SerialConfig,
+    pub terminal: TerminalConfig,
     pub browser: BrowserConfig,
+}
+
+/// Per-session terminal output buffer, in MiB (round-69: was a hardcoded
+/// compile-time constant — a serial console scrolling GPON logs wrapped in
+/// seconds. Configurable now: the panel's settings writes this, the buffer
+/// logic reads it at runtime; the file persists across restarts).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalConfig {
+    /// MiB per session before the oldest half spills to disk (memory) +
+    /// spill file (same size) ≈ 2× this of recall. 1..=64.
+    pub buffer_mb: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +111,12 @@ impl ServerConfig {
 impl Default for SerialConfig {
     fn default() -> Self {
         Self { default_baud_rate: 115200, default_timeout_ms: 1000 }
+    }
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self { buffer_mb: 8 }
     }
 }
 

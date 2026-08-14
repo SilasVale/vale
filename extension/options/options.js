@@ -18,7 +18,7 @@ $("save").addEventListener("click", async () => {
     value = u.origin; // strip path/query — only the origin is used
   } catch {
     const s = $("saved");
-    s.textContent = "必须使用 https:// 地址";
+    s.textContent = "must use an https:// URL";
     s.classList.remove("hidden");
     s.style.color = "var(--danger)";
     setTimeout(() => { s.classList.add("hidden"); s.style.color = ""; }, 3000);

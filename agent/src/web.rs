@@ -29,7 +29,7 @@ use tokio::sync::mpsc;
 use tower::Service;
 
 use crate::state::AppState;
-use vale_agent_core::EventBus;
+use vale_agent_core::{Config, EventBus};
 
 /// Minimal self-contained status page — the panel SPA is retired, but the
 /// device URL should still answer something readable in a browser. Apple-style
@@ -446,6 +446,47 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 .unwrap_or(0);
             api_events_poll(&state, after)
         },
+
+        // Settings: read / write the runtime-configurable values (round-69).
+        // buffer_mb is the per-session output buffer cap — the panel's
+        // settings writes it here; it takes effect for NEW output (existing
+        // buffers keep their size), persists to config.yaml, survives restarts.
+        ("GET", "/api/settings") => {
+            serde_json::json!({
+                "ok": true,
+                "buffer_mb": state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024),
+            })
+        }
+        ("PUT", "/api/settings") => {
+            let v: serde_json::Value = match serde_json::from_str(&body_str) {
+                Ok(v) => v,
+                Err(e) => return axum::Json(serde_json::json!({
+                    "ok": false, "error": format!("invalid JSON: {e}"), "code": "invalid_params",
+                })).into_response(),
+            };
+            let Some(mb) = v.get("buffer_mb").and_then(|b| b.as_u64()) else {
+                return axum::Json(serde_json::json!({
+                    "ok": false, "error": "buffer_mb required", "code": "invalid_params",
+                })).into_response();
+            };
+            let mb = mb.clamp(1, 64) as usize;
+            state.terminal_buf_bytes.store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
+            // Persist to config.yaml (atomic write, same as bootstrap) so the
+            // value survives restarts. Best-effort: a read-only install dir
+            // must not fail the PUT — the runtime value already took effect.
+            let cfg_path = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_default()
+                .join("config.yaml");
+            if let Ok(mut cfg) = Config::load(&cfg_path) {
+                cfg.terminal.buffer_mb = mb as u32;
+                if let Ok(yaml) = serde_yaml::to_string(&cfg) {
+                    let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
+                }
+            }
+            serde_json::json!({ "ok": true, "buffer_mb": mb })
+        }
 
         // Generic tool dispatch: POST /api/tools/{name}
         ("POST", p) if p.starts_with("/api/tools/") => {

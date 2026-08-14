@@ -261,6 +261,7 @@ pub struct TerminalPlugin {
     output_buf: OutputBuf,
     diag: DiagStore,
     logger: crate::session_log::SessionLogger,
+    buffer_limit: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Install dir of the audit log — next to the exe, same place as
@@ -279,6 +280,7 @@ impl TerminalPlugin {
         terminal_mgr: Arc<TerminalManager>,
         serial_pool: Arc<SerialPool>,
         bus: Arc<dyn EventBus>,
+        buffer_limit: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
         // Crash recovery (round-54): a command that never finished (agent
         // died mid-execute) gets a synthetic command/end{interrupted} in its
@@ -297,6 +299,7 @@ impl TerminalPlugin {
             output_buf: Arc::new(std::sync::Mutex::new(SessionStore::new())),
             diag: Arc::new(std::sync::Mutex::new(DiagBuf::default())),
             logger,
+            buffer_limit,
         }
     }
 }
@@ -309,7 +312,7 @@ impl Plugin for TerminalPlugin {
     }
 
     fn tools(&self) -> Vec<ToolDef> {
-        tools::build(&self.terminal_mgr, &self.serial_pool, &self.bus, &self.output_buf, &self.diag, &self.logger)
+        tools::build(&self.terminal_mgr, &self.serial_pool, &self.bus, &self.output_buf, &self.diag, &self.logger, &self.buffer_limit)
     }
 }
 
@@ -323,7 +326,7 @@ mod tests {
         let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
         let serial = Arc::new(SerialPool::new(115200, 1000));
         let mgr = Arc::new(TerminalManager::new(serial.clone()));
-        TerminalPlugin::new(mgr, serial, bus)
+        TerminalPlugin::new(mgr, serial, bus, Arc::new(std::sync::atomic::AtomicUsize::new(8 * 1024 * 1024)))
     }
 
     #[test]
