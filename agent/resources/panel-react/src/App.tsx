@@ -7,6 +7,7 @@ import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
 import { StatusBar } from "./components/StatusBar";
 import { ConnModal } from "./components/ConnModal";
+import { SettingsModal } from "./components/SettingsModal";
 
 const LS_HOST = "valeHost";
 const LS_TOKEN = "valeToken";
@@ -17,6 +18,7 @@ export function App() {
   const [connected, setConnected] = useState(() => !!(localStorage.getItem(LS_HOST) && localStorage.getItem(LS_TOKEN)));
   const [connError, setConnError] = useState("");
   const [modalKind, setModalKind] = useState<"ssh" | "serial" | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   const sessions = useSessions(connected);
   // SSE: per-session xterm write callbacks registered by TerminalPane.
@@ -56,8 +58,9 @@ export function App() {
         onOpenPty={() => sessions.openSession("pty", "").catch(() => {})}
         onShowConn={(kind) => setModalKind(kind)}
         onExportAll={() => sessions.sessions.forEach((s) => sessions.exportSession(s.sid))}
-        onShowSettings={() => alert("settings coming in the full build")}
+        onShowSettings={() => setShowSettings(true)}
       />
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {modalKind && (
         <ConnModal
           kind={modalKind}
