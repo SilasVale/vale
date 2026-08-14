@@ -149,11 +149,20 @@ export function useSSE(
                 // immediate incremental backfill for EVERY session with a
                 // callback — the read pulls [rendered, end) from the server
                 // buffer, which still has the gap.
+                // round-101: dedup against the ISSUE-time offset, not the
+                // response-time rendered — an SSE frame delivered while the
+                // read is in flight advances rendered past the gap, and
+                // skip=rendered-start then drops exactly the dropped bytes.
+                // Only write bytes [issue_offset, end) that haven't been
+                // written since (frame starts below issue_offset were already
+                // rendered; anything above issue_offset written by frames is
+                // duplicated harmlessly — dedup by rendered at frame time).
                 for (const [sid, cb] of writeCallbacks.current) {
-                  callTool("terminal_read", { session_id: sid, offset: cb.getRendered(), clean: false })
+                  const issueOffset = cb.getRendered();
+                  callTool("terminal_read", { session_id: sid, offset: issueOffset, clean: false })
                     .then((r: any) => {
                       if (!r || (!r.text && !r.raw)) return;
-                      const skip = Math.max(0, cb.getRendered() - Number(r.start));
+                      const skip = Math.max(0, issueOffset - Number(r.start));
                       if (r.raw) {
                         const bin = atob(r.raw);
                         const bytes = new Uint8Array(bin.length);

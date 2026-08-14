@@ -474,14 +474,19 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             };
             let mb = mb.clamp(1, 64) as usize;
             state.terminal_buf_bytes.store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
-            // Persist to config.yaml (atomic write, same as bootstrap) so the
-            // value survives restarts. Best-effort: a read-only install dir
-            // must not fail the PUT — the runtime value already took effect.
-            let cfg_path = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_default()
-                .join("config.yaml");
+            // Persist to the ACTUALLY-LOADED config path (round-101: the old
+            // hardcoded exe_dir/config.yaml silently reverted on restart for
+            // dev/custom invocations — main.rs sets state.config_path from
+            // argv[1]). Atomic write, same as bootstrap. Best-effort: a
+            // read-only install dir must not fail the PUT — the runtime
+            // value already took effect.
+            let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_default()
+                    .join("config.yaml")
+            });
             if let Ok(mut cfg) = Config::load(&cfg_path) {
                 cfg.terminal.buffer_mb = mb as u32;
                 if let Ok(yaml) = serde_yaml::to_string(&cfg) {

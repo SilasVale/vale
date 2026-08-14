@@ -346,6 +346,10 @@ async fn run_server(config_path: PathBuf) {
     let port = config.server.port;
     let name = config.server.name.clone();
     let state = Arc::new(AppState::new(config));
+    // round-101: remember the ACTUAL loaded config path so PUT /api/settings
+    // persists to it (a hardcoded exe_dir/config.yaml silently reverted on
+    // restart for dev/custom invocations).
+    *state.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(config_path.clone());
 
     out!();
     out!("  MCP server running on http://{host}:{port}/mcp");

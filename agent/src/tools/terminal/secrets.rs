@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use vale_agent_core::DeviceError;
+use vale_agent_core::{recover_guard, DeviceError};
 
 pub(crate) mod file_impl {
     use super::*;
@@ -30,23 +30,41 @@ pub(crate) mod file_impl {
         }
     }
 
+    /// Serialize all mutations — read-modify-write must be atomic within the
+    /// process (round-101: concurrent secret_set calls both read the same
+    /// map and last-writer-wins silently dropped an entry).
+    static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn write_all(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), DeviceError> {
         let p = store_path();
-        std::fs::write(&p, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))
-            .map_err(|e| DeviceError::Keychain { reason: format!("write {p:?}: {e}") })?;
+        // round-101: temp + atomic rename — a crash/power loss mid-write
+        // previously left a partial file that read_all() parsed to an EMPTY
+        // map (the whole password store silently emptied; the repo's own
+        // standard, fixed for vale-known-hosts.json/config.yaml in round-57).
+        let tmp = p.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))
+            .map_err(|e| DeviceError::Keychain { reason: format!("write {tmp:?}: {e}") })?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
         }
-        Ok(())
+        std::fs::rename(&tmp, &p)
+            .map_err(|e| DeviceError::Keychain { reason: format!("rename to {p:?}: {e}") })
     }
 
     fn key_of(target: &str) -> String {
-        format!("ssh:{target}")
+        // round-101: key by the NORMALIZED connection identity — 'user@host'
+        // and 'user@host:22' are the same connection (parse_ssh_target
+        // defaults the port to 22), but raw-target keying made a password
+        // stored under one spelling unfindable via the other (the panel
+        // always builds 'user@host:22'; MCP AI commonly stores 'user@host').
+        let (user, host, port) = crate::tools::terminal::parse_ssh_target(target);
+        format!("ssh:{user}@{host}:{port}")
     }
 
     pub fn set(target: &str, password: &str) -> Result<(), DeviceError> {
+        let _g = recover_guard(&STORE_LOCK);
         let mut map = read_all();
         map.insert(key_of(target), serde_json::Value::String(password.to_string()));
         write_all(&map)
@@ -55,6 +73,7 @@ pub(crate) mod file_impl {
         Ok(read_all().get(&key_of(target)).and_then(|v| v.as_str()).map(String::from))
     }
     pub fn delete(target: &str) -> Result<(), DeviceError> {
+        let _g = recover_guard(&STORE_LOCK);
         let mut map = read_all();
         if map.remove(&key_of(target)).is_some() { write_all(&map)?; }
         Ok(())

@@ -46,12 +46,18 @@ async function cachedDeviceProbe(env: any, device: Device): Promise<DeviceProbeS
   if (hit && Date.now() - hit.ts < DEVICE_PROBE_TTL_MS) return hit;
   // Probe through the tunnel; classify the failure: a tunnel-level error
   // (1033/530 — origin unreachable) vs an agent-level error (HTTP response).
+  // round-101: deviceFetch NEVER throws — it returns {status:502,
+  // ok:false, error:'Device unreachable: …'} on any network failure, so the
+  // old try/catch left tunnel=true always (the catch was unreachable) and a
+  // down device showed tunnel_up:true. Classify from the returned shape:
+  // the 502-with-unreachable error string is the tunnel-level case.
   let state: DeviceProbeState = { tunnel: false, agent: false, ts: Date.now() };
-  try {
-    const res = await deviceFetch(env, device, "/api/status");
-    state.tunnel = true;
+  const res = await deviceFetch(env, device, "/api/status");
+  if (res && res.status !== undefined) {
+    const tunnelLevel = !res.ok && typeof res.error === "string" && res.error.includes("Device unreachable");
+    state.tunnel = !tunnelLevel;
     state.agent = res.ok;
-  } catch { /* tunnel-level failure (1033/530/network) */ }
+  }
   if (DEVICE_PROBE_CACHE.size >= 64) DEVICE_PROBE_CACHE.clear();
   DEVICE_PROBE_CACHE.set(device.name, state);
   return state;

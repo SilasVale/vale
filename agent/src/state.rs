@@ -18,6 +18,12 @@ pub struct AppState {
     pub event_bus: Arc<AppEventBus>,
     pub plugin_registry: PluginRegistry,
     pub config: Config,
+    /// The config file actually loaded (argv[1]) — PUT /api/settings must
+    /// persist to THIS path, not a hardcoded exe_dir/config.yaml (round-101:
+    /// a dev/custom invocation silently reverted buffer settings on restart).
+    /// Arc<Mutex<>> so it can be set after construction (AppState isn't
+    /// Clone, so Arc::make_mut is unavailable).
+    pub config_path: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
     /// Per-session output buffer cap in BYTES (round-69): read at runtime by
     /// the terminal buffer logic, written by PUT /api/settings; seeded from
     /// config.terminal.buffer_mb so it survives restarts.
@@ -57,7 +63,7 @@ impl AppState {
         ));
         let plugin_registry = build_registry(&terminal_mgr, &serial_pool, &event_bus, &terminal_buf_bytes);
 
-        Self { serial_pool, terminal_mgr, event_bus, plugin_registry, config, terminal_buf_bytes }
+        Self { serial_pool, terminal_mgr, event_bus, plugin_registry, config, config_path: std::sync::Arc::new(std::sync::Mutex::new(None)), terminal_buf_bytes }
     }
 }
 

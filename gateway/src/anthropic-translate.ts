@@ -180,11 +180,17 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           // data: line ever parsed, finish() still emitted an empty turn.
           // Any leftover buffer with no data: line is the same failure.
           const hasDataLine = buffer.split("\n").some((l) => l.startsWith("data:"));
-          if (!encoderStream.started && !hasDataLine) {
+          // round-101: `!hasDataLine` alone missed an SSE-shaped body whose
+          // data: lines carried no parseable event (empty choices / empty
+          // delta / [DONE] only) — started stays false and finish() emitted
+          // a silent empty turn. Any stream that never produced a single
+          // content event is the same failure class.
+          if (!encoderStream.started) {
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream returned an empty/non-SSE stream" } })}\n\n`));
             controller.close();
             return;
           }
+          void hasDataLine;
           const tail = encoderStream.finish(buffer);
           if (tail) controller.enqueue(encoder.encode(tail));
           controller.close();
