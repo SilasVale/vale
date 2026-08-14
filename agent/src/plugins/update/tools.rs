@@ -29,7 +29,16 @@ fn parse_version(v: &str) -> Vec<u32> {
 }
 
 fn newer(remote: &str, local: &str) -> bool {
-    parse_version(remote) > parse_version(local)
+    let r = parse_version(remote);
+    let l = parse_version(local);
+    // round-87: pad both to the max length — a raw Vec comparison treats an
+    // extra trailing part as "newer" (newer("1.0.75.0", "1.0.75") == true),
+    // so a 4-part build number on the server caused a reinstall loop that
+    // never converged (every agent_update taskkilled the agent).
+    let n = r.len().max(l.len());
+    let rp: Vec<u32> = r.iter().copied().chain(std::iter::repeat(0)).take(n).collect();
+    let lp: Vec<u32> = l.iter().copied().chain(std::iter::repeat(0)).take(n).collect();
+    rp > lp
 }
 
 /// Convert a path to its Windows 8.3 short form (for NSIS /D= which must be
@@ -235,6 +244,10 @@ pub fn agent_update() -> ToolDef {
                 //    needed. The installer kills us mid-flight. If the spawn
                 //    fails, drop the bad file so the next attempt
                 //    re-downloads.
+                // round-87: on non-Windows (dev/test) there is no installer to
+                // run — the old cfg(windows) block skipped the spawn AND the
+                // busy-marker cleanup, leaving a stale marker + a 5MB exe in
+                // the dir and locking updates out for an hour.
                 #[cfg(windows)]
                 {
                     // NSIS's /D= must be the LAST, UNQUOTED argument — Rust's
@@ -255,7 +268,7 @@ pub fn agent_update() -> ToolDef {
                         .spawn()
                     {
                         Ok(_) => {}
-                        Err(e) => {
+                        Err(_) => {
                             // Clear the busy marker on failure — a leftover marker
                             // blocked retries for up to an hour.
                             let _ = std::fs::remove_file(&busy_bg);
@@ -272,6 +285,14 @@ pub fn agent_update() -> ToolDef {
                     let _ = std::fs::remove_file(&busy_bg);
                     #[cfg(not(windows))]
                     let _ = std::fs::remove_file(&busy_bg);
+                }
+                // round-87: non-Windows — no installer to spawn; clean up so
+                // the marker does not lock updates for an hour and the stale
+                // exe does not sit in the dir.
+                #[cfg(not(windows))]
+                {
+                    let _ = std::fs::remove_file(&busy_bg);
+                    let _ = std::fs::remove_file(&installer);
                 }
             });
             // Handler returns immediately — the download+install run in the
@@ -305,6 +326,12 @@ mod tests {
         assert!(newer("1.1.0", "1.0.99"));
         assert!(!newer("1.0.72", "1.0.72"));
         assert!(!newer("0.9.9", "1.0.0"));
+        // round-87: unequal part counts with an equal prefix must NOT be
+        // "newer" (the old Vec comparison made "1.0.75.0" > "1.0.75" — a
+        // reinstall loop that never converged).
+        assert!(!newer("1.0.75.0", "1.0.75"));
+        assert!(!newer("0.9.0", "0.9"));
+        assert!(newer("1.0.76.0", "1.0.75"));
     }
 
     #[test]

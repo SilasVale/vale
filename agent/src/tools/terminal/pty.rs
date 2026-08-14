@@ -80,6 +80,13 @@ impl PtyBackend {
         let exit_slot: Arc<Mutex<Option<i32>>> = Arc::new(Mutex::new(None));
         let exit_slot_reap = exit_slot.clone();
         let child_reap = child_slot.clone();
+        // round-87: the reader thread never EOFs after a natural shell exit —
+        // a PTY master read only returns EOF when ALL slave fds are closed,
+        // and the backend's _slave kept one open until the session was
+        // dropped (15-min sweeper). The reaper now holds its own slave clone
+        // and DROPS it on exit, releasing the fd so the reader EOFs, the
+        // drainer finalizes the session, and the exit code is delivered.
+        let slave_reap = slave.clone();
         std::thread::spawn(move || {
             loop {
                 let (done, code) = if let Ok(mut guard) = child_reap.lock() {
@@ -111,6 +118,9 @@ impl PtyBackend {
                             }
                         }
                     }
+                    // Drop our slave fd clone — the reader's blocking read
+                    // sees EOF once ALL slave fds are gone (round-87).
+                    drop(slave_reap);
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));

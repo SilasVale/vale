@@ -188,7 +188,12 @@ pub async fn serve_with_token(
     use std::io::Write as _;
     let _ = writeln!(std::io::stdout(), "  Server started. Press Ctrl+C to stop.");
     ct.cancelled().await;
-    let _ = handle.await;
+    // round-87: do NOT await the server handle here — axum's graceful
+    // shutdown waits for in-flight SSE bodies (open /api/events streams loop
+    // forever), so Ctrl+C hung the process (and held port 18080) until every
+    // panel tab closed. The caller (main.rs) exits right after this returns;
+    // the process teardown closes the sockets.
+    drop(handle);
     Ok(())
 }
 

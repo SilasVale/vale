@@ -121,6 +121,19 @@ impl SerialPool {
             builder = builder.stop_bits(sb);
         }
 
+        // round-87: no per-port exclusivity — two opens of the same port
+        // both succeeded (Linux: interleaved/garbled reads + termios races;
+        // Windows: misleading "not found" for what is really an in-use port).
+        // Reject a second open of an already-open port.
+        {
+            let guard = recover_guard(&self.ports);
+            if guard.values().any(|p| p.port_name == port_name) {
+                return Err(DeviceError::SerialPortNotOpen {
+                    id: format!("{port_name} already in use"),
+                });
+            }
+        }
+
         let port = builder.open().map_err(|e| DeviceError::SerialPortNotFound {
             port: format!("{port_name}: {e}"),
         })?;
