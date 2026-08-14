@@ -550,6 +550,17 @@ async function handleConsole(request: Request, env: any, url: URL) {
     const { device }: any = (await request.json().catch(() => ({}))) || {};
     const links = await listPluginLinks(env);
     for (const [t, l] of Object.entries(links)) if (l.device === device) await removePluginLink(env, t);
+    // round-92: removing the KV links was not enough — the extension's LIVE
+    // hub socket kept relaying browser_* commands past the unpair (the socket
+    // stays in the DO and its 20s pings keep the idle alarm from ever firing,
+    // so alarm()'s token re-validation never runs either). revoke() (round-84)
+    // already knew this and calls /close-all; unpair is the same revocation
+    // contract and must do the same.
+    const id = env.PLUGIN_HUB.idFromName(device);
+    const hub = env.PLUGIN_HUB.get(id);
+    const req = new Request("https://hub/close-all", { method: "POST" });
+    if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
+    await hub.fetch(req).catch(() => {});
     return jsonOk({ ok: true });
   }
   if (method === "GET" && path === `${PLUGIN_BASE}/status`) {
