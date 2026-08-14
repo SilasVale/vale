@@ -9,10 +9,13 @@
 
 // Request body cap: Claude Code 1M-context bodies run ~4-10MB; anything larger
 // would blow the Workers Free plan's 10ms CPU budget just to scan/parse it.
-// 12 MB (was 20 MB, round-55): 20 MB bodies were themselves blowing the budget
-// on the scan — 10 MB is the practical 1M-context ceiling, 12 MB leaves margin
-// without letting a budget-buster through.
-export const MAX_BODY_BYTES = 12 * 1024 * 1024; // 12 MB
+// Restored to 20 MB (round-61): the 12 MB tightening (round-58) rejected
+// legitimate 10-15MB bodies (1M context / large documents) with 413 → API
+// error. The CPU concern is covered by the scan optimizations (2MB sampling
+// window + cheap indexOf image scan), so 20 MB — the value the user accepted
+// and ran without issues — is the boundary between transparent relay and the
+// Free plan scan budget.
+export const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
 
 /**
  * Replace the top-level "model" value in a raw JSON body without parsing it.
