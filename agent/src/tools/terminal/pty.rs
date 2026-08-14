@@ -192,7 +192,9 @@ impl TermBackend for PtyBackend {
         // re-accumulate a parked thread per retry; fail fast for 5s.
         let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
         let last_t = self.last_write_timeout.load(std::sync::atomic::Ordering::SeqCst);
-        if last_t != 0 && now_ms - last_t < 5000 {
+        // round-112: saturating_sub — a backward system-clock jump wrapped
+        // the raw u64 subtraction (and panicked in debug builds).
+        if last_t != 0 && now_ms.saturating_sub(last_t) < 5000 {
             self.write_in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
             return Box::pin(async move {
                 Err("pty write in cooldown after a timeout (input queue wedged)".into())
