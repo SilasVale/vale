@@ -293,3 +293,13 @@ body {
   font: 600 13px var(--font); cursor: pointer;
 }
 .empty-actions button:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+/* SSE connection state (round-60): fixed status element, not overwritten by
+   transient setStatus text. */
+#sse-status {
+  margin-left: auto;
+  color: var(--danger);
+  font-size: 12px;
+  white-space: nowrap;
+}
+#sse-status.hidden { display: none; }

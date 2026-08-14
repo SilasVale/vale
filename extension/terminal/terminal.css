@@ -247,3 +247,12 @@ body {
 }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 @keyframes toast-out { to { opacity: 0; transform: translate(-50%, 8px); } }
+
+/* SSE connection state (round-60): fixed status element, not overwritten by
+   transient setStatus text. */
+#sse-status {
+  color: var(--danger);
+  font-size: 12px;
+  white-space: nowrap;
+}
+#sse-status.hidden { display: none; }
