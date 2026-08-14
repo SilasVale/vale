@@ -37,6 +37,15 @@ pub struct ServerConfig {
     /// the token survives the rename without regeneration.
     #[serde(skip_serializing_if = "Option::is_none", alias = "auth_token")]
     pub device_token: Option<String>,
+    /// Shared secret for the gateway proxy (round-103): the gateway proxy
+    /// sends this as X-Vale-Auth when proxying /panel/ so the agent can
+    /// distinguish a gateway-authenticated request (safe to inject the
+    /// device token) from a DIRECT public request (must NOT inject — the
+    /// R102 marker header was client-spoofable). Auto-generated on first
+    /// launch; the console reads it via the device-token-authenticated
+    /// /api/status or registration flow.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +91,7 @@ impl Default for ServerConfig {
         // read the injected __PANEL_TOKEN__ and get RCE as SYSTEM.
         // 127.0.0.2 is cloudflared's canonical ingress for this tunnel;
         // 127.0.0.1 covers localhost. Nothing else is reachable.
-        Self { host: "127.0.0.2".into(), port: 18080, name: "vale-agent".into(), device_token: None }
+        Self { host: "127.0.0.2".into(), port: 18080, name: "vale-agent".into(), device_token: None, proxy_secret: None }
     }
 }
 
@@ -98,12 +107,25 @@ impl ServerConfig {
         // Some("") passed auth only with an empty Bearer header, so all /mcp
         // and /api/* returned 401 forever with no remote recovery.
         if self.device_token.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+            // round-103: still ensure the proxy secret exists (a pre-secret
+            // config gets one on this boot; persistence is the caller's).
+            if self.proxy_secret.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+                return Ok(None);
+            }
+            let mut b2 = [0u8; 32];
+            getrandom::getrandom(&mut b2).map_err(|e| anyhow::anyhow!("failed to generate proxy secret: {e}"))?;
+            let sec: String = b2.iter().map(|b| format!("{b:02x}")).collect();
+            self.proxy_secret = Some(sec);
             return Ok(None);
         }
         let mut buf = [0u8; 32];
         getrandom::getrandom(&mut buf).map_err(|e| anyhow::anyhow!("failed to generate device token: {e}"))?;
         let token: String = buf.iter().map(|b| format!("{b:02x}")).collect();
         self.device_token = Some(token.clone());
+        let mut b2 = [0u8; 32];
+        getrandom::getrandom(&mut b2).map_err(|e| anyhow::anyhow!("failed to generate proxy secret: {e}"))?;
+        let sec: String = b2.iter().map(|b| format!("{b:02x}")).collect();
+        self.proxy_secret = Some(sec);
         Ok(Some(token))
     }
 }

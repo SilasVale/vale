@@ -159,6 +159,14 @@ pub fn parse_serial_config(target: &str) -> SerialTargetConfig {
 /// which kind of session (PTY/SSH/Serial) a session is.
 pub trait TermBackend: Send + Sync {
     fn write(&self, data: &[u8]);
+    /// Reliable write (round-103): waits for the transport instead of
+    /// drop-on-full — used by terminal_execute, where a dropped command
+    /// silently never runs (and the wait loop reports success-like 'idle').
+    /// Default = sync write (keystrokes); SSH overrides with an awaitable
+    /// send so backpressure never loses a command.
+    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move { self.write(data) })
+    }
     fn resize(&self, rows: u16, cols: u16);
     fn close(&self);
     /// Abort the currently-running foreground command WITHOUT closing the
@@ -394,7 +402,10 @@ mod desktop_impl {
                 s.last_output = std::time::Instant::now();
                 s.backend.clone()
             };
-            backend.write(data);
+            // round-103: reliable write (SSH overrides with an awaitable
+            // send) — terminal_execute's command must not be dropped when
+            // the transport is under backpressure.
+            backend.write_async(data).await;
             Ok(())
         }
 

@@ -65,26 +65,48 @@ async function requireSession(request: Request, env: any): Promise<User | null> 
 // the install runs headless on the device machine.
 async function handleRegister(request: Request, env: any): Promise<Response> {
   const body = await readJson(request);
-  // Accept either a live key or the short-lived grant issued when the key
-  // was spent at /api/install/tunnel-token (same install, both calls).
-  const keyOk = (await hasRegKey(env, body.key)) || (await hasRegGrant(env, body.key));
-  if (!keyOk) {
-    return jsonError(403, "Invalid or used registration key", "authorization_error");
+  const k = String(body.key || "").toLowerCase();
+  // round-103: single-flight claim (the siblings all have one) — a bare
+  // check-then-act on eventually-consistent KV let one reg key register
+  // TWO devices under concurrent POSTs.
+  const claim = await env.KEYS.get(`regclaim2:${k}`);
+  if (claim) return jsonError(403, "Registration key already in use", "authorization_error");
+  await env.KEYS.put(`regclaim2:${k}`, "1", { expirationTtl: 60 });
+  try {
+    // Accept either a live key or the short-lived grant issued when the key
+    // was spent at /api/install/tunnel-token (same install, both calls).
+    const keyOk = (await hasRegKey(env, k)) || (await hasRegGrant(env, k));
+    if (!keyOk) {
+      return jsonError(403, "Invalid or used registration key", "authorization_error");
+    }
+    let device: Device;
+    try { device = validateDevice(body); } catch (e) { return jsonError(400, (e as Error).message, "invalid_request"); }
+    // round-68: a one-time-key holder could upsert an EXISTING device name —
+    // the register endpoint silently replaced a production device's
+    // hostname/token, redirecting console terminal tools + the proxy to the
+    // attacker. Refuse when the name is already registered; re-registering
+    // an existing device is an admin action.
+    if (await getDevice(env, device.name)) {
+      return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+    }
+    // round-103: read the device's proxy secret so the gateway proxy can
+    // present X-Vale-Auth for /panel/ (token-injection gate).
+    try {
+      const status = await deviceFetch(env, device, "/api/status");
+      if (status && status.resp) {
+        const j = await status.resp.json().catch(() => null);
+        if (j && typeof j.proxy_secret === "string" && j.proxy_secret.length >= 32) {
+          device.proxySecret = j.proxy_secret;
+        }
+      }
+    } catch { /* best-effort — panel injection just won't work until admin updates */ }
+    await upsertDevice(env, device);
+    await deleteRegKey(env, k); // one-time — consumed only after success
+    await deleteRegGrant(env, k);
+    return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
+  } finally {
+    await env.KEYS.delete(`regclaim2:${k}`).catch(() => {});
   }
-  let device: Device;
-  try { device = validateDevice(body); } catch (e) { return jsonError(400, (e as Error).message, "invalid_request"); }
-  // round-68: a one-time-key holder could upsert an EXISTING device name —
-  // the register endpoint silently replaced a production device's
-  // hostname/token, redirecting console terminal tools + the proxy to the
-  // attacker. Refuse when the name is already registered; re-registering
-  // an existing device is an admin action.
-  if (await getDevice(env, device.name)) {
-    return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
-  }
-  await upsertDevice(env, device);
-  await deleteRegKey(env, body.key); // one-time — consumed only after success
-  await deleteRegGrant(env, body.key);
-  return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
 }
 
 // Public: the Windows install fetches the Cloudflare tunnel API token with a
@@ -372,13 +394,12 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
   headers.delete("x-forwarded-for");
   headers.delete("cf-connecting-ip");
   headers.set("x-forwarded-proto", "https");
-  // round-102: mark this request as gateway-proxied. The device's /panel/
-  // injects its Bearer token ONLY when this header is present — a direct
-  // navigation to dN.agent.saisi.online/panel/ (no proxy) previously got
-  // the token injected for any internet user (full device RCE through
-  // /api/tools with the leaked token). The gateway proxy is the only
-  // authenticated path (admin session or plugin link).
-  headers.set("x-vale-proxy", "1");
+  // round-103: the device's /panel/ injects its Bearer token ONLY when the
+  // request carries the shared proxy secret (X-Vale-Auth) — the R102 marker
+  // header was client-spoofable end-to-end (a direct curl could set it and
+  // read the token → /api/tools RCE). The secret is read from the device at
+  // registration; only this authenticated proxy path presents it.
+  if (device.proxySecret) headers.set("x-vale-auth", device.proxySecret);
 
   // Never forward the extension's ?token= to the device — the plugin token
   // is a console-side credential; the device authenticates with its own

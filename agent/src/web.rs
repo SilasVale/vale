@@ -279,19 +279,25 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             axum::http::HeaderValue::from_static("no-store"),
         );
         // Zero-config token injection: embed the device token as a script
-        // fragment before </head>. round-102: injection now requires the
-        // gateway-proxy marker header — a DIRECT navigation to
-        // dN.agent.saisi.online/panel/ previously got the token injected
-        // for any internet user (the device hostnames are enumerable public
-        // DNS records; the leaked token grants /api/tools RCE). The gateway
-        // proxy (admin session or plugin link) is the only authenticated
-        // path, and it sets X-Vale-Proxy. Localhost/loopback keeps working
-        // for on-device use.
+        // fragment before </head>. round-102/103: injection requires the
+        // gateway proxy's SHARED SECRET (X-Vale-Auth) — a plain marker
+        // header was client-spoofable end-to-end (any curl could set it and
+        // read the token; the leaked token grants /api/tools RCE). The
+        // secret is generated at agent bootstrap and read by the console;
+        // the gateway proxy sends it only for authenticated (admin session
+        // or plugin link) requests. Localhost/loopback keeps working for
+        // on-device use.
+        let secret = state.config.server.proxy_secret.as_deref().unwrap_or("");
         let via_proxy = req
             .headers()
-            .get("x-vale-proxy")
+            .get("x-vale-auth")
             .and_then(|v| v.to_str().ok())
-            .map(|v| v == "1")
+            .map(|v| {
+                // Constant-time compare (timing-safe for a 64-hex secret).
+                let a = v.as_bytes();
+                let b = secret.as_bytes();
+                a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+            })
             .unwrap_or(false);
         if let Some(ref token) = state.config.server.device_token {
             // EXACT host allowlist. A substring/prefix match here was
@@ -716,11 +722,19 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
 
 async fn api_status(state: &AppState) -> serde_json::Value {
     let serial = state.serial_pool.list_open_ports();
-    serde_json::json!({
+    let mut out = serde_json::json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
         "serial_ports": serial,
-    })
+    });
+    // round-103: expose the proxy secret (token-authenticated endpoint) so
+    // the console can store it at registration and present X-Vale-Auth when
+    // proxying /panel/ — the agent injects the panel token only for
+    // requests carrying the matching secret.
+    if let Some(sec) = state.config.server.proxy_secret.as_deref() {
+        out["proxy_secret"] = serde_json::json!(sec);
+    }
+    out
 }
 
 // ── Event polling ───────────────────────────────────────────
@@ -798,29 +812,53 @@ mod tests {
         if via_proxy { b = b.header("x-vale-proxy", "1"); }
         b.body(Body::empty()).unwrap()
     }
+    fn req_with_host_secret(path: &str, host: &str) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(path)
+            .header(axum::http::header::HOST, host)
+            .header("x-vale-auth", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+            .body(Body::empty())
+            .unwrap()
+    }
+    fn req_with_host_secret_wrong(path: &str, host: &str) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(path)
+            .header(axum::http::header::HOST, host)
+            .header("x-vale-auth", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+            .body(Body::empty())
+            .unwrap()
+    }
 
     #[tokio::test]
     async fn panel_token_injection_host_gate() {
         let mut cfg = Config::default();
         cfg.server.device_token = Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into());
+        cfg.server.proxy_secret = Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into());
         let st = Arc::new(AppState::new(cfg));
-        // The device's own subdomain MUST inject when proxied by the gateway
-        // (3 dots + d prefix + X-Vale-Proxy) — round-102: a DIRECT request
-        // (no proxy marker) must NOT inject (the token would leak to any
-        // internet user hitting the enumerable public hostname).
-        let ok = handle_request(req_with_host_proxy("/panel/", "d1.agent.saisi.online", true), st.clone()).await;
+        // The device's own subdomain MUST inject when the request carries
+        // the gateway's shared secret (X-Vale-Auth, round-103 — a spoofable
+        // marker header was replaced with a constant-time secret check).
+        let ok = handle_request(req_with_host_secret("/panel/", "d1.agent.saisi.online"), st.clone()).await;
         let body = axum::body::to_bytes(ok.into_body(), 1 << 20).await.unwrap();
-        assert!(String::from_utf8_lossy(&body).contains("window.__PANEL_TOKEN__"), "device host via proxy must inject");
+        assert!(String::from_utf8_lossy(&body).contains("window.__PANEL_TOKEN__"), "device host with secret must inject");
 
-        // Direct (no proxy marker) on the device host MUST NOT inject.
+        // Direct (no secret) on the device host MUST NOT inject — an
+        // attacker hitting the enumerable public hostname gets no token.
         let direct = handle_request(req_with_host("/panel/", "d1.agent.saisi.online"), st.clone()).await;
         let bd = axum::body::to_bytes(direct.into_body(), 1 << 20).await.unwrap();
         assert!(!String::from_utf8_lossy(&bd).contains("window.__PANEL_TOKEN__"), "direct device access must NOT inject (RCE)");
 
-        // Apex via proxy + loopback inject.
-        let apex = handle_request(req_with_host_proxy("/panel/", "agent.saisi.online", true), st.clone()).await;
+        // A spoofed WRONG secret must not inject either.
+        let wrong = handle_request(req_with_host_secret_wrong("/panel/", "d1.agent.saisi.online"), st.clone()).await;
+        let bw = axum::body::to_bytes(wrong.into_body(), 1 << 20).await.unwrap();
+        assert!(!String::from_utf8_lossy(&bw).contains("window.__PANEL_TOKEN__"), "wrong secret must NOT inject");
+
+        // Apex with secret + loopback inject.
+        let apex = handle_request(req_with_host_secret("/panel/", "agent.saisi.online"), st.clone()).await;
         let ba = axum::body::to_bytes(apex.into_body(), 1 << 20).await.unwrap();
-        assert!(String::from_utf8_lossy(&ba).contains("window.__PANEL_TOKEN__"), "apex via proxy must inject");
+        assert!(String::from_utf8_lossy(&ba).contains("window.__PANEL_TOKEN__"), "apex with secret must inject");
         for h in ["127.0.0.1:18080", "localhost"] {
             let r = handle_request(req_with_host("/panel/", h), st.clone()).await;
             let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();

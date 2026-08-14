@@ -16,6 +16,40 @@ import { callTool } from "../lib/api";
 
 export type SseState = "connected" | "down" | "connecting";
 
+// round-103: per-session gap backfill state — a lagged broadcast dropped
+// frames; the next frame's start is the true gap lower bound, so we backfill
+// [issueOffset, frame.start) precisely (guessing at renderedNow was wrong in
+// both directions: it duplicated frame bytes or lost the gap entirely).
+const lagBackfill = new Map<string, number>();
+
+function backfillGap(
+  sid: string,
+  issueOffset: number,
+  gapEnd: number | undefined,
+  cb: { write: (bytes: Uint8Array) => void },
+) {
+  // Read [issueOffset, end) from the server buffer; write only the dropped
+  // range [issueOffset, gapEnd) — bytes at or above gapEnd are (or will be)
+  // frame-delivered.
+  callTool("terminal_read", { session_id: sid, offset: issueOffset, clean: false })
+    .then((r: any) => {
+      if (!r || (!r.text && !r.raw)) return;
+      let bytes: Uint8Array;
+      if (r.raw) {
+        const bin = atob(r.raw);
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      } else {
+        bytes = new TextEncoder().encode(r.text);
+      }
+      const rel = Math.max(0, issueOffset - Number(r.start));
+      const to = gapEnd === undefined ? bytes.length : Math.min(rel + (gapEnd - issueOffset), bytes.length);
+      const from = Math.min(rel, bytes.length);
+      if (to > from) cb.write(bytes.subarray(from, to));
+    })
+    .catch(() => {});
+}
+
 export function useSSE(
   connected: boolean,
   writeCallbacks: React.MutableRefObject<Map<string, { write: (bytes: Uint8Array) => void; getRendered: () => number }>>,
@@ -138,6 +172,15 @@ export function useSSE(
                 // rendered offset already passed (round-83 wrote every frame
                 // unconditionally, duplicating what a sync read delivered).
                 if (typeof frame.start === "number" && frame.start < cb.getRendered()) continue;
+                // round-103: a pending lag-backfill for this session — the
+                // frame's start is the true gap lower bound; backfill only
+                // [issueOffset, frame.start) (the dropped range) instead of
+                // guessing at renderedNow.
+                if (lagBackfill.has(frame.session_id)) {
+                  const issue = lagBackfill.get(frame.session_id)!;
+                  lagBackfill.delete(frame.session_id);
+                  backfillGap(frame.session_id, issue, typeof frame.start === "number" ? frame.start : undefined);
+                }
                 cb.write(new Uint8Array(frame.data));
               } else if (frame.lagged) {
                 // round-100: the broadcast dropped frames for this lagging
@@ -145,47 +188,13 @@ export function useSSE(
                 // never delivered, and the sync loop's dedup (skip =
                 // rendered - start) treats them as if they were, so the gap
                 // would be lost forever. The lagged frame carries no
-                // session_id (the stream is cross-session); force an
-                // immediate incremental backfill for EVERY session with a
-                // callback — the read pulls [rendered, end) from the server
-                // buffer, which still has the gap.
-                // round-101: dedup against the ISSUE-time offset, not the
-                // response-time rendered — an SSE frame delivered while the
-                // read is in flight advances rendered past the gap, and
-                // skip=rendered-start then drops exactly the dropped bytes.
-                // Only write bytes [issue_offset, end) that haven't been
-                // written since (frame starts below issue_offset were already
-                // rendered; anything above issue_offset written by frames is
-                // duplicated harmlessly — dedup by rendered at frame time).
+                // session_id (the stream is cross-session); mark EVERY
+                // session's rendered offset as needing a gap backfill — the
+                // next frame for a session carries its start, the true gap
+                // lower bound (round-103: guessing at renderedNow was wrong
+                // in both directions).
                 for (const [sid, cb] of writeCallbacks.current) {
-                  const issueOffset = cb.getRendered();
-                  callTool("terminal_read", { session_id: sid, offset: issueOffset, clean: false })
-                    .then((r: any) => {
-                      if (!r || (!r.text && !r.raw)) return;
-                      // round-102: write ONLY [issueOffset, renderedNow) —
-                      // bytes the frames delivered while the read was in
-                      // flight are ABOVE renderedNow and must not be
-                      // re-written (the R101 issue-time skip wrote
-                      // everything below end, duplicating frame-delivered
-                      // bytes on screen). The gap [issueOffset, renderedNow)
-                      // is exactly what the broadcast dropped.
-                      const renderedNow = cb.getRendered();
-                      if (renderedNow <= issueOffset) return;
-                      const rel = Math.max(0, issueOffset - Number(r.start));
-                      let bytes: Uint8Array;
-                      if (r.raw) {
-                        const bin = atob(r.raw);
-                        bytes = new Uint8Array(bin.length);
-                        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-                      } else {
-                        bytes = new TextEncoder().encode(r.text);
-                      }
-                      const want = renderedNow - issueOffset;
-                      const from = Math.min(rel, bytes.length);
-                      const to = Math.min(rel + want, bytes.length);
-                      if (to > from) cb.write(bytes.subarray(from, to));
-                    })
-                    .catch(() => {});
+                  lagBackfill.set(sid, cb.getRendered());
                 }
               }
             }
