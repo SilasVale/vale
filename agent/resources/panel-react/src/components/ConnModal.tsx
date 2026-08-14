@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { callApi } from "../lib/api";
 
 // SSH / Serial connection modal (migrated from vanilla panel.js showModal/
@@ -31,12 +31,19 @@ export function ConnModal({ kind, onClose, onConnect }: {
       .catch(() => {});
   }, [kind]);
 
+  // round-102: serial framing params (parity/data/stop) ride in the saved
+  // connection's params — remember them on pick and merge into the connect.
+  const savedParams = useRef<Record<string, unknown>>({});
+
   function pickSaved(id: string) {
     const c = saved.find((s) => s.id === id);
     if (!c || !c.target) return;
+    savedParams.current = (c.params && typeof c.params === "object" ? c.params : {}) as Record<string, unknown>;
     if (kind === "ssh") {
-      const m = /^(.*)@(.*):(\d+)$/.exec(c.target);
-      if (m) { setHost(m[2]); setPort(m[3]); setUser(m[1]); }
+      // round-102: portless targets ('user@host') never matched the
+      // port-required regex and the pick failed silently. Port defaults to 22.
+      const m = /^(.*)@(.*?)(?::(\d+))?$/.exec(c.target);
+      if (m) { setHost(m[2]); setPort(m[3] || "22"); setUser(m[1]); }
     } else {
       setSport(c.target.split("?")[0]);
       const b = /baud=(\d+)/.exec(c.target || "");
@@ -54,7 +61,11 @@ export function ConnModal({ kind, onClose, onConnect }: {
         await onConnect(target, { password: pass });
       } else {
         if (!sport) { setStatus("port required"); setBusy(false); return; }
-        await onConnect(`${sport}?baud=${baud}`, {});
+        // round-102: replay the saved framing params (parity/data/stop) so a
+        // reconnect preserves the link config.
+        const extra: Record<string, unknown> = { ...savedParams.current };
+        delete extra.password; // never send credentials through here
+        await onConnect(`${sport}?baud=${baud}`, extra);
       }
       onClose();
     } catch (e: any) {

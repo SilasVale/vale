@@ -372,6 +372,13 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
   headers.delete("x-forwarded-for");
   headers.delete("cf-connecting-ip");
   headers.set("x-forwarded-proto", "https");
+  // round-102: mark this request as gateway-proxied. The device's /panel/
+  // injects its Bearer token ONLY when this header is present — a direct
+  // navigation to dN.agent.saisi.online/panel/ (no proxy) previously got
+  // the token injected for any internet user (full device RCE through
+  // /api/tools with the leaked token). The gateway proxy is the only
+  // authenticated path (admin session or plugin link).
+  headers.set("x-vale-proxy", "1");
 
   // Never forward the extension's ?token= to the device — the plugin token
   // is a console-side credential; the device authenticates with its own
@@ -455,17 +462,45 @@ export default {
   name: "devices",
   deps: [],
   setup(ctx: PluginContext) {
+    // round-102: every public one-shot endpoint (register, tunnel-token,
+    // pair/claim, ws-ticket, ws handshake) costs KV WRITES — an attacker
+    // firing random codes can exhaust the Free-plan daily KV write quota
+    // (the same reason login and probe are gated). Per-IP gate, in-memory
+    // like probeRateLimited (no per-request KV writes).
+    const PUBLIC_LIMIT = 30; // per minute, per IP
+    const PUBLIC_WINDOW_MS = 60000;
+    const __publicRate = new Map(); // `ip:${bucket}` → count
+    const publicRateLimited = (request: Request) => {
+      try {
+        const ip = request?.headers?.get?.("cf-connecting-ip") || "unknown";
+        const bucket = Math.floor(Date.now() / PUBLIC_WINDOW_MS);
+        const key = `pub-rate:${ip}:${bucket}`;
+        const hit = __publicRate.get(key) || 0;
+        if (hit >= PUBLIC_LIMIT) return true;
+        __publicRate.set(key, hit + 1);
+        if (__publicRate.size > 4096) __publicRate.delete(__publicRate.keys().next().value);
+        return false;
+      } catch { return false; }
+    };
+    const gate = (fn: (request: Request, env: any, ...rest: any[]) => Promise<Response>) =>
+      async (request: Request, env: any, ...rest: any[]) => {
+        if (publicRateLimited(request)) {
+          return jsonError(429, "rate limit exceeded", "rate_limit_error");
+        }
+        return fn(request, env, ...rest);
+      };
+
     // Public registration flow (index.js order preserved).
-    route(ctx, "POST", "/api/register", handleRegister);
-    route(ctx, "POST", "/api/install/tunnel-token", handleTunnelToken);
-    route(ctx, "POST", `${PLUGIN_BASE}/pair/claim`, handlePairClaim);
+    route(ctx, "POST", "/api/register", gate(handleRegister));
+    route(ctx, "POST", "/api/install/tunnel-token", gate(handleTunnelToken));
+    route(ctx, "POST", `${PLUGIN_BASE}/pair/claim`, gate(handlePairClaim));
     route(ctx, "POST", `${PLUGIN_BASE}/revoke`, handleRevoke);
-    route(ctx, "POST", `${PLUGIN_BASE}/ws-ticket`, handleWsTicket);
+    route(ctx, "POST", `${PLUGIN_BASE}/ws-ticket`, gate(handleWsTicket));
     // index.js compared the ws path with === — register an exact match
     // (a prefix match would also swallow GET /api/plugins/ws-ticket).
     ctx.routes.push({
       match: (m, p) => m === "GET" && p === `${PLUGIN_BASE}/ws`,
-      handler: handleWs,
+      handler: gate(handleWs),
     });
 
     // Device reverse-proxy — checked BEFORE the admin-gated device routes,

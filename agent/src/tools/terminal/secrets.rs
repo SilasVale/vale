@@ -70,12 +70,20 @@ pub(crate) mod file_impl {
         write_all(&map)
     }
     pub fn get(target: &str) -> Result<Option<String>, DeviceError> {
-        Ok(read_all().get(&key_of(target)).and_then(|v| v.as_str()).map(String::from))
+        let map = read_all();
+        // round-102: fall back to the pre-normalization raw key — entries
+        // stored before key_of normalization (R101) are still findable.
+        Ok(map.get(&key_of(target))
+            .or_else(|| map.get(&format!("ssh:{target}")))
+            .and_then(|v| v.as_str())
+            .map(String::from))
     }
     pub fn delete(target: &str) -> Result<(), DeviceError> {
         let _g = recover_guard(&STORE_LOCK);
         let mut map = read_all();
-        if map.remove(&key_of(target)).is_some() { write_all(&map)?; }
+        let removed = map.remove(&key_of(target)).is_some()
+            || map.remove(&format!("ssh:{target}")).is_some();
+        if removed { write_all(&map)?; }
         Ok(())
     }
     pub fn list() -> Vec<String> {
