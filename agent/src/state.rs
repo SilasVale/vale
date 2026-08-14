@@ -5,6 +5,7 @@ use vale_agent_core::events::{AppEventBus, EventBus};
 use vale_agent_core::Config;
 use crate::plugins::PluginRegistry;
 use crate::plugins::design::DesignPlugin;
+use crate::plugins::mcp_client::McpClientPlugin;
 use crate::plugins::terminal::TerminalPlugin;
 use crate::plugins::update::UpdatePlugin;
 use crate::tools::serial::SerialPool;
@@ -37,6 +38,7 @@ fn build_registry(
         buffer_limit.clone(),
     )));
     registry.register(Box::new(UpdatePlugin::new()));
+    registry.register(Box::new(McpClientPlugin::new()));
     registry.register(Box::new(DesignPlugin::new()));
     registry
 }

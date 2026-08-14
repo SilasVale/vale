@@ -817,8 +817,8 @@ mod tests {
         let resp = handle_request(req("GET", "/api/spec"), state()).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        // terminal + update + design plugins
-        assert_eq!(v["plugins"].as_array().unwrap().len(), 3);
+        // terminal + update + mcp-client + design plugins
+        assert_eq!(v["plugins"].as_array().unwrap().len(), 4);
     }
 
     #[tokio::test]
