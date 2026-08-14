@@ -154,6 +154,12 @@ const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst
 /* ---- Logout ---- */
 
 async function authLogout(request: Request, env: any, secure: boolean): Promise<Response> {
+  // round-110: logout is an unauthenticated KV-write endpoint (any crafted
+  // cookie with a truthy exp triggers a write) — an attacker could exhaust
+  // the daily KV write quota. Per-IP gate like register.
+  if (authRateLimited(request)) {
+    return jsonError(429, "rate limit exceeded", "rate_limit_error");
+  }
   // Revoke the session server-side: the HMAC cookie alone was cleared
   // client-side, but a copied cookie stayed valid for the full 24h. Blacklist
   // the token hash in KV until its exp so it dies everywhere.

@@ -13,6 +13,10 @@ pub struct PtyBackend {
     /// without this gate every subsequent write spawns ANOTHER parked task
     /// (thread pile-up). When set, write_async fails fast.
     write_in_flight: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// round-110: unix-ms of the last write timeout — a wedged queue
+    /// re-accumulates a parked thread per retry; after a timeout, new
+    /// writes fail fast for this window instead of piling on.
+    last_write_timeout: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Master handle — kept for real PTY resize (ResizePseudoConsole on
     /// Windows, TIOCSWINSZ on Unix).
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
@@ -146,6 +150,7 @@ impl PtyBackend {
         Ok(PtyBackend {
             writer: Arc::new(Mutex::new(writer)),
             write_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            last_write_timeout: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             master: Arc::new(Mutex::new(master)),
             _slave: slave,
             child: child_slot,
@@ -183,8 +188,19 @@ impl TermBackend for PtyBackend {
                 Err("pty write already in flight (previous write wedged on a full input queue)".into())
             });
         }
+        // round-110: cooldown after a timeout — the wedged queue would
+        // re-accumulate a parked thread per retry; fail fast for 5s.
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let last_t = self.last_write_timeout.load(std::sync::atomic::Ordering::SeqCst);
+        if last_t != 0 && now_ms - last_t < 5000 {
+            self.write_in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Box::pin(async move {
+                Err("pty write in cooldown after a timeout (input queue wedged)".into())
+            });
+        }
         let writer = self.writer.clone();
         let in_flight = self.write_in_flight.clone();
+        let last_timeout = self.last_write_timeout.clone();
         let d = data.to_vec();
         Box::pin(async move {
             let res = tokio::time::timeout(
