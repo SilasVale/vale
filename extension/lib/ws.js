@@ -74,10 +74,15 @@ async function connectInner() {
   let ticket;
   try {
     // Trade the plugin token for a one-time WS ticket.
+    // round-112: a blackholed network hung this fetch forever, blocking the
+    // whole reconnect chain behind the single-flight flag. Bound it.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 10000);
     const res = await fetch(`${consoleOrigin}/api/plugins/ws-ticket`, {
       method: "POST",
       headers: { "content-type": "application/json", Authorization: `Bearer ${pairing.token}` },
-    });
+      signal: ctl.signal,
+    }).finally(() => clearTimeout(timer));
     const j = await res.json().catch(() => ({}));
     if (!state.pairedDevice) return; // unpaired while fetching the ticket
     if (!j.ticket) {

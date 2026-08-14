@@ -733,6 +733,10 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let mut pending: Vec<u8> = Vec::new();
                     let mut marker_code: Option<i32> = None;
                     let mut marker_seen_at: Option<Instant> = None;
+                    // round-112: one re-arm of the marker confirm window —
+                    // a REAL marker's trailing prompt can arrive >300ms
+                    // later (slow PS1); a SECOND late chunk invalidates.
+                    let mut marker_confirm_rearmed = false;
                     // Every exit path below assigns it (marker / idle / timeout).
                     let wait_reason: &str;
 
@@ -814,19 +818,21 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             // markers through; the R103 any-output reset
                             // killed real markers).
                             if let Some(at) = marker_seen_at {
-                                // round-111: ANY output past the confirm
-                                // window invalidates the marker — a fake
-                                // marker followed by slow small output (the
-                                // R110 >1KB threshold let it through) must
-                                // not end the wait with a bogus exit code.
-                                // A REAL marker's trailing prompt ALSO
-                                // invalidates (it degrades to the quiet
-                                // path — idle, exit_code null), which is the
-                                // safer failure mode than a fake exit code
-                                // while the command still runs.
+                                // round-112: distinguish a REAL marker's
+                                // trailing prompt from sustained fake-marker
+                                // output. A prompt is small and STOPPS; fake
+                                // output keeps coming. When a chunk arrives
+                                // past the confirm window, re-arm the confirm
+                                // window once (small output = prompt); a
+                                // SECOND late chunk (>1KB total) invalidates.
                                 if at.elapsed() >= marker_confirm {
-                                    marker_seen_at = None;
-                                    marker_code = None;
+                                    if chunk.len() <= 1024 && !marker_confirm_rearmed {
+                                        marker_confirm_rearmed = true;
+                                        marker_seen_at = Some(Instant::now());
+                                    } else {
+                                        marker_seen_at = None;
+                                        marker_code = None;
+                                    }
                                 }
                             }
                             // Finalize everything that can no longer be a

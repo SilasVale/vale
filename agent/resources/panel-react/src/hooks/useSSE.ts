@@ -200,7 +200,9 @@ export function useSSE(
                 if (lagBackfill.has(frame.session_id)) {
                   const issue = lagBackfill.get(frame.session_id)!;
                   lagBackfill.delete(frame.session_id);
-                  backfillGap(frame.session_id, issue, typeof frame.start === "number" ? frame.start : undefined);
+                  // round-112: cb was MISSING (dead code) — the backfill
+                  // threw on cb.getRendered() and the gap was never written.
+                  backfillGap(frame.session_id, issue, typeof frame.start === "number" ? frame.start : undefined, cb);
                 }
                 cb.write(new Uint8Array(frame.data));
               } else if (frame.lagged) {
