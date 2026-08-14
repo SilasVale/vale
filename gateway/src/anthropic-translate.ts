@@ -218,6 +218,12 @@ export class AnthropicStreamEncoder {
   nextToolBlockIdx = 0;  // running content-block index for tool blocks
   toolBlockIdxMap: Record<number, number> = {};  // tool index → its content-block index
   openToolInputs: Record<number, string> = {};   // tool index → accumulated arguments string
+  // round-96: content-block indices already stopped by a type-switch close —
+  // finish() must NOT emit a duplicate content_block_stop for them, but the
+  // toolBlockIdxMap entry must SURVIVE (an interleaved stream can resume the
+  // tool's input_json_delta after a text block; deleting the entry made the
+  // resume open a bogus second tool_use block).
+  stoppedToolBlocks: Set<number> = new Set();
   pending: string[] = [];
   lastStopReason = "end_turn";
   id = "";
@@ -286,8 +292,11 @@ export class AnthropicStreamEncoder {
     }
     // The client expects message_start to be the first event.
     if (!this.started) this.emitStart();
-    // Close EVERY open tool block (parallel calls leave several open).
+    // Close EVERY still-open tool block (parallel calls leave several open).
+    // round-96: skip blocks already stopped by a type-switch (they'd get a
+    // duplicate content_block_stop — the round-95 bug).
     for (const bi of new Set(Object.values(this.toolBlockIdxMap))) {
+      if (this.stoppedToolBlocks.has(bi)) continue;
       this.pending.push(sse("content_block_stop", { type: "content_block_stop", index: bi }));
     }
     // round-68: close the open TEXT/THINKING block before resetting — the
@@ -345,7 +354,16 @@ export class AnthropicStreamEncoder {
       // text/thinking and tool blocks never collide on an index.
       this.blockIndex = this.nextToolBlockIdx++;
       this.blockType = type;
-      const contentBlock = type === "thinking" ? { ...block, signature: "" } : { ...block };
+      // round-96: content_block_start must hold the block's INITIAL state,
+      // not the first chunk — the same chunk was also emitted as the first
+      // delta below, so clients got the first chunk twice (the Anthropic SDK
+      // seeds the block from start, then appends deltas). Start with an empty
+      // content block; the deltas carry everything.
+      const contentBlock = type === "thinking"
+        ? { type: "thinking", thinking: "" }
+        : type === "text"
+          ? { type: "text", text: "" }
+          : { type: "tool_use", id: block.id || "", name: block.name || "unknown", input: {} };
       this.pending.push(sse("content_block_start", {
         type: "content_block_start",
         index: this.blockIndex,
@@ -444,9 +462,11 @@ export class AnthropicStreamEncoder {
       // stopped AGAIN by finish()'s toolBlockIdxMap loop — that emitted a
       // duplicate content_block_stop for an already-stopped index (protocol
       // violation strict clients read as a corrupted stream).
-      for (const [tool, bi] of Object.entries(this.toolBlockIdxMap)) {
-        if (bi === this.blockIndex) delete this.toolBlockIdxMap[tool];
-      }
+      // round-96: record the stopped index instead of deleting the map entry
+      // — an interleaved upstream stream can resume this tool's
+      // input_json_delta after the text block, and deleting the entry made
+      // the resume open a bogus second tool_use block (name "unknown").
+      if (this.blockType === "tool_use") this.stoppedToolBlocks.add(this.blockIndex);
       this.blockIndex = -1;
       this.blockType = null;
     }
@@ -466,8 +486,9 @@ export function toSSE(res: any): string {
     // server_tool_use starts with empty input in Anthropic's wire format; the query
     // arrives via input_json_delta. web_search_tool_result carries its full content
     // array inside content_block_start (matches DeepSeek's stream).
-    let startBlock = block;
-    if (block.type === "server_tool_use") startBlock = { ...block, input: {} };
+    // round-96: content_block_start initializes the block EMPTY — the full
+    // content was also emitted as the first delta below (double-emit).
+    const startBlock = { ...block, text: "", thinking: "", input: {} };
     out += sse("content_block_start", { type: "content_block_start", index: i, content_block: startBlock });
     if (block.type === "thinking") {
       out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "thinking_delta", thinking: block.thinking } });

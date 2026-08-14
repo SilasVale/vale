@@ -24,7 +24,6 @@ interface SessionRuntime {
   renderedBytes: number;
   needSync: boolean;
   sseDirty: boolean;
-  syncInFlight: boolean;
 }
 
 const runtimes = new Map<string, SessionRuntime>();

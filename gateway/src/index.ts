@@ -1269,7 +1269,11 @@ const DEVICE_PROBE_TTL_MS = 30000;
 
 async function cachedDeviceProbe(env: any, device: any) {
   const hit = DEVICE_PROBE_CACHE.get(device.name);
-  if (hit && Date.now() - hit.at < DEVICE_PROBE_TTL_MS) return hit;
+  // round-96: the cache stored the timestamp under `ts` but the hit check
+  // read `hit.at` — the cache NEVER hit, so every /api/plugins/status poll
+  // live-probed every device through the tunnel (the exact hammering the
+  // 30s cache exists to prevent). Check `ts`.
+  if (hit && Date.now() - hit.ts < DEVICE_PROBE_TTL_MS) return hit;
   // Probe through the tunnel; classify the failure: a tunnel-level error
   // (1033/530 — origin unreachable) vs an agent-level error (HTTP response).
   let state = { tunnel: false, agent: false, ts: Date.now() };
