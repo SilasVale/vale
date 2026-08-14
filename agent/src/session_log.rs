@@ -22,6 +22,60 @@ use serde::Serialize;
 /// audit lines (round-98 — a closed session's file grew unbounded).
 const MAX_CLOSED_LOG_LINES: usize = 2000;
 
+/// Stream-trim a session JSONL: keep the version header + the LAST
+/// command/start (recovery needs it to detect an interrupted command) and
+/// everything after it; if that's still over the cap, keep the most recent
+/// lines. Reads/writes the tail only — never the whole file into RAM
+/// (round-99: the previous trim allocated ~2-3x the file size at close, an
+/// OOM on the very ~GB files it exists for).
+fn trim_file(path: &std::path::Path) {
+    use std::io::{BufRead, BufReader, BufWriter, Write as _};
+    let Ok(file) = std::fs::File::open(path) else { return };
+    let mut reader = BufReader::new(file);
+    let mut header = String::new();
+    let _ = reader.read_line(&mut header); // version header (may be empty)
+    let mut tail: Vec<String> = Vec::new();
+    let mut last_start_idx: Option<usize> = None;
+    let mut line = String::new();
+    let mut idx: usize = 0;
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                // Bounded memory: only retain from the last command/start
+                // onward plus a rolling window behind it.
+                if line.contains("\"command/start\"") {
+                    last_start_idx = Some(idx);
+                }
+                tail.push(line.clone());
+                if last_start_idx.is_none() && tail.len() > MAX_CLOSED_LOG_LINES {
+                    tail.remove(0);
+                }
+                idx += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    // Drop everything before the last command/start (recovery needs it and
+    // the lines after it; the older head is a rolling log).
+    if let Some(start) = last_start_idx {
+        let drop_head = tail.len() - (idx - start);
+        if drop_head > 0 { tail.drain(..drop_head); }
+    }
+    // Still over the cap → keep the most recent lines only.
+    if tail.len() > MAX_CLOSED_LOG_LINES {
+        tail.drain(..tail.len() - MAX_CLOSED_LOG_LINES);
+    }
+    if tail.is_empty() { return; }
+    if let Ok(out) = std::fs::File::create(path) {
+        let mut w = BufWriter::new(out);
+        let _ = w.write_all(header.as_bytes());
+        for l in &tail { let _ = w.write_all(l.as_bytes()); }
+        let _ = w.flush();
+    }
+}
+
 /// One audit event for a session. `seq` is per-session monotonic; `ts` is
 /// unix seconds. Optional fields are omitted when absent (compact JSONL).
 #[derive(Debug, Clone, Serialize)]
@@ -172,25 +226,17 @@ impl SessionLogger {
             let _ = w.flush();
             // round-98: a closed session's file was never trimmed — a serial
             // console scrolling logs for hours grew an unbounded .jsonl on
-            // the install disk. Keep the header + the last
-            // MAX_CLOSED_LOG_LINES audit lines (command/end boundaries are
-            // the recovery-relevant part); the old head is a rolling log,
-            // not a source of truth once the session is closed.
+            // the install disk.
+            // round-99: the naive trim (read_to_string + keep last N lines)
+            // had two flaws: (1) it deleted the LAST command/start when the
+            // final command produced >2000 output events, silently killing
+            // the "interrupted" recovery flag for that command; (2) it read
+            // the WHOLE (potentially ~GB) file into RAM at close. Trim by
+            // STREAMING the tail: keep the header, the last command/start
+            // (recovery needs it) plus everything after it, and if that's
+            // still over the cap, the most recent lines.
             let path = self.dir.join(format!("{sid}.jsonl"));
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                let lines: Vec<&str> = content.lines().collect();
-                if lines.len() > MAX_CLOSED_LOG_LINES {
-                    let keep: Vec<&str> = lines[..1]
-                        .iter()
-                        .chain(lines[lines.len() - MAX_CLOSED_LOG_LINES..].iter())
-                        .copied()
-                        .collect();
-                    if let Ok(mut file) = std::fs::File::create(&path) {
-                        use std::io::Write as _;
-                        let _ = writeln!(file, "{}", keep.join("\n"));
-                    }
-                }
-            }
+            trim_file(&path);
         }
     }
 
@@ -307,6 +353,20 @@ impl SessionLogger {
                 match v.get("kind").and_then(|k| k.as_str()) {
                     Some("command/start") => last_start = Some(i),
                     Some("command/end") => last_end = Some(i),
+                    // round-99: a backgrounded command (run_in_background)
+                    // never gets a command/end — it logs status
+                    // "backgrounded" and the shell later logs "closed"/
+                    // "exited:N". Neither was recognized, so recovery
+                    // misreported every completed background command as
+                    // "interrupted". Treat any post-start status line
+                    // (backgrounded/closed/exited) as a terminal marker.
+                    Some(k) if k == "status" => {
+                        if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+                            if text == "backgrounded" || text == "closed" || text.starts_with("exited:") {
+                                last_end = Some(i);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }

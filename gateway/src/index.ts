@@ -1230,6 +1230,16 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
  */
 export async function handleGateway(request: Request, env: any, url: URL) {
   const started = Date.now();
+  // round-99: plugin dispatch FIRST — plugins/translate.ts registers its
+  // /v1/* routes here but they were NEVER reached (the old code went
+  // straight to the inline impl below, leaving the plugin's 800-line copy
+  // dead and drifting). A matching plugin route now runs; unmatched
+  // requests fall through to the inline impl.
+  const pctx = ensurePluginCtx();
+  if (pctx.routes.length) {
+    const hit = dispatch(pctx, request.method, url.pathname, request, env, url, url.protocol === "https:");
+    if (hit !== null) return hit;
+  }
   // Read the raw body ONCE here and hand it to the impl (round-55: the old
   // clone().text() re-read + re-scan on every /v1 request was ~30MB extra
   // memory + double the scan CPU). The impl scans it for routing AND the
@@ -1736,6 +1746,13 @@ const DEFAULT_ROUTE_MODEL = "ds/deepseek-v4-flash";
 export async function resolveAutoModel(env: any, uid: string) {
   const chosen = await getUserRoute(env, uid);
   if (chosen && (await isModelUsable(env, chosen, uid))) return chosen;
+  // round-99: the default fallback returned DEFAULT_ROUTE_MODEL (ds/...)
+  // UNCHECKED — a BYOK user without a DeepSeek key got a guaranteed 502 on
+  // every model=auto request (the exact hole round-68 fixed for the
+  // chosen-route path). Fall back to the first usable channel instead.
+  for (const m of [DEFAULT_ROUTE_MODEL, "qw/qwen3.8-max-preview", "og/deepseek-v4-flash", "or/openai/gpt-5.6-luna:floor[1m]"]) {
+    if (await isModelUsable(env, m, uid)) return m;
+  }
   return DEFAULT_ROUTE_MODEL;
 }
 

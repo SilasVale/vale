@@ -153,6 +153,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         await clearPairing();
         disconnect();
+        // round-99: detach this device's controlled tab — an unpaired
+        // device's proxy tab otherwise stayed attached forever (the R98
+        // URL-recoverable guard treats its proxy URL as live).
+        const { releaseDeviceTab } = await import("./lib/cdp.js");
+        await releaseDeviceTab(state.pairedDevice?.device || "");
         state.error = null;
         sendResponse({ ok: true });
       } catch (e) { sendResponse({ ok: false, error: String(e) }); }

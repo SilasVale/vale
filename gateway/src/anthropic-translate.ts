@@ -172,6 +172,14 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
         }
         const { done, value } = chunk;
         if (done) {
+          // round-99: a 200 SSE body with ZERO parseable frames (dead
+          // backend, wrong content-type) yielded a silent empty assistant
+          // message AND recorded a breaker success. Surface it.
+          if (!encoderStream.started && !buffer.trim()) {
+            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream returned an empty/non-SSE stream" } })}\n\n`));
+            controller.close();
+            return;
+          }
           const tail = encoderStream.finish(buffer);
           if (tail) controller.enqueue(encoder.encode(tail));
           controller.close();

@@ -24,7 +24,14 @@ use rmcp::{
 const DEFAULT_URL: &str = "http://127.0.0.1:9229/mcp";
 
 /// Shared remote-peer slot: set by `mcp_client_connect`, used by `call`/`list`.
-static PEER: Mutex<Option<Peer<RoleClient>>> = Mutex::const_new(None);
+/// Carries the session's cancel token so `disconnect` can tear the session
+/// down for real (round-99: dropping the Peer alone left the connect's
+/// spawned session task alive, leaking sessions on the browser server).
+struct PeerSession {
+    peer: Peer<RoleClient>,
+    cancel: rmcp::service::RunningServiceCancellationToken,
+}
+static PEER: Mutex<Option<PeerSession>> = Mutex::const_new(None);
 
 /// A minimal client-side service — we only call tools, never serve requests.
 struct EmptyClientService;
@@ -110,7 +117,10 @@ pub fn mcp_client_connect() -> ToolDef {
             })?
             .map_err(|e| DeviceError::Internal { message: format!("MCP connect failed: {e}") })?;
             let peer = running.peer().clone();
-            // Keep the session task alive for the process lifetime.
+            // The session's cancel token — disconnect() cancels it to tear
+            // the session down for real (round-99). The spawned waiting()
+            // task keeps the session alive until then.
+            let cancel = running.cancellation_token();
             tokio::spawn(async move { let _ = running.waiting().await; });
 
             let tools = tokio::time::timeout(
@@ -120,7 +130,7 @@ pub fn mcp_client_connect() -> ToolDef {
             .await
             .map_err(|_| DeviceError::Internal { message: "list tools timed out after 30s".into() })?
             .map_err(|e| DeviceError::Internal { message: format!("list tools failed: {e}") })?;
-            *PEER.lock().await = Some(peer);
+            *PEER.lock().await = Some(PeerSession { peer, cancel });
 
             Ok(json!({
                 "status": "connected",
@@ -141,9 +151,9 @@ pub fn mcp_client_list() -> ToolDef {
         json!({ "type": "object" }),
         |_: Value| async move {
             let guard = PEER.lock().await;
-            let peer = guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
+            let peer = &guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
                 message: "not connected — call mcp_client_connect first".into(),
-            })?;
+            })?.peer;
             // round-93: bounded like connect — a hung remote must not wedge
             // this MCP worker.
             let tools = tokio::time::timeout(
@@ -198,9 +208,9 @@ pub fn mcp_client_call() -> ToolDef {
             }
 
             let guard = PEER.lock().await;
-            let peer = guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
+            let peer = &guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
                 message: "not connected — call mcp_client_connect first".into(),
-            })?;
+            })?.peer;
             // round-93: browser operations can be slow (navigation, waiting),
             // but never infinite — a hung remote must not wedge this MCP
             // worker.
@@ -237,7 +247,15 @@ pub fn mcp_client_disconnect() -> ToolDef {
         "Close the browser MCP client session (frees the connection).",
         json!({ "type": "object" }),
         |_: Value| async move {
-            *PEER.lock().await = None;
+            // round-99: just dropping the slot left the connect's
+            // tokio::spawn(running.waiting()) session task alive (the Peer
+            // clone it holds kept the MCP session open) — connect/disconnect
+            // cycles leaked sessions on the browser server. Cancel the
+            // session's token to tear it down for real.
+            let sess = PEER.lock().await.take();
+            if let Some(s) = sess {
+                s.cancel.cancel();
+            }
             Ok(json!({ "status": "disconnected" }))
         },
     )
