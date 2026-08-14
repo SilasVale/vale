@@ -97,7 +97,20 @@ async function clickByPath(tabId, el) {
   // Re-resolve the path in-page; if it fails, DOM changed → re-snapshot.
   // Scroll the element into view FIRST: an off-viewport element's rect lands
   // the click on whatever is at those page coords (silently wrong action).
-  await evaluate(tabId, `(() => { const _p = ${JSON.stringify(el.path)}; const e = _p ? document.querySelector(_p) : null; if (e) e.scrollIntoView({block:"center"}); return true; })()`);
+  // round-88: scroll through the shadow chain too — the old document
+  // .querySelector(el.path) was null for shadow elements (path:null), so
+  // below-the-fold shadow targets were never scrolled and the click silently
+  // hit whatever was at those page coords.
+  await evaluate(tabId, `(() => {
+    const chain = ${JSON.stringify(el.path ? [el.path, ...(el.shadowPath || [])] : (el.shadowPath || []))};
+    let t = null;
+    for (let i = 0; i < chain.length; i++) {
+      t = i === 0 ? document.querySelector(chain[i]) : t && t.shadowRoot ? t.shadowRoot.querySelector(chain[i]) : null;
+      if (!t) break;
+    }
+    if (t) t.scrollIntoView({block:"center"});
+    return true;
+  })()`);
   const found = await evaluate(tabId, reResolveExpr(el, "rect"));
   if (!found) throw new Error("DOM changed — please re-snapshot");
   // getBoundingClientRect() returns VIEWPORT coords — after scrollIntoView the

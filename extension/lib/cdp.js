@@ -121,6 +121,12 @@ async function ensureTabInner(device, proxyUrl) {
       if (source.tabId !== tabId || method !== "Page.loadEventFired") return;
       chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", { expression: scrubExpr }).catch(() => {});
     });
+  } else {
+    // round-88: the reuse path (SW-restart / query-hit) skipped the scrub —
+    // ?token= survived the exact 'SW idled out mid-load' case the R84 fix
+    // targeted. Scrub immediately on the reused tab too.
+    const scrubExpr = `history.replaceState(null, "", location.pathname + location.search.replace(/([?&])token=[^&]*/, "$1").replace(/[?&]$/, ""))`;
+    chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", { expression: scrubExpr }).catch(() => {});
   }
   return tabId;
 }
