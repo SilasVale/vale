@@ -461,7 +461,10 @@ async function handleConsole(request: Request, env: any, url: URL) {
       return jsonError(403, "Admin only", "forbidden");
     }
     const body = await readJson(request);
-    await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : null);
+    // round-95: OFF persisted as "0" (not deleted) so it shadows an
+    // env/US_PROXY Worker var; getGlobalSetting normalizes "0" → null for
+    // every consumer.
+    await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : "0");
     const v = await getGlobalSetting(env, "US_PROXY");
     return jsonOk({ ok: true, enabled: !!v });
   }

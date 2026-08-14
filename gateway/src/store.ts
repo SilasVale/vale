@@ -213,16 +213,23 @@ export async function createUser(env: Env, { username, password, inviteCode, rol
     // round-94: invite consumption was check-then-act on eventually-consistent
     // KV — N parallel registrations with the SAME code all saw it present and
     // all proceeded, minting N accounts from one one-time invite (each with
-    // its own rate-limit budget). Single-flight claim, same pattern as the
-    // pair/claim, reg-key and ws-ticket locks.
-    const claim = await env.KEYS.get(`invclaim:${code}`);
-    if (claim) throw new Error("Invite code already in use");
-    await env.KEYS.put(`invclaim:${code}`, "1", { expirationTtl: 60 });
-    if (!(await env.KEYS.get(`invite:${code}`))) {
-      await env.KEYS.delete(`invclaim:${code}`);
-      throw new Error("Invalid invite code");
-    }
-    await env.KEYS.delete(`invite:${code}`);
+    // its own rate-limit budget). The claim lock added in R94 was still
+    // get-then-put (non-atomic on KV, same hole with a different key).
+    // round-95: serialize the consume per invite code within this isolate
+    // (withKeyLock — Workers isolates are single-threaded, so same-isolate
+    // concurrent registrations queue here and only one passes the
+    // invite-present check); the TTL claim still bounds cross-isolate races.
+    const r = await withKeyLock(`invclaim:${code}`, async () => {
+      const claim = await env.KEYS.get(`invclaim:${code}`);
+      if (claim) throw new Error("Invite code already in use");
+      await env.KEYS.put(`invclaim:${code}`, "1", { expirationTtl: 60 });
+      if (!(await env.KEYS.get(`invite:${code}`))) {
+        await env.KEYS.delete(`invclaim:${code}`);
+        throw new Error("Invalid invite code");
+      }
+      await env.KEYS.delete(`invite:${code}`);
+    });
+    void r;
   }
 
   const salt = randomHex(16);
@@ -381,7 +388,13 @@ export async function getGlobalSetting(env: Env, name: string): Promise<string |
   if (hit !== undefined) return hit;
   let v = await env.KEYS.get(key);
   if (v === null || v === undefined) v = env[name] ? String(env[name]) : null;
-  if (v === null || v === undefined) v = null;
+  // round-95: normalize AT THE READ — an explicit OFF is persisted as "0"
+  // (shadows the env var, round-94), but every consumer (the real /v1 path in
+  // index.ts, the console GET, the probes) used raw truthiness, which treats
+  // "0" as ON. Returning a canonical value here fixes ALL consumers at once:
+  // "1" = on, null = off. globalSettingEnabled() stays for callers that need
+  // the boolean directly.
+  if (v !== null && v !== undefined && (v === "0" || v === "false")) v = null;
   cset(key, v);
   return v;
 }

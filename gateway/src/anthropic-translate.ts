@@ -440,6 +440,13 @@ export class AnthropicStreamEncoder {
   closeBlock(): void {
     if (this.blockIndex >= 0) {
       this.pending.push(sse("content_block_stop", { type: "content_block_stop", index: this.blockIndex }));
+      // round-95: a block closed here (type switch mid-stream) must not be
+      // stopped AGAIN by finish()'s toolBlockIdxMap loop — that emitted a
+      // duplicate content_block_stop for an already-stopped index (protocol
+      // violation strict clients read as a corrupted stream).
+      for (const [tool, bi] of Object.entries(this.toolBlockIdxMap)) {
+        if (bi === this.blockIndex) delete this.toolBlockIdxMap[tool];
+      }
       this.blockIndex = -1;
       this.blockType = null;
     }
