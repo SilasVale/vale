@@ -57,7 +57,11 @@ export async function handleMcp(request, env) {
       const result = await callTool(tool, env, device, args);
       return mcpJson({ content: formatResult(result) }, id);
     } catch (e) {
-      return mcpError(-32603, `Tool ${name} failed: ${e.message}`, id);
+      // Stable error code in data (round-55): a flat "-32603 Tool failed: ..."
+      // string hides whether the device is offline / the session is gone / a
+      // timeout / the extension is offline — the model needs the distinction
+      // to retry smartly.
+      return mcpError(-32603, `Tool ${name} failed: ${e.message}`, id, e.code);
     }
   }
   return mcpError(-32601, `Method not found: ${method}`, id);
@@ -86,35 +90,90 @@ export async function callTool(tool, env, device, args) {
   // Never let an auth failure masquerade as success.
   if (res.status === 401) throw new Error("hub auth misconfigured (x-do-auth)");
   const j = await res.json().catch(() => ({}));
-  if (res.status === 503) throw new Error("extension_offline — is the Vale extension running on the device browser?");
+  if (res.status === 503) throw ToolErr(EXTENSION_OFFLINE, "extension_offline — is the Vale extension running on the device browser?");
   if (j.error) throw new Error(`extension error: ${j.error}`);
   return j.result;
 }
 
+// Stable error codes (round-55) — carried in the JSON-RPC error data so MCP
+// clients can distinguish failure classes and retry smartly.
+export const DEVICE_UNREACHABLE = "DEVICE_UNREACHABLE";
+export const EXTENSION_OFFLINE = "EXTENSION_OFFLINE";
+export const TIMEOUT = "TIMEOUT";
+export const SESSION_NOT_FOUND = "SESSION_NOT_FOUND";
+export const SESSION_BUSY = "SESSION_BUSY";
+function ToolErr(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
 async function callTerminalTool(name, env, device, args) {
+  // Every terminal tool on the device is reachable here (round-54: only 5 of
+  // 16 were mapped — write/read/resize/select/history/list_ports/diag/secret
+  // were invisible to MCP clients through the console). Keep in sync with
+  // TERMINAL_TOOLS in mcp-tools.js.
   const toolPath = {
     terminal_open: "/api/tools/terminal_open",
     terminal_screen: "/api/tools/terminal_screen",
-    terminal_send: "/api/tools/terminal_execute",
+    terminal_execute: "/api/tools/terminal_execute",
+    terminal_write: "/api/tools/terminal_write",
+    terminal_read: "/api/tools/terminal_read",
+    terminal_resize: "/api/tools/terminal_resize",
+    terminal_select: "/api/tools/terminal_select",
+    terminal_history: "/api/tools/terminal_history",
     terminal_list: "/api/tools/terminal_list",
+    terminal_list_ports: "/api/tools/terminal_list_ports",
     terminal_close: "/api/tools/terminal_close",
+    terminal_diag_write: "/api/tools/terminal_diag_write",
+    terminal_diag_read: "/api/tools/terminal_diag_read",
+    secret_set: "/api/tools/secret_set",
+    secret_get: "/api/tools/secret_get",
+    secret_delete: "/api/tools/secret_delete",
   }[name];
   if (!toolPath) throw new Error(`Unknown terminal tool: ${name}`);
   const body = { ...args };
   delete body.device;
-  if (name === "terminal_send") {
+  if (name === "terminal_execute") {
     body.command = body.input;
     delete body.input;
-    body.quiet_ms = body.quiet_ms ?? 400;
+    // Default must match the agent (200) — a gateway-side 400 invented a
+    // different quiet window than the device actually uses (round-54).
+    body.quiet_ms = body.quiet_ms ?? 200;
   }
-  const { ok, resp } = await deviceFetch(env, device, toolPath, {
+  const { ok, resp, error } = await deviceFetch(env, device, toolPath, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!resp) throw new Error("Device unreachable");
+  if (!resp) {
+    // Distinct code for a timeout vs a hard unreachable (round-55).
+    const code = /timeout/i.test(String(error || "")) ? TIMEOUT : DEVICE_UNREACHABLE;
+    throw ToolErr(code, error || "Device unreachable");
+  }
   const data = await resp.json().catch(() => ({}));
-  if (!ok) throw new Error(data?.error || `Device returned ${resp.status}`);
+  // round-58: deviceFetch's `ok` is the HTTP status — the agent returns
+  // tool errors as HTTP 200 + {"ok":false,"error":...} (web.rs api_call_tool),
+  // so the old `if (!ok)` never fired and the error-code mapping below was
+  // DEAD CODE: "Session not found" sailed back to the model as a successful
+  // tool result. Check the agent's own ok flag.
+  if (!ok || data.ok === false) {
+    // The agent now ships a typed `code` (round-59: DeviceError variant →
+    // stable code); fall back to message-text guessing only for older
+    // agents that predate it.
+    const msg = data?.error || `Device returned ${resp.status}`;
+    const code = data?.code === "session_not_found" ? SESSION_NOT_FOUND
+      : data?.code === "session_busy" ? SESSION_BUSY
+      : data?.code === "ssh_timeout" ? TIMEOUT
+      : /Session not found/i.test(msg) ? SESSION_NOT_FOUND
+      : /Session busy/i.test(msg) ? SESSION_BUSY
+      : /timed out/i.test(msg) ? TIMEOUT
+      : DEVICE_UNREACHABLE;
+    throw ToolErr(code, msg);
+  }
+  // No heartbeat here (round-54): the agent's own execute wait-loop pings
+  // the session every poll, and the panel pings terminal_select every 30s —
+  // the MCP path is covered by the execute loop. The gateway simulating
+  // presence was a workaround for the old model where output activity kept
+  // sessions alive; presence now comes from the agent-side loops only.
   return data;
 }
 
@@ -133,8 +192,10 @@ function formatResult(result) {
 function mcpJson(result, id) {
   return new Response(JSON.stringify({ jsonrpc: "2.0", result, id }), { headers: { "content-type": "application/json" } });
 }
-function mcpError(code, message, id) {
-  return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id }), { headers: { "content-type": "application/json" } });
+function mcpError(code, message, id, data) {
+  const error = { code, message };
+  if (data) error.data = { code: data };
+  return new Response(JSON.stringify({ jsonrpc: "2.0", error, id }), { headers: { "content-type": "application/json" } });
 }
 
 function mcpSseStream() {
