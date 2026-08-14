@@ -285,7 +285,14 @@ fn tool_open(
                         logger2.log_status(&sid_buf, "closed");
                     }
                     logger2.close_session(&sid_buf);
-                    remove_spill(&sid_buf);
+                    // round-95: the spill file is NOT deleted here — the
+                    // retained history entry still advertises bytes
+                    // [0, dropped) that terminal_read merges from spill;
+                    // deleting it made the session head unreachable after
+                    // close (reads returned only the in-memory tail while
+                    // reporting start:0/end:end_abs). The spill now lives
+                    // until the history entry is evicted by
+                    // enforce_history_caps (which calls remove_spill_for).
                     // Backend-initiated death (SSH channel EOF, serial read
                     // error, pty EOF) — emit the event so clients learn the
                     // session died and WHY, instead of discovering it only via

@@ -131,8 +131,15 @@ impl SshSession {
         // blackholed address blocks for the OS connect timeout (Windows
         // ~21s, Linux up to ~130s).
         let config = Arc::new(client::Config {
-            inactivity_timeout: Some(std::time::Duration::from_secs(15)),
-            keepalive_interval: Some(std::time::Duration::from_secs(30)),
+            // round-95: the old values were inverted — inactivity_timeout 15s
+            // with keepalive_interval 30s meant ANY session with no incoming
+            // bytes for 15s died before the keepalive ever fired (a `sleep
+            // 20` over SSH, or 16s of reading output, killed the session).
+            // keepalive must fire BEFORE the inactivity timer expires: 5s
+            // keepalive keeps the connection alive; 30s inactivity is the
+            // real dead-peer bound.
+            inactivity_timeout: Some(std::time::Duration::from_secs(30)),
+            keepalive_interval: Some(std::time::Duration::from_secs(5)),
             ..Default::default()
         });
         // TOFU host-key verification — keyed by user@host:port so a changed

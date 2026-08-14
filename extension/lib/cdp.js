@@ -68,10 +68,19 @@ async function ensureTabInner(device, proxyUrl) {
         // legitimately sit on any real site (the agent navigated it there,
         // or the user browsed it), and requiring the proxy URL made the
         // reuse path detach a LIVE, valid tab and replace it with a fresh
-        // proxy page, destroying the agent's browser session. The device
-        // attribution is `state.controlledTabs[device]`, not the URL.
+        // proxy page, destroying the agent's browser session.
+        // round-95: reuse-by-tab-id ALONE reopened the round-88 cross-device
+        // takeover (attached is a flat per-extension set; controlledTabs is
+        // empty exactly in this SW-restart branch, so there was no
+        // attribution check at all). Balance both: reuse the attached tab
+        // for this device ONLY IF it still looks like this device's tab —
+        // the proxy URL, OR it is the tab controlledTabs already knows. A
+        // tab on an arbitrary real site with NO device attribution is NOT
+        // ours to reuse (leaving it alone is safe — the agent's session on
+        // it is gone with the SW; a fresh proxy tab is correct).
         const t = await chrome.tabs.get(candidate);
-        if (t.id !== undefined) {
+        const tUrl = t.url || "";
+        if (tUrl.includes(`/api/devices/${device}/proxy`) || Object.values(state.controlledTabs).includes(candidate)) {
           tabId = candidate;
         }
       } catch { /* tab gone — detach it below */ }
