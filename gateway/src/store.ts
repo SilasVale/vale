@@ -382,19 +382,30 @@ export async function setUserRoute(env: Env, id: string, model: string | null | 
 
 /** Read a global setting; falls back to a Worker secret/env of the same name
  *  so the console toggle can override (and persist) a bootstrap value. */
+/** Normalize a raw setting value to the canonical form: "1" = on, null = off.
+ *  "0"/"false" (explicit OFF persisted by the console) → null; anything else
+ *  passes through. (round-95/96) */
+function normalizeSetting(v: string | null | undefined): string | null {
+  if (v !== null && v !== undefined && (v === "0" || v === "false")) return null;
+  return v as string | null;
+}
+
 export async function getGlobalSetting(env: Env, name: string): Promise<string | null> {
   const key = `settings:${name}`;
   const hit = cget(key);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) return normalizeSetting(hit);
   let v = await env.KEYS.get(key);
   if (v === null || v === undefined) v = env[name] ? String(env[name]) : null;
   // round-95: normalize AT THE READ — an explicit OFF is persisted as "0"
   // (shadows the env var, round-94), but every consumer (the real /v1 path in
   // index.ts, the console GET, the probes) used raw truthiness, which treats
   // "0" as ON. Returning a canonical value here fixes ALL consumers at once:
-  // "1" = on, null = off. globalSettingEnabled() stays for callers that need
-  // the boolean directly.
-  if (v !== null && v !== undefined && (v === "0" || v === "false")) v = null;
+  // "1" = on, null = off.
+  // round-96: the CACHE HIT path (above) bypassed this normalization — the
+  // isolate that just wrote the "0" (setGlobalSetting write-through-caches
+  // the raw value) kept reading "0" as ON for the cache TTL, so the console
+  // PUT response bounced back enabled:true and /v1 routing used the proxy.
+  v = normalizeSetting(v);
   cset(key, v);
   return v;
 }
@@ -421,8 +432,12 @@ export async function setGlobalSetting(env: Env, name: string, value: any): Prom
     return;
   }
   const s = String(value);
-  await env.KEYS.put(key, s);
-  cset(key, s); // write-through：切换立即生效（同 isolate 零延迟）
+  // round-96: persist the CANONICAL value ("1" or "0") — the raw string is
+  // cached write-through and a raw "0" in the cache bypassed the read-side
+  // normalization on this isolate (see getGlobalSetting).
+  const canonical = s === "1" ? "1" : "0";
+  await env.KEYS.put(key, canonical);
+  cset(key, canonical); // write-through：切换立即生效（同 isolate 零延迟）
 }
 
 /* ---- Admin password (stored hashed — never plaintext) ----

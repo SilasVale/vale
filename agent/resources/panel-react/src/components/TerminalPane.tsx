@@ -17,7 +17,6 @@ export function TerminalPane({ session, registerWrite }: {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const renderedRef = useRef(0);
-  const syncInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -71,14 +70,33 @@ export function TerminalPane({ session, registerWrite }: {
     }, () => renderedRef.current);
 
     // Pull retained history so a resurrected session shows its tail.
-    syncInFlightRef.current = true;
-    callTool("terminal_read", { session_id: session.sid, offset: 0, clean: false })
+    // round-96: the adopt read used offset:0 and rewrote EVERYTHING, while
+    // SSE frames streamed in concurrently — the whole history was written
+    // twice (syncInFlightRef was set but never read, so nothing suppressed
+    // the duplicate). Read INCREMENTALLY from the current rendered offset
+    // (the same dedup the 5s sync loop uses): bytes SSE already delivered
+    // are skipped, nothing is re-written.
+    callTool("terminal_read", { session_id: session.sid, offset: renderedRef.current, clean: false })
       .then((r: any) => {
-        if (r && r.text) { term.write(r.text); }
-        renderedRef.current = Math.max(renderedRef.current, Number(r?.end) || 0);
+        if (!r || (!r.text && !r.raw)) return;
+        const skip = Math.max(0, renderedRef.current - Number(r.start));
+        if (r.raw) {
+          const bin = atob(r.raw);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          if (skip < bytes.length) {
+            term.write(bytes.subarray(skip));
+            renderedRef.current += bytes.length - skip;
+          }
+        } else if (skip >= 0 && r.text) {
+          const bytes = new TextEncoder().encode(r.text);
+          if (skip < bytes.length) {
+            term.write(bytes.subarray(skip));
+            renderedRef.current += bytes.length - skip;
+          }
+        }
       })
-      .catch(() => {})
-      .finally(() => { syncInFlightRef.current = false; });
+      .catch(() => {});
 
     return () => {
       sub.dispose();
@@ -91,7 +109,19 @@ export function TerminalPane({ session, registerWrite }: {
   // resize/zoom/visibility (round-83 R82 review: browser resize left the
   // canvas at its old grid — white space/clipped content until a tab switch).
   useEffect(() => {
-    const refit = () => { try { (termRef.current as any)?.fit?.(); } catch {} };
+    const refit = () => {
+      try {
+        const term: any = termRef.current;
+        term?.fit?.();
+        // round-96: the fit() only reflows the LOCAL xterm grid — the
+        // backend PTY/SSH/serial session kept its original cols/rows, so a
+        // resize left the remote line-wrapping wrong. Push the new grid to
+        // the backend (best-effort; failure is harmless).
+        if (term && session.sid) {
+          callTool("terminal_resize", { session_id: session.sid, cols: term.cols, rows: term.rows }).catch(() => {});
+        }
+      } catch {}
+    };
     if (session.active) {
       const t = setTimeout(refit, 50);
       window.addEventListener("resize", refit);

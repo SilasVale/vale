@@ -72,6 +72,13 @@ const MAX_HISTORY_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB
 
 impl SessionStore {
     pub fn new() -> Self {
+        // round-96: spill files are retained until their history entry is
+        // evicted (R95) — but history is in-memory, so on agent restart every
+        // spill file becomes an orphan (R60-H2 leak). A fresh process has an
+        // empty history map, so ALL *.spill files are unreachable: sweep them
+        // ONCE at process startup (a per-construction sweep would race tests
+        // that write their own spill files concurrently).
+        crate::plugins::terminal::tools::sweep_spills_once();
         Self {
             live: HashMap::new(),
             history: HashMap::new(),

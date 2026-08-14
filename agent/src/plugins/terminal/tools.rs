@@ -488,6 +488,26 @@ fn remove_spill(sid: &str) {
 
 /// Public alias for mod.rs (history eviction calls it under a different
 /// module path).
+/// Startup sweep: delete every *.spill file. History is in-memory, so a fresh
+/// process can never reference them — they are orphans from a previous run
+/// (round-96, closes the R60-H2 leak re-opened by spill retention). Runs ONCE
+/// per process (OnceLock) — a per-construction sweep would race concurrent
+/// tests that write their own spill files.
+pub(crate) fn sweep_spills_once() {
+    use std::sync::OnceLock;
+    static SWEPT: OnceLock<()> = OnceLock::new();
+    SWEPT.get_or_init(|| {
+        let dir = std::env::temp_dir().join("vale");
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                if e.path().extension().is_some_and(|x| x == "spill") {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    });
+}
+
 pub(crate) fn remove_spill_for(sid: &str) {
     remove_spill(sid);
 }

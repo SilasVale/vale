@@ -80,15 +80,26 @@ async function ensureTabInner(device, proxyUrl) {
         // it is gone with the SW; a fresh proxy tab is correct).
         const t = await chrome.tabs.get(candidate);
         const tUrl = t.url || "";
-        if (tUrl.includes(`/api/devices/${device}/proxy`) || Object.values(state.controlledTabs).includes(candidate)) {
+        // round-96: the attribution arm must be THIS device's tab —
+        // Object.values(...).includes(candidate) admitted ANY device's
+        // controlled tab, so device A's first tool call could take over
+        // device B's live tab (round-88 hole, reopened).
+        if (tUrl.includes(`/api/devices/${device}/proxy`) || state.controlledTabs[device] === candidate) {
           tabId = candidate;
         }
       } catch { /* tab gone — detach it below */ }
     }
     if (!tabId) {
-      // A tab we attached to was CLOSED (chrome.tabs.get threw) — detach our
-      // own stale attachments for this device before creating fresh.
-      const stale = [...attached].filter((id) => id !== state.controlledTabs[device]);
+      // round-96: this block previously detached EVERY attached tab that
+      // wasn't this device's — so the first device to call after an SW
+      // restart could kill OTHER devices' still-live controlled tabs
+      // (debugger attachment survives the SW restart by design). Only
+      // detach tabs that are actually GONE (chrome.tabs.get threw in the
+      // reuse attempt above / tab closed); a live tab we merely refuse to
+      // reuse stays attached — its owner device still uses it.
+      const stale = [...attached].filter((id) => {
+        try { chrome.tabs.get(id); return false; } catch { return true; }
+      });
       for (const id of stale) {
         try { await chrome.debugger.detach({ tabId: id }); } catch {}
         attached.delete(id);
