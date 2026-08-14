@@ -176,7 +176,14 @@ impl SessionLogger {
         // Cap a single chunk at 4 KiB — a full 1MB burst would dominate the
         // audit trail for one session. The event stream stays dense enough
         // to reconstruct what ran.
-        let text = if text.len() > 4096 { format!("{}…[truncated {} bytes]", &text[..4096], text.len() - 4096) } else { text };
+        // Char-boundary-safe truncation (round-68): &text[..4096] panicked
+        // when byte 4096 split a multi-byte char (binary output expands past
+        // 4096 via U+FFFD replacement chars) — the panic killed the drainer
+        // and wedged the session. floor_char_boundary keeps the slice valid.
+        let text = if text.len() > 4096 {
+            let cut = text.floor_char_boundary(4096);
+            format!("{}…[truncated {} bytes]", &text[..cut], text.len() - cut)
+        } else { text };
         self.log(sid, SessionEvent::output(0, text));
     }
     pub fn log_command_end(&self, sid: &str, exit_code: Option<i32>, reason: Option<&str>, duration_ms: Option<u64>) {

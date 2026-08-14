@@ -42,8 +42,10 @@ pub(super) fn build(
     ]
 }
 
-/// Max bytes per session buffer before evicting oldest half.
-const MAX_BUF_BYTES: usize = 1_048_576; // 1 MB
+/// Max bytes per session buffer before evicting oldest half (round-68: was
+/// 1MB — a serial console scrolling GPON logs wrapped in seconds, losing the
+/// useful head; 8MB ≈ 16MB of recall with the spill file).
+const MAX_BUF_BYTES: usize = 8_388_608; // 8 MB
 
 fn tool_open(
     terminal_mgr: &Arc<TerminalManager>,
@@ -150,8 +152,11 @@ fn tool_open(
                         bus.emit(&AgentEvent::SshConnect { host, username: user, session_id: id.clone() });
                     }
                     "serial" => {
-                        let (port, _baud) = parse_serial_target(&target);
-                        bus.emit(&AgentEvent::SerialOpen { port, baud: 115200, session_id: id.clone() });
+                        // Real baud from the target (?baud=N or the default),
+                        // not a hardcoded 115200 — the event feed showed the
+                        // wrong link speed for every non-default session (round-68).
+                        let (port, baud) = parse_serial_target(&target);
+                        bus.emit(&AgentEvent::SerialOpen { port, baud, session_id: id.clone() });
                     }
                     _ => {
                         let cmd = std::path::Path::new(&target)
@@ -220,6 +225,13 @@ fn tool_open(
                         }
                         bus2.emit_term_output(framed);
                     }
+                    // The PTY's natural exit code (round-60): distinguishes a
+                    // clean `exit` from a crash for the audit trail. SSH/serial
+                    // have no process → None, logged as plain closed.
+                    // Read it BEFORE term_unregister (round-68): unregister
+                    // empties the session map, so reading after it always
+                    // returned None and the exit code was never audited.
+                    let exit_code = mgr2.term_exit_code(&sid_buf).await;
                     // Session ended — retain the buffer in history instead of
                     // dropping it (terminal_close also retains; whichever runs
                     // second is a no-op), and unregister the manager entry so
@@ -233,10 +245,6 @@ fn tool_open(
                     // drop its spill file (round-60; the retained history
                     // entry carries the tail, the spill's head is unreachable
                     // once the session is gone).
-                    // The PTY's natural exit code (round-60): distinguishes a
-                    // clean `exit` from a crash for the audit trail. SSH/serial
-                    // have no process → None, logged as plain closed.
-                    let exit_code = mgr2.term_exit_code(&sid_buf).await;
                     if let Some(code) = exit_code {
                         logger2.log_status(&sid_buf, &format!("exited:{code}"));
                     } else {
@@ -539,11 +547,16 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // "interrupted" (round-55).
                     logger.log_command_start(&sid, &command);
                     // Background mode: return immediately with the read cursor
-                    // so the caller can collect output incrementally. No wait
-                    // loop, no busy lock held (round-60).
+                    // so the caller can collect output incrementally. The busy
+                    // lock MUST be released here (round-68): the old code
+                    // returned without term_release_execute, so every later
+                    // execute on this session failed SessionBusy forever —
+                    // the documented "background → terminal_read → run more"
+                    // flow wedged on its second execute.
                     if run_in_background {
                         let start = recover_guard(&buf)
                             .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
+                        terminal_mgr.term_release_execute(&sid).await;
                         return Ok(json!({
                             "kind": "session",
                             "status": "running",
