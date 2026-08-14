@@ -6,11 +6,11 @@
  * GET returns a keep-alive SSE stream (Claude Code v2.1.84+ probes GET first;
  * 405 is treated as server failure). Stateless.
  */
-import { getDevice, findUserByToken } from "./store.js";
-import { allMcpTools } from "./mcp-tools.js";
-import { deviceFetch } from "./device-fetch.js";
+import { getDevice, findUserByToken } from "./store.ts";
+import { allMcpTools } from "./mcp-tools.ts";
+import { deviceFetch } from "./device-fetch.ts";
 
-export async function handleMcp(request, env) {
+export async function handleMcp(request: Request, env: any): Promise<Response> {
   const auth = String(request.headers.get("authorization") || "");
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const user = token ? await findUserByToken(env, token) : null;
@@ -25,7 +25,7 @@ export async function handleMcp(request, env) {
     return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code: -32600, message: "Method not allowed" }, id: null }), { status: 405, headers: { "content-type": "application/json" } });
   }
 
-  let body;
+  let body: any;
   try { body = await request.json(); } catch {
     return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null }), { status: 400, headers: { "content-type": "application/json" } });
   }
@@ -56,14 +56,18 @@ export async function handleMcp(request, env) {
     try {
       const result = await callTool(tool, env, device, args);
       return mcpJson({ content: formatResult(result) }, id);
-    } catch (e) {
-      return mcpError(-32603, `Tool ${name} failed: ${e.message}`, id);
+    } catch (e: any) {
+      // Stable error code in data (round-55): a flat "-32603 Tool failed: ..."
+      // string hides whether the device is offline / the session is gone / a
+      // timeout / the extension is offline — the model needs the distinction
+      // to retry smartly.
+      return mcpError(-32603, `Tool ${name} failed: ${e.message}`, id, e.code);
     }
   }
   return mcpError(-32601, `Method not found: ${method}`, id);
 }
 
-export async function callTool(tool, env, device, args) {
+export async function callTool(tool: any, env: any, device: any, args: any): Promise<any> {
   if (tool.name.startsWith("terminal_")) {
     return callTerminalTool(tool.name, env, device, args);
   }
@@ -73,7 +77,7 @@ export async function callTool(tool, env, device, args) {
   // formatResult turns {image:...} into an MCP image block.
   const id = env.PLUGIN_HUB.idFromName(device.name);
   const hub = env.PLUGIN_HUB.get(id);
-  const headers = { "content-type": "application/json" };
+  const headers: Record<string, string> = { "content-type": "application/json" };
   // DO_AUTH gate: the DO 401s any request without x-do-auth when configured —
   // WITHOUT this header the call failed silently (empty success result, no
   // error) and browser tools appeared to do nothing.
@@ -86,35 +90,101 @@ export async function callTool(tool, env, device, args) {
   // Never let an auth failure masquerade as success.
   if (res.status === 401) throw new Error("hub auth misconfigured (x-do-auth)");
   const j = await res.json().catch(() => ({}));
-  if (res.status === 503) throw new Error("extension_offline — is the Vale extension running on the device browser?");
+  if (res.status === 503) throw ToolErr(EXTENSION_OFFLINE, "extension_offline — is the Vale extension running on the device browser?");
   if (j.error) throw new Error(`extension error: ${j.error}`);
   return j.result;
 }
 
-async function callTerminalTool(name, env, device, args) {
-  const toolPath = {
+// Stable error codes (round-55) — carried in the JSON-RPC error data so MCP
+// clients can distinguish failure classes and retry smartly.
+export const DEVICE_UNREACHABLE = "DEVICE_UNREACHABLE";
+export const EXTENSION_OFFLINE = "EXTENSION_OFFLINE";
+export const TIMEOUT = "TIMEOUT";
+export const SESSION_NOT_FOUND = "SESSION_NOT_FOUND";
+export const SESSION_BUSY = "SESSION_BUSY";
+export const TOOL_ERROR = "TOOL_ERROR";
+function ToolErr(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code });
+}
+
+async function callTerminalTool(name: string, env: any, device: any, args: any): Promise<any> {
+  // Every terminal tool on the device is reachable here (round-54: only 5 of
+  // 16 were mapped — write/read/resize/select/history/list_ports/diag/secret
+  // were invisible to MCP clients through the console). Keep in sync with
+  // TERMINAL_TOOLS in mcp-tools.js.
+  const toolPath: string | undefined = {
     terminal_open: "/api/tools/terminal_open",
     terminal_screen: "/api/tools/terminal_screen",
-    terminal_send: "/api/tools/terminal_execute",
+    terminal_execute: "/api/tools/terminal_execute",
+    terminal_write: "/api/tools/terminal_write",
+    terminal_read: "/api/tools/terminal_read",
+    terminal_resize: "/api/tools/terminal_resize",
+    terminal_select: "/api/tools/terminal_select",
+    terminal_history: "/api/tools/terminal_history",
     terminal_list: "/api/tools/terminal_list",
+    terminal_list_ports: "/api/tools/terminal_list_ports",
     terminal_close: "/api/tools/terminal_close",
+    terminal_diag_write: "/api/tools/terminal_diag_write",
+    terminal_diag_read: "/api/tools/terminal_diag_read",
+    secret_set: "/api/tools/secret_set",
+    secret_get: "/api/tools/secret_get",
+    secret_delete: "/api/tools/secret_delete",
+    terminal_saved_connections: "/api/tools/terminal_saved_connections",
+    terminal_connect_saved: "/api/tools/terminal_connect_saved",
   }[name];
   if (!toolPath) throw new Error(`Unknown terminal tool: ${name}`);
-  const body = { ...args };
+  const body: any = { ...args };
   delete body.device;
-  if (name === "terminal_send") {
+  if (name === "terminal_execute") {
     body.command = body.input;
     delete body.input;
-    body.quiet_ms = body.quiet_ms ?? 400;
+    // Default must match the agent (200) — a gateway-side 400 invented a
+    // different quiet window than the device actually uses (round-54).
+    body.quiet_ms = body.quiet_ms ?? 200;
   }
-  const { ok, resp } = await deviceFetch(env, device, toolPath, {
+  const { ok, resp, error } = await deviceFetch(env, device, toolPath, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!resp) throw new Error("Device unreachable");
-  const data = await resp.json().catch(() => ({}));
-  if (!ok) throw new Error(data?.error || `Device returned ${resp.status}`);
+  if (!resp) {
+    // Distinct code for a timeout vs a hard unreachable (round-55).
+    const code = /timeout/i.test(String(error || "")) ? TIMEOUT : DEVICE_UNREACHABLE;
+    throw ToolErr(code, error || "Device unreachable");
+  }
+  const data: any = await resp.json().catch(() => ({}));
+  // round-58: deviceFetch's `ok` is the HTTP status — the agent returns
+  // tool errors as HTTP 200 + {"ok":false,"error":...} (web.rs api_call_tool),
+  // so the old `if (!ok)` never fired and the error-code mapping below was
+  // DEAD CODE: "Session not found" sailed back to the model as a successful
+  // tool result. Check the agent's own ok flag.
+  if (!ok || data.ok === false) {
+    // The agent now ships a typed `code` (round-59: DeviceError variant →
+    // stable code); fall back to message-text guessing only for older
+    // agents that predate it.
+    const msg = data?.error || `Device returned ${resp.status}`;
+    const code = data?.code === "session_not_found" ? SESSION_NOT_FOUND
+      : data?.code === "session_busy" ? SESSION_BUSY
+      : data?.code === "ssh_timeout" ? TIMEOUT
+      // round-64: the agent ships NINE typed codes (round-59) but only three
+      // were mapped — ssh_connect_failed / serial_port_not_found /
+      // serial_port_not_open / invalid_params / keychain / internal ALL fell
+      // into DEVICE_UNREACHABLE. A live device reporting "serial port not
+      // found" read as "device offline", sending clients on a device-recovery
+      // detour instead of fixing the parameter. Any typed code that is not
+      // one of the mapped ones is a device-UP tool failure.
+      : data?.code ? TOOL_ERROR
+      : /Session not found/i.test(msg) ? SESSION_NOT_FOUND
+      : /Session busy/i.test(msg) ? SESSION_BUSY
+      : /timed out/i.test(msg) ? TIMEOUT
+      : DEVICE_UNREACHABLE;
+    throw ToolErr(code, msg);
+  }
+  // No heartbeat here (round-54): the agent's own execute wait-loop pings
+  // the session every poll, and the panel pings terminal_select every 30s —
+  // the MCP path is covered by the execute loop. The gateway simulating
+  // presence was a workaround for the old model where output activity kept
+  // sessions alive; presence now comes from the agent-side loops only.
   return data;
 }
 
@@ -123,23 +193,25 @@ async function callTerminalTool(name, env, device, args) {
  * browser tools return { image: { data, mimeType } } (base64 PNG) → an MCP
  * image block. Plain objects are stringified so the model sees the full shape.
  */
-function formatResult(result) {
+function formatResult(result: any) {
   if (result && typeof result === "object" && result.image) {
     return [{ type: "image", data: result.image.data, mimeType: result.image.mimeType || "image/png" }];
   }
   return [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }];
 }
 
-function mcpJson(result, id) {
+function mcpJson(result: any, id: any): Response {
   return new Response(JSON.stringify({ jsonrpc: "2.0", result, id }), { headers: { "content-type": "application/json" } });
 }
-function mcpError(code, message, id) {
-  return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id }), { headers: { "content-type": "application/json" } });
+function mcpError(code: number, message: string, id: any, data?: any): Response {
+  const error: any = { code, message };
+  if (data) error.data = { code: data };
+  return new Response(JSON.stringify({ jsonrpc: "2.0", error, id }), { headers: { "content-type": "application/json" } });
 }
 
-function mcpSseStream() {
+function mcpSseStream(): Response {
   const encoder = new TextEncoder();
-  let timer = null;
+  let timer: number | null = null;
   const stream = new ReadableStream({
     start(controller) {
       // Keep the timer in the source's closure: `this` in start/cancel is the
