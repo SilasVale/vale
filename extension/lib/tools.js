@@ -30,6 +30,26 @@ async function resolveRef(tabId, ref) {
   const snap = await snapshot(tabId);
   const el = snap.elements.find((e) => e.ref === ref);
   if (!el) throw new Error(`element ref ${ref} not found — re-snapshot`);
+  // round-84: refs are ordinal positions — after a navigation the same ref
+  // may silently point at a DIFFERENT element (the old code clicked/typed
+  // the wrong target with no error). Verify the snapshot's rect still
+  // matches what's on screen; a mismatch means the DOM changed.
+  const live = await evaluate(tabId, `(() => {
+    const chain = ${JSON.stringify(el.path ? [el.path, ...(el.shadowPath || [])] : (el.shadowPath || []))};
+    let target = null;
+    for (let i = 0; i < chain.length; i++) {
+      target = i === 0 ? document.querySelector(chain[i]) : target && target.shadowRoot ? target.shadowRoot.querySelector(chain[i]) : null;
+      if (!target) break;
+    }
+    if (!target) return { gone: true };
+    const r = target.getBoundingClientRect();
+    return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+  })()`);
+  if (live?.gone) throw new Error(`element ref ${ref} is gone — DOM changed, re-snapshot`);
+  const s = el.rect, l = live;
+  if (l && (Math.abs(s.x - l.x) > 4 || Math.abs(s.y - l.y) > 4 || Math.abs(s.w - l.w) > 4 || Math.abs(s.h - l.h) > 4)) {
+    throw new Error(`element ref ${ref} moved — DOM changed, re-snapshot`);
+  }
   return { el, snap };
 }
 // Build an in-page expression that re-resolves a snapshot element by its
@@ -119,14 +139,22 @@ export async function runTool(tool, params) {
       // full_page on a very long page produced images the model API rejects —
       // clamp the capture to 8000px tall (viewport width).
       const shotParams = { format: "png", captureBeyondViewport: !!params.full_page };
+      let clipped = false;
       if (params.full_page) {
         const dims = await evaluate(tabId, `(() => { const s = document.scrollingElement || document.documentElement; return { w: s.clientWidth, h: s.scrollHeight }; })()`);
         if (dims && dims.h > 8000) {
+          // round-84: a full_page capture over 8000px tall produced images
+          // the model API rejects — clamp to viewport, but TELL the caller
+          // (the old code silently returned a viewport-only image that
+          // looked like a full capture).
           shotParams.captureBeyondViewport = false;
+          clipped = true;
         }
       }
       const { data } = await send(tabId, "Page.captureScreenshot", shotParams);
-      return { image: { type: "image", data, mimeType: "image/png" } };
+      const img = { type: "image", data, mimeType: "image/png" };
+      if (clipped) (img as any).note = "full_page clipped to viewport (page >8000px tall)";
+      return { image: img };
     }
     case "browser_click": {
       const { el } = await resolveRef(tabId, params.element_ref);
@@ -150,9 +178,18 @@ export async function runTool(tool, params) {
           target = i === 0 ? document.querySelector(chain[i]) : target && target.shadowRoot ? target.shadowRoot.querySelector(chain[i]) : null;
           if (!target) break;
         }
+        if (!target) return { gone: true };
+        // round-84: typing into a readonly/disabled field silently did
+        // nothing — fail loudly instead so the agent knows to pick another
+        // element (the snapshot never exposed readonly).
+        if ((target as any).readOnly || (target as any).disabled || (target as any).ariaDisabled === "true") {
+          return { readonly: true };
+        }
         return document.activeElement === target ? true : { active: (document.activeElement?.tagName || '') + '#' + (document.activeElement?.id || '') };
       })()`);
       if (ok !== true) {
+        if (ok?.gone) throw new Error("type target gone — DOM changed, re-snapshot");
+        if (ok?.readonly) throw new Error("type target is read-only/disabled — cannot type into it");
         throw new Error(`type target not focused (active: ${ok?.active || "?"}) — click it first`);
       }
       await send(tabId, "Input.insertText", { text: String(params.text) });

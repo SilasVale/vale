@@ -102,16 +102,16 @@ async function ensureTabInner(device, proxyUrl) {
     await persistAttached();
     await chrome.debugger.sendCommand({ tabId }, "Page.enable");
     await chrome.debugger.sendCommand({ tabId }, "Runtime.enable");
-    // Scrub the ?token= out of the address bar/history ONCE THE PAGE HAS
-    // LOADED — the old code ran immediately after attach (before the
-    // navigation committed), so it never ran OR stripped the token before the
-    // proxy could authenticate the request.
+    // Scrub the ?token= out of the address bar/history (round-84): the old
+    // one-shot loadEventFired listener could be permanently missed — a fast
+    // load fires before the listener registers, an error page never fires,
+    // or the SW idles out mid-load. Scrub IMMEDIATELY (the tab may already
+    // be on the proxy URL with the token) AND re-scrub on every load.
+    const scrubExpr = `history.replaceState(null, "", location.pathname + location.search.replace(/([?&])token=[^&]*/, "$1").replace(/[?&]$/, ""))`;
+    chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", { expression: scrubExpr }).catch(() => {});
     chrome.debugger.onEvent.addListener(function scrubOnLoad(source, method) {
       if (source.tabId !== tabId || method !== "Page.loadEventFired") return;
-      chrome.debugger.onEvent.removeListener(scrubOnLoad);
-      chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-        expression: `history.replaceState(null, "", location.pathname + location.search.replace(/([?&])token=[^&]*/, "$1").replace(/[?&]$/, ""))`,
-      }).catch(() => {});
+      chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", { expression: scrubExpr }).catch(() => {});
     });
   }
   return tabId;
