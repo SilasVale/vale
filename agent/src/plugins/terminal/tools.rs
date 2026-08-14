@@ -181,6 +181,9 @@ fn tool_open(
                         .map(|m| m.label.clone())
                         .unwrap_or_else(|| id.clone());
                     let p = params.as_object().cloned().unwrap_or_default();
+                    // round-108: conn_* is gated behind the terminal feature —
+                    // headless builds must not call it.
+                    #[cfg(feature = "terminal")]
                     let _ = crate::tools::terminal::conn_remember(&kind, &target, &label, &p);
                 }
                 // Drain output channel to keep backend alive.
@@ -669,6 +672,13 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // expiry fires marker_confirm after the FIRST expiry
                     // (not 2x quiet_dur, and never a future panic).
                     let mut quiet_confirm_at: Option<Instant> = None;
+                    // round-108: marker-injected PTY sessions NEVER break on
+                    // quiet — the marker arrives at the NEXT prompt (command
+                    // end), which can be seconds after the echo (`sleep 2 &&
+                    // echo done`). Only the marker or the deadline ends the
+                    // wait. Marker-less backends (SSH/serial) keep the
+                    // bounded quiet path.
+                    let marker_injected = terminal_mgr.term_marker_injected(&sid).await;
                     let mut result = String::new();
                     // round-105: cap the session-mode result like the local
                     // mode (1 MB tail) — the old code grew to the command's
@@ -809,18 +819,26 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 // shell echoes the command, the tty goes
                                 // quiet, and the marker arrives only at the
                                 // NEXT prompt — breaking on quiet returned
-                                // premature success. Extend the quiet wait
-                                // ONCE (bounded — a marker-less backend must
-                                // not loop to the deadline): give the marker
-                                // up to marker_confirm to appear, then break
-                                // idle.
-                                if !quiet_extended {
-                                    quiet_extended = true;
+                                // premature success.
+                                // round-108: for marker-injected sessions the
+                                // quiet path NEVER breaks — the marker (at
+                                // command end) or the deadline is the only
+                                // terminator. Marker-less backends keep the
+                                // bounded once-extension.
+                                if !marker_injected {
+                                    if !quiet_extended {
+                                        quiet_extended = true;
+                                        quiet_since = Some(Instant::now());
+                                        quiet_confirm_at = Some(Instant::now() + marker_confirm);
+                                    } else if quiet_confirm_at.map(|t| Instant::now() >= t).unwrap_or(true) {
+                                        wait_reason = "idle";
+                                        break;
+                                    }
+                                } else {
+                                    // Still waiting for the marker — keep
+                                    // polling (the deadline check below ends
+                                    // the wait if the command truly hangs).
                                     quiet_since = Some(Instant::now());
-                                    quiet_confirm_at = Some(Instant::now() + marker_confirm);
-                                } else if quiet_confirm_at.map(|t| Instant::now() >= t).unwrap_or(true) {
-                                    wait_reason = "idle";
-                                    break;
                                 }
                             }
                         }
@@ -989,16 +1007,18 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         // the child exited but a daemon grandchild keeps rx
                         // open forever.
                         if let Ok(Some(_)) = child.try_wait() {
-                            // round-107: the exit-flush drain used try_recv —
-                            // the pipe_reader tasks may still hold the final
-                            // bytes (pipe buffer not yet read into the
-                            // channel), so a fast exit lost the tail. Give
-                            // the readers one bounded tick to flush, then
-                            // drain.
-                            let _ = tokio::time::timeout(
+                            // round-107/108: the exit-flush drain used
+                            // try_recv — the pipe_reader tasks may still hold
+                            // the final bytes, so a fast exit lost the tail.
+                            // Give the readers one bounded tick to flush and
+                            // APPEND the received chunk (the R107 fix
+                            // discarded it with `let _`).
+                            if let Ok(Some(c)) = tokio::time::timeout(
                                 std::time::Duration::from_millis(50),
                                 rx.recv(),
-                            ).await;
+                            ).await {
+                                append_chunk(&mut captured, &mut truncated, c);
+                            }
                             // Drain whatever the exit flushed out (round-57):
                             // skipping this silently dropped up to 16 chunks
                             // (~128KB) of tail output with truncated unset.
@@ -1406,7 +1426,11 @@ fn tool_saved_connections() -> ToolDef {
         "List saved terminal connections (successfully-opened sessions). Each entry has id (kind:target), kind, target, label and the original open params — reconnect with terminal_connect_saved. Connect-failures are not saved; a reconnect updates the entry.",
         json!({"type":"object","properties":{},"additionalProperties":false}),
         move |_params: Value| async move {
-            Ok(json!({ "connections": crate::tools::terminal::conn_list() }))
+            #[cfg(feature = "terminal")]
+            let conns = crate::tools::terminal::conn_list();
+            #[cfg(not(feature = "terminal"))]
+            let conns: Vec<serde_json::Value> = vec![];
+            Ok(json!({ "connections": conns }))
         },
     )
 }
@@ -1438,25 +1462,31 @@ fn tool_connect_saved(
             let buffer_limit = buffer_limit.clone();
             async move {
                 let id = require_str(&params, "id")?;
-                let conn = crate::tools::terminal::conn_list()
-                    .into_iter()
-                    .find(|c| c.get("id").and_then(|v| v.as_str()) == Some(id.as_str()))
-                    .ok_or_else(|| DeviceError::Internal { message: format!("unknown saved connection: {id}") })?;
-                let mut open_params = conn.get("params").and_then(|p| p.as_object()).cloned().unwrap_or_default();
-                // Overrides: rows/cols from the caller win.
-                if let Some(r) = params.get("rows") { open_params.insert("rows".into(), r.clone()); }
-                if let Some(c) = params.get("cols") { open_params.insert("cols".into(), c.clone()); }
-                // Reuse the open handler's full body (prompt-marker injection,
-                // audit, connection memory) via a fresh closure.
-                let handler = {
-                    let terminal_mgr = terminal_mgr.clone();
-                    let bus = bus.clone();
-                    let buf = buf.clone();
-                    let logger = logger.clone();
-                    let buffer_limit = buffer_limit.clone();
-                    tool_open(&terminal_mgr, &bus, &buf, &logger, &buffer_limit).handler
-                };
-                handler.call(serde_json::Value::Object(open_params)).await
+                // round-108: saved connections are terminal-feature only.
+                #[cfg(feature = "terminal")]
+                {
+                    let conn = crate::tools::terminal::conn_list()
+                        .into_iter()
+                        .find(|c| c.get("id").and_then(|v| v.as_str()) == Some(id.as_str()))
+                        .ok_or_else(|| DeviceError::Internal { message: format!("unknown saved connection: {id}") })?;
+                    let mut open_params = conn.get("params").and_then(|p| p.as_object()).cloned().unwrap_or_default();
+                    // Overrides: rows/cols from the caller win.
+                    if let Some(r) = params.get("rows") { open_params.insert("rows".into(), r.clone()); }
+                    if let Some(c) = params.get("cols") { open_params.insert("cols".into(), c.clone()); }
+                    // Reuse the open handler's full body (prompt-marker injection,
+                    // audit, connection memory) via a fresh closure.
+                    let handler = {
+                        let terminal_mgr = terminal_mgr.clone();
+                        let bus = bus.clone();
+                        let buf = buf.clone();
+                        let logger = logger.clone();
+                        let buffer_limit = buffer_limit.clone();
+                        tool_open(&terminal_mgr, &bus, &buf, &logger, &buffer_limit).handler
+                    };
+                    return handler.call(serde_json::Value::Object(open_params)).await;
+                }
+                #[cfg(not(feature = "terminal"))]
+                return Err(DeviceError::Internal { message: "terminal feature disabled".into() });
             }
         },
     )

@@ -148,8 +148,15 @@ export function useSSE(
       if (!alive) return;
       try {
         // round-107: match the page protocol (loopback http panel works).
+        // round-108: a blackholed tunnel left this fetch pending forever
+        // (sseState 'connecting' with no reconnect) — bound it with an
+        // abort signal like every other device call.
         const proto = window.location.protocol === "http:" ? "http:" : "https:";
+        const ctl = new AbortController();
+        const abortTimer = setTimeout(() => ctl.abort(), 30000);
         const res = await fetch(`${proto}//${hostname}/api/events/term`, {
+          signal: ctl.signal,
+        }).finally(() => clearTimeout(abortTimer));
           headers: { authorization: `Bearer ${token}` },
         });
         if (res.status === 401) { setSseState("down"); setTimeout(connect, backoff()); return; }

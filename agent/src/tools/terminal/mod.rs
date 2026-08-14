@@ -193,6 +193,11 @@ mod desktop_impl {
         kind: String,
         label: String,
         backend: Arc<dyn TermBackend>,
+        /// round-108: whether this PTY session gets the OSC 133;D prompt
+        /// marker — execute's quiet path must not break early on such
+        /// sessions (the marker arrives at the NEXT prompt, i.e. at command
+        /// end, not after the echo).
+        inject_marker: bool,
         /// Last time output was seen — used by the idle sweeper.
         last_output: std::time::Instant,
         /// When the session was opened — tiebreaker for eviction when
@@ -365,7 +370,8 @@ mod desktop_impl {
                         None => break,
                     }
                 }
-                inner.sessions.push(Session { id: id.clone(), kind, label, backend, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now(), busy: false });
+                let inject = kind == "pty" && req.inject_marker;
+                inner.sessions.push(Session { id: id.clone(), kind, label, backend, inject_marker: inject, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now(), busy: false });
             }
             Ok((id, rx))
         }
@@ -533,6 +539,15 @@ mod desktop_impl {
                 kind: s.kind.clone(),
                 label: s.label.clone(),
             })
+        }
+
+        /// round-108: whether this session gets the OSC 133;D prompt marker
+        /// (marker-injected PTY). execute's quiet path must not break early
+        /// on such sessions — the marker arrives at the NEXT prompt, i.e.
+        /// at command end, which can be seconds after the echo.
+        pub async fn term_marker_injected(&self, sid: &str) -> bool {
+            let inner = self.inner.lock().await;
+            inner.sessions.iter().find(|s| s.id == sid).map(|s| s.inject_marker).unwrap_or(false)
         }
     }
 }
