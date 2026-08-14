@@ -40,6 +40,8 @@ pub(super) fn build(
         tool_secret_set(),
         tool_secret_get(),
         tool_secret_delete(),
+        tool_saved_connections(),
+        tool_connect_saved(terminal_mgr, bus, output_buf, logger, buffer_limit),
     ]
 }
 
@@ -168,6 +170,18 @@ fn tool_open(
                             .file_name().and_then(|n| n.to_str()).unwrap_or(&target).to_string();
                         bus.emit(&AgentEvent::ShellExec { command: if cmd.is_empty() { "shell".into() } else { cmd } });
                     }
+                }
+                // Connection memory (round-70): remember every successful
+                // open so the AI / panel can reconnect without re-entering
+                // the target. Best-effort — a read-only install dir must not
+                // fail the open. PTY default shell is skipped (nothing to
+                // remember).
+                {
+                    let label = terminal_mgr.term_info(&id).await
+                        .map(|m| m.label.clone())
+                        .unwrap_or_else(|| id.clone());
+                    let p = params.as_object().cloned().unwrap_or_default();
+                    let _ = crate::tools::terminal::conn_remember(&kind, &target, &label, &p);
                 }
                 // Drain output channel to keep backend alive.
                 // Forward via EventBus, also buffer for MCP terminal_read.
@@ -1183,6 +1197,71 @@ fn tool_secret_delete() -> ToolDef {
             let target = require_str(&params, "target")?;
             crate::tools::terminal::secret_delete(&target)?;
             Ok(json!("deleted"))
+        },
+    )
+}
+
+/// List every successfully-opened connection (round-70) — the device's
+/// connection memory. An AI reconnects via terminal_connect_saved instead of
+/// re-entering the target/params from scratch.
+fn tool_saved_connections() -> ToolDef {
+    ToolDef::new(
+        "terminal_saved_connections",
+        "List saved terminal connections (successfully-opened sessions). Each entry has id (kind:target), kind, target, label and the original open params — reconnect with terminal_connect_saved. Connect-failures are not saved; a reconnect updates the entry.",
+        json!({"type":"object","properties":{},"additionalProperties":false}),
+        move |_params: Value| async move {
+            Ok(json!({ "connections": crate::tools::terminal::conn_list() }))
+        },
+    )
+}
+
+/// Reconnect to a saved connection by id (round-70). The saved params are
+/// replayed through terminal_open (baud/parity/rows/cols preserved), so a
+/// serial console reconnects at the same link config without re-typing it.
+fn tool_connect_saved(
+    terminal_mgr: &Arc<TerminalManager>,
+    bus: &Arc<dyn EventBus>,
+    output_buf: &OutputBuf,
+    logger: &crate::session_log::SessionLogger,
+    buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
+) -> ToolDef {
+    let terminal_mgr = terminal_mgr.clone();
+    let bus = bus.clone();
+    let buf = output_buf.clone();
+    let logger = logger.clone();
+    let buffer_limit = buffer_limit.clone();
+    ToolDef::new(
+        "terminal_connect_saved",
+        "Reconnect to a saved terminal connection (from terminal_saved_connections) by id. Replays the saved params through terminal_open; returns the new session id. Optional params override the saved ones.",
+        json!({"type":"object","properties":{"id":{"type":"string","description":"The id (kind:target) from terminal_saved_connections."},"rows":{"type":"integer"},"cols":{"type":"integer"}},"required":["id"]}),
+        move |params: Value| {
+            let terminal_mgr = terminal_mgr.clone();
+            let bus = bus.clone();
+            let buf = buf.clone();
+            let logger = logger.clone();
+            let buffer_limit = buffer_limit.clone();
+            async move {
+                let id = require_str(&params, "id")?;
+                let conn = crate::tools::terminal::conn_list()
+                    .into_iter()
+                    .find(|c| c.get("id").and_then(|v| v.as_str()) == Some(id.as_str()))
+                    .ok_or_else(|| DeviceError::Internal { message: format!("unknown saved connection: {id}") })?;
+                let mut open_params = conn.get("params").and_then(|p| p.as_object()).cloned().unwrap_or_default();
+                // Overrides: rows/cols from the caller win.
+                if let Some(r) = params.get("rows") { open_params.insert("rows".into(), r.clone()); }
+                if let Some(c) = params.get("cols") { open_params.insert("cols".into(), c.clone()); }
+                // Reuse the open handler's full body (prompt-marker injection,
+                // audit, connection memory) via a fresh closure.
+                let handler = {
+                    let terminal_mgr = terminal_mgr.clone();
+                    let bus = bus.clone();
+                    let buf = buf.clone();
+                    let logger = logger.clone();
+                    let buffer_limit = buffer_limit.clone();
+                    tool_open(&terminal_mgr, &bus, &buf, &logger, &buffer_limit).handler
+                };
+                handler.call(serde_json::Value::Object(open_params)).await
+            }
         },
     )
 }

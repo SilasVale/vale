@@ -5,7 +5,7 @@ import { allMcpTools } from "../src/mcp-tools.js";
 test("mcp tools: all tools take a device param", () => {
   const tools = allMcpTools();
   // 16 agent terminal tools (round-54: was 5) + 7 browser tools.
-  assert.equal(tools.length, 23);
+  assert.equal(tools.length, 25);
   for (const t of tools) {
     assert.equal(t.inputSchema.type, "object");
     assert.ok(t.inputSchema.properties.device, `${t.name} must take device`);
