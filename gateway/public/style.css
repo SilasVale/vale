@@ -16,7 +16,7 @@
   --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
 /* Unified focus ring + slim scrollbar (round-54): every Vale surface uses
    the same teal keyboard-focus ring and 8px scrollbars. */
-:focus-visible { outline: 2px solid rgba(14,147,132,.45); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
 *::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
@@ -24,6 +24,10 @@
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
   --accent-tint: #99ded2;  /* tip note border */
+  /* round-86: focus affordances were hardcoded rgba(14,147,132,…) = the
+     RETIRED accent #0e9384 — a token keeps them in sync with --accent. */
+  --focus-ring: rgba(11, 122, 110, 0.45);   /* :focus-visible outline */
+  --focus-ring-soft: rgba(11, 122, 110, 0.14); /* input focus box-shadow */
 
   --lane-og: #0b7a6e;   /* OpenCode Go (darkened with --accent for AA) */
   --lane-ds: #4f6bed;   /* DeepSeek */
@@ -150,7 +154,7 @@ pre code { background: none; color: inherit; padding: 0; }
   font: 14px var(--font-body); color: var(--ink); background: var(--surface);
   outline: none;
 }
-.auth-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(14, 147, 132, 0.14); }
+.auth-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring-soft); }
 .form-msg { font-size: 13px; margin: 0 0 12px; color: var(--danger); }
 .auth-foot { max-width: 380px; text-align: center; color: var(--faint); font-size: 13px; margin-top: 16px; }
 
@@ -334,7 +338,7 @@ button { font-family: var(--font-body); }
   border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
   font: 13px var(--font-mono); outline: none;
 }
-.key-edit-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(14, 147, 132, 0.14); }
+.key-edit-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring-soft); }
 .test-result { font-size: 13px; margin-top: 8px; }
 /* 路由页内层卡片扁平为列表行,避免卡片套卡片 */
 #panel-routes .key-card {
@@ -353,7 +357,7 @@ button { font-family: var(--font-body); }
   border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
   font: 13px var(--font-mono); outline: none;
 }
-.device-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(14, 147, 132, 0.14); }
+.device-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring-soft); }
 
 /* ---------- 用户列表 ---------- */
 .users-list { display: flex; flex-direction: column; margin-top: 8px; }

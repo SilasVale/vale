@@ -16,7 +16,7 @@
 }
 /* Unified focus ring + slim scrollbar (round-54): every Vale surface uses
    the same teal keyboard-focus ring and 8px scrollbars. */
-:focus-visible { outline: 2px solid rgba(14,147,132,.45); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
 *::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
@@ -31,7 +31,7 @@ body{font-family:var(--font);font-size:14px;line-height:1.5;background:var(--bg)
 h1{font-size:17px;font-weight:650;letter-spacing:-0.01em}
 label{color:var(--text2);font-size:13px}
 input{font-family:inherit;font-size:14px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:8px 12px;background:var(--card)}
-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(14,147,132,.14)}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--focus-ring-soft)}
 .hint{color:var(--text3);font-size:12px}
 .row{display:flex;align-items:center;gap:10px;margin-top:4px}
 button{font-family:inherit;font-size:14px;cursor:pointer;border:1px solid var(--accent);background:var(--accent);

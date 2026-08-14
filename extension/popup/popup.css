@@ -25,7 +25,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 /* Unified focus ring + slim scrollbar (round-54): the same visual language
    across every Vale surface — teal ring on keyboard focus, 8px scrollbars. */
-:focus-visible{outline:2px solid rgba(14,147,132,.45);outline-offset:2px}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px}
 *::-webkit-scrollbar{width:8px;height:8px}
 *::-webkit-scrollbar-thumb{background:rgba(0,0,0,.16);border-radius:4px}
 *::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,.28)}
@@ -43,7 +43,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 button.primary:hover{background:var(--accent-hover)}
 button.danger:hover{background:var(--red-bg);border-color:var(--red);color:var(--red)}
 input{font-family:inherit;font-size:13px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:6px 10px;color:var(--text);background:var(--card)}
-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(14,147,132,.14)}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--focus-ring-soft)}
 
 header{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .logo{display:flex;align-items:center;gap:7px;font-weight:600;font-size:13px}

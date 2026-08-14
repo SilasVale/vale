@@ -105,7 +105,7 @@ export function App() {
           onConnect={(target, extra) => sessions.openSession(modalKind, target, extra)}
         />
       )}
-      <TabBar sessions={sessions.sessions} activeSid={sessions.activeSid} onActivate={sessions.activate} onClose={sessions.closeSession} />
+      <TabBar sessions={sessions.sessions} activeSid={sessions.activeSid} onActivate={sessions.activate} onClose={sessions.closeSession} onExport={sessions.exportSession} />
       <div id="term-container">
         {sessions.sessions.length === 0 ? (
           <div id="empty-state">
