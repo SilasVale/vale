@@ -38,14 +38,14 @@ import { handleMcp } from "./mcp.js";
 import { PluginHubDO } from "./plugin-hub.js";
 import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE } from "./anthropic-translate.js";
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.js";
-import { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES } from "./body-scan.js";
+import { rawWithModel, scanTopLevelModel, estimateTokens } from "./body-scan.js";
 import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.js";
 import { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH } from "./channels.js";
 export { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH };
 export { jsonOk, jsonError, readJson, CORS_HEADERS };
 export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE };
 export { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess };
-export { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES };
+export { rawWithModel, scanTopLevelModel, estimateTokens };
 export { PluginHubDO };
 
 const COUNT_PATH = "/v1/messages/count_tokens";
@@ -806,25 +806,14 @@ async function handleGatewayImpl(request, env, url, preReadText = null, ctx = { 
   }
 
   // Read the body as raw text ONCE and extract the top-level "model" field
-  // with a lightweight scan — full JSON.parse + re-stringify of a multi-MB
-  // body exceeds the Workers Free plan 10ms CPU budget (Error 1102). Only the
-  // og translate path (which must walk the message array) parses the object.
-  // Size guard first: a body over MAX_BODY_BYTES would take too long to even
-  // scan on the Free plan — reject it outright.
-  const declaredLen = Number(request.headers.get("content-length") || 0);
-  if (declaredLen > MAX_BODY_BYTES) {
-    return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
-  }
-  // Reuse the body the log wrapper already read (round-55) — reading a
-  // multi-MB body twice on every /v1 request doubled the memory/CPU cost.
+  // with a lightweight scan. Passthrough routes (ds/qw/or) NEVER parse the
+  // body — they forward it unchanged — so there is NO app-level size limit:
+  // rejecting large bodies (the old MAX_BODY_BYTES 413) broke legitimate
+  // 1M-context / big-document requests. CPU is bounded by the scan design
+  // (2MB sampling window + cheap indexOf image scan; full parse only on the
+  // og translate path, which walks the message array). The platform's own
+  // request-body ceiling is the only bound.
   let rawText = preReadText !== null ? preReadText : await request.text();
-  // The post-read guard must compare BYTES, not UTF-16 code units: a CJK/
-  // emoji body is up to 3 bytes per char, so a length check let ~3x the
-  // intended size through and blew the scan/parse CPU budget it exists to
-  // prevent. TextEncoder().encode().length is the cheap byte measure here.
-  if (new TextEncoder().encode(rawText).length > MAX_BODY_BYTES) {
-    return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
-  }
   // The full scan result (model + value span) is reused by the passthrough
   // model-swap below — re-scanning a multi-MB body just to replace the field
   // doubled the scan CPU on every passthrough request (round-55).

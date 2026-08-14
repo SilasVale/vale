@@ -4,18 +4,14 @@
  * The /v1/* hot path must NEVER fully JSON.parse / re-stringify a multi-MB
  * body (Workers Free plan 10ms CPU budget, Error 1102). This module only
  * provides O(n) raw-string scans: scanTopLevelModel, rawWithModel,
- * estimateTokens, MAX_BODY_BYTES. Extracted from index.js (2026-08-12).
+ * estimateTokens. Extracted from index.js (2026-08-12).
+ *
+ * NO app-level body size limit (round-61): passthrough routes never parse
+ * the body, and the scans are bounded by design (2MB sampling window +
+ * cheap indexOf image scan) — rejecting large bodies broke legitimate
+ * 1M-context requests. The platform's own request-body ceiling is the only
+ * bound.
  */
-
-// Request body cap: Claude Code 1M-context bodies run ~4-10MB; anything larger
-// would blow the Workers Free plan's 10ms CPU budget just to scan/parse it.
-// Restored to 20 MB (round-61): the 12 MB tightening (round-58) rejected
-// legitimate 10-15MB bodies (1M context / large documents) with 413 → API
-// error. The CPU concern is covered by the scan optimizations (2MB sampling
-// window + cheap indexOf image scan), so 20 MB — the value the user accepted
-// and ran without issues — is the boundary between transparent relay and the
-// Free plan scan budget.
-export const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
 
 /**
  * Replace the top-level "model" value in a raw JSON body without parsing it.
