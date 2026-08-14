@@ -173,105 +173,116 @@ pub fn agent_update() -> ToolDef {
                 }
             }
 
-            // 3. Download the installer next to this exe (300s: a slow release
-            //    server / bandwidth-limited device shouldn't fail a real update,
-            //    but must still terminate).
+            // 3. Download + install in a BACKGROUND task (round-84): the old
+            //    code downloaded synchronously in the MCP handler — a slow
+            //    5MB download held the rmcp worker for up to 300s, during
+            //    which EVERY other MCP tool call queued behind it (the panel
+            //    and other MCP clients appeared "down"). The handler now
+            //    returns "upgrading" immediately; the background task does
+            //    the download, integrity check, and silent install, then the
+            //    installer kills this process and the agent restarts on the
+            //    new build. The busy marker is held by the background task
+            //    (concurrent updates still rejected).
             let dir = install_dir();
             let installer = dir.join("ValeAgent-Setup.exe");
-            let bytes = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(300))
-                .build()
-                .map_err(|e| DeviceError::Internal { message: format!("client build failed: {e}") })?
-                .get(&download)
-                .send()
-                .await
-                .map_err(|e| DeviceError::Internal { message: format!("download failed: {e}") })?
-                .bytes()
-                .await
-                .map_err(|e| DeviceError::Internal { message: format!("download failed: {e}") })?;
-            // Integrity check BEFORE it touches disk or spawns: the download
-            // must match the hash the release server published. HTML-polluted
-            // 404 pages and truncated transfers both landed on devices as
-            // ValeAgent-Setup.exe before; a poisoned/corrupt file is deleted
-            // and the call fails loudly instead of running (round-54).
-            if !expected_sha256.is_empty() {
-                let actual = hex_encode(&Sha256::digest(&bytes));
-                if actual != expected_sha256 {
-                    let _ = std::fs::remove_file(&busy);
-                    return Err(DeviceError::Internal {
-                        message: format!(
-                            "installer integrity check failed (sha256 {actual} != published {expected_sha256})"
-                        ),
-                    });
-                }
-            }
-            // A failed write (e.g. the installer is locked by AV scanning or a
-            // previous run) must NOT leave the busy marker — the caller's
-            // retry loop then bounces off "already in progress" for up to an
-            // hour (observed live: write failed on a locked exe, updates
-            // blocked 60 min). Drop the marker with the same cleanup the
-            // spawn-failure path uses.
-            if let Err(e) = std::fs::write(&installer, &bytes) {
-                let _ = std::fs::remove_file(&busy);
-                let _ = std::fs::remove_file(&installer);
-                return Err(DeviceError::Internal { message: format!("write installer failed: {e}") });
-            }
-
-            // 4. Spawn the silent installer. This process runs elevated (SYSTEM
-            //    task or admin console), so no UAC prompt is needed. The
-            //    installer kills us mid-flight — hence the early return. If
-            //    the spawn fails (e.g. a truncated download that Windows
-            //    refuses to run), report it honestly and drop the bad file so
-            //    the next attempt re-downloads.
-            #[cfg(windows)]
-            {
-                // NSIS's /D= must be the LAST, UNQUOTED argument — Rust's
-                // Command quotes any arg containing a space, which mangles
-                // $INSTDIR for a spaced install dir (device left offline
-                // after a 'successful' upgrade). Convert to a short (8.3)
-                // path when the dir contains a space.
-                #[cfg(windows)]
-                let install_arg = if dir.to_string_lossy().contains(' ') {
-                    short_path(&dir).unwrap_or_else(|| dir.display().to_string())
-                } else {
-                    dir.display().to_string()
+            let dl_url = download.clone();
+            let busy_bg = busy.clone();
+            tokio::spawn(async move {
+                // Download (300s: a slow release server / bandwidth-limited
+                // device shouldn't fail a real update, but must terminate).
+                // tokio::spawn moves the reqwest client (Send); the download
+                // runs off the MCP worker entirely.
+                let bytes = match async {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(300))
+                        .build()
+                        .map_err(|e| DeviceError::Internal { message: format!("client build failed: {e}") })?;
+                    client.get(&dl_url).send().await
+                        .map_err(|e| DeviceError::Internal { message: format!("download failed: {e}") })?
+                        .bytes().await
+                        .map_err(|e| DeviceError::Internal { message: format!("download failed: {e}") })
+                }.await {
+                    Ok(b) => b,
+                    Err(_) => {
+                        let _ = std::fs::remove_file(&busy_bg);
+                        return;
+                    }
                 };
-                #[cfg(not(windows))]
-                let install_arg = dir.display().to_string();
-                match Command::new(&installer)
-                    .args(["/S", &format!("/D={install_arg}")])
-                    .spawn()
-                {
-                    Ok(_) => {}
-                    Err(e) => {
-                        // Clear the busy marker on failure — a leftover marker
-                        // blocked retries for up to an hour.
-                        let _ = std::fs::remove_file(&busy);
-                        let _ = std::fs::remove_file(&installer);
-                        return Err(DeviceError::Internal {
-                            message: format!("installer failed to start: {e}"),
-                        });
+                // Integrity check BEFORE it touches disk or spawns: the
+                // download must match the hash the release server published.
+                // HTML-polluted 404 pages and truncated transfers both landed
+                // on devices as ValeAgent-Setup.exe before; a poisoned/corrupt
+                // file is deleted and the install is skipped (round-54).
+                if !expected_sha256.is_empty() {
+                    let actual = hex_encode(&Sha256::digest(&bytes));
+                    if actual != expected_sha256 {
+                        let _ = std::fs::remove_file(&busy_bg);
+                        return;
                     }
                 }
-            }
+                // A failed write (e.g. the installer is locked by AV scanning)
+                // must NOT leave the busy marker — drop it so the next
+                // attempt can retry (round-54: a stuck marker blocked updates
+                // for up to an hour).
+                if std::fs::write(&installer, &bytes).is_err() {
+                    let _ = std::fs::remove_file(&busy_bg);
+                    let _ = std::fs::remove_file(&installer);
+                    return;
+                }
 
-            // Clear the busy marker on SUCCESS too (round-57): the old code
-            // only removed it on failure — every successful update left the
-            // marker behind and the NEXT agent_update (or tray check) bounced
-            // off "another update is already in progress" for up to 60 min
-            // (stale-reclaim self-healed it, i.e. each upgrade shipped with a
-            // built-in one-hour lock). The process dies right after this
-            // return, so the timing is irrelevant to the installer.
-            #[cfg(windows)]
-            let _ = std::fs::remove_file(&busy);
-            #[cfg(not(windows))]
-            let _ = std::fs::remove_file(&busy);
+                // 4. Spawn the silent installer. This process runs elevated
+                //    (SYSTEM task or admin console), so no UAC prompt is
+                //    needed. The installer kills us mid-flight. If the spawn
+                //    fails, drop the bad file so the next attempt
+                //    re-downloads.
+                #[cfg(windows)]
+                {
+                    // NSIS's /D= must be the LAST, UNQUOTED argument — Rust's
+                    // Command quotes any arg containing a space, which mangles
+                    // $INSTDIR for a spaced install dir (device left offline
+                    // after a 'successful' upgrade). Convert to a short (8.3)
+                    // path when the dir contains a space.
+                    #[cfg(windows)]
+                    let install_arg = if dir.to_string_lossy().contains(' ') {
+                        short_path(&dir).unwrap_or_else(|| dir.display().to_string())
+                    } else {
+                        dir.display().to_string()
+                    };
+                    #[cfg(not(windows))]
+                    let install_arg = dir.display().to_string();
+                    match Command::new(&installer)
+                        .args(["/S", &format!("/D={install_arg}")])
+                        .spawn()
+                    {
+                        Ok(_) => {}
+                        Err(e) => {
+                            // Clear the busy marker on failure — a leftover marker
+                            // blocked retries for up to an hour.
+                            let _ = std::fs::remove_file(&busy_bg);
+                            let _ = std::fs::remove_file(&installer);
+                            return;
+                        }
+                    }
 
+                    // Clear the busy marker on SUCCESS too (round-57): the old
+                    // code only removed it on failure — every successful update
+                    // left the marker behind and the NEXT agent_update (or tray
+                    // check) bounced off "already in progress" for up to 60 min.
+                    #[cfg(windows)]
+                    let _ = std::fs::remove_file(&busy_bg);
+                    #[cfg(not(windows))]
+                    let _ = std::fs::remove_file(&busy_bg);
+                }
+            });
+            // Handler returns immediately — the download+install run in the
+            // background task; the MCP worker is NOT held (round-84: the old
+            // synchronous download held it up to 300s, queueing every other
+            // MCP call behind it).
             Ok(json!({
                 "status": "upgrading",
                 "current": local,
                 "remote": remote,
-                "message": "installer started — vale-agent restarts automatically, MCP reconnects in ~1 minute"
+                "message": "downloading + installing in the background — vale-agent restarts automatically, MCP reconnects in ~1 minute"
             }))
         },
     )
