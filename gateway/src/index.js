@@ -47,6 +47,21 @@ export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStr
 export { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess };
 export { rawWithModel, scanTopLevelModel, estimateTokens };
 export { PluginHubDO };
+import { createPluginContext, registerPlugins, dispatch } from "./plugins/registry.js";
+import authPlugin from "./plugins/auth.js";
+import devicesPlugin from "./plugins/devices.js";
+import mcpPlugin from "./plugins/mcp.js";
+import translatePlugin from "./plugins/translate.js";
+// Plugin context (round-73): built once per isolate with the shared helpers;
+// routes registered here run first in handleConsole (and /v1 via handleGateway
+// once migrated). Lazy so a reload never re-registers duplicate routes.
+let __pluginCtx = null;
+function ensurePluginCtx() {
+  if (__pluginCtx) return __pluginCtx;
+  __pluginCtx = createPluginContext(null, { jsonOk, jsonError, readJson, CORS_HEADERS });
+  registerPlugins(__pluginCtx, [authPlugin, devicesPlugin, mcpPlugin, translatePlugin]);
+  return __pluginCtx;
+}
 
 const COUNT_PATH = "/v1/messages/count_tokens";
 
@@ -170,6 +185,18 @@ async function handleConsole(request, env, url) {
   const path = url.pathname;
   const method = request.method;
   const secure = url.protocol === "https:";
+
+  // Plugin dispatch (round-73): the console's routes are being migrated to
+  // DSH-style plugins (plugins/auth.js, devices.js, mcp.js). Registered
+  // plugin routes run FIRST; unmatched requests fall through to the legacy
+  // inline handlers below (which still exist until fully migrated). Zero
+  // behavior change: a plugin route that matches is the same handler that
+  // used to run inline.
+  const pctx = ensurePluginCtx();
+  if (pctx.routes.length) {
+    const hit = dispatch(pctx, method, path, request, env, url, secure);
+    if (hit !== null) return hit;
+  }
 
   // ---- Public: register / login / logout / route info ----
   if (method === "POST" && path === `${AUTH_BASE}/register`) return authRegister(request, env, secure);
