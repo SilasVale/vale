@@ -165,12 +165,25 @@ export class BreakerDO {
         // degradedUntil is NOT cleared: while the circuit is open no real
         // request gets through, and the half-open probe that succeeds resets
         // the count for the next genuine failure.
-        await this.state.storage.delete("fail");
+        // round-55: ONE success must not zero the count — a channel stuck in
+        // hard-fail/success alternation would never accumulate the 3
+        // consecutive failures the breaker needs, and every request would
+        // burn the full upstream timeout with the circuit never opening.
+        // Two consecutive successes (a genuinely recovering channel) clear
+        // the count.
+        const succ = (await this.state.storage.get("succ")) || 0;
+        if (succ >= 1) {
+          await this.state.storage.delete("fail");
+          await this.state.storage.delete("succ");
+        } else {
+          await this.state.storage.put("succ", succ + 1);
+        }
         return new Response("ok");
       }
       if (action === "/clear") {
         await this.state.storage.delete("degradedUntil");
         await this.state.storage.delete("fail");
+        await this.state.storage.delete("succ");
         return new Response("ok");
       }
       if (action === "/check") {

@@ -9,16 +9,21 @@
 
 // Request body cap: Claude Code 1M-context bodies run ~4-10MB; anything larger
 // would blow the Workers Free plan's 10ms CPU budget just to scan/parse it.
-export const MAX_BODY_BYTES = 20 * 1024 * 1024; // 20 MB
+// 12 MB (was 20 MB, round-55): 20 MB bodies were themselves blowing the budget
+// on the scan — 10 MB is the practical 1M-context ceiling, 12 MB leaves margin
+// without letting a budget-buster through.
+export const MAX_BODY_BYTES = 12 * 1024 * 1024; // 12 MB
 
 /**
  * Replace the top-level "model" value in a raw JSON body without parsing it.
  * Re-scans for the field's value span (cheap O(n), no object graph) and
  * rebuilds only that slice. Falls back to the unchanged body if the field
- * can't be located.
+ * can't be located. Pass a prior scan result to skip the second pass
+ * (round-55: the handler already scanned for routing; re-scanning a multi-MB
+ * body just to swap the model doubled the CPU).
  */
-export function rawWithModel(raw, newModel) {
-  const { valueStart, valueEnd } = scanTopLevelModel(raw);
+export function rawWithModel(raw, newModel, scanned) {
+  const { valueStart, valueEnd } = scanned || scanTopLevelModel(raw);
   if (valueStart < 0 || valueEnd <= valueStart) return raw;
   return raw.slice(0, valueStart) + JSON.stringify(newModel) + raw.slice(valueEnd);
 }
@@ -137,34 +142,64 @@ export function estimateTokens(jsonStr) {
   // screenshot-heavy conversation looked far beyond the 1M context and the
   // client rejected requests / compacted prematurely. Each image gets a fixed
   // allowance (~1600 tokens, the real vision cost).
-  let s = String(jsonStr);
-  const stripped = s.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, '"data":"<base64>"');
-  const images = (stripped.match(/"data":"<base64>"/g) || []).length;
-  s = stripped;
+  const s = String(jsonStr);
   const len = s.length;
+
+  // Image scan over the WHOLE body (round-57): counting `"data":"` fields
+  // with indexOf jumps is O(n) but far cheaper than the old full-string
+  // regex + match passes (a few dozen indexOf hops for real bodies), and it
+  // is the ONLY way to see images BEYOND a 2MB sampling window — windowed
+  // bodies' tail images were previously charged as text (~280x over the
+  // real vision cost) or silently missed.
+  let images = 0;
+  let removedChars = 0; // ALL base64 chars (the scan sees the whole body)
+  let searchFrom = 0;
+  let idx;
+  const DATA_KEY = '"data":"';
+  // Base64 charset via charCode ranges (round-58): the old per-char regex
+  // test on a 12MB all-base64 body was ~12M regex calls — alone enough to
+  // eat the 10ms Free-plan budget. Range compares are ~10x faster, same
+  // semantics (A-Z a-z 0-9 + / =).
+  const isB64 = (c) =>
+    (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 43 || c === 47 || c === 61;
+  while ((idx = s.indexOf(DATA_KEY, searchFrom)) !== -1) {
+    // Only count when it looks like a base64 payload (long alnum run).
+    let j = idx + DATA_KEY.length;
+    const start = j;
+    while (j < len && isB64(s.charCodeAt(j))) j += 1;
+    if (j - start >= 512) {
+      images += 1;
+      removedChars += j - start;
+      searchFrom = j;
+    } else {
+      searchFrom = idx + DATA_KEY.length;
+    }
+  }
+
+  // Text estimate: subtract ALL base64 bytes (the scan covered the full
+  // body) — the per-image 1600 charge replaces them.
+  const textLen = len - removedChars;
+  if (textLen <= 0) return images * 1600;
   const base = (() => {
-    if (len > ESTIMATE_WALK_LIMIT) {
+    if (textLen > ESTIMATE_WALK_LIMIT) {
       // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
-      return Math.ceil(len / 3);
+      return Math.ceil(textLen / 3);
     }
-    if (len > ESTIMATE_SAMPLE) {
-      // Sample the head (model + system prompt live there) and extrapolate.
-      let ascii = 0;
-      let other = 0;
-      for (let i = 0; i < ESTIMATE_SAMPLE; i++) {
-        if (s.charCodeAt(i) < 128) ascii += 1;
-        else other += 1;
-      }
-      const ratio = len / ESTIMATE_SAMPLE;
-      return Math.ceil((ascii * ratio) / 4 + (other * ratio) * 1.8);
-    }
+    // Sample the head (model + system prompt live there), strip its base64,
+    // and extrapolate the TEXT density to the full textLen. Sampling stays
+    // bounded (round-55/57: walking a multi-MB body blows the 10ms budget).
+    const sample = s.slice(0, Math.min(ESTIMATE_SAMPLE, len));
+    const stripped = sample.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, '"data":"<base64>"');
     let ascii = 0;
     let other = 0;
-    for (const ch of s) {
-      if (ch.charCodeAt(0) < 128) ascii += 1;
+    for (let i = 0; i < stripped.length; i++) {
+      if (stripped.charCodeAt(i) < 128) ascii += 1;
       else other += 1;
     }
-    return Math.ceil(ascii / 4 + other * 1.8);
+    // stripped contains the <base64> markers (18 chars each) — their text
+    // density is negligible; extrapolate by the stripped length.
+    const r = textLen / stripped.length;
+    return Math.ceil((ascii * r) / 4 + (other * r) * 1.8);
   })();
   return base + images * 1600; // ~1600 tokens per image (real vision cost)
 }
