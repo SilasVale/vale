@@ -414,9 +414,12 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         // for /api/sessions but no endpoint called it — the durable audit
         // corpus was write-only, unqueryable by the panel or MCP. This reads
         // the session's jsonl (permanent, survives agent restarts).
-        ("GET", "/api/sessions/{sid}") => {
-            let sid = path.strip_prefix("/api/sessions/")
-                .and_then(|p| p.split('/').next())
+        ("GET", p) if p.starts_with("/api/sessions/") && p.len() > "/api/sessions/".len() => {
+            // round-87: the old literal "/api/sessions/{sid}" arm never
+            // matched a real session id (exact-string match) — the audit
+            // endpoint 404'd for every session. Guard-arm route.
+            let sid = p.strip_prefix("/api/sessions/")
+                .and_then(|s| s.split('/').next())
                 .unwrap_or("")
                 .to_string();
             let dir = std::env::current_exe()
