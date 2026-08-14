@@ -205,3 +205,19 @@ test("mcp: agent error (200 + ok:false) → SESSION_BUSY code", async () => {
     globalThis.fetch = realFetch;
   }
 });
+
+test("mcp: agent typed error (200 + ok:false + code) → TOOL_ERROR not DEVICE_UNREACHABLE (round-64)", async () => {
+  const env = makeEnv();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    return new Response(JSON.stringify({ ok: false, error: "Serial port not found: COM9", code: "serial_port_not_found" }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_open", arguments: { device: "d1", kind: "serial", target: "COM9" } }, id: 11 }), env);
+    const data = await res.json();
+    assert.equal(data.error.data.code, "TOOL_ERROR");
+    assert.notEqual(data.error.data.code, "DEVICE_UNREACHABLE");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
