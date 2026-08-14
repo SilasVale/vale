@@ -211,17 +211,22 @@ impl TermBackend for PtyBackend {
                     let _ = w.flush();
                 }),
             ).await;
-            // round-109: the gate must clear on BOTH outcomes — a timed-out
-            // task eventually completes when the queue drains, but nothing
-            // observed that; keeping the gate set made the session
-            // permanently write-dead. Execute is serialized by the busy
-            // lock, so clearing the gate cannot pile up more than one
-            // in-flight task.
+            // round-109/111: clear the gate on BOTH outcomes (a stuck gate
+            // made the session permanently write-dead), but on TIMEOUT
+            // RECORD the moment (round-111: the store was missing — the
+            // cooldown was dead code) so new writes fail fast instead of
+            // spawning another parked thread behind the wedged one.
             in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
             match res {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(e)) => Err(format!("pty write task failed: {e}")),
-                Err(_) => Err("pty write timed out after 5s (input queue full)".into()),
+                Err(_) => {
+                    last_timeout.store(
+                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                    Err("pty write timed out after 5s (input queue full)".into())
+                }
             }
         })
     }
