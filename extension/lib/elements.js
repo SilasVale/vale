@@ -63,7 +63,11 @@ export const ELEMENTS_SCRIPT = `
       if (el.shadowRoot) walk(el.shadowRoot);
       const tag = el.tagName;
       const role = el.getAttribute("role");
-      if (!INTERACTIVE.has(tag) && !(role && /button|link|tab|menuitem|checkbox|radio|switch/.test(role)) && !el.getAttribute("onclick") && !(el.getAttribute("contenteditable") === "true")) continue;
+      // round-84: contenteditable="" and contenteditable="plaintext-only"
+      // are editable too — the old `=== "true"` filter dropped them, so the
+      // agent could never type into contenteditable editors.
+      const editable = el.getAttribute("contenteditable");
+      if (!INTERACTIVE.has(tag) && !(role && /button|link|tab|menuitem|checkbox|radio|switch/.test(role)) && !el.getAttribute("onclick") && !(editable === "true" || editable === "" || editable === "plaintext-only")) continue;
       if (!visible(el)) continue;
       const r = el.getBoundingClientRect();
       let value = "";
