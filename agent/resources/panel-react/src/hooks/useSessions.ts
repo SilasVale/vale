@@ -34,6 +34,11 @@ export function useSessions(connected: boolean) {
   const [activeSid, setActiveSid] = useState<string | null>(null);
   const [status, setStatusState] = useState("");
   const pollRef = useRef<number | null>(null);
+  // round-94: a live mirror of activeSid for async callbacks (closeSession
+  // awaits terminal_close, during which the user can activate another tab —
+  // the closed-over activeSid was stale and stomped that activation).
+  const activeRef = useRef<string | null>(null);
+  activeRef.current = activeSid;
 
   // Poll the session list while connected (the panel polls terminal_list
   // every 3s to pick up sessions created by other clients).
@@ -111,7 +116,10 @@ export function useSessions(connected: boolean) {
         // round-86: closing the ACTIVE session must switch to the next live
         // one — the old code left activeSid on the dead tab (stale output,
         // unclickable, typing went nowhere).
-        if (activeSid === sid) {
+        // round-94: read the LIVE activeSid — the user may have activated
+        // another tab while terminal_close was in flight; only switch if the
+        // closed session is still the active one.
+        if (activeRef.current === sid) {
           const nextLive = next.find((s) => !s.closed && s.sid !== sid);
           if (nextLive) {
             setActiveSid(nextLive.sid);

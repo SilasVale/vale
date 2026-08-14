@@ -450,10 +450,18 @@ mod desktop_impl {
         /// session-mode execute path when its deadline fires, so a timed-out
         /// command cannot keep running orphaned on the device.
         pub async fn term_terminate(&self, sid: &str) -> Result<(), DeviceError> {
-            let mut inner = self.inner.lock().await;
-            let s = inner.sessions.iter_mut().find(|s| s.id == sid)
-                .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
-            s.backend.terminate();
+            // round-94: terminate() runs OUTSIDE the global lock. PTY's
+            // terminate does a blocking write_all (^C) to the master fd —
+            // same hazard R92-H1 fixed for term_write_bytes: holding `inner`
+            // across a blocked write would freeze every session op. The
+            // backend is Arc'd, so clone + terminate outside the lock.
+            let backend = {
+                let inner = self.inner.lock().await;
+                let s = inner.sessions.iter().find(|s| s.id == sid)
+                    .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
+                s.backend.clone()
+            };
+            backend.terminate();
             Ok(())
         }
 
