@@ -8,6 +8,11 @@ use std::sync::{Arc, Mutex};
 
 pub struct PtyBackend {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// round-108: one in-flight blocking write per session — a timed-out
+    /// spawn_blocking task holds the writer mutex until the queue drains;
+    /// without this gate every subsequent write spawns ANOTHER parked task
+    /// (thread pile-up). When set, write_async fails fast.
+    write_in_flight: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Master handle — kept for real PTY resize (ResizePseudoConsole on
     /// Windows, TIOCSWINSZ on Unix).
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
@@ -140,6 +145,7 @@ impl PtyBackend {
 
         Ok(PtyBackend {
             writer: Arc::new(Mutex::new(writer)),
+            write_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             master: Arc::new(Mutex::new(master)),
             _slave: slave,
             child: child_slot,
@@ -165,25 +171,42 @@ impl TermBackend for PtyBackend {
         // it — the timeout abandons the stalled task (the fd stays valid;
         // a later drain unblocks the write_all which then completes into a
         // consumed buffer).
-        // round-107: spawn_blocking + timeout ABANDONED a blocked task per
-        // timeout (threads piled up on the blocking pool, each holding the
-        // writer mutex so later writes blocked behind it too). The PTY master
-        // fd is inherently blocking — the sound bounded approach without
-        // leaking threads is: try_lock (never blocks the async worker; a
-        // held mutex = a stalled write is in progress = we must not pile on),
-        // and if the lock is free, the queue is not full, so a single
-        // blocking write completes quickly.
+        // round-108: the lock-free ⇒ queue-not-full assumption was wrong —
+        // a free mutex only means the PREVIOUS write returned; the n_tty
+        // queue can be exactly full at that moment and the blocking
+        // write_all hangs. The bounded approach without a thread pile-up:
+        // one in-flight blocking write per session (spawn_blocking + 5s
+        // timeout); while one is wedged, subsequent writes fail fast
+        // instead of parking another thread behind the same mutex.
+        if self.write_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return Box::pin(async move {
+                Err("pty write already in flight (previous write wedged on a full input queue)".into())
+            });
+        }
+        let writer = self.writer.clone();
+        let in_flight = self.write_in_flight.clone();
         let d = data.to_vec();
         Box::pin(async move {
-            for _ in 0..10 {
-                if let Ok(mut w) = self.writer.try_lock() {
+            let res = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::task::spawn_blocking(move || {
+                    let mut w = writer.lock().unwrap_or_else(|p| p.into_inner());
                     let _ = w.write_all(&d);
                     let _ = w.flush();
-                    return Ok(());
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }),
+            ).await;
+            // round-108: on SUCCESS the task finished and the mutex is free
+            // — clear the gate. On TIMEOUT the task is still parked holding
+            // the mutex; keep the gate set so no further write piles on
+            // (it clears when the session closes and the backend drops).
+            if res.is_ok() {
+                in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
             }
-            Err("pty write timed out (input queue full or write in progress)".into())
+            match res {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) => Err(format!("pty write task failed: {e}")),
+                Err(_) => Err("pty write timed out after 5s (input queue full)".into()),
+            }
         })
     }
     fn resize(&self, rows: u16, cols: u16) {
