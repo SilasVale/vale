@@ -112,7 +112,9 @@ async function connectInner() {
       // clearing it here would wipe the message exactly when the user needs
       // it. Only connection errors clear it (set on the failure path).
       setStateError(null);
-      wsSend({ type: "hello", device: pairing.device });
+      // round-88: carry the plugin token so the hub's alarm can re-validate
+      // the link (30-day TTL) on the LIVE socket.
+      wsSend({ type: "hello", device: pairing.device, token: pairing.token });
       startHeartbeat();
     };
     sock.onmessage = (ev) => {

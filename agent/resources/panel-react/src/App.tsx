@@ -38,15 +38,25 @@ export function App() {
       // 401'd into a noop, form unreachable). Proxy-mode cookie boot (no
       // token) stays connected — the cookie is the credential there.
       if (!tok && !isProxy) return false;
-      initTransport(host, tok || " ", () => {});
+      initTransport(host, tok || " ", () => { authFailed.current = true; });
       if (urlToken) { try { history.replaceState(null, "", location.pathname); } catch {} }
       return true;
     }
     const h = localStorage.getItem(LS_HOST);
     const t = localStorage.getItem(LS_TOKEN);
-    if (h && t) initTransport(h, t, () => {});
+    if (h && t) initTransport(h, t, () => { authFailed.current = true; });
     return !!(h && t);
   });
+  // round-88: a stored token that expires/rotates 401'd into a noop — the
+  // panel stayed 'connected' with everything dead and the conn form
+  // unreachable. The 401 callback sets this flag; a render effect drops the
+  // session back to the conn form.
+  const authFailed = useRef(false);
+  if (authFailed.current) {
+    authFailed.current = false;
+    setConnected(false);
+    setConnError("session expired — re-enter token");
+  }
   const [modalKind, setModalKind] = useState<"ssh" | "serial" | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 

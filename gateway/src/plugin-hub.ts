@@ -6,6 +6,8 @@
  * storage alarm (timers don't run while hibernating): the extension pings
  * every 20s; the alarm fires 65s after the last message and closes a stale WS.
  */
+import { getPluginByToken } from "./store.ts";
+
 export class PluginHubDO {
   state: DurableObjectState;
   env: any;
@@ -102,10 +104,11 @@ export class PluginHubDO {
     if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: msg.t })); return; }
     if (msg.type === "hello") {
       this.state.storage.put("lastSeen", Date.now());
-      // round-84: remember the device bound to this socket so the alarm can
-      // re-validate the plugin link (a revoked/expired link must not keep
-      // browser_* control over a live socket).
-      this.state.storage.put(`ws-device:${(ws as any).id || ""}`, String(msg.device || "")).catch(() => {});
+      // round-88: remember the plugin TOKEN bound to this socket (the round-84
+      // ws-device: key was never read — dead code). The alarm re-validates
+      // the link: a 30-day-expired link must not keep browser_* control over
+      // a live socket.
+      this.state.storage.put(`ws-token:${(ws as any).id || ""}`, String(msg.token || "")).catch(() => {});
       return;
     }
     if (msg.type === "response" && msg.id) {
@@ -122,6 +125,17 @@ export class PluginHubDO {
 
   async alarm() {
     const sockets = this.state.getWebSockets() || [];
-    for (const ws of sockets) ws.close(4001, "idle timeout");
+    for (const ws of sockets) {
+      // round-88: re-validate the plugin link bound to this socket — an
+      // expired (30-day TTL) link must not keep browser_* control.
+      try {
+        const tok = await this.state.storage.get(`ws-token:${(ws as any).id || ""}`);
+        if (tok) {
+          const link = await getPluginByToken(this.env, String(tok));
+          if (!link) { ws.close(4001, "link expired"); continue; }
+        }
+      } catch { /* validation failure → idle-close below */ }
+      ws.close(4001, "idle timeout");
+    }
   }
 }
