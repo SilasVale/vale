@@ -71,7 +71,7 @@ test("hub /call: online → forwards request to the socket and resolves the resp
   assert.equal(sent.type, "request");
   assert.equal(sent.tool, "browser_click");
   // Extension replies → the /call promise resolves.
-  hub.webSocketMessage(ws, JSON.stringify({ id: "r2", type: "response", ok: true, result: { clicked: true } }));
+  await hub.webSocketMessage(ws, JSON.stringify({ id: "r2", type: "response", ok: true, result: { clicked: true } }));
   const res = await p;
   assert.deepEqual(await res.json(), { id: "r2", type: "response", ok: true, result: { clicked: true } });
 });
@@ -80,7 +80,9 @@ test("hub webSocketMessage: ping → pong echoes t", async () => {
   const ws = fakeWs();
   const state = makeState([ws]);
   const hub = new PluginHubDO(state, {});
-  hub.webSocketMessage(ws, JSON.stringify({ type: "ping", t: 42 }));
+  // round-94: webSocketMessage is async (token re-validation on every frame);
+  // await it so the pong is actually sent before asserting.
+  await hub.webSocketMessage(ws, JSON.stringify({ type: "ping", t: 42 }));
   assert.equal(ws.sent.length, 1);
   assert.deepEqual(JSON.parse(ws.sent[0]), { type: "pong", t: 42 });
 });
