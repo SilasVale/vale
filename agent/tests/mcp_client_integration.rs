@@ -80,3 +80,34 @@ async fn mcp_client_bridge_roundtrip() {
     let err = call.handler.call(json!({ "tool": "terminal_list" })).await.unwrap_err().to_string();
     assert!(err.contains("not connected"), "call after disconnect: {err}");
 }
+
+#[tokio::test]
+async fn connect_to_dead_server_fails_fast() {
+    // round-93: connecting to a server that is NOT running used to hang
+    // forever — rmcp's SSE retry defaults to FixedInterval { max_times: None }
+    // (infinite 1s reconnect), so serve() never returned and the MCP worker
+    // that awaited this handler wedged (every subsequent tool call queued
+    // behind it → API errors). The connect must fail within the 5s budget.
+    // Grab an ephemeral port that nothing listens on.
+    let dead = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = l.local_addr().expect("addr");
+        drop(l); // closed now — nothing listens there
+        format!("http://{addr}/mcp")
+    };
+    let state = AppState::new(Config::default());
+    let connect = plugin_tool(&state, "mcp_client_connect");
+    let started = std::time::Instant::now();
+    let r = connect.handler.call(json!({ "url": dead })).await;
+    let elapsed = started.elapsed();
+    assert!(r.is_err(), "connect to a dead server must error, got {r:?}");
+    let msg = r.unwrap_err().to_string();
+    assert!(
+        msg.contains("timed out") || msg.contains("failed") || msg.contains("not running"),
+        "unexpected error: {msg}"
+    );
+    assert!(
+        elapsed.as_secs() < 30,
+        "connect must fail fast (bounded), took {elapsed:?}"
+    );
+}

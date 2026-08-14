@@ -6,12 +6,15 @@ Vale is a unified device-control + AI-gateway platform: **one repository** for t
 Vale Gate (front door, Cloudflare Worker)
   ├─ console — login/roles, BYOK AI gateway, Devices (online status, pairing)
   ├─ /mcp — AI-first device tools: terminal_* (proxied to the device)
-  │         + browser_* (routed to the browser extension via PluginHubDO)
-  └─ PluginHubDO — per-device WebSocket hub
-        │  request/response frames (chrome.debugger, internal CDP)
+  └─ PluginHubDO — per-device WebSocket hub (browser extension, chrome.debugger)
+        │
         ▼
-Vale Browser Control (Chrome/Edge extension) ── drives the device's real browser
-Vale Agent (Windows, slim) ── headless MCP server + /api/tools + system tray
+Vale Agent (Windows, slim) — headless MCP server + /api/tools + system tray
+  └─ plugin registry: terminal / update / mcp-client / design
+        │  mcp-client plugin bridges to a local browser MCP server
+        ▼
+browser MCP server (Node: playwright-mcp / chrome-devtools-mcp) ── drives the browser
+Vale Browser Control (Chrome/Edge extension) ── legacy browser drive (chrome.debugger)
 Vale Index ── installer / script distribution
 ```
 
@@ -20,7 +23,7 @@ Vale Index ── installer / script distribution
 | Directory | Project | Runtime | Description |
 |---|---|---|---|
 | `gateway/` | **Vale Gate** | Cloudflare Worker | Vale console (login/roles) + AI gateway (BYOK routing) + `/mcp` (AI-first device tools) + PluginHubDO (extension hub) + device reverse proxy |
-| `extension/` | **Vale Browser Control** | Chrome/Edge (MV3) | pairs with the console, drives the device's real browser via `chrome.debugger` (no network ports), keeps a WS to PluginHubDO, full-screen terminal page |
+| `extension/` | **Vale Browser Control** | Chrome/Edge (MV3) | legacy browser drive via `chrome.debugger` (no network ports), keeps a WS to PluginHubDO, full-screen terminal page — superseded by the mcp-client plugin + local browser MCP server |
 | `agent/` | **Vale Agent** | Windows (Rust) | slim headless MCP server (`/mcp`, token-gated) + `/api/tools/{name}` + system tray; terminal panel (`/panel`) |
 | `index/` | **Vale Index** | Cloudflare Worker | installer / script download distribution |
 | `docs/` | docs | — | platform & device-integration design |
@@ -63,7 +66,10 @@ The post-deploy E2E script (pair → browser_open → screenshot → click → t
 
 ## Core design
 
-- **Device control, AI-first**: Claude Code connects to `https://<console>/mcp` with the admin Bearer token and gets 12 tools. `terminal_open / terminal_screen / terminal_send / terminal_list / terminal_close` proxy to the device's `/api/tools` (token injected server-side); `browser_open / browser_snapshot / browser_screenshot / browser_click / browser_type / browser_wait / browser_close` route via PluginHubDO → the browser extension → `chrome.debugger`. Screenshots come back as MCP image blocks; `terminal_screen` returns the ANSI-stripped tail of a session's output buffer.
+- **Device control, AI-first**: Claude Code connects to `https://<console>/mcp` with the admin Bearer token and gets the device tool surface. The Vale Agent plugin registry (`agent/src/plugins/`) exposes 24 tools: the `terminal` plugin (18: PTY/SSH/serial open/write/close/execute/read/screen + secrets + saved connections), `update` (agent_update), `mcp-client` (4: connect/list/call/disconnect — bridge to a local browser MCP server, DSH-style), and `design` (page_view). `terminal_*` proxy to the device's `/api/tools` (token injected server-side); `terminal_screen` returns the ANSI-stripped tail of a session's output buffer.
+- **Browser control via mcp-client (playwright)**: the `mcp-client` plugin connects to a local browser MCP server on the device (`playwright-mcp` / `chrome-devtools-mcp`, default `http://127.0.0.1:9229/mcp`) over Streamable HTTP, and forwards its tools (`browser_navigate`, `browser_snapshot`, `browser_click`, …) through the Vale tool surface — same wiring as DeepSeek Harness's `mcp-client` plugin. The browser MCP server (Node process on the device) does the actual browser work; the Rust agent only bridges.
+- **Extension pairing (no account)**: the console generates a one-time pairing code (10 min); the extension claims it for a plugin token, trades the token for a one-time WS ticket, and opens the per-device hub socket. The same plugin token authenticates the extension's terminal page through the device reverse proxy (token scoped to its own device only).
+- **Vale Agent (slim)**: headless MCP server + `/api/tools`; `GET /` is a minimal status page, `/panel` is the terminal panel (token entered in the browser, saved to localStorage). The tray app (vale-tray) offers four functions: copy MCP config, open console, local terminal, start/stop/restart/quit.
 - **Extension pairing (no account)**: the console generates a one-time pairing code (10 min); the extension claims it for a plugin token, trades the token for a one-time WS ticket, and opens the per-device hub socket. The same plugin token authenticates the extension's terminal page through the device reverse proxy (token scoped to its own device only).
 - **Vale Agent (slim)**: headless MCP server + `/api/tools`; `GET /` is a minimal status page, `/panel` is the terminal panel (token entered in the browser, saved to localStorage). The tray app (vale-tray) offers four functions: copy MCP config, open console, local terminal, start/stop/restart/quit.
 - **Claude Code direct** (per device, without the gateway):
@@ -76,17 +82,17 @@ The post-deploy E2E script (pair → browser_open → screenshot → click → t
   ```
   The console's Devices panel shows a ready-made `vale-gate` snippet (with the current user's token) and a per-device `vale-agent` snippet.
 
-## Tokens 体系(3 个边界 → 3 个 token)
+## Tokens (3 trust boundaries → 3 tokens)
 
-| Token | 名字 | 在哪 | 认证什么 | 谁持有 |
+| Token | Name | Where | Authenticates | Held by |
 |---|---|---|---|---|
-| **设备访问令牌** | `device_token`(旧名 `auth_token`,0.8.5 兼容) | `C:\vale-agent\config.yaml` | 设备 API(`/api/*`)+ MCP(`/mcp`)+ 终端面板 | 设备(Windows) |
-| **控制台令牌** | `console_token`(user token / x-api-key) | 用户 settings.json / 控制台设置 | 网关管理 + AI 路由 | 你(Claude 配置) |
-| **浏览器令牌** | `browser_token`(plugin token) | 扩展 `chrome.storage`(配对自动存) | 插件 WS / browser 驱动 | 浏览器扩展 |
+| **Device access token** | `device_token` (legacy `auth_token`, 0.8.5-compatible) | `C:\vale-agent\config.yaml` | Device API (`/api/*`) + MCP (`/mcp`) + terminal panel | the device (Windows) |
+| **Console token** | `console_token` (user token / x-api-key) | user settings.json / console settings | gateway admin + AI routing | you (Claude config) |
+| **Browser token** | `browser_token` (plugin token) | extension `chrome.storage` (auto-saved on pairing) | plugin WS / browser drive | the browser extension |
 
-**获取方式**:
-- `device_token`:装好 vale-agent 后读 `C:\vale-agent\config.yaml` 的 `device_token:` 行(自动生成)。**终端面板用这个**:打开 `https://<device-host>/panel/` 填一次,浏览器记住。
-- `console_token`:控制台登录后,设置/设备页复制 MCP 配置(带 token)。
-- `browser_token`:不用手动获取——控制台设备页生成配对码,扩展配对时自动存。
+**How to obtain**:
+- `device_token`: after installing vale-agent, read the `device_token:` line in `C:\vale-agent\config.yaml` (auto-generated). **The terminal panel uses this**: open `https://<device-host>/panel/`, enter it once, the browser remembers it.
+- `console_token`: after logging into the console, copy the MCP config (with token) from the settings/devices page.
+- `browser_token`: no manual step — the console's devices page generates a pairing code; the extension stores it automatically when pairing.
 
-**原则**:一个信任边界一个 token,不再重复。`device.token`(网关注册时填的)与 `device_token` 是同一份——注册设备时填 config.yaml 里的值即可。
+**Principle**: one token per trust boundary, no duplication. `device.token` (entered when registering the device on the gateway) is the same value as `device_token` — fill in the value from config.yaml when registering a device.

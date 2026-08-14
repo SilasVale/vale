@@ -87,17 +87,39 @@ pub fn mcp_client_connect() -> ToolDef {
             // rmcp client: WorkerTransport over reqwest, served by our empty
             // client service. The RunningService must stay alive for the
             // session — drop it and the worker task dies with it.
+            //
+            // round-93: the serve() call MUST be bounded. rmcp's SSE retry
+            // policy defaults to FixedInterval { max_times: None } — an
+            // infinite 1s reconnect loop when the server is not up. A server
+            // that isn't running (playwright-mcp not installed/started yet)
+            // made serve() never return, wedging the MCP worker that awaited
+            // this handler and cascading into API errors for every tool on
+            // that connection. Fail fast with a clear "is the server running?"
+            // error instead of hanging the session.
             let transport = StreamableHttpClientTransport::from_uri(url);
-            let running = EmptyClientService
-                .serve(transport)
-                .await
-                .map_err(|e| DeviceError::Internal { message: format!("MCP connect failed: {e}") })?;
+            let running = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                EmptyClientService.serve(transport),
+            )
+            .await
+            .map_err(|_| DeviceError::Internal {
+                message: format!(
+                    "MCP connect timed out after 5s — is the browser MCP server running at {url}? \
+                     (playwright-mcp / chrome-devtools-mcp)"
+                ),
+            })?
+            .map_err(|e| DeviceError::Internal { message: format!("MCP connect failed: {e}") })?;
             let peer = running.peer().clone();
             // Keep the session task alive for the process lifetime.
             tokio::spawn(async move { let _ = running.waiting().await; });
 
-            let tools = peer.list_all_tools().await
-                .map_err(|e| DeviceError::Internal { message: format!("list tools failed: {e}") })?;
+            let tools = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                peer.list_all_tools(),
+            )
+            .await
+            .map_err(|_| DeviceError::Internal { message: "list tools timed out after 30s".into() })?
+            .map_err(|e| DeviceError::Internal { message: format!("list tools failed: {e}") })?;
             *PEER.lock().await = Some(peer);
 
             Ok(json!({
@@ -122,8 +144,15 @@ pub fn mcp_client_list() -> ToolDef {
             let peer = guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
                 message: "not connected — call mcp_client_connect first".into(),
             })?;
-            let tools = peer.list_all_tools().await
-                .map_err(|e| DeviceError::Internal { message: format!("list tools failed: {e}") })?;
+            // round-93: bounded like connect — a hung remote must not wedge
+            // this MCP worker.
+            let tools = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                peer.list_all_tools(),
+            )
+            .await
+            .map_err(|_| DeviceError::Internal { message: "list tools timed out after 30s".into() })?
+            .map_err(|e| DeviceError::Internal { message: format!("list tools failed: {e}") })?;
             Ok(json!({
                 "tool_count": tools.len(),
                 "tools": tools.iter().map(|t| {
@@ -172,8 +201,16 @@ pub fn mcp_client_call() -> ToolDef {
             let peer = guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
                 message: "not connected — call mcp_client_connect first".into(),
             })?;
-            let result = peer.call_tool(req).await
-                .map_err(|e| DeviceError::Internal { message: format!("call {tool} failed: {e}") })?;
+            // round-93: browser operations can be slow (navigation, waiting),
+            // but never infinite — a hung remote must not wedge this MCP
+            // worker.
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                peer.call_tool(req),
+            )
+            .await
+            .map_err(|_| DeviceError::Internal { message: format!("call {tool} timed out after 60s") })?
+            .map_err(|e| DeviceError::Internal { message: format!("call {tool} failed: {e}") })?;
 
             // Extract the text content the way MCP clients render it — a
             // screenshot comes back as image content (PNG base64) which we
