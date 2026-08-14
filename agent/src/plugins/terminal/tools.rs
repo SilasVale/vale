@@ -543,7 +543,13 @@ fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
         while i < data.len() && data[i].is_ascii_digit() { i += 1; }
         if i == digits_start { search_from = start + 1; continue; } // prefix but no digits yet — try the next prefix
         if i >= data.len() || data[i] != 0x07 { search_from = start + 1; continue; } // incomplete — try the next
-        let code: i32 = std::str::from_utf8(&data[digits_start..i]).ok()?.parse().ok()?;
+        // round-101: a digit run that overflows i32 (11+ digits) must not
+        // abort the whole scan — continue to the next prefix like the other
+        // false-prefix cases.
+        let code: i32 = match std::str::from_utf8(&data[digits_start..i]).ok().and_then(|s| s.parse().ok()) {
+            Some(c) => c,
+            None => { search_from = start + 1; continue; }
+        };
         return Some((start, i + 1, code));
     }
     None
