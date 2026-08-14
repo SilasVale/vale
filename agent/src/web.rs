@@ -288,17 +288,21 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         // or plugin link) requests. Localhost/loopback keeps working for
         // on-device use.
         let secret = state.config.server.proxy_secret.as_deref().unwrap_or("");
-        let via_proxy = req
-            .headers()
-            .get("x-vale-auth")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| {
-                // Constant-time compare (timing-safe for a 64-hex secret).
-                let a = v.as_bytes();
-                let b = secret.as_bytes();
-                a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-            })
-            .unwrap_or(false);
+        // round-104: an EMPTY/absent configured secret must never match — the
+        // old gate accepted an empty header when the secret was "" (quarantine
+        // recovery / pre-secret boot), which is exactly the fail-open RCE.
+        let via_proxy = !secret.is_empty()
+            && req
+                .headers()
+                .get("x-vale-auth")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| {
+                    // Constant-time compare (timing-safe for a 64-hex secret).
+                    let a = v.as_bytes();
+                    let b = secret.as_bytes();
+                    a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+                })
+                .unwrap_or(false);
         if let Some(ref token) = state.config.server.device_token {
             // EXACT host allowlist. A substring/prefix match here was
             // bypassable — e.g. Host: evil-agent.saisi.online.evil.com matches

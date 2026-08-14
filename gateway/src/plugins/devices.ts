@@ -437,7 +437,24 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
     return new Response(rewritten, { status: resp.status, headers: outHeaders });
   }
 
-  // JSON / binary: pass through unchanged.
+  // JSON / binary: pass through — EXCEPT strip the proxy_secret (round-104:
+  // a plugin-token holder proxying /api/status could read the secret and
+  // escalate to the permanent device token, defeating unpair/revoke scope).
+  if (resp.body && ct.includes("application/json")) {
+    const text = await resp.text();
+    try {
+      const j = JSON.parse(text);
+      if (j && typeof j === "object" && "proxy_secret" in j) {
+        delete j.proxy_secret;
+        const out = JSON.stringify(j);
+        if (outHeaders.has("content-length")) {
+          outHeaders.set("content-length", String(new TextEncoder().encode(out).length));
+        }
+        return new Response(out, { status: resp.status, headers: outHeaders });
+      }
+    } catch { /* non-JSON — fall through */ }
+    return new Response(text, { status: resp.status, headers: outHeaders });
+  }
   return new Response(resp.body, { status: resp.status, headers: outHeaders });
 }
 

@@ -72,19 +72,25 @@ fn config_default_impl() {
 fn ensure_token_is_64_hex_chars() {
     use vale_agent::config::ServerConfig;
     let mut c = ServerConfig::default();
-    let token = c.ensure_token().unwrap().expect("token generated");
+    let (token, changed) = c.ensure_token().unwrap();
+    assert!(changed, "fresh config must report changed");
+    let token = token.expect("token generated");
     assert_eq!(token.len(), 64);
     // lowercase hex only — digits '0'-'9' and 'a'-'f'
     assert!(token.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    // proxy secret is generated too
+    assert!(c.proxy_secret.as_deref().is_some_and(|s| s.len() == 64));
 }
 
 #[test]
 fn ensure_token_idempotent() {
     use vale_agent::config::ServerConfig;
     let mut c = ServerConfig::default();
-    let t1 = c.ensure_token().unwrap().unwrap();
-    let again = c.ensure_token().unwrap();
+    let (t1, _) = c.ensure_token().unwrap();
+    let t1 = t1.unwrap();
+    let (again, changed) = c.ensure_token().unwrap();
     assert!(again.is_none(), "second call must not regenerate");
+    assert!(!changed, "second call must not report changed");
     assert_eq!(c.device_token.as_deref(), Some(t1.as_str()));
 }
 
@@ -93,18 +99,20 @@ fn ensure_token_unique_across_configs() {
     use vale_agent::config::ServerConfig;
     let mut a = ServerConfig::default();
     let mut b = ServerConfig::default();
-    let ta = a.ensure_token().unwrap().unwrap();
-    let tb = b.ensure_token().unwrap().unwrap();
-    assert_ne!(ta, tb, "two fresh configs must not share a token");
+    let (ta, _) = a.ensure_token().unwrap();
+    let (tb, _) = b.ensure_token().unwrap();
+    assert_ne!(ta.unwrap(), tb.unwrap(), "two fresh configs must not share a token");
 }
 
 #[test]
 fn ensure_token_serialization_roundtrip() {
     let mut c = Config::default();
-    let token = c.server.ensure_token().unwrap().unwrap();
+    let (token, _) = c.server.ensure_token().unwrap();
+    let token = token.unwrap();
     let yaml = serde_yaml::to_string(&c).unwrap();
     let back: Config = serde_yaml::from_str(&yaml).unwrap();
     assert_eq!(back.server.device_token.as_deref(), Some(token.as_str()));
+    assert_eq!(back.server.proxy_secret, c.server.proxy_secret, "secret survives roundtrip");
 }
 
 // ═══════════════════════════════════════════════════════════════

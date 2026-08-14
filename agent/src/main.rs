@@ -311,7 +311,10 @@ fn load_config(config_path: &Path) -> Config {
         Ok(v) => v,
         Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
     };
-    if let Some(token) = token {
+    // round-104: bootstrap persists a newly generated proxy secret/token.
+    // This branch only warns on a fresh token (it was already persisted by
+    // load_or_create; a stale-token rewrite is a no-op here).
+    if let Some(token) = &token {
         // A NEW token was generated — either a fresh install or the
         // device_token line was dropped/emptied by a hand-edit. The latter
         // silently 401s every remote client until they update; warn loudly.

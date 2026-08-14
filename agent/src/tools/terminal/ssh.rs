@@ -62,10 +62,16 @@ impl TermBackend for SshBackend {
         // (ssh channel task blocked on remote TCP backpressure), and the
         // wait loop reported a success-like 'idle'. Await the send instead;
         // the caller (term_write_bytes) is async so no tokio worker blocks.
+        // round-104: BOUNDED — an awaited send on a full channel hangs
+        // forever when the remote never drains (foreground sleep 300 with a
+        // full n_tty queue, wedged peer where keepalives keep inactivity
+        // from firing). A stuck write must fail (and release the execute
+        // busy flag) rather than brick the session; 5s is far beyond any
+        // legitimate drain pause.
         let tx = self.write_tx.clone();
         let d = data.to_vec();
         Box::pin(async move {
-            let _ = tx.send(d).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(d)).await;
         })
     }
     fn resize(&self, rows: u16, cols: u16) {
