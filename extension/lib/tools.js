@@ -47,8 +47,19 @@ async function resolveRef(tabId, ref) {
   })()`);
   if (live?.gone) throw new Error(`element ref ${ref} is gone — DOM changed, re-snapshot`);
   const s = el.rect, l = live;
-  if (l && (Math.abs(s.x - l.x) > 4 || Math.abs(s.y - l.y) > 4 || Math.abs(s.w - l.w) > 4 || Math.abs(s.h - l.h) > 4)) {
-    throw new Error(`element ref ${ref} moved — DOM changed, re-snapshot`);
+  if (l) {
+    // round-88: a strict 4px comparison false-positived on animating /
+    // layout-shifting elements (spinners, expanding panels) — every click
+    // failed with 'moved'. Only treat a CENTER displacement larger than the
+    // element's own size as a real DOM change (a navigation replaces the
+    // element wholesale; an animation stays within its box).
+    const scx = s.x + s.w / 2, scy = s.y + s.h / 2;
+    const lcx = l.x + l.w / 2, lcy = l.y + l.h / 2;
+    const dx = Math.abs(scx - lcx), dy = Math.abs(scy - lcy);
+    const size = Math.max(s.w, s.h, 1);
+    if (dx > size / 2 || dy > size / 2) {
+      throw new Error(`element ref ${ref} moved — DOM changed, re-snapshot`);
+    }
   }
   return { el, snap };
 }
