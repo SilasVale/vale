@@ -157,8 +157,12 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
   // round-110: logout is an unauthenticated KV-write endpoint (any crafted
   // cookie with a truthy exp triggers a write) — an attacker could exhaust
   // the daily KV write quota. Per-IP gate like register.
+  // round-111: a 429 must STILL clear the client cookie — skipping the
+  // whole handler left the browser cookie alive AND skipped the KV
+  // blacklist (the endpoint's entire security purpose).
   if (authRateLimited(request)) {
-    return jsonError(429, "rate limit exceeded", "rate_limit_error");
+    return jsonError(429, "rate limit exceeded", "rate_limit_error",
+      { "set-cookie": clearSessionCookieHeader(secure) });
   }
   // Revoke the session server-side: the HMAC cookie alone was cleared
   // client-side, but a copied cookie stayed valid for the full 24h. Blacklist

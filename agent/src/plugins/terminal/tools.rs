@@ -479,26 +479,27 @@ fn append_spill(sid: &str, bytes: &[u8]) {
 
 /// Read absolute bytes [start, end) that live in the spill file (everything
 /// before the in-memory window). Best-effort: a missing file yields nothing.
-fn read_spill(sid: &str, start: usize, end: usize) -> Vec<u8> {
-    // round-110: the whole spill file was read into RAM then sliced — a
-    // log-streaming session accumulates hundreds of MB of spill, so a
-    // first no-offset read (cursor 0) OOM'd the agent and produced a
-    // response too big to traverse the gateway. Cap a single read at
-    // 1MB of spill, from the tail.
+/// Reads [start, end) of the spill file. Returns (bytes, actual_start) —
+/// actual_start is the file offset the bytes begin at, which the caller
+/// must surface: when the window is capped (round-111), bytes begin later
+/// than the requested offset and the response start must reflect it (the
+/// R110 cap silently mislabeled the tail as [offset, end), making the
+/// head unreachable AND duplicating on the panel's incremental reads).
+fn read_spill(sid: &str, start: usize, end: usize) -> (Vec<u8>, u64) {
+    // round-110/111: the whole spill file was read into RAM then sliced —
+    // a log-streaming session accumulates hundreds of MB, so a first
+    // no-offset read (cursor 0) OOM'd the agent. Cap a single read at 1MB.
     use std::io::{Read, Seek, SeekFrom};
     const MAX_SPILL_READ: u64 = 1_048_576;
-    let Ok(mut f) = std::fs::File::open(spill_path(sid)) else { return Vec::new() };
+    let Ok(mut f) = std::fs::File::open(spill_path(sid)) else { return (Vec::new(), start as u64) };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     let e = (end as u64).min(len);
     let s = (start as u64).min(e);
-    // Read at most MAX_SPILL_READ bytes ending at `e`; if the window is
-    // beyond the cap, drop the older head (truncated by the caller's
-    // `truncated` flag path when end_abs reflects it).
     let read_start = if e - s > MAX_SPILL_READ { e - MAX_SPILL_READ } else { s };
     let _ = f.seek(SeekFrom::Start(read_start));
     let mut out = Vec::with_capacity((e - read_start) as usize);
     let _ = f.take(e - read_start).read_to_end(&mut out);
-    out
+    (out, read_start)
 }
 
 /// Remove a session's spill file (round-60): append_spill had NO deletion
@@ -813,19 +814,18 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             // markers through; the R103 any-output reset
                             // killed real markers).
                             if let Some(at) = marker_seen_at {
-                                // round-110: a REAL marker's prompt can
-                                // render slowly (>300ms on a loaded device /
-                                // slow PS1). Only invalidate on SUSTAINED
-                                // output — a small single chunk (the prompt)
-                                // or a burst under 1KB across chunks is
-                                // tolerated; anything bigger is a fake
-                                // marker followed by real command output.
-                                if at.elapsed() >= marker_confirm && chunk.len() > 1024 {
+                                // round-111: ANY output past the confirm
+                                // window invalidates the marker — a fake
+                                // marker followed by slow small output (the
+                                // R110 >1KB threshold let it through) must
+                                // not end the wait with a bogus exit code.
+                                // A REAL marker's trailing prompt ALSO
+                                // invalidates (it degrades to the quiet
+                                // path — idle, exit_code null), which is the
+                                // safer failure mode than a fake exit code
+                                // while the command still runs.
+                                if at.elapsed() >= marker_confirm {
                                     marker_seen_at = None;
-                                    // round-107: output continuing past the
-                                    // confirm window means the marker was
-                                    // fake — its exit code must not leak
-                                    // into the final result.
                                     marker_code = None;
                                 }
                             }
@@ -1230,20 +1230,29 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                     let merged = |entry: &SessionBuf, offset: usize| {
                         let in_mem_start = entry.dropped as usize;
                         let spilled = offset < in_mem_start;
-                        let mut raw = if spilled {
+                        // round-111: read_spill returns the ACTUAL start —
+                        // when the window is capped, bytes begin later than
+                        // `offset`; report that as `start` (the R110 cap
+                        // silently mislabeled the tail as [offset, end),
+                        // making the head unreachable and duplicating on
+                        // incremental reads).
+                        let (spill_bytes, actual_start) = if spilled {
                             read_spill(&session_id, offset, in_mem_start)
                         } else {
-                            Vec::new()
+                            (Vec::new(), offset as u64)
                         };
-                        let rel = offset.saturating_sub(in_mem_start).min(entry.data.len());
-                        raw.extend_from_slice(&entry.data[rel..]);
+                        let mut raw = spill_bytes;
+                        // The in-memory slice starts at the actual spill end
+                        // (capped or not) so the stream stays continuous.
+                        let mem_rel = (actual_start as usize).saturating_sub(in_mem_start).min(entry.data.len());
+                        raw.extend_from_slice(&entry.data[mem_rel..]);
                         let text = if clean {
                             clean_terminal_output(&raw)
                         } else {
                             String::from_utf8_lossy(&raw).to_string()
                         };
                         let raw_out = if clean { Vec::new() } else { raw.clone() };
-                        (text, raw_out, clean, offset, entry.end_abs(), entry.dropped, spilled)
+                        (text, raw_out, clean, actual_start as usize, entry.end_abs(), entry.dropped, spilled)
                     };
                     match store.live.get_mut(&session_id) {
                         Some(entry) => {
@@ -1377,9 +1386,12 @@ fn tool_diag_write(diag: &DiagStore) -> ToolDef {
             let diag = diag.clone();
             async move {
                 let line = require_str(&params, "line")?;
-                // round-110: a caller-supplied line up to the 1MB HTTP body
-                // limit × 200 ring entries = 200MB retained. Cap a line.
-                let capped = if line.len() > 4096 { &line[..4096] } else { &line };
+                // round-110/111: a caller-supplied line up to the 1MB HTTP
+                // body limit × 200 ring entries = 200MB retained. Cap a
+                // line — at a CHAR boundary (the R110 &line[..4096] panicked
+                // when byte 4096 fell mid-UTF-8, the R106-H1 class).
+                let bound = line.floor_char_boundary(4096);
+                let capped = if line.len() > bound { &line[..bound] } else { &line };
                 let mut d = recover_guard(&diag);
                 d.push(format!("{} {capped}", chrono_timestamp()));
                 Ok(json!("ok"))
