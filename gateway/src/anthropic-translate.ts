@@ -192,10 +192,13 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           try { chunk = JSON.parse(payload); } catch { continue; }
           encoderStream.push(chunk);
           const events = encoderStream.take();
-          if (events.length) {
-            controller.enqueue(encoder.encode(events));
-            return;
-          }
+          // round-97: the old `if (events.length) { enqueue; return; }`
+          // returned after the FIRST output-producing event, leaving the
+          // rest of this read's buffer unprocessed until the next read —
+          // and the FINAL read's remaining events were silently dropped
+          // (finish() only rescued the first data: line). Continue draining
+          // the whole buffer instead.
+          if (events.length) controller.enqueue(encoder.encode(events));
         }
       }
     },
@@ -360,7 +363,10 @@ export class AnthropicStreamEncoder {
       // seeds the block from start, then appends deltas). Start with an empty
       // content block; the deltas carry everything.
       const contentBlock = type === "thinking"
-        ? { type: "thinking", thinking: "" }
+        // round-97: keep the `signature` field (empty) — strict client
+        // parsers hard-fail on its absence (claude-agent-sdk-python
+        // KeyError 'signature'; anthropic-sdk-csharp threw on eager access).
+        ? { type: "thinking", thinking: "", signature: "" }
         : type === "text"
           ? { type: "text", text: "" }
           : { type: "tool_use", id: block.id || "", name: block.name || "unknown", input: {} };
@@ -410,6 +416,13 @@ export class AnthropicStreamEncoder {
     // return to tool 0 after tool 1 started) — never re-open.
     if (this.toolBlockIdxMap[idx] !== undefined) {
       this.blockIndex = this.toolBlockIdxMap[idx];
+      // round-97: resuming a block that was stopped by a type-switch
+      // re-opens it — it MUST be re-stopped at finish(). Remove it from
+      // stoppedToolBlocks so finish()'s loop emits content_block_stop again
+      // (the mirror of the R96 fix: the old code kept it stopped, so the
+      // resumed block never got its stop and the tool_use was unterminated
+      // at message_stop).
+      this.stoppedToolBlocks.delete(this.blockIndex);
       this.blockType = "tool_use";
       if (name) this.toolName = name;
       if (argsDelta) {

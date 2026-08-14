@@ -110,6 +110,18 @@ async function ensureTabInner(device, proxyUrl) {
   if (!tabId) {
     const tab = await chrome.tabs.create({ url: proxyUrl });
     tabId = tab.id;
+    // round-97: a FRESH tab for this device means the old controlled tab
+    // (if any) is abandoned — it sits on some real site, still
+    // debugger-attached, with no device attribution (SW restart lost
+    // controlledTabs). Detach those zombies so they don't accumulate and
+    // block reuse ([...attached][0] would otherwise keep picking a zombie
+    // that the predicate refuses, forcing a new tab every call).
+    for (const id of [...attached]) {
+      if (id === tabId || Object.values(state.controlledTabs).includes(id)) continue;
+      try { await chrome.debugger.detach({ tabId: id }); } catch {}
+      attached.delete(id);
+    }
+    await persistAttached();
   }
   state.controlledTabs[device] = tabId;
   if (!attached.has(tabId)) {
