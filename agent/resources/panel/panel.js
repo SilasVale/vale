@@ -639,6 +639,11 @@ async function startSharedStream() {
                 // already delivered these bytes (renderedBytes advanced past
                 // it), skip — otherwise the same bytes render twice.
                 if (typeof frame.start === "number" && frame.start < s.renderedBytes) continue;
+                // round-68: while a sync read is in flight, DON'T advance
+                // renderedBytes — the sync writes cleaned text that the read
+                // covers; advancing here would make the sync's text double-
+                // render (the same bytes twice on screen).
+                if (s.syncInFlight) continue;
                 s.term.write(new Uint8Array(frame.data));
                 s.renderedBytes += frame.data.length;
                 s.sseDirty = true;
