@@ -63,9 +63,17 @@ export function App() {
   const sessions = useSessions(connected);
   // SSE: per-session xterm write callbacks registered by TerminalPane.
   const writeCallbacks = useRef(new Map<string, { write: (bytes: Uint8Array) => void; getRendered: () => number }>());
-  const registerWrite = useMemo(() =>
-    (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => { writeCallbacks.current.set(sid, { write: fn, getRendered }); },
-  []);
+  const registerWrite = useMemo(() => {
+    // round-99: a removable registration — without unregister, closed
+    // session callbacks lived in the map forever and the sync loop polled
+    // them every 5s (unbounded no-op polling as sessions accumulate).
+    const reg = (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => {
+      writeCallbacks.current.set(sid, { write: fn, getRendered });
+      return () => { writeCallbacks.current.delete(sid); };
+    };
+    reg.unregister = (sid: string) => { writeCallbacks.current.delete(sid); };
+    return reg;
+  }, []);
   // round-86: stable getLiveSids ref — an inline arrow recreated the SSE
   // effect every 3s poll (stream teardown/re-establish, dropped frames).
   const getLiveSidsRef = useRef(() => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid));

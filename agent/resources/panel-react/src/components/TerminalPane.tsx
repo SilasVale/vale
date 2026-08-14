@@ -61,7 +61,10 @@ export function TerminalPane({ session, registerWrite }: {
 
     // Register the SSE write callback: dedup via the frame's absolute start
     // offset, and skip while a sync read is in flight (round-68).
-    registerWrite(session.sid, (bytes) => {
+    // round-99: registerWrite returns an unregister fn — the callback must
+    // leave the map when this pane unmounts, or the 5s sync loop polls
+    // closed-session entries forever (unbounded no-op polling).
+    const unregister = registerWrite(session.sid, (bytes) => {
       // The SSE hook passed the frame; TerminalPane only needs the bytes
       // (the hook already validated session_id). Dedup is done by the hook
       // caller in useSSE — here we just write + advance.
@@ -102,6 +105,7 @@ export function TerminalPane({ session, registerWrite }: {
       sub.dispose();
       term.dispose();
       termRef.current = null;
+      unregister();
     };
   }, [session.sid, registerWrite]);
 

@@ -138,9 +138,23 @@ impl SerialPool {
             port: format!("{port_name}: {e}"),
         })?;
 
+        // round-99: the exclusivity check above was check-then-act — two
+        // concurrent opens of the same port BOTH passed the check (lock
+        // released before the blocking open), then the loser's insert
+        // clobbered the winner's entry, and the loser returned a port it no
+        // longer owned. Re-check UNDER THE LOCK after the open: the loser
+        // closes its just-opened handle and reports the real "in use" error
+        // (what round-87 intended).
         let id = format!("port-{}", NEXT_PORT_ID.fetch_add(1, Ordering::Relaxed));
-        recover_guard(&self.ports)
-            .insert(
+        {
+            let mut guard = recover_guard(&self.ports);
+            if guard.values().any(|p| p.port_name == port_name) {
+                drop(port);
+                return Err(DeviceError::SerialPortNotOpen {
+                    id: format!("{port_name} already in use"),
+                });
+            }
+            guard.insert(
                 id.clone(),
                 OpenPort {
                     port,
@@ -148,6 +162,7 @@ impl SerialPool {
                     baud_rate: baud,
                 },
             );
+        }
 
         Ok((id, baud))
     }

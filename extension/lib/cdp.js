@@ -185,6 +185,19 @@ export async function send(tabId, method, params = {}) {
   return chrome.debugger.sendCommand({ tabId }, method, params);
 }
 
+/** Detach + forget a device's controlled tab (unpair/revoke cleanup —
+ *  round-99: an unpaired device's proxy tab stayed attached forever, since
+ *  the R98 URL-recoverable guard treats its proxy URL as live). */
+export async function releaseDeviceTab(device) {
+  const tabId = state.controlledTabs[device];
+  if (tabId && attached.has(tabId)) {
+    try { await chrome.debugger.detach({ tabId }); } catch {}
+    attached.delete(tabId);
+    await persistAttached();
+  }
+  delete state.controlledTabs[device];
+}
+
 function deviceForTab(tabId) {
   for (const [d, id] of Object.entries(state.controlledTabs)) if (id === tabId) return d;
   return null;
