@@ -52,6 +52,7 @@ import authPlugin from "./plugins/auth.js";
 import devicesPlugin from "./plugins/devices.js";
 import mcpPlugin from "./plugins/mcp.js";
 import translatePlugin from "./plugins/translate.js";
+import adminPlugin from "./plugins/admin.js";
 // Plugin context (round-73): built once per isolate with the shared helpers;
 // routes registered here run first in handleConsole (and /v1 via handleGateway
 // once migrated). Lazy so a reload never re-registers duplicate routes.
@@ -59,7 +60,7 @@ let __pluginCtx = null;
 function ensurePluginCtx() {
   if (__pluginCtx) return __pluginCtx;
   __pluginCtx = createPluginContext(null, { jsonOk, jsonError, readJson, CORS_HEADERS });
-  registerPlugins(__pluginCtx, [authPlugin, devicesPlugin, mcpPlugin, translatePlugin]);
+  registerPlugins(__pluginCtx, [authPlugin, devicesPlugin, mcpPlugin, translatePlugin, adminPlugin]);
   return __pluginCtx;
 }
 
