@@ -52,7 +52,18 @@ pub fn remember(kind: &str, target: &str, label: &str, params: &serde_json::Map<
     // Preserve the open params so a reconnect passes them through (baud,
     // parity, data/stop bits, rows/cols — the target string alone would lose
     // the ?baud= for serial if the caller passed them separately).
-    entry.insert("params".into(), serde_json::Value::Object(params.clone()));
+    // round-92: the params were persisted VERBATIM — an ssh open's "password"
+    // landed in vale-connections.json in the clear and was returned by
+    // terminal_saved_connections to any token holder. SSH passwords belong in
+    // the keychain (secret_set/secret_get); persist everything except
+    // credentials — terminal_connect_saved replays the config and ssh.rs's
+    // keychain fallback supplies the password.
+    let safe: serde_json::Map<String, serde_json::Value> = params
+        .iter()
+        .filter(|(k, _)| k.as_str() != "password")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    entry.insert("params".into(), serde_json::Value::Object(safe));
     map.insert(key, serde_json::Value::Object(entry));
     write_all(&map)
 }
