@@ -42,7 +42,10 @@ function Download-File($Url, $Dest, [switch]$Force) {
 }
 
 function Get-TunnelId($cloudflared, $Name) {
+    $oldEAPt = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $list = & $cloudflared tunnel list --name $Name 2>&1 | Out-String
+    $ErrorActionPreference = $oldEAPt
     if ($list -match '([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})') { return $Matches[1] }
     return $null
 }
@@ -233,14 +236,27 @@ if ($apiToken) {
     Write-Host "  already logged in - skipping browser auth."
 } else {
     Write-Host "  >>> A browser will open for Cloudflare authorization - click Authorize, then come back."
+    $oldEAPl = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $cloudflared tunnel login
-    if ($LASTEXITCODE -ne 0) { throw "cloudflared tunnel login failed (exit $LASTEXITCODE)" }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $oldEAPl
+    if ($code -ne 0) { throw "cloudflared tunnel login failed (exit $code)" }
 }
 
 # Authoritative hostname: prefer reusing the lowest-numbered existing
 # vale-agent-dN tunnel (the original device). A buggy earlier run can leave a
 # stale d2 in the config/hostname files; the tunnel list is the ground truth.
+# EAP=Continue guard: cloudflared logs its version WRN to stderr, which PS 5.1
+# turns into a terminating NativeCommandError under EAP=Stop — the whole setup
+# aborted at [3/7] (d1, live: "your version X is outdated" killed the install
+# before the tunnel config, boot task and agent start ever ran). Scope EAP to
+# Continue like the winget/route-dns calls; a real failure still aborts via
+# the $LASTEXITCODE check below.
+$oldEAP4 = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $tunnels = & $cloudflared tunnel list 2>&1 | Out-String
+$ErrorActionPreference = $oldEAP4
 $ns = [regex]::Matches($tunnels, "vale-agent-d(\d+)") | ForEach-Object { [int]$_.Groups[1].Value }
 if ($ns.Count -gt 0) {
     $lowest = ($ns | Measure-Object -Minimum).Minimum
@@ -260,7 +276,10 @@ $tunnelName = "vale-agent-" + ($Hostname -split '\.')[0]
 Write-Host "`n[4/7] tunnel create + DNS route ($tunnelName)"
 $tunnelId = Get-TunnelId $cloudflared $tunnelName
 if (-not $tunnelId) {
+    $oldEAPc = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $created = & $cloudflared tunnel create $tunnelName 2>&1 | Out-String
+    $ErrorActionPreference = $oldEAPc
     Write-Host "  $($created.Trim())"
     $tunnelId = Get-TunnelId $cloudflared $tunnelName
     if (-not $tunnelId) { throw "could not create tunnel; output: $created" }
@@ -271,9 +290,13 @@ Write-Host "  tunnel id: $tunnelId"
 # cloudflared fails with 1003 when the hostname already has a record, and the
 # old "already exists - route in place" fallback was wrong: a bare CNAME is
 # NOT a tunnel route, so the tunnel 530'd with error 1033 (no route).
+$oldEAPr = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & $cloudflared tunnel route dns $tunnelName $Hostname
-if ($LASTEXITCODE -ne 0) {
-    throw "tunnel route dns failed (exit $LASTEXITCODE)"
+$rc = $LASTEXITCODE
+$ErrorActionPreference = $oldEAPr
+if ($rc -ne 0) {
+    throw "tunnel route dns failed (exit $rc)"
 }
 
 # 5. Tunnel config
@@ -363,8 +386,12 @@ if (Test-Path $trayExe) {
 #    ~/.cloudflared/config.yml and never sees the one we wrote to the
 #    Administrator profile (connector stays up but never connects).
 Write-Host "`n[7/7] cloudflared service"
+$oldEAPk = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $tunnelToken = (& $cloudflared tunnel token $tunnelName 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0) { throw "cloudflared tunnel token failed: $tunnelToken" }
+$tk = $LASTEXITCODE
+$ErrorActionPreference = $oldEAPk
+if ($tk -ne 0) { throw "cloudflared tunnel token failed: $tunnelToken" }
 # cloudflared writes its INF logs to stderr, which Windows PowerShell 5.1 turns
 # into terminating NativeCommandErrors under $ErrorActionPreference=Stop (even
 # with 2>$null). Scope EAP to Continue around the cloudflared calls and rely on
