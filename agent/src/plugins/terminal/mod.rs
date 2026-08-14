@@ -216,7 +216,12 @@ pub fn clean_terminal_output(raw: &[u8]) -> String {
             // BEL) appears in every bash prompt, so leaving it in makes AI-read
             // screen text full of ESC]0;... noise. Ends at BEL (\x07) or ST
             // (ESC \).
+            // round-105: an OSC that runs to the END of the buffer with no
+            // terminator is truncated garbage — the OLD code consumed it all
+            // and SWALLOWED the real output after it (up to the next BEL).
+            // Only skip OSC sequences that actually terminate.
             i += 2;
+            let start = i;
             let mut term = false;
             while i < bytes.len() && bytes[i] != 0x07 {
                 if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
@@ -226,7 +231,14 @@ pub fn clean_terminal_output(raw: &[u8]) -> String {
                 }
                 i += 1;
             }
-            if !term && i < bytes.len() { i += 1; } // skip the BEL (ST already consumed)
+            if i >= bytes.len() && !term {
+                // Unterminated OSC — keep everything from the ESC on (the
+                // content is real output; only a complete sequence is noise).
+                out.push_str(&String::from_utf8_lossy(&bytes[start - 2..]));
+                break;
+            } else if !term && i < bytes.len() {
+                i += 1; // skip the BEL (ST already consumed)
+            }
         } else if bytes[i] == b'\r' {
             // \r\n → \n, standalone \r → \n
             if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {

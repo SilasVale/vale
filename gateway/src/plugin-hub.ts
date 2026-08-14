@@ -108,12 +108,15 @@ export class PluginHubDO {
     // the check. A live, pinging socket therefore kept browser_* control
     // past the 30-day link TTL (the exact hole round-92 claimed to close).
     // Validate the bound token on EVERY frame now — pings included.
+    // round-105: a socket with NO bound token (hello never carried one, or
+    // the DO restarted and the storage key was lost) skipped validation
+    // entirely — a 30-day-TTL bypass for any socket that connected without
+    // a token. Close it: every legit socket binds a token at hello.
     if (msg.type !== "hello") {
       const tok = await this.state.storage.get(`ws-token:${(ws as any).id || ""}`);
-      if (tok) {
-        const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
-        if (!link) { ws.close(4001, "link expired"); return; }
-      }
+      if (!tok) { ws.close(4001, "no bound token"); return; }
+      const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
+      if (!link) { ws.close(4001, "link expired"); return; }
     }
     if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: msg.t })); return; }
     if (msg.type === "hello") {
