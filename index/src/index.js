@@ -32,6 +32,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
     --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
     --accent-ink: #0b7a6e;
     --accent-soft: #e7f5f2;
+    --focus-ring-soft: rgba(11, 122, 110, 0.14);
     --danger: #dc2626;
     --radius: 14px;
     --radius-sm: 10px;
@@ -59,7 +60,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
                  text-decoration: none; font-size: 14px; font-weight: 600; padding: 10px 18px; border-radius: var(--radius-sm);
                  transition: background .15s ease, transform .15s ease; }
   .install-btn:hover { background: var(--accent-ink); transform: translateY(-1px); }
-  .install-btn:focus-visible { box-shadow: 0 0 0 3px rgba(14, 147, 132, 0.14); outline: none; } /* unified .14 focus ring */
+  .install-btn:focus-visible { box-shadow: 0 0 0 3px var(--focus-ring-soft); outline: none; } /* unified .14 focus ring */
   .install-note { color: var(--faint); font-size: 12px; }
 
   .steps { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }

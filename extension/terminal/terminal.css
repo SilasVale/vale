@@ -1,6 +1,6 @@
 /* Unified focus ring + slim scrollbar (round-54): same teal ring and
    8px scrollbars as every other Vale surface. */
-:focus-visible { outline: 2px solid rgba(14,147,132,.45); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
 *::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
@@ -20,6 +20,8 @@
   --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
+  --focus-ring: rgba(11, 122, 110, 0.45);
+  --focus-ring-soft: rgba(11, 122, 110, 0.14);
   --danger: #dc2626;
   --lane-ds: #4f6bed;   /* SSH tab dot (panel/console --lane-ds) */
   --lane-or: #d97706;   /* serial tab dot (panel/console --lane-or) */
