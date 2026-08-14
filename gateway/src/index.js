@@ -47,7 +47,7 @@ export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStr
 export { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess };
 export { rawWithModel, scanTopLevelModel, estimateTokens };
 export { PluginHubDO };
-import { createPluginContext, registerPlugins, dispatch } from "./plugins/registry.js";
+import { createPluginContext, registerPlugins, dispatch } from "./plugins/registry.ts";
 import authPlugin from "./plugins/auth.js";
 import devicesPlugin from "./plugins/devices.js";
 import mcpPlugin from "./plugins/mcp.js";
