@@ -46,7 +46,7 @@ export class PluginHubDO {
     }
     if (url.pathname === "/call") {
       const { tool, params, requestId } = await request.json() as { tool?: string; params?: any; requestId?: string };
-      return this.callPlugin(tool, params, requestId);
+      return this.callPlugin(tool || "", params, requestId || "");
     }
     if (url.pathname === "/status") {
       const sockets = this.state.getWebSockets?.() || [];
