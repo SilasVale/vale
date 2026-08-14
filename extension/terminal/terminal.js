@@ -340,7 +340,7 @@ async function startSharedStream() {
       } else if (!res.ok) {
         if (activeSid) setStatus(`stream error ${res.status}`, true);
       } else {
-        if (activeSid && statusEl.textContent === "reconnecting…") setStatus("");
+        setStreamDown(false);
       }
       if (!res.ok || !res.body) {
         setTimeout(connect, backoff());
@@ -361,6 +361,9 @@ async function startSharedStream() {
           while ((idx = buffer.indexOf("\n\n")) !== -1) {
             const raw = buffer.slice(0, idx);
             buffer = buffer.slice(idx + 2);
+            // Any frame (incl. the `: ping` heartbeat) proves the stream is
+            // alive (round-60).
+            setStreamDown(false);
             const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
             if (!dataLine) continue;
             let frame;
@@ -396,12 +399,27 @@ async function startSharedStream() {
         await reader.cancel().catch(() => {});
       }
     } catch {
+      setStreamDown(true);
       for (const s of sessions.values()) if (!s.closed) s.needSync = true;
     }
     // Stream dropped or rejected → reconnect with jittered backoff (round-59).
     setTimeout(connect, backoff());
   };
   connect();
+}
+
+// SSE connection state (round-60): a dedicated flag rendered as a fixed
+// status element — the old "reconnecting…" was one line of text that any
+// later setStatus overwrote. Any frame (incl. the `: ping` heartbeat)
+// clears it.
+let streamDown = false;
+function setStreamDown(v) {
+  if (streamDown === v) return;
+  streamDown = v;
+  const el = $("sse-status");
+  if (!el) return;
+  el.classList.toggle("hidden", !v);
+  el.textContent = v ? "reconnecting…" : "";
 }
 
 /** Create the xterm + tab for a session and wire it to the device.

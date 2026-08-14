@@ -618,6 +618,9 @@ async function startSharedStream() {
           while ((idx = buffer.indexOf("\n\n")) !== -1) {
             const raw = buffer.slice(0, idx);
             buffer = buffer.slice(idx + 2);
+            // Any frame (incl. the 60s `: ping` heartbeat) proves the stream
+            // is alive (round-60).
+            setStreamDown(false);
             // SSE spec: an event may carry MULTIPLE data: lines which must be
             // joined. The server emits single lines today, but joining is
             // spec-compliant and future-proof (round-59).
@@ -650,12 +653,26 @@ async function startSharedStream() {
         }
       } finally { await reader.cancel().catch(() => {}); }
     } catch {
-      setStatus("reconnecting…");
+      setStreamDown(true);
       for (const s of sessions.values()) if (!s.closed) s.needSync = true;
     }
     setTimeout(connect, backoff());
   };
   connect();
+}
+
+// SSE connection state (round-60): a dedicated flag rendered as a fixed
+// status element — "reconnecting…" via setStatus was one line of text that
+// any later setStatus overwrote, and nothing cleared it on reconnect. Any
+// frame (incl. the 60s `: ping` heartbeat) clears it.
+let streamDown = false;
+function setStreamDown(v) {
+  if (streamDown === v) return;
+  streamDown = v;
+  const el = $("sse-status");
+  if (!el) return;
+  el.classList.toggle("hidden", !v);
+  el.textContent = v ? "reconnecting…" : "";
 }
 
 // ── Line ingestion + local persistence (localStorage, no IDB needed) ──
