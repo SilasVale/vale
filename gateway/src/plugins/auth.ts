@@ -12,7 +12,7 @@
  * derived here the same way handleConsole did: url.protocol === "https:".
  */
 
-import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, type User } from "../store.ts";
+import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, globalSettingEnabled, type User } from "../store.ts";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "../auth.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { MODELS, OG_ZEN_CHAT } from "../channels.ts";
@@ -205,9 +205,12 @@ async function mePutUsproxy(request: Request, env: any): Promise<Response> {
     return jsonError(403, "Admin only", "forbidden");
   }
   const body = await readJson(request);
-  await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : null);
+  // round-94: an explicit OFF is persisted as "0" (not deleted) so it
+  // shadows an env/US_PROXY Worker var — deleting let the env fallback
+  // bounce the toggle straight back ON.
+  await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : "0");
   const v = await getGlobalSetting(env, "US_PROXY");
-  return jsonOk({ ok: true, enabled: !!v });
+  return jsonOk({ ok: true, enabled: globalSettingEnabled(v) });
 }
 
 async function mePutKeys(request: Request, env: any): Promise<Response> {
