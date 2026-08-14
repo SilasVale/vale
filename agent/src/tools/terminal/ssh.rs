@@ -31,12 +31,26 @@ impl SshBackend {
                 pass = stored;
             }
         }
-        let session = SshSession::connect(
-            &host, port, &user,
-            if pass.is_empty() { None } else { Some(&pass) },
-        ).await?;
+        // round-107: SshSession::connect's internal 15s only bounds the TCP
+        // + handshake — the AUTH and channel-open phases were bare awaits; a
+        // peer that completes the handshake then stalls (tarpit, sshd stuck
+        // on reverse-DNS) hung terminal_open forever. Bound the whole
+        // connect+auth+open_shell sequence.
+        let (session, output_rx, write_tx, resize_tx) = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            async {
+                let session = SshSession::connect(
+                    &host, port, &user,
+                    if pass.is_empty() { None } else { Some(&pass) },
+                ).await?;
+                let (output_rx, write_tx, resize_tx) = session.open_shell(rows, cols).await?;
+                Ok::<_, DeviceError>((session, output_rx, write_tx, resize_tx))
+            },
+        )
+        .await
+        .map_err(|_| DeviceError::SshTimeout { host: host.to_string() })??;
 
-        let (mut output_rx, write_tx, resize_tx) = session.open_shell(rows, cols).await?;
+        let mut output_rx = output_rx;
 
         // Forward raw output bytes as TermOutput (bounded send — awaits)
         tokio::spawn(async move {

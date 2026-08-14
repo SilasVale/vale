@@ -665,6 +665,10 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // quiet expiry breaks idle — marker-less backends must
                     // not loop to the deadline.
                     let mut quiet_extended = false;
+                    // round-107: when the extension is taken, the second
+                    // expiry fires marker_confirm after the FIRST expiry
+                    // (not 2x quiet_dur, and never a future panic).
+                    let mut quiet_confirm_at: Option<Instant> = None;
                     let mut result = String::new();
                     // round-105: cap the session-mode result like the local
                     // mode (1 MB tail) — the old code grew to the command's
@@ -771,6 +775,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             if let Some(at) = marker_seen_at {
                                 if at.elapsed() >= marker_confirm {
                                     marker_seen_at = None;
+                                    // round-107: output continuing past the
+                                    // confirm window means the marker was
+                                    // fake — its exit code must not leak
+                                    // into the final result.
+                                    marker_code = None;
                                 }
                             }
                             // Finalize everything that can no longer be a
@@ -807,15 +816,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 // idle.
                                 if !quiet_extended {
                                     quiet_extended = true;
-                                    // round-106: total quiet tolerance becomes
-                                    // quiet_dur + marker_confirm (~500ms) — a
-                                    // real marker flow (echo → command runs →
-                                    // marker at next prompt) needs that, not
-                                    // 2x quiet_dur (~400ms). Backdate the
-                                    // start so the second expiry fires after
-                                    // marker_confirm.
-                                    quiet_since = Some(Instant::now() - marker_confirm + quiet_dur);
-                                } else {
+                                    quiet_since = Some(Instant::now());
+                                    quiet_confirm_at = Some(Instant::now() + marker_confirm);
+                                } else if quiet_confirm_at.map(|t| Instant::now() >= t).unwrap_or(true) {
                                     wait_reason = "idle";
                                     break;
                                 }
@@ -986,6 +989,16 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         // the child exited but a daemon grandchild keeps rx
                         // open forever.
                         if let Ok(Some(_)) = child.try_wait() {
+                            // round-107: the exit-flush drain used try_recv —
+                            // the pipe_reader tasks may still hold the final
+                            // bytes (pipe buffer not yet read into the
+                            // channel), so a fast exit lost the tail. Give
+                            // the readers one bounded tick to flush, then
+                            // drain.
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_millis(50),
+                                rx.recv(),
+                            ).await;
                             // Drain whatever the exit flushed out (round-57):
                             // skipping this silently dropped up to 16 chunks
                             // (~128KB) of tail output with truncated unset.

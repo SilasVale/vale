@@ -165,21 +165,25 @@ impl TermBackend for PtyBackend {
         // it — the timeout abandons the stalled task (the fd stays valid;
         // a later drain unblocks the write_all which then completes into a
         // consumed buffer).
-        let writer = self.writer.clone();
+        // round-107: spawn_blocking + timeout ABANDONED a blocked task per
+        // timeout (threads piled up on the blocking pool, each holding the
+        // writer mutex so later writes blocked behind it too). The PTY master
+        // fd is inherently blocking — the sound bounded approach without
+        // leaking threads is: try_lock (never blocks the async worker; a
+        // held mutex = a stalled write is in progress = we must not pile on),
+        // and if the lock is free, the queue is not full, so a single
+        // blocking write completes quickly.
         let d = data.to_vec();
         Box::pin(async move {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                tokio::task::spawn_blocking(move || {
-                    let mut w = writer.lock().unwrap_or_else(|p| p.into_inner());
+            for _ in 0..10 {
+                if let Ok(mut w) = self.writer.try_lock() {
                     let _ = w.write_all(&d);
                     let _ = w.flush();
-                }),
-            ).await {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(e)) => Err(format!("pty write task failed: {e}")),
-                Err(_) => Err("pty write timed out after 5s (input queue full)".into()),
+                    return Ok(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
+            Err("pty write timed out (input queue full or write in progress)".into())
         })
     }
     fn resize(&self, rows: u16, cols: u16) {

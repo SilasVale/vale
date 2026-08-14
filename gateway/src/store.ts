@@ -211,42 +211,40 @@ export async function createUser(env: Env, { username, password, inviteCode, rol
   const name = String(username || "").trim();
   if (!/^[A-Za-z0-9_.-]{2,32}$/.test(name)) throw new Error("Username must be 2-32 chars: letters/digits/_ . -");
   if (!password || String(password).length < 6) throw new Error("Password must be at least 6 chars");
-  if (await env.KEYS.get(`user:${name}`)) throw new Error("Username already taken");
+  // round-107: serialize the WHOLE create per name — a bare check left a
+  // window where concurrent same-name registrations both passed and
+  // overwrote each other's record while both tokens stayed live.
+  return withKeyLock(`user:${name}`, async () => {
+    if (await env.KEYS.get(`user:${name}`)) throw new Error("Username already taken");
 
-  if (role !== "admin") {
-    const code = String(inviteCode || "").trim();
-    // round-94: invite consumption was check-then-act on eventually-consistent
-    // KV — N parallel registrations with the SAME code all saw it present and
-    // all proceeded, minting N accounts from one one-time invite (each with
-    // its own rate-limit budget). The claim lock added in R94 was still
-    // get-then-put (non-atomic on KV, same hole with a different key).
-    // round-95: serialize the consume per invite code within this isolate
-    // (withKeyLock — Workers isolates are single-threaded, so same-isolate
-    // concurrent registrations queue here and only one passes the
-    // invite-present check); the TTL claim still bounds cross-isolate races.
-    const r = await withKeyLock(`invclaim:${code}`, async () => {
-      const claim = await env.KEYS.get(`invclaim:${code}`);
-      if (claim) throw new Error("Invite code already in use");
-      await env.KEYS.put(`invclaim:${code}`, "1", { expirationTtl: 60 });
-      if (!(await env.KEYS.get(`invite:${code}`))) {
-        await env.KEYS.delete(`invclaim:${code}`);
-        throw new Error("Invalid invite code");
-      }
-      await env.KEYS.delete(`invite:${code}`);
-    });
-    void r;
-  }
+    if (role !== "admin") {
+      const code = String(inviteCode || "").trim();
+      // round-94/95: invite consumption is serialized per code (the TTL
+      // claim bounds cross-isolate races).
+      const r = await withKeyLock(`invclaim:${code}`, async () => {
+        const claim = await env.KEYS.get(`invclaim:${code}`);
+        if (claim) throw new Error("Invite code already in use");
+        await env.KEYS.put(`invclaim:${code}`, "1", { expirationTtl: 60 });
+        if (!(await env.KEYS.get(`invite:${code}`))) {
+          await env.KEYS.delete(`invclaim:${code}`);
+          throw new Error("Invalid invite code");
+        }
+        await env.KEYS.delete(`invite:${code}`);
+      });
+      void r;
+    }
 
-  const salt = randomHex(16);
-  const passwordHash = await hashPassword(String(password), salt);
-  const token = generateGatewayToken();
-  // user ID = username → readable KV keys: user:<name> / ukeys:<name> / token:<t> → <name>
-  const user = { id: name, username: name, role, enabled: true, createdAt: Date.now(), passwordHash, salt, token };
-  await env.KEYS.put(`user:${name}`, JSON.stringify(user));
-  await env.KEYS.put(`token:${token}`, name);
-  cset(`user:${name}`, user);
-  cset(`token:${token}`, name);
-  return { id: name, username: name, role, token };
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(String(password), salt);
+    const token = generateGatewayToken();
+    // user ID = username → readable KV keys: user:<name> / ukeys:<name> / token:<t> → <name>
+    const user = { id: name, username: name, role, enabled: true, createdAt: Date.now(), passwordHash, salt, token };
+    await env.KEYS.put(`user:${name}`, JSON.stringify(user));
+    await env.KEYS.put(`token:${token}`, name);
+    cset(`user:${name}`, user);
+    cset(`token:${token}`, name);
+    return { id: name, username: name, role, token };
+  });
 }
 
 export async function getUser(env: Env, id: string): Promise<User | null> {

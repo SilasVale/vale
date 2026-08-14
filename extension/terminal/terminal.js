@@ -875,7 +875,16 @@ async function init() {
 function pruneIdb(records) {
   const MAX_RECORDS = 40;
   const MAX_LINES = 300000;
-  const sorted = records.slice().sort((a, b) => (a.closedAt || 0) - (b.closedAt || 0));
+  // round-107: the old sort put LIVE sessions (closedAt=0) FIRST — an
+  // overflow dropped active sessions' records before any closed one. Closed
+  // records are the least valuable (their content is already exported/
+  // retained); sort closed-first, live last.
+  const sorted = records.slice().sort((a, b) => {
+    const ac = a.closedAt ? 1 : 0;
+    const bc = b.closedAt ? 1 : 0;
+    if (ac !== bc) return bc - ac; // closed (1) before live (0)
+    return (a.closedAt || 0) - (b.closedAt || 0); // older closed first
+  });
   const dropped = [];
   let lines = sorted.reduce((n, r) => n + (r.lines?.length || 0), 0);
   while (sorted.length - dropped.length > MAX_RECORDS || lines > MAX_LINES) {
