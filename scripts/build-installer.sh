@@ -45,8 +45,8 @@ done
 # NOTE: *.nsi is intentionally excluded — the NSIS script is independent of
 # the exe build (editing it must not require a rebuild).
 NEWEST_IN="$(find "$ROOT/agent/src" "$ROOT/agent/vale-command-core" "$ROOT/agent/vale-tray" \
-  "$ROOT/agent/deploy" "$ROOT/agent/Cargo.toml" \
-  \( -name '*.rs' -o -name '*.toml' -o -name '*.ps1' -o -name '*.bat' -o -name '*.ico' \) \
+  "$ROOT/agent/Cargo.toml" \
+  \( -name '*.rs' -o -name '*.toml' \) \
   -newer "$VALEEXE" -print | head -1)"
 if [ -n "$NEWEST_IN" ]; then
   echo "!! $NEWEST_IN is newer than the release vale-agent.exe — run ./scripts/build.sh agent (release) first"
