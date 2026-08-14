@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { initTransport } from "./lib/api";
 import { useSessions } from "./hooks/useSessions";
+import { useSSE } from "./hooks/useSSE";
 import { TerminalPane } from "./components/TerminalPane";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
@@ -16,6 +17,12 @@ export function App() {
   const [connError, setConnError] = useState("");
 
   const sessions = useSessions(connected);
+  // SSE: per-session xterm write callbacks registered by TerminalPane.
+  const writeCallbacks = useRef(new Map<string, (bytes: Uint8Array) => void>());
+  const registerWrite = useMemo(() =>
+    (sid: string, fn: (bytes: Uint8Array) => void) => { writeCallbacks.current.set(sid, fn); },
+  []);
+  const sseState = useSSE(connected, writeCallbacks);
 
   function connect() {
     if (!host || !token) { setConnError("host + token required"); return; }
@@ -59,10 +66,10 @@ export function App() {
             </div>
           </div>
         ) : (
-          sessions.sessions.map((s) => <TerminalPane key={s.sid} session={s} />)
+          sessions.sessions.map((s) => <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />)
         )}
       </div>
-      <StatusBar sessions={sessions.sessions} status={sessions.status} sseState="connecting" />
+      <StatusBar sessions={sessions.sessions} status={sessions.status} sseState={sseState} />
     </div>
   );
 }

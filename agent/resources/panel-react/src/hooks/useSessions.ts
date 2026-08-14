@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { callApi, callTool } from "../lib/api";
+import { callTool } from "../lib/api";
 
 // Session state (migrated from panel.js) — the xterm instance + render
 // cursor live OUTSIDE React state (imperative, heavy); React tracks only the

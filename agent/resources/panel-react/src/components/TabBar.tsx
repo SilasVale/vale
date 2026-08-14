@@ -1,4 +1,4 @@
-import React from "react";
+// react-jsx: no React import needed
 import type { Session } from "../hooks/useSessions";
 
 export function TabBar({ sessions, activeSid, onActivate, onClose }: {
