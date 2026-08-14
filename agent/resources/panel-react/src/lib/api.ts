@@ -16,7 +16,10 @@ export function getHost() { return hostname; }
 
 /** Fetch a path on the device with the bearer token. Returns parsed JSON. */
 export async function callApi(path: string, init: RequestInit = {}): Promise<any> {
-  const res = await fetch(`https://${hostname}${path}`, {
+  // round-107: the protocol was hardcoded https:// — the loopback on-device
+  // panel (http://127.0.0.1:18080/panel) could never reach the agent.
+  const proto = window.location.protocol === "http:" ? "http:" : "https:";
+  const res = await fetch(`${proto}//${hostname}${path}`, {
     ...init,
     signal: AbortSignal.timeout(30_000),
     headers: {

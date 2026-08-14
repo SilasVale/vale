@@ -147,7 +147,9 @@ export function useSSE(
     const connect = async () => {
       if (!alive) return;
       try {
-        const res = await fetch(`https://${hostname}/api/events/term`, {
+        // round-107: match the page protocol (loopback http panel works).
+        const proto = window.location.protocol === "http:" ? "http:" : "https:";
+        const res = await fetch(`${proto}//${hostname}/api/events/term`, {
           headers: { authorization: `Bearer ${token}` },
         });
         if (res.status === 401) { setSseState("down"); setTimeout(connect, backoff()); return; }

@@ -246,11 +246,10 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   // The `if (proxyMatch)` guard from index.js is the route's match fn below —
   // the handler is only reached when the regex matched.
   const proxyMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/proxy(.*)$`))!;
-  // round-106: a malformed percent-escape in the device name (e.g. %zz)
+  // round-106/107: a malformed percent-escape in the device name (e.g. %zz)
   // made decodeURIComponent throw URIError — an unhandled 500. 400 instead.
-  let deviceName: string;
-  try { deviceName = decodeURIComponent(proxyMatch[1]); }
-  catch { return jsonError(400, "Invalid device name", "invalid_request"); }
+  const deviceName = decodeDeviceName(proxyMatch[1]);
+  if (deviceName === null) return jsonError(400, "Invalid device name", "invalid_request");
   const d = await getDevice(env, deviceName);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
   const user = await requireSession(request, env);
@@ -348,7 +347,9 @@ async function handleDeviceMcp(request: Request, env: any, url: URL): Promise<Re
   if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
   const path = url.pathname;
   const mcpMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/mcp$`))!;
-  const d = await getDevice(env, decodeURIComponent(mcpMatch[1]));
+  const devName = decodeDeviceName(mcpMatch[1]);
+  if (devName === null) return jsonError(400, "Invalid device name", "invalid_request");
+  const d = await getDevice(env, devName);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
   return jsonOk({ name: d.name, hostname: d.hostname, mcp: mcpConfig(d) });
 }
@@ -359,11 +360,20 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
   if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
   const path = url.pathname;
   const delMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)$`))!;
-  await deleteDevice(env, decodeURIComponent(delMatch[1]));
+  const delName = decodeDeviceName(delMatch[1]);
+  if (delName === null) return jsonError(400, "Invalid device name", "invalid_request");
+  await deleteDevice(env, delName);
   return jsonOk({ ok: true });
 }
 
 /* ---------------- Device module helpers (copied verbatim from index.js) ---------------- */
+
+// round-107: decode a URL-encoded device name, null on malformed escapes
+// (a raw decodeURIComponent threw URIError → unhandled 500).
+function decodeDeviceName(seg: string): string | null {
+  try { return decodeURIComponent(seg); }
+  catch { return null; }
+}
 
 function validateDevice(body: any): Device {
   const name = String(body?.name || "").trim();

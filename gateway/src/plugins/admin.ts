@@ -116,7 +116,10 @@ async function adminSetUserEnabled(request: Request, env: Env, url: URL): Promis
   const user = await requireSession(request, env);
   if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
   const path = url.pathname;
-  const id = decodeURIComponent(path.slice(`${ADMIN_BASE}/users/`.length, -"/enabled".length));
+  // round-107: malformed percent-escape in the user id threw URIError (500).
+  let id: string;
+  try { id = decodeURIComponent(path.slice(`${ADMIN_BASE}/users/`.length, -"/enabled".length)); }
+  catch { return jsonError(400, "Invalid user id", "invalid_request"); }
   const body = await readJson(request);
   if (id === ADMIN_ID) return jsonError(400, "Cannot disable the admin account", "invalid_request");
   const u = await setUserEnabled(env, id, !!body.enabled);
