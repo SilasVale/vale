@@ -33,7 +33,7 @@ impl TerminalManager {
     pub async fn term_terminate(&self, _sid: &str) -> Result<(), DeviceError> {
         Err(disabled_err())
     }
-    pub async fn term_try_execute(&self, _sid: &str) -> bool { false }
+    pub async fn term_try_execute(&self, _sid: &str) -> Result<bool, DeviceError> { Err(disabled_err()) }
     pub async fn term_release_execute(&self, _sid: &str) {}
     pub async fn term_exit_code(&self, _sid: &str) -> Option<i32> { None }
     pub async fn term_select(&self, _sid: &str) -> Result<(), DeviceError> {

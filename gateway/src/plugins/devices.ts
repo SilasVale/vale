@@ -246,7 +246,11 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   // The `if (proxyMatch)` guard from index.js is the route's match fn below —
   // the handler is only reached when the regex matched.
   const proxyMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/proxy(.*)$`))!;
-  const deviceName = decodeURIComponent(proxyMatch[1]);
+  // round-106: a malformed percent-escape in the device name (e.g. %zz)
+  // made decodeURIComponent throw URIError — an unhandled 500. 400 instead.
+  let deviceName: string;
+  try { deviceName = decodeURIComponent(proxyMatch[1]); }
+  catch { return jsonError(400, "Invalid device name", "invalid_request"); }
   const d = await getDevice(env, deviceName);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
   const user = await requireSession(request, env);

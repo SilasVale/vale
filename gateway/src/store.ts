@@ -547,7 +547,17 @@ export async function upsertDevice(env: Env, device: Device): Promise<Device> {
   return withKeyLock(DEVICES_KEY, async () => {
     const devs = await readDevicesRaw(env);
     const i = devs.findIndex((d) => d.name === device.name);
-    if (i >= 0) devs[i] = device; else devs.push(device);
+    if (i >= 0) {
+      // round-106: an admin edit REPLACED the whole record and wiped
+      // proxySecret — /panel/ token injection broke permanently until
+      // re-registration. Preserve the secret unless the caller sets one.
+      if (!device.proxySecret && devs[i].proxySecret) {
+        device = { ...device, proxySecret: devs[i].proxySecret };
+      }
+      devs[i] = device;
+    } else {
+      devs.push(device);
+    }
     await saveDevices(env, devs);
     return device;
   });

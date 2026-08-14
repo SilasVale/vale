@@ -677,7 +677,17 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             *truncated = true;
                             let drop = result.len() + s.len() - MAX_SESSION_BYTES;
                             let drop = drop.min(result.len());
-                            result.drain(..drop);
+                            // round-106: String::drain panics on a non-char
+                            // boundary — terminal output is arbitrary bytes
+                            // (lossy-converted), so a multi-byte flood
+                            // (CJK/emoji) panicked inside the wait loop and
+                            // wedged the session busy flag forever. Walk
+                            // back to a char boundary before draining.
+                            let mut bound = drop;
+                            while bound > 0 && !result.is_char_boundary(bound) {
+                                bound -= 1;
+                            }
+                            result.drain(..bound);
                         }
                         result.push_str(s);
                     };
@@ -797,7 +807,14 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 // idle.
                                 if !quiet_extended {
                                     quiet_extended = true;
-                                    quiet_since = Some(Instant::now());
+                                    // round-106: total quiet tolerance becomes
+                                    // quiet_dur + marker_confirm (~500ms) — a
+                                    // real marker flow (echo → command runs →
+                                    // marker at next prompt) needs that, not
+                                    // 2x quiet_dur (~400ms). Backdate the
+                                    // start so the second expiry fires after
+                                    // marker_confirm.
+                                    quiet_since = Some(Instant::now() - marker_confirm + quiet_dur);
                                 } else {
                                     wait_reason = "idle";
                                     break;
