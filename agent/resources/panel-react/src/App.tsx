@@ -6,6 +6,7 @@ import { TerminalPane } from "./components/TerminalPane";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
 import { StatusBar } from "./components/StatusBar";
+import { ConnModal } from "./components/ConnModal";
 
 const LS_HOST = "valeHost";
 const LS_TOKEN = "valeToken";
@@ -15,6 +16,7 @@ export function App() {
   const [token, setToken] = useState(() => localStorage.getItem(LS_TOKEN) || "");
   const [connected, setConnected] = useState(() => !!(localStorage.getItem(LS_HOST) && localStorage.getItem(LS_TOKEN)));
   const [connError, setConnError] = useState("");
+  const [modalKind, setModalKind] = useState<"ssh" | "serial" | null>(null);
 
   const sessions = useSessions(connected);
   // SSE: per-session xterm write callbacks registered by TerminalPane.
@@ -52,10 +54,17 @@ export function App() {
     <div id="panel-main">
       <Toolbar
         onOpenPty={() => sessions.openSession("pty", "").catch(() => {})}
-        onShowConn={(kind) => { if (kind === "ssh") sessions.openSession("ssh", prompt("user@host:port") || "").catch(() => {}); else sessions.openSession("serial", prompt("COM3 or /dev/ttyUSB0") || "").catch(() => {}); }}
+        onShowConn={(kind) => setModalKind(kind)}
         onExportAll={() => sessions.sessions.forEach((s) => sessions.exportSession(s.sid))}
         onShowSettings={() => alert("settings coming in the full build")}
       />
+      {modalKind && (
+        <ConnModal
+          kind={modalKind}
+          onClose={() => setModalKind(null)}
+          onConnect={(target, extra) => sessions.openSession(modalKind, target, extra)}
+        />
+      )}
       <TabBar sessions={sessions.sessions} activeSid={sessions.activeSid} onActivate={sessions.activate} onClose={sessions.closeSession} />
       <div id="term-container">
         {sessions.sessions.length === 0 ? (
