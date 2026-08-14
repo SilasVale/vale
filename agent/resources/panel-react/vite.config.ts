@@ -8,8 +8,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: "../panel",
-    emptyOutDir: false, // keep index.html / panel.css / vendor/ (managed by hand)
+    outDir: "dist", // do NOT overwrite the production panel.js until the
+                    // React build is feature-complete — a future round flips
+                    // this to ../panel once parity is reached
     lib: {
       entry: "src/main.tsx",
       name: "valePanel",
