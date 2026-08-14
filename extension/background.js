@@ -151,13 +151,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return;
           }
         }
+        // round-100: capture the device name BEFORE clearPairing() nulls
+        // state.pairedDevice — the round-99 code read it after and passed
+        // "" (a no-op), leaving the zombie tab attached.
+        const deviceName = state.pairedDevice?.device
+          || (await chrome.storage.local.get("valePlugin"))?.valePlugin?.device
+          || "";
         await clearPairing();
         disconnect();
         // round-99: detach this device's controlled tab — an unpaired
         // device's proxy tab otherwise stayed attached forever (the R98
         // URL-recoverable guard treats its proxy URL as live).
         const { releaseDeviceTab } = await import("./lib/cdp.js");
-        await releaseDeviceTab(state.pairedDevice?.device || "");
+        await releaseDeviceTab(deviceName);
         state.error = null;
         sendResponse({ ok: true });
       } catch (e) { sendResponse({ ok: false, error: String(e) }); }

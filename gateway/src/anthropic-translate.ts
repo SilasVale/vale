@@ -175,7 +175,12 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           // round-99: a 200 SSE body with ZERO parseable frames (dead
           // backend, wrong content-type) yielded a silent empty assistant
           // message AND recorded a breaker success. Surface it.
-          if (!encoderStream.started && !buffer.trim()) {
+          // round-100: the empty check alone missed a one-line non-SSE body
+          // ('Internal Server Error', no \n\n) — buffer was non-empty, no
+          // data: line ever parsed, finish() still emitted an empty turn.
+          // Any leftover buffer with no data: line is the same failure.
+          const hasDataLine = buffer.split("\n").some((l) => l.startsWith("data:"));
+          if (!encoderStream.started && !hasDataLine) {
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream returned an empty/non-SSE stream" } })}\n\n`));
             controller.close();
             return;
