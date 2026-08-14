@@ -116,8 +116,20 @@ async function ensureTabInner(device, proxyUrl) {
     // controlledTabs). Detach those zombies so they don't accumulate and
     // block reuse ([...attached][0] would otherwise keep picking a zombie
     // that the predicate refuses, forcing a new tab every call).
+    // round-98: the skip guard ALSO protects tabs recoverable by ANY
+    // device's proxy URL — in the SW-restart case controlledTabs is empty,
+    // so the old guard detached OTHER devices' still-live controlled tabs
+    // (the exact hazard R96 fixed). A tab still on a proxy URL belongs to
+    // that device and is live; only unattributed, non-recoverable tabs are
+    // zombies.
     for (const id of [...attached]) {
       if (id === tabId || Object.values(state.controlledTabs).includes(id)) continue;
+      let recoverable = false;
+      try {
+        const t = await chrome.tabs.get(id);
+        recoverable = !!(t.url && t.url.includes("/api/devices/") && t.url.includes("/proxy"));
+      } catch { /* tab gone — detach below */ }
+      if (recoverable) continue;
       try { await chrome.debugger.detach({ tabId: id }); } catch {}
       attached.delete(id);
     }

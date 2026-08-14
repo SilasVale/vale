@@ -18,6 +18,10 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
+/// Closed-session log trim: keep the version header + this many trailing
+/// audit lines (round-98 — a closed session's file grew unbounded).
+const MAX_CLOSED_LOG_LINES: usize = 2000;
+
 /// One audit event for a session. `seq` is per-session monotonic; `ts` is
 /// unix seconds. Optional fields are omitted when absent (compact JSONL).
 #[derive(Debug, Clone, Serialize)]
@@ -166,6 +170,27 @@ impl SessionLogger {
         let mut f = self.files.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(mut w) = f.remove(sid) {
             let _ = w.flush();
+            // round-98: a closed session's file was never trimmed — a serial
+            // console scrolling logs for hours grew an unbounded .jsonl on
+            // the install disk. Keep the header + the last
+            // MAX_CLOSED_LOG_LINES audit lines (command/end boundaries are
+            // the recovery-relevant part); the old head is a rolling log,
+            // not a source of truth once the session is closed.
+            let path = self.dir.join(format!("{sid}.jsonl"));
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                let lines: Vec<&str> = content.lines().collect();
+                if lines.len() > MAX_CLOSED_LOG_LINES {
+                    let keep: Vec<&str> = lines[..1]
+                        .iter()
+                        .chain(lines[lines.len() - MAX_CLOSED_LOG_LINES..].iter())
+                        .copied()
+                        .collect();
+                    if let Ok(mut file) = std::fs::File::create(&path) {
+                        use std::io::Write as _;
+                        let _ = writeln!(file, "{}", keep.join("\n"));
+                    }
+                }
+            }
         }
     }
 

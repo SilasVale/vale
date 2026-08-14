@@ -40,7 +40,10 @@ const DEVICE_PROBE_TTL_MS = 30000;
 
 async function cachedDeviceProbe(env: any, device: Device): Promise<DeviceProbeState> {
   const hit = DEVICE_PROBE_CACHE.get(device.name);
-  if (hit && Date.now() - hit.at < DEVICE_PROBE_TTL_MS) return hit;
+  // round-98: the TTL check read hit.at but the cache stores ts — the 30s
+  // cache NEVER hit, so every /api/plugins/status poll live-probed every
+  // device through the tunnel (the hammering the cache exists to prevent).
+  if (hit && Date.now() - hit.ts < DEVICE_PROBE_TTL_MS) return hit;
   // Probe through the tunnel; classify the failure: a tunnel-level error
   // (1033/530 — origin unreachable) vs an agent-level error (HTTP response).
   let state: DeviceProbeState = { tunnel: false, agent: false, ts: Date.now() };

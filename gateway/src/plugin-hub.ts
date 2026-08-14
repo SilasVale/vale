@@ -128,6 +128,17 @@ export class PluginHubDO {
     if (msg.type === "response" && msg.id) {
       const resolve = this.pending.get(msg.id);
       if (resolve) { this.pending.delete(msg.id); resolve(msg); }
+      return;
+    }
+    // round-98: extension → hub tool request (callPlugin's path). The hub
+    // has no tool executor (tools run in the main worker's /mcp); the
+    // previous behavior dropped the frame and callPlugin hung until its 65s
+    // timeout. Reply with a clear error so the caller fails fast instead of
+    // hanging — this direction (extension-initiated calls) is not supported;
+    // the supported direction is hub → extension (/call → request frame).
+    if (msg.type === "request" && msg.id) {
+      ws.send(JSON.stringify({ id: msg.id, type: "response", ok: false, error: "extension-initiated calls not supported — use the gateway /mcp instead" }));
+      return;
     }
   }
 
