@@ -102,6 +102,7 @@ export const EXTENSION_OFFLINE = "EXTENSION_OFFLINE";
 export const TIMEOUT = "TIMEOUT";
 export const SESSION_NOT_FOUND = "SESSION_NOT_FOUND";
 export const SESSION_BUSY = "SESSION_BUSY";
+export const TOOL_ERROR = "TOOL_ERROR";
 function ToolErr(code, message) {
   return Object.assign(new Error(message), { code });
 }
@@ -163,6 +164,14 @@ async function callTerminalTool(name, env, device, args) {
     const code = data?.code === "session_not_found" ? SESSION_NOT_FOUND
       : data?.code === "session_busy" ? SESSION_BUSY
       : data?.code === "ssh_timeout" ? TIMEOUT
+      // round-64: the agent ships NINE typed codes (round-59) but only three
+      // were mapped — ssh_connect_failed / serial_port_not_found /
+      // serial_port_not_open / invalid_params / keychain / internal ALL fell
+      // into DEVICE_UNREACHABLE. A live device reporting "serial port not
+      // found" read as "device offline", sending clients on a device-recovery
+      // detour instead of fixing the parameter. Any typed code that is not
+      // one of the mapped ones is a device-UP tool failure.
+      : data?.code ? TOOL_ERROR
       : /Session not found/i.test(msg) ? SESSION_NOT_FOUND
       : /Session busy/i.test(msg) ? SESSION_BUSY
       : /timed out/i.test(msg) ? TIMEOUT
