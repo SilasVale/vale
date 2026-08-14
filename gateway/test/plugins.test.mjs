@@ -127,3 +127,32 @@ test("plugin link: expires after 30 days, getPluginByToken drops it", async () =
     Date.now = realNow;
   }
 });
+
+// round-88: /api/plugins/status is admin-session-gated — no cookie → 401,
+// a copied pre-logout cookie (sess-revoked blacklist) → 401, a valid admin
+// session → 200. The R83 hand-rolled gate must match requireSession.
+import { issueSessionToken } from "../src/auth.ts";
+
+test("plugins/status: no cookie → 401 (R83 gate)", async () => {
+  const env = makeEnv();
+  const req = new Request("https://x/api/plugins/status", { method: "GET", headers: { "content-type": "application/json" } });
+  const res = await worker.fetch(req, env);
+  assert.equal(res.status, 401);
+});
+
+test("plugins/status: revoked cookie → 401 (R88 blacklist)", async () => {
+  const env = makeEnv();
+  // Blacklist a fake session cookie the way logout does (sess-revoked:<cookie>).
+  await env.KEYS.put("sess-revoked:fake-cookie", "1", { expirationTtl: 3600 });
+  const req = new Request("https://x/api/plugins/status", { method: "GET", headers: { "content-type": "application/json", cookie: "ag_session=fake-cookie" } });
+  const res = await worker.fetch(req, env);
+  assert.equal(res.status, 401);
+});
+
+test("plugins/status: valid admin session → 200 (R83 gate)", async () => {
+  const env = makeEnv();
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  const req = new Request("https://x/api/plugins/status", { method: "GET", headers: { "content-type": "application/json", cookie: `ag_session=${cookie}` } });
+  const res = await worker.fetch(req, env);
+  assert.equal(res.status, 200);
+});
