@@ -15,8 +15,32 @@ const LS_TOKEN = "valeToken";
 export function App() {
   const [host, setHost] = useState(() => localStorage.getItem(LS_HOST) || "");
   const [token, setToken] = useState(() => localStorage.getItem(LS_TOKEN) || "");
-  const [connected, setConnected] = useState(() => !!(localStorage.getItem(LS_HOST) && localStorage.getItem(LS_TOKEN)));
+  // Boot transport (round-83): migrate the vanilla loadConfig bootstrap —
+  // same-origin (/panel) + proxy (/api/devices/<n>/proxy/panel) modes, token
+  // precedence (injected > URL ?token= > stored), and ?token= scrub from the
+  // address bar. The old code read localStorage only, so a reload or a proxy
+  // visit (extension Terminal button) showed a permanently empty panel.
   const [connError, setConnError] = useState("");
+  const [connected, setConnected] = useState(() => {
+    const sameOrigin = location.pathname.startsWith("/panel") || /\/proxy\/panel/.test(location.pathname);
+    if (sameOrigin) {
+      const isProxy = /\/proxy\/panel/.test(location.pathname);
+      const urlToken = new URLSearchParams(location.search).get("token") || "";
+      const injected = (isProxy ? "" : (window as any).__PANEL_TOKEN__) || "";
+      const stored = localStorage.getItem(LS_TOKEN) || "";
+      const host = location.host;
+      const tok = isProxy ? (urlToken || "") : (injected || urlToken || stored);
+      localStorage.setItem(LS_HOST, host);
+      if (tok) localStorage.setItem(LS_TOKEN, tok);
+      initTransport(host, tok || " ", () => {});
+      if (urlToken) { try { history.replaceState(null, "", location.pathname); } catch {} }
+      return true;
+    }
+    const h = localStorage.getItem(LS_HOST);
+    const t = localStorage.getItem(LS_TOKEN);
+    if (h && t) initTransport(h, t, () => {});
+    return !!(h && t);
+  });
   const [modalKind, setModalKind] = useState<"ssh" | "serial" | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -26,7 +50,7 @@ export function App() {
   const registerWrite = useMemo(() =>
     (sid: string, fn: (bytes: Uint8Array) => void) => { writeCallbacks.current.set(sid, fn); },
   []);
-  const sseState = useSSE(connected, writeCallbacks);
+  const sseState = useSSE(connected, writeCallbacks, () => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid));
 
   function connect() {
     if (!host || !token) { setConnError("host + token required"); return; }
