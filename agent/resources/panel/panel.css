@@ -52,7 +52,17 @@ body {
    #term-container's flex:1 resolves against a block parent whose height
    collapses to content — the terminal rendered at the default 80×24 grid
    inside a 0-height container ("half screen" bug, present since the 1.0.14
-   redesign). */
+   redesign).
+
+   Since the vanilla→React migration (round-79) the app mounts into #root —
+   #panel-main is no longer body's direct child. #root must carry the same
+   stretch chain or flex:1 dies there (the half-screen bug came back). */
+#root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 #panel-main {
   flex: 1;
   min-height: 0;
