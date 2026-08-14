@@ -147,13 +147,28 @@ export function disconnect() {
 }
 
 function handleFrame(frame) {
-  if (frame.type === "pong") return;
+  if (frame.type === "pong") { lastPong = Date.now(); return; }
   if (frame.type === "request") {
     handleToolRequest(frame).then((result) => wsSend({ id: frame.id, type: "response", ok: true, result }))
       .catch((err) => wsSend({ id: frame.id, type: "response", ok: false, error: String(err?.message || err) }));
   }
 }
-function startHeartbeat() { heartbeat = setInterval(() => wsSend({ type: "ping", t: Date.now() }), 20_000); }
+// round-84: dead-peer detection — a half-open TCP path (WiFi drop, laptop
+// sleep, firewall DROP) never fires onclose, so the old code pings into the
+// void forever with wsState stuck 'connected' and no reconnect ever. Track
+// the last pong; if the hub stops answering for 60s (3 missed pings), force
+// a close so the reconnect path runs.
+let lastPong = 0;
+function startHeartbeat() {
+  lastPong = Date.now();
+  heartbeat = setInterval(() => {
+    wsSend({ type: "ping", t: Date.now() });
+    if (Date.now() - lastPong > 60_000) {
+      const sock = ws;
+      try { sock && sock.close(4000, "pong timeout"); } catch {}
+    }
+  }, 20_000);
+}
 function stopHeartbeat() { if (heartbeat) clearInterval(heartbeat); heartbeat = null; }
 function scheduleReconnect() {
   setTimeout(connect, backoffMs);

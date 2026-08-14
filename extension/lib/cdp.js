@@ -31,7 +31,18 @@ async function persistAttached() {
 }
 
 // Attach debugger to a tab (create if needed) and enable the domains we use.
+// round-84: concurrent tool calls (parallel MCP) both hit the create path
+// and made two proxy tabs (one orphaned). Serialize per-device ensures.
+const ensureInFlight = new Map();
+
 export async function ensureTab(device, proxyUrl) {
+  if (ensureInFlight.has(device)) return ensureInFlight.get(device);
+  const p = ensureTabInner(device, proxyUrl).finally(() => ensureInFlight.delete(device));
+  ensureInFlight.set(device, p);
+  return p;
+}
+
+async function ensureTabInner(device, proxyUrl) {
   await hydrateAttached();
   let tabId = state.controlledTabs[device];
   if (!tabId) {
@@ -39,16 +50,28 @@ export async function ensureTab(device, proxyUrl) {
     tabId = tabs[0]?.id;
   }
   if (!tabId && attached.size) {
-    // A tab we attached to navigated AWAY from the proxy URL (or was closed
-    // behind our back) — the attached set still holds a stale tabId and the
-    // next attach to it would throw "Another debugger is already attached".
-    // Detach our own stale attachments for this device before creating fresh.
-    const stale = [...attached].filter((id) => id !== state.controlledTabs[device]);
-    for (const id of stale) {
-      try { await chrome.debugger.detach({ tabId: id }); } catch {}
-      attached.delete(id);
+    // round-84: after an MV3 SW restart, `attached` (persisted in
+    // chrome.storage.session) still holds the LIVE controlled tab — the
+    // extension OWNS its debugger session (survives the SW restart). The old
+    // code detached it (killing the agent's browser session mid-task) and
+    // created a fresh proxy tab. Reuse the attached tab instead: it is
+    // exactly the controlled tab, still attached, still on the page the
+    // agent was working on.
+    const candidate = [...attached][0];
+    if (candidate !== undefined) {
+      try { await chrome.tabs.get(candidate); tabId = candidate; }
+      catch { /* tab gone — detach it below */ }
     }
-    await persistAttached();
+    if (!tabId) {
+      // A tab we attached to navigated AWAY (or was closed) — detach our own
+      // stale attachments for this device before creating fresh.
+      const stale = [...attached].filter((id) => id !== state.controlledTabs[device]);
+      for (const id of stale) {
+        try { await chrome.debugger.detach({ tabId: id }); } catch {}
+        attached.delete(id);
+      }
+      await persistAttached();
+    }
   }
   if (!tabId) {
     const tab = await chrome.tabs.create({ url: proxyUrl });

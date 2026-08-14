@@ -145,7 +145,21 @@ async function handleRevoke(request: Request, env: any): Promise<Response> {
   const auth = String(request.headers.get("authorization") || "");
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!token) return jsonError(401, "Missing plugin token", "authentication_error");
+  // round-84: a revoked link must not keep browser_* control over a LIVE WS —
+  // the hub never re-validated the token after handshake, so a revoked/
+  // expired link kept executing commands indefinitely. Find the device the
+  // link belonged to and close its hub socket.
+  const link = await getPluginByToken(env, token);
   await removePluginLink(env, token);
+  if (link && env.PLUGIN_HUB) {
+    try {
+      const id = env.PLUGIN_HUB.idFromName(link.device);
+      const hub = env.PLUGIN_HUB.get(id);
+      const req = new Request("https://hub/close-all", { method: "POST" });
+      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
+      await hub.fetch(req).catch(() => {});
+    } catch { /* best-effort */ }
+  }
   return jsonOk({ ok: true });
 }
 
