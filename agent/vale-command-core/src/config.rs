@@ -101,22 +101,29 @@ impl ServerConfig {
     ///
     /// Uses `getrandom` (CSPRNG, rdrand/OS source) — never a guessable fallback,
     /// since this token gates the entire HTTP/MCP API.
-    pub fn ensure_token(&mut self) -> anyhow::Result<Option<String>> {
+    /// Returns (new_token, changed) — `changed` is true when the config
+    /// needs persistence (a token OR proxy secret was generated; round-104:
+    /// a pre-secret config got a fresh secret every boot that was never
+    /// written, so the console's registered secret went stale and /panel/
+    /// injection died permanently after the first restart).
+    pub fn ensure_token(&mut self) -> anyhow::Result<(Option<String>, bool)> {
         // Treat empty/whitespace as MISSING: `device_token: ""` (the natural
         // YAML way to express "no auth") previously locked every client out —
         // Some("") passed auth only with an empty Bearer header, so all /mcp
         // and /api/* returned 401 forever with no remote recovery.
+        let mut changed = false;
         if self.device_token.as_deref().is_some_and(|t| !t.trim().is_empty()) {
             // round-103: still ensure the proxy secret exists (a pre-secret
             // config gets one on this boot; persistence is the caller's).
             if self.proxy_secret.as_deref().is_some_and(|s| !s.trim().is_empty()) {
-                return Ok(None);
+                return Ok((None, changed));
             }
             let mut b2 = [0u8; 32];
             getrandom::getrandom(&mut b2).map_err(|e| anyhow::anyhow!("failed to generate proxy secret: {e}"))?;
             let sec: String = b2.iter().map(|b| format!("{b:02x}")).collect();
             self.proxy_secret = Some(sec);
-            return Ok(None);
+            changed = true;
+            return Ok((None, changed));
         }
         let mut buf = [0u8; 32];
         getrandom::getrandom(&mut buf).map_err(|e| anyhow::anyhow!("failed to generate device token: {e}"))?;
@@ -126,7 +133,7 @@ impl ServerConfig {
         getrandom::getrandom(&mut b2).map_err(|e| anyhow::anyhow!("failed to generate proxy secret: {e}"))?;
         let sec: String = b2.iter().map(|b| format!("{b:02x}")).collect();
         self.proxy_secret = Some(sec);
-        Ok(Some(token))
+        Ok((Some(token), true))
     }
 }
 

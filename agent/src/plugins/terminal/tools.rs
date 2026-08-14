@@ -722,12 +722,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 marker_code = Some(code);
                                 marker_seen_at = Some(Instant::now());
                             }
-                            // round-103: output AFTER a marker means the
-                            // 'marker' was a false positive (e.g. a literal
-                            // OSC 133 sequence in a log line) — the command
-                            // is still running. Reset the confirm window so
-                            // the wait doesn't end early on the fake marker.
-                            if marker_seen_at.is_some() && !pending.is_empty() {
+                            // round-103/104: output AFTER a marker could be a
+                            // false positive (literal OSC 133 in a log line)
+                            // OR the shell prompt that immediately follows a
+                            // REAL marker. Distinguish by volume/timing:
+                            // a real marker's prompt is ≤ a few hundred bytes
+                            // arriving within one poll; sustained output
+                            // (a burst > 1 chunk or continuing past the
+                            // confirm window) means the marker was fake.
+                            if marker_seen_at.is_some() && chunk.len() > 256 {
                                 marker_seen_at = None;
                             }
                             // Finalize everything that can no longer be a
@@ -753,8 +756,24 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                         } else if let Some(qs) = quiet_since {
                             if qs.elapsed() >= quiet_dur {
-                                wait_reason = "idle";
-                                break;
+                                // round-104: the quiet path broke ~200ms after
+                                // the last output — on a marker-injected PTY
+                                // the shell echoes the command, the tty goes
+                                // quiet, and the marker arrives only at the
+                                // NEXT prompt (command end). Breaking on
+                                // quiet returned premature success for every
+                                // command with a >200ms silent gap. If the
+                                // un-finalized window still holds a marker
+                                // PREFIX (or the command could still emit
+                                // one — we can't know), extend the quiet
+                                // wait once: give the marker up to
+                                // marker_confirm to complete.
+                                if pending.windows(b"\x1b]133;D;".len()).any(|w| w == b"\x1b]133;D;") {
+                                    quiet_since = None; // wait for the marker
+                                } else {
+                                    wait_reason = "idle";
+                                    break;
+                                }
                             }
                         }
                         if Instant::now() >= deadline {

@@ -22,6 +22,23 @@ import type { PluginContext } from "./registry.ts";
 const AUTH_BASE = "/api/auth";
 const ME_BASE = "/api/me";
 
+// round-104: per-IP gate for registration (2-3 KV writes per attempt — an
+// attacker can exhaust the Free-plan daily KV write quota). In-memory like
+// the devices plugin's public gate; no per-request KV writes.
+const __authRate = new Map(); // `ip:${bucket}` → count
+function authRateLimited(request: Request): boolean {
+  try {
+    const ip = request?.headers?.get?.("cf-connecting-ip") || "unknown";
+    const bucket = Math.floor(Date.now() / 60000);
+    const key = `auth-rate:${ip}:${bucket}`;
+    const hit = __authRate.get(key) || 0;
+    if (hit >= 30) return true;
+    __authRate.set(key, hit + 1);
+    if (__authRate.size > 4096) __authRate.delete(__authRate.keys().next().value);
+    return false;
+  } catch { return false; }
+}
+
 // Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
 // secret) over the admin password. Using the password directly lets any invited
 // user offline-brute-force it from their own signed cookie (HMAC-SHA256 is not
@@ -47,6 +64,12 @@ async function requireSession(request: Request, env: any): Promise<User | null> 
 /* ---- Register / Login ---- */
 
 async function authRegister(request: Request, env: any, secure: boolean): Promise<Response> {
+  // round-104: registration costs 2-3 KV writes per attempt — an attacker
+  // can exhaust the Free-plan daily KV write quota (console-wide DoS).
+  // Per-IP in-memory gate, same pattern as the devices plugin.
+  if (authRateLimited(request)) {
+    return jsonError(429, "rate limit exceeded", "rate_limit_error");
+  }
   const ap = await getAdminPassword(env);
   if (!ap) return jsonError(500, "Admin password not configured", "config_error");
   const body = await readJson(request);

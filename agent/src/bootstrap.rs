@@ -73,6 +73,14 @@ pub fn load_or_create(
             Config::load(path)?
         }
     };
-    let token = config.server.ensure_token()?;
+    let (token, changed) = config.server.ensure_token()?;
+    if changed {
+        // round-104: a freshly generated proxy secret (or token) must be
+        // persisted NOW — the old code only persisted on new-token, so a
+        // pre-secret config rotated the secret every boot without saving it
+        // and the console's registered secret went permanently stale.
+        let yaml = serde_yaml::to_string(&config).unwrap_or_default();
+        atomic_write(path, yaml.as_bytes())?;
+    }
     Ok((config, token))
 }

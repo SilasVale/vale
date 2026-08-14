@@ -45,7 +45,13 @@ function backfillGap(
       const rel = Math.max(0, issueOffset - Number(r.start));
       const to = gapEnd === undefined ? bytes.length : Math.min(rel + (gapEnd - issueOffset), bytes.length);
       const from = Math.min(rel, bytes.length);
-      if (to > from) cb.write(bytes.subarray(from, to));
+      // round-104: re-check at RESPONSE time — if the sync loop (or another
+      // path) already advanced rendered past the gap, skip (no duplicate).
+      const alreadyRendered = Math.max(0, cb.getRendered() - issueOffset);
+      if (to > from && alreadyRendered < (gapEnd === undefined ? Number.MAX_SAFE_INTEGER : gapEnd - issueOffset)) {
+        const effectiveFrom = Math.max(from, rel + alreadyRendered);
+        if (to > effectiveFrom) cb.write(bytes.subarray(effectiveFrom, to));
+      }
     })
     .catch(() => {});
 }
@@ -171,7 +177,14 @@ export function useSSE(
                 // attaches the frame's absolute start offset; skip bytes the
                 // rendered offset already passed (round-83 wrote every frame
                 // unconditionally, duplicating what a sync read delivered).
-                if (typeof frame.start === "number" && frame.start < cb.getRendered()) continue;
+                if (typeof frame.start === "number" && frame.start < cb.getRendered()) {
+                  // round-104: a SKIPPED frame still consumes any pending
+                  // lag entry — the sync loop already recovered the gap
+                  // (rendered advanced past it), so a later backfill would
+                  // re-write the same range (duplication).
+                  lagBackfill.delete(frame.session_id);
+                  continue;
+                }
                 // round-103: a pending lag-backfill for this session — the
                 // frame's start is the true gap lower bound; backfill only
                 // [issueOffset, frame.start) (the dropped range) instead of
