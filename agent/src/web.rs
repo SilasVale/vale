@@ -410,6 +410,24 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             }).collect();
             serde_json::json!({ "ok": true, "sessions": list })
         },
+        // Full audit events for one session (round-68): events_of() existed
+        // for /api/sessions but no endpoint called it — the durable audit
+        // corpus was write-only, unqueryable by the panel or MCP. This reads
+        // the session's jsonl (permanent, survives agent restarts).
+        ("GET", "/api/sessions/{sid}") => {
+            let sid = path.strip_prefix("/api/sessions/")
+                .and_then(|p| p.split('/').next())
+                .unwrap_or("")
+                .to_string();
+            let dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_default()
+                .join("sessions");
+            let logger = crate::session_log::SessionLogger::new(dir);
+            let events = logger.events_of(&sid);
+            serde_json::json!({ "ok": true, "id": sid, "events": events })
+        },
         // Read the tray's vale-update.log (promised by the tray's doc comment
         // but never implemented) — lets a remote client see auto-update
         // failures instead of asking the user to open files.

@@ -44,6 +44,20 @@ fn load_known_hosts() -> Result<serde_json::Map<String, serde_json::Value>, std:
     serde_json::from_str(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+/// Missing file is a FRESH trust table (round-68): round-57 propagated the
+/// NotFound, so check_server_key aborted with UnknownKey BEFORE the first-use
+/// TOFU branch could write the file — SSH could never bootstrap on a fresh
+/// install (nothing creates vale-known-hosts.json). NotFound → empty map;
+/// corrupt/other errors still propagate so check_server_key FAILS CLOSED
+/// (the re-TOFU-everything MITM protection round-57 built stays intact).
+fn load_known_hosts_or_empty() -> Result<serde_json::Map<String, serde_json::Value>, std::io::Error> {
+    match load_known_hosts() {
+        Ok(map) => Ok(map),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Atomic write (round-57): temp + rename in the same directory — the old
 /// std::fs::write (truncate + write) left a half-written file on power loss,
 /// which load then silently swallowed as an empty trust table.
@@ -70,7 +84,7 @@ impl client::Handler for SshHandler {
         let fp = fingerprint_of(key);
         // A corrupt file (half write, disk error) FAILS the connection —
         // re-TOFUing everything would silently re-open the MITM window.
-        let mut hosts = load_known_hosts().map_err(|_| russh::Error::UnknownKey)?;
+        let mut hosts = load_known_hosts_or_empty().map_err(|_| russh::Error::UnknownKey)?;
         match hosts.get(&self.trust_key) {
             // First use — record and trust (TOFU). FAIL CLOSED on persistence
             // failure: a write error (read-only install dir, disk full) must
