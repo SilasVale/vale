@@ -182,7 +182,7 @@ mod desktop_impl {
         id: String,
         kind: String,
         label: String,
-        backend: Box<dyn TermBackend>,
+        backend: Arc<dyn TermBackend>,
         /// Last time output was seen — used by the idle sweeper.
         last_output: std::time::Instant,
         /// When the session was opened — tiebreaker for eviction when
@@ -293,14 +293,14 @@ mod desktop_impl {
                     ).await?;
                     let (user, host, _port) = parse_ssh_target(&req.target);
                     let label = format!("{user}@{host}");
-                    (Box::new(be) as Box<dyn TermBackend>, label)
+                    (Arc::new(be) as Arc<dyn TermBackend>, label)
                 }
                 "serial" => {
                     let be = serial::SerialBackend::open(
                         self.serial_pool.clone(), &req.target, req.data_bits, req.parity.clone(), req.stop_bits, tx, id.clone(),
                     ).await?;
                     let label = format!("serial:{}", req.target.split('?').next().unwrap_or(&req.target));
-                    (Box::new(be) as Box<dyn TermBackend>, label)
+                    (Arc::new(be) as Arc<dyn TermBackend>, label)
                 }
                 _ => {
                     // PTY spawn (openpty + spawn_command) blocks — off-executor
@@ -328,7 +328,7 @@ mod desktop_impl {
                             .unwrap_or(&req.target)
                             .to_string()
                     };
-                    (Box::new(be) as Box<dyn TermBackend>, label)
+                    (Arc::new(be) as Arc<dyn TermBackend>, label)
                 }
             };
 
@@ -378,12 +378,23 @@ mod desktop_impl {
         /// Write arbitrary bytes (base64 path from terminal_write) — the
         /// only way to reach non-UTF-8 serial frames (round-54).
         pub async fn term_write_bytes(&self, sid: &str, data: &[u8]) -> Result<(), DeviceError> {
-            let mut inner = self.inner.lock().await;
-            let s = inner.sessions.iter_mut().find(|s| s.id == sid)
-                .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
-            s.backend.write(data);
-            // Activity = heartbeat (round-49): typing into a session is liveness.
-            s.last_output = std::time::Instant::now();
+            // round-92: the write used to happen INSIDE the global inner lock —
+            // PtyBackend::write does a blocking write_all on the PTY master fd,
+            // which stalls forever when the n_tty input queue (4096B) is full
+            // (a foreground process not reading stdin). Holding the only
+            // manager lock during that freeze wedged EVERY session: open/close/
+            // resize/list all hang, and the wedged session couldn't even be
+            // closed. The backend is now Arc'd so the write runs OUTSIDE the
+            // lock — a blocked write stalls only its own call, not the system.
+            let backend = {
+                let mut inner = self.inner.lock().await;
+                let s = inner.sessions.iter_mut().find(|s| s.id == sid)
+                    .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
+                // Activity = heartbeat (round-49): typing into a session is liveness.
+                s.last_output = std::time::Instant::now();
+                s.backend.clone()
+            };
+            backend.write(data);
             Ok(())
         }
 

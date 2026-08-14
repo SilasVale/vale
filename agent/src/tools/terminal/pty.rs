@@ -182,31 +182,15 @@ impl TermBackend for PtyBackend {
         self.exit_code.lock().ok().and_then(|g| *g)
     }
     fn terminate(&self) {
-        // Kill the whole process tree (the shell AND its descendants), not
-        // just the direct child — an execute-timeout on `make`/`agent_update`
-        // must not orphan the build/installer. forkpty makes the shell a
-        // session leader, so its pid == its process group id; killing -pid
-        // takes the group down. On Windows taskkill /T walks the tree.
-        if let Ok(mut guard) = self.child.lock() {
-            if let Some(c) = guard.as_mut() {
-                if matches!(c.try_wait(), Ok(None)) {
-                    let pid = c.process_id().unwrap_or_default();
-                    if pid > 0 {
-                        #[cfg(unix)]
-                        {
-                            let _ = std::process::Command::new("kill")
-                                .args(["-9", "--", &format!("-{pid}")])
-                                .spawn();
-                        }
-                        #[cfg(windows)]
-                        {
-                            let _ = std::process::Command::new("taskkill")
-                                .args(["/F", "/T", "/PID", &pid.to_string()])
-                                .spawn();
-                        }
-                    }
-                }
-            }
-        }
+        // Send ^C to the shell's input (round-92) — the old code killed the
+        // whole process group with `kill -9 -- -{pid}`. forkpty makes the
+        // shell a session leader, so pid == pgid and the group kill SIGKILLed
+        // the shell itself: an execute-timeout destroyed the user's session
+        // (cwd/env all gone, session unregistered on reaper EOF) despite the
+        // documented contract "stop the command, not the shell". ^C to the
+        // master interrupts the foreground job (make, agent_update, sleep —
+        // the same behavior SSH's terminate has with the remote shell) and
+        // keeps the session usable, matching ssh.rs.
+        let _ = self.writer.lock().ok().map(|mut w| w.write_all(&[0x03]));
     }
 }

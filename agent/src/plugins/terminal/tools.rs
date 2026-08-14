@@ -216,7 +216,20 @@ fn tool_open(
                         // Poison recovery — dropping buffered output on a poisoned
                         // lock would silently lose terminal data.
                         let mut store = recover_guard(&buf);
-                        let entry = store.live.entry(sid_buf.clone()).or_default();
+                        // round-92: terminal_close retains the live buffer
+                        // while this drainer is still draining (the backend
+                        // reader hasn't EOF'd yet). Writing the remaining
+                        // chunks into a FRESH live entry reset end_abs to 0 —
+                        // every post-close frame carried start:0 and was
+                        // dropped by incremental consumers (panel SSE at
+                        // offset N dedups against start). Route the tail into
+                        // the retained history entry instead; the cursor stays
+                        // continuous and the tail reaches the panel.
+                        let entry: &mut SessionBuf = if store.history.contains_key(&sid_buf) {
+                            &mut store.history.get_mut(&sid_buf).expect("checked above").buf
+                        } else {
+                            store.live.entry(sid_buf.clone()).or_default()
+                        };
                         // The frame's ABSOLUTE start offset, attached to the SSE
                         // frame so the panel can skip bytes already delivered by
                         // a concurrent terminal_read (dedup — see panel.js).
