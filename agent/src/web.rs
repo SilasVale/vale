@@ -446,14 +446,14 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
 async fn api_call_tool(state: &AppState, tool_name: &str, body: &str) -> serde_json::Value {
     let tool = match state.plugin_registry.find_tool(tool_name) {
         Some(t) => t,
-        None => return serde_json::json!({"ok": false, "error": format!("unknown tool: {tool_name}")}),
+        None => return serde_json::json!({"ok": false, "error": format!("unknown tool: {tool_name}"), "code": "invalid_params"}),
     };
     let params: serde_json::Value = if body.is_empty() {
         serde_json::json!({})
     } else {
         match serde_json::from_str(body) {
             Ok(v) => v,
-            Err(e) => return serde_json::json!({"ok": false, "error": format!("invalid JSON body: {e}")}),
+            Err(e) => return serde_json::json!({"ok": false, "error": format!("invalid JSON body: {e}"), "code": "invalid_params"}),
         }
     };
     match tool.handler.call(params).await {
@@ -789,6 +789,7 @@ mod tests {
         let v = json_body(resp).await;
         assert_eq!(v["ok"], false);
         assert!(v["error"].as_str().unwrap().contains("unknown tool"));
+        assert_eq!(v["code"], "invalid_params");
     }
 
     #[tokio::test]
