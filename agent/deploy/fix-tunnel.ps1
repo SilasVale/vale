@@ -9,7 +9,10 @@
 $ErrorActionPreference = "Stop"
 
 function Get-TunnelId($cloudflared, $Name) {
+    $oldEAPt = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $list = & $cloudflared tunnel list --name $Name 2>&1 | Out-String
+    $ErrorActionPreference = $oldEAPt
     if ($list -match '([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})') { return $Matches[1] }
     return $null
 }
@@ -28,7 +31,13 @@ if (-not $cloudflared) { Write-Host "!! cloudflared not found"; exit 1 }
 # Find the agent tunnel by NAME, not by the first UUID in `tunnel list` — the
 # legacy vale-command-dN tunnels still exist and Get-TunnelId's regex could
 # match one of them, writing the OLD tunnel into the config.
+# EAP=Continue guard (round-66): cloudflared's stderr WRN/INF (e.g. a version
+# notice) is a terminating NativeCommandError under EAP=Stop — the script
+# aborted before any tunnel repair. Real failures still surface via exit codes.
+$oldEAP3 = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $list = & $cloudflared tunnel list 2>&1 | Out-String
+$ErrorActionPreference = $oldEAP3
 $newTunnel = ""
 if ($list -match "([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})\s+$([regex]::Escape($tunnelName))\s") {
     $newTunnel = $Matches[1]
