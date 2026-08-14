@@ -122,9 +122,9 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       return new Response(
         JSON.stringify({
-          version: "1.0.72",
+          version: "1.0.73",
           download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
-          sha256: "97b98ed52ded9df9354abea29fb04776a297eb9fb89035a107ddafc7c3214dfa",
+          sha256: "e1c6ede437865b4ee7f34765f1ee632a56331fb8a4e6a75dd2c168abb22a170b",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
