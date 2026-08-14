@@ -43,8 +43,15 @@ export function useSSE(
     // 5s sync loop (round-86): recover bytes missed during an SSE outage —
     // read INCREMENTALLY from each session's renderedBytes (the round-83
     // offset:0 read re-appended the full history every tick).
+    // round-98: also sync sessions with a live write callback that are NO
+    // longer in the live list (closed/tombstone) — their drainer-tail bytes
+    // (retained in history) never got a final read, so the panel permanently
+    // missed the tail of a session that closed mid-stream.
     const syncLoop = window.setInterval(() => {
-      for (const sid of getLiveSidsRef.current()) {
+      const live = new Set(getLiveSidsRef.current());
+      const sids = new Set<string>(live);
+      for (const sid of writeCallbacks.current.keys()) sids.add(sid);
+      for (const sid of sids) {
         const cb = writeCallbacks.current.get(sid);
         if (!cb) continue;
         const from = cb.getRendered();

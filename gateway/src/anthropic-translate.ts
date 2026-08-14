@@ -198,7 +198,15 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           // and the FINAL read's remaining events were silently dropped
           // (finish() only rescued the first data: line). Continue draining
           // the whole buffer instead.
-          if (events.length) controller.enqueue(encoder.encode(events));
+          // round-98: drain the whole buffer but keep per-pull backpressure —
+          // enqueue() never waits, so an unbounded drain lets one pull()
+          // buffer the ENTIRE upstream response in the stream queue when the
+          // client socket is slow. Yield to the consumer after each enqueue
+          // by awaiting a microtask tick; a slow client then paces us.
+          if (events.length) {
+            controller.enqueue(encoder.encode(events));
+            await Promise.resolve();
+          }
         }
       }
     },

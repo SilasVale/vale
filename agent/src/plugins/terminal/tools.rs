@@ -560,7 +560,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
             let logger = logger.clone();
             async move {
                 let command = require_str(&params, "command")?;
-                let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(30);
+                // round-98: clamp — a client-supplied u64::MAX made
+                // `Instant::now() + Duration::from_secs(timeout_secs)`
+                // overflow and PANIC after the busy guard was taken and the
+                // command written, wedging the session busy flag forever and
+                // orphaning the command. 1h is the practical max.
+                let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(30).min(3600);
                 let quiet_ms = params.get("quiet_ms").and_then(|v| v.as_u64()).unwrap_or(200);
 
                 if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()) {
@@ -617,6 +622,10 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     if run_in_background {
                         let start = recover_guard(&buf)
                             .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
+                        // round-98: audit — the command was handed to the
+                        // shell; without an end line the trail permanently
+                        // misreports it as "interrupted" on the next boot.
+                        logger.log_status(&sid, "backgrounded");
                         terminal_mgr.term_release_execute(&sid).await;
                         return Ok(json!({
                             "kind": "session",

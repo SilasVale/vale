@@ -195,12 +195,22 @@ impl TermBackend for PtyBackend {
         // queue full, foreground process not reading stdin) holds the writer
         // mutex forever, and terminate() IS the abort that is supposed to
         // unblock that queue. Waiting on the lock would deadlock the
-        // execute-timeout path (term_terminate awaits forever). Best-effort:
-        // if the writer is busy, the queue is already full of bytes the
-        // foreground process isn't reading — ^C can't be delivered anyway
-        // until it does.
-        if let Ok(mut w) = self.writer.try_lock() {
-            let _ = w.write_all(&[0x03]);
+        // execute-timeout path (term_terminate awaits forever).
+        // round-98: but a plain single try_lock ALSO dropped ^C during brief
+        // normal writes (a keystroke holding the lock for microseconds) —
+        // the execute-timeout abort silently no-ops and the timed-out
+        // command keeps running. Retry with a short bounded window (a few
+        // ms): covers the brief-write case while still bailing out before
+        // the stalled-write deadlock.
+        let mut delivered = false;
+        for _ in 0..8 {
+            if let Ok(mut w) = self.writer.try_lock() {
+                let _ = w.write_all(&[0x03]);
+                delivered = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        let _ = delivered;
     }
 }
