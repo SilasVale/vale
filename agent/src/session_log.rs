@@ -25,47 +25,53 @@ const MAX_CLOSED_LOG_LINES: usize = 2000;
 /// Stream-trim a session JSONL: keep the version header + the LAST
 /// command/start (recovery needs it to detect an interrupted command) and
 /// everything after it; if that's still over the cap, keep the most recent
-/// lines. Reads/writes the tail only — never the whole file into RAM
-/// (round-99: the previous trim allocated ~2-3x the file size at close, an
-/// OOM on the very ~GB files it exists for).
+/// lines BUT never drop the last command/start (round-100: the previous
+/// cap drain removed it when the final command produced >2000 events —
+/// the exact R98 bug R99 claimed to fix). Memory-bounded: on seeing a NEW
+/// command/start, everything before it is drained immediately (round-100:
+/// the previous version retained everything after the FIRST start, still
+/// O(file size) at close).
 fn trim_file(path: &std::path::Path) {
     use std::io::{BufRead, BufReader, BufWriter, Write as _};
     let Ok(file) = std::fs::File::open(path) else { return };
     let mut reader = BufReader::new(file);
     let mut header = String::new();
     let _ = reader.read_line(&mut header); // version header (may be empty)
+    // tail = the last command/start + everything after it (rolling).
     let mut tail: Vec<String> = Vec::new();
-    let mut last_start_idx: Option<usize> = None;
+    let mut have_start = false;
     let mut line = String::new();
-    let mut idx: usize = 0;
     loop {
         line.clear();
         match reader.read_line(&mut line) {
             Ok(0) => break,
             Ok(_) => {
-                // Bounded memory: only retain from the last command/start
-                // onward plus a rolling window behind it.
                 if line.contains("\"command/start\"") {
-                    last_start_idx = Some(idx);
+                    // A NEW start: everything before it is older history —
+                    // drain immediately (bounds memory; only the last
+                    // start window + rolling tail are retained).
+                    if have_start { tail.clear(); }
+                    have_start = true;
                 }
                 tail.push(line.clone());
-                if last_start_idx.is_none() && tail.len() > MAX_CLOSED_LOG_LINES {
-                    tail.remove(0);
+                // Cap: keep the last MAX lines BUT always retain the last
+                // command/start (drop from the head only while the start
+                // is still in the window).
+                if tail.len() > MAX_CLOSED_LOG_LINES + 1 {
+                    let drop = tail.len() - (MAX_CLOSED_LOG_LINES + 1);
+                    // Never drop line 0 while it is the start.
+                    if !(have_start && tail[0].contains("\"command/start\"") && drop > 0 && tail.len() > drop) {
+                        tail.drain(..drop);
+                    } else if have_start && tail[0].contains("\"command/start\"") {
+                        // Start at head: keep it, drop from index 1.
+                        tail.drain(1..1 + drop);
+                    } else {
+                        tail.drain(..drop);
+                    }
                 }
-                idx += 1;
             }
             Err(_) => break,
         }
-    }
-    // Drop everything before the last command/start (recovery needs it and
-    // the lines after it; the older head is a rolling log).
-    if let Some(start) = last_start_idx {
-        let drop_head = tail.len() - (idx - start);
-        if drop_head > 0 { tail.drain(..drop_head); }
-    }
-    // Still over the cap → keep the most recent lines only.
-    if tail.len() > MAX_CLOSED_LOG_LINES {
-        tail.drain(..tail.len() - MAX_CLOSED_LOG_LINES);
     }
     if tail.is_empty() { return; }
     if let Ok(out) = std::fs::File::create(path) {
@@ -361,7 +367,12 @@ impl SessionLogger {
                     // "interrupted". Treat any post-start status line
                     // (backgrounded/closed/exited) as a terminal marker.
                     Some(k) if k == "status" => {
-                        if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+                        // round-100: SessionEvent::status() serializes the
+                        // value in the `status` field, not `text` (both are
+                        // skip-if-none, so a status line has no "text" key)
+                        // — the round-99 branch read the wrong field and
+                        // never fired.
+                        if let Some(text) = v.get("status").and_then(|t| t.as_str()) {
                             if text == "backgrounded" || text == "closed" || text.starts_with("exited:") {
                                 last_end = Some(i);
                             }

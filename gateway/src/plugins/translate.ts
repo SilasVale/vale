@@ -779,6 +779,14 @@ const DEFAULT_ROUTE_MODEL = "ds/deepseek-v4-flash";
 export async function resolveAutoModel(env: any, uid: string): Promise<string> {
   const chosen = await getUserRoute(env, uid);
   if (chosen && (await isModelUsable(env, chosen, uid))) return chosen;
+  // round-100: this plugin IS the live /v1 path (R99 made handleGateway
+  // dispatch plugins first) — the usable-fallback fix landed only in the
+  // now-unreachable index.ts copy, so a BYOK user without a DeepSeek key
+  // still got a guaranteed 502 on model=auto. Fall back to the first
+  // usable channel.
+  for (const m of [DEFAULT_ROUTE_MODEL, "qw/qwen3.8-max-preview", "og/deepseek-v4-flash", "or/openai/gpt-5.6-luna:floor[1m]"]) {
+    if (await isModelUsable(env, m, uid)) return m;
+  }
   return DEFAULT_ROUTE_MODEL;
 }
 

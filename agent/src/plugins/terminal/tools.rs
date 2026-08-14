@@ -531,14 +531,22 @@ fn close_event(kind: &str, sid: &str) -> AgentEvent {
 /// keeps waiting for the next chunk.
 fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
     const PREFIX: &[u8] = b"\x1b]133;D;";
-    let start = data.windows(PREFIX.len()).position(|w| w == PREFIX)?;
-    let mut i = start + PREFIX.len();
-    let digits_start = i;
-    while i < data.len() && data[i].is_ascii_digit() { i += 1; }
-    if i == digits_start { return None; } // prefix but no digits yet
-    if i >= data.len() || data[i] != 0x07 { return None; }
-    let code: i32 = std::str::from_utf8(&data[digits_start..i]).ok()?.parse().ok()?;
-    Some((start, i + 1, code))
+    // round-100: the old code stopped at the FIRST prefix — a false
+    // \x1b]133;D; sequence in output (e.g. a literal escape in a log line)
+    // with no digits/BEL made the whole search fail even when a REAL marker
+    // followed. Scan ALL prefixes; only a complete sequence counts.
+    let mut search_from = 0;
+    while let Some(rel) = data[search_from..].windows(PREFIX.len()).position(|w| w == PREFIX) {
+        let start = search_from + rel;
+        let mut i = start + PREFIX.len();
+        let digits_start = i;
+        while i < data.len() && data[i].is_ascii_digit() { i += 1; }
+        if i == digits_start { search_from = start + 1; continue; } // prefix but no digits yet — try the next prefix
+        if i >= data.len() || data[i] != 0x07 { search_from = start + 1; continue; } // incomplete — try the next
+        let code: i32 = std::str::from_utf8(&data[digits_start..i]).ok()?.parse().ok()?;
+        return Some((start, i + 1, code));
+    }
+    None
 }
 
 

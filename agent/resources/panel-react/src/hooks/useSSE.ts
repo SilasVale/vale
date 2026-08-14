@@ -139,6 +139,33 @@ export function useSSE(
                 // unconditionally, duplicating what a sync read delivered).
                 if (typeof frame.start === "number" && frame.start < cb.getRendered()) continue;
                 cb.write(new Uint8Array(frame.data));
+              } else if (frame.lagged) {
+                // round-100: the broadcast dropped frames for this lagging
+                // subscriber — bytes in [rendered, next frame's start) were
+                // never delivered, and the sync loop's dedup (skip =
+                // rendered - start) treats them as if they were, so the gap
+                // would be lost forever. The lagged frame carries no
+                // session_id (the stream is cross-session); force an
+                // immediate incremental backfill for EVERY session with a
+                // callback — the read pulls [rendered, end) from the server
+                // buffer, which still has the gap.
+                for (const [sid, cb] of writeCallbacks.current) {
+                  callTool("terminal_read", { session_id: sid, offset: cb.getRendered(), clean: false })
+                    .then((r: any) => {
+                      if (!r || (!r.text && !r.raw)) return;
+                      const skip = Math.max(0, cb.getRendered() - Number(r.start));
+                      if (r.raw) {
+                        const bin = atob(r.raw);
+                        const bytes = new Uint8Array(bin.length);
+                        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                        if (skip < bytes.length) cb.write(bytes.subarray(skip));
+                      } else if (r.text) {
+                        const bytes = new TextEncoder().encode(r.text);
+                        if (skip < bytes.length) cb.write(bytes.subarray(skip));
+                      }
+                    })
+                    .catch(() => {});
+                }
               }
             }
           }
