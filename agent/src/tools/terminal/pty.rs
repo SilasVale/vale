@@ -195,13 +195,13 @@ impl TermBackend for PtyBackend {
                     let _ = w.flush();
                 }),
             ).await;
-            // round-108: on SUCCESS the task finished and the mutex is free
-            // — clear the gate. On TIMEOUT the task is still parked holding
-            // the mutex; keep the gate set so no further write piles on
-            // (it clears when the session closes and the backend drops).
-            if res.is_ok() {
-                in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
-            }
+            // round-109: the gate must clear on BOTH outcomes — a timed-out
+            // task eventually completes when the queue drains, but nothing
+            // observed that; keeping the gate set made the session
+            // permanently write-dead. Execute is serialized by the busy
+            // lock, so clearing the gate cannot pile up more than one
+            // in-flight task.
+            in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
             match res {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(e)) => Err(format!("pty write task failed: {e}")),

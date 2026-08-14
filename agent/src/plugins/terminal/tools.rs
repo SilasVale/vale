@@ -151,6 +151,12 @@ fn tool_open(
                         // first prompt after it carries the marker.
                         let _ = terminal_mgr.term_write(&id, &inject).await;
                     }
+                    // round-109: the marker flag must reflect whether the
+                    // injection ACTUALLY happened — a custom shell (zsh,
+                    // cmd.exe, bash.exe) gets no marker, so execute's
+                    // quiet-never-break must not apply (it would hang every
+                    // command to the deadline).
+                    terminal_mgr.term_set_marker_injected(&id, injectable).await;
                 }
                 // Emit event based on kind
                 match kind.as_str() {
@@ -177,14 +183,17 @@ fn tool_open(
                 // fail the open. PTY default shell is skipped (nothing to
                 // remember).
                 {
-                    let label = terminal_mgr.term_info(&id).await
-                        .map(|m| m.label.clone())
-                        .unwrap_or_else(|| id.clone());
-                    let p = params.as_object().cloned().unwrap_or_default();
-                    // round-108: conn_* is gated behind the terminal feature —
-                    // headless builds must not call it.
+                    // round-108/109: conn_* is gated behind the terminal
+                    // feature — headless builds must not call it (and the
+                    // label/p computation must not warn unused there).
                     #[cfg(feature = "terminal")]
-                    let _ = crate::tools::terminal::conn_remember(&kind, &target, &label, &p);
+                    {
+                        let label = terminal_mgr.term_info(&id).await
+                            .map(|m| m.label.clone())
+                            .unwrap_or_else(|| id.clone());
+                        let p = params.as_object().cloned().unwrap_or_default();
+                        let _ = crate::tools::terminal::conn_remember(&kind, &target, &label, &p);
+                    }
                 }
                 // Drain output channel to keep backend alive.
                 // Forward via EventBus, also buffer for MCP terminal_read.
@@ -733,6 +742,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         // sweeper once the execute returns.
                         if ticks.is_multiple_of(20) {
                             let _ = terminal_mgr.term_select(&sid).await;
+                        }
+                        let live_entry = recover_guard(&buf).live.contains_key(&sid);
+                        // round-109: the session died mid-execute (tab closed,
+                        // shell exited, backend EOF) — the live entry is gone.
+                        // marker-injected sessions would otherwise spin to the
+                        // deadline (up to 3600s) and return a bogus timeout.
+                        if !live_entry {
+                            wait_reason = "closed";
+                            break;
                         }
                         let (chunk, chunk_len) = recover_guard(&buf)
                             .live.get(&sid)
@@ -1462,6 +1480,9 @@ fn tool_connect_saved(
             let buffer_limit = buffer_limit.clone();
             async move {
                 let id = require_str(&params, "id")?;
+                // round-109: headless — silence the unused closure clones.
+                #[cfg(not(feature = "terminal"))]
+                let _ = (&terminal_mgr, &bus, &buf, &logger, &buffer_limit, &id);
                 // round-108: saved connections are terminal-feature only.
                 #[cfg(feature = "terminal")]
                 {

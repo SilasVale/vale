@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use vale_agent_core::DeviceError;
+use vale_agent_core::{recover_guard, DeviceError};
 
 fn store_path() -> PathBuf {
     std::env::current_exe()
@@ -27,22 +27,32 @@ fn read_all() -> serde_json::Map<String, serde_json::Value> {
     }
 }
 
+/// round-109: serialize remember()/forget() — concurrent calls both read
+/// the same map and last-writer-wins silently dropped an entry.
+static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn write_all(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), DeviceError> {
     let p = store_path();
-    std::fs::write(&p, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))
-        .map_err(|e| DeviceError::Internal { message: format!("write {p:?}: {e}") })?;
+    // round-109: temp + atomic rename — a crash/power loss mid-write left a
+    // partial file (read_all then parsed to an empty map, losing every saved
+    // connection), the same class fixed for secrets.rs/config.yaml.
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))
+        .map_err(|e| DeviceError::Internal { message: format!("write {tmp:?}: {e}") })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
     }
-    Ok(())
+    std::fs::rename(&tmp, &p)
+        .map_err(|e| DeviceError::Internal { message: format!("rename to {p:?}: {e}") })
 }
 
 /// Remember a successful connection. `kind` is pty|ssh|serial, `target` the
 /// open target (with ?baud= etc. for serial). Deduped by `kind:target`.
 pub fn remember(kind: &str, target: &str, label: &str, params: &serde_json::Map<String, serde_json::Value>) -> Result<(), DeviceError> {
     if kind == "pty" && target.is_empty() { return Ok(()); } // default shell — nothing to remember
+    let _g = recover_guard(&STORE_LOCK);
     let mut map = read_all();
     let key = format!("{kind}:{target}");
     let mut entry = serde_json::Map::new();
@@ -87,6 +97,7 @@ pub fn list() -> Vec<serde_json::Value> {
 
 /// Forget a saved connection by its `kind:target` id.
 pub fn forget(id: &str) -> Result<bool, DeviceError> {
+    let _g = recover_guard(&STORE_LOCK);
     let mut map = read_all();
     let removed = map.remove(id).is_some();
     if removed { write_all(&map)?; }
