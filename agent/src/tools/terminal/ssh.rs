@@ -53,11 +53,18 @@ impl SshBackend {
 
 impl TermBackend for SshBackend {
     fn write(&self, data: &[u8]) {
-        // try_send: keystrokes must never block — drop when full. (The
-        // round-53 'drop-oldest' idea doesn't apply: tokio mpsc Sender has
-        // no try_recv, and a full 16-slot channel on a keystroke stream is
-        // practically unreachable — the consumer drains faster than typing.)
-        let _ = self.write_tx.try_send(data.to_vec());
+        // round-102: try_send dropped the payload when the channel was full
+        // (the ssh channel task blocked on remote TCP backpressure) — a
+        // terminal_execute COMMAND was silently lost and the wait loop
+        // reported a success-like 'idle'. Keystrokes may drop (never block),
+        // but a full channel here is rare enough that a bounded spin retry
+        // is cheaper than losing a command.
+        for _ in 0..8 {
+            if self.write_tx.try_send(data.to_vec()).is_ok() { return; }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // Still full after ~16ms — the session is wedged on backpressure;
+        // drop (a keystroke stream would never recover this fast anyway).
     }
     fn resize(&self, rows: u16, cols: u16) {
         let _ = self.resize_tx.try_send((rows, cols));
@@ -68,6 +75,11 @@ impl TermBackend for SshBackend {
     fn terminate(&self) {
         // ^C to the remote shell — interrupts the foreground command without
         // dropping the connection (the session stays usable).
-        let _ = self.write_tx.try_send(vec![0x03]);
+        // round-102: same bounded retry — a dropped ^C leaves the timed-out
+        // command running on the remote.
+        for _ in 0..8 {
+            if self.write_tx.try_send(vec![0x03]).is_ok() { return; }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 }

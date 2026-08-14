@@ -162,16 +162,28 @@ export function useSSE(
                   callTool("terminal_read", { session_id: sid, offset: issueOffset, clean: false })
                     .then((r: any) => {
                       if (!r || (!r.text && !r.raw)) return;
-                      const skip = Math.max(0, issueOffset - Number(r.start));
+                      // round-102: write ONLY [issueOffset, renderedNow) —
+                      // bytes the frames delivered while the read was in
+                      // flight are ABOVE renderedNow and must not be
+                      // re-written (the R101 issue-time skip wrote
+                      // everything below end, duplicating frame-delivered
+                      // bytes on screen). The gap [issueOffset, renderedNow)
+                      // is exactly what the broadcast dropped.
+                      const renderedNow = cb.getRendered();
+                      if (renderedNow <= issueOffset) return;
+                      const rel = Math.max(0, issueOffset - Number(r.start));
+                      let bytes: Uint8Array;
                       if (r.raw) {
                         const bin = atob(r.raw);
-                        const bytes = new Uint8Array(bin.length);
+                        bytes = new Uint8Array(bin.length);
                         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-                        if (skip < bytes.length) cb.write(bytes.subarray(skip));
-                      } else if (r.text) {
-                        const bytes = new TextEncoder().encode(r.text);
-                        if (skip < bytes.length) cb.write(bytes.subarray(skip));
+                      } else {
+                        bytes = new TextEncoder().encode(r.text);
                       }
+                      const want = renderedNow - issueOffset;
+                      const from = Math.min(rel, bytes.length);
+                      const to = Math.min(rel + want, bytes.length);
+                      if (to > from) cb.write(bytes.subarray(from, to));
                     })
                     .catch(() => {});
                 }

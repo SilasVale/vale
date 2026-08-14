@@ -278,11 +278,21 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             axum::http::HeaderName::from_static("cache-control"),
             axum::http::HeaderValue::from_static("no-store"),
         );
-        // Zero-config token injection (re-enabled after the CORS * removal
-        // above made it safe again): embed the device token as a script
-        // fragment before </head>. Cross-origin fetch of this page now can't
-        // READ the response (no ACAO header), so the token can't leak to a
-        // third-party page. Host is pinned to the device's own domains.
+        // Zero-config token injection: embed the device token as a script
+        // fragment before </head>. round-102: injection now requires the
+        // gateway-proxy marker header — a DIRECT navigation to
+        // dN.agent.saisi.online/panel/ previously got the token injected
+        // for any internet user (the device hostnames are enumerable public
+        // DNS records; the leaked token grants /api/tools RCE). The gateway
+        // proxy (admin session or plugin link) is the only authenticated
+        // path, and it sets X-Vale-Proxy. Localhost/loopback keeps working
+        // for on-device use.
+        let via_proxy = req
+            .headers()
+            .get("x-vale-proxy")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == "1")
+            .unwrap_or(false);
         if let Some(ref token) = state.config.server.device_token {
             // EXACT host allowlist. A substring/prefix match here was
             // bypassable — e.g. Host: evil-agent.saisi.online.evil.com matches
@@ -307,7 +317,18 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                             && host.split('.').next().map(|d| d.starts_with("d")).unwrap_or(false))
                 })
                 .unwrap_or(false);
-            if host_ok {
+            // round-102: token injection only via the gateway proxy OR
+            // loopback — a public direct request must NOT receive the token.
+            let loopback = req
+                .headers()
+                .get(axum::http::header::HOST)
+                .and_then(|h| h.to_str().ok())
+                .map(|h| {
+                    let host = h.trim().split(':').next().unwrap_or(h.trim());
+                    host == "127.0.0.1" || host == "localhost"
+                })
+                .unwrap_or(false);
+            if host_ok && (via_proxy || loopback) {
                 // serde_json escapes quotes but NOT < > (no escape_html
                 // feature), so a non-hex token containing </script> could
                 // break out of the script element and run attacker JS on the
@@ -767,12 +788,15 @@ mod tests {
     }
 
     fn req_with_host(path: &str, host: &str) -> Request<Body> {
-        Request::builder()
-            .method("GET")
-            .uri(path)
-            .header(axum::http::header::HOST, host)
-            .body(Body::empty())
-            .unwrap()
+        // round-102: token injection requires the gateway-proxy marker (or
+        // loopback) — the inject cases set it, the must-NOT-inject cases
+        // (direct public access) don't.
+        req_with_host_proxy(path, host, false)
+    }
+    fn req_with_host_proxy(path: &str, host: &str, via_proxy: bool) -> Request<Body> {
+        let mut b = Request::builder().method("GET").uri(path).header(axum::http::header::HOST, host);
+        if via_proxy { b = b.header("x-vale-proxy", "1"); }
+        b.body(Body::empty()).unwrap()
     }
 
     #[tokio::test]
@@ -780,13 +804,24 @@ mod tests {
         let mut cfg = Config::default();
         cfg.server.device_token = Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into());
         let st = Arc::new(AppState::new(cfg));
-        // The device's own subdomain MUST inject (3 dots + d prefix).
-        let ok = handle_request(req_with_host("/panel/", "d1.agent.saisi.online"), st.clone()).await;
+        // The device's own subdomain MUST inject when proxied by the gateway
+        // (3 dots + d prefix + X-Vale-Proxy) — round-102: a DIRECT request
+        // (no proxy marker) must NOT inject (the token would leak to any
+        // internet user hitting the enumerable public hostname).
+        let ok = handle_request(req_with_host_proxy("/panel/", "d1.agent.saisi.online", true), st.clone()).await;
         let body = axum::body::to_bytes(ok.into_body(), 1 << 20).await.unwrap();
-        assert!(String::from_utf8_lossy(&body).contains("window.__PANEL_TOKEN__"), "device host must inject");
+        assert!(String::from_utf8_lossy(&body).contains("window.__PANEL_TOKEN__"), "device host via proxy must inject");
 
-        // Apex + loopback inject too.
-        for h in ["agent.saisi.online", "127.0.0.1:18080", "localhost"] {
+        // Direct (no proxy marker) on the device host MUST NOT inject.
+        let direct = handle_request(req_with_host("/panel/", "d1.agent.saisi.online"), st.clone()).await;
+        let bd = axum::body::to_bytes(direct.into_body(), 1 << 20).await.unwrap();
+        assert!(!String::from_utf8_lossy(&bd).contains("window.__PANEL_TOKEN__"), "direct device access must NOT inject (RCE)");
+
+        // Apex via proxy + loopback inject.
+        let apex = handle_request(req_with_host_proxy("/panel/", "agent.saisi.online", true), st.clone()).await;
+        let ba = axum::body::to_bytes(apex.into_body(), 1 << 20).await.unwrap();
+        assert!(String::from_utf8_lossy(&ba).contains("window.__PANEL_TOKEN__"), "apex via proxy must inject");
+        for h in ["127.0.0.1:18080", "localhost"] {
             let r = handle_request(req_with_host("/panel/", h), st.clone()).await;
             let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
             assert!(String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"), "{h} must inject");
