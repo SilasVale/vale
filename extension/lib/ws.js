@@ -1,7 +1,7 @@
 // WS client for the gateway PluginHubDO — one socket per device, ping every
 // 20s, exponential backoff reconnect. Frames: {type: "hello"|"ping"|"pong"|
 // "request"|"response", ...} — see gateway/src/plugin-hub.js.
-import { state, loadPairing } from "./state.js";
+import { state, loadPairing, setStateError } from "./state.js";
 
 let ws = null;
 let backoffMs = 1000;

@@ -29,6 +29,10 @@ export async function callApi(path: string, init: RequestInit = {}): Promise<any
     onUnauthorizedCb?.();
     throw new Error("unauthorized");
   }
+  // round-86: a transient 502/500 must THROW — the old code returned the
+  // error body as a successful result, so the poll mapped its characters
+  // into junk sessions (sid: undefined) and tombstoned the list.
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = await res.text();
   try { return JSON.parse(text); } catch { return text; }
 }

@@ -69,7 +69,10 @@ export function useSessions(connected: boolean) {
       setSessions((prev) => {
         if (prev.some((s) => s.sid === sid)) return prev;
         const label = kind === "ssh" ? target.split("@").pop() || target : kind === "serial" ? target.split("?")[0] : target || "shell";
-        return [...prev, { sid, label, kind, closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null }];
+        // round-86: the new session is the ACTIVE one — the old active:false
+        // + setActiveSid(sid) never set the session's own flag, so the pane
+        // stayed display:none (blank terminal area).
+        return [...prev.map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null }];
       });
       setActiveSid(sid);
       return sid;
@@ -86,11 +89,25 @@ export function useSessions(connected: boolean) {
     // it open and surface the error.
     try {
       await callTool("terminal_close", { session_id: sid });
-      setSessions((prev) => prev.map((s) => (s.sid === sid ? { ...s, closed: true, closedAt: Date.now() } : s)));
+      setSessions((prev) => {
+        const next = prev.map((s) => (s.sid === sid ? { ...s, closed: true, closedAt: Date.now() } : s));
+        // round-86: closing the ACTIVE session must switch to the next live
+        // one — the old code left activeSid on the dead tab (stale output,
+        // unclickable, typing went nowhere).
+        if (activeSid === sid) {
+          const nextLive = next.find((s) => !s.closed && s.sid !== sid);
+          if (nextLive) {
+            setActiveSid(nextLive.sid);
+            return next.map((s) => ({ ...s, active: s.sid === nextLive.sid }));
+          }
+          setActiveSid(null);
+        }
+        return next;
+      });
     } catch (e: any) {
       setStatusState(`close failed — session still open: ${e.message}`);
     }
-  }, []);
+  }, [activeSid]);
 
   const activate = useCallback((sid: string) => {
     setActiveSid(sid);
