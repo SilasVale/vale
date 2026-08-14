@@ -1,0 +1,341 @@
+/**
+ * Vale gateway plugin: auth — /api/auth/* (register / login / logout) and
+ * /api/me/* (account info, route selection, US-proxy switch, user keys).
+ *
+ * round-73 plugin extraction: all handler/helper logic copied VERBATIM from
+ * index.js (handleConsole); zero behavior change. The wiring phase (next)
+ * dispatches through the registry and removes the now-duplicated routes
+ * from index.js.
+ *
+ * Dispatch contract: handlers receive (request, env, url) — the same triple
+ * handleConsole(request, env, url) got. The auth handlers' `secure` flag is
+ * derived here the same way handleConsole did: url.protocol === "https:".
+ */
+
+import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, type User } from "../store.ts";
+import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "../auth.ts";
+import { fetchWithTimeout } from "../reliability.ts";
+import { MODELS, OG_ZEN_CHAT } from "../channels.ts";
+import { jsonOk, jsonError, readJson } from "../http.ts";
+import type { PluginContext } from "./registry.ts";
+
+const AUTH_BASE = "/api/auth";
+const ME_BASE = "/api/me";
+
+// Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
+// secret) over the admin password. Using the password directly lets any invited
+// user offline-brute-force it from their own signed cookie (HMAC-SHA256 is not
+// memory-hard); with SESSION_SECRET set, the password is never a signing key.
+function sessionSecret(env: any, adminPassword: string): string {
+  return env.SESSION_SECRET || adminPassword;
+}
+
+async function requireSession(request: Request, env: any): Promise<User | null> {
+  const ap = await getAdminPassword(env);
+  if (!ap) return null;
+  const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
+  if (!cookie) return null;
+  // Revoked by logout (server-side blacklist — a copied cookie dies too).
+  if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) return null;
+  const session = await verifySessionToken(sessionSecret(env, ap), cookie);
+  if (!session) return null;
+  const user = await getUser(env, session.uid);
+  if (!user || !user.enabled) return null;
+  return user;
+}
+
+/* ---- Register / Login ---- */
+
+async function authRegister(request: Request, env: any, secure: boolean): Promise<Response> {
+  const ap = await getAdminPassword(env);
+  if (!ap) return jsonError(500, "Admin password not configured", "config_error");
+  const body = await readJson(request);
+  try {
+    const created = await createUser(env, {
+      username: body.username,
+      password: body.password,
+      inviteCode: body.inviteCode,
+      role: "user", // always a normal user; the admin can only come from seeding
+    });
+    const token = await issueSessionToken(sessionSecret(env, ap), created.id, created.role);
+    return jsonOk({ ok: true, username: created.username, role: created.role, token: created.token }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
+  } catch (e: any) {
+    return jsonError(400, e.message, "invalid_request");
+  }
+}
+
+async function authLogin(request: Request, env: any, secure: boolean): Promise<Response> {
+  if (!(await hasAdminPassword(env))) return jsonError(500, "Admin password not configured", "config_error");
+  // The session-signing key in fallback mode is the stored admin password
+  // HASH (same value requireSession uses) — getAdminPassword returns the
+  // hash, never the plaintext.
+  const ap = await getAdminPassword(env);
+  const body = await readJson(request);
+  // Brute-force throttle: 5 consecutive failures lock the username for 30s
+  // (exponential backoff would need the failure count; a flat lock is simple
+  // and stops online guessing of the 6-8 char passwords).
+  // Trim + lowercase: findUserByUsername trims, so an untrimmed key let
+  // "admin " variants bypass the lock while still reaching the real admin
+  // password check (brute-force bypass).
+  // Bind the lock to the CALLER (IP+username): a per-username-only key let
+  // any unauthenticated attacker POST 5 wrong passwords and hold the admin
+  // console login at 429 forever (permanent login-layer DoS).
+  const callerIp = request.headers?.get?.("cf-connecting-ip") || "unknown";
+  // Per-IP in-memory burst gate BEFORE the KV lock path: a brute-force loop
+  // otherwise burns 2-3 KV WRITES per failed login — ~400 attempts exhaust
+  // the Free-plan daily write quota (1000). >10 failures/min from one IP
+  // short-circuits with no KV traffic; the KV lock below still handles the
+  // sustained case.
+  const gk = `login:${callerIp}:${Math.floor(Date.now() / 60000)}`;
+  const gate = (__loginGate.get(gk) || 0) + 1;
+  __loginGate.set(gk, gate);
+  if (__loginGate.size > 4096) __loginGate.delete(__loginGate.keys().next().value);
+  if (gate > 10) {
+    return jsonError(429, "Too many attempts — try again in a moment", "rate_limit_error");
+  }
+  const lockKey = `login-lock:${callerIp}:${String(body.username || "").trim().toLowerCase()}`;
+  const locked = await env.KEYS.get(lockKey);
+  if (locked) {
+    return jsonError(429, "Too many attempts — try again in ~30s", "rate_limit_error");
+  }
+  const user = await findUserByUsername(env, body.username);
+  if (!user || !user.enabled) return jsonError(401, "Incorrect username or password", "authentication_error");
+  let ok = false;
+  if (user.id === ADMIN_ID) {
+    // The admin account logs in with the admin password (stored HASHED —
+    // compare via verifyAdminPassword, never read the plaintext).
+    ok = await verifyAdminPassword(env, body.password || "");
+  } else {
+    ok = !!user.salt && !!user.passwordHash && (await verifyPassword(body.password || "", user.salt, user.passwordHash));
+  }
+  if (!ok) {
+    // Track failures: 5th consecutive miss arms the 30s lock.
+    const fails = Number(await env.KEYS.get(lockKey + ":n")) || 0;
+    const next = fails + 1;
+    if (next >= 5) {
+      await env.KEYS.put(lockKey, "1", { expirationTtl: 60 });
+      await env.KEYS.delete(lockKey + ":n");
+    } else {
+      await env.KEYS.put(lockKey + ":n", String(next), { expirationTtl: 60 });
+    }
+    return jsonError(401, "Incorrect username or password", "authentication_error");
+  }
+  // Success clears the failure counter.
+  await env.KEYS.delete(lockKey + ":n");
+  const token = await issueSessionToken(sessionSecret(env, ap), user.id, user.role);
+  return jsonOk({ ok: true, username: user.username, role: user.role }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
+}
+
+const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
+
+/* ---- Logout ---- */
+
+async function authLogout(request: Request, env: any, secure: boolean): Promise<Response> {
+  // Revoke the session server-side: the HMAC cookie alone was cleared
+  // client-side, but a copied cookie stayed valid for the full 24h. Blacklist
+  // the token hash in KV until its exp so it dies everywhere.
+  const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
+  if (cookie && env.KEYS) {
+    try {
+      const payload = JSON.parse(atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") || "{}") || "{}");
+      if (payload.exp) {
+        const ttl = Math.max(1, Math.min(86400 * 2, Math.ceil((payload.exp * 1000 - Date.now()) / 1000)));
+        await env.KEYS.put(`sess-revoked:${cookie}`, "1", { expirationTtl: ttl });
+      }
+    } catch { /* malformed cookie — ignore */ }
+  }
+  return jsonOk({ ok: true }, { "Set-Cookie": clearSessionCookieHeader(secure) });
+}
+
+/* ---- /api/me (session-gated; gate copied from handleConsole) ---- */
+
+async function meGet(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const ukeys = await getUserKeys(env, user.id);
+  return jsonOk({
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    enabled: user.enabled,
+    token: user.token,
+    keys: userKeysStatus(ukeys),
+  });
+}
+
+// Per-user route selection (Claude Code model=auto)
+async function meGetRoute(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  return jsonOk({ model: await getUserRoute(env, user.id) });
+}
+
+async function mePutRoute(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const body = await readJson(request);
+  const model = body?.model ?? null;
+  if (model !== null && !MODELS.some((m) => m.id === model)) {
+    return jsonError(400, `Unknown model: ${model}`, "invalid_request");
+  }
+  await setUserRoute(env, user.id, model);
+  return jsonOk({ ok: true, model });
+}
+
+async function meRegenerateToken(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const token = await regenerateToken(env, user.id);
+  return jsonOk({ ok: true, token });
+}
+
+// 美国出口开关(全局设置):GET 读当前值;PUT 改(仅管理员)。
+// 网关在每次请求路由时读 KV,开关立即生效,无需重启。
+async function meGetUsproxy(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const v = await getGlobalSetting(env, "US_PROXY");
+  return jsonOk({ enabled: !!v });
+}
+
+async function mePutUsproxy(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin") {
+    return jsonError(403, "Admin only", "forbidden");
+  }
+  const body = await readJson(request);
+  await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : null);
+  const v = await getGlobalSetting(env, "US_PROXY");
+  return jsonOk({ ok: true, enabled: !!v });
+}
+
+async function mePutKeys(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const body = await readJson(request);
+  const { name, value } = body || {};
+  if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  if (typeof value !== "string" || !value.trim()) return jsonError(400, "value must not be empty", "invalid_request");
+  const v = value.trim();
+  await setUserKey(env, user.id, name, v);
+  return jsonOk({ ok: true, name, masked: maskKey(v) });
+}
+
+async function meDeleteKeys(request: Request, env: any, url: URL): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const name = url.searchParams.get("name") || "";
+  if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  await deleteUserKey(env, user.id, name);
+  return jsonOk({ ok: true, name });
+}
+
+async function meTestKeys(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const body = await readJson(request);
+  const name = body?.name;
+  if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  const ukeys = await getUserKeys(env, user.id);
+  return testKey(env, name, ukeys[name]);
+}
+
+/* ---- Connectivity tests ---- */
+
+async function testKey(env: any, name: string, key: string): Promise<Response> {
+  if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
+  try {
+    if (name === "DEEPSEEK_API_KEY") {
+      const res = await fetchWithTimeout("https://api.deepseek.com/models", { headers: { Authorization: `Bearer ${key}` } });
+      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "DeepSeek auth OK" : `Upstream ${res.status}` });
+    }
+    if (name === "OPENROUTER_API_KEY") {
+      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${key}` } });
+      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "OpenRouter auth OK" : `Upstream ${res.status}` });
+    }
+    if (name === "OPENCODE_GO_API_KEY") {
+      // Do not send the literal "[1m]" suffix — zen rejects it with 401
+      // 尊重 US_PROXY 开关:开启时经美国代理探测(实测 chat/completions
+      // 走代理 1-3s vs 直连 12-13s);关闭时直连。
+      const usProxy = await getGlobalSetting(env, "US_PROXY");
+      const probeUrl = usProxy
+        ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
+        : OG_ZEN_CHAT;
+      const res = await fetchWithTimeout(probeUrl, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "deepseek-v4-flash",
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+          stream: true,
+        }),
+      });
+      if (!res.ok) {
+        return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
+      }
+      // 流式探测:收到首个 SSE data 块即判定连通(auth OK + 连接建立),
+      // 不等 thinking 结束(非流式要等完整响应 ~10s)。提前 cancel 释放连接。
+      const firstChunk = await (async () => {
+        const reader = res.body!.getReader();
+        const { value } = await reader.read();
+        await reader.cancel().catch(() => {});
+        return new TextDecoder().decode(value || new Uint8Array());
+      })();
+      const ok = firstChunk.includes("data:");
+      return jsonOk({ ok, name, status: res.status, detail: ok ? "OpenCode Go auth OK" : "OpenCode Go auth FAILED (no stream data)" });
+    }
+    if (name === "QWEN_API_KEY") {
+      const res = await fetchWithTimeout("https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: "qwen3.8-max-preview",
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+        }),
+      });
+      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "Qwen MaaS auth OK" : `Upstream ${res.status}` });
+    }
+  } catch (e: any) {
+    return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
+  }
+  return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+}
+
+function userKeysStatus(ukeys: Record<string, string>): Record<string, { configured: boolean; masked: string }> {
+  const out: Record<string, { configured: boolean; masked: string }> = {};
+  for (const n of USER_KEY_NAMES) {
+    const v = ukeys[n];
+    out[n] = { configured: !!v, masked: maskKey(v) };
+  }
+  return out;
+}
+
+export default {
+  name: "auth",
+  deps: [],
+  setup(ctx: PluginContext) {
+    // Exact method+path match, same as the index.js if/else chain (the
+    // registry's route() helper does prefix matching — exact here so
+    // /api/me never swallows /api/me/route etc.). Order mirrors index.js.
+    const add = (method: string, path: string, handler: (...args: any[]) => any) =>
+      ctx.routes.push({ match: (m: string, p: string) => m === method && p === path, handler });
+    // `secure` derived exactly as handleConsole did: url.protocol === "https:"
+    const withSecure = (fn: (request: Request, env: any, secure: boolean) => Response | Promise<Response>) =>
+      (request: Request, env: any, url: URL): Response | Promise<Response> => fn(request, env, url.protocol === "https:");
+    add("POST", `${AUTH_BASE}/register`, withSecure(authRegister));
+    add("POST", `${AUTH_BASE}/login`, withSecure(authLogin));
+    add("POST", `${AUTH_BASE}/logout`, withSecure(authLogout));
+    add("GET", ME_BASE, meGet);
+    add("GET", `${ME_BASE}/route`, meGetRoute);
+    add("PUT", `${ME_BASE}/route`, mePutRoute);
+    add("POST", `${ME_BASE}/token/regenerate`, meRegenerateToken);
+    add("GET", `${ME_BASE}/usproxy`, meGetUsproxy);
+    add("PUT", `${ME_BASE}/usproxy`, mePutUsproxy);
+    add("PUT", `${ME_BASE}/keys`, mePutKeys);
+    add("DELETE", `${ME_BASE}/keys`, meDeleteKeys);
+    add("POST", `${ME_BASE}/keys/test`, meTestKeys);
+  },
+};
