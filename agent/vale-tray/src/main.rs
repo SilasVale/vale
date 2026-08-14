@@ -11,7 +11,7 @@
 //!   - Copy MCP config (Claude Code snippet) to the clipboard
 //!   - Open the console (gateway device page) in the default browser
 //!   - Open a local terminal (PowerShell in the install dir) for logs/testing
-//!   - Updates: manual 检查更新 (dialog) + checkable 自动更新 (silent hourly
+//!   - Updates: manual Check for updates (dialog) + checkable Auto-update (silent hourly
 //!     check, auto-installs newer ValeAgent-Setup.exe — toggle persisted in
 //!     %APPDATA%\ValeAgent\auto-update, progress in vale-update.log)
 //!
@@ -106,7 +106,7 @@ fn auto_update_dir() -> PathBuf {
         .unwrap_or_else(install_dir)
 }
 
-/// Is the 自动更新 toggle on? Persisted as "1"/"0" in APPDATA so it survives
+/// Is the Auto-update toggle on? Persisted as "1"/"0" in APPDATA so it survives
 /// upgrades and logon/logoff.
 fn auto_update_enabled() -> bool {
     std::fs::read_to_string(auto_update_dir().join("auto-update"))
@@ -120,7 +120,7 @@ fn set_auto_update(enabled: bool) {
     let _ = std::fs::write(dir.join("auto-update"), if enabled { "1" } else { "0" });
 }
 
-/// Masked token for display: `a1b2…ef34` (empty → "未找到").
+/// Masked token for display: `a1b2…ef34` (empty → "not found").
 /// Char-safe: the token may be hand-edited into non-ASCII text, and byte
 /// slicing would panic on a non-char-boundary — killing the refresh loop.
 fn token_mask() -> String {
@@ -236,16 +236,16 @@ try {{
   $local = [version]'{1}'
   if ($remote -le $local) {{
     Log 'check: up to date'
-    [System.Windows.Forms.MessageBox]::Show("已是最新版本 {1}。", "Vale Agent 更新", 'OK')
+    [System.Windows.Forms.MessageBox]::Show("Already up to date ({1}).", "Vale Agent Update", 'OK')
     return
   }}
   Log "check: newer $($j.version) available"
   $r = [System.Windows.Forms.MessageBox]::Show(
-    "发现新版本 $($j.version)（当前 {1}）。是否立即升级？", "Vale Agent 更新", 'YesNo')
+    "New version $($j.version) available (current {1}). Upgrade now?", "Vale Agent Update", 'YesNo')
   if ($r -ne 'Yes') {{ Log 'check: declined'; return }}
   [System.Windows.Forms.MessageBox]::Show(
-    "正在下载更新并静默升级，约需 1 分钟。期间服务会短暂中断，完成后托盘将自动重启。",
-    "Vale Agent 更新", 'OK')
+    "Downloading update and silently upgrading (~1 min). Service will briefly interrupt; tray restarts when done.",
+    "Vale Agent Update", 'OK')
   # Mutual exclusion with the hourly auto-update (both download to the same
   # ValeAgent-Setup.exe path; two silent installers would race). Same
   # 60-minute staleness rule as the auto path.
@@ -255,7 +255,7 @@ try {{
       $age = (Get-Date) - (Get-Item $busy).LastWriteTime
       if ($age.TotalMinutes -lt 60) {{
         Log 'check: another update in progress'
-        [System.Windows.Forms.MessageBox]::Show("正在更新中，请稍候。", "Vale Agent 更新", 'OK')
+        [System.Windows.Forms.MessageBox]::Show("Update in progress, please wait.", "Vale Agent Update", 'OK')
         return
       }}
       Log 'check: stale busy marker, clearing'
@@ -274,16 +274,16 @@ New-Item -ItemType File -Path $busy -Force | Out-Null
   Invoke-WebRequest -Uri $j.download -OutFile $installer -TimeoutSec 300
   Log 'update: downloaded, running silent installer'
   $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D={2}" -Verb RunAs -PassThru -Wait
-  if ($p.ExitCode -ne 0) {{ throw "安装程序退出码 $($p.ExitCode)" }}
+  if ($p.ExitCode -ne 0) {{ throw "installer exit code $($p.ExitCode)" }}
   Log 'update: install ok'
   Remove-Item $installer -Force -ErrorAction SilentlyContinue
   Remove-Item $busy -Force -ErrorAction SilentlyContinue
   [System.Windows.Forms.MessageBox]::Show(
-    "升级完成！已更新到 $($j.version)。", "Vale Agent 更新", 'OK')
+    "Upgrade complete! Updated to $($j.version).", "Vale Agent Update", 'OK')
 }} catch {{
   Log "update: FAILED - $($_.Exception.Message)"
   Remove-Item $busy -Force -ErrorAction SilentlyContinue
-  [System.Windows.Forms.MessageBox]::Show("升级失败：$($_.Exception.Message)", "Vale Agent 更新", 'OK')
+  [System.Windows.Forms.MessageBox]::Show("Upgrade failed: $($_.Exception.Message)", "Vale Agent Update", 'OK')
   Restore-Tray
 }}
 "#,
@@ -293,7 +293,7 @@ New-Item -ItemType File -Path $busy -Force | Out-Null
         .args(["-NoProfile", "-Command", &ps])
         // CREATE_NO_WINDOW: the update script must run WITHOUT a visible
         // console — an auto-upgrade popping a black cmd window with
-        // schtasks/sc noise (1060, "找不到文件", an Administrator password
+        // schtasks/sc noise (1060, "file not found", an Administrator password
         // prompt) looked like a failure. No console = no window.
         .creation_flags(0x08000000)
         .spawn();
@@ -305,7 +305,7 @@ New-Item -ItemType File -Path $busy -Force | Out-Null
     // already-current install.)
 }
 
-/// How often the tray re-checks for updates while the 自动更新 toggle is on.
+/// How often the tray re-checks for updates while the Auto-update toggle is on.
 const AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Silent auto-update: like `check_for_update()` but with no dialogs at all —
@@ -313,7 +313,7 @@ const AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// installer. Every step goes to vale-update.log in the install dir (a log
 /// endpoint reads it back instead of asking the user to open files). A busy
 /// marker in APPDATA guards against two updates racing (the hourly auto check
-/// vs a manual 检查更新 click).
+/// vs a manual Check for updates click).
 fn auto_update_check() {
     let dir = install_dir();
     let ps = format!(
@@ -359,7 +359,7 @@ try {{
   Invoke-WebRequest -Uri $j.download -OutFile $installer -TimeoutSec 300
   Log 'auto: running silent installer'
   $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D={2}" -Verb RunAs -PassThru -Wait
-  if ($p.ExitCode -ne 0) {{ throw "安装程序退出码 $($p.ExitCode)" }}
+  if ($p.ExitCode -ne 0) {{ throw "installer exit code $($p.ExitCode)" }}
   Log 'auto: install ok'
   Remove-Item $installer -Force -ErrorAction SilentlyContinue
 }} catch {{
@@ -393,14 +393,14 @@ impl TrayUi {
     fn refresh(&self, tray: &TrayIcon) {
         let port = server_port();
         let running = server_running(port);
-        let status = if running { "运行中" } else { "已停止" };
-        self.status_item.set_text(format!("状态：{status}"));
+        let status = if running { "Running" } else { "Stopped" };
+        self.status_item.set_text(format!("Status: {status}"));
         self.start_item.set_enabled(!running);
         self.stop_item.set_enabled(running);
         let host = device_hostname();
-        self.host_item.set_text(format!("域名：{}", if host.is_empty() { "未知" } else { &host }));
+        self.host_item.set_text(format!("Host: {}", if host.is_empty() { "Unknown" } else { &host }));
         let mask = token_mask();
-        self.token_item.set_text(format!("Token：{}", if mask.is_empty() { "未找到" } else { &mask }));
+        self.token_item.set_text(format!("Token: {}", if mask.is_empty() { "not found" } else { &mask }));
         let _ = tray.set_tooltip(Some(format!("Vale Agent — {status}")));
     }
 }
@@ -419,25 +419,25 @@ fn create_tray(png: &[u8]) -> Option<(TrayIcon, TrayUi, CheckMenuItem)> {
 
         let menu = Menu::new();
         let header = MenuItem::new("Vale Agent", false, None);
-        let status_item = MenuItem::new("状态：--", false, None);
-        let host_item = MenuItem::new("域名：--", false, None);
+        let status_item = MenuItem::new("Status: --", false, None);
+        let host_item = MenuItem::new("Host: --", false, None);
         let token_item = MenuItem::new("Token：--", false, None);
-        let copy_mcp = MenuItem::with_id("copy_mcp", "复制 MCP 配置", true, None);
-        let open_panel = MenuItem::with_id("open_panel", "打开设备面板", true, None);
-        let open_console = MenuItem::with_id("open_console", "打开控制台", true, None);
-        let open_terminal = MenuItem::with_id("open_terminal", "本地终端", true, None);
-        let check_update = MenuItem::with_id("check_update", "检查更新", true, None);
+        let copy_mcp = MenuItem::with_id("copy_mcp", "Copy MCP config", true, None);
+        let open_panel = MenuItem::with_id("open_panel", "Open device panel", true, None);
+        let open_console = MenuItem::with_id("open_console", "Open console", true, None);
+        let open_terminal = MenuItem::with_id("open_terminal", "Local terminal", true, None);
+        let check_update = MenuItem::with_id("check_update", "Check for updates", true, None);
         let auto_update = CheckMenuItem::with_id(
             "auto_update",
-            "自动更新",
+            "Auto-update",
             true,
             auto_update_enabled(),
             None,
         );
-        let start = MenuItem::with_id("start", "启动", true, None);
-        let stop = MenuItem::with_id("stop", "停止", true, None);
-        let restart = MenuItem::with_id("restart", "重启", true, None);
-        let quit = MenuItem::with_id("quit", "退出", true, None);
+        let start = MenuItem::with_id("start", "Start", true, None);
+        let stop = MenuItem::with_id("stop", "Stop", true, None);
+        let restart = MenuItem::with_id("restart", "Restart", true, None);
+        let quit = MenuItem::with_id("quit", "Quit", true, None);
         let sep = PredefinedMenuItem::separator();
         menu.append(&header).expect("menu header");
         menu.append(&status_item).expect("menu status");
@@ -516,7 +516,7 @@ fn main() {
         // icon, then exit. (No user-visible window, so a MessageBox is the
         // cheapest honest signal.)
         let _ = std::process::Command::new("powershell")
-            .args(["-c", "[System.Windows.Forms.MessageBox]::Show('Vale Agent 托盘已在运行。', 'Vale Agent', 'OK', 'Information')"])
+            .args(["-c", "[System.Windows.Forms.MessageBox]::Show('Vale Agent tray is already running.', 'Vale Agent', 'OK', 'Information')"])
             .spawn();
         std::process::exit(0);
     }
@@ -531,7 +531,7 @@ fn main() {
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
     // First auto-update check ~60s after tray start (network is often not up
     // right at logon). Only advances when the check actually runs, so toggling
-    // 自动更新 on triggers one within a minute.
+    // Auto-update on triggers one within a minute.
     let mut last_auto_check = Instant::now() - AUTO_CHECK_INTERVAL + Duration::from_secs(60);
 
     event_loop
@@ -545,7 +545,7 @@ fn main() {
             }
             // No periodic auto-update: the hourly check caused surprise
             // installs/restarts and user asked for push-only (updates happen
-            // via the MCP agent_update or the tray's manual 检查更新). The
+            // via the MCP agent_update or the tray's manual Check for updates). The
             // auto_update_enabled() toggle stays for the manual path.
             if false && auto_update_enabled() && last_auto_check.elapsed() >= AUTO_CHECK_INTERVAL {
                 auto_update_check();

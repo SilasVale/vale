@@ -25,9 +25,10 @@ const LS_HOST = "valePanelHost";
 const LS_TOKEN = "valePanelToken";
 
 // Light terminal — white background, dark ink — per the confirmed Apple-style
-// design spec ("xterm 白底墨字保留", docs/superpowers/specs/2026-08-11-
-// apple-style-unification-design.md). A dark block on the light panel was a
-// spec deviation introduced in a later commit; revert to the confirmed theme.
+// design spec ("xterm keeps white bg, dark ink", docs/superpowers/specs/
+// 2026-08-11-apple-style-unification-design.md). A dark block on the light
+// panel was a spec deviation introduced in a later commit; revert to the
+// confirmed theme.
 //
 // The bright palette (8-15) MUST be set: xterm draws bold text with index<8
 // at index+8 (drawBoldTextInBrightColors default true) and falls back to the
@@ -1014,6 +1015,40 @@ $("new-serial").addEventListener("click", () => showModal("serial"));
 $("modal-cancel").addEventListener("click", hideModal);
 $("modal-connect").addEventListener("click", connectModal);
 $("conn-modal").addEventListener("click", (e) => { if (e.target === e.currentTarget) hideModal(); });
+
+// Settings modal (round-69): session buffer size, read/written via the
+// agent's /api/settings (persisted to config.yaml by the agent).
+function showSettings() {
+  callApi("/api/settings")
+    .then((j) => {
+      if (j && typeof j.buffer_mb === "number") {
+        $("settings-buffer").value = j.buffer_mb;
+        $("settings-status").textContent = "";
+      } else {
+        $("settings-status").textContent = "read failed";
+      }
+      $("settings-modal").classList.remove("hidden");
+    })
+    .catch(() => { $("settings-status").textContent = "read failed"; });
+}
+function hideSettings() { $("settings-modal").classList.add("hidden"); }
+function saveSettings() {
+  const mb = Number($("settings-buffer").value);
+  if (!Number.isFinite(mb) || mb < 1 || mb > 64) {
+    $("settings-status").textContent = "enter 1-64";
+    return;
+  }
+  callApi("/api/settings", { method: "PUT", body: JSON.stringify({ buffer_mb: mb }) })
+    .then((j) => {
+      if (j && j.ok) { hideSettings(); setStatus(`buffer set to ${j.buffer_mb} MiB`); }
+      else { $("settings-status").textContent = "save failed"; }
+    })
+    .catch(() => { $("settings-status").textContent = "save failed"; });
+}
+$("open-settings").addEventListener("click", showSettings);
+$("settings-cancel").addEventListener("click", hideSettings);
+$("settings-save").addEventListener("click", saveSettings);
+$("settings-modal").addEventListener("click", (e) => { if (e.target === e.currentTarget) hideSettings(); });
 
 // ── Boot ────────────────────────────────────────────────────────
 

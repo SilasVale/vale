@@ -36,8 +36,8 @@
     <label>Auth token</label>
     <input id="token" type="password" placeholder="Bearer token from C:\vale-agent\config.yaml" autocomplete="off">
     <button id="save">Connect</button>
-    <button id="forget-creds" class="hidden" style="background:transparent;border:1px solid var(--line-strong);color:var(--muted);margin-top:8px">忘记凭据 / 重新输入</button>
-    <div class="hint">凭据保存在本浏览器(localStorage),不会上传到别处。</div>
+    <button id="forget-creds" class="hidden" style="background:transparent;border:1px solid var(--line-strong);color:var(--muted);margin-top:8px">Forget credentials / re-enter</button>
+    <div class="hint">Credentials stay in this browser (localStorage); they are never sent elsewhere.</div>
     <div id="conn-status"></div>
   </div>
 
@@ -50,6 +50,7 @@
         <button id="new-ssh" title="New SSH connection">SSH</button>
         <button id="new-serial" title="New serial connection">Serial</button>
         <button id="export-all" title="Export all session logs">Export</button>
+        <button id="open-settings" title="Settings">Settings</button>
       </div>
     </div>
     <div id="term-container">
@@ -81,6 +82,22 @@
           <button id="modal-connect" class="primary">Connect</button>
         </div>
         <div id="modal-status"></div>
+      </div>
+    </div>
+
+    <!-- Settings modal (round-69): session buffer size, runtime-writable
+         via PUT /api/settings, persisted to config.yaml by the agent. -->
+    <div id="settings-modal" class="hidden">
+      <div class="modal-card">
+        <h2>Settings</h2>
+        <label>Session buffer (MiB per session)</label>
+        <input id="settings-buffer" type="number" min="1" max="64" step="1">
+        <div class="hint">Output recall per terminal session (memory + spill file, ~2x this). 1-64. Applies to new output; persisted across restarts.</div>
+        <div class="modal-actions">
+          <button id="settings-cancel">Cancel</button>
+          <button id="settings-save" class="primary">Save</button>
+        </div>
+        <div id="settings-status"></div>
       </div>
     </div>
   </div>
