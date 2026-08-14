@@ -8,8 +8,12 @@ DEST=public/code/files
 rm -rf "$DEST"
 mkdir -p "$DEST/vale-gate/src" "$DEST/vale-gate/public" "$DEST/openrouter-proxy"
 
-# vale-gate sources
-cp src/index.js src/store.js src/auth.js "$DEST/vale-gate/src/"
+# vale-gate sources — the TS migration (round-83) moved the real source to
+# .ts files; the .js files are re-export shims. Copy EVERYTHING (incl.
+# plugins/) so the published snapshot shows the implementation, not shims.
+cp "$PWD"/src/*.ts "$PWD"/src/*.js "$DEST/vale-gate/src/"
+mkdir -p "$DEST/vale-gate/src/plugins"
+cp "$PWD"/src/plugins/*.ts "$PWD"/src/plugins/*.js "$DEST/vale-gate/src/plugins/" 2>/dev/null || true
 cp public/index.html public/app.js public/style.css "$DEST/vale-gate/public/"
 cp wrangler.jsonc "$DEST/vale-gate/"
 

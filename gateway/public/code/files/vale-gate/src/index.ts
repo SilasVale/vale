@@ -31,22 +31,38 @@
  *   store.js / auth.js / device-fetch.js / mcp.js / plugin-hub.js  supporting modules
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, hasRegGrant, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
-import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.js";
-import { build101Response, deviceFetch } from "./device-fetch.js";
-import { handleMcp } from "./mcp.js";
-import { PluginHubDO } from "./plugin-hub.js";
-import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE } from "./anthropic-translate.js";
-import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.js";
-import { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES } from "./body-scan.js";
-import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.js";
-import { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH } from "./channels.js";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, hasRegGrant, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.ts";
+import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.ts";
+import { build101Response, deviceFetch } from "./device-fetch.ts";
+import { handleMcp } from "./mcp.ts";
+import { PluginHubDO } from "./plugin-hub.ts";
+import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE } from "./anthropic-translate.ts";
+import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.ts";
+import { rawWithModel, scanTopLevelModel, estimateTokens } from "./body-scan.ts";
+import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.ts";
+import { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH } from "./channels.ts";
 export { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH };
 export { jsonOk, jsonError, readJson, CORS_HEADERS };
 export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE };
 export { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess };
-export { rawWithModel, scanTopLevelModel, estimateTokens, MAX_BODY_BYTES };
+export { rawWithModel, scanTopLevelModel, estimateTokens };
 export { PluginHubDO };
+import { createPluginContext, registerPlugins, dispatch } from "./plugins/registry.ts";
+import authPlugin from "./plugins/auth.ts";
+import devicesPlugin from "./plugins/devices.ts";
+import mcpPlugin from "./plugins/mcp.ts";
+import translatePlugin from "./plugins/translate.ts";
+import adminPlugin from "./plugins/admin.ts";
+// Plugin context (round-73): built once per isolate with the shared helpers;
+// routes registered here run first in handleConsole (and /v1 via handleGateway
+// once migrated). Lazy so a reload never re-registers duplicate routes.
+let __pluginCtx: any = null;
+function ensurePluginCtx() {
+  if (__pluginCtx) return __pluginCtx;
+  __pluginCtx = createPluginContext(null, { jsonOk, jsonError: jsonError as (status: number, message: string, code?: string) => Response, readJson, CORS_HEADERS });
+  registerPlugins(__pluginCtx, [authPlugin, devicesPlugin, mcpPlugin, translatePlugin, adminPlugin]);
+  return __pluginCtx;
+}
 
 const COUNT_PATH = "/v1/messages/count_tokens";
 
@@ -57,24 +73,39 @@ const DEVICE_BASE = "/api/devices";
 const PLUGIN_BASE = "/api/plugins";
 
 // Public /api/vale-probe rate limit: each probe costs a real upstream call
-// (real money), so cap probes at 60/min gateway-wide via a KV counter.
-// KV is eventually consistent (~1s) — fine for a rate limiter.
-const PROBE_RATE_LIMIT = 60; // probes per minute, whole gateway
+// (real money), so cap probes per-caller via a KV counter. Per-IP (the
+// gateway-wide bucket let one caller exhaust the budget for everyone AND a
+// minute-boundary race double-spent).
+const PROBE_RATE_LIMIT = 60; // probes per minute, per IP
 const PROBE_RATE_WINDOW_MS = 60000;
 
-export async function probeRateLimited(env) {
+// In-memory per-IP probe counters (per isolate) — the KV version cost 1
+// read + 1 write per probe call; probes are user-invoked but this keeps the
+// "no per-request KV writes" invariant (KV quota). Each bucket's first call
+// per IP reads KV once; nothing is written.
+const __probeRate = new Map(); // `ip:${bucket}` → count
+
+export async function probeRateLimited(env: any, request: Request) {
   try {
+    const ip = (request?.headers?.get?.("cf-connecting-ip")) || "unknown";
     const bucket = Math.floor(Date.now() / PROBE_RATE_WINDOW_MS);
-    const key = `probe-rate:${bucket}`;
-    const cur = Number(await env.KEYS.get(key)) || 0;
-    if (cur >= PROBE_RATE_LIMIT) return true;
-    await env.KEYS.put(key, String(cur + 1), { expirationTtl: 120 });
-    return false;
+    const key = `probe-rate:${ip}:${bucket}`;
+    const hit = __probeRate.get(key);
+    if (hit !== undefined) {
+      if (hit >= PROBE_RATE_LIMIT) return true;
+      __probeRate.set(key, hit + 1);
+      return false;
+    }
+    let cur = 0;
+    try { cur = Number(await env.KEYS.get(key)) || 0; } catch {}
+    __probeRate.set(key, cur + 1);
+    if (__probeRate.size > 4096) __probeRate.delete(__probeRate.keys().next().value);
+    return cur >= PROBE_RATE_LIMIT;
   } catch { return false; } // fail-open on KV errors, like the breaker
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request: Request, env: any) {
     const url = new URL(request.url);
 
     // Force HTTPS: the Secure session cookie is only stored over https; on plain http
@@ -103,8 +134,8 @@ export default {
         return jsonOk(await buildHealth(env));
       }
       if (request.method === "POST" && path === "/api/vale-probe") {
-        if (await probeRateLimited(env)) {
-          return jsonError(429, "probe rate limit exceeded", "rate_limited");
+        if (await probeRateLimited(env, request)) {
+          return jsonError(429, "probe rate limit exceeded", "rate_limit_error");
         }
         const body = await readJson(request);
         return await valeProbe(env, String(body.model || ""));
@@ -144,22 +175,47 @@ export default {
       // ---- /v1/* gateway (both domains) ----
       return await handleGateway(request, env, url);
     } catch (error) {
-      return jsonError(500, error.message || "Internal error", "api_error");
+      return jsonError(500, (error as any).message || "Internal error", "api_error");
     }
   },
 };
 
 /* ---------------- Console (web UI API) ---------------- */
 
-async function handleConsole(request, env, url) {
+async function handleConsole(request: Request, env: any, url: URL) {
   const path = url.pathname;
   const method = request.method;
   const secure = url.protocol === "https:";
+
+  // Plugin dispatch (round-73): the console's routes are being migrated to
+  // DSH-style plugins (plugins/auth.js, devices.js, mcp.js). Registered
+  // plugin routes run FIRST; unmatched requests fall through to the legacy
+  // inline handlers below (which still exist until fully migrated). Zero
+  // behavior change: a plugin route that matches is the same handler that
+  // used to run inline.
+  const pctx = ensurePluginCtx();
+  if (pctx.routes.length) {
+    const hit = dispatch(pctx, method, path, request, env, url, secure);
+    if (hit !== null) return hit;
+  }
 
   // ---- Public: register / login / logout / route info ----
   if (method === "POST" && path === `${AUTH_BASE}/register`) return authRegister(request, env, secure);
   if (method === "POST" && path === `${AUTH_BASE}/login`) return authLogin(request, env, secure);
   if (method === "POST" && path === `${AUTH_BASE}/logout`) {
+    // Revoke the session server-side: the HMAC cookie alone was cleared
+    // client-side, but a copied cookie stayed valid for the full 24h. Blacklist
+    // the token hash in KV until its exp so it dies everywhere.
+    const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
+    if (cookie && env.KEYS) {
+      try {
+        const payload = JSON.parse(atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/")) || "{}");
+        if (payload.exp) {
+          const ttl = Math.max(1, Math.min(86400 * 2, Math.ceil((payload.exp * 1000 - Date.now()) / 1000)));
+          await env.KEYS.put(`sess-revoked:${cookie}`, "1", { expirationTtl: ttl });
+        }
+      } catch { /* malformed cookie — ignore */ }
+    }
     return jsonOk({ ok: true }, { "Set-Cookie": clearSessionCookieHeader(secure) });
   }
   if (method === "GET" && path === `${ADMIN_BASE}/public`) {
@@ -177,8 +233,16 @@ async function handleConsole(request, env, url) {
     if (!keyOk) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
-    let device;
-    try { device = validateDevice(body); } catch (e) { return jsonError(400, e.message, "invalid_request"); }
+    let device: any;
+    try { device = validateDevice(body); } catch (e) { return jsonError(400, (e as any).message, "invalid_request"); }
+    // round-68: a one-time-key holder could upsert an EXISTING device name —
+    // the register endpoint silently replaced a production device's
+    // hostname/token, redirecting console terminal tools + the proxy to the
+    // attacker. Refuse when the name is already registered; re-registering
+    // an existing device is an admin action.
+    if (await getDevice(env, device.name)) {
+      return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+    }
     await upsertDevice(env, device);
     await deleteRegKey(env, body.key); // one-time — consumed only after success
     await deleteRegGrant(env, body.key);
@@ -206,7 +270,7 @@ async function handleConsole(request, env, url) {
     if (claim) {
       return jsonError(403, "Registration key already in use", "authorization_error");
     }
-    await env.KEYS.put(`regclaim:${k}`, "1", { expirationTtl: 30 });
+    await env.KEYS.put(`regclaim:${k}`, "1", { expirationTtl: 60 });
     if (!(await hasRegKey(env, k))) {
       await env.KEYS.delete(`regclaim:${k}`);
       return jsonError(403, "Invalid or used registration key", "authorization_error");
@@ -218,12 +282,33 @@ async function handleConsole(request, env, url) {
   // Public: browser-extension pairing — the extension has no admin session, the
   // pairing code is the credential (same pattern as /api/register above).
   if (method === "POST" && path === `${PLUGIN_BASE}/pair/claim`) {
-    const { code } = (await request.json().catch(() => ({}))) || {};
-    const device = await consumePairCode(env, String(code || ""));
-    if (!device) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    const { code }: any = (await request.json().catch(() => ({}))) || {};
+    const c = String(code || "");
+    if (!c) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    // Single-flight: consumePairCode was check-then-act on eventually-
+    // consistent KV — two concurrent claims both passed and minted two
+    // 30-day device-control tokens from one code. A claim lock bounds it.
+    const claim = await env.KEYS.get(`pairclaim:${c}`);
+    if (claim) return jsonError(403, "Pairing code already in use", "authorization_error");
+    await env.KEYS.put(`pairclaim:${c}`, "1", { expirationTtl: 60 });
+    const device = await consumePairCode(env, c);
+    if (!device) {
+      await env.KEYS.delete(`pairclaim:${c}`);
+      return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    }
     const token = randomHex(16);
     await addPluginLink(env, token, device);
     return jsonOk({ token, device });
+  }
+
+  // Extension unpair: revoke the plugin token server-side (local-only unpair
+  // left a 30-day device-control credential valid after the user unpaired).
+  if (method === "POST" && path === `${PLUGIN_BASE}/revoke`) {
+    const auth = String(request.headers.get("authorization") || "");
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!token) return jsonError(401, "Missing plugin token", "authentication_error");
+    await removePluginLink(env, token);
+    return jsonOk({ ok: true });
   }
 
   // Public: the extension trades its plugin token for a one-time WS ticket
@@ -281,10 +366,53 @@ async function handleConsole(request, env, url) {
       return await proxyDevice(request, env, d, proxyMatch[2] || "/");
     }
     const auth = String(request.headers.get("authorization") || "");
-    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    const qToken = url.searchParams.get("token") || "";
+    // ?token= is accepted ONLY for a top-level browser navigation (the
+    // extension's Terminal button) — a browser navigation cannot carry an
+    // Authorization header. Any other request with a query token is rejected:
+    // a leaked URL (history/sync/screenshot/log) would otherwise grant full
+    // device terminal control via /proxy/* for the 30-day plugin-link TTL.
+    // Sec-Fetch-Mode is set by browsers on every fetch/navigation and cannot
+    // be spoofed cross-origin (it is a forbidden header for fetch()).
+    const isNav = String(request.headers.get("sec-fetch-mode") || "") === "navigate";
+    if (qToken && !auth && !isNav) {
+      return jsonError(401, "Invalid plugin token", "authentication_error");
+    }
+    // Bootstrap-navigation reload support: the navigation pins the plugin
+    // token in a PER-DEVICE cookie so the panel's relative subresources
+    // (panel.css/js/vendor/*) and an F5/history-forward reload authenticate.
+    // The cookie is scoped to THIS device's proxy path and carries the device
+    // name in its key — one origin-wide cookie would let a later-opened
+    // device's page steal an earlier device's terminal (cross-device hijack)
+    // and would clobber a multi-device pairing.
+    // The cookie was written with encodeURIComponent — decode on read so a
+    // future non-hex token charset (base64 +/=, etc.) still matches the
+    // plugin-link map (hex tokens are a no-op, but the decode must exist).
+    let cookieToken = "";
+    try {
+      cookieToken = decodeURIComponent(parseCookie(request.headers.get("cookie") || "")[`vale_pt_${deviceName}`] || "");
+    } catch { /* malformed — treat as absent */ }
+    const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "") || qToken || cookieToken;
     const link = token ? await getPluginByToken(env, token) : null;
     if (link && link.device === deviceName) {
-      return await proxyDevice(request, env, d, proxyMatch[2] || "/");
+      // Never cache a response that carried a token in the URL.
+      const resp = await proxyDevice(request, env, d, proxyMatch[2] || "/");
+      resp.headers.set("Cache-Control", "no-store");
+      if (qToken && isNav) {
+        // Per-device path scope + per-device name: a leaked cookie only ever
+        // authenticates THIS device's proxy, and never leaves this subtree.
+        resp.headers.append("Set-Cookie", `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
+      }
+      return resp;
+    }
+    // A top-level navigation with a bad/expired token gets a readable page
+    // (with a re-pair hint) instead of a raw JSON 401 — the panel's own
+    // recovery UI can never load if the bootstrap navigation itself 401s.
+    if (!auth && isNav) {
+      return new Response(
+        `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vale — session expired</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;color:#1d1d1f;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:32px 40px;max-width:400px;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.12)}h1{font-size:18px;margin:0 0 8px}p{color:#6e6e73;font-size:14px;margin:0 0 4px}.mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:10px;background:#1d1d1f;color:#fff;font-weight:700;font-size:24px;margin-bottom:14px}</style></head><body><div class="card"><span class="mark">V</span><h1>Device session expired</h1><p>This device pairing has expired or the browser was restarted.</p><p>Open the Vale extension and re-pair to access the terminal.</p></div></body></html>`,
+        { status: 401, headers: { "content-type": "text/html; charset=utf-8" } }
+      );
     }
     return jsonError(401, "Not logged in or invalid plugin token", "authentication_error");
   }
@@ -347,7 +475,7 @@ async function handleConsole(request, env, url) {
     return jsonOk({ ok: true, name, masked: maskKey(v) });
   }
   if (method === "DELETE" && path === `${ME_BASE}/keys`) {
-    const name = url.searchParams.get("name");
+    const name = url.searchParams.get("name") || "";
     if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
     await deleteUserKey(env, user.id, name);
     return jsonOk({ ok: true, name });
@@ -386,8 +514,8 @@ async function handleConsole(request, env, url) {
   }
   if (method === "POST" && path === DEVICE_BASE) {
     const body = await readJson(request);
-    let device;
-    try { device = validateDevice(body); } catch (e) { return jsonError(400, e.message, "invalid_request"); }
+    let device: any;
+    try { device = validateDevice(body); } catch (e) { return jsonError(400, (e as any).message, "invalid_request"); }
     await upsertDevice(env, device);
     return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname, token: maskKey(device.token) } });
   }
@@ -412,21 +540,21 @@ async function handleConsole(request, env, url) {
   //  the extension has no admin session and authenticates by pairing code /
   //  plugin token instead.)
   if (method === "POST" && path === `${PLUGIN_BASE}/pair`) {
-    const { device } = (await request.json().catch(() => ({}))) || {};
+    const { device }: any = (await request.json().catch(() => ({}))) || {};
     const d = device ? await getDevice(env, String(device)) : null;
     if (!d) return jsonError(404, "Device not found", "not_found_error");
     const code = await createPairCode(env, d.name);
     return jsonOk({ code });
   }
   if (method === "POST" && path === `${PLUGIN_BASE}/unpair`) {
-    const { device } = (await request.json().catch(() => ({}))) || {};
+    const { device }: any = (await request.json().catch(() => ({}))) || {};
     const links = await listPluginLinks(env);
     for (const [t, l] of Object.entries(links)) if (l.device === device) await removePluginLink(env, t);
     return jsonOk({ ok: true });
   }
   if (method === "GET" && path === `${PLUGIN_BASE}/status`) {
     const devices = await listDevices(env);
-    const out = {};
+    const out: Record<string, { online: boolean; agent_up: boolean; tunnel_up: boolean }> = {};
     for (const d of devices) {
       // Extension WS (chrome.debugger hub) — reflects the browser extension.
       let extOnline = false;
@@ -441,7 +569,7 @@ async function handleConsole(request, env, url) {
       // Agent + tunnel health: probe the device's own /api/status through its
       // tunnel (cached 30s — the console polls every 30s already).
       const probe = await cachedDeviceProbe(env, d);
-      out[d.name] = { online: extOnline, agent_up: probe, tunnel_up: probe };
+      out[d.name] = { online: extOnline, agent_up: probe.agent, tunnel_up: probe.tunnel };
     }
     return jsonOk({ devices: out });
   }
@@ -501,6 +629,11 @@ async function handleConsole(request, env, url) {
     const body = await readJson(request);
     const v = String(body?.password || "");
     if (v.length < 8) return jsonError(400, "Admin password must be at least 8 chars", "invalid_request");
+    // Require the CURRENT password: a hijacked session must not be able to
+    // rotate the password and permanently lock out the real admin.
+    if (!(await verifyAdminPassword(env, String(body?.currentPassword || "")))) {
+      return jsonError(403, "Current password is incorrect", "authentication_error");
+    }
     await setAdminPassword(env, v);
     return jsonOk({ ok: true, changed: true });
   }
@@ -512,14 +645,17 @@ async function handleConsole(request, env, url) {
 // secret) over the admin password. Using the password directly lets any invited
 // user offline-brute-force it from their own signed cookie (HMAC-SHA256 is not
 // memory-hard); with SESSION_SECRET set, the password is never a signing key.
-function sessionSecret(env, adminPassword) {
+function sessionSecret(env: any, adminPassword: string) {
   return env.SESSION_SECRET || adminPassword;
 }
 
-async function requireSession(request, env) {
+async function requireSession(request: Request, env: any) {
   const ap = await getAdminPassword(env);
   if (!ap) return null;
-  const cookie = parseCookie(request.headers.get("Cookie"))[SESSION_COOKIE];
+  const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
+  if (!cookie) return null;
+  // Revoked by logout (server-side blacklist — a copied cookie dies too).
+  if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) return null;
   const session = await verifySessionToken(sessionSecret(env, ap), cookie);
   if (!session) return null;
   const user = await getUser(env, session.uid);
@@ -529,7 +665,7 @@ async function requireSession(request, env) {
 
 /* ---- Register / Login ---- */
 
-async function authRegister(request, env, secure) {
+async function authRegister(request: Request, env: any, secure: boolean) {
   const ap = await getAdminPassword(env);
   if (!ap) return jsonError(500, "Admin password not configured", "config_error");
   const body = await readJson(request);
@@ -543,12 +679,16 @@ async function authRegister(request, env, secure) {
     const token = await issueSessionToken(sessionSecret(env, ap), created.id, created.role);
     return jsonOk({ ok: true, username: created.username, role: created.role, token: created.token }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
   } catch (e) {
-    return jsonError(400, e.message, "invalid_request");
+    return jsonError(400, (e as any).message, "invalid_request");
   }
 }
 
-async function authLogin(request, env, secure) {
+async function authLogin(request: Request, env: any, secure: boolean) {
   if (!(await hasAdminPassword(env))) return jsonError(500, "Admin password not configured", "config_error");
+  // The session-signing key in fallback mode is the stored admin password
+  // HASH (same value requireSession uses) — getAdminPassword returns the
+  // hash, never the plaintext.
+  const ap = await getAdminPassword(env);
   const body = await readJson(request);
   // Brute-force throttle: 5 consecutive failures lock the username for 30s
   // (exponential backoff would need the failure count; a flat lock is simple
@@ -556,10 +696,26 @@ async function authLogin(request, env, secure) {
   // Trim + lowercase: findUserByUsername trims, so an untrimmed key let
   // "admin " variants bypass the lock while still reaching the real admin
   // password check (brute-force bypass).
-  const lockKey = `login-lock:${String(body.username || "").trim().toLowerCase()}`;
+  // Bind the lock to the CALLER (IP+username): a per-username-only key let
+  // any unauthenticated attacker POST 5 wrong passwords and hold the admin
+  // console login at 429 forever (permanent login-layer DoS).
+  const callerIp = request.headers?.get?.("cf-connecting-ip") || "unknown";
+  // Per-IP in-memory burst gate BEFORE the KV lock path: a brute-force loop
+  // otherwise burns 2-3 KV WRITES per failed login — ~400 attempts exhaust
+  // the Free-plan daily write quota (1000). >10 failures/min from one IP
+  // short-circuits with no KV traffic; the KV lock below still handles the
+  // sustained case.
+  const gk = `login:${callerIp}:${Math.floor(Date.now() / 60000)}`;
+  const gate = (__loginGate.get(gk) || 0) + 1;
+  __loginGate.set(gk, gate);
+  if (__loginGate.size > 4096) __loginGate.delete(__loginGate.keys().next().value);
+  if (gate > 10) {
+    return jsonError(429, "Too many attempts — try again in a moment", "rate_limit_error");
+  }
+  const lockKey = `login-lock:${callerIp}:${String(body.username || "").trim().toLowerCase()}`;
   const locked = await env.KEYS.get(lockKey);
   if (locked) {
-    return jsonError(429, "Too many attempts — try again in ~30s", "rate_limited");
+    return jsonError(429, "Too many attempts — try again in ~30s", "rate_limit_error");
   }
   const user = await findUserByUsername(env, body.username);
   if (!user || !user.enabled) return jsonError(401, "Incorrect username or password", "authentication_error");
@@ -576,7 +732,7 @@ async function authLogin(request, env, secure) {
     const fails = Number(await env.KEYS.get(lockKey + ":n")) || 0;
     const next = fails + 1;
     if (next >= 5) {
-      await env.KEYS.put(lockKey, "1", { expirationTtl: 30 });
+      await env.KEYS.put(lockKey, "1", { expirationTtl: 60 });
       await env.KEYS.delete(lockKey + ":n");
     } else {
       await env.KEYS.put(lockKey + ":n", String(next), { expirationTtl: 60 });
@@ -591,13 +747,24 @@ async function authLogin(request, env, secure) {
 
 /* ---------------- /v1/* gateway ---------------- */
 
-async function handleGatewayImpl(request, env, url) {
+// In-memory per-token rate-limit counters (per isolate). The old KV
+// get-then-put counters cost 2 reads + 2 writes per /v1/messages request —
+// that alone burned the Free-plan daily KV WRITE quota (1000/day) at ~250
+// requests. Never written; each window's first request per token reads KV
+// once to inherit other isolates' counts.
+const __rlMin = new Map(); // `min:${token}:${minute}` → count
+const __rlDay = new Map(); // `day:${token}:${day}`   → count
+const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
+
+async function handleGatewayImpl(request: Request, env: any, url: URL, preReadText: string | null = null, ctx: { model: string; user?: string } = { model: "" }) {
   const path = url.pathname;
   const method = request.method;
 
   // Auth: x-api-key = the user's gateway token
   const token = request.headers.get("x-api-key") || "";
   const user = await findUserByToken(env, token);
+  // For the log wrapper (round-58): resolved user id, not the token prefix.
+  ctx.user = user?.id || "";
   if (!user || !user.enabled) {
     return jsonError(401, "Missing or invalid x-api-key", "authentication_error");
   }
@@ -608,26 +775,51 @@ async function handleGatewayImpl(request, env, url) {
   const qwenKey = ukeys.QWEN_API_KEY || null;
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
-  // spend (Free-plan quota exhaustion + surprise billing). KV is
-  // eventually-consistent (~1s) — fine for a limiter, same as the probe one.
+  // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
+  // MEMORY per isolate — the old get-then-put KV counters cost 2 reads + 2
+  // writes per /v1/messages request, which alone burned the Free-plan daily
+  // KV WRITE quota (1000/day) at ~250 requests and tripped the 90% usage
+  // alert. Each window's first request per token still reads KV once
+  // (inherits other isolates' counts); we never write. With 1-3 hot isolates
+  // overshoot is bounded (~48→~144/min worst case) — the thresholds already
+  // budget ~20% headroom, and a KV 429 can no longer 500 a chat request
+  // (all KV reads here are wrapped).
   // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
-  if (env.KEYS && method === "POST" && (path.endsWith("/messages") || path.endsWith(COUNT_PATH))) {
+  // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
+  // the double-count that halved the effective budget for Claude Code turns.
+  if (env.KEYS && method === "POST" && path.endsWith("/messages") && !path.endsWith(COUNT_PATH)) {
     const minuteKey = `rl-min:${token}:${Math.floor(Date.now() / 60000)}`;
     const dayKey = `rl-day:${token}:${Math.floor(Date.now() / 86400000)}`;
+    const mk = `min:${token}:${Math.floor(Date.now() / 60000)}`;
+    const dk = `day:${token}:${Math.floor(Date.now() / 86400000)}`;
     const [minute, day] = await Promise.all([
-      (async () => Number(await env.KEYS.get(minuteKey)) || 0)(),
-      (async () => Number(await env.KEYS.get(dayKey)) || 0)(),
+      (async () => {
+        const hit = __rlMin.get(mk);
+        if (hit !== undefined) return hit;
+        let v = 0;
+        try { v = Number(await env.KEYS.get(minuteKey)) || 0; } catch {}
+        __rlMin.set(mk, v);
+        if (__rlMin.size > 4096) __rlMin.delete(__rlMin.keys().next().value);
+        return v;
+      })(),
+      (async () => {
+        const hit = __rlDay.get(dk);
+        if (hit !== undefined) return hit;
+        let v = 0;
+        try { v = Number(await env.KEYS.get(dayKey)) || 0; } catch {}
+        __rlDay.set(dk, v);
+        if (__rlDay.size > 4096) __rlDay.delete(__rlDay.keys().next().value);
+        return v;
+      })(),
     ]);
-    if (minute >= 60) {
-      return jsonError(429, "Rate limit: 60 requests/minute per token", "rate_limited");
+    if (minute >= 48) {
+      return jsonError(429, "Rate limit: ~60 requests/minute per token", "rate_limit_error");
     }
-    if (day >= 5000) {
-      return jsonError(429, "Rate limit: 5000 requests/day per token", "rate_limited");
+    if (day >= 4000) {
+      return jsonError(429, "Rate limit: ~5000 requests/day per token", "rate_limit_error");
     }
-    await Promise.all([
-      env.KEYS.put(minuteKey, String(minute + 1), { expirationTtl: 120 }),
-      env.KEYS.put(dayKey, String(day + 1), { expirationTtl: 90000 }),
-    ]);
+    __rlMin.set(mk, minute + 1);
+    __rlDay.set(dk, day + 1);
   }
 
   // GET /v1/models — list of prefixed models this gateway supports
@@ -650,25 +842,23 @@ async function handleGatewayImpl(request, env, url) {
   }
 
   // Read the body as raw text ONCE and extract the top-level "model" field
-  // with a lightweight scan — full JSON.parse + re-stringify of a multi-MB
-  // body exceeds the Workers Free plan 10ms CPU budget (Error 1102). Only the
-  // og translate path (which must walk the message array) parses the object.
-  // Size guard first: a body over MAX_BODY_BYTES would take too long to even
-  // scan on the Free plan — reject it outright.
-  const declaredLen = Number(request.headers.get("content-length") || 0);
-  if (declaredLen > MAX_BODY_BYTES) {
-    return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
-  }
-  const rawText = await request.text();
-  // The post-read guard must compare BYTES, not UTF-16 code units: a CJK/
-  // emoji body is up to 3 bytes per char, so a length check let ~3x the
-  // intended size through and blew the scan/parse CPU budget it exists to
-  // prevent. TextEncoder().encode().length is the cheap byte measure here.
-  if (new TextEncoder().encode(rawText).length > MAX_BODY_BYTES) {
-    return jsonError(413, `request body too large (max ${MAX_BODY_BYTES} bytes)`, "invalid_request");
-  }
-  const { model: scannedModel } = scanTopLevelModel(rawText);
-  let model = scannedModel || "";
+  // with a lightweight scan. Passthrough routes (ds/qw/or) NEVER parse the
+  // body — they forward it unchanged — so there is NO app-level size limit:
+  // rejecting large bodies (the old MAX_BODY_BYTES 413) broke legitimate
+  // 1M-context / big-document requests. CPU is bounded by the scan design
+  // (2MB sampling window + cheap indexOf image scan; full parse only on the
+  // og translate path, which walks the message array). The platform's own
+  // request-body ceiling is the only bound.
+  let rawText = preReadText !== null ? preReadText : await request.text();
+  // The full scan result (model + value span) is reused by the passthrough
+  // model-swap below — re-scanning a multi-MB body just to replace the field
+  // doubled the scan CPU on every passthrough request (round-55).
+  const scanned = scanTopLevelModel(rawText);
+  let model = scanned.model || "";
+  // The log wrapper reads the same model via the per-request context
+  // (round-57) — avoids a duplicate scan on the 10ms budget AND keeps
+  // concurrent requests' log attribution correct.
+  ctx.model = model;
   if (model === "auto") {
     // Claude Code 固定模型名 auto：按用户网页选择路由
     model = await resolveAutoModel(env, user.id);
@@ -687,7 +877,7 @@ async function handleGatewayImpl(request, env, url) {
   // KV 写透传后立即生效(同 isolate 零延迟)。
   const usProxy = await getGlobalSetting(env, "US_PROXY");
   const baseRoute = pickRoute(prefix2, env, usProxy);
-  const upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
+  let upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
   // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
@@ -716,22 +906,108 @@ async function handleGatewayImpl(request, env, url) {
   // is only the search backend. Requires this user's DEEPSEEK_API_KEY. ds/ and
   // or/ requests pass through untouched (ds/ handles web_search natively).
   if (isMessages && (route.type === "translate" || route.kind === "opencode")) {
-    body = JSON.parse(rawText);
-    const isWebSearch = (
-      (Array.isArray(body.tools) && body.tools.some((t) => t && typeof t.type === "string" && t.type.startsWith("web_search"))) ||
-      (body.tool_choice && body.tool_choice.type === "tool" && body.tool_choice.name === "web_search")
-    );
-    if (isWebSearch) {
-      if (!deepseekKey) {
-        return jsonError(502, "DEEPSEEK_API_KEY not configured — required for gateway web search", "config_error");
+    // CPU guard: parsing a multi-MB body into an object graph blows the Free
+    // plan's 10ms budget (Error 1102) — but web_search detection and image
+    // preprocessing NEED the object. The translate path MUST parse (it
+    // reshapes the request), so the scan-skip ONLY applies to the native
+    // opencode PASSTHROUGH (deepseek-v4-flash, route.type === "passthrough"):
+    // scan the RAW text for the triggers ("web_search" tool, image blocks)
+    // BEFORE parsing — a plain text-only request (the common case) skips the
+    // parse entirely. Translate models (minimax/mimo/kimi) always parse.
+    if (route.kind === "opencode" && route.type === "passthrough") {
+      // Precise triggers. IMAGE: scan ONLY the LAST user message (from the
+      // last '"role":"user"' to the end) — the current image's
+      // "type":"image" marker always sits in the freshly-sent message,
+      // BEFORE its base64 payload (tens of KB to >1MB). History images
+      // (round-41's whole-body scan) re-triggered parse + re-described ALL
+      // past images on every follow-up — the 1102 regression. The client
+      // keeps original image blocks in its transcript, so only the last
+      // message is authoritative for "new image".
+      // WEB_SEARCH: scan only the tools region, anchored AFTER the tools
+      // array starts — indexOf('"messages"', toolsStart) so a schema
+      // property named "messages" inside the tools array cannot truncate it
+      // (round-42 Medium: the first-"messages" anchor cut the region off).
+      const toolsStart = rawText.indexOf('"tools":[');
+      // Bound the region at the tools array's CLOSING bracket — searching for
+      // the next '"messages"' still truncates at a tool schema property named
+      // "messages" (round-43 Medium), cutting off a later web_search
+      // declaration. A naive bracket count is fine: tool schemas may nest
+      // braces, so scan depth-aware from the opening '['.
+      let toolsRegion = "";
+      if (toolsStart >= 0) {
+        let depth = 0;
+        let end = -1;
+        for (let i = toolsStart + 8; i < rawText.length; i++) {
+          const ch = rawText[i];
+          if (ch === '[' || ch === '{') depth++;
+          else if (ch === ']' || ch === '}') { depth--; if (depth < 0) { end = i; break; } }
+        }
+        toolsRegion = end > 0 ? rawText.slice(toolsStart, end + 1) : "";
       }
-      const res = await runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey);
-      if (body.stream) {
-        return new Response(toSSE(res), {
-          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
-        });
+      const lastUserStart = rawText.lastIndexOf('"role":"user"');
+      const lastUserMsg = lastUserStart >= 0 ? rawText.slice(lastUserStart) : rawText;
+      // Parse if the LAST user message has a NEW image (needs describing) OR
+      // any HISTORY image exists (needs the placeholder swap — a text-only
+      // follow-up asking about a turn-1 screenshot must still get the
+      // described context, not the raw base64). Both cases parse ONCE; the
+      // vision call only fires for the last message's image (preprocessImages
+      // swaps history images to placeholders without calling vision).
+      const needsParse =
+        /"type"\s*:\s*"image"/.test(lastUserMsg) ||
+        /"type"\s*:\s*"image"/.test(rawText) ||
+        /"web_search"/.test(toolsRegion);
+      if (!needsParse) {
+        body = null;
+      } else {
+        body = JSON.parse(rawText);
       }
-      return jsonOk(res);
+    } else {
+      body = JSON.parse(rawText);
+    }
+    // Web search is handled NATIVELY by opencode zen (verified 2026-08-13:
+    // og/deepseek-v4-flash returns server_tool_use + web_search_tool_result +
+    // a text answer for a web_search_20250305 tool). The old DeepSeek-fallback
+    // interception (runWebSearch/ogWebSearchAnswer) is REMOVED — web_search
+    // requests flow through the passthrough/translate path untouched and zen
+    // performs the search itself. (The needsParse trigger above still parses
+    // the body when web_search is declared, so preprocessImages can run for
+    // mixed image+search requests; a pure search request parses once and is
+    // forwarded — no DeepSeek key required.)
+    // VERIFIED (2026-08-13): zen implements web_search NATIVELY only for
+    // deepseek-v4-flash. Translate-path models (mimo-v2.5/minimax/kimi/glm)
+    // do NOT search — the forced tool_choice makes them fabricate a query and
+    // return a plain text answer with no web_search_tool_result. So a REAL
+    // search request is FORCED to the native search-capable model.
+    // Trigger: ONLY a forced tool_choice naming web_search — Claude Code
+    // DECLARES web_search_20250305 in the tools array of EVERY ordinary turn,
+    // so a declaration-only check silently hijacked the user's model on
+    // every request (round-46 High). The tool_choice check is the true
+    // search intent.
+    const webSearchToolChoice = body?.tool_choice &&
+      ((body.tool_choice.type === "tool" && body.tool_choice.name === "web_search") ||
+       (body.tool_choice.type === "any" && Array.isArray(body.tool_choice.tools) &&
+        body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
+    if (webSearchToolChoice && body) {
+      const searchModel = "og/deepseek-v4-flash";
+      // Swap when the route is NOT already the native search-capable
+      // passthrough (covers the translate path AND US_PROXY=1 where the
+      // flagship model would otherwise ride the broken chat/completions
+      // translation — round-46 Medium #3).
+      if (route.type !== "passthrough" || route.upstream !== OG_ZEN_ANTHROPIC) {
+        model = searchModel;
+        effectiveModel = searchModel;
+        body.model = "deepseek-v4-flash";
+        upstreamModel = "deepseek-v4-flash";
+        // Rebuild rawText from the parsed body — the passthrough forwards
+        // rawWithModel(rawText, upstreamModel), which overwrites the top-level
+        // model with upstreamModel; both now say deepseek-v4-flash.
+        rawText = JSON.stringify(body);
+        // Re-point the (const) route object at the native passthrough so the
+        // web_search tool rides through to zen /v1/messages untouched.
+        route.type = "passthrough";
+        route.upstream = OG_ZEN_ANTHROPIC;
+        route.kind = "opencode";
+      }
     }
 
     // ---- Gateway-side vision pre-processing ----
@@ -739,9 +1015,12 @@ async function handleGatewayImpl(request, env, url) {
     // carries image blocks and the target model isn't on the vision-capable
     // allowlist, describe each image with the configured vision model (default
     // og/mimo-v2.5) and swap the image blocks for that text, so any model can
-    // answer image questions. count_tokens skips this.
-    const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
-    if (prep.changed) body.messages = prep.messages;
+    // answer image questions. count_tokens skips this. (body is null when the
+    // raw scan found no web_search/image triggers — nothing to preprocess.)
+    if (body) {
+      const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
+      if (prep.changed) body.messages = prep.messages;
+    }
   }
 
   // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
@@ -800,7 +1079,7 @@ async function handleGatewayImpl(request, env, url) {
     // every other passthrough channel uses Bearer.
     const forwardBody = body !== null
       ? JSON.stringify({ ...body, model: upstreamModel })
-      : rawWithModel(rawText, upstreamModel);
+      : rawWithModel(rawText, upstreamModel, scanned);
     const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
       method: "POST",
       headers: passthroughHeaders(bearerKey, { apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false }),
@@ -818,17 +1097,33 @@ async function handleGatewayImpl(request, env, url) {
     }
     if (!upstream.ok) {
       let message = `Upstream ${upstream.status}`;
+      let type = "api_error";
+      let extra = {};
       try {
-        const err = await upstream.json();
+        const err: any = await upstream.json();
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
+        // Forward the upstream's OWN error.type (Claude Code keys retry and
+        // auth flows off it) — a DeepSeek 429 rate_limit_error collapsed to
+        // api_error was NON-retryable for the client. Whitelist the known
+        // Anthropic types; unknown → api_error.
+        const upType = err.error?.type || err.type;
+        const KNOWN = ["rate_limit_error", "overloaded_error", "authentication_error",
+          "invalid_request_error", "permission_error", "not_found_error", "request_too_large", "api_error"];
+        if (upType && KNOWN.includes(upType)) type = upType;
+        // Carry Retry-After so the client paces against the upstream limit.
+        const ra = upstream.headers?.get?.("retry-after");
+        if (ra) extra = { "retry-after": ra };
       } catch { /* non-JSON error body */ }
       // A real response resets the og consecutive-failure count.
       if (route.kind === "opencode") await recordChannelSuccess(env);
-      return jsonError(upstream.status, message, "api_error");
+      return jsonError(upstream.status, message, type, extra);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
     headers.set("Access-Control-Allow-Origin", "*");
+    // Idle watchdog REMOVED (round-61): it aborted legitimate slow streams
+    // (>60s without bytes during model thinking) with an api_error frame.
+    // The relay is untimed again — dead streams are the client's problem.
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 
@@ -870,18 +1165,46 @@ async function handleGatewayImpl(request, env, url) {
   // whole response and flushing it at once — that made thinking look frozen and
   // could time out long generations).
   if (body.stream) {
+    const ctype = upstream.headers?.get?.("content-type") || "";
+    if (ctype.includes("application/json") && !ctype.includes("text/event-stream")) {
+      // The upstream ignored stream:true and returned a plain JSON completion
+      // (a proxy/backend quirk, or a 200-wrapped error). Feeding JSON into the
+      // SSE parser produced an EMPTY Anthropic message — the whole answer was
+      // silently dropped. Buffer + translate as a one-shot SSE instead.
+      const json: any = await upstream.json().catch(() => null);
+      if (json) {
+        // A 200-wrapped OpenAI ERROR envelope ({error:{...}}) must NOT become
+        // a silent empty assistant message — surface it.
+        if (json.error || !Array.isArray(json.choices) || json.choices.length === 0) {
+          return jsonError(502, json.error?.message || json.message || "upstream returned an error envelope", "api_error");
+        }
+        const oneShot = toSSE(toAnthropicResponse(json, upstreamModel));
+        return new Response(oneShot, {
+          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+        });
+      }
+      // Parse failed AND the body was consumed — a fall-through to the SSE
+      // translator would read an empty stream and fabricate an empty message.
+      return jsonError(502, "upstream returned invalid JSON", "api_error");
+    }
     // Extract the scalars the encoder needs, then drop the big body object so
     // the GC can reclaim it while the (potentially minutes-long) stream runs —
     // keeping a multi-MB parsed body resident the whole time pushes the Free
     // plan's 128MB isolate limit.
     const clientModel = body.model;
-    const streamBody = streamOgToAnthropic(upstream.body, clientModel, upstreamModel);
+    const streamBody = streamOgToAnthropic(upstream.body!, clientModel, upstreamModel);
     body = null;
     return new Response(streamBody, {
       headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
     });
   }
-  const anthropicRes = toAnthropicResponse(await upstream.json(), upstreamModel);
+  const upJson: any = await upstream.json().catch(() => null);
+  // A 200-wrapped OpenAI error envelope must not become an empty assistant
+  // message (silent failure, no retry signal).
+  if (!upJson || upJson.error || !Array.isArray(upJson.choices) || upJson.choices.length === 0) {
+    return jsonError(502, upJson?.error?.message || upJson?.message || "upstream returned an invalid response", "api_error");
+  }
+  const anthropicRes = toAnthropicResponse(upJson, upstreamModel);
   return jsonOk(anthropicRes);
 }
 
@@ -891,15 +1214,32 @@ async function handleGatewayImpl(request, env, url) {
  * persistent storage on the Free plan, but enough to see who used what and
  * which channel misbehaves.
  */
-export async function handleGateway(request, env, url) {
+export async function handleGateway(request: Request, env: any, url: URL) {
   const started = Date.now();
-  const res = await handleGatewayImpl(request, env, url);
+  // Read the raw body ONCE here and hand it to the impl (round-55: the old
+  // clone().text() re-read + re-scan on every /v1 request was ~30MB extra
+  // memory + double the scan CPU). The impl scans it for routing AND the
+  // model swap — that single scan result is also the log's model. The model
+  // travels in a per-request context object (round-57: a module variable
+  // cross-talked between CONCURRENT requests — request A's log line could
+  // read request B's model after an await boundary).
+  let rawText: string | null = null;
+  try {
+    rawText = await request.text();
+  } catch { /* impl will re-try; a broken stream fails there with a clear error */ }
+  const ctx = { model: "", user: "" };
+  const res = await handleGatewayImpl(request, env, url, rawText, ctx);
   try {
     // One structured line per /v1 request — tail-visible usage/health signal.
+    // round-58: log the resolved user id instead of the x-api-key prefix —
+    // the key's first 8 chars (~48bit entropy) leak token material and
+    // cross-correlate requests across logs; findUserByToken already resolved
+    // the user in the impl.
     console.log(JSON.stringify({
       ts: started, ms: Date.now() - started, status: res.status,
-      key: String(request.headers.get("x-api-key") || "").slice(0, 8),
+      user: ctx.user,
       path: url.pathname,
+      model: ctx.model,
     }));
   } catch { /* log must never break the request */ }
   return res;
@@ -913,20 +1253,23 @@ export async function handleGateway(request, env, url) {
 const DEVICE_PROBE_CACHE = new Map(); // name -> { at, ok }
 const DEVICE_PROBE_TTL_MS = 30000;
 
-async function cachedDeviceProbe(env, device) {
+async function cachedDeviceProbe(env: any, device: any) {
   const hit = DEVICE_PROBE_CACHE.get(device.name);
-  if (hit && Date.now() - hit.at < DEVICE_PROBE_TTL_MS) return hit.ok;
-  let ok = false;
+  if (hit && Date.now() - hit.at < DEVICE_PROBE_TTL_MS) return hit;
+  // Probe through the tunnel; classify the failure: a tunnel-level error
+  // (1033/530 — origin unreachable) vs an agent-level error (HTTP response).
+  let state = { tunnel: false, agent: false, ts: Date.now() };
   try {
     const res = await deviceFetch(env, device, "/api/status");
-    ok = res.ok;
-  } catch { ok = false; }
+    state.tunnel = true;
+    state.agent = res.ok;
+  } catch { /* tunnel-level failure (1033/530/network) */ }
   if (DEVICE_PROBE_CACHE.size >= 64) DEVICE_PROBE_CACHE.clear();
-  DEVICE_PROBE_CACHE.set(device.name, { at: Date.now(), ok });
-  return ok;
+  DEVICE_PROBE_CACHE.set(device.name, state);
+  return state;
 }
 
-function validateDevice(body) {
+function validateDevice(body: any) {
   const name = String(body?.name || "").trim();
   const hostname = String(body?.hostname || "").trim();
   const token = String(body?.token || "").trim();
@@ -937,7 +1280,7 @@ function validateDevice(body) {
 }
 
 /** Claude Code MCP config snippet for a device (the only place the raw token is returned). */
-function mcpConfig(d) {
+function mcpConfig(d: any) {
   const url = `https://${d.hostname}/mcp`;
   const snippet = {
     mcpServers: {
@@ -948,7 +1291,7 @@ function mcpConfig(d) {
 }
 
 /** Reverse-proxy to the device panel, injecting the Bearer token server-side. */
-async function proxyDevice(request, env, device, restPath) {
+async function proxyDevice(request: Request, env: any, device: any, restPath: string) {
   const url = new URL(request.url);
 
   // The panel sits behind a tunnel that adds its own x-forwarded-*; don't pass
@@ -960,7 +1303,14 @@ async function proxyDevice(request, env, device, restPath) {
   headers.delete("cf-connecting-ip");
   headers.set("x-forwarded-proto", "https");
 
-  const { resp, error } = await deviceFetch(env, device, restPath + url.search, {
+  // Never forward the extension's ?token= to the device — the plugin token
+  // is a console-side credential; the device authenticates with its own
+  // Bearer (injected by deviceFetch). A leaked token must not reach device
+  // query logs.
+  const q = new URLSearchParams(url.search);
+  q.delete("token");
+  const qs = q.toString();
+  const { resp, error } = await deviceFetch(env, device, restPath + (qs ? `?${qs}` : ""), {
     method: request.method,
     headers,
     body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
@@ -1002,23 +1352,36 @@ const PANEL_ROOT_PATHS = [
   "/term.js", "/conn.js", "/icons.js", "/ui/", "/vendor/",
 ];
 
-function rewriteDeviceBody(text, name) {
+function rewriteDeviceBody(text: string, name: string) {
   const prefix = `${DEVICE_BASE}/${name}/proxy`;
   const already = `${DEVICE_BASE}/[^/"']+/proxy/`;
   let out = text;
   for (const p of PANEL_ROOT_PATHS) {
     const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // A quote/backtick followed by a root path that isn't already the proxy
-    // prefix → insert the prefix between them (avoids double-rewriting).
-    const re = new RegExp(`(["'\`])(?!${already})${escaped}`, "g");
+    // A quote/backtick OR template-interpolation close (}) followed by a
+    // root path that isn't already the proxy prefix → insert the prefix
+    // between them (avoids double-rewriting). The } case matters: panel.js
+    // builds `https://${hostname}/api/events/term` where the path follows a
+    // `}` — without it the SSE stream URL was never rewritten and the
+    // proxied panel froze ("stream error 404", no needSync recovery).
+    const re = new RegExp(`(["'\`}])(?!${already})${escaped}`, "g");
     out = out.replace(re, `$1${prefix}${p}`);
   }
+  // Strip the agent's injected device token from proxied HTML. Direct
+  // same-origin HTML never passes through this function (it only runs in
+  // proxyDevice for /proxy/*), and the admin session-cookie flow authenticates
+  // BEFORE any token parsing — so stripping costs nothing functionally, and
+  // it prevents an extension user from reading the PERMANENT device token off
+  // a console-origin page (DOM/devtools/XSS) and keeping direct control of
+  // /api/tools/* and /mcp after the plugin-link TTL or unpair — the exact
+  // revocation scope the plugin token exists to enforce.
+  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*"[^"]*"/g, "window.__PANEL_TOKEN__=\"\"");
   return out;
 }
 
 /* ---- Connectivity tests ---- */
 
-async function testKey(env, name, key) {
+async function testKey(env: any, name: string, key: string) {
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
   try {
     if (name === "DEEPSEEK_API_KEY") {
@@ -1053,7 +1416,7 @@ async function testKey(env, name, key) {
       // 流式探测:收到首个 SSE data 块即判定连通(auth OK + 连接建立),
       // 不等 thinking 结束(非流式要等完整响应 ~10s)。提前 cancel 释放连接。
       const firstChunk = await (async () => {
-        const reader = res.body.getReader();
+        const reader = res.body!.getReader();
         const { value } = await reader.read();
         await reader.cancel().catch(() => {});
         return new TextDecoder().decode(value || new Uint8Array());
@@ -1074,13 +1437,13 @@ async function testKey(env, name, key) {
       return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "Qwen MaaS auth OK" : `Upstream ${res.status}` });
     }
   } catch (e) {
-    return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
+    return jsonOk({ ok: false, name, detail: "Test failed: " + (e as any).message });
   }
   return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
 }
 
-function userKeysStatus(ukeys) {
-  const out = {};
+function userKeysStatus(ukeys: Record<string, any>) {
+  const out: Record<string, { configured: boolean; masked: string }> = {};
   for (const n of USER_KEY_NAMES) {
     const v = ukeys[n];
     out[n] = { configured: !!v, masked: maskKey(v) };
@@ -1091,16 +1454,16 @@ function userKeysStatus(ukeys) {
 
 // Claude Code appends a [context-window] marker (e.g. [1m]) to model names and strips it
 // before sending; strip it here too as a safety net so a literal "[1m]" never hits zen/OpenRouter.
-function stripBracket(s) {
+function stripBracket(s: string) {
   return s.replace(/\[[^\]]*\]$/, "");
 }
 
-function pickRoute(prefix, env, usProxy) {
+function pickRoute(prefix: string, env: any, usProxy?: string | null) {
   // 美国出口开关:US_PROXY=1 时所有模型经 Vercel 代理(v.saisi.online/api/zen)
   // 从美国边缘出口访问上游,规避区域限制/拥堵。target=og|ds|qw|or 选上游,
   // path 参数带上游相对路径(代理 base 已含主机级前缀)。usProxy is a local
   // per-request value — never mutate the shared env object with it.
-  const via = (direct, path) => usProxy
+  const via = (direct: string, path: string) => usProxy
     ? `https://v.saisi.online/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
     : direct;
   switch (prefix) {
@@ -1145,7 +1508,7 @@ function pickRoute(prefix, env, usProxy) {
   }
 }
 
-function passthroughHeaders(bearerKey, { apiKeyHeader = false } = {}) {
+function passthroughHeaders(bearerKey: string, { apiKeyHeader = false }: { apiKeyHeader?: string | false } = {}) {
   const h = new Headers();
   h.set("Content-Type", "application/json");
   // All passthrough targets speak the Anthropic protocol (ds/qw native,
@@ -1170,24 +1533,32 @@ function passthroughHeaders(bearerKey, { apiKeyHeader = false } = {}) {
 // og/mimo-v2.5, configurable via env VISION_MODEL) and replace the image blocks
 // with the returned text so every model can "see" the picture.
 
-function isVisionCapable(model, upstreamModel, env) {
+function isVisionCapable(model: string, upstreamModel: string, env: any) {
   const list = String(env.VISION_CAPABLE_MODELS || "")
     .split(",").map((s) => s.trim()).filter(Boolean);
   return list.includes(model) || list.includes(upstreamModel);
 }
 
-async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
+async function preprocessImages(messages: any, env: any, ukeys: any, model: string, upstreamModel: string) {
   if (!Array.isArray(messages)) return { messages, changed: false };
   if (isVisionCapable(model, upstreamModel, env)) return { messages, changed: false };
   const visionModel = env.VISION_MODEL || "og/mimo-v2.5";
   let changed = false;
   const out = [];
+  // Every image block gets a REAL description (round-43's placeholder carried
+  // no content — a turn-2 follow-up about a turn-1 screenshot was answered
+  // blind because the description existed only in the forwarded body, never
+  // in the client transcript). describeImage has a KV cache (keyed by the
+  // base64 data hash), so re-sent history images hit the cache — no vision
+  // call, no extra cost. Image conversations parse every turn (they must, to
+  // swap history images for their cached descriptions) — acceptable: image
+  // sessions are rare and the 1102 risk is bounded to them.
   for (const m of messages) {
     if (m.role !== "user" || typeof m.content !== "object" || !Array.isArray(m.content)) {
       out.push(m);
       continue;
     }
-    if (!m.content.some((b) => b.type === "image")) {
+    if (!m.content.some((b: any) => b.type === "image")) {
       out.push(m);
       continue;
     }
@@ -1206,10 +1577,43 @@ async function preprocessImages(messages, env, ukeys, model, upstreamModel) {
   return { messages: out, changed };
 }
 
-async function describeImage(env, ukeys, source, visionModel) {
+/** Cheap hex hash (FNV-1a) for the image description cache key. */
+function hashHex(str: string) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Cache a successful image description (never cache failures/empties). */
+async function cacheImageDesc(cacheKey: string, env: any, desc: string) {
+  if (!cacheKey || !env?.KEYS) return;
+  if (!desc || /图片描述失败|图片描述为空/.test(desc)) return;
+  try { await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 }); } catch {}
+}
+
+async function describeImage(env: any, ukeys: any, source: any, visionModel: string) {
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
   if (!data) return "(图片数据为空)";
+  // KV description cache: the client re-sends the same base64 image every
+  // turn, so a per-image cache turns N vision calls per follow-up into 1.
+  // Keyed by a short hash of the payload (hex, no special chars).
+  // User-scoped cache key (the shared KEYS namespace must never serve one
+  // user's image content to another — round-45 Medium #1). hashHex is 32-bit,
+  // so use TWO independent FNV passes for ~64 bits of key space (no .slice
+  // illusion — the old slice(0,24) was a no-op on an 8-char hex).
+  const h1 = hashHex(data);
+  const h2 = hashHex(visionModel + ":" + data);
+  const cacheKey = data.length > 16 ? `img-desc:${h1}${h2}` : "";
+  if (cacheKey && env.KEYS) {
+    try {
+      const hit = await env.KEYS.get(cacheKey);
+      if (hit) return hit;
+    } catch {}
+  }
   const prefix = visionModel.split("/")[0];
   const route = pickRoute(prefix, env);
   const upstreamModel = stripBracket(route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel);
@@ -1231,13 +1635,15 @@ async function describeImage(env, ukeys, source, visionModel) {
         body: JSON.stringify({ ...miniReq, model: upstreamModel }),
       }, upstreamTimeoutMs(env));
     } catch (e) {
-      return `(图片描述失败：${e.message})`;
+      return `(图片描述失败：${(e as any).message})`;
     }
     if (!resp.ok) return `(图片描述失败：${resp.status})`;
-    let json;
+    let json: any;
     try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
-    const text = (json.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-    return text || "(图片描述为空)";
+    const text = (json.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n").trim();
+    const descPt = text || "(图片描述为空)";
+    await cacheImageDesc(cacheKey, env, descPt);
+    return descPt;
   }
 
   // og/ vision model (opencode zen) — needs the Anthropic→OpenAI translation,
@@ -1252,127 +1658,20 @@ async function describeImage(env, ukeys, source, visionModel) {
       body: JSON.stringify(openaiReq),
     }, upstreamTimeoutMs(env));
   } catch (e) {
-    return `(图片描述失败：${e.message})`;
+    return `(图片描述失败：${(e as any).message})`;
   }
   if (!resp.ok) return `(图片描述失败：${resp.status})`;
-  let json;
+  let json: any;
   try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
-  return (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
+  const desc = (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
+  await cacheImageDesc(cacheKey, env, desc);
+  return desc;
 }
-
-/* ---------------- Gateway web search (og model answers, DeepSeek searches) ---------------- */
-
-/** Pull the search query out of the nested web-search request Claude Code sends. */
-function extractWebSearchQuery(messages) {
-  const last = [...(messages || [])].reverse().find((m) => m.role === "user");
-  let text = "";
-  if (last) {
-    if (typeof last.content === "string") text = last.content;
-    else text = (last.content || []).filter((b) => b.type === "text").map((b) => b.text).join(" ");
-  }
-  const m = text.match(/query:?\s*([\s\S]*)/i);
-  return (m ? m[1].trim() : text.trim()) || "latest news";
-}
-
-/**
- * Execute the search via DeepSeek official (its Anthropic endpoint implements
- * Anthropic's web_search server tool server-side), then have the requested og/
- * model answer from the results. Returns an Anthropic-format message whose content
- * carries the server_tool_use + web_search_tool_result blocks (so Claude Code's
- * parser sees real results) plus the og/ model's text answer.
- */
-async function runWebSearch(body, env, ukeys, route, upstreamModel, deepseekKey, opencodeGoKey) {
-  const query = extractWebSearchQuery(body.messages);
-  const searchUrl = "https://api.deepseek.com/anthropic" + VERIFY_PATH;
-
-  let searchJson = {};
-  try {
-    const sr = await fetchWithTimeout(searchUrl, {
-      method: "POST",
-      headers: passthroughHeaders(deepseekKey),
-      body: JSON.stringify({
-        model: "deepseek-v4-flash",
-        max_tokens: 500,
-        tools: [{ name: "web_search", type: "web_search_20250305" }],
-        tool_choice: { type: "tool", name: "web_search" },
-        messages: [{ role: "user", content: query }],
-      }),
-    }, upstreamTimeoutMs(env));
-    if (sr.ok) searchJson = await sr.json();
-  } catch {}
-
-  const serverToolUses = (searchJson.content || []).filter((b) => b.type === "server_tool_use");
-  const resultBlocks = (searchJson.content || []).filter((b) => b.type === "web_search_tool_result");
-
-  let answer = await ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks);
-  if (!answer) {
-    // Fall back to DeepSeek's own summary if the og/ model didn't produce one.
-    answer = (searchJson.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-  }
-
-  return {
-    id: crypto.randomUUID(),
-    type: "message",
-    role: "assistant",
-    model: body.model,
-    content: [...serverToolUses, ...resultBlocks, { type: "text", text: answer }],
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: {
-      input_tokens: searchJson.usage?.input_tokens || 0,
-      output_tokens: (searchJson.usage?.output_tokens || 0) + Math.ceil(answer.length / 4),
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-      server_tool_use: { web_search_requests: serverToolUses.length },
-    },
-  };
-}
-
-/** Ask the requested og/ model to answer the query from the search result titles/URLs. */
-async function ogWebSearchAnswer(env, route, upstreamModel, opencodeGoKey, query, resultBlocks) {
-  if (!opencodeGoKey) return "";
-  const resultsText = resultBlocks
-    .map((rb) => (rb.content || []).map((r) => `- ${r.title}\n  ${r.url}`).join("\n"))
-    .join("\n");
-  const req = {
-    model: upstreamModel,
-    max_tokens: 500,
-    messages: [{
-      role: "user",
-      content: `用户查询：${query}\n\n以下是网络搜索结果：\n${resultsText || "(无结果)"}\n\n请根据这些搜索结果，用中文简要、准确地回答用户的问题。如果信息不足，请说明。`,
-    }],
-  };
-  try {
-    // Always the OpenAI-format endpoint: this sends an OpenAI body (toOpenAIRequest).
-    // For native-Anthropic og models the request route's upstream is now /v1/messages,
-    // which would reject an OpenAI body — so pin the chat/completions URL explicitly.
-    // NOTE: intentionally direct (not via US_PROXY) — web_search is a gateway
-    // background operation, not a user-routed request.
-    const resp = await fetchWithTimeout(OG_ZEN_CHAT, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${opencodeGoKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(toOpenAIRequest(req, upstreamModel)),
-    }, upstreamTimeoutMs(env));
-    if (!resp.ok) {
-      console.error(`ogWebSearchAnswer: zen ${resp.status}`);
-      return "";
-    }
-    const json = await resp.json();
-    const text = (json.choices?.[0]?.message?.content || "").trim();
-    if (!text) console.error("ogWebSearchAnswer: empty content from zen");
-    return text;
-  } catch (e) {
-    console.error("ogWebSearchAnswer error:", e.message);
-    return "";
-  }
-}
-
-
 
 /* ---------------- Public endpoints: health / vale-cli / installers ---------------- */
 
-export async function buildHealth(env) {
-  const channels = [];
+export async function buildHealth(env: any) {
+  const channels: any[] = [];
   for (const c of HEALTH_CHANNELS) {
     let ok = true;
     let reason = "";
@@ -1389,9 +1688,20 @@ export async function buildHealth(env) {
   };
 }
 
-/** Model usable for routing? In the whitelist and (og) breaker not open. */
-export async function isModelUsable(env, model) {
+/** Model usable for routing? In the whitelist, (og) breaker not open, AND
+ *  the REQUESTING user's key for that channel is configured — a channel
+ *  without a key 502s every request, so model=auto must not route to it.
+ *  round-68: the old code checked ADMIN_ID's keys — a BYOK user with only an
+ *  og key was told og was "unusable" (the admin lacks it) and routed to ds,
+ *  which the user lacks → 502 on every model=auto request. */
+export async function isModelUsable(env: any, model: string, uid: string) {
   if (!MODELS.some((m) => m.id === model)) return false;
+  const userKeys: any = await getUserKeys(env, uid).catch(() => ({}));
+  const prefix = model.split("/")[0] + "/";
+  if (prefix === "og/" && !(userKeys.OPENCODE_GO_API_KEY || env.OPENCODE_GO_API_KEY)) return false;
+  if (prefix === "ds/" && !(userKeys.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY)) return false;
+  if (prefix === "qw/" && !(userKeys.QWEN_API_KEY || env.QWEN_API_KEY)) return false;
+  if (prefix === "or/" && !(userKeys.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY)) return false;
   if (model.startsWith("og/")) return !(await isChannelDegraded(env));
   return true;
 }
@@ -1405,15 +1715,15 @@ const DEFAULT_ROUTE_MODEL = "ds/deepseek-v4-flash";
  * channel (per-user route selection). Falls back to the default channel
  * (ds/deepseek-v4-flash) when unset or unusable.
  */
-export async function resolveAutoModel(env, uid) {
+export async function resolveAutoModel(env: any, uid: string) {
   const chosen = await getUserRoute(env, uid);
-  if (chosen && (await isModelUsable(env, chosen))) return chosen;
+  if (chosen && (await isModelUsable(env, chosen, uid))) return chosen;
   return DEFAULT_ROUTE_MODEL;
 }
 
 /** UTF-8-safe base64: btoa is Latin1-only and throws on non-ASCII (the vale
  *  CLI is full of Chinese text). Encode to bytes first. */
-export function encodeBase64Utf8(text) {
+export function encodeBase64Utf8(text: string) {
   return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
 }
 
@@ -1426,7 +1736,7 @@ export function encodeBase64Utf8(text) {
  * each probe costs one tiny upstream call (og short-circuits on the open
  * breaker, so a degraded channel costs nothing).
  */
-export async function valeProbe(env, model) {
+export async function valeProbe(env: any, model: string) {
   const prefix = model.split("/")[0];
   const known = HEALTH_CHANNELS.some((c) => c.id === prefix) && MODELS.some((m) => m.id === model);
   if (!known) {
@@ -1461,7 +1771,7 @@ export async function valeProbe(env, model) {
         }),
       }, upstreamTimeoutMs(env));
     } catch (e) {
-      return jsonOk({ ok: false, channel: prefix, detail: e.message });
+      return jsonOk({ ok: false, channel: prefix, detail: (e as any).message });
     }
     return jsonOk({ ok: res.ok, channel: prefix, status: res.status, detail: res.ok ? "" : `upstream ${res.status}` });
   }
@@ -1484,13 +1794,13 @@ export async function valeProbe(env, model) {
       }),
     }, upstreamTimeoutMs(env));
   } catch (e) {
-    return jsonOk({ ok: false, channel: prefix, detail: e.message });
+    return jsonOk({ ok: false, channel: prefix, detail: (e as any).message });
   }
   return jsonOk({ ok: res.ok, channel: prefix, status: res.status, detail: res.ok ? "" : `upstream ${res.status}` });
 }
 
 // POSIX one-liner installer — embeds the vale CLI as base64 (no quoting issues).
-export function posixInstaller(b64) {
+export function posixInstaller(b64: string) {
   return `#!/bin/sh
 set -e
 command -v node >/dev/null 2>&1 || { echo "error: Node.js required"; exit 1; }
@@ -1504,7 +1814,7 @@ echo "usage: vale check | vale use <ds|qw|og|or> | vale use auto | vale restore"
 }
 
 // PowerShell one-liner installer (irm | iex) — installs vale + vale.cmd wrapper.
-export function psInstaller(b64) {
+export function psInstaller(b64: string) {
   return `$ErrorActionPreference = "Stop"
 try { node --version | Out-Null } catch { Write-Error "Node.js required"; exit 1 }
 $dest = Join-Path $HOME ".local\\bin"
@@ -1516,7 +1826,7 @@ Write-Host "installed: $dest\\vale  (command: vale)"
 `;
 }
 
-async function serveAssetText(env, assetPath) {
+async function serveAssetText(env: any, assetPath: string) {
   if (!env.ASSETS || typeof env.ASSETS.fetch !== "function") {
     return null;
   }

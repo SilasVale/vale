@@ -18,35 +18,50 @@
  * takes 45s to fail will simply fail again; retries only help fast 5xx/429s.
  * Returns { response, detail } where detail explains the failure for the 502.
  */
-export async function fetchWithRetry(url, init, { attempts = 3, backoffMs = 750, timeoutMs = 30000 } = {}) {
+export async function fetchWithRetry(url: string, init: any, { attempts = 3, backoffMs = 750, timeoutMs = 30000, idempotent = false }: { attempts?: number; backoffMs?: number; timeoutMs?: number; idempotent?: boolean } = {}) {
   let last = null;
   let detail = "";
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       last = await fetchWithTimeout(url, { ...init, body: init.body }, timeoutMs);
-    } catch (e) {
+    } catch (e: any) {
       detail = e.name === "TimeoutError" ? `timeout after ${timeoutMs}ms` : `network error: ${e.message}`;
       break;
     }
     if (last.ok || !(last.status >= 500 || last.status === 429)) {
       return { response: last, detail: "" };
     }
+    // A 5xx AFTER the upstream processed the request may have billed the
+    // user's BYOK key — re-sending the identical POST double-charges. Only
+    // retry 5xx when the caller says the request is idempotent (safe probes).
+    // 429 (rate-limited, NOT processed) is always safe to retry.
+    if (last.status === 429) {
+      detail = `upstream 429 (retried ${attempt}/${attempts})`;
+      console.error(`[gateway] upstream 429 on attempt ${attempt}/${attempts} — retrying`);
+      if (attempt < attempts) {
+        await new Promise((r) => setTimeout(r, backoffMs * attempt));
+        continue;
+      }
+      return { response: last, detail };
+    }
+    if (!idempotent || attempt >= attempts) {
+      detail = `upstream ${last.status} (${idempotent ? `retried ${attempt}/${attempts}` : "not retried — POST may have been billed"})`;
+      return { response: last, detail };
+    }
     detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
     console.error(`[gateway] upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
-    if (attempt < attempts) {
-      await new Promise((r) => setTimeout(r, backoffMs * attempt));
-    }
+    await new Promise((r) => setTimeout(r, backoffMs * attempt));
   }
   return { response: last, detail };
 }
 
 
-export async function fetchWithTimeout(url, init = {}, ms = 15000) {
+export async function fetchWithTimeout(url: string, init: any = {}, ms: number = 15000): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
     return await fetch(url, { ...init, signal: ctrl.signal });
-  } catch (e) {
+  } catch (e: any) {
     if (e.name === "AbortError") {
       const err = new Error(`timeout after ${ms}ms`);
       err.name = "TimeoutError";
@@ -61,7 +76,7 @@ export async function fetchWithTimeout(url, init = {}, ms = 15000) {
 /* ---------------- Reliability: upstream timeout, circuit breaker, estimation ---------------- */
 
 /** Effective upstream timeout: env UPSTREAM_TIMEOUT_MS, default 30s. */
-export function upstreamTimeoutMs(env) {
+export function upstreamTimeoutMs(env: any): number {
   const v = Number(env?.UPSTREAM_TIMEOUT_MS);
   return Number.isFinite(v) && v > 0 ? v : 30000;
 }
@@ -75,7 +90,7 @@ export function upstreamTimeoutMs(env) {
  * timeout only gates time-to-headers (observed ~7s) — once the SSE stream
  * starts, it runs untimed.
  */
-export function ogTimeoutMs(env) {
+export function ogTimeoutMs(env: any): number {
   const v = Number(env?.OG_TIMEOUT_MS);
   return Number.isFinite(v) && v > 0 ? v : 120000;
 }
@@ -86,7 +101,7 @@ export function ogTimeoutMs(env) {
  * max-thinking runs 40-54s to first byte — while every other passthrough
  * channel (ds/qw/or) keeps the generic 30s upstream budget.
  */
-export function passthroughTimeoutMs(env, kind) {
+export function passthroughTimeoutMs(env: any, kind: string): number {
   return kind === "opencode" ? ogTimeoutMs(env) : upstreamTimeoutMs(env);
 }
 
@@ -115,11 +130,12 @@ const BREAKER_WINDOW_MS = 10 * 60 * 1000;
 
 /** Durable Object holding the breaker state (single instance per channel name). */
 export class BreakerDO {
-  constructor(state, env) {
+  state: any;
+  constructor(state: any, env: any) {
     this.state = state;
   }
 
-  async fetch(request) {
+  async fetch(request: Request): Promise<Response> {
     const action = new URL(request.url).pathname;
     try {
       if (action === "/trip") {
@@ -128,15 +144,20 @@ export class BreakerDO {
         // fresh one days later to trip).
         const rec = await this.state.storage.get("fail");
         let count = 0;
+        let firstAt = Date.now();
         if (rec && typeof rec.count === "number" && Date.now() - rec.firstAt < BREAKER_WINDOW_MS) {
           count = rec.count;
+          firstAt = rec.firstAt; // inside the window — keep the anchor
         }
+        // Outside the window: re-anchor to NOW. Keeping the stale anchor made
+        // the next /trip see an expired window again, reset to 0, and the
+        // circuit NEVER tripped.
         count += 1;
         if (count >= BREAKER_FAIL_THRESHOLD) {
           await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
           await this.state.storage.delete("fail");
         } else {
-          await this.state.storage.put("fail", { count, firstAt: rec?.firstAt || Date.now() });
+          await this.state.storage.put("fail", { count, firstAt });
         }
         return new Response("ok");
       }
@@ -145,12 +166,25 @@ export class BreakerDO {
         // degradedUntil is NOT cleared: while the circuit is open no real
         // request gets through, and the half-open probe that succeeds resets
         // the count for the next genuine failure.
-        await this.state.storage.delete("fail");
+        // round-55: ONE success must not zero the count — a channel stuck in
+        // hard-fail/success alternation would never accumulate the 3
+        // consecutive failures the breaker needs, and every request would
+        // burn the full upstream timeout with the circuit never opening.
+        // Two consecutive successes (a genuinely recovering channel) clear
+        // the count.
+        const succ = (await this.state.storage.get("succ")) || 0;
+        if (succ >= 1) {
+          await this.state.storage.delete("fail");
+          await this.state.storage.delete("succ");
+        } else {
+          await this.state.storage.put("succ", succ + 1);
+        }
         return new Response("ok");
       }
       if (action === "/clear") {
         await this.state.storage.delete("degradedUntil");
         await this.state.storage.delete("fail");
+        await this.state.storage.delete("succ");
         return new Response("ok");
       }
       if (action === "/check") {
@@ -158,13 +192,13 @@ export class BreakerDO {
         return new Response(degradedUntil > Date.now() ? "1" : "0");
       }
       return new Response("not found", { status: 404 });
-    } catch (e) {
+    } catch (e: any) {
       return new Response(`breaker error: ${e.message}`, { status: 500 });
     }
   }
 }
 
-function breakerStub(env) {
+function breakerStub(env: any) {
   return env.BREAKER.get(env.BREAKER.idFromName("og"));
 }
 
@@ -182,31 +216,35 @@ export function __clearDegradedCache() {
 let degradedCache = { at: 0, value: false };
 const DEGRADED_CACHE_TTL_MS = 5000;
 
-export async function isChannelDegraded(env) {
+export async function isChannelDegraded(env: any): Promise<boolean> {
   const now = Date.now();
   if (now - degradedCache.at < DEGRADED_CACHE_TTL_MS) return degradedCache.value;
   try {
     const res = await breakerStub(env).fetch("https://breaker/check");
     degradedCache = { at: now, value: (await res.text()) === "1" };
     return degradedCache.value;
-  } catch (e) {
+  } catch (e: any) {
     console.error("[breaker] check failed:", e.message);
     return false;
   }
 }
 
-export async function recordChannelFailure(env) {
+export async function recordChannelFailure(env: any): Promise<void> {
   try {
     await breakerStub(env).fetch("https://breaker/trip");
-  } catch (e) {
+    // Invalidate the 5s stale cache immediately — otherwise this isolate's
+    // health checks keep reporting ok for up to 5s after a trip.
+    degradedCache = { at: 0, value: false };
+    console.error("[breaker] channel failure recorded (may open the circuit)");
+  } catch (e: any) {
     console.error("[breaker] trip failed:", e.message);
   }
 }
 
-export async function recordChannelSuccess(env) {
+export async function recordChannelSuccess(env: any): Promise<void> {
   try {
     await breakerStub(env).fetch("https://breaker/reset");
-  } catch (e) {
+  } catch (e: any) {
     console.error("[breaker] reset failed:", e.message);
   }
 }

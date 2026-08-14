@@ -31,48 +31,8 @@
       "group": "vale-gate"
     },
     {
-      "name": "src/body-scan.js",
-      "path": "files/vale-gate/src/body-scan.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/channels.js",
-      "path": "files/vale-gate/src/channels.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/reliability.js",
-      "path": "files/vale-gate/src/reliability.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/plugin-hub.js",
-      "path": "files/vale-gate/src/plugin-hub.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/device-fetch.js",
-      "path": "files/vale-gate/src/device-fetch.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/http.js",
-      "path": "files/vale-gate/src/http.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/mcp.js",
-      "path": "files/vale-gate/src/mcp.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/mcp-tools.js",
-      "path": "files/vale-gate/src/mcp-tools.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/anthropic-translate.js",
-      "path": "files/vale-gate/src/anthropic-translate.js",
+      "name": "wrangler.jsonc",
+      "path": "files/vale-gate/wrangler.jsonc",
       "group": "vale-gate"
     }
   ]
