@@ -83,7 +83,11 @@ pub fn load_or_create(
                         let v = v.trim_matches(|c| c == '"' || c == '\'' || c == ' ');
                         Some(v.to_string())
                     })
-                    .filter(|tok| tok.len() >= 16)
+                    // round-139: recovered values must be COMPLETE 64-hex —
+                    // a tail-truncated line (power-loss on a pre-atomic file)
+                    // passing the old len>=16 filter wrote a corrupt value
+                    // with full confidence and kept X-Vale-Auth broken.
+                    .filter(|tok| tok.len() == 64 && tok.chars().all(|c| c.is_ascii_hexdigit()))
                     .next_back(); // last wins (duplicate keys)
                 let recovered = extract("device_token").or_else(|| extract("auth_token"));
                 // round-138: also recover the proxy_secret — the old path
@@ -97,9 +101,7 @@ pub fn load_or_create(
                     let mut fresh = Config::load(path)?;
                     fresh.server.device_token = Some(tok);
                     if let Some(sec) = recovered_secret {
-                        if sec.len() >= 16 {
-                            fresh.server.proxy_secret = Some(sec);
-                        }
+                        fresh.server.proxy_secret = Some(sec);
                     }
                     atomic_write(path, serde_yaml::to_string(&fresh).unwrap_or_default().as_bytes())?;
                     log("     Recovered the previous device_token from the quarantined config.");
