@@ -166,9 +166,15 @@ impl EventBus for AppEventBus {
         if ring.len() > RING_CAP {
             ring.pop_front();
         }
-        drop(guard);
-        // Broadcast to SSE / any subscriber
+        // round-120: the broadcast send used to happen AFTER drop(guard) with
+        // an allocation in between — two concurrent emitters (session drainer
+        // tasks, handler emits) could deliver events OUT of seq order on the
+        // SSE stream, and a seq-deduping client dropped the straggler
+        // permanently (poll_after only returns seq > after). tokio broadcast
+        // send is synchronous and never awaits, so sending INSIDE the lock
+        // keeps send order == seq order at no cost.
         let _ = self.tx.send(SeqEvent { seq, event: event.clone() });
+        drop(guard);
         // Optional hook (e.g. Tauri event forwarding)
         let hook = recover_guard(&self.hook);
         if let Some(ref f) = *hook {

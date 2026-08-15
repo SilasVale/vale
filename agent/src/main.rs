@@ -108,11 +108,17 @@ fn main() {
     // `--init <path>` bootstraps the config + auth token and exits (used by the
     // Windows one-click installer so a server isn't left running just to
     // generate a token). Without a flag, argv[1] is the config path.
+    // round-120: a bare launch (double-click, no boot task) with no argv[1]
+    // used to fall back to a RELATIVE "config.yaml" — resolved against the
+    // process CWD (C:\Windows\System32 for shell/SYSTEM contexts), where
+    // bootstrap CREATED a phantom default config with a fresh unknown token
+    // and every client 401'd. Fall back to the exe's own directory.
+    let exe_dir_cfg = || std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("config.yaml")));
     let init_mode = args.get(1).map(String::as_str) == Some("--init");
     let config_path = if init_mode {
-        args.get(2).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("config.yaml"))
+        args.get(2).map(PathBuf::from).or_else(exe_dir_cfg).unwrap_or_else(|| PathBuf::from("config.yaml"))
     } else {
-        args.get(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("config.yaml"))
+        args.get(1).map(PathBuf::from).or_else(exe_dir_cfg).unwrap_or_else(|| PathBuf::from("config.yaml"))
     };
 
     if init_mode {
@@ -441,17 +447,44 @@ fn run_service(args: Vec<std::ffi::OsString>) {
         return;
     }
 
-    // Service is registered with binPath= "<exe>" "<config>", so the config path
-    // arrives as the first service argument.
-    let config_path = args
-        .first()
+    // round-120: the SCM does NOT pass the binPath "<config>" argument to
+    // ServiceMain — lpServiceArgVectors are the StartService args only (empty
+    // for auto-start at boot). The old args.first() was therefore always
+    // empty, so the path fell back to a RELATIVE "config.yaml" which resolved
+    // against the service CWD (C:\Windows\System32) — bootstrap CREATED a
+    // phantom default config there with a fresh unknown token, and every
+    // client 401'd while the real install-dir config was never loaded. Read
+    // the process command line (env::args carries the binPath param) and fall
+    // back to the exe's own directory (never a relative path).
+    let config_path = std::env::args().nth(1)
         .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("config.yaml"))))
         .unwrap_or_else(|| PathBuf::from("config.yaml"));
 
     // Run the async server on its own tokio runtime — this thread must stay free
     // to answer SCM control requests.
+    // round-120: a panic on this thread (Runtime::new().expect, or any panic
+    // in run_server) previously unwound only the thread — the service stayed
+    // 'Running' with a dead server and the SCM recovery actions never fired.
+    // Report the failure so the SCM sees a stopped service and restarts it.
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("create service tokio runtime");
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                eout!("ERROR: failed to create service tokio runtime: {e}");
+                let stopped = ServiceStatus {
+                    service_type: ServiceType::OWN_PROCESS,
+                    current_state: ServiceState::Stopped,
+                    controls_accepted: ServiceControlAccept::empty(),
+                    exit_code: ServiceExitCode::SERVICE_SPECIFIC,
+                    checkpoint: 0,
+                    wait_hint: Duration::from_secs(0),
+                    process_id: None,
+                };
+                let _ = status_handle.set_service_status(stopped);
+                return;
+            }
+        };
         rt.block_on(run_server(config_path));
     });
 
