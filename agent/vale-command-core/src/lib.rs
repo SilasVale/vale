@@ -57,6 +57,21 @@ pub trait ToolHandler: Send + Sync {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<serde_json::Value, DeviceError>> + Send + '_>,
     >;
+
+    /// round-118: cancellable variant — a client `notifications/cancelled`
+    /// (rmcp routes it to the request context token) must abort a long tool
+    /// call instead of running to its deadline. Default = plain call; tools
+    /// that can observe cancellation override this.
+    fn call_cancellable(
+        &self,
+        params: serde_json::Value,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<serde_json::Value, DeviceError>> + Send + '_>,
+    > {
+        let _ = cancel;
+        self.call(params)
+    }
 }
 
 impl<F, Fut> ToolHandler for F

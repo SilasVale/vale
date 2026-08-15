@@ -14,7 +14,7 @@ use rmcp::transport::streamable_http_server::{
 use rmcp::{ErrorData as McpError, ServerHandler};
 use tokio_util::sync::CancellationToken;
 
-use vale_agent_core::Config;
+use vale_agent_core::{Config, DeviceError};
 use crate::state::AppState;
 
 #[derive(Debug, Clone)]
@@ -54,16 +54,35 @@ impl ServerHandler for DeviceServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let tool_name = request.name.as_ref();
         let tool = self.state.plugin_registry.find_tool(tool_name).ok_or_else(|| {
-            McpError::method_not_found::<rmcp::model::CallToolRequestMethod>()
+            // round-118: MCP spec — an unknown TOOL in tools/call is Invalid
+            // params (-32602), not Method not found (-32601, reserved for a
+            // genuinely unknown METHOD). The old error misattributed the
+            // failure to the server's method dispatch.
+            McpError::invalid_params(format!("Unknown tool: {tool_name}"), None)
         })?;
         let params: serde_json::Value = request.arguments
             .map(serde_json::Value::Object)
             .unwrap_or(serde_json::json!({}));
-        match tool.handler.call(params).await {
+        // round-118: route the request's cancellation token (rmcp flips it on
+        // notifications/cancelled) into the tool call so a client-cancelled
+        // long operation (terminal_execute running to a 1h deadline, busy-
+        // flagging the session) can abort early. The handler's cancellable
+        // variant decides whether to observe it; tools that don't override
+        // keep the plain call.
+        let cancel = context.ct.clone();
+        let result = tokio::select! {
+            r = tool.handler.call_cancellable(params, cancel.clone()) => r,
+            _ = cancel.cancelled() => {
+                // Client cancelled — surface it as a tool error so the
+                // caller knows the op did NOT complete.
+                Err(DeviceError::Internal { message: "tool call cancelled by client".into() })
+            }
+        };
+        match result {
             Ok(result) => {
                 let mut r = CallToolResult::default();
                 r.content = vec![ContentBlock::text(result.to_string())];
