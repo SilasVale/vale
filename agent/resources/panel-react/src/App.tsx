@@ -243,7 +243,7 @@ export function App() {
               session below the terminal; the trajectory tab replaces both.
               Clicking a card opens the details column. */}
           {trajOpen && sessions.activeSid ? (
-            <TrajectoryView key={sessions.activeSid} sid={sessions.activeSid} />
+            <TrajectoryView key={sessions.activeSid} events={cmdEvents.events} />
           ) : (
             <CommandStream
               cards={cmdEvents.cards}

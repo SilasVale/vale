@@ -26,6 +26,7 @@ function end(seq: number, exitCode: number, reason: string): CommandEvent {
 
 function mockSession(events: CommandEvent[]) {
   mockCallApi.mockResolvedValue({ ok: true, id: "s1", events });
+  return events;
 }
 
 // Output rows carry trailing newlines — testing-library's string matcher
@@ -34,7 +35,7 @@ function mockSession(events: CommandEvent[]) {
 
 describe("TrajectoryView", () => {
   it("renders rounds with the newest expanded and session status rows", async () => {
-    mockSession([
+    const evs = mockSession([
       { seq: 1, ts: 100, kind: "status", status: "opened" },
       start(2, "echo one"),
       output(3, "OUT-ONE\n"),
@@ -42,7 +43,7 @@ describe("TrajectoryView", () => {
       start(5, "echo two"),
       output(6, "OUT-TWO\n"),
     ]);
-    render(<TrajectoryView sid="s1" />);
+    render(<TrajectoryView events={evs} />);
     // Round headers always render; the preamble round holds the raw
     // session-level "opened" status.
     await waitFor(() => expect(screen.getByText("echo one")).toBeTruthy());
@@ -58,7 +59,7 @@ describe("TrajectoryView", () => {
   });
 
   it("search filters to matching rounds and rows (text-only)", async () => {
-    mockSession([
+    const evs = mockSession([
       start(1, "ping apple.com"),
       output(2, "PING apple.com (17.1.1.1)…\n"),
       end(3, 0, "marker"),
@@ -66,7 +67,7 @@ describe("TrajectoryView", () => {
       output(5, "banana content\n"),
       end(6, 0, "marker"),
     ]);
-    render(<TrajectoryView sid="s1" />);
+    render(<TrajectoryView events={evs} />);
     await waitFor(() => expect(screen.getByText("ping apple.com")).toBeTruthy());
     fireEvent.change(screen.getByPlaceholderText("Filter output…"), { target: { value: "banana" } });
     await waitFor(() => expect(screen.queryByText("ping apple.com")).toBeNull());
@@ -82,7 +83,7 @@ describe("TrajectoryView", () => {
   });
 
   it("collapse all folds every round; a round head toggles it back", async () => {
-    mockSession([
+    const evs = mockSession([
       start(1, "echo one"),
       output(2, "OUT-ONE\n"),
       end(3, 0, "marker"),
@@ -90,7 +91,7 @@ describe("TrajectoryView", () => {
       output(5, "OUT-TWO\n"),
       end(6, 0, "marker"),
     ]);
-    render(<TrajectoryView sid="s1" />);
+    render(<TrajectoryView events={evs} />);
     await waitFor(() => expect(screen.getByText(/OUT-TWO/)).toBeTruthy());
     fireEvent.click(screen.getByText("Collapse all"));
     await waitFor(() => expect(screen.queryByText(/OUT-TWO/)).toBeNull());
@@ -106,7 +107,7 @@ describe("TrajectoryView", () => {
       events.push(output(i * 2 + 2, `OUT-${i}\n`));
     }
     mockSession(events);
-    render(<TrajectoryView sid="s1" />);
+    render(<TrajectoryView events={events} />);
     await waitFor(() => expect(screen.getByText("cmd 24")).toBeTruthy());
     // Oldest round is outside the 20-round window.
     expect(screen.queryByText("cmd 0")).toBeNull();
@@ -119,8 +120,8 @@ describe("TrajectoryView", () => {
   });
 
   it("shows the empty state before any events arrive", async () => {
-    mockSession([]);
-    render(<TrajectoryView sid="s1" />);
+    const evs = mockSession([]);
+    render(<TrajectoryView events={evs} />);
     await waitFor(() => expect(screen.getByText("No commands in this session yet.")).toBeTruthy());
   });
 });

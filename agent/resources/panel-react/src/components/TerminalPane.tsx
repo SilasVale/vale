@@ -115,7 +115,13 @@ export function TerminalPane({ session, registerWrite }: {
   useEffect(() => {
     const refit = () => {
       try {
+        // round-128: the admin views (trajectory/plugins) hide the active
+        // pane's container without unmounting — a window resize then runs
+        // fit() on a 0-size hidden container and pushes a garbage grid to
+        // the backend. Skip while not visible (offsetParent is null when
+        // the element or an ancestor is display:none).
         const term: any = termRef.current;
+        if (term?.element && term.element.offsetParent === null) return;
         term?.fit?.();
         // round-96: the fit() only reflows the LOCAL xterm grid — the
         // backend PTY/SSH/serial session kept its original cols/rows, so a

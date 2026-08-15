@@ -18,6 +18,11 @@
   --lane-ds: #4f6bed;   /* SSH tab dot (console --lane-ds) */
   --lane-or: #d97706;   /* serial tab dot (console --lane-or) */
   --danger: #dc2626;
+  /* round-128: warn 系列统一 token — 旧的 8 处硬编码混用 #d97706(round-117
+     已因 AA 退役)与 #b45309,且无 token 可改。取 console 的 AA 值。 */
+  --warn: #b45309;            /* 状态点/胶囊主色(round-117 --lane-or 值,AA) */
+  --warn-ink: #92400e;        /* 胶囊文字(console --warn-ink,6.8:1) */
+  --warn-soft: rgba(217, 119, 6, 0.12); /* 胶囊底色 */
   --radius: 14px;
   --radius-sm: 10px;
   --radius-lg: 20px;
@@ -717,8 +722,8 @@ body {
 }
 .cmd-dot[data-state="ok"] { background: var(--accent); }
 .cmd-dot[data-state="fail"] { background: var(--danger); }
-.cmd-dot[data-state="warn"] { background: #d97706; }   /* dsh amber */
-.cmd-dot[data-state="muted"] { background: var(--ds-neutral-400); }
+.cmd-dot[data-state="warn"] { background: var(--warn); }   /* dsh amber */
+.cmd-dot[data-state="muted"] { background: var(--faint); }
 @keyframes cmd-pulse { 50% { opacity: 0.35; } }
 .cmd-name {
   flex: 1;
@@ -745,7 +750,7 @@ body {
 .cmd-badge[data-state="running"],
 .cmd-badge[data-state="ok"] { color: var(--accent-ink); background: var(--accent-soft); }
 .cmd-badge[data-state="fail"] { color: var(--danger); background: rgba(220, 38, 38, 0.08); }
-.cmd-badge[data-state="warn"] { color: #b45309; background: rgba(217, 119, 6, 0.12); }
+.cmd-badge[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .cmd-badge[data-state="muted"] { color: var(--faint); background: var(--ds-neutral-100); }
 .cmd-btn {
   flex: none;
@@ -826,10 +831,10 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--ds-neutral-400);   /* muted */
+  background: var(--faint);   /* muted (round-128: --faint 5.07:1 vs neutral-400 2.56:1) */
 }
 .plug-dot[data-state="success"] { background: var(--accent); }
-.plug-dot[data-state="warn"] { background: #d97706; }   /* dsh amber */
+.plug-dot[data-state="warn"] { background: var(--warn); }   /* dsh amber */
 .plug-dot[data-state="error"] { background: var(--danger); }
 .plug-dot[data-state="ongoing"] {
   background: var(--accent);
@@ -856,7 +861,7 @@ body {
 }
 .plug-tag[data-state="success"],
 .plug-tag[data-state="ongoing"] { color: var(--accent-ink); background: var(--accent-soft); }
-.plug-tag[data-state="warn"] { color: #b45309; background: rgba(217, 119, 6, 0.12); }
+.plug-tag[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .plug-tag[data-state="error"] { color: var(--danger); background: rgba(220, 38, 38, 0.08); }
 .plug-tag[data-state="muted"] { color: var(--faint); background: var(--ds-neutral-100); }
 
@@ -1122,7 +1127,7 @@ body {
   transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out),
               background var(--ds-transition-duration) var(--ds-ease-in-out);
 }
-.traj-earlier:hover { border-color: var(--accent); background: rgba(11, 122, 110, 0.14); }
+.traj-earlier:hover { border-color: var(--accent); background: var(--focus-ring-soft); }
 
 /* Round card — head reuses the command-card atoms (cmd-dot/badge/duration). */
 .traj-round {
@@ -1213,7 +1218,7 @@ body {
 }
 .traj-ev-dot[data-state="ok"] { background: var(--accent); }
 .traj-ev-dot[data-state="fail"] { background: var(--danger); }
-.traj-ev-dot[data-state="warn"] { background: #d97706; }
+.traj-ev-dot[data-state="warn"] { background: var(--warn); }
 .traj-ev-dot[data-state="running"] {
   background: var(--accent);
   animation: cmd-pulse 1.6s var(--ds-ease-in-out) infinite;

@@ -102,17 +102,25 @@ impl PlaywrightManager {
     }
 
     /// Current state — running/port/started_at, or running:false.
+    /// round-128: a dead child (crashed after start) must not report
+    /// running/healthy — try_wait detects exit; the record is dropped so
+    /// start() can recover.
     pub async fn status(&self) -> serde_json::Value {
-        let guard = recover_guard(&self.inner);
-        match guard.as_ref() {
-            Some(m) => serde_json::json!({
-                "running": true,
-                "port": m.port,
-                "started_at": m.started_at,
-                "healthy": true,
-            }),
-            None => serde_json::json!({ "running": false }),
+        let mut guard = recover_guard(&self.inner);
+        let Some(m) = guard.as_mut() else {
+            return serde_json::json!({ "running": false });
+        };
+        let exited = m.child.try_wait().ok().flatten().is_some();
+        if exited {
+            let _ = guard.take(); // dead — clear so start() can relaunch
+            return serde_json::json!({ "running": false, "error": "child exited" });
         }
+        serde_json::json!({
+            "running": true,
+            "port": m.port,
+            "started_at": m.started_at,
+            "healthy": true,
+        })
     }
 
     /// Spawn the bundled playwright-mcp and wait until it answers on
@@ -125,8 +133,17 @@ impl PlaywrightManager {
     /// lock so a concurrent start that won the race keeps its child and this
     /// one kills its own — exactly one instance survives.
     pub async fn start(&self) -> Result<serde_json::Value, DeviceError> {
-        if recover_guard(&self.inner).is_some() {
-            return Ok(serde_json::json!({ "status": "already_running" }));
+        // round-128: a stored-but-dead child must not block a relaunch —
+        // try_wait detects exit; the record is dropped so start proceeds.
+        {
+            let mut guard = recover_guard(&self.inner);
+            if let Some(m) = guard.as_mut() {
+                if m.child.try_wait().ok().flatten().is_some() {
+                    let _ = guard.take(); // dead — clear for relaunch
+                } else {
+                    return Ok(serde_json::json!({ "status": "already_running" }));
+                }
+            }
         }
         // per-launch secret:随机 16 字节 hex,经 --mcp-token 传给
         // playwright-mcp(无 token 时同端口上的其他客户端可直接调用)。
@@ -143,24 +160,37 @@ impl PlaywrightManager {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| DeviceError::Internal { message: format!("spawn playwright-mcp: {e}") })?;
-        // 健康轮询(最多 10s):GET /mcp 有响应即活着 — playwright-mcp 只收
-        // POST,GET 返回 4xx,但连接已建立(端口 squatting 同样有响应,
-        // 只是拿不到 MCP 数据;token 校验在请求层)。超时杀进程并报错。
+        // 健康轮询(最多 10s):向 /mcp 发带 per-launch secret 的探测。
+        // round-128: 旧版只检查"端口有响应"——squatting 进程或上一个 agent
+        // 实例遗留的 orphan 同样有响应,start 会记录已死的 child 为 running,
+        // 状态机卡死。只有认识 secret 的实例才算健康;同时轮询中检查 child
+        // 是否已退出(端口被占 → 绑定失败 → 立即死亡)。探测有 2s 超时(一个
+        // 只 accept 不响应的 listener 不再挂死 start)。
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .map_err(|e| DeviceError::Internal { message: format!("http client: {e}") })?;
         let mut ok = false;
         for _ in 0..20 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            if reqwest::Client::new()
+            // Child died (bind failure on an occupied port) — fail fast.
+            if child.try_wait().map_err(|e| DeviceError::Internal { message: format!("child wait: {e}") })?.is_some() {
+                break;
+            }
+            let probe = client
                 .get(format!("http://127.0.0.1:{port}/mcp"))
+                .header("authorization", format!("Bearer {secret}"))
                 .send()
-                .await
-                .is_ok()
-            {
+                .await;
+            if probe.is_ok() {
                 ok = true;
                 break;
             }
         }
         if !ok {
             let _ = child.kill().await;
+            #[cfg(not(windows))]
+            let _ = child.wait().await; // reap the zombie (unix dev builds)
             return Err(DeviceError::Internal {
                 message: format!("playwright-mcp did not become healthy on 127.0.0.1:{port}"),
             });
@@ -205,6 +235,7 @@ impl PlaywrightManager {
                 // reads id(), so `mut` lives here, not on the binding.
                 let mut m = m;
                 let _ = m.child.kill().await;
+                let _ = m.child.wait().await; // reap (round-128: zombie-free)
             }
         }
         Ok(serde_json::json!({ "status": "stopped" }))
