@@ -46,7 +46,17 @@ export async function ensureTab(device, proxyUrl) {
 }
 
 async function ensureTabInner(device, proxyUrl) {
+  // round-116: an Unpair can land while this ensure is in flight (both run
+  // in the same SW, interleaved at awaits). releaseDeviceTab only detaches
+  // what is CURRENTLY in controlledTabs/attached — if it ran before we set
+  // them, this ensure would re-attach the debugger and re-create the tab
+  // AFTER unpair reported ok, leaving the controlled tab live + attached
+  // forever (and re-pairing would resurrect the stale session). Re-check
+  // pairing at every await boundary and bail once it's gone.
+  const stillPaired = () => state.pairedDevice?.device === device;
+  if (!stillPaired()) return null;
   await hydrateAttached();
+  if (!stillPaired()) return null;
   let tabId = state.controlledTabs[device];
   if (!tabId) {
     const tabs = await chrome.tabs.query({ url: `*://*/api/devices/${device}/proxy/*` });
@@ -141,6 +151,10 @@ async function ensureTabInner(device, proxyUrl) {
   state.controlledTabs[device] = tabId;
   if (!attached.has(tabId)) {
     try {
+      // round-116: re-check right before attach — the unpair may have run
+      // while we were in the awaits above (query/reuse); attaching now would
+      // resurrect the controlled tab after unpair.
+      if (!stillPaired()) { delete state.controlledTabs[device]; return null; }
       await chrome.debugger.attach({ tabId }, "1.3");
     } catch (e) {
       const s = String(e);
