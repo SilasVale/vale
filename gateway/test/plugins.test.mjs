@@ -102,7 +102,7 @@ test("ws-ticket: valid plugin token → 200, unknown token → 401 (public route
   // must clear the cache or the earlier add/remove tests' cached (empty) map
   // wins and the valid token 401s.
   __clearCaches();
-  await kv.put("plugins:v1", JSON.stringify({ "tok-d1": { device: "d1", createdAt: 1 } }));
+  await kv.put("plugins:v1", JSON.stringify({ "tok-d1": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 * 30 } }));
   const ok = await apiFetch(env, "/api/plugins/ws-ticket", {
     headers: { authorization: "Bearer tok-d1", "content-type": "application/json" },
     body: "{}",

@@ -25,7 +25,7 @@
  * Handler convention: dispatch(ctx, method, path, request, env, url) →
  * handler(request, env, url).
  */
-import { hasRegKey, hasRegGrant, getDevice, upsertDevice, deleteDevice, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, getAdminPassword, getUser, maskKey, listDevices, addPluginLink, getPluginByToken, removePluginLink, listPluginLinks, consumePairCode, createWsTicket, consumeWsTicket, type User, type Device } from "../store.ts";
+import { hasRegKey, hasRegGrant, getDevice, upsertDevice, insertDevice, deleteDevice, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, getAdminPassword, getUser, maskKey, listDevices, addPluginLink, getPluginByToken, removePluginLink, listPluginLinks, consumePairCode, createWsTicket, consumeWsTicket, type User, type Device } from "../store.ts";
 import { parseCookie, SESSION_COOKIE, verifySessionToken, randomHex } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
@@ -108,7 +108,13 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
         }
       }
     } catch { /* best-effort — panel injection just won't work until admin updates */ }
-    await upsertDevice(env, device);
+    // round-122: insertDevice does the existence check INSIDE the lock —
+    // the old getDevice→409 check-then-act let two concurrent same-name
+    // registrations both pass and the second upsert took over the name.
+    const inserted = await insertDevice(env, device);
+    if (!inserted) {
+      return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+    }
     await deleteRegKey(env, k); // one-time — consumed only after success
     await deleteRegGrant(env, k);
     return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });

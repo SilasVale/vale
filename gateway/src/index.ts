@@ -31,7 +31,7 @@
  *   store.js / auth.js / device-fetch.js / mcp.js / plugin-hub.js  supporting modules
  */
 
-import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, deleteDevice, createRegKey, hasRegKey, hasRegGrant, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.ts";
+import { seedAdmin, createUser, getUser, findUserByUsername, findUserByToken, listUsers, setUserEnabled, regenerateToken, getUserKeys, setUserKey, deleteUserKey, createInvite, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, listDevices, getDevice, upsertDevice, insertDevice, deleteDevice, createRegKey, hasRegKey, hasRegGrant, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, setCfToken, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, listPluginLinks, addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.ts";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, randomHex } from "./auth.ts";
 import { build101Response, deviceFetch } from "./device-fetch.ts";
 import { handleMcp } from "./mcp.ts";
@@ -210,7 +210,8 @@ async function handleConsole(request: Request, env: any, url: URL) {
       try {
         const payload = JSON.parse(atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/")) || "{}");
         if (payload.exp) {
-          const ttl = Math.max(1, Math.min(86400 * 2, Math.ceil((payload.exp * 1000 - Date.now()) / 1000)));
+          // round-122: exp is stored in MS (issueSessionToken uses Date.now() + SESSION_TTL_MS) — the old *1000 treated it as seconds, overstating the remaining life ~1000x (every logout wrote a 2-day entry).
+        const ttl = Math.max(1, Math.min(86400, Math.ceil((payload.exp - Date.now()) / 1000)));
           await env.KEYS.put(`sess-revoked:${cookie}`, "1", { expirationTtl: ttl });
         }
       } catch { /* malformed cookie — ignore */ }
@@ -239,10 +240,13 @@ async function handleConsole(request: Request, env: any, url: URL) {
     // hostname/token, redirecting console terminal tools + the proxy to the
     // attacker. Refuse when the name is already registered; re-registering
     // an existing device is an admin action.
-    if (await getDevice(env, device.name)) {
+    // round-122: insertDevice checks existence INSIDE the lock (the old
+    // getDevice check-then-act let concurrent same-name registrations both
+    // pass and the second upsert took over the name).
+    const inserted = await insertDevice(env, device);
+    if (!inserted) {
       return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
     }
-    await upsertDevice(env, device);
     await deleteRegKey(env, body.key); // one-time — consumed only after success
     await deleteRegGrant(env, body.key);
     return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });

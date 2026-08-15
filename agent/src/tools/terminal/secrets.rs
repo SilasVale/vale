@@ -49,11 +49,25 @@ pub(crate) mod file_impl {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
         }
+        #[cfg(windows)]
+        {
+            // round-122: the file store is the DE-FACTO production store
+            // (Session 0 Credential Manager is unreliable per the module doc)
+            // and holds plaintext SSH passwords — the unix-only 0o600 left it
+            // with inherited ACLs (often Users:Read) on Windows. Restrict to
+            // the current user via icacls (best-effort like the unix chmod);
+            // the grant uses the current user's SID resolved from USERNAME.
+            if let Ok(user) = std::env::var("USERNAME") {
+                let _ = std::process::Command::new("icacls")
+                    .args([tmp.to_string_lossy().as_ref(), "/inheritance:r", "/grant:r", &format!("{user}:(R,W)")])
+                    .output();
+            }
+        }
         std::fs::rename(&tmp, &p)
             .map_err(|e| DeviceError::Keychain { reason: format!("rename to {p:?}: {e}") })
     }
 
-    fn key_of(target: &str) -> String {
+    pub(crate) fn key_of(target: &str) -> String {
         // round-101: key by the NORMALIZED connection identity — 'user@host'
         // and 'user@host:22' are the same connection (parse_ssh_target
         // defaults the port to 22), but raw-target keying made a password
@@ -98,7 +112,14 @@ mod secrets_impl {
     const SERVICE: &str = "vale-command";
 
     fn entry(target: &str) -> Result<Entry, DeviceError> {
-        Entry::new(SERVICE, &format!("ssh:{target}"))
+        // round-122: key the Credential Manager entry by the SAME normalized
+        // identity as the file store (round-101's key_of) — the old raw
+        // "ssh:{target}" meant a password stored as 'user@host' was
+        // unfindable via 'user@host:22' (the panel spelling), and
+        // secret_delete left the other spelling's entry alive in the
+        // keychain while reporting "deleted". Same class: IPv6 brackets and
+        // hostname case.
+        Entry::new(SERVICE, &file_impl::key_of(target))
             .map_err(|e| DeviceError::Keychain { reason: format!("create entry: {e}") })
     }
 
