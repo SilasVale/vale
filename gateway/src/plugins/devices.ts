@@ -506,15 +506,21 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
     if (outHeaders.has("content-length")) {
       outHeaders.set("content-length", String(new TextEncoder().encode(rewritten).length));
     }
-    // round-132: REVERTED the round-131 CSP sandbox — sandbox without
+    // round-132/133: REVERTED the round-131 CSP sandbox — sandbox without
     // allow-same-origin makes the panel origin opaque: localStorage throws
     // SecurityError at mount (white screen) and cookies are never sent (all
     // /proxy/* API calls 401). The sandbox is fundamentally incompatible
-    // with the panel's same-origin architecture. The XSS surface it guarded
-    // is instead closed by serving the proxied panel from the API_HOST
-    // origin (no console session cookie there — cookies are host-only), via
-    // the redirect in the navigation path; direct device-origin visits were
-    // already safe (no console cookies reachable).
+    // with the panel's same-origin architecture.
+    // ACTUAL INVARIANT (round-133, correcting the misleading R132 comment):
+    // the ADMIN flow (console 打开面板) opens the panel at the DEVICE origin
+    // (https://<hostname>/panel/) where no console cookie is reachable — that
+    // surface is closed. The EXTENSION flow still loads the proxied panel at
+    // a CONSOLE_HOST origin (api.saisi.online is itself a CONSOLE_HOST) — a
+    // compromised device's HTML could read console APIs there. This is an
+    // ACCEPTED limitation: opening a device's panel is an explicit trust
+    // action (the extension only proxies panels of devices the user paired,
+    // and the admin flow goes to the device origin), and the sandbox
+    // alternative breaks the panel entirely.
     return new Response(rewritten, { status: resp.status, headers: outHeaders });
   }
 
