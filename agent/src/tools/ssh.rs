@@ -39,6 +39,11 @@ fn known_hosts_path() -> std::path::PathBuf {
 /// connection. A half-written file must NOT silently become an empty trust
 /// table (which would re-TOFU every host and re-open the MITM window the
 /// save-side fail-closed protects against) (round-57).
+/// Serializes the TOFU read-modify-write (round-118): concurrent first-time
+/// connections lost one host's fingerprint (last-save-wins), re-opening that
+/// host's MITM window.
+static KNOWN_HOSTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn load_known_hosts() -> Result<serde_json::Map<String, serde_json::Value>, std::io::Error> {
     let s = std::fs::read_to_string(known_hosts_path())?;
     serde_json::from_str(&s).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
@@ -82,6 +87,13 @@ impl client::Handler for SshHandler {
         key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
         let fp = fingerprint_of(key);
+        // round-118: TOFU is a load-insert-save of the whole table — two
+        // concurrent first-time connections (multi-threaded runtime, parallel
+        // terminal_open) both read the empty map and last-save-wins silently
+        // dropped one host's fingerprint, re-opening that host's MITM window
+        // (the same lost-update class round-101 fixed for secrets via
+        // STORE_LOCK). Serialize the whole read-modify-write.
+        let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         // A corrupt file (half write, disk error) FAILS the connection —
         // re-TOFUing everything would silently re-open the MITM window.
         let mut hosts = load_known_hosts_or_empty().map_err(|_| russh::Error::UnknownKey)?;
