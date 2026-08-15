@@ -107,6 +107,9 @@ Section "Install" SEC01
   ; unpacked → $INSTDIR\extension). Updated together with the binaries on
   ; every install/upgrade.
   File "vale-browser-control.zip"
+  ; Phase 3: playwright-mcp runtime (node.exe + dist/cli.js + node_modules) —
+  ; the PlaywrightManager spawns $INSTDIR\playwright\ on Start. ~40-50MB.
+  File "vale-playwright.zip"
 
   ; 2. NOW stop every vale binary. A running instance locks its exe AND holds
   ;    port 18080, so the restarted boot task cannot bind. This includes the
@@ -217,6 +220,9 @@ Section "Install" SEC01
     ; upgrades skip it (run-setup.bat runs only on fresh installs) — extract
     ; here so $INSTDIR\extension\ stays fresh on every update.
     nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -Recurse -Force \"$INSTDIR\extension\" -ErrorAction SilentlyContinue; Expand-Archive -Force -Path \"$INSTDIR\vale-browser-control.zip\" -DestinationPath \"$INSTDIR\extension\""'
+    ; Phase 3: extract the playwright runtime on every upgrade too (a stale
+    ; bundle would make the Plugins page Start fail against the old code).
+    nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -Recurse -Force \"$INSTDIR\playwright\" -ErrorAction SilentlyContinue; Expand-Archive -Force -Path \"$INSTDIR\vale-playwright.zip\" -DestinationPath \"$INSTDIR\""'
     ; Domain migration (0.8.6): rewrite a *.command.saisi.online tunnel ingress
     ; to *.agent.saisi.online in both cloudflared configs (user + systemprofile),
     ; update the hostname file, restart the cloudflared service. Idempotent —
