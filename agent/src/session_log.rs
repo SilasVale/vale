@@ -74,12 +74,25 @@ fn trim_file(path: &std::path::Path) {
         }
     }
     if tail.is_empty() { return; }
-    if let Ok(out) = std::fs::File::create(path) {
-        let mut w = BufWriter::new(out);
-        let _ = w.write_all(header.as_bytes());
-        for l in &tail { let _ = w.write_all(l.as_bytes()); }
-        let _ = w.flush();
-    }
+    // round-116: atomic trim — File::create truncates the file to zero and
+    // rewrites in place; a crash (Windows service kill, power loss) between
+    // truncate and rewrite destroyed the WHOLE session audit tail (and the
+    // recovery marker). Write the trimmed tail to a temp file in the same
+    // dir, flush+sync, then rename over the original (atomic on Windows).
+    let tmp = path.with_extension("jsonl.tmp");
+    let res = (|| -> std::io::Result<()> {
+        let mut out = std::fs::File::create(&tmp)?;
+        {
+            let mut w = BufWriter::new(&mut out);
+            w.write_all(header.as_bytes())?;
+            for l in &tail { w.write_all(l.as_bytes())?; }
+            w.flush()?;
+        }
+        out.sync_all()?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    })();
+    if res.is_err() { let _ = std::fs::remove_file(&tmp); }
 }
 
 /// One audit event for a session. `seq` is per-session monotonic; `ts` is
@@ -387,9 +400,17 @@ impl SessionLogger {
             if let Some(start) = last_start {
                 if last_end.map(|e| e < start).unwrap_or(true) {
                     self.log_command_end(&sid, None, Some("interrupted"), None);
-                    affected.push(sid);
+                    affected.push(sid.clone());
                 }
             }
+            // round-116: trim EVERY recovered session's file, not just
+            // gracefully-closed ones — a crash-open session (agent killed,
+            // power loss) that was streaming for hours never hit
+            // close_session's trim, so its .jsonl stayed unbounded on disk
+            // until the next graceful close. trim_file is atomic (temp +
+            // rename).
+            let path = self.dir.join(format!("{sid}.jsonl"));
+            trim_file(&path);
         }
         affected
     }
