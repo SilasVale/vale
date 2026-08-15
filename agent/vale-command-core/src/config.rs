@@ -180,7 +180,8 @@ mod tests {
         writeln!(f, "  host: \"127.0.0.2\"").unwrap();
         writeln!(f, "  port: 0").unwrap();
         let r = Config::load(&p);
-        assert!(r.is_err(), "port: 0 must be rejected, got {r:?}");
+        let err = r.unwrap_err();
+        assert!(err.to_string().contains("port"), "rejection must mention port: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -102,6 +102,18 @@ pub fn load_or_create(
                     fresh.server.device_token = Some(tok);
                     if let Some(sec) = recovered_secret {
                         fresh.server.proxy_secret = Some(sec);
+                    } else {
+                        // round-140: the secret line did not survive intact —
+                        // generate + persist one NOW (device_token is already
+                        // present, so ensure_token only mints the secret).
+                        // The old path returned with secret=None and the
+                        // next boot silently rotated it, killing gateway
+                        // /panel/ injection (round-104 class). A rotated
+                        // secret is unavoidable here; making it explicit and
+                        // persisted beats a silent future boot.
+                        if let (_, true) = fresh.server.ensure_token()? {
+                            log("     !! proxy_secret was missing/corrupt — generated a NEW one; gateway /panel/ injection needs the console to re-read /api/status");
+                        }
                     }
                     atomic_write(path, serde_yaml::to_string(&fresh).unwrap_or_default().as_bytes())?;
                     log("     Recovered the previous device_token from the quarantined config.");

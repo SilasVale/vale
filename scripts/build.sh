@@ -42,6 +42,22 @@ build_agent() {
   ( cd "$ROOT/agent/vale-tray" \
       && cargo xwin build --target "$TARGET" --release )
   echo "    ok: agent/vale-tray/target/$TARGET/release/vale-tray.exe"
+
+  # round-140: compile the NSIS script at build time — string errors (e.g.
+  # the R139 quote-splitting bug) previously shipped to devices silently.
+  # The File directives need real exes; copy them into a scratch stage.
+  echo "=== [agent] NSIS script compile check ==="
+  local stage; stage="$(mktemp -d)"
+  cp "$ROOT/agent/deploy/vale-agent-install.nsi" "$stage/"
+  cp "$ROOT/agent/deploy/vale-agent.ico" "$stage/" 2>/dev/null || true
+  cp "$ROOT/agent/target/$TARGET/${profile}/vale-agent.exe" "$stage/vale-agent.exe"
+  cp "$ROOT/agent/vale-tray/target/$TARGET/release/vale-tray.exe" "$stage/vale-tray.exe"
+  ( cd "$stage" \
+      && NSISDIR="${NSISDIR:-$ROOT/tools/nsis/extracted/usr/share/nsis}" \
+         "${MAKENSIS:-$ROOT/tools/nsis/extracted/usr/bin/makensis}" vale-agent-install.nsi >/dev/null 2>&1 ) \
+    || { echo "!! NSIS compile failed — check vale-agent-install.nsi"; rm -rf "$stage"; exit 1; }
+  rm -rf "$stage"
+  echo "  ok: NSIS script compiles"
 }
 
 deploy_worker() {
