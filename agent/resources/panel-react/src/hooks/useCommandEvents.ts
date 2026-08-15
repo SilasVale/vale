@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { callApi } from "../lib/api";
 
 // Command event stream for one session (round-admin-ui Task 4): polls
@@ -49,8 +49,10 @@ export interface CommandCard {
 const MAX_OUTPUT_CHARS = 1_000_000;
 const TRUNC_MARK = "\n…[output truncated — older lines dropped]…\n";
 
-/** Map a status event's value to a command end, or null if session-level. */
-function terminalStatus(st: string): { exitCode: number | null; reason: string } | null {
+/** Map a status event's value to a command end, or null if session-level.
+ *  Exported for the trajectory view (useTrajectory) — the round state uses
+ *  the same round-99/100 terminal markers. */
+export function terminalStatus(st: string): { exitCode: number | null; reason: string } | null {
   if (st === "backgrounded" || st === "closed") return { exitCode: null, reason: st };
   if (st.startsWith("exited:")) {
     const code = Number(st.slice("exited:".length));
@@ -126,13 +128,15 @@ export function groupEvents(events: CommandEvent[]): CommandCard[] {
 }
 
 /**
- * Poll the active session's audit log. Cards update every poll; a FAILED
- * poll (tunnel blip, agent restarting) keeps the last good cards instead of
- * blanking the stream (same stance as useSessions' poll). No polling while
- * sid is null.
+ * Poll the audit log of one session and return the RAW events (in seq order).
+ * Shared by the command-card grouping (useCommandEvents) and the trajectory
+ * timeline (useTrajectory) — both consume /api/sessions/{sid} with the same
+ * polling semantics. A FAILED poll (tunnel blip, agent restarting) keeps the
+ * last good events instead of blanking the stream (same stance as
+ * useSessions' poll). No polling while sid is null.
  */
-export function useCommandEvents(sid: string | null, pollMs = 2000) {
-  const [cards, setCards] = useState<CommandCard[]>([]);
+export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEvent[] {
+  const [events, setEvents] = useState<CommandEvent[]>([]);
   // A fetch in flight when the sid switches must not land its result under
   // the new session's stream — tick() checks the live sid before setState.
   const sidRef = useRef(sid);
@@ -142,14 +146,14 @@ export function useCommandEvents(sid: string | null, pollMs = 2000) {
   // file's max seq on agent restart — it never regresses while a file is
   // appended, and trim keeps the tail's max seq).
   const lastSeqRef = useRef(0);
-  // Session switch: drop the previous session's cards + seq watermark
+  // Session switch: drop the previous session's events + seq watermark
   // SYNCHRONOUSLY (render-time ref diff) — no stale frame from the old
   // stream, and the new session's lower seqs can't be skipped by the guard.
   const lastSidRef = useRef(sid);
   if (lastSidRef.current !== sid) {
     lastSidRef.current = sid;
     lastSeqRef.current = 0;
-    setCards([]);
+    setEvents([]);
   }
 
   useEffect(() => {
@@ -158,21 +162,32 @@ export function useCommandEvents(sid: string | null, pollMs = 2000) {
       if (sidRef.current !== sid) return; // stale tick after a sid switch
       try {
         const res = await callApi(`/api/sessions/${encodeURIComponent(sid)}`);
-        const events: CommandEvent[] = res && Array.isArray(res.events) ? res.events : [];
+        const evs: CommandEvent[] = res && Array.isArray(res.events) ? res.events : [];
         let maxSeq = 0;
-        for (const e of events) maxSeq = Math.max(maxSeq, e.seq || 0);
+        for (const e of evs) maxSeq = Math.max(maxSeq, e.seq || 0);
         // `<=` not `===`: a degraded response (empty/malformed events,
         // transient blip that returns a 200 shell) must NOT rewind the
         // watermark and blank the stream — the audit log only grows.
         if (maxSeq <= lastSeqRef.current) return; // nothing new
         lastSeqRef.current = maxSeq;
-        setCards(groupEvents(events));
-      } catch { /* transient — keep the last good cards, retry next tick */ }
+        setEvents(evs);
+      } catch { /* transient — keep the last good events, retry next tick */ }
     };
     tick();
     const t = window.setInterval(tick, pollMs);
     return () => clearInterval(t);
   }, [sid, pollMs]);
 
+  return events;
+}
+
+/**
+ * Command card stream for one session: poll the audit log (useSessionEvents)
+ * and group the raw events into cards. Cards update every poll; a FAILED
+ * poll keeps the last good cards instead of blanking the stream.
+ */
+export function useCommandEvents(sid: string | null, pollMs = 2000) {
+  const events = useSessionEvents(sid, pollMs);
+  const cards = useMemo(() => groupEvents(events), [events]);
   return { cards };
 }

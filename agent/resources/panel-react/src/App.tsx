@@ -5,10 +5,14 @@ import { useCommandEvents } from "./hooks/useCommandEvents";
 import { useSSE } from "./hooks/useSSE";
 import { AppFrame } from "./components/AppFrame";
 import { Sidebar } from "./components/Sidebar";
+import { PluginsView } from "./components/PluginsView";
+import { usePlugins } from "./hooks/usePlugins";
 import { DetailsPanel } from "./components/DetailsPanel";
 import { CommandStream } from "./components/CommandCard";
+import { TrajectoryView } from "./components/TrajectoryView";
 import { TerminalPane } from "./components/TerminalPane";
 import { TabBar } from "./components/TabBar";
+import type { SessionView } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
 import { StatusBar } from "./components/StatusBar";
 import { ConnModal } from "./components/ConnModal";
@@ -79,8 +83,29 @@ export function App() {
   // Details column (round-admin-ui Task 3): closed until a command card is
   // selected (Task 4); the panel's ✕ closes it.
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // round-admin-ui Task 6: main-area view switch — the sidebar nav toggles
+  // between the session workspace and the plugins page.
+  const [view, setView] = useState<"sessions" | "plugins">("sessions");
+  const plugins = usePlugins(connected && view === "plugins");
 
   const sessions = useSessions(connected);
+
+  // round-admin-ui Task 5: per-session main-area view (terminal | trajectory).
+  // Per-sid so each session keeps its own view; new sessions default to the
+  // terminal (the map defaults).
+  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
+  const sessionView: SessionView = (sessions.activeSid && sessionViews[sessions.activeSid]) || "terminal";
+  const trajOpen = !!sessions.activeSid && sessionView === "trajectory";
+
+  // A selected command card belongs to the sessions view — leaving it drops
+  // the details column (a stale card would linger over the plugins page).
+  const switchView = (v: "sessions" | "plugins") => {
+    setView(v);
+    if (v === "plugins") {
+      setDetailsOpen(false);
+      setSelectedCmdId(null);
+    }
+  };
 
   // Command card stream (round-admin-ui Task 4): poll the ACTIVE session's
   // audit log; the selected card id + derived card live here so the details
@@ -151,9 +176,23 @@ export function App() {
   // Task 4). The toolbar/tabs/terminal/statusbar keep their exact DOM + CSS.
   return (
     <AppFrame
-      sidebar={<Sidebar sessions={sessions.sessions} activeSid={sessions.activeSid} onActivate={sessions.activate} />}
+      sidebar={
+        <Sidebar
+          sessions={sessions.sessions}
+          activeSid={sessions.activeSid}
+          onActivate={sessions.activate}
+          view={view}
+          onViewChange={switchView}
+          plugins={plugins}
+        />
+      }
       main={(
-        <div id="panel-main">
+        <>
+        {/* round-admin-ui Task 6: the session workspace is HIDDEN, not
+            unmounted, while the plugins page is up — xterm instances and
+            SSE streams keep running, so switching back restores the exact
+            terminal state. */}
+        <div id="panel-main" className={view === "plugins" ? "hidden" : undefined}>
           <Toolbar
             onOpenPty={() => sessions.openSession("pty", "").catch(() => {})}
             onShowConn={(kind) => setModalKind(kind)}
@@ -168,8 +207,23 @@ export function App() {
               onConnect={(target, extra) => sessions.openSession(modalKind, target, extra)}
             />
           )}
-          <TabBar sessions={sessions.sessions} activeSid={sessions.activeSid} onActivate={sessions.activate} onClose={sessions.closeSession} onExport={sessions.exportSession} />
-          <div id="term-container">
+          <TabBar
+            sessions={sessions.sessions}
+            activeSid={sessions.activeSid}
+            onActivate={sessions.activate}
+            onClose={sessions.closeSession}
+            onExport={sessions.exportSession}
+            view={sessionView}
+            onViewChange={(v) => {
+              const sid = sessions.activeSid;
+              if (sid) setSessionViews((m) => ({ ...m, [sid]: v }));
+            }}
+          />
+          {/* round-admin-ui Task 5: trajectory mode hides the terminal
+              CONTAINER (inline display:none), not the panes — xterm instances
+              stay mounted and keep streaming, so switching back restores the
+              exact terminal state. */}
+          <div id="term-container" style={trajOpen ? { display: "none" } : undefined}>
             {sessions.sessions.length === 0 ? (
               <div id="empty-state">
                 <div className="empty-card">
@@ -185,20 +239,26 @@ export function App() {
               sessions.sessions.filter((s) => !s.closed).map((s) => <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />)
             )}
           </div>
-          {/* round-admin-ui Task 4: command card stream for the ACTIVE
-              session, below the terminal. Clicking a card opens the details
-              column. */}
-          <CommandStream
-            cards={cmdEvents.cards}
-            selectedId={selectedCmdId}
-            // Clicking the selected card again closes the details column.
-            onSelect={(id) => {
-              if (id === selectedCmdId) { setSelectedCmdId(null); setDetailsOpen(false); }
-              else { setSelectedCmdId(id); setDetailsOpen(true); }
-            }}
-          />
+          {/* round-admin-ui Task 4/5: command card stream for the ACTIVE
+              session below the terminal; the trajectory tab replaces both.
+              Clicking a card opens the details column. */}
+          {trajOpen && sessions.activeSid ? (
+            <TrajectoryView key={sessions.activeSid} sid={sessions.activeSid} />
+          ) : (
+            <CommandStream
+              cards={cmdEvents.cards}
+              selectedId={selectedCmdId}
+              // Clicking the selected card again closes the details column.
+              onSelect={(id) => {
+                if (id === selectedCmdId) { setSelectedCmdId(null); setDetailsOpen(false); }
+                else { setSelectedCmdId(id); setDetailsOpen(true); }
+              }}
+            />
+          )}
           <StatusBar sessions={sessions.sessions} status={sessions.status} sseState={sseState} />
         </div>
+        {view === "plugins" && <PluginsView plugins={plugins} />}
+        </>
       )}
       details={<DetailsPanel card={selectedCard} onClose={() => setDetailsOpen(false)} />}
       detailsOpen={detailsOpen}
