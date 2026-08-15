@@ -1,0 +1,14 @@
+{
+  "name": "zen-us-proxy",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": true,
+  "custom_domains": ["zen-us.saisi.online"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "us-proxy-db",
+      "database_id": "84148dae-6038-44bc-8a14-ed7391edc3e3"
+    }
+  ]
+}
