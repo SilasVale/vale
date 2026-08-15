@@ -161,7 +161,12 @@ fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
-    if from_header == Some(token.as_str()) {
+    // round-116: constant-time compare — the device token is the ONLY gate
+    // between an unauthenticated network caller and SYSTEM-level device
+    // control; a short-circuiting == leaks the match position via timing
+    // (low practical value at 64 hex chars, but the proxy-secret compare in
+    // this same file already sets the precedent).
+    if from_header.is_some_and(|h| timing_safe_eq(h.as_bytes(), token.as_bytes())) {
         return Ok(());
     }
     Err(Box::new(built_response(
@@ -169,6 +174,13 @@ fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>
         "application/json",
         Body::from(r#"{"ok":false,"error":"unauthorized"}"#),
     )))
+}
+
+/// Constant-time byte compare — the device token is compared at every
+/// /api/* gate; a short-circuiting == leaks the match position via timing
+/// (round-116; the proxy-secret check below already used this shape).
+fn timing_safe_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 // ── Token gate for the MCP route ─────────────────────────────
@@ -230,7 +242,7 @@ where
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            == Some(token.as_str());
+            .is_some_and(|h| timing_safe_eq(h.as_bytes(), token.as_bytes()));
         if !authorized {
             return Box::pin(async { Ok(unauthorized_mcp_response()) });
         }
@@ -453,6 +465,16 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 .and_then(|s| s.split('/').next())
                 .unwrap_or("")
                 .to_string();
+            // round-116: the sid flows into a FILE PATH (events_of →
+            // {dir}/{sid}.jsonl). The forward-slash split alone let a
+            // backslash (0x5C, accepted in the request-target by the http
+            // crate) traverse on Windows: /api/sessions/..%5C..%5Cfoo read
+            // {dir}/../../foo.jsonl. Restrict to the session-id charset —
+            // session ids are hex (sid per-boot unique), so anything else is
+            // not a valid session anyway.
+            if !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return built_response(StatusCode::BAD_REQUEST, "application/json", Body::from(r#"{"ok":false,"error":"invalid session id"}"#));
+            }
             let dir = std::env::current_exe()
                 .ok()
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()))
