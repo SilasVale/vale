@@ -45,7 +45,12 @@ export function useSessions(connected: boolean) {
     if (!connected) return;
     const tick = async () => {
       try {
-        const list = await callTool("terminal_list").catch(() => []);
+        // round-113: a FAILED poll (tunnel blip, agent restarting) used to
+        // return [] and tombstone EVERY open session — the heartbeat then
+        // skipped them and the agent's 15-min sweeper reaped them while the
+        // user watched. Only a SUCCESSFUL list may mark sessions gone.
+        const list = await callTool("terminal_list");
+        if (!Array.isArray(list)) return;
         const seen = new Set(list.map((s: any) => s.id));
         setSessions((prev) => {
           const next = [...prev];
