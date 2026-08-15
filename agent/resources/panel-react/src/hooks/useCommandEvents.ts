@@ -164,6 +164,11 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
       if (sidRef.current !== sid) return; // stale tick after a sid switch
       try {
         const res = await callApi(`/api/sessions/${encodeURIComponent(sid)}`);
+        // round-138: re-check AFTER the await — a slow poll for the OLD
+        // session resolving after the user switched would land the old
+        // session's events under the new tab and poison its seq watermark
+        // (new session's polls then always return 'nothing new').
+        if (sidRef.current !== sid) return;
         const evs: CommandEvent[] = res && Array.isArray(res.events) ? res.events : [];
         let maxSeq = 0;
         for (const e of evs) maxSeq = Math.max(maxSeq, e.seq || 0);

@@ -68,19 +68,39 @@ pub fn load_or_create(
                 // appear in a real hex token); (2) prefer device_token over
                 // the legacy auth_token (first-match-wins could recover a
                 // stale auth_token and silently discard the live one).
+                // round-138: (3) accept 'device_token : value' (space before
+                // the colon is legal YAML — the old strict matcher missed it
+                // and silently rotated the token); (4) take the LAST
+                // occurrence (a merged/appended duplicate's later line is
+                // what a working parser used before the file broke — the old
+                // first-wins kept a stale token and 401'd newer clients).
                 let extract = |key: &str| bad_text.lines()
-                    .find_map(|l| {
+                    .filter_map(|l| {
                         let t = l.trim();
-                        if !t.starts_with(key) || !t[key.len()..].starts_with(':') { return None; }
-                        let v = t[key.len() + 1..].split('#').next().unwrap_or("").trim();
+                        let colon = t.find(':')?;
+                        if t[..colon].trim() != key { return None; }
+                        let v = t[colon + 1..].split('#').next().unwrap_or("").trim();
                         let v = v.trim_matches(|c| c == '"' || c == '\'' || c == ' ');
                         Some(v.to_string())
                     })
-                    .filter(|tok| tok.len() >= 16);
+                    .filter(|tok| tok.len() >= 16)
+                    .next_back(); // last wins (duplicate keys)
                 let recovered = extract("device_token").or_else(|| extract("auth_token"));
+                // round-138: also recover the proxy_secret — the old path
+                // returned early with secret=None, and the next boot's
+                // ensure_token generated a NEW secret that never matched the
+                // console's registered one: gateway /panel/ injection died
+                // permanently (round-104 failure class). Keep the secret on
+                // the recovery boot so X-Vale-Auth stays in sync.
+                let recovered_secret = extract("proxy_secret");
                 if let Some(tok) = recovered {
                     let mut fresh = Config::load(path)?;
                     fresh.server.device_token = Some(tok);
+                    if let Some(sec) = recovered_secret {
+                        if sec.len() >= 16 {
+                            fresh.server.proxy_secret = Some(sec);
+                        }
+                    }
                     atomic_write(path, serde_yaml::to_string(&fresh).unwrap_or_default().as_bytes())?;
                     log("     Recovered the previous device_token from the quarantined config.");
                     return Ok((fresh, None));

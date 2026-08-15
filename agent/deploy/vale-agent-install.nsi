@@ -121,6 +121,11 @@ Section "Install" SEC01
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
+  ; round-138: kill a running playwright-mcp (node.exe) — it holds Windows
+  ; locks on the bundled cli.js/package.json (the extraction below would
+  ; silently fail and keep a STALE bundle) and squats port 9229 (the new
+  ; agent's Start would fail 'did not become healthy').
+  nsExec::ExecToLog 'taskkill /F /IM node.exe'
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgentTray 2>NUL'
   ; Legacy 0.8.x autostart leftovers. The ValeCommand service (sc create from
@@ -302,6 +307,9 @@ Section "Uninstall"
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
+  ; round-138: kill playwright's node.exe too — a running MCP server locks
+  ; the bundle files and the RMDir /r below would fail.
+  nsExec::ExecToLog 'taskkill /F /IM node.exe'
   ; Stop and remove the scheduled tasks + cloudflared service (best effort)
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgentTray 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgentTray /F 2>NUL'
@@ -325,6 +333,9 @@ Section "Uninstall"
   Delete "$INSTDIR\config.yaml"
   Delete "$INSTDIR\fix-tunnel.ps1"
   Delete "$INSTDIR\vale-browser-control.zip"
+  ; round-138: the Phase 3 bundle zip (40-50MB) was missed by R129's
+  ; uninstall sweep — RMDir only removes EMPTY dirs, so it always survived.
+  Delete "$INSTDIR\vale-playwright.zip"
   Delete "$INSTDIR\vale-agent.exe.bak"
   Delete "$INSTDIR\vale-tray.exe.bak"
   RMDir /r "$INSTDIR\extension"

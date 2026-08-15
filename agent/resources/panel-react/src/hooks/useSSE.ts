@@ -176,8 +176,19 @@ export function useSSE(
         const decoder = new TextDecoder();
         let buffer = "";
         try {
+          // round-138: liveness watchdog — the server sends ': ping\n\n'
+          // every 60s; 90s without ANY byte means the connection is
+          // blackholed (NAT/tunnel drop, device power loss — no FIN/RST),
+          // and reader.read() would hang forever. Race it against a timer
+          // and let the outer catch reconnect.
+          const readWithTimeout = () => Promise.race([
+            reader.read(),
+            new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error("SSE read timeout")), 90_000);
+            }),
+          ]);
           while (alive) {
-            const { done, value } = await reader.read();
+            const { done, value } = await readWithTimeout();
             if (done) break;
             attempt = 0;
             buffer += decoder.decode(value, { stream: true });
