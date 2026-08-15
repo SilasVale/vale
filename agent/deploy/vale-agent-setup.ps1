@@ -57,6 +57,10 @@ Require-Admin
 # CLOUDFLARED CONFIG is the ground truth for a re-install (a buggy earlier run
 # can write a stale value into vale-agent.hostname, as happened with d2).
 $hostFile = Join-Path $InstallDir "vale-agent.hostname"
+# round-116: ensure the install dir EXISTS before any Set-Content — a
+# re-install targeting a directory that was never created (or was cleaned
+# up) aborted at the very first write with "未能找到路径 ... 的一部分".
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 if (-not $Hostname) {
     # 1. The existing working setup's subdomain (cloudflared config ingress).
     $cfCfg = Join-Path $env:USERPROFILE ".cloudflared\config.yml"
