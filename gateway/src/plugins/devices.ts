@@ -25,7 +25,7 @@
  * Handler convention: dispatch(ctx, method, path, request, env, url) →
  * handler(request, env, url).
  */
-import { hasRegKey, hasRegGrant, getDevice, upsertDevice, deleteDevice, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, getAdminPassword, getUser, maskKey, listDevices, addPluginLink, getPluginByToken, removePluginLink, consumePairCode, createWsTicket, consumeWsTicket, type User, type Device } from "../store.ts";
+import { hasRegKey, hasRegGrant, getDevice, upsertDevice, deleteDevice, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, getAdminPassword, getUser, maskKey, listDevices, addPluginLink, getPluginByToken, removePluginLink, listPluginLinks, consumePairCode, createWsTicket, consumeWsTicket, type User, type Device } from "../store.ts";
 import { parseCookie, SESSION_COOKIE, verifySessionToken, randomHex } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
@@ -66,6 +66,14 @@ async function requireSession(request: Request, env: any): Promise<User | null> 
 async function handleRegister(request: Request, env: any): Promise<Response> {
   const body = await readJson(request);
   const k = String(body.key || "").toLowerCase();
+  // round-115: reject garbage keys BEFORE the claim lock — an attacker
+  // firing random keys otherwise burned 2 KV writes per attempt (claim put
+  // + finally delete) through a per-IP gate that parallel requests across
+  // isolates bypass, exhausting the daily KV write quota (round-102's
+  // original concern). Invalid keys are now zero-write.
+  if (!k || (!(await hasRegKey(env, k)) && !(await hasRegGrant(env, k)))) {
+    return jsonError(403, "Invalid or used registration key", "authorization_error");
+  }
   // round-103: single-flight claim (the siblings all have one) — a bare
   // check-then-act on eventually-consistent KV let one reg key register
   // TWO devices under concurrent POSTs.
@@ -144,7 +152,12 @@ async function handleTunnelToken(request: Request, env: any): Promise<Response> 
 async function handlePairClaim(request: Request, env: any): Promise<Response> {
   const { code } = ((await request.json().catch(() => ({}))) || {}) as any;
   const c = String(code || "");
-  if (!c) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+  // round-115: reject garbage codes BEFORE the claim lock — same KV
+  // write-quota exhaustion path as /api/register (claim put + finally
+  // delete on every attempt). Invalid codes are now zero-write.
+  if (!c || !(await env.KEYS.get(`pair:${c}`))) {
+    return jsonError(403, "Invalid or used pairing code", "authorization_error");
+  }
   // Single-flight: consumePairCode was check-then-act on eventually-
   // consistent KV — two concurrent claims both passed and minted two
   // 30-day device-control tokens from one code. A claim lock bounds it.
@@ -204,6 +217,12 @@ async function handleWsTicket(request: Request, env: any): Promise<Response> {
 async function handleWs(request: Request, env: any, url: URL): Promise<Response> {
   const device = url.searchParams.get("device") || "";
   const ticket = url.searchParams.get("ticket") || "";
+  // round-115: reject garbage tickets BEFORE the claim lock — same KV
+  // write-quota exhaustion path as /api/register. Invalid tickets are
+  // now zero-write.
+  if (!ticket || !(await env.KEYS.get(`plg-ticket:${ticket}`))) {
+    return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
+  }
   // round-92: consumeWsTicket was check-then-delete on eventually-consistent
   // KV — two concurrent /ws handshakes with the SAME ticket both passed and
   // opened two sockets, one of which the hub then replaced (churn + a second
@@ -362,6 +381,22 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
   const delMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)$`))!;
   const delName = decodeDeviceName(delMatch[1]);
   if (delName === null) return jsonError(400, "Invalid device name", "invalid_request");
+  // round-115: deleteDevice alone left the device's plugin links (30-day TTL)
+  // and its live hub socket alive — a same-name re-registration resurrected
+  // the old pairing's browser_* control (round-84's revocation hole). Revoke
+  // every link for this device and close the hub socket, like handleRevoke.
+  const links = await listPluginLinks(env);
+  const stale = Object.entries(links).filter(([, l]) => l.device === delName);
+  for (const [token] of stale) await removePluginLink(env, token);
+  if (stale.length > 0 && env.PLUGIN_HUB) {
+    try {
+      const id = env.PLUGIN_HUB.idFromName(delName);
+      const hub = env.PLUGIN_HUB.get(id);
+      const req = new Request("https://hub/close-all", { method: "POST" });
+      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
+      await hub.fetch(req).catch(() => {});
+    } catch { /* best-effort */ }
+  }
   await deleteDevice(env, delName);
   return jsonOk({ ok: true });
 }
@@ -519,7 +554,7 @@ export default {
     // firing random codes can exhaust the Free-plan daily KV write quota
     // (the same reason login and probe are gated). Per-IP gate, in-memory
     // like probeRateLimited (no per-request KV writes).
-    const PUBLIC_LIMIT = 30; // per minute, per IP
+    const PUBLIC_LIMIT = 10; // per minute, per IP (round-115: 30 let a single IP burn 60 writes/min through the claim+delete pair)
     const PUBLIC_WINDOW_MS = 60000;
     const __publicRate = new Map(); // `ip:${bucket}` → count
     const publicRateLimited = (request: Request) => {

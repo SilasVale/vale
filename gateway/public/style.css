@@ -14,13 +14,6 @@
   --line-strong: rgba(0,0,0,0.14);
 
   --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
-/* Unified focus ring + slim scrollbar (round-54): every Vale surface uses
-   the same teal keyboard-focus ring and 8px scrollbars. */
-:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
-*::-webkit-scrollbar-track { background: transparent; }
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
   --accent-tint: #99ded2;  /* tip note border */
@@ -55,6 +48,16 @@
   --font-body: -apple-system, "SF Pro Text", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Consolas, "Courier New", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
+
+/* Unified focus ring + slim scrollbar (round-54): every Vale surface uses
+   the same teal keyboard-focus ring and 8px scrollbars. Top-level rules —
+   inside :root they compiled to :root-scoped selectors (or dropped entirely
+   in pre-nesting browsers), leaving the root scrollbar unstyled. */
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
+*::-webkit-scrollbar-track { background: transparent; }
 
 * { box-sizing: border-box; }
 
