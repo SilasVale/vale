@@ -19,12 +19,12 @@
   --accent-tint: #99ded2;  /* tip note border */
   /* round-86: focus affordances were hardcoded rgba(14,147,132,…) = the
      RETIRED accent #0e9384 — a token keeps them in sync with --accent. */
-  --focus-ring: rgba(11, 122, 110, 0.45);   /* :focus-visible outline */
+  --focus-ring: rgba(11, 122, 110, 0.65)  /* round-117: 0.45 was ~1.95:1 — below the 3:1 non-text minimum; 0.65 = ~3:1 */;   /* :focus-visible outline */
   --focus-ring-soft: rgba(11, 122, 110, 0.14); /* input focus box-shadow */
 
   --lane-og: #0b7a6e;   /* OpenCode Go (darkened with --accent for AA) */
   --lane-ds: #4f6bed;   /* DeepSeek */
-  --lane-or: #d97706;   /* OpenRouter */
+  --lane-or: #b45309;   /* OpenRouter (round-117: #d97706 white text was 3.19:1 — fails AA; #b45309 = 5.29:1) */
 
   --danger: #dc2626;
   --danger-soft: #fef2f2;
