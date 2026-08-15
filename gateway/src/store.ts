@@ -130,12 +130,15 @@ const __locks = new Map<string, Promise<any>>();
 function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = __locks.get(key) || Promise.resolve();
   const next = prev.then(fn, fn);
-  // Self-prune on settle: once `next` completes, remove this key's entry IF
-  // it is still the one we stored (a later caller replaced it — don't delete
-  // the newer chain).
-  __locks.set(key, next.catch(() => {}).finally(() => {
-    if (__locks.get(key) === next) __locks.delete(key);
-  }));
+  // Self-prune on settle (round-124: the first attempt compared against
+  // `next` but stored the .finally() wrapper — a DIFFERENT object, so the
+  // prune never fired and every key accumulated until the 512 bound evicted
+  // the oldest (hot, possibly-pending) chain). Capture the stored wrapper
+  // and compare against it.
+  const stored = next.catch(() => {}).finally(() => {
+    if (__locks.get(key) === stored) __locks.delete(key);
+  });
+  __locks.set(key, stored);
   // Hard bound for pathological distinct-key bursts: evict the oldest key,
   // accepting that a pending chain there loses its queue (its own RMW still
   // completes; only a NEW caller for that key can now race it). Far rarer

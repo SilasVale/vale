@@ -296,13 +296,19 @@ export class AnthropicStreamEncoder {
       this.usage.cache_read_input_tokens =
         chunk.usage.prompt_cache_hit_tokens || chunk.usage.prompt_tokens_details?.cached_tokens || 0;
     }
-    // round-123: a mid-stream upstream error frame (OpenAI shape
+    // round-123/124: a mid-stream upstream error frame (OpenAI shape
     // {"error":{...}}) was silently dropped by the choices guard below — the
     // client got a complete-looking TRUNCATED answer with no error, no
-    // retry, and the breaker never learned. Surface it as an error event.
+    // retry, and the breaker never learned. Surface it as a TERMINAL error
+    // event: the error frame ends the stream (no message_delta/message_stop
+    // after it, no further chunks translated), and the done-branch's
+    // empty-stream check is skipped (started is set so it won't double-fire
+    // with a misleading second error).
     if (chunk.error) {
       const msg = chunk.error?.message || "upstream stream error";
       this.pending.push(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: `upstream mid-stream error: ${msg}` } })}\n\n`);
+      this.started = true; // suppress the done-branch empty-stream error
+      this.finished = true;
       return;
     }
     const choice = chunk.choices?.[0];

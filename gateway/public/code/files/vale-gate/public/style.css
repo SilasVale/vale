@@ -14,24 +14,17 @@
   --line-strong: rgba(0,0,0,0.14);
 
   --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
-/* Unified focus ring + slim scrollbar (round-54): every Vale surface uses
-   the same teal keyboard-focus ring and 8px scrollbars. */
-:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
-*::-webkit-scrollbar-track { background: transparent; }
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
   --accent-tint: #99ded2;  /* tip note border */
   /* round-86: focus affordances were hardcoded rgba(14,147,132,…) = the
      RETIRED accent #0e9384 — a token keeps them in sync with --accent. */
-  --focus-ring: rgba(11, 122, 110, 0.45);   /* :focus-visible outline */
+  --focus-ring: rgba(11, 122, 110, 0.65)  /* round-117: 0.45 was ~1.95:1 — below the 3:1 non-text minimum; 0.65 = ~3:1 */;   /* :focus-visible outline */
   --focus-ring-soft: rgba(11, 122, 110, 0.14); /* input focus box-shadow */
 
   --lane-og: #0b7a6e;   /* OpenCode Go (darkened with --accent for AA) */
   --lane-ds: #4f6bed;   /* DeepSeek */
-  --lane-or: #d97706;   /* OpenRouter */
+  --lane-or: #b45309;   /* OpenRouter (round-117: #d97706 white text was 3.19:1 — fails AA; #b45309 = 5.29:1) */
 
   --danger: #dc2626;
   --danger-soft: #fef2f2;
@@ -55,6 +48,16 @@
   --font-body: -apple-system, "SF Pro Text", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Consolas, "Courier New", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
+
+/* Unified focus ring + slim scrollbar (round-54): every Vale surface uses
+   the same teal keyboard-focus ring and 8px scrollbars. Top-level rules —
+   inside :root they compiled to :root-scoped selectors (or dropped entirely
+   in pre-nesting browsers), leaving the root scrollbar unstyled. */
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(0,0,0,.16); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.28); }
+*::-webkit-scrollbar-track { background: transparent; }
 
 * { box-sizing: border-box; }
 

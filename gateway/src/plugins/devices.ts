@@ -311,14 +311,28 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "") || qToken || cookieToken;
   const link = token ? await getPluginByToken(env, token) : null;
   if (link && link.device === deviceName) {
+    // round-124: a top-level navigation carrying ?token= is the ONLY way
+    // the per-device cookie gets minted (the extension Terminal button). The
+    // old code proxied the panel and appended Set-Cookie — the token stayed
+    // in the omnibox/history until the panel JS scrubbed it, and if the
+    // panel failed to boot (device offline → 502 body) it stayed forever.
+    // 302 to the SAME url with ?token= stripped + Set-Cookie: the token
+    // never reaches the omnibox, the cookie is minted regardless of whether
+    // the panel boots, and a refresh/reload re-authenticates via cookie.
+    if (qToken && isNav) {
+      const clean = new URL(request.url);
+      clean.searchParams.delete("token");
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Location": clean.pathname + clean.search,
+          "Set-Cookie": `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
+        },
+      });
+    }
     // Never cache a response that carried a token in the URL.
     const resp = await proxyDevice(request, env, d, proxyMatch[2] || "/");
     resp.headers.set("Cache-Control", "no-store");
-    if (qToken && isNav) {
-      // Per-device path scope + per-device name: a leaked cookie only ever
-      // authenticates THIS device's proxy, and never leaves this subtree.
-      resp.headers.append("Set-Cookie", `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
-    }
     return resp;
   }
   // A top-level navigation with a bad/expired token gets a readable page

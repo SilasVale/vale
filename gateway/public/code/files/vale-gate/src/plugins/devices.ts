@@ -25,7 +25,7 @@
  * Handler convention: dispatch(ctx, method, path, request, env, url) →
  * handler(request, env, url).
  */
-import { hasRegKey, hasRegGrant, getDevice, upsertDevice, deleteDevice, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, getAdminPassword, getUser, maskKey, listDevices, addPluginLink, getPluginByToken, removePluginLink, consumePairCode, createWsTicket, consumeWsTicket, type User, type Device } from "../store.ts";
+import { hasRegKey, hasRegGrant, getDevice, upsertDevice, insertDevice, deleteDevice, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, getAdminPassword, getUser, maskKey, listDevices, addPluginLink, getPluginByToken, removePluginLink, listPluginLinks, consumePairCode, createWsTicket, consumeWsTicket, type User, type Device } from "../store.ts";
 import { parseCookie, SESSION_COOKIE, verifySessionToken, randomHex } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
@@ -65,26 +65,62 @@ async function requireSession(request: Request, env: any): Promise<User | null> 
 // the install runs headless on the device machine.
 async function handleRegister(request: Request, env: any): Promise<Response> {
   const body = await readJson(request);
-  // Accept either a live key or the short-lived grant issued when the key
-  // was spent at /api/install/tunnel-token (same install, both calls).
-  const keyOk = (await hasRegKey(env, body.key)) || (await hasRegGrant(env, body.key));
-  if (!keyOk) {
+  const k = String(body.key || "").toLowerCase();
+  // round-115: reject garbage keys BEFORE the claim lock — an attacker
+  // firing random keys otherwise burned 2 KV writes per attempt (claim put
+  // + finally delete) through a per-IP gate that parallel requests across
+  // isolates bypass, exhausting the daily KV write quota (round-102's
+  // original concern). Invalid keys are now zero-write.
+  if (!k || (!(await hasRegKey(env, k)) && !(await hasRegGrant(env, k)))) {
     return jsonError(403, "Invalid or used registration key", "authorization_error");
   }
-  let device: Device;
-  try { device = validateDevice(body); } catch (e) { return jsonError(400, (e as Error).message, "invalid_request"); }
-  // round-68: a one-time-key holder could upsert an EXISTING device name —
-  // the register endpoint silently replaced a production device's
-  // hostname/token, redirecting console terminal tools + the proxy to the
-  // attacker. Refuse when the name is already registered; re-registering
-  // an existing device is an admin action.
-  if (await getDevice(env, device.name)) {
-    return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+  // round-103: single-flight claim (the siblings all have one) — a bare
+  // check-then-act on eventually-consistent KV let one reg key register
+  // TWO devices under concurrent POSTs.
+  const claim = await env.KEYS.get(`regclaim2:${k}`);
+  if (claim) return jsonError(403, "Registration key already in use", "authorization_error");
+  await env.KEYS.put(`regclaim2:${k}`, "1", { expirationTtl: 60 });
+  try {
+    // Accept either a live key or the short-lived grant issued when the key
+    // was spent at /api/install/tunnel-token (same install, both calls).
+    const keyOk = (await hasRegKey(env, k)) || (await hasRegGrant(env, k));
+    if (!keyOk) {
+      return jsonError(403, "Invalid or used registration key", "authorization_error");
+    }
+    let device: Device;
+    try { device = validateDevice(body); } catch (e) { return jsonError(400, (e as Error).message, "invalid_request"); }
+    // round-68: a one-time-key holder could upsert an EXISTING device name —
+    // the register endpoint silently replaced a production device's
+    // hostname/token, redirecting console terminal tools + the proxy to the
+    // attacker. Refuse when the name is already registered; re-registering
+    // an existing device is an admin action.
+    if (await getDevice(env, device.name)) {
+      return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+    }
+    // round-103: read the device's proxy secret so the gateway proxy can
+    // present X-Vale-Auth for /panel/ (token-injection gate).
+    try {
+      const status = await deviceFetch(env, device, "/api/status");
+      if (status && status.resp) {
+        const j = await status.resp.json().catch(() => null);
+        if (j && typeof j.proxy_secret === "string" && j.proxy_secret.length >= 32) {
+          device.proxySecret = j.proxy_secret;
+        }
+      }
+    } catch { /* best-effort — panel injection just won't work until admin updates */ }
+    // round-122: insertDevice does the existence check INSIDE the lock —
+    // the old getDevice→409 check-then-act let two concurrent same-name
+    // registrations both pass and the second upsert took over the name.
+    const inserted = await insertDevice(env, device);
+    if (!inserted) {
+      return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+    }
+    await deleteRegKey(env, k); // one-time — consumed only after success
+    await deleteRegGrant(env, k);
+    return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
+  } finally {
+    await env.KEYS.delete(`regclaim2:${k}`).catch(() => {});
   }
-  await upsertDevice(env, device);
-  await deleteRegKey(env, body.key); // one-time — consumed only after success
-  await deleteRegGrant(env, body.key);
-  return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
 }
 
 // Public: the Windows install fetches the Cloudflare tunnel API token with a
@@ -122,7 +158,12 @@ async function handleTunnelToken(request: Request, env: any): Promise<Response> 
 async function handlePairClaim(request: Request, env: any): Promise<Response> {
   const { code } = ((await request.json().catch(() => ({}))) || {}) as any;
   const c = String(code || "");
-  if (!c) return jsonError(403, "Invalid or used pairing code", "authorization_error");
+  // round-115: reject garbage codes BEFORE the claim lock — same KV
+  // write-quota exhaustion path as /api/register (claim put + finally
+  // delete on every attempt). Invalid codes are now zero-write.
+  if (!c || !(await env.KEYS.get(`pair:${c}`))) {
+    return jsonError(403, "Invalid or used pairing code", "authorization_error");
+  }
   // Single-flight: consumePairCode was check-then-act on eventually-
   // consistent KV — two concurrent claims both passed and minted two
   // 30-day device-control tokens from one code. A claim lock bounds it.
@@ -182,8 +223,25 @@ async function handleWsTicket(request: Request, env: any): Promise<Response> {
 async function handleWs(request: Request, env: any, url: URL): Promise<Response> {
   const device = url.searchParams.get("device") || "";
   const ticket = url.searchParams.get("ticket") || "";
+  // round-115: reject garbage tickets BEFORE the claim lock — same KV
+  // write-quota exhaustion path as /api/register. Invalid tickets are
+  // now zero-write.
+  if (!ticket || !(await env.KEYS.get(`plg-ticket:${ticket}`))) {
+    return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
+  }
+  // round-92: consumeWsTicket was check-then-delete on eventually-consistent
+  // KV — two concurrent /ws handshakes with the SAME ticket both passed and
+  // opened two sockets, one of which the hub then replaced (churn + a second
+  // socket that was briefly live). Same single-flight claim lock the pair/
+  // claim and reg-key routes already use.
+  const claim = await env.KEYS.get(`plgclaim:${ticket}`);
+  if (claim) return jsonError(403, "WS ticket already in use", "authorization_error");
+  await env.KEYS.put(`plgclaim:${ticket}`, "1", { expirationTtl: 60 });
   const ok = await consumeWsTicket(env, ticket);
-  if (!ok || ok !== device) return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
+  if (!ok || ok !== device) {
+    await env.KEYS.delete(`plgclaim:${ticket}`);
+    return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
+  }
   const d = await getDevice(env, device);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
   const id = env.PLUGIN_HUB.idFromName(device);
@@ -213,7 +271,10 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   // The `if (proxyMatch)` guard from index.js is the route's match fn below —
   // the handler is only reached when the regex matched.
   const proxyMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/proxy(.*)$`))!;
-  const deviceName = decodeURIComponent(proxyMatch[1]);
+  // round-106/107: a malformed percent-escape in the device name (e.g. %zz)
+  // made decodeURIComponent throw URIError — an unhandled 500. 400 instead.
+  const deviceName = decodeDeviceName(proxyMatch[1]);
+  if (deviceName === null) return jsonError(400, "Invalid device name", "invalid_request");
   const d = await getDevice(env, deviceName);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
   const user = await requireSession(request, env);
@@ -250,14 +311,28 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "") || qToken || cookieToken;
   const link = token ? await getPluginByToken(env, token) : null;
   if (link && link.device === deviceName) {
+    // round-124: a top-level navigation carrying ?token= is the ONLY way
+    // the per-device cookie gets minted (the extension Terminal button). The
+    // old code proxied the panel and appended Set-Cookie — the token stayed
+    // in the omnibox/history until the panel JS scrubbed it, and if the
+    // panel failed to boot (device offline → 502 body) it stayed forever.
+    // 302 to the SAME url with ?token= stripped + Set-Cookie: the token
+    // never reaches the omnibox, the cookie is minted regardless of whether
+    // the panel boots, and a refresh/reload re-authenticates via cookie.
+    if (qToken && isNav) {
+      const clean = new URL(request.url);
+      clean.searchParams.delete("token");
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Location": clean.pathname + clean.search,
+          "Set-Cookie": `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
+        },
+      });
+    }
     // Never cache a response that carried a token in the URL.
     const resp = await proxyDevice(request, env, d, proxyMatch[2] || "/");
     resp.headers.set("Cache-Control", "no-store");
-    if (qToken && isNav) {
-      // Per-device path scope + per-device name: a leaked cookie only ever
-      // authenticates THIS device's proxy, and never leaves this subtree.
-      resp.headers.append("Set-Cookie", `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
-    }
     return resp;
   }
   // A top-level navigation with a bad/expired token gets a readable page
@@ -311,7 +386,9 @@ async function handleDeviceMcp(request: Request, env: any, url: URL): Promise<Re
   if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
   const path = url.pathname;
   const mcpMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/mcp$`))!;
-  const d = await getDevice(env, decodeURIComponent(mcpMatch[1]));
+  const devName = decodeDeviceName(mcpMatch[1]);
+  if (devName === null) return jsonError(400, "Invalid device name", "invalid_request");
+  const d = await getDevice(env, devName);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
   return jsonOk({ name: d.name, hostname: d.hostname, mcp: mcpConfig(d) });
 }
@@ -322,11 +399,36 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
   if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
   const path = url.pathname;
   const delMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)$`))!;
-  await deleteDevice(env, decodeURIComponent(delMatch[1]));
+  const delName = decodeDeviceName(delMatch[1]);
+  if (delName === null) return jsonError(400, "Invalid device name", "invalid_request");
+  // round-115: deleteDevice alone left the device's plugin links (30-day TTL)
+  // and its live hub socket alive — a same-name re-registration resurrected
+  // the old pairing's browser_* control (round-84's revocation hole). Revoke
+  // every link for this device and close the hub socket, like handleRevoke.
+  const links = await listPluginLinks(env);
+  const stale = Object.entries(links).filter(([, l]) => l.device === delName);
+  for (const [token] of stale) await removePluginLink(env, token);
+  if (stale.length > 0 && env.PLUGIN_HUB) {
+    try {
+      const id = env.PLUGIN_HUB.idFromName(delName);
+      const hub = env.PLUGIN_HUB.get(id);
+      const req = new Request("https://hub/close-all", { method: "POST" });
+      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
+      await hub.fetch(req).catch(() => {});
+    } catch { /* best-effort */ }
+  }
+  await deleteDevice(env, delName);
   return jsonOk({ ok: true });
 }
 
 /* ---------------- Device module helpers (copied verbatim from index.js) ---------------- */
+
+// round-107: decode a URL-encoded device name, null on malformed escapes
+// (a raw decodeURIComponent threw URIError → unhandled 500).
+function decodeDeviceName(seg: string): string | null {
+  try { return decodeURIComponent(seg); }
+  catch { return null; }
+}
 
 function validateDevice(body: any): Device {
   const name = String(body?.name || "").trim();
@@ -361,6 +463,12 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
   headers.delete("x-forwarded-for");
   headers.delete("cf-connecting-ip");
   headers.set("x-forwarded-proto", "https");
+  // round-103: the device's /panel/ injects its Bearer token ONLY when the
+  // request carries the shared proxy secret (X-Vale-Auth) — the R102 marker
+  // header was client-spoofable end-to-end (a direct curl could set it and
+  // read the token → /api/tools RCE). The secret is read from the device at
+  // registration; only this authenticated proxy path presents it.
+  if (device.proxySecret) headers.set("x-vale-auth", device.proxySecret);
 
   // Never forward the extension's ?token= to the device — the plugin token
   // is a console-side credential; the device authenticates with its own
@@ -398,7 +506,24 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
     return new Response(rewritten, { status: resp.status, headers: outHeaders });
   }
 
-  // JSON / binary: pass through unchanged.
+  // JSON / binary: pass through — EXCEPT strip the proxy_secret (round-104:
+  // a plugin-token holder proxying /api/status could read the secret and
+  // escalate to the permanent device token, defeating unpair/revoke scope).
+  if (resp.body && ct.includes("application/json")) {
+    const text = await resp.text();
+    try {
+      const j = JSON.parse(text);
+      if (j && typeof j === "object" && "proxy_secret" in j) {
+        delete j.proxy_secret;
+        const out = JSON.stringify(j);
+        if (outHeaders.has("content-length")) {
+          outHeaders.set("content-length", String(new TextEncoder().encode(out).length));
+        }
+        return new Response(out, { status: resp.status, headers: outHeaders });
+      }
+    } catch { /* non-JSON — fall through */ }
+    return new Response(text, { status: resp.status, headers: outHeaders });
+  }
   return new Response(resp.body, { status: resp.status, headers: outHeaders });
 }
 
@@ -444,17 +569,45 @@ export default {
   name: "devices",
   deps: [],
   setup(ctx: PluginContext) {
+    // round-102: every public one-shot endpoint (register, tunnel-token,
+    // pair/claim, ws-ticket, ws handshake) costs KV WRITES — an attacker
+    // firing random codes can exhaust the Free-plan daily KV write quota
+    // (the same reason login and probe are gated). Per-IP gate, in-memory
+    // like probeRateLimited (no per-request KV writes).
+    const PUBLIC_LIMIT = 10; // per minute, per IP (round-115: 30 let a single IP burn 60 writes/min through the claim+delete pair)
+    const PUBLIC_WINDOW_MS = 60000;
+    const __publicRate = new Map(); // `ip:${bucket}` → count
+    const publicRateLimited = (request: Request) => {
+      try {
+        const ip = request?.headers?.get?.("cf-connecting-ip") || "unknown";
+        const bucket = Math.floor(Date.now() / PUBLIC_WINDOW_MS);
+        const key = `pub-rate:${ip}:${bucket}`;
+        const hit = __publicRate.get(key) || 0;
+        if (hit >= PUBLIC_LIMIT) return true;
+        __publicRate.set(key, hit + 1);
+        if (__publicRate.size > 4096) __publicRate.delete(__publicRate.keys().next().value);
+        return false;
+      } catch { return false; }
+    };
+    const gate = (fn: (request: Request, env: any, ...rest: any[]) => Promise<Response>) =>
+      async (request: Request, env: any, ...rest: any[]) => {
+        if (publicRateLimited(request)) {
+          return jsonError(429, "rate limit exceeded", "rate_limit_error");
+        }
+        return fn(request, env, ...rest);
+      };
+
     // Public registration flow (index.js order preserved).
-    route(ctx, "POST", "/api/register", handleRegister);
-    route(ctx, "POST", "/api/install/tunnel-token", handleTunnelToken);
-    route(ctx, "POST", `${PLUGIN_BASE}/pair/claim`, handlePairClaim);
+    route(ctx, "POST", "/api/register", gate(handleRegister));
+    route(ctx, "POST", "/api/install/tunnel-token", gate(handleTunnelToken));
+    route(ctx, "POST", `${PLUGIN_BASE}/pair/claim`, gate(handlePairClaim));
     route(ctx, "POST", `${PLUGIN_BASE}/revoke`, handleRevoke);
-    route(ctx, "POST", `${PLUGIN_BASE}/ws-ticket`, handleWsTicket);
+    route(ctx, "POST", `${PLUGIN_BASE}/ws-ticket`, gate(handleWsTicket));
     // index.js compared the ws path with === — register an exact match
     // (a prefix match would also swallow GET /api/plugins/ws-ticket).
     ctx.routes.push({
       match: (m, p) => m === "GET" && p === `${PLUGIN_BASE}/ws`,
-      handler: handleWs,
+      handler: gate(handleWs),
     });
 
     // Device reverse-proxy — checked BEFORE the admin-gated device routes,

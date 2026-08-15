@@ -12,7 +12,7 @@
  * derived here the same way handleConsole did: url.protocol === "https:".
  */
 
-import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, type User } from "../store.ts";
+import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, globalSettingEnabled, type User } from "../store.ts";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "../auth.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { MODELS, OG_ZEN_CHAT } from "../channels.ts";
@@ -21,6 +21,23 @@ import type { PluginContext } from "./registry.ts";
 
 const AUTH_BASE = "/api/auth";
 const ME_BASE = "/api/me";
+
+// round-104: per-IP gate for registration (2-3 KV writes per attempt — an
+// attacker can exhaust the Free-plan daily KV write quota). In-memory like
+// the devices plugin's public gate; no per-request KV writes.
+const __authRate = new Map(); // `ip:${bucket}` → count
+function authRateLimited(request: Request): boolean {
+  try {
+    const ip = request?.headers?.get?.("cf-connecting-ip") || "unknown";
+    const bucket = Math.floor(Date.now() / 60000);
+    const key = `auth-rate:${ip}:${bucket}`;
+    const hit = __authRate.get(key) || 0;
+    if (hit >= 30) return true;
+    __authRate.set(key, hit + 1);
+    if (__authRate.size > 4096) __authRate.delete(__authRate.keys().next().value);
+    return false;
+  } catch { return false; }
+}
 
 // Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
 // secret) over the admin password. Using the password directly lets any invited
@@ -47,6 +64,12 @@ async function requireSession(request: Request, env: any): Promise<User | null> 
 /* ---- Register / Login ---- */
 
 async function authRegister(request: Request, env: any, secure: boolean): Promise<Response> {
+  // round-104: registration costs 2-3 KV writes per attempt — an attacker
+  // can exhaust the Free-plan daily KV write quota (console-wide DoS).
+  // Per-IP in-memory gate, same pattern as the devices plugin.
+  if (authRateLimited(request)) {
+    return jsonError(429, "rate limit exceeded", "rate_limit_error");
+  }
   const ap = await getAdminPassword(env);
   if (!ap) return jsonError(500, "Admin password not configured", "config_error");
   const body = await readJson(request);
@@ -109,28 +132,79 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
     ok = !!user.salt && !!user.passwordHash && (await verifyPassword(body.password || "", user.salt, user.passwordHash));
   }
   if (!ok) {
-    // Track failures: 5th consecutive miss arms the 30s lock.
-    const fails = Number(await env.KEYS.get(lockKey + ":n")) || 0;
-    const next = fails + 1;
-    if (next >= 5) {
+    // round-115: count failures in memory — the old KV counter (lockKey:":n")
+    // burned one KV WRITE per failed attempt, the same quota-exhaustion path
+    // as the register/pair endpoints (round-102/104 gated the rate but a
+    // parallel burst across isolates still landed hundreds of writes). Only
+    // arming the 30s lock touches KV. The lock itself is still KV, so a lock
+    // armed on one isolate throttles every isolate.
+    const fk = `login-fails:${callerIp}:${user.id}`;
+    const fails = (__loginFails.get(fk) || 0) + 1;
+    if (fails >= 5) {
       await env.KEYS.put(lockKey, "1", { expirationTtl: 60 });
-      await env.KEYS.delete(lockKey + ":n");
+      __loginFails.delete(fk);
     } else {
-      await env.KEYS.put(lockKey + ":n", String(next), { expirationTtl: 60 });
+      __loginFails.set(fk, fails);
+      if (__loginFails.size > 4096) __loginFails.delete(__loginFails.keys().next().value);
     }
     return jsonError(401, "Incorrect username or password", "authentication_error");
   }
   // Success clears the failure counter.
-  await env.KEYS.delete(lockKey + ":n");
+  __loginFails.delete(`login-fails:${callerIp}:${user.id}`);
   const token = await issueSessionToken(sessionSecret(env, ap), user.id, user.role);
   return jsonOk({ ok: true, username: user.username, role: user.role }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
 }
 
+/* ---- Reset admin password (by admin gateway token) ----
+ *
+ * The admin password is stored HASHED (never plaintext) so there is no way
+ * to "look it up" — the console shows only `set`/`not set`. If the admin
+ * forgets the password, the console is locked out entirely (the admin is
+ * the only account that can change it). Recovery: prove possession of the
+ * admin gateway token (the `x-api-key` value in the console Overview —
+ * also the user's Claude Code key) and set a new password. Rate-limited
+ * like register so an attacker cannot brute-force the token.
+ */
+async function authResetPassword(request: Request, env: any): Promise<Response> {
+  if (authRateLimited(request)) {
+    return jsonError(429, "rate limit exceeded", "rate_limit_error");
+  }
+  const admin = await getUser(env, ADMIN_ID);
+  if (!admin) return jsonError(500, "Admin not seeded", "config_error");
+  const body = await readJson(request);
+  const adminKey = String(body?.adminKey || "").trim();
+  const newPassword = String(body?.newPassword || "");
+  if (!adminKey || !newPassword) {
+    return jsonError(400, "adminKey and newPassword are required", "invalid_request");
+  }
+  if (newPassword.length < 8) {
+    return jsonError(400, "New password must be at least 8 chars", "invalid_request");
+  }
+  // Prove possession of the admin gateway token (the console's Overview
+  // shows this value; it is the same key Claude Code uses as x-api-key).
+  if (!admin.token || adminKey !== admin.token) {
+    return jsonError(403, "Invalid admin key", "authentication_error");
+  }
+  await setAdminPassword(env, newPassword);
+  return jsonOk({ ok: true });
+}
+
 const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
+const __loginFails = new Map(); // `login-fails:${ip}:${userId}` → consecutive failures (in-memory, round-115)
 
 /* ---- Logout ---- */
 
 async function authLogout(request: Request, env: any, secure: boolean): Promise<Response> {
+  // round-110: logout is an unauthenticated KV-write endpoint (any crafted
+  // cookie with a truthy exp triggers a write) — an attacker could exhaust
+  // the daily KV write quota. Per-IP gate like register.
+  // round-111: a 429 must STILL clear the client cookie — skipping the
+  // whole handler left the browser cookie alive AND skipped the KV
+  // blacklist (the endpoint's entire security purpose).
+  if (authRateLimited(request)) {
+    return jsonError(429, "rate limit exceeded", "rate_limit_error",
+      { "set-cookie": clearSessionCookieHeader(secure) });
+  }
   // Revoke the session server-side: the HMAC cookie alone was cleared
   // client-side, but a copied cookie stayed valid for the full 24h. Blacklist
   // the token hash in KV until its exp so it dies everywhere.
@@ -139,7 +213,10 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
     try {
       const payload = JSON.parse(atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") || "{}") || "{}");
       if (payload.exp) {
-        const ttl = Math.max(1, Math.min(86400 * 2, Math.ceil((payload.exp * 1000 - Date.now()) / 1000)));
+        // round-122: exp is stored in MS (issueSessionToken uses Date.now() + SESSION_TTL_MS) — the old *1000 treated it as seconds, overstating the remaining life ~1000x (every logout wrote a 2-day entry).
+        // round-124: floor 60 — KV's minimum expirationTtl; the old floor of
+        // 1 let a <60s-life session skip the blacklist write entirely.
+        const ttl = Math.max(60, Math.min(86400, Math.ceil((payload.exp - Date.now()) / 1000)));
         await env.KEYS.put(`sess-revoked:${cookie}`, "1", { expirationTtl: ttl });
       }
     } catch { /* malformed cookie — ignore */ }
@@ -205,9 +282,12 @@ async function mePutUsproxy(request: Request, env: any): Promise<Response> {
     return jsonError(403, "Admin only", "forbidden");
   }
   const body = await readJson(request);
-  await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : null);
+  // round-94: an explicit OFF is persisted as "0" (not deleted) so it
+  // shadows an env/US_PROXY Worker var — deleting let the env fallback
+  // bounce the toggle straight back ON.
+  await setGlobalSetting(env, "US_PROXY", body?.enabled ? "1" : "0");
   const v = await getGlobalSetting(env, "US_PROXY");
-  return jsonOk({ ok: true, enabled: !!v });
+  return jsonOk({ ok: true, enabled: globalSettingEnabled(v) });
 }
 
 async function mePutKeys(request: Request, env: any): Promise<Response> {
@@ -327,6 +407,7 @@ export default {
       (request: Request, env: any, url: URL): Response | Promise<Response> => fn(request, env, url.protocol === "https:");
     add("POST", `${AUTH_BASE}/register`, withSecure(authRegister));
     add("POST", `${AUTH_BASE}/login`, withSecure(authLogin));
+    add("POST", `${AUTH_BASE}/reset-password`, authResetPassword);
     add("POST", `${AUTH_BASE}/logout`, withSecure(authLogout));
     add("GET", ME_BASE, meGet);
     add("GET", `${ME_BASE}/route`, meGetRoute);

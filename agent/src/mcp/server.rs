@@ -70,27 +70,24 @@ impl ServerHandler for DeviceServer {
         // round-118: route the request's cancellation token (rmcp flips it on
         // notifications/cancelled) into the tool call so a client-cancelled
         // long operation can abort early.
-        // round-123: the select's cancel arm DROPPED the handler future
-        // mid-flight — for terminal_execute that left the session busy-
-        // flagged FOREVER (the wait loop's release was never reached) and
-        // the running command unsupervised. The handler future is now
-        // polled to completion in the background on cancel; tools that
-        // observe the token (call_cancellable override) abort early and
-        // clean up, tools that don't run to their normal end (releasing
-        // busy) and the caller still gets the cancel error. Never drop a
-        // future that holds locks.
+        // round-123/124: the select's cancel arm DROPS the handler future
+        // mid-flight (nothing polls it in the background — the R123 comment
+        // misstated that). The only un-wedging mechanism is the explicit
+        // cleanup below, scoped to terminal_execute ONLY (round-124: the
+        // starts_with("terminal_") version sent ^C into the session for
+        // terminal_write/read/screen cancels, interrupting the user's
+        // foreground command, and cleared the busy flag a background
+        // execute legitimately holds).
         let cancel = context.ct.clone();
         let result = tokio::select! {
             r = tool.handler.call_cancellable(params.clone(), cancel.clone()) => r,
             _ = cancel.cancelled() => {
-                // round-123: the R118 cancel arm DROPPED the handler future
-                // mid-flight — terminal_execute's busy flag was never
-                // released (session permanently SessionBusy) and the running
-                // command was left unsupervised. For terminal tools, clean
-                // up the session explicitly: terminate the command and
-                // release the busy lock, so the caller's cancel error is
-                // truthful AND the session stays usable.
-                if tool_name.starts_with("terminal_") {
+                // terminal_execute is the only tool that owns the busy flag
+                // and a running command — terminate + release so the session
+                // stays usable. Local mode (no session_id) is unsupervised
+                // after cancel (the deadline-kill lives in the dropped
+                // future); acknowledged limitation.
+                if tool_name == "terminal_execute" {
                     if let Some(sid) = params.get("session_id").and_then(|v| v.as_str()) {
                         let sid = sid.to_string();
                         let _ = self.state.terminal_mgr.term_terminate(&sid).await;
