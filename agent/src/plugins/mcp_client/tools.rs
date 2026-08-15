@@ -30,6 +30,11 @@ const DEFAULT_URL: &str = "http://127.0.0.1:9229/mcp";
 struct PeerSession {
     peer: Peer<RoleClient>,
     cancel: rmcp::service::RunningServiceCancellationToken,
+    /// The server URL this session was opened to (round-118: already_connected
+    /// used to echo the REQUESTED url without checking it matched the cached
+    /// session — connecting to a different server silently kept using the old
+    /// one).
+    url: String,
 }
 static PEER: Mutex<Option<PeerSession>> = Mutex::const_new(None);
 
@@ -85,9 +90,21 @@ pub fn mcp_client_connect() -> ToolDef {
                 .unwrap_or(DEFAULT_URL);
             // Reuse an existing connection — connecting twice would leak a
             // second client session.
+            // round-118: only reuse when the cached session points at the SAME
+            // url — the old check echoed the requested url back without
+            // matching, so a connect to a different server silently kept using
+            // the old one.
             if let Ok(guard) = PEER.try_lock() {
-                if guard.is_some() {
-                    return Ok(json!({ "status": "already_connected", "url": url }));
+                if let Some(s) = guard.as_ref() {
+                    if s.url == url {
+                        return Ok(json!({ "status": "already_connected", "url": url }));
+                    }
+                    // Different server — tear down the old session and connect
+                    // to the new one (the caller asked for THIS url).
+                    drop(guard);
+                    if let Some(s) = PEER.lock().await.take() {
+                        s.cancel.cancel();
+                    }
                 }
             }
 
@@ -150,11 +167,15 @@ pub fn mcp_client_connect() -> ToolDef {
             // would orphan this session's task.
             {
                 let mut guard = PEER.lock().await;
-                if guard.is_some() {
-                    cancel.cancel();
-                    return Ok(json!({ "status": "already_connected", "url": url }));
+                if let Some(s) = guard.as_ref() {
+                    // round-118: same-url reuse only (the early check may have
+                    // been raced); a different-url session is replaced below.
+                    if s.url == url {
+                        cancel.cancel();
+                        return Ok(json!({ "status": "already_connected", "url": url }));
+                    }
                 }
-                *guard = Some(PeerSession { peer, cancel });
+                *guard = Some(PeerSession { peer, cancel, url: url.to_string() });
             }
 
             Ok(json!({
@@ -175,10 +196,16 @@ pub fn mcp_client_list() -> ToolDef {
          browser_navigate, browser_snapshot, browser_click, ...).",
         json!({ "type": "object" }),
         |_: Value| async move {
-            let guard = PEER.lock().await;
-            let peer = &guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
-                message: "not connected — call mcp_client_connect first".into(),
-            })?.peer;
+            // round-118: the lock must NOT be held across the remote call —
+            // it used to serialize ALL browser-bridge traffic (call/list/
+            // disconnect) behind one in-flight op for up to 60s. Clone the
+            // peer under the lock and release it before the await.
+            let peer = {
+                let guard = PEER.lock().await;
+                guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
+                    message: "not connected — call mcp_client_connect first".into(),
+                })?.peer.clone()
+            };
             // round-93: bounded like connect — a hung remote must not wedge
             // this MCP worker.
             let tools = tokio::time::timeout(
@@ -232,19 +259,30 @@ pub fn mcp_client_call() -> ToolDef {
                 req = req.with_arguments(obj.clone());
             }
 
-            let guard = PEER.lock().await;
-            let peer = &guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
-                message: "not connected — call mcp_client_connect first".into(),
-            })?.peer;
+            // round-118: same as list — clone the peer under the lock, call
+            // outside it (the lock used to serialize every browser op behind
+            // one in-flight call for up to 60s, and blocked disconnect too).
+            let peer = {
+                let guard = PEER.lock().await;
+                guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
+                    message: "not connected — call mcp_client_connect first".into(),
+                })?.peer.clone()
+            };
             // round-93: browser operations can be slow (navigation, waiting),
             // but never infinite — a hung remote must not wedge this MCP
             // worker.
+            // round-118: rmcp 2.2.0's call_tool macro hardcodes
+            // no_options() — the remote-cancel path
+            // (send_timeout_cancel_notification) is unreachable, so a
+            // timed-out op keeps running on the remote and can race a retry.
+            // The local timeout at least stops THIS caller from wedging; the
+            // session cancel token is the only lever (disconnect uses it).
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(60),
                 peer.call_tool(req),
             )
             .await
-            .map_err(|_| DeviceError::Internal { message: format!("call {tool} timed out after 60s") })?
+            .map_err(|_| DeviceError::Internal { message: format!("call {tool} timed out after 60s — the remote op may still be running; call mcp_client_disconnect to abort it") })?
             .map_err(|e| DeviceError::Internal { message: format!("call {tool} failed: {e}") })?;
 
             // Extract the text content the way MCP clients render it — a
