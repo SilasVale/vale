@@ -289,6 +289,13 @@ Section "Install" SEC01
 SectionEnd
 
 Section "Uninstall"
+  ; round-131: kill the RUNNING agent BEFORE deleting — Windows refuses to
+  ; delete a running exe, so a live boot-task agent left the whole install
+  ; dir (and its token) behind until reboot. Mirror the install section's
+  ; taskkill + task removal, then the Deletes below actually succeed.
+  nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
+  nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
+  nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
   ; Stop and remove the scheduled tasks + cloudflared service (best effort)
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgentTray 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgentTray /F 2>NUL'
@@ -312,6 +319,8 @@ Section "Uninstall"
   Delete "$INSTDIR\config.yaml"
   Delete "$INSTDIR\fix-tunnel.ps1"
   Delete "$INSTDIR\vale-browser-control.zip"
+  Delete "$INSTDIR\vale-agent.exe.bak"
+  Delete "$INSTDIR\vale-tray.exe.bak"
   RMDir /r "$INSTDIR\extension"
   RMDir /r "$INSTDIR\playwright"
   RMDir "$INSTDIR"

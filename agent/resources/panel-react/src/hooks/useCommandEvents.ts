@@ -181,12 +181,22 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
         let tail = evs;
         if (tail.length > MAX_RAW_EVENTS) {
           const cut = tail.length - MAX_RAW_EVENTS;
-          // Walk back to the newest command/start at or before the cut.
+          // Walk back to the newest command/start at or before the cut
+          // (keep a running round's start so the live card isn't orphaned).
           let start = cut;
           for (let i = cut; i >= 0; i--) {
             if (tail[i].kind === "command/start") { start = i; break; }
           }
           tail = tail.slice(start);
+          // round-131: if the anchored round STILL exceeds the cap (one
+          // command running for the whole window — no newer start ever
+          // appears), drop the round's OLDEST output events, keeping the
+          // start (groupEvents/groupRounds need it for the live card).
+          // The audit file on the server still holds the full history.
+          if (tail.length > MAX_RAW_EVENTS) {
+            const keep = tail.filter((e, i) => i === 0 || i >= tail.length - MAX_RAW_EVENTS);
+            tail = keep;
+          }
         }
         setEvents(tail);
       } catch { /* transient — keep the last good events, retry next tick */ }
