@@ -91,7 +91,11 @@ export class PluginHubDO {
     // link expired/revoked (30-day TTL, console revoke) kept executing
     // browser_* commands for up to 20s (next ping) or 65s (silent) after
     // expiry. Server-initiated delivery must not trust the client's cadence.
-    const tok = await this.state.storage.get(`ws-token:${(ws as any).id || ""}`);
+    // round-121: the token lives in the socket ATTACHMENT (per-connection,
+    // auto-dropped on close) — the old ws.id key was shared by every socket
+    // (ws.id does not exist in Cloudflare's WebSocket), so a re-pair after
+    // revoke validated the OLD token forever and locked the device out.
+    const tok = ws.deserializeAttachment?.()?.token || null;
     if (!tok) {
       return Response.json({ error: "extension_offline — no bound token" }, { status: 503 });
     }
@@ -134,7 +138,8 @@ export class PluginHubDO {
     // indefinitely. Validate hello too — the only case that legitimately
     // lacks a bound token is the FIRST hello (nothing stored yet); every
     // later hello must carry a valid, unexpired link.
-    const tok = await this.state.storage.get(`ws-token:${(ws as any).id || ""}`);
+    // round-121: token lives in the socket ATTACHMENT (per-connection).
+    const tok = ws.deserializeAttachment?.()?.token || null;
     if (tok && msg.type !== "hello") {
       const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
       if (!link) { ws.close(4001, "link expired"); return; }
@@ -145,7 +150,7 @@ export class PluginHubDO {
     }
     if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: msg.t })); return; }
     if (msg.type === "hello") {
-      // round-119: only the FIRST hello may bind a token (nothing stored
+      // round-119: only the FIRST hello may bind a token (nothing attached
       // yet); a re-hello with a different/garbage token must NOT overwrite
       // the bound one, and it must be validated like every other frame.
       if (!tok) {
@@ -153,14 +158,13 @@ export class PluginHubDO {
         const link = newTok ? await getPluginByToken(this.env, newTok).catch(() => null) : null;
         if (!link) { ws.close(4001, "invalid plugin token"); return; }
         this.state.storage.put("lastSeen", Date.now());
-        // round-88: remember the plugin TOKEN bound to this socket (the round-84
-        // ws-device: key was never read — dead code). The alarm re-validates
-        // the link: a 30-day-expired link must not keep browser_* control over
-        // a live socket.
-        this.state.storage.put(`ws-token:${(ws as any).id || ""}`, newTok).catch(() => {});
+        // round-88: remember the plugin TOKEN bound to this socket. The
+        // attachment is per-connection and auto-dropped on close — the alarm
+        // re-validates the link: a 30-day-expired link must not keep
+        // browser_* control over a live socket.
+        ws.serializeAttachment?.({ token: newTok });
       } else {
-        // Re-hello: validate the ALREADY-bound token (the 20s ping loop
-        // sends hello; this keeps the expiry check enforced).
+        // Re-hello: validate the ALREADY-bound token.
         const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
         if (!link) { ws.close(4001, "link expired"); return; }
       }
@@ -189,10 +193,9 @@ export class PluginHubDO {
     for (const [id, resolve] of this.pending) { resolve(err); this.pending.delete(id); }
     // round-119: resource cleanup — the 65s alarm armed at handshake was
     // never cancelled (one extra DO wake per connect/close cycle, firing a
-    // no-op alarm() against zero sockets), and the ws-token: key accumulated
-    // forever (each connection gets a fresh DO-assigned ws.id). Clear both.
-    const wid = (ws as any).id || "";
-    if (wid) await this.state.storage.delete(`ws-token:${wid}`).catch(() => {});
+    // no-op alarm() against zero sockets). round-121: the token attachment
+    // is auto-dropped with the socket (no storage key to leak); just clear
+    // the alarm when the last socket closes.
     if ((this.state.getWebSockets() || []).length === 0) {
       this.state.storage.deleteAlarm().catch(() => {});
     }
@@ -203,8 +206,9 @@ export class PluginHubDO {
     for (const ws of sockets) {
       // round-88: re-validate the plugin link bound to this socket — an
       // expired (30-day TTL) link must not keep browser_* control.
+      // round-121: token comes from the per-connection attachment.
       try {
-        const tok = await this.state.storage.get(`ws-token:${(ws as any).id || ""}`);
+        const tok = ws.deserializeAttachment?.()?.token || null;
         if (tok) {
           const link = await getPluginByToken(this.env, String(tok));
           if (!link) { ws.close(4001, "link expired"); continue; }

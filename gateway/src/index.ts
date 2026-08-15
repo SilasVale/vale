@@ -64,7 +64,6 @@ function ensurePluginCtx() {
   return __pluginCtx;
 }
 
-const COUNT_PATH = "/v1/messages/count_tokens";
 
 const AUTH_BASE = "/api/auth";
 const ADMIN_BASE = "/api/admin";
@@ -766,8 +765,6 @@ async function authLogin(request: Request, env: any, secure: boolean) {
 // that alone burned the Free-plan daily KV WRITE quota (1000/day) at ~250
 // requests. Never written; each window's first request per token reads KV
 // once to inherit other isolates' counts.
-const __rlMin = new Map(); // `min:${token}:${minute}` → count
-const __rlDay = new Map(); // `day:${token}:${day}`   → count
 const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
 
 
@@ -1086,13 +1083,6 @@ function passthroughHeaders(bearerKey: string, { apiKeyHeader = false }: { apiKe
   return h;
 }
 
-
-/* ---------------- Gateway-side vision pre-processing ---------------- */
-// The gateway's own models (deepseek, minimax, ...) are text-only. If an incoming
-// request carries Anthropic image blocks and the target model isn't on the
-// vision-capable allowlist, describe each image with a vision model (default
-// og/mimo-v2.5, configurable via env VISION_MODEL) and replace the image blocks
-// with the returned text so every model can "see" the picture.
 
 
 

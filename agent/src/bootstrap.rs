@@ -64,17 +64,20 @@ pub fn load_or_create(
             // the token was silently discarded, and every client 401'd with
             // no recovery. Extract the token line directly instead.
             if let Ok(bad_text) = std::fs::read_to_string(&bad) {
-                let recovered = bad_text.lines()
+                // round-121: (1) strip trailing inline comments (# can never
+                // appear in a real hex token); (2) prefer device_token over
+                // the legacy auth_token (first-match-wins could recover a
+                // stale auth_token and silently discard the live one).
+                let extract = |key: &str| bad_text.lines()
                     .find_map(|l| {
                         let t = l.trim();
-                        let key = t.split(':').next().unwrap_or("").trim();
-                        if key == "device_token" || key == "auth_token" {
-                            let v = t[t.find(':').map(|i| i + 1).unwrap_or(t.len())..].trim();
-                            let v = v.trim_matches(|c| c == '"' || c == '\'' || c == ' ');
-                            Some(v.to_string())
-                        } else { None }
+                        if !t.starts_with(key) || !t[key.len()..].starts_with(':') { return None; }
+                        let v = t[key.len() + 1..].split('#').next().unwrap_or("").trim();
+                        let v = v.trim_matches(|c| c == '"' || c == '\'' || c == ' ');
+                        Some(v.to_string())
                     })
                     .filter(|tok| tok.len() >= 16);
+                let recovered = extract("device_token").or_else(|| extract("auth_token"));
                 if let Some(tok) = recovered {
                     let mut fresh = Config::load(path)?;
                     fresh.server.device_token = Some(tok);
