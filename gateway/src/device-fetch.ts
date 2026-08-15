@@ -40,13 +40,20 @@ export async function deviceFetch(env: any, device: any, restPath: string, init:
   // RCE surviving revoke/TTL). Build the upstream from the hostname field
   // ONLY and reject any restPath that could smuggle a host (userinfo '@',
   // scheme, or a path that re-roots the URL).
-  if (restPath.includes("@") || /^[a-z][a-z0-9+.-]*:/i.test(restPath)) {
+  // round-121: narrow the at-sign check to the AUTHORITY-RELEVANT prefix
+  // (up to the first / ? or #) — an at-sign in a query string is legitimate
+  // (?user=a@b.com) and the hostname-equality check below already blocks
+  // userinfo smuggling. A leading scheme in the authority is still rejected.
+  const authorityPrefix = restPath.split(/[/?#]/, 1)[0];
+  if (authorityPrefix.includes("@") || /^[a-z][a-z0-9+.-]*:/i.test(authorityPrefix)) {
     return { status: 400, ok: false, resp: undefined, error: "invalid proxy path" };
   }
   const upstream = new URL(`https://${device.hostname}${restPath.startsWith("/") ? restPath : "/" + restPath}`);
   // Belt-and-suspenders: whatever the parser produced, the host MUST be the
   // device's own hostname (never attacker-controlled).
-  if (upstream.hostname !== device.hostname) {
+  // round-121: case-insensitive — WHATWG lowercases special-scheme hosts but
+  // device registration allows (and stores verbatim) uppercase hostnames.
+  if (upstream.hostname.toLowerCase() !== String(device.hostname).toLowerCase()) {
     return { status: 400, ok: false, resp: undefined, error: "invalid proxy path" };
   }
   const headers = new Headers(init.headers || {});

@@ -48,9 +48,17 @@ impl SerialBackend {
             let port_name = port_name.clone();
             tokio::task::spawn_blocking(move || {
                 let (port_id, _) = pool.open(port_name, Some(baud), data_bits, parity, stop_bits)?;
-                let port = pool.borrow_port(&port_id)
-                    .ok_or_else(|| DeviceError::SerialPortNotOpen { id: port_id.clone() })?;
-                Ok::<_, DeviceError>((port, port_id))
+                match pool.borrow_port(&port_id) {
+                    Some(port) => Ok::<_, DeviceError>((port, port_id)),
+                    // round-121: borrow failed (try_clone error) — the pool
+                    // entry open() just inserted must be released or the port
+                    // stays 'already in use' forever (ghost in list_open_ports,
+                    // only an agent restart recovers).
+                    None => {
+                        pool.release_port(&port_id);
+                        Err(DeviceError::SerialPortNotOpen { id: port_id })
+                    }
+                }
             })
             .await
             .map_err(|e| DeviceError::Internal {

@@ -26,11 +26,18 @@ function backfillGap(
   sid: string,
   issueOffset: number,
   gapEnd: number | undefined,
-  cb: { write: (bytes: Uint8Array) => void },
+  cb: { write: (bytes: Uint8Array) => void; getRendered: () => number },
 ) {
   // Read [issueOffset, end) from the server buffer; write only the dropped
   // range [issueOffset, gapEnd) — bytes at or above gapEnd are (or will be)
   // frame-delivered.
+  // round-121: capture rendered BEFORE the read resolves — the caller writes
+  // the post-gap frame synchronously right after issuing this read, so at
+  // RESPONSE time rendered already covers [start, start+len). The sync loop
+  // may also have delivered part of the gap meanwhile; skip only bytes the
+  // sync loop already wrote (those < rendered at capture time), never the
+  // whole gap (the round-104 bug).
+  const before = cb.getRendered();
   callTool("terminal_read", { session_id: sid, offset: issueOffset, clean: false })
     .then((r: any) => {
       if (!r || (!r.text && !r.raw)) return;
@@ -45,20 +52,20 @@ function backfillGap(
       const rel = Math.max(0, issueOffset - Number(r.start));
       const to = gapEnd === undefined ? bytes.length : Math.min(rel + (gapEnd - issueOffset), bytes.length);
       const from = Math.min(rel, bytes.length);
-      // round-117: the round-104 re-check compared cb.getRendered() at
-      // RESPONSE time against the gap end — but the caller wrote the
-      // post-gap frame (start..start+len) SYNCHRONOUSLY right after issuing
-      // this read, so rendered was always >= gapEnd by the time the read
-      // resolved and the backfill NEVER fired: the dropped range was lost
-      // permanently. The frame's write covers [start, start+len), which does
-      // NOT include the gap [issueOffset, start) — so the only real
-      // duplication risk is the 5s sync loop racing this read. Compare
-      // against the frame's start (the true gap lower bound), not rendered.
-      if (to > from && (gapEnd === undefined || rel < (gapEnd - issueOffset))) {
-        cb.write(bytes.subarray(from, to));
+      // Skip bytes the sync loop already delivered before this read resolved
+      // (dedup); write the rest of the gap.
+      const syncDelivered = Math.max(0, before - issueOffset);
+      const effectiveFrom = Math.max(from, rel + syncDelivered);
+      if (to > effectiveFrom) {
+        cb.write(bytes.subarray(effectiveFrom, to));
       }
     })
-    .catch(() => {});
+    .catch(() => {
+      // round-121: a failed backfill read must be retried — the gap is
+      // unrecoverable otherwise (rendered advanced past it, the sync loop
+      // reads from rendered). Re-register the lag so the next frame retries.
+      lagBackfill.set(sid, issueOffset);
+    });
 }
 
 export function useSSE(

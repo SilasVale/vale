@@ -404,7 +404,7 @@ windows_service::define_windows_service!(ffi_service_main, run_service);
 /// Returns `()` because the SCM bootstrap macro discards the return value; any
 /// error is logged and the service simply fails to start.
 #[cfg(windows)]
-fn run_service(args: Vec<std::ffi::OsString>) {
+fn run_service(_args: Vec<std::ffi::OsString>) {
     use std::sync::mpsc;
     use std::time::Duration;
     use windows_service::service::{
@@ -476,7 +476,7 @@ fn run_service(args: Vec<std::ffi::OsString>) {
                     service_type: ServiceType::OWN_PROCESS,
                     current_state: ServiceState::Stopped,
                     controls_accepted: ServiceControlAccept::empty(),
-                    exit_code: ServiceExitCode::SERVICE_SPECIFIC,
+                    exit_code: ServiceExitCode::ServiceSpecific(1),
                     checkpoint: 0,
                     wait_hint: Duration::from_secs(0),
                     process_id: None,

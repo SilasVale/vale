@@ -26,10 +26,14 @@ function makeState(initialSockets = []) {
 
 // A fake WebSocket: records sent frames, allows programmatic onmessage/onclose.
 function fakeWs() {
+  let attachment = null;
   return {
     sent: [],
     send(msg) { this.sent.push(msg); },
     close(code, reason) { this.closed = { code, reason }; },
+    // round-121: token binding moved to the per-connection attachment.
+    serializeAttachment(a) { attachment = a; },
+    deserializeAttachment() { return attachment; },
   };
 }
 
@@ -69,8 +73,9 @@ async function boundHub(state, ws) {
     },
   };
   const hub = new PluginHubDO(state, env);
-  // Simulate the hello that binds the token to this socket.
-  await state.storage.put(`ws-token:${ws.id || ""}`, "tok-test");
+  // Simulate the hello that binds the token to this socket (round-121:
+  // token lives in the socket attachment, not storage).
+  ws.serializeAttachment({ token: "tok-test" });
   return hub;
 }
 
