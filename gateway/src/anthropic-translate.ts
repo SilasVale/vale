@@ -296,6 +296,15 @@ export class AnthropicStreamEncoder {
       this.usage.cache_read_input_tokens =
         chunk.usage.prompt_cache_hit_tokens || chunk.usage.prompt_tokens_details?.cached_tokens || 0;
     }
+    // round-123: a mid-stream upstream error frame (OpenAI shape
+    // {"error":{...}}) was silently dropped by the choices guard below — the
+    // client got a complete-looking TRUNCATED answer with no error, no
+    // retry, and the breaker never learned. Surface it as an error event.
+    if (chunk.error) {
+      const msg = chunk.error?.message || "upstream stream error";
+      this.pending.push(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: `upstream mid-stream error: ${msg}` } })}\n\n`);
+      return;
+    }
     const choice = chunk.choices?.[0];
     if (!choice) return;
     const delta = choice.delta || {};

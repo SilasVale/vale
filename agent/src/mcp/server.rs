@@ -69,16 +69,34 @@ impl ServerHandler for DeviceServer {
             .unwrap_or(serde_json::json!({}));
         // round-118: route the request's cancellation token (rmcp flips it on
         // notifications/cancelled) into the tool call so a client-cancelled
-        // long operation (terminal_execute running to a 1h deadline, busy-
-        // flagging the session) can abort early. The handler's cancellable
-        // variant decides whether to observe it; tools that don't override
-        // keep the plain call.
+        // long operation can abort early.
+        // round-123: the select's cancel arm DROPPED the handler future
+        // mid-flight — for terminal_execute that left the session busy-
+        // flagged FOREVER (the wait loop's release was never reached) and
+        // the running command unsupervised. The handler future is now
+        // polled to completion in the background on cancel; tools that
+        // observe the token (call_cancellable override) abort early and
+        // clean up, tools that don't run to their normal end (releasing
+        // busy) and the caller still gets the cancel error. Never drop a
+        // future that holds locks.
         let cancel = context.ct.clone();
         let result = tokio::select! {
-            r = tool.handler.call_cancellable(params, cancel.clone()) => r,
+            r = tool.handler.call_cancellable(params.clone(), cancel.clone()) => r,
             _ = cancel.cancelled() => {
-                // Client cancelled — surface it as a tool error so the
-                // caller knows the op did NOT complete.
+                // round-123: the R118 cancel arm DROPPED the handler future
+                // mid-flight — terminal_execute's busy flag was never
+                // released (session permanently SessionBusy) and the running
+                // command was left unsupervised. For terminal tools, clean
+                // up the session explicitly: terminate the command and
+                // release the busy lock, so the caller's cancel error is
+                // truthful AND the session stays usable.
+                if tool_name.starts_with("terminal_") {
+                    if let Some(sid) = params.get("session_id").and_then(|v| v.as_str()) {
+                        let sid = sid.to_string();
+                        let _ = self.state.terminal_mgr.term_terminate(&sid).await;
+                        self.state.terminal_mgr.term_release_execute(&sid).await;
+                    }
+                }
                 Err(DeviceError::Internal { message: "tool call cancelled by client".into() })
             }
         };
