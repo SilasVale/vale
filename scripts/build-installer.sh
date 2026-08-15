@@ -27,43 +27,43 @@ repack_extension() {
 }
 repack_extension
 
-# Phase 3: bundle the playwright-mcp runtime (node.exe + @playwright/mcp +
-# its node_modules) into vale-playwright.zip, staged next to the installer
+# Phase 3: bundle the playwright-mcp runtime (node.exe + the full flat
+# node_modules tree) into vale-playwright.zip, staged next to the installer
 # for the NSIS script (File "vale-playwright.zip"). The PlaywrightManager
-# spawns install_dir/playwright/node.exe + dist/cli.js on Start; the device
-# uses its own Edge (--browser msedge), so no Chromium is bundled.
-# The bundle is repacked on every run (a playwright version bump or a
-# manager.rs change must reach devices on the next installer).
+# spawns install_dir/playwright/node.exe + the package's cli.js (at the
+# package ROOT — 0.0.79 has no dist/; verified against the npm tarball).
+# The device uses its own Edge (--browser msedge), so no Chromium is
+# bundled and PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD avoids pulling Linux
+# browsers on this build host. Repacked on every run.
 prepare_playwright() {
   local out="$ROOT/agent/deploy/vale-playwright.zip"
   local work
   work="$(mktemp -d)"
   echo "  preparing playwright bundle..."
-  # 1. node.exe (Windows x64, LTS 20+) — pinned; the updater requires the
-  #    exact bundled runtime to match manager.rs expectations.
+  # 1. node.exe (Windows x64, LTS 20+) — pinned.
   local node_ver="v20.18.0"
   curl -fsS -m 300 -o "$work/node.zip" \
     "https://nodejs.org/dist/$node_ver/node-$node_ver-win-x64.zip"
   ( cd "$work" && unzip -q node.zip && mv "node-$node_ver-win-x64" node )
-  # 2. @playwright/mcp + deps (npm pack downloads only the package; a plain
-  #    `npm install` in the workdir pulls the full tree with the right
-  #    versions). Dist-tag latest — the manager was verified against 0.0.79.
+  # 2. @playwright/mcp@0.0.79 + deps (flat node_modules). The postinstall
+  #    would download Linux browsers — skip (the manager runs --browser
+  #    msedge, and browsers are never shipped).
   ( cd "$work" \
-      && npm install --no-audit --no-fund @playwright/mcp@0.0.79 >/dev/null 2>&1 )
-  # 3. layout: playwright/node.exe + playwright/dist/cli.js + node_modules
+      && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund @playwright/mcp@0.0.79 >/dev/null 2>&1 )
+  # 3. layout: playwright/{node.exe, node_modules/} — the whole flat tree,
+  #    including node_modules/@playwright/mcp itself (cli.js + index.js +
+  #    package.json live there; cli.js requires './package.json' and
+  #    'playwright-core' from the flattened deps).
   mkdir -p "$work/playwright"
   mv "$work/node/node.exe" "$work/playwright/"
-  ( cd "$work/node_modules/@playwright/mcp" \
-      && cp -r dist "$work/playwright/dist" \
-      && mkdir -p "$work/playwright/node_modules/@playwright/mcp" \
-      && cp -r node_modules "$work/playwright/node_modules/@playwright/mcp/" 2>/dev/null || true )
-  # npm's flat node_modules — keep the whole tree (playwright-core etc. are
-  # required at runtime).
   cp -r "$work/node_modules" "$work/playwright/node_modules"
-  rm -rf "$work/playwright/node_modules/@playwright/mcp" 2>/dev/null || true
-  mkdir -p "$work/playwright/node_modules/@playwright/mcp"
-  cp -r "$work/node_modules/@playwright/mcp/dist" "$work/playwright/node_modules/@playwright/mcp/"
-  # 4. zip it
+  # 4. sanity: the entry the manager spawns must exist.
+  if [ ! -f "$work/playwright/node_modules/@playwright/mcp/cli.js" ]; then
+    echo "  !! playwright bundle missing cli.js — npm install failed?"
+    rm -rf "$work"
+    exit 1
+  fi
+  # 5. zip it
   ( cd "$work" && zip -r -q "$out" playwright )
   rm -rf "$work"
   echo "  staged vale-playwright.zip ($(du -h "$out" | cut -f1))"
@@ -132,7 +132,8 @@ cp "$VALEEXE" "$TRAYEXE" \
    "$ROOT/agent/deploy/fix-tunnel.ps1" \
    "$ROOT/agent/deploy/vale-agent-install.nsi" \
    "$ROOT/agent/deploy/vale-agent.ico" \
-   "$ROOT/index/public/vale-agent/vale-browser-control.zip" "$STAGE/"
+   "$ROOT/index/public/vale-agent/vale-browser-control.zip" \
+   "$ROOT/agent/deploy/vale-playwright.zip" "$STAGE/"
 
 echo "=== building ValeAgent-Setup.exe (makensis) ==="
 (cd "$STAGE" && NSISDIR="$NSISDIR" "$MAKENSIS" vale-agent-install.nsi >/dev/null 2>&1) \
@@ -160,6 +161,9 @@ DEST="$ROOT/index/public/vale-agent"
 cp "$STAGE/ValeAgent-Setup.exe" "$DEST/ValeAgent-Setup.exe"
 cp "$VALEEXE" "$DEST/vale-agent.exe"
 cp "$TRAYEXE" "$DEST/vale-tray.exe"
+# round-136: the playwright bundle must reach BOTH install paths — NSIS
+# (staged above) and the irm script-install (downloads it from the site).
+cp "$ROOT/agent/deploy/vale-playwright.zip" "$DEST/vale-playwright.zip"
 # Refresh the gateway's code-viewer mirror of the worker source — the public
 # /code/ viewer was drifting 1000+ lines behind live src with no pipeline step.
 # Sync ALL viewer files (round-63): the original list missed
