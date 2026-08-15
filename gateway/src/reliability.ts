@@ -155,7 +155,14 @@ export class BreakerDO {
         count += 1;
         if (count >= BREAKER_FAIL_THRESHOLD) {
           await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
-          await this.state.storage.delete("fail");
+          // round-118: the old code DELETED 'fail' here — after the degrade
+          // window the circuit closed with a zeroed count, so a dead channel
+          // needed 3 FRESH probe failures (3 x full upstream timeout, ~6 min
+          // of 120s hangs) to re-trip. The half-open probe must re-trip on
+          // ONE failure (the design comment says 're-trips on failure').
+          // Keep 'fail' as the opened-state marker; /reset clears it only
+          // after two genuine successes.
+          await this.state.storage.put("fail", { count, firstAt });
         } else {
           await this.state.storage.put("fail", { count, firstAt });
         }
