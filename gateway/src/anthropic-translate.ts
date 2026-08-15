@@ -199,6 +199,12 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
         buffer += decoder.decode(value, { stream: true });
         // SSE events are separated by blank lines; a data line may be split across
         // read chunks, so only consume complete events.
+        // round-116: the old parser split ONLY on "\n\n" — an SSE-compliant
+        // CRLF stream (separators "\r\n\r\n", which several upstreams use)
+        // never matched, so no event ever parsed and the whole response
+        // became "upstream returned an empty/non-SSE stream" (or a merged
+        // mid-answer drop on mixed line endings). Normalize CRLF → LF first.
+        buffer = buffer.replace(/\r\n/g, "\n");
         let idx;
         while ((idx = buffer.indexOf("\n\n")) !== -1) {
           const raw = buffer.slice(0, idx);
@@ -211,20 +217,17 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           try { chunk = JSON.parse(payload); } catch { continue; }
           encoderStream.push(chunk);
           const events = encoderStream.take();
-          // round-97: the old `if (events.length) { enqueue; return; }`
-          // returned after the FIRST output-producing event, leaving the
-          // rest of this read's buffer unprocessed until the next read —
-          // and the FINAL read's remaining events were silently dropped
-          // (finish() only rescued the first data: line). Continue draining
-          // the whole buffer instead.
-          // round-98: drain the whole buffer but keep per-pull backpressure —
-          // enqueue() never waits, so an unbounded drain lets one pull()
-          // buffer the ENTIRE upstream response in the stream queue when the
-          // client socket is slow. Yield to the consumer after each enqueue
-          // by awaiting a microtask tick; a slow client then paces us.
           if (events.length) {
+            // round-116: real backpressure. The old `await Promise.resolve()`
+            // after each enqueue did NOT pace the consumer — pull() is not
+            // re-entered while an enqueued item is unconsumed at the default
+            // HWM=1, but the loop kept draining the WHOLE upstream buffer
+            // into the stream queue in one pull, so a slow client let one
+            // pull() buffer the entire upstream response in memory. Emit one
+            // event batch per pull() and RETURN — the stream's desiredSize
+            // gates the next pull, pacing the reader.
             controller.enqueue(encoder.encode(events));
-            await Promise.resolve();
+            return;
           }
         }
       }
@@ -247,6 +250,8 @@ export class AnthropicStreamEncoder {
   toolIdx: number | undefined = undefined;   // current OpenAI tool index (parallel calls)
   nextToolBlockIdx = 0;  // running content-block index for tool blocks
   toolBlockIdxMap: Record<number, number> = {};  // tool index → its content-block index
+  toolMeta: Record<number, { id: string; name: string }> = {};  // tool index → real id/name (round-116)
+  startedBlocks: Set<number> = new Set(); // content-block indices whose start was emitted (round-116)
   openToolInputs: Record<number, string> = {};   // tool index → accumulated arguments string
   // round-96: content-block indices already stopped by a type-switch close —
   // finish() must NOT emit a duplicate content_block_stop for them, but the
@@ -279,10 +284,10 @@ export class AnthropicStreamEncoder {
 
   push(chunk: any): void {
     if (this.finished) return;
-    const choice = chunk.choices?.[0];
-    if (!choice) return;
-    const delta = choice.delta || {};
-    if (!this.id && chunk.id) this.id = chunk.id;
+    // round-116: capture usage BEFORE the choice guard — OpenAI streams end
+    // with a usage-only chunk ({choices:[], usage:{...}}) that the old
+    // `if (!choice) return` dropped entirely, so the client never received
+    // input/cache token counts (message_start fired with zeros).
     if (chunk.usage) {
       this.usage.input_tokens = chunk.usage.prompt_tokens || 0;
       this.usage.output_tokens = chunk.usage.completion_tokens || 0;
@@ -291,6 +296,10 @@ export class AnthropicStreamEncoder {
       this.usage.cache_read_input_tokens =
         chunk.usage.prompt_cache_hit_tokens || chunk.usage.prompt_tokens_details?.cached_tokens || 0;
     }
+    const choice = chunk.choices?.[0];
+    if (!choice) return;
+    const delta = choice.delta || {};
+    if (!this.id && chunk.id) this.id = chunk.id;
     if (choice.finish_reason) this.lastStopReason = STREAM_STOP_MAP[choice.finish_reason] || "end_turn";
 
     if (delta.reasoning_content) {
@@ -322,6 +331,18 @@ export class AnthropicStreamEncoder {
     }
     // The client expects message_start to be the first event.
     if (!this.started) this.emitStart();
+    // round-116: emit any DELAYED content_block_start (the new-tool branch
+    // waits for the id/name chunk; a stream that ended before it arrived
+    // would otherwise close a block that was never opened — protocol error).
+    for (const [idx, bi] of Object.entries(this.toolBlockIdxMap)) {
+      const meta = this.toolMeta[Number(idx)];
+      if (!meta || this.stoppedToolBlocks.has(bi) || this.startedBlocks.has(bi)) continue;
+      this.pending.push(sse("content_block_start", {
+        type: "content_block_start",
+        index: bi,
+        content_block: { type: "tool_use", id: meta.id || "", name: meta.name || "unknown", input: {} },
+      }));
+    }
     // Close EVERY still-open tool block (parallel calls leave several open).
     // round-96: skip blocks already stopped by a type-switch (they'd get a
     // duplicate content_block_stop — the round-95 bug).
@@ -342,7 +363,12 @@ export class AnthropicStreamEncoder {
     this.pending.push(sse("message_delta", {
       type: "message_delta",
       delta: { stop_reason: this.lastStopReason, stop_sequence: null },
-      usage: { output_tokens: this.usage.output_tokens },
+      // round-116: the old delta carried ONLY output_tokens — input and
+      // cache-read were dropped, so the client's cache-hit tracking read 0%
+      // and its usage accounting was wrong (the non-stream path delivers
+      // all three). The usage-only final chunk is now captured in push()
+      // and reported here.
+      usage: { ...this.usage },
     }));
     this.pending.push(sse("message_stop", { type: "message_stop" }));
     return this.take();
@@ -439,6 +465,16 @@ export class AnthropicStreamEncoder {
     // round-19). text/thinking blocks stay on the running blockIndex and
     // close before a tool block opens.
     if (this.blockType !== null && this.blockType !== "tool_use") this.closeBlock();
+    // round-116: track the tool's real id/name on the map — an upstream
+    // (or the exit proxy) can stream {index, function:{arguments}} FIRST and
+    // the id/name on a LATER chunk. The old code emitted content_block_start
+    // with id:""/name:"unknown" on that first chunk and then DROPPED the
+    // late id (map-hit branch ignored it) / stored the name in a write-only
+    // field — the client saw a tool_use named "unknown" with an empty id and
+    // could never match the tool_result round-trip. The start is now
+    // DELAYED until a chunk carries the id or name (or until finish()).
+    const meta = this.toolBlockIdxMap[idx] !== undefined;
+    if (meta && (id || name)) this.toolMeta[idx] = { id: id || this.toolMeta[idx]?.id || "", name: name || this.toolMeta[idx]?.name || "" };
     // If this tool already has a block, route to it (interleaved streams
     // return to tool 0 after tool 1 started) — never re-open.
     if (this.toolBlockIdxMap[idx] !== undefined) {
@@ -472,14 +508,26 @@ export class AnthropicStreamEncoder {
     this.toolBlockIdxMap[idx] = toolBlockIdx;
     this.blockIndex = toolBlockIdx;
     this.blockType = "tool_use";
-    this.pending.push(sse("content_block_start", {
-      type: "content_block_start",
-      index: this.blockIndex,
-      content_block: { type: "tool_use", id: id || "", name: name || "unknown", input: {} },
-    }));
-    if (name) {
-      // zen may repeat the name on later chunks; emit a partial_json delta only for args.
-      this.toolName = name;
+    // round-116: remember this tool's real id/name even when they arrive on
+    // a LATER chunk — used to re-open with the correct name at finish() if
+    // the start went out as "unknown".
+    if (id || name) this.toolMeta[idx] = { id: id || "", name: name || this.toolMeta[idx]?.name || "" };
+    // round-116: delay content_block_start until the id or name is known —
+    // an upstream streaming {index, arguments} first would otherwise lock
+    // the block to id:""/name:"unknown" forever (the map-hit branch dropped
+    // the late id). The args accumulate in openToolInputs meanwhile; the
+    // start (with the real id/name) is emitted on the first chunk that
+    // carries them, or at finish() with whatever arrived.
+    const haveMeta = !!(id || name || this.toolMeta[idx]?.name);
+    if (haveMeta) {
+      const m = this.toolMeta[idx] || { id: "", name: "" };
+      this.pending.push(sse("content_block_start", {
+        type: "content_block_start",
+        index: this.blockIndex,
+        content_block: { type: "tool_use", id: m.id || id || "", name: m.name || name || "unknown", input: {} },
+      }));
+      this.startedBlocks.add(this.blockIndex);
+      if (name) this.toolName = name;
     }
     if (argsDelta) {
       const cur = this.openToolInputs[idx] || "";

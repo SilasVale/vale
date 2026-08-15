@@ -266,7 +266,7 @@ test("og translate success resets the breaker failure count", async () => {
   assert.equal(resets.length, 1); // success → count reset
 });
 
-test("og translate fast 500: NOT retried (billable POST), 502, breaker NOT tripped", async () => {
+test("og translate fast 500: NOT retried (billable POST), 500 passthrough, breaker NOT tripped", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips, timeout: 1000 });
   let n = 0;
@@ -275,7 +275,9 @@ test("og translate fast 500: NOT retried (billable POST), 502, breaker NOT tripp
   );
   assert.equal(n, 1); // single attempt — re-sending would double-bill
   assert.equal(trips.length, 0);
-  assert.equal(res.status, 502);
+  // round-116: the status is now preserved (was hardcoded 502) so the client
+  // can distinguish 5xx/429 and back off properly.
+  assert.equal(res.status, 500);
 });
 
 // ── ds passthrough retries (absorb fast 5xx/429, never slow failures) ──
@@ -333,7 +335,7 @@ test("og-native passthrough: missing OPENCODE_GO_API_KEY → 502 config_error (n
   assert.match(body.error.message, /OPENCODE_GO_API_KEY not configured/);
 });
 
-test("og translate: 500 → 502 single attempt (billable POST not retried)", async () => {
+test("og translate: 500 → 500 single attempt (billable POST not retried)", async () => {
   const trips = [];
   const { env, token } = gwEnv({ trips, timeout: 1000 });
   let n = 0;
@@ -341,7 +343,8 @@ test("og translate: 500 → 502 single attempt (billable POST not retried)", asy
     post(env, token, { model: "og/mimo-v2.5", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(n, 1); // single attempt — re-sending would double-bill
-  assert.equal(res.status, 502);
+  // round-116: status preserved (was 502).
+  assert.equal(res.status, 500);
   assert.equal(trips.length, 0); // fast 5xx must not trip the breaker
 });
 
