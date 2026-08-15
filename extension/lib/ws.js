@@ -86,6 +86,19 @@ async function connectInner() {
     const j = await res.json().catch(() => ({}));
     if (!state.pairedDevice) return; // unpaired while fetching the ticket
     if (!j.ticket) {
+      // round-116: a 401 means the plugin token is DEAD server-side — the
+      // 30-day link expired or the console revoked it (getPluginByToken
+      // returns null forever; a deleted/expired token can never become
+      // valid again). Retrying is pointless: the old loop reconnected at
+      // 1s backoff (onopen reset it) for the rest of the browser session,
+      // firing a doomed fetch every ~30s forever. Enter a terminal
+      // error state and stop — only a fresh re-pair can recover.
+      if (res.status === 401) {
+        setStateError(`pairing expired or revoked (${j.error || res.status}) — unpair and re-pair`);
+        state.wsState = "disconnected";
+        stopHeartbeat();
+        return;
+      }
       setStateError(`ws-ticket failed (${res.status}${j.error ? ": " + j.error : ""})`);
       scheduleReconnect();
       return;

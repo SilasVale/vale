@@ -227,6 +227,11 @@ Section "Install" SEC01
     ; (user + systemprofile configs), fixes config.yaml name, restarts
     ; cloudflared. Idempotent; safe on fresh installs.
     nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\fix-tunnel.ps1"'
+    ; round-116: failure auto-restart (idempotent) — a crashed cloudflared
+    ; used to leave the device offline until a human restarted it. Re-assert
+    ; the SCM recovery action on every upgrade (the service survives
+    ; upgrades, so the setup-script path never runs again).
+    nsExec::ExecToLog 'cmd /c sc failure Cloudflared reset= 86400 actions= restart/5000/restart/10000/restart/30000 2>NUL'
     ; Loopback bind on upgrade (security, 1.0.63+): an OLD config.yaml still
     ; says host: 0.0.0.0 (the embedded default before 1.0.63) and setup.ps1
     ; only rewrites it on fresh installs — without this, an upgrade keeps

@@ -334,7 +334,10 @@ $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 # ExecutionTimeLimit 0 = never kill the task. Default is 72h — the server
 # (and the tray below) would silently stop after 3 days until a reboot.
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
+# round-116: restart on failure — a crashed agent (panic, OOM kill) used to
+# leave the device dark until reboot; the SCM restarts it (3 tries, 1 min
+# apart). ExecutionTimeLimit 0 = never kill the task.
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName "ValeAgent" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 if (-not (Get-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue)) {
     throw "failed to register scheduled task ValeAgent"
@@ -438,11 +441,16 @@ $oldEAP2 = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 sc.exe start Cloudflared 2>$null
 $scCode = $LASTEXITCODE
-$ErrorActionPreference = $oldEAP2
 # 1056 = ERROR_SERVICE_ALREADY_RUNNING. cloudflared's `service install`
 # auto-starts the service, so a redundant start is a benign no-op — treat it
 # as success, not a failure (this used to abort a fully successful install).
 if ($scCode -ne 0 -and $scCode -ne 1056) { throw "cloudflared service failed to start (exit $scCode)" }
+# round-116: failure auto-restart — a crashed cloudflared (memory leak,
+# network blip, process killed) used to take the device OFFLINE until a
+# human restarted the service. Configure the SCM to restart it (5s / 10s /
+# 30s backoff, counter resets after 24h). Idempotent.
+sc.exe failure Cloudflared reset= 86400 actions= restart/5000/restart/10000/restart/30000 2>$null
+$ErrorActionPreference = $oldEAP2
 
 Start-Sleep -Seconds 2
 # 1.0 renamed auth_token → device_token; both may appear depending on the

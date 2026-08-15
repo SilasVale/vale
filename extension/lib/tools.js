@@ -182,7 +182,7 @@ export async function runTool(tool, params) {
       }
       const { data } = await send(tabId, "Page.captureScreenshot", shotParams);
       const img = { type: "image", data, mimeType: "image/png" };
-      if (clipped) (img as any).note = "full_page clipped to viewport (page >8000px tall)";
+      if (clipped) img.note = "full_page clipped to viewport (page >8000px tall)";
       return { image: img };
     }
     case "browser_click": {
@@ -211,7 +211,7 @@ export async function runTool(tool, params) {
         // round-84: typing into a readonly/disabled field silently did
         // nothing — fail loudly instead so the agent knows to pick another
         // element (the snapshot never exposed readonly).
-        if ((target as any).readOnly || (target as any).disabled || (target as any).ariaDisabled === "true") {
+        if (target.readOnly || target.disabled || target.ariaDisabled === "true") {
           return { readonly: true };
         }
         return document.activeElement === target ? true : { active: (document.activeElement?.tagName || '') + '#' + (document.activeElement?.id || '') };
