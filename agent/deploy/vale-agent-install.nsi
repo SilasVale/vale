@@ -121,11 +121,13 @@ Section "Install" SEC01
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
-  ; round-138/139: kill ONLY the bundled playwright node — taskkill /IM
-  ; node.exe would force-kill every Node process on the device (dev
-  ; servers, npm, monitoring agents). Filter by command line (the manager
-  ; spawns install_dir\playwright\node.exe with the cli.js path).
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name=''node.exe''\" | Where-Object { $_.CommandLine -like ''*playwright*'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"'
+  ; round-138/139/140: kill ONLY the bundled playwright node. NSIS has NO
+  ; quote-doubling escape — '' inside a ' string splits it (the R139 version
+  ; compiled into 5 tokens and the kill never ran). Backtick-delimit the
+  ; nsExec string so ' and " pass through. The filter anchors on the
+  ; bundle's executable path (\playwright\node.exe) so a user's own
+  ; npx playwright runs are untouched.
+  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*\playwright\node.exe*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgentTray 2>NUL'
   ; Legacy 0.8.x autostart leftovers. The ValeCommand service (sc create from
@@ -307,9 +309,9 @@ Section "Uninstall"
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
-  ; round-138/139: kill ONLY the bundled playwright node (command-line
-  ; filtered — /IM node.exe would kill every Node process on the device).
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name=''node.exe''\" | Where-Object { $_.CommandLine -like ''*playwright*'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"'
+  ; round-138/139/140: kill ONLY the bundled playwright node (backtick
+  ; delimited — NSIS '' is not an escape; anchored on \playwright\node.exe).
+  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*\playwright\node.exe*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
   ; Stop and remove the scheduled tasks + cloudflared service (best effort)
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgentTray 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgentTray /F 2>NUL'

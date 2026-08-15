@@ -112,10 +112,12 @@ Write-Host "`n[1/7] vale-agent binary"
 # keep the OLD server serving the device after this install.
 Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
-# round-138/139: kill ONLY the bundled playwright node (command-line
-# filtered — Get-Process node would kill every Node process on the device).
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-    Where-Object { $_.CommandLine -like '*playwright*' } |
+# round-138/139/140: kill ONLY the bundled playwright node (command-line
+# anchored on the bundle path — Get-Process node would kill every Node
+# process; -ErrorAction SilentlyContinue so a CIM failure degrades to a
+# no-op instead of aborting setup under EAP=Stop).
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*\playwright\node.exe*' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 # Legacy 0.8.x autostart: the ValeCommand service + tasks. The SCM starts the
 # service before the ValeAgent boot task at every restart and wins the port,
