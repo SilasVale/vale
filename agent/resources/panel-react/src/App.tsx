@@ -133,7 +133,11 @@ export function App() {
             </div>
           </div>
         ) : (
-          sessions.sessions.map((s) => <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />)
+          // round-113: closed sessions do NOT render a pane — the R99
+          // unregister fix was dead code because closed panes never
+          // unmounted, leaving their write callbacks in the 5s sync loop's
+          // polling set forever. Unmounting releases the callback.
+          sessions.sessions.filter((s) => !s.closed).map((s) => <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />)
         )}
       </div>
       <StatusBar sessions={sessions.sessions} status={sessions.status} sseState={sseState} />

@@ -708,7 +708,18 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // OOM'd the agent. The tail is kept (most useful to the
                     // model); `truncated` is set so the caller knows.
                     const MAX_SESSION_BYTES: usize = 1_048_576;
-                    let mut append_result = |result: &mut String, truncated: &mut bool, s: &str| {
+                    let append_result = |result: &mut String, truncated: &mut bool, s: &str| {
+                        // round-113: a SINGLE chunk larger than the cap (a
+                        // burst between 50ms polls, up to the whole buffer)
+                        // used to bypass the guard — it was pushed in full
+                        // and only trimmed on the NEXT append. Trim `s`
+                        // itself first.
+                        let mut s = s;
+                        if s.len() > MAX_SESSION_BYTES {
+                            *truncated = true;
+                            let keep = s.floor_char_boundary(MAX_SESSION_BYTES);
+                            s = &s[s.len() - keep..];
+                        }
                         if result.len() + s.len() > MAX_SESSION_BYTES {
                             *truncated = true;
                             let drop = result.len() + s.len() - MAX_SESSION_BYTES;

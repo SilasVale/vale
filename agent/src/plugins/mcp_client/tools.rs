@@ -121,6 +121,12 @@ pub fn mcp_client_connect() -> ToolDef {
             // the session down for real (round-99). The spawned waiting()
             // task keeps the session alive until then.
             let cancel = running.cancellation_token();
+            // round-113: `cancel(self)` consumes the wrapper and it has no
+            // Clone — take fresh wrappers (sharing the same inner token)
+            // before `running` is moved into the spawn task below, one per
+            // consumer: the two list-error closures and PeerSession itself.
+            let cancel_list_timeout = running.cancellation_token();
+            let cancel_list_err = running.cancellation_token();
             tokio::spawn(async move { let _ = running.waiting().await; });
 
             let tools = tokio::time::timeout(
@@ -128,9 +134,28 @@ pub fn mcp_client_connect() -> ToolDef {
                 peer.list_all_tools(),
             )
             .await
-            .map_err(|_| DeviceError::Internal { message: "list tools timed out after 30s".into() })?
-            .map_err(|e| DeviceError::Internal { message: format!("list tools failed: {e}") })?;
-            *PEER.lock().await = Some(PeerSession { peer, cancel });
+            .map_err(|_| {
+                // round-113: the session was opened (serve() succeeded) but
+                // listing failed — cancel it or the remote session leaks
+                // forever (round-99 fixed disconnect, not this path).
+                cancel_list_timeout.cancel();
+                DeviceError::Internal { message: "list tools timed out after 30s".into() }
+            })?
+            .map_err(|e| {
+                cancel_list_err.cancel();
+                DeviceError::Internal { message: format!("list tools failed: {e}") }
+            })?;
+            // round-113: re-check under the lock — a concurrent connect may
+            // have won between the early check and here; last-writer-wins
+            // would orphan this session's task.
+            {
+                let mut guard = PEER.lock().await;
+                if guard.is_some() {
+                    cancel.cancel();
+                    return Ok(json!({ "status": "already_connected", "url": url }));
+                }
+                *guard = Some(PeerSession { peer, cancel });
+            }
 
             Ok(json!({
                 "status": "connected",
