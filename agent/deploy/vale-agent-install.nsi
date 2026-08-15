@@ -304,5 +304,15 @@ Section "Uninstall"
   Delete "$INSTDIR\install-result.txt"
   Delete "$INSTDIR\regkey.txt"
   Delete "$INSTDIR\uninstall.exe"
+  ; round-129: uninstall left credentials + bundle junk behind — config.yaml
+  ; holds the device auth token, fix-tunnel.ps1 / vale-browser-control.zip /
+  ; the extension dir were never removed, and RMDir only removes EMPTY dirs
+  ; (so $INSTDIR persisted non-empty). Phase 3 adds playwright/ (~65MB) to
+  ; the same leak — clean all of it.
+  Delete "$INSTDIR\config.yaml"
+  Delete "$INSTDIR\fix-tunnel.ps1"
+  Delete "$INSTDIR\vale-browser-control.zip"
+  RMDir /r "$INSTDIR\extension"
+  RMDir /r "$INSTDIR\playwright"
   RMDir "$INSTDIR"
 SectionEnd
