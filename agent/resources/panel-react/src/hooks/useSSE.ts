@@ -181,12 +181,18 @@ export function useSSE(
           // blackholed (NAT/tunnel drop, device power loss — no FIN/RST),
           // and reader.read() would hang forever. Race it against a timer
           // and let the outer catch reconnect.
-          const readWithTimeout = () => Promise.race([
-            reader.read(),
-            new Promise<never>((_, reject) => {
-              setTimeout(() => reject(new Error("SSE read timeout")), 90_000);
-            }),
-          ]);
+          const readWithTimeout = () => {
+            // round-139: clear the timer when the race settles — the R138
+            // version left one 90s timer pending per read() (thousands under
+            // active output, surviving teardown/reconnects).
+            let t: ReturnType<typeof setTimeout>;
+            return Promise.race([
+              reader.read(),
+              new Promise<never>((_, reject) => {
+                t = setTimeout(() => reject(new Error("SSE read timeout")), 90_000);
+              }),
+            ]).finally(() => clearTimeout(t!));
+          };
           while (alive) {
             const { done, value } = await readWithTimeout();
             if (done) break;

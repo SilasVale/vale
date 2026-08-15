@@ -74,7 +74,7 @@ pub struct BrowserConfig {
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path)?;
-        let mut cfg: Config = serde_yaml::from_str::<Config>(&content)?;
+        let cfg: Config = serde_yaml::from_str::<Config>(&content)?;
         // round-138: `port: 0` parses as u16 but binds an OS EPHEMERAL port —
         // the server reports healthy while cloudflared's fixed 18080 ingress
         // connects to nothing, so the device 502s silently with no diagnostics
@@ -161,5 +161,26 @@ impl Default for TerminalConfig {
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self { page_load_timeout_secs: 30, headless_executable: None, headless_cdp_port: None }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn load_rejects_port_zero() {
+        let dir = std::env::temp_dir().join(format!("vale-cfg-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.yaml");
+        let mut f = std::fs::File::create(&p).unwrap();
+        writeln!(f, "server:").unwrap();
+        writeln!(f, "  host: \"127.0.0.2\"").unwrap();
+        writeln!(f, "  port: 0").unwrap();
+        let r = Config::load(&p);
+        assert!(r.is_err(), "port: 0 must be rejected, got {r:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
