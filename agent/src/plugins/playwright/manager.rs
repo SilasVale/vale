@@ -148,7 +148,10 @@ impl PlaywrightManager {
             .arg(&entry)
             .arg("--port").arg(port.to_string())
             .arg("--browser").arg("msedge")
-            .arg("--allowed-hosts").arg("127.0.0.1")
+            // round-131: playwright-mcp 的 Host 比较是 RAW 串含端口 —
+            // 非默认端口 9229 上必须写 "127.0.0.1:9229"(写 "127.0.0.1"
+            // 永不匹配,所有请求 403,start 永远失败)。含 localhost 同义。
+            .arg("--allowed-hosts").arg("127.0.0.1:9229,localhost:9229")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -172,6 +175,9 @@ impl PlaywrightManager {
             let probe = client
                 .post(format!("http://127.0.0.1:{port}/mcp"))
                 .header("content-type", "application/json")
+                // round-131: MCP 传输要求 Accept: application/json,
+                // text/event-stream — 缺了返回 406,探测永远失败。
+                .header("accept", "application/json, text/event-stream")
                 .body(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"vale-agent","version":"1"}}}"#)
                 .send()
                 .await;

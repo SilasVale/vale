@@ -96,6 +96,14 @@ export function App() {
   const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
   const sessionView: SessionView = (sessions.activeSid && sessionViews[sessions.activeSid]) || "terminal";
   const trajOpen = !!sessions.activeSid && sessionView === "trajectory";
+  // round-131: refit the xterm when the terminal container un-hides (the
+  // refit effect skips while display:none) — a window resize while in the
+  // trajectory view otherwise leaves a stale grid on switch-back.
+  const prevTraj = useRef(trajOpen);
+  if (prevTraj.current && !trajOpen) {
+    window.dispatchEvent(new Event("resize"));
+  }
+  prevTraj.current = trajOpen;
 
   // A selected command card belongs to the sessions view — leaving it drops
   // the details column (a stale card would linger over the plugins page).
@@ -222,7 +230,9 @@ export function App() {
           {/* round-admin-ui Task 5: trajectory mode hides the terminal
               CONTAINER (inline display:none), not the panes — xterm instances
               stay mounted and keep streaming, so switching back restores the
-              exact terminal state. */}
+              exact terminal state. round-131: the refit effect skips while
+              hidden — fire a resize when un-hiding so the grid (local xterm +
+              backend cols/rows) refits to the now-visible size. */}
           <div id="term-container" style={trajOpen ? { display: "none" } : undefined}>
             {sessions.sessions.length === 0 ? (
               <div id="empty-state">

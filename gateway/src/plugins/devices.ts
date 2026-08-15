@@ -506,6 +506,13 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
     if (outHeaders.has("content-length")) {
       outHeaders.set("content-length", String(new TextEncoder().encode(rewritten).length));
     }
+    // round-131: the proxied panel runs at the CONSOLE origin under the
+    // admin session — a compromised/rogue device's HTML/JS could otherwise
+    // fetch same-origin admin APIs (/api/devices/*/mcp raw tokens, /api/me)
+    // with the session cookie. Sandbox the device content: scripts still run
+    // (the panel needs them) but cannot reach the opener's origin, cookies,
+    // or top navigation.
+    outHeaders.set("content-security-policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' http: https:; connect-src http: https:; style-src 'unsafe-inline' http: https:; img-src data: http: https:;");
     return new Response(rewritten, { status: resp.status, headers: outHeaders });
   }
 

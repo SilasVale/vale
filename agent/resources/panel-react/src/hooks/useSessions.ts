@@ -103,12 +103,17 @@ export function useSessions(connected: boolean) {
       const sid = await callTool("terminal_open", { kind, target, rows: 30, cols: 120, ...extra });
       if (typeof sid !== "string" || !sid) throw new Error("terminal_open returned no sid");
       setSessions((prev) => {
-        if (prev.some((s) => s.sid === sid)) return prev;
+        // round-131: rebuild the entry UNCONDITIONALLY — the old
+        // `prev.some(...) return prev` guard let a 3s poll tick (which
+        // registered the session with active:false between the server's
+        // open and this setSessions) skip the activation, leaving the pane
+        // display:none (round-86 bug class). Filtering any existing entry
+        // also clears a stale tombstone from a reordered poll response.
         const label = kind === "ssh" ? target.split("@").pop() || target : kind === "serial" ? target.split("?")[0] : target || "shell";
         // round-86: the new session is the ACTIVE one — the old active:false
         // + setActiveSid(sid) never set the session's own flag, so the pane
         // stayed display:none (blank terminal area).
-        return [...prev.map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null }];
+        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null }];
       });
       setActiveSid(sid);
       return sid;

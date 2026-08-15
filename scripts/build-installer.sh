@@ -44,9 +44,13 @@ done
 # otherwise always be newer than a freshly-built exe, blocking every build.
 # NOTE: *.nsi is intentionally excluded — the NSIS script is independent of
 # the exe build (editing it must not require a rebuild).
+# round-131: deploy/*.ps1|*.bat are re-staged fresh into the installer by
+# THIS script at makensis time — their mtime vs the exe is meaningless, and
+# gating on them wedges the pipeline (editing a ps1 demands an exe rebuild
+# that nothing changes). Only rs/toml sources that actually feed the exe.
 NEWEST_IN="$(find "$ROOT/agent/src" "$ROOT/agent/vale-command-core" "$ROOT/agent/vale-tray" \
-  "$ROOT/agent/Cargo.toml" "$ROOT/agent/deploy" \
-  \( -name '*.rs' -o -name '*.toml' -o -name '*.ps1' -o -name '*.bat' \) \
+  "$ROOT/agent/Cargo.toml" \
+  \( -name '*.rs' -o -name '*.toml' \) \
   -newer "$VALEEXE" -print | head -1)"
 if [ -n "$NEWEST_IN" ]; then
   echo "!! $NEWEST_IN is newer than the release vale-agent.exe — run ./scripts/build.sh agent (release) first"
