@@ -65,9 +65,10 @@ fn bundled_node() -> Result<PathBuf, DeviceError> {
     Ok(p)
 }
 
-/// 捆绑的 playwright-mcp 入口脚本(dist/cli.js)。
+/// 捆绑的 playwright-mcp 入口脚本 — 0.0.79 的 bin 是包根 cli.js
+/// (无 dist/;cli.js 相对 require 同目录的 package.json)。
 fn bundled_mcp_entry() -> Result<PathBuf, DeviceError> {
-    let p = install_dir().join("playwright").join("dist").join("cli.js");
+    let p = install_dir().join("playwright").join("node_modules").join("@playwright").join("mcp").join("cli.js");
     if !p.exists() {
         return Err(DeviceError::Internal {
             message: format!(
