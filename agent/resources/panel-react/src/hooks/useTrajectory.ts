@@ -95,8 +95,9 @@ export function groupRounds(events: CommandEvent[]): TrajRound[] {
   return rounds;
 }
 
-/** Poll the session's audit log and group it into trajectory rounds. */
-export function useTrajectory(sid: string | null, pollMs = 2000): TrajRound[] {
-  const events = useSessionEvents(sid, pollMs);
+/** Group raw audit events into trajectory rounds. round-128: the caller
+ *  passes the events from the SHARED useSessionEvents poll (App-level) so the
+ *  trajectory tab does not run a second full-log fetch every 2s. */
+export function useTrajectory(events: CommandEvent[]): TrajRound[] {
   return useMemo(() => groupRounds(events), [events]);
 }

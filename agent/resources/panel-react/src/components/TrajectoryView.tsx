@@ -85,8 +85,10 @@ function EventRow({ ev }: { ev: CommandEvent }) {
   );
 }
 
-export function TrajectoryView({ sid }: { sid: string }) {
-  const rounds = useTrajectory(sid);
+export function TrajectoryView({ events }: { events: import("../hooks/useCommandEvents").CommandEvent[] }) {
+  // round-128: events come from the App-level shared poll (one fetch per 2s,
+  // not a second independent one).
+  const rounds = useTrajectory(events);
   const [query, setQuery] = useState("");
   const [windowCount, setWindowCount] = useState(ROUNDS_PAGE);
   // Explicit user state: collapsed = rounds the user folded, expanded = rounds
@@ -99,6 +101,7 @@ export function TrajectoryView({ sid }: { sid: string }) {
   const listRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const lastIdsRef = useRef("");
+  const lastGrowthRef = useRef(""); // round-128: newest round's event count (streaming follow)
 
   const needle = query.trim().toLowerCase();
   const searching = needle.length > 0;
@@ -109,14 +112,18 @@ export function TrajectoryView({ sid }: { sid: string }) {
 
   // Terminal-style follow: while the newest round is still running, keep the
   // list at the bottom — but only if the user hasn't scrolled up (same
-  // stick-to-bottom stance as a terminal; the ids guard fires only on new
-  // rounds, so a streaming round's own growth stays put).
+  // stick-to-bottom stance as a terminal).
+  // round-128: the ids guard alone never fired for a STREAMING round (output
+  // growth changes no ids) — track the newest round's event count too, so
+  // new output inside the running round auto-scrolls.
   useEffect(() => {
     if (!listRef.current || searching) return;
     const ids = visible.map((r) => r.id).join(",");
-    if (ids === lastIdsRef.current) return;
-    lastIdsRef.current = ids;
     const newest = visible[visible.length - 1];
+    const growthKey = newest ? `${newest.id}:${newest.events.length}` : "";
+    if (ids === lastIdsRef.current && growthKey === lastGrowthRef.current) return;
+    lastIdsRef.current = ids;
+    lastGrowthRef.current = growthKey;
     if (newest && !newest.ended && stickRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }

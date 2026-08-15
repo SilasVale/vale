@@ -47,6 +47,8 @@ export interface CommandCard {
 // memory bounded; the TAIL wins (the newest output is what the operator
 // needs to see; the audit file on disk still holds the head).
 const MAX_OUTPUT_CHARS = 1_000_000;
+// round-128: tail cap for the raw event array (see setEvents below).
+const MAX_RAW_EVENTS = 20_000;
 const TRUNC_MARK = "\n…[output truncated — older lines dropped]…\n";
 
 /** Map a status event's value to a command end, or null if session-level.
@@ -170,7 +172,13 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
         // watermark and blank the stream — the audit log only grows.
         if (maxSeq <= lastSeqRef.current) return; // nothing new
         lastSeqRef.current = maxSeq;
-        setEvents(evs);
+        // round-128: tail-cap the RAW events — a chatty long-lived session
+        // (serial console ~11.5KB/s → ~40MB/hour) grew browser memory
+        // unbounded and made every 2s tick re-parse the whole log. Keep the
+        // newest window (mirrors the card output cap); older events are
+        // unreachable anyway once the card/round grouping has consumed them.
+        const tail = evs.length > MAX_RAW_EVENTS ? evs.slice(-MAX_RAW_EVENTS) : evs;
+        setEvents(tail);
       } catch { /* transient — keep the last good events, retry next tick */ }
     };
     tick();
@@ -189,5 +197,7 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
 export function useCommandEvents(sid: string | null, pollMs = 2000) {
   const events = useSessionEvents(sid, pollMs);
   const cards = useMemo(() => groupEvents(events), [events]);
-  return { cards };
+  // round-128: expose the raw events so the trajectory view reuses THIS
+  // poll instead of mounting a second one (double fetch every 2s).
+  return { cards, events };
 }
