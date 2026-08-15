@@ -511,16 +511,15 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
     // SecurityError at mount (white screen) and cookies are never sent (all
     // /proxy/* API calls 401). The sandbox is fundamentally incompatible
     // with the panel's same-origin architecture.
-    // ACTUAL INVARIANT (round-133, correcting the misleading R132 comment):
-    // the ADMIN flow (console 打开面板) opens the panel at the DEVICE origin
-    // (https://<hostname>/panel/) where no console cookie is reachable — that
-    // surface is closed. The EXTENSION flow still loads the proxied panel at
-    // a CONSOLE_HOST origin (api.saisi.online is itself a CONSOLE_HOST) — a
-    // compromised device's HTML could read console APIs there. This is an
-    // ACCEPTED limitation: opening a device's panel is an explicit trust
-    // action (the extension only proxies panels of devices the user paired,
-    // and the admin flow goes to the device origin), and the sandbox
-    // alternative breaks the panel entirely.
+    // ACTUAL INVARIANT (round-133/134): the ADMIN 打开面板 flow opens the
+    // panel at the DEVICE origin (https://<hostname>/panel/) where no console
+    // cookie is reachable — that surface is closed. The console-origin proxy
+    // path (/api/devices/<n>/proxy/panel/) remains reachable by BOTH the
+    // extension flow AND an admin visiting it directly; device HTML runs at
+    // a CONSOLE_HOST origin there and could read console APIs. This is an
+    // ACCEPTED trust limitation (opening a device's panel is an explicit
+    // trust action; the sandbox alternative breaks the panel entirely), and
+    // it applies to every entry point of the proxy path.
     return new Response(rewritten, { status: resp.status, headers: outHeaders });
   }
 

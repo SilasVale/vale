@@ -83,8 +83,13 @@ fn config_value(key: &str) -> Option<String> {
 }
 
 /// Server port from config.yaml (server.port), else the default.
+/// round-134: strip quotes like host (a user quoting the port in the
+/// config's own style would otherwise silently fall back to the default).
 fn server_port() -> u16 {
-    config_value("port").and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_PORT)
+    config_value("port")
+        .map(|v| v.trim_matches('"').trim_matches('\'').trim().to_string())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_PORT)
 }
 
 /// Full device token from config.yaml. Prefers the new `device_token:` field,
@@ -240,17 +245,26 @@ fn open_local_terminal() {
 /// (hung child, AV), /Run fails "task is currently running", and a killed
 /// agent stays DOWN silently. Poll the task state before /Run, and retry.
 fn restart_task() {
-    let _ = Command::new("schtasks").args(["/End", "/TN", "ValeAgent"]).output();
+    // round-134: route /End through the logging helper (an access-denied
+    // tray should leave a trail, not a silent no-op).
+    schtasks(&["/End", "/TN", "ValeAgent"]);
     // round-133: poll the AGENT PORT instead of parsing schtasks /Query
     // output — the Status field is localized (Chinese Windows prints
-    // '正在运行', so the old contains("Running") never matched and the
-    // 2s-race returned). The port probe is language-independent and is
-    // exactly the semantic that matters: the agent has stopped serving.
+    // '正在运行'), and the port probe is exactly the semantic that matters:
+    // the agent has stopped serving.
     for _ in 0..20 {
         if !server_running(server_port()) { break; }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    schtasks(&["/Run", "/TN", "ValeAgent"]);
+    // round-134: the port can go down while Task Scheduler still tears the
+    // tree down (hung child) — a single immediate /Run then fails with
+    // 'task is currently running' and the agent stays down. Retry a few
+    // times; failures are logged by the helper.
+    for _ in 0..3 {
+        schtasks(&["/Run", "/TN", "ValeAgent"]);
+        if server_running(server_port()) { break; }
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
 }
 
 /// Full auto-upgrade: check the download server for a newer vale-agent and,

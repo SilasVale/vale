@@ -96,7 +96,12 @@ deploy_worker() {
     [ -n "$dl_url" ] || { echo "  !! manifest has no download URL"; exit 1; }
     live_sha=""
     for _ in 1 2 3 4 5; do
-      live_sha="$(curl -s -m 120 "$dl_url" | sha256sum | cut -d' ' -f1)"
+      # round-134: curl -f fails fast on 4xx/5xx (a 404 error body would
+      # otherwise be hashed and burn all retries); `|| live_sha=""` keeps a
+      # TRANSPORT failure (timeout/reset during the post-deploy propagation
+      # window) inside the retry loop instead of aborting the whole deploy
+      # under set -e.
+      live_sha="$(curl -fsS -m 120 "$dl_url" 2>/dev/null | sha256sum | cut -d' ' -f1)" || live_sha=""
       [ "$live_sha" = "$want_sha" ] && break
       sleep 3
     done
