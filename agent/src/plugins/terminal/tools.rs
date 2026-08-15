@@ -716,13 +716,19 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // dangling start that crash recovery reports as
                     // "interrupted" (round-55).
                     logger.log_command_start(&sid, &command);
+                    let quiet_dur = std::time::Duration::from_millis(quiet_ms);
                     // Background mode: return immediately with the read cursor
-                    // so the caller can collect output incrementally. The busy
-                    // lock MUST be released here (round-68): the old code
-                    // returned without term_release_execute, so every later
-                    // execute on this session failed SessionBusy forever —
-                    // the documented "background → terminal_read → run more"
-                    // flow wedged on its second execute.
+                    // so the caller can collect output incrementally.
+                    // round-115: the busy lock is NOT released here — a
+                    // background command still running while a foreground
+                    // execute takes the lock makes the marker stream
+                    // ambiguous (the marker carries no command identity, so
+                    // the foreground call could return the BACKGROUND
+                    // command's marker + exit code and miss its own output).
+                    // A background task releases the lock when THIS command's
+                    // marker (PTY) or quiet period (SSH/serial) arrives;
+                    // foreground executes during that window get SessionBusy
+                    // (correct — one shell runs one command at a time).
                     if run_in_background {
                         let start = recover_guard(&buf)
                             .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
@@ -730,7 +736,56 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         // shell; without an end line the trail permanently
                         // misreports it as "interrupted" on the next boot.
                         logger.log_status(&sid, "backgrounded");
-                        terminal_mgr.term_release_execute(&sid).await;
+                        let marker_confirm = std::time::Duration::from_millis(300);
+                        let mgr2 = terminal_mgr.clone();
+                        let buf2 = buf.clone();
+                        let sid2 = sid.clone();
+                        let quiet_dur2 = quiet_dur;
+                        let start2 = start;
+                        let marker_injected2 = terminal_mgr.term_marker_injected(&sid).await;
+                        tokio::spawn(async move {
+                            // Wait for the background command to finish (same
+                            // marker/quiet semantics as the foreground wait
+                            // loop), then release the execute lock.
+                            let mut read_abs = start2;
+                            let mut quiet_since: Option<Instant> = None;
+                            let mut marker_seen_at: Option<Instant> = None;
+                            let mut pending: Vec<u8> = Vec::new();
+                            loop {
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                // Session closed → release; retain_live already
+                                // logged the end.
+                                if mgr2.term_info(&sid2).await.is_none() { break; }
+                                let (chunk, chunk_len) = recover_guard(&buf2)
+                                    .live.get(&sid2)
+                                    .map(|e| {
+                                        if e.dropped as usize > read_abs { read_abs = e.dropped as usize; }
+                                        let s = e.slice_from(read_abs);
+                                        (s.to_vec(), s.len())
+                                    })
+                                    .unwrap_or_default();
+                                if chunk_len > 0 {
+                                    read_abs += chunk_len;
+                                    pending.extend_from_slice(&chunk);
+                                    while let Some((mstart, mend, _code)) = find_prompt_marker(&pending) {
+                                        pending.drain(..mend);
+                                        marker_seen_at = Some(Instant::now());
+                                        let _ = mstart;
+                                    }
+                                    let keep = pending.len().saturating_sub(64);
+                                    if keep > 0 { pending.drain(..keep); }
+                                    quiet_since = None;
+                                } else if quiet_since.is_none() {
+                                    quiet_since = Some(Instant::now());
+                                }
+                                if let Some(at) = marker_seen_at {
+                                    if at.elapsed() >= marker_confirm { break; }
+                                } else if let Some(qs) = quiet_since {
+                                    if !marker_injected2 && qs.elapsed() >= quiet_dur2 { break; }
+                                }
+                            }
+                            mgr2.term_release_execute(&sid2).await;
+                        });
                         return Ok(json!({
                             "kind": "session",
                             "status": "running",
@@ -743,7 +798,6 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let cmd_started = Instant::now();
 
                     let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs);
-                    let quiet_dur = std::time::Duration::from_millis(quiet_ms);
                     // Marker-confirm window (dsh handoffGraceMs): once the
                     // prompt marker arrives, wait this long before returning —
                     // bash prints the prompt and then hands the tty back, and
