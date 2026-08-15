@@ -56,7 +56,16 @@ fn short_path(p: &std::path::Path) -> Option<String> {
     let n = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), needed) };
     if n == 0 { return None; }
     buf.truncate(n as usize);
-    Some(std::ffi::OsString::from_wide(&buf).to_string_lossy().into_owned())
+    let s = std::ffi::OsString::from_wide(&buf).to_string_lossy().into_owned();
+    // round-119: on volumes with 8.3 short-name generation DISABLED (the
+    // default for non-system volumes since Windows 8), GetShortPathNameW
+    // SUCCEEDS but returns the LONG path unchanged — a spaced path then
+    // flows into NSIS /D= with Rust's quotes and the installer writes to a
+    // path containing literal quote characters (device left offline after a
+    // 'successful' upgrade). Signal failure so the caller refuses instead
+    // of installing to a mangled path.
+    if s.contains(' ') { return None; }
+    Some(s)
 }
 /// The directory this exe lives in — where the installer lands and where the
 /// NSIS /D= install root points.
@@ -121,6 +130,16 @@ pub fn agent_update() -> ToolDef {
             if remote.is_empty() || download.is_empty() {
                 return Err(DeviceError::Internal {
                     message: "release server returned no version/download".to_string(),
+                });
+            }
+            // round-119: sha256 is NOT optional — an omitted field previously
+            // skipped verification entirely (`if !expected_sha256.is_empty()`)
+            // and the downloaded bytes were spawned at SYSTEM unverified
+            // (re-opening the round-54 HTML-polluted-404 install class).
+            // Fail loudly: an unverifiable download must never execute.
+            if expected_sha256.len() != 64 || !expected_sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(DeviceError::Internal {
+                    message: "release server returned no/invalid sha256 — refusing unverifiable install".to_string(),
                 });
             }
 
@@ -225,10 +244,18 @@ pub fn agent_update() -> ToolDef {
                 // HTML-polluted 404 pages and truncated transfers both landed
                 // on devices as ValeAgent-Setup.exe before; a poisoned/corrupt
                 // file is deleted and the install is skipped (round-54).
-                if !expected_sha256.is_empty() {
+                // round-119: sha256 is now REQUIRED (checked above) and a
+                // mismatch must LOG — the old silent return left a stale hash
+                // (index worker hand-maintained) failing every agent_update
+                // forever with zero diagnostics.
+                {
                     let actual = hex_encode(&Sha256::digest(&bytes));
                     if actual != expected_sha256 {
+                        tracing::error!(
+                            "[vale-agent] agent_update sha256 mismatch: want {expected_sha256}, got {actual} — install skipped"
+                        );
                         let _ = std::fs::remove_file(&busy_bg);
+                        let _ = std::fs::remove_file(&installer);
                         return;
                     }
                 }
@@ -260,7 +287,23 @@ pub fn agent_update() -> ToolDef {
                     // path when the dir contains a space.
                     #[cfg(windows)]
                     let install_arg = if dir.to_string_lossy().contains(' ') {
-                        short_path(&dir).unwrap_or_else(|| dir.display().to_string())
+                        match short_path(&dir) {
+                            // round-119: short_path returns None when 8.3
+                            // names are disabled AND the path still has
+                            // spaces — the old fallback used the long spaced
+                            // path, which Rust quotes and NSIS mangles into a
+                            // literal-quote $INSTDIR (device left offline).
+                            // Refuse instead of installing to a wrong path.
+                            Some(s) => s,
+                            None => {
+                                tracing::error!(
+                                    "[vale-agent] agent_update: install dir has spaces and 8.3 short names are disabled — cannot build an unquoted /D=; install aborted"
+                                );
+                                let _ = std::fs::remove_file(&busy_bg);
+                                let _ = std::fs::remove_file(&installer);
+                                return;
+                            }
+                        }
                     } else {
                         dir.display().to_string()
                     };

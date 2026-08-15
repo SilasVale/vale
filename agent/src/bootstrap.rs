@@ -57,17 +57,30 @@ pub fn load_or_create(
             // Round-57: the old device_token lives in the quarantined file —
             // a crash window (half-written config) must NOT rotate the token
             // and 401 every client. Recover it into the fresh default.
+            // round-119: the recovery re-parsed the quarantined file with the
+            // SAME serde_yaml parser that just failed — for any YAML SYNTAX
+            // error (truncated half-write, hand-edit typo, tab indentation —
+            // the dominant failure class) the re-parse failed identically,
+            // the token was silently discarded, and every client 401'd with
+            // no recovery. Extract the token line directly instead.
             if let Ok(bad_text) = std::fs::read_to_string(&bad) {
-                if let Ok(old) = serde_yaml::from_str::<vale_agent_core::Config>(&bad_text) {
-                    if let Some(tok) = old.server.device_token {
-                        if tok.len() >= 16 {
-                            let mut fresh = Config::load(path)?;
-                            fresh.server.device_token = Some(tok);
-                            atomic_write(path, serde_yaml::to_string(&fresh).unwrap_or_default().as_bytes())?;
-                            log("     Recovered the previous device_token from the quarantined config.");
-                            return Ok((fresh, None));
-                        }
-                    }
+                let recovered = bad_text.lines()
+                    .find_map(|l| {
+                        let t = l.trim();
+                        let key = t.split(':').next().unwrap_or("").trim();
+                        if key == "device_token" || key == "auth_token" {
+                            let v = t[t.find(':').map(|i| i + 1).unwrap_or(t.len())..].trim();
+                            let v = v.trim_matches(|c| c == '"' || c == '\'' || c == ' ');
+                            Some(v.to_string())
+                        } else { None }
+                    })
+                    .filter(|tok| tok.len() >= 16);
+                if let Some(tok) = recovered {
+                    let mut fresh = Config::load(path)?;
+                    fresh.server.device_token = Some(tok);
+                    atomic_write(path, serde_yaml::to_string(&fresh).unwrap_or_default().as_bytes())?;
+                    log("     Recovered the previous device_token from the quarantined config.");
+                    return Ok((fresh, None));
                 }
             }
             Config::load(path)?
