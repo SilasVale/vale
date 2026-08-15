@@ -414,8 +414,11 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         const ra = upstream.headers?.get?.("retry-after");
         if (ra) extra = { "retry-after": ra };
       } catch { /* non-JSON error body */ }
-      // A real response resets the og consecutive-failure count.
-      if (route.kind === "opencode") await recordChannelSuccess(env);
+      // round-118: this branch is `!upstream.ok` — a 429/5xx is NOT a
+      // success. The old code called recordChannelSuccess here, so a dead
+      // channel alternating hangs with fast 429s never accumulated the 3
+      // consecutive failures to trip (the round-55 alternation hole, re-
+      // introduced at this call site). Only a genuinely ok response resets.
       return jsonError(upstream.status, message, type, extra);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
