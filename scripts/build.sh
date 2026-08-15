@@ -6,6 +6,8 @@
 #   ./scripts/build.sh command [debug] # legacy alias for `agent`
 #   ./scripts/build.sh gateway         # deploy the Vale Gate worker
 #   ./scripts/build.sh index           # deploy the Vale Index worker
+#   ./scripts/build.sh proxies         # deploy the satellite proxy workers (zen-go / zen-us / openrouter)
+#   ./scripts/build.sh vercel-proxy    # deploy the Vercel exit proxy (v.saisi.online, needs vercel CLI)
 #   ./scripts/build.sh deploy          # build agent + deploy gateway/index
 #
 # Dependencies: cargo-xwin, wrangler (global v4), CLOUDFLARE_API_TOKEN (deploy
@@ -86,11 +88,45 @@ deploy_worker() {
   fi
 }
 
+deploy_proxy() {
+  # Satellite proxy workers (proxies/<name>/): same deploy + smoke pattern as
+  # deploy_worker, but these are one-file workers without the post-publish
+  # version assertion (no /api/version endpoint).
+  local dir="$1" name="$2"
+  local token; token="$(cf_token)"
+  if [[ -z "$token" ]]; then
+    echo "  !! CLOUDFLARE_API_TOKEN (or ~/.cloudflare-token) missing — skipping $name deploy"
+    return 1
+  fi
+  echo "=== [deploy] proxy ${name} (proxies/${dir}/) ==="
+  ( cd "$ROOT/proxies/$dir" \
+      && CLOUDFLARE_API_TOKEN="$token" wrangler deploy )
+  # Secrets are set once via `wrangler secret put` (or the dashboard) and
+  # survive re-deploys; if a proxy needs env it reads from Worker env.
+  echo "  ok: $name deployed"
+}
+
+deploy_vercel_proxy() {
+  # Vercel exit proxy (v.saisi.online/api/zen + /api/proxy). Needs the Vercel
+  # CLI + token; skips with a clear message when unavailable (CI-friendly).
+  if ! command -v vercel >/dev/null 2>&1; then
+    echo "  !! vercel CLI not found — skipping vercel-proxy deploy"
+    echo "     install: npm i -g vercel  &&  vercel login  (or set VERCEL_TOKEN)"
+    return 1
+  fi
+  echo "=== [deploy] vercel-proxy (proxies/vercel-proxy/) ==="
+  ( cd "$ROOT/proxies/vercel-proxy" \
+      && vercel --prod --yes )
+  echo "  ok: vercel-proxy deployed"
+}
+
 cmd="${1:-agent}"
 case "$cmd" in
   agent|command)  build_agent "${2:-release}" ;;
   gateway)  deploy_worker gateway "Vale Gate" ;;
   index)    deploy_worker index "Vale Index" ;;
-  deploy)   build_agent "${2:-release}" && ./scripts/build-installer.sh && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" ;;
-  *) echo "usage: $0 [agent|gateway|index|deploy]"; exit 1 ;;
+  proxies)  deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  vercel-proxy) deploy_vercel_proxy ;;
+  deploy)   build_agent "${2:-release}" && ./scripts/build-installer.sh && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
 esac

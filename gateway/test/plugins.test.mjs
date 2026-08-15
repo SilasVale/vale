@@ -156,3 +156,49 @@ test("plugins/status: valid admin session → 200 (R83 gate)", async () => {
   const res = await worker.fetch(req, env);
   assert.equal(res.status, 200);
 });
+
+/* ---- Reset admin password (round-113, by admin gateway token) ---- */
+
+function makeResetEnv() {
+  const m = new Map([
+    ["_admin_seeded", "1"],
+    ["auth:admin_password", "oldsalt:oldhash"],
+    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "ADMIN_KEY_123" })],
+  ]);
+  return {
+    CONSOLE_HOST: "x",
+    KEYS: {
+      async get(k) { return m.has(k) ? m.get(k) : null; },
+      async put(k, v) { m.set(k, v); },
+      async delete(k) { m.delete(k); },
+    },
+  };
+}
+
+test("reset-password: wrong adminKey → 403", async () => {
+  __clearCaches();
+  const env = makeResetEnv();
+  const res = await apiFetch(env, "/api/auth/reset-password", { body: JSON.stringify({ adminKey: "WRONG", newPassword: "newpass123" }) });
+  assert.equal(res.status, 403);
+});
+
+test("reset-password: correct adminKey → 200, login with new pw works, old rejected", async () => {
+  __clearCaches();
+  const env = makeResetEnv();
+  const res = await apiFetch(env, "/api/auth/reset-password", { body: JSON.stringify({ adminKey: "ADMIN_KEY_123", newPassword: "newpass123" }) });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.ok, true);
+
+  const login = await apiFetch(env, "/api/auth/login", { body: JSON.stringify({ username: "admin", password: "newpass123" }) });
+  assert.equal(login.status, 200);
+  const old = await apiFetch(env, "/api/auth/login", { body: JSON.stringify({ username: "admin", password: "oldpass" }) });
+  assert.equal(old.status, 401);
+});
+
+test("reset-password: too-short new password → 400", async () => {
+  __clearCaches();
+  const env = makeResetEnv();
+  const res = await apiFetch(env, "/api/auth/reset-password", { body: JSON.stringify({ adminKey: "ADMIN_KEY_123", newPassword: "short" }) });
+  assert.equal(res.status, 400);
+});

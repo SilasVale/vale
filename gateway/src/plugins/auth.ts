@@ -12,7 +12,7 @@
  * derived here the same way handleConsole did: url.protocol === "https:".
  */
 
-import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, globalSettingEnabled, type User } from "../store.ts";
+import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, globalSettingEnabled, type User } from "../store.ts";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "../auth.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { MODELS, OG_ZEN_CHAT } from "../channels.ts";
@@ -147,6 +147,40 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
   await env.KEYS.delete(lockKey + ":n");
   const token = await issueSessionToken(sessionSecret(env, ap), user.id, user.role);
   return jsonOk({ ok: true, username: user.username, role: user.role }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
+}
+
+/* ---- Reset admin password (by admin gateway token) ----
+ *
+ * The admin password is stored HASHED (never plaintext) so there is no way
+ * to "look it up" — the console shows only `set`/`not set`. If the admin
+ * forgets the password, the console is locked out entirely (the admin is
+ * the only account that can change it). Recovery: prove possession of the
+ * admin gateway token (the `x-api-key` value in the console Overview —
+ * also the user's Claude Code key) and set a new password. Rate-limited
+ * like register so an attacker cannot brute-force the token.
+ */
+async function authResetPassword(request: Request, env: any): Promise<Response> {
+  if (authRateLimited(request)) {
+    return jsonError(429, "rate limit exceeded", "rate_limit_error");
+  }
+  const admin = await getUser(env, ADMIN_ID);
+  if (!admin) return jsonError(500, "Admin not seeded", "config_error");
+  const body = await readJson(request);
+  const adminKey = String(body?.adminKey || "").trim();
+  const newPassword = String(body?.newPassword || "");
+  if (!adminKey || !newPassword) {
+    return jsonError(400, "adminKey and newPassword are required", "invalid_request");
+  }
+  if (newPassword.length < 8) {
+    return jsonError(400, "New password must be at least 8 chars", "invalid_request");
+  }
+  // Prove possession of the admin gateway token (the console's Overview
+  // shows this value; it is the same key Claude Code uses as x-api-key).
+  if (!admin.token || adminKey !== admin.token) {
+    return jsonError(403, "Invalid admin key", "authentication_error");
+  }
+  await setAdminPassword(env, newPassword);
+  return jsonOk({ ok: true });
 }
 
 const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
@@ -363,6 +397,7 @@ export default {
       (request: Request, env: any, url: URL): Response | Promise<Response> => fn(request, env, url.protocol === "https:");
     add("POST", `${AUTH_BASE}/register`, withSecure(authRegister));
     add("POST", `${AUTH_BASE}/login`, withSecure(authLogin));
+    add("POST", `${AUTH_BASE}/reset-password`, authResetPassword);
     add("POST", `${AUTH_BASE}/logout`, withSecure(authLogout));
     add("GET", ME_BASE, meGet);
     add("GET", `${ME_BASE}/route`, meGetRoute);
