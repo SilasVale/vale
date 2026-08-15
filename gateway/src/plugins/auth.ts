@@ -213,7 +213,8 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
     try {
       const payload = JSON.parse(atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") || "{}") || "{}");
       if (payload.exp) {
-        const ttl = Math.max(1, Math.min(86400 * 2, Math.ceil((payload.exp * 1000 - Date.now()) / 1000)));
+        // round-122: exp is stored in MS (issueSessionToken uses Date.now() + SESSION_TTL_MS) — the old *1000 treated it as seconds, overstating the remaining life ~1000x (every logout wrote a 2-day entry).
+        const ttl = Math.max(1, Math.min(86400, Math.ceil((payload.exp - Date.now()) / 1000)));
         await env.KEYS.put(`sess-revoked:${cookie}`, "1", { expirationTtl: ttl });
       }
     } catch { /* malformed cookie — ignore */ }

@@ -25,7 +25,7 @@ function makeEnv() {
   const kv = new Map([
     ["devices:v1", JSON.stringify([DEVICE])],
     ["plugins:v1", JSON.stringify({
-      "tok-d1": { device: "d1", createdAt: 1 },
+      "tok-d1": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 * 30 },
       "tok-d2": { device: "d2", createdAt: 2 },
     })],
     ["auth:admin_password", ADMIN_PW],

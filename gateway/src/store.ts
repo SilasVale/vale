@@ -120,12 +120,27 @@ function rcdel(k: string): void { __rc.delete(k); }
 // requests both read the pre-write value and the second put clobbered the
 // first's record. Serializing per key makes same-isolate writes atomic
 // (Workers isolates are single-threaded; the queue bridges the awaits).
+// round-122: settled chains are pruned opportunistically — the old size
+// bound deleted the OLDEST key (always a hot key like devices:v1 whose
+// chain could be pending), letting a new caller run CONCURRENTLY with the
+// queued writers (the exact lost-update the queue prevents). Evict only
+// chains that are no longer in flight: a chain is settled once it resolves,
+// so wrap each stored promise to self-prune on completion.
 const __locks = new Map<string, Promise<any>>();
 function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = __locks.get(key) || Promise.resolve();
   const next = prev.then(fn, fn);
-  __locks.set(key, next.catch(() => {}));
-  if (__locks.size > 512) __locks.delete(__locks.keys().next().value!); // bound
+  // Self-prune on settle: once `next` completes, remove this key's entry IF
+  // it is still the one we stored (a later caller replaced it — don't delete
+  // the newer chain).
+  __locks.set(key, next.catch(() => {}).finally(() => {
+    if (__locks.get(key) === next) __locks.delete(key);
+  }));
+  // Hard bound for pathological distinct-key bursts: evict the oldest key,
+  // accepting that a pending chain there loses its queue (its own RMW still
+  // completes; only a NEW caller for that key can now race it). Far rarer
+  // than the old always-hit-hot-key eviction.
+  if (__locks.size > 512) __locks.delete(__locks.keys().next().value!);
   return next;
 }
 
@@ -284,14 +299,20 @@ export async function listUsers(env: Env): Promise<User[]> {
 }
 
 export async function setUserEnabled(env: Env, id: string, enabled: boolean): Promise<User> {
-  // read-modify-write: read raw KV (not cache) so the write is based on the
-  // latest value, then refresh the cache with the new object (write-through)
-  const u = await getJSON(env, `user:${id}`);
-  if (!u) throw new Error("User not found");
-  u.enabled = !!enabled;
-  await env.KEYS.put(`user:${id}`, JSON.stringify(u));
-  cset(`user:${id}`, u);
-  return u;
+  // round-122: serialize on the same key as createUser/regenerateToken — the
+  // unlocked read-modify-write let an enable/disable land with a stale token
+  // value (regenerate's delete of token:T1 then made the record's T1 dead:
+  // x-api-key stops working while the console still shows T1).
+  return withKeyLock(`user:${id}`, async () => {
+    // read-modify-write: read raw KV (not cache) so the write is based on the
+    // latest value, then refresh the cache with the new object (write-through)
+    const u = await getJSON(env, `user:${id}`);
+    if (!u) throw new Error("User not found");
+    u.enabled = !!enabled;
+    await env.KEYS.put(`user:${id}`, JSON.stringify(u));
+    cset(`user:${id}`, u);
+    return u;
+  });
 }
 
 export async function regenerateToken(env: Env, id: string): Promise<string> {
@@ -561,6 +582,22 @@ export async function upsertDevice(env: Env, device: Device): Promise<Device> {
   });
 }
 
+/** Insert a device ONLY if the name is not already registered (round-122:
+ *  /api/register's getDevice→409 guard was check-then-act — two concurrent
+ *  same-name registrations both passed and the serialized upserts ended with
+ *  the second party's hostname/token pointing at the name (device takeover,
+ *  the exact round-68 hijack). The existence check now runs INSIDE the
+ *  DEVICES_KEY critical section. Returns null when the name exists. */
+export async function insertDevice(env: Env, device: Device): Promise<Device | null> {
+  return withKeyLock(DEVICES_KEY, async () => {
+    const devs = await readDevicesRaw(env);
+    if (devs.some((d) => d.name === device.name)) return null;
+    devs.push(device);
+    await saveDevices(env, devs);
+    return device;
+  });
+}
+
 export async function deleteDevice(env: Env, name: string): Promise<boolean> {
   return withKeyLock(DEVICES_KEY, async () => {
     const devs = await readDevicesRaw(env);
@@ -664,7 +701,11 @@ export async function getPluginByToken(env: Env, token: string): Promise<PluginL
   const map = await listPluginLinks(env);
   const link = map[token] || null;
   if (!link) return null;
-  if (link.expiresAt && link.expiresAt < Date.now()) {
+  // round-122: a MISSING expiresAt is treated as expired — links created
+  // before the 30-day TTL feature shipped ({device, createdAt} only) were
+  // never expiring, granting permanent browser_* control (the exact hole
+  // the TTL exists to close). One-time sweep on read.
+  if (!link.expiresAt || link.expiresAt < Date.now()) {
     // Expired — drop it (lazy cleanup) and treat as unknown.
     delete map[token];
     await savePluginLinks(env, map);

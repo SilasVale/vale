@@ -31,7 +31,13 @@ export function App() {
       const host = location.host;
       const tok = isProxy ? (urlToken || "") : (injected || urlToken || stored);
       localStorage.setItem(LS_HOST, host);
-      if (tok) localStorage.setItem(LS_TOKEN, tok);
+      // round-122: in PROXY mode do NOT persist the token to localStorage —
+      // the vale_pt cookie is the real credential there, and persisting the
+      // plugin token made a plaintext 30-day device-control credential
+      // readable by any script on the console origin (the extension's own
+      // token-hygiene model forbids exactly this). Same-origin (LAN) mode
+      // keeps the stored-token flow.
+      if (tok && !isProxy) localStorage.setItem(LS_TOKEN, tok);
       // round-86: a same-origin visit with NO token (LAN IP / non-allowlisted
       // host, empty storage) must show the conn form — the old code booted
       // connected=true with a placeholder token, silently dead (every call
