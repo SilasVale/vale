@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Session } from "../hooks/useSessions";
+import type { usePlugins } from "../hooks/usePlugins";
 
 // dsh Rows-style session list (round-admin-ui Task 3): each row is a kind
 // StateDot + label + relative time; hovering swaps the time for
@@ -22,10 +23,13 @@ function relTime(ts: number): string {
   return day < 7 ? `${day}d` : new Date(ts).toLocaleDateString();
 }
 
-export function Sidebar({ sessions, activeSid, onActivate }: {
+export function Sidebar({ sessions, activeSid, onActivate, view, onViewChange, plugins }: {
   sessions: Session[];
   activeSid: string | null;
   onActivate: (sid: string) => void;
+  view: "sessions" | "plugins";
+  onViewChange: (v: "sessions" | "plugins") => void;
+  plugins: ReturnType<typeof usePlugins>;
 }) {
   const [labels, setLabels] = useState<Map<string, string>>(new Map());
   const [archived, setArchived] = useState<Set<string>>(new Set());
@@ -54,6 +58,42 @@ export function Sidebar({ sessions, activeSid, onActivate }: {
 
   return (
     <>
+      {/* round-admin-ui Task 6: section nav — Sessions | Plugins. The plugin
+          rows below share the live status hook, so the dots stay current. */}
+      <div className="side-nav" role="tablist" aria-label="Panel sections">
+        <button
+          className={`side-nav-btn${view === "sessions" ? " active" : ""}`}
+          role="tab"
+          aria-selected={view === "sessions"}
+          onClick={() => onViewChange("sessions")}
+        >Sessions</button>
+        <button
+          className={`side-nav-btn${view === "plugins" ? " active" : ""}`}
+          role="tab"
+          aria-selected={view === "plugins"}
+          onClick={() => onViewChange("plugins")}
+        >Plugins</button>
+      </div>
+      {view === "plugins" ? (
+        <>
+          <div className="side-header">
+            <h1 className="side-title">Plugins</h1>
+            <span className="side-count">{plugins.rows.length}</span>
+          </div>
+          <div className="side-list">
+            {!plugins.specLoaded && <p className="side-empty">Inventory loading…</p>}
+            {plugins.specLoaded && plugins.rows.length === 0 && <p className="side-empty">No plugins</p>}
+            {plugins.rows.map((r) => (
+              <div key={r.name} className="side-plug-row" title={r.description}>
+                <span className="plug-dot" data-state={r.state} />
+                <span className="side-label">{r.displayName}</span>
+                <span className="side-time">{r.stateLabel}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+      <>
       <div className="side-header">
         <h1 className="side-title">Sessions</h1>
         <span className="side-count">{sessions.length}</span>
@@ -100,6 +140,8 @@ export function Sidebar({ sessions, activeSid, onActivate }: {
           </div>
         ))}
       </div>
+      </>
+      )}
     </>
   );
 }
