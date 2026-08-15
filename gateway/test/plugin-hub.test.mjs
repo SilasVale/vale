@@ -107,18 +107,19 @@ test("hub webSocketMessage: ping → pong echoes t", async () => {
   assert.deepEqual(JSON.parse(ws.sent[0]), { type: "pong", t: 42 });
 });
 
-test("hub webSocketMessage: hello stores lastSeen", async () => {
+test("hub webSocketMessage: hello with NO token closes (round-119: token required)", async () => {
   const ws = fakeWs();
   const state = makeState([ws]);
   const hub = new PluginHubDO(state, {});
   await hub.webSocketMessage(ws, JSON.stringify({ type: "hello" }));
-  assert.ok(state._storage.kv.has("lastSeen"));
+  assert.equal(ws.closed?.code, 4001); // no bound token → close
+  assert.ok(!state._storage.kv.has("lastSeen")); // nothing stored for an invalid hello
 });
 
 test("hub webSocketClose: rejects all in-flight calls with extension_disconnected", async () => {
   const ws = fakeWs();
   const state = makeState([ws]);
-  const hub = new PluginHubDO(state, {});
+  const hub = await boundHub(state, ws); // round-119: /call validates the bound token
   const p = hub.fetch(new Request("https://hub/call", {
     method: "POST",
     headers: { "content-type": "application/json" },
