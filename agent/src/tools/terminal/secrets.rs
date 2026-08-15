@@ -95,9 +95,13 @@ pub(crate) mod file_impl {
     pub fn delete(target: &str) -> Result<(), DeviceError> {
         let _g = recover_guard(&STORE_LOCK);
         let mut map = read_all();
-        let removed = map.remove(&key_of(target)).is_some()
-            || map.remove(&format!("ssh:{target}")).is_some();
-        if removed { write_all(&map)?; }
+        // round-126: evaluate BOTH removals unconditionally — the old `||`
+        // short-circuited, so when both the normalized and legacy raw keys
+        // existed, only the first was removed and the stale password
+        // survived "deleted" (findable via the raw fallback).
+        let removed_norm = map.remove(&key_of(target)).is_some();
+        let removed_raw = map.remove(&format!("ssh:{target}")).is_some();
+        if removed_norm || removed_raw { write_all(&map)?; }
         Ok(())
     }
     pub fn list() -> Vec<String> {

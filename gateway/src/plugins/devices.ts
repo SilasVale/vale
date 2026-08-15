@@ -327,6 +327,9 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
         headers: {
           "Location": clean.pathname + clean.search,
           "Set-Cookie": `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
+          // round-126: a cached 302 would drop the Set-Cookie on a re-pair
+          // (stale cookie → panel 401s forever).
+          "Cache-Control": "no-store",
         },
       });
     }

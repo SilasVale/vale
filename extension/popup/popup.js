@@ -73,14 +73,18 @@ $("openTerminal").addEventListener("click", () => {
     const device = valePlugin?.device;
     const base = (consoleOrigin || "https://api.saisi.online").replace(/\/+$/, "");
     if (device) {
-      // round-122: NO token in the URL — the persistent per-device
-      // vale_pt_<device> cookie (30-day, HttpOnly, set by the gateway proxy)
-      // authenticates the panel. The old ?token= stayed in the omnibox and
-      // history whenever the panel failed to boot (device offline → 502 body,
-      // no JS to scrub it) — a leaked URL then granted full device terminal
-      // control for the link's remaining life. Tokenless also avoids the
-      // panel persisting the token to console-origin localStorage.
-      chrome.tabs.create({ url: `${base}/api/devices/${device}/proxy/panel/` });
+      // round-124/126: the gateway 302s a ?token= top-level navigation to
+      // the STRIPPED url with Set-Cookie — the token never reaches the
+      // omnibox/history (even if the panel fails to boot), and the cookie is
+      // minted regardless. A tokenless navigation can NEVER mint the cookie
+      // (the gateway only accepts ?token= for navigations), so a fresh
+      // pairing or an expired cookie would dead-end at the re-pair page.
+      // Navigate WITH the token when we have one; keep the tokenless
+      // fallback for the already-cookied restart case.
+      chrome.storage.session.get("valePluginToken").then(({ valePluginToken }) => {
+        const q = valePluginToken ? `?token=${encodeURIComponent(valePluginToken)}` : "";
+        chrome.tabs.create({ url: `${base}/api/devices/${device}/proxy/panel/${q}` });
+      });
       return;
     }
     chrome.tabs.create({ url: `${base}/` });

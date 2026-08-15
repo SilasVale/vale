@@ -162,7 +162,10 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           // Mid-stream upstream death AFTER content was emitted must NOT be
           // fabricated into a clean completed message — emit an error event
           // so the client retries instead of showing an empty turn.
-          if (buffer || encoderStream.started) {
+          // round-126: skip when finished — an error FRAME already emitted
+          // the terminal error; a read-throw after it must not double-report
+          // a contradictory "died mid-response".
+          if ((buffer || encoderStream.started) && !encoderStream.finished) {
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream died mid-response" } })}\n\n`));
           }
           const tail = encoderStream.finish(buffer);
