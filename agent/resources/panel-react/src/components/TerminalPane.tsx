@@ -40,7 +40,7 @@ export function TerminalPane({ session, registerWrite }: {
         foreground: "#1d1d1f",
         cursor: "#0b7a6e",
         cursorAccent: "#ffffff",
-        selectionBackground: "rgba(14,147,132,.2)",
+        selectionBackground: "rgba(11,122,110,.2)", // --accent #0b7a6e (round-115: was the retired #0e9384)
         black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",
         blue: "#1d4ed8", magenta: "#7c3aed", cyan: "#0f766e", white: "#44403c",
         brightBlack: "#4b5563", brightRed: "#dc2626", brightGreen: "#15803d",
