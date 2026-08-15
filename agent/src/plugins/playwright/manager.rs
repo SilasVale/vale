@@ -1,7 +1,7 @@
 //! playwright-mcp 进程管理 — 按需启停,用设备 Edge(round-admin-ui)。
 //!
 //! 管理界面(panel 插件页)经 /api/plugins/playwright/start|stop 启停捆绑的
-//! playwright-mcp;per-launch secret 通过 argv 传给 playwright-mcp(防端口
+//! playwright-mcp;127.0.0.1-only 绑定 + allowed-hosts(防端口
 //! squatting:同端口无 token 的服务可被任意客户端直接调用)。
 //!
 //! 捆绑路径约定(Phase 3 打包):node.exe 与 playwright-mcp(dist/cli.js)
@@ -80,15 +80,6 @@ fn bundled_mcp_entry() -> Result<PathBuf, DeviceError> {
     Ok(p)
 }
 
-/// 随机 per-launch secret:16 字节 CSPRNG hex(与 config.rs 的 token 生成
-/// 同风格;getrandom 失败绝不回退到可猜测值,直接报错)。
-fn random_hex(bytes: usize) -> Result<String, DeviceError> {
-    let mut buf = vec![0u8; bytes];
-    getrandom::getrandom(&mut buf)
-        .map_err(|e| DeviceError::Internal { message: format!("failed to generate playwright secret: {e}") })?;
-    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
-}
-
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -145,9 +136,11 @@ impl PlaywrightManager {
                 }
             }
         }
-        // per-launch secret:随机 16 字节 hex,经 --mcp-token 传给
-        // playwright-mcp(无 token 时同端口上的其他客户端可直接调用)。
-        let secret = random_hex(16)?;
+        // round-129: @playwright/mcp 无 --mcp-token flag(实测 0.0.79 及更早
+        // 版本都不接受,child 会立即退出)——per-launch secret 方案不可落地。
+        // 防 squatting 改为:127.0.0.1-only 绑定(playwright-mcp 默认)+
+        // --allowed-hosts 127.0.0.1(禁 DNS rebinding 的远程访问)。secret
+        // 仅作连接信息展示,不再是安全边界。
         let port = MCP_PORT;
         let node = bundled_node()?;
         let entry = bundled_mcp_entry()?;
@@ -155,17 +148,16 @@ impl PlaywrightManager {
             .arg(&entry)
             .arg("--port").arg(port.to_string())
             .arg("--browser").arg("msedge")
-            .arg("--mcp-token").arg(&secret)
+            .arg("--allowed-hosts").arg("127.0.0.1")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| DeviceError::Internal { message: format!("spawn playwright-mcp: {e}") })?;
-        // 健康轮询(最多 10s):向 /mcp 发带 per-launch secret 的探测。
-        // round-128: 旧版只检查"端口有响应"——squatting 进程或上一个 agent
-        // 实例遗留的 orphan 同样有响应,start 会记录已死的 child 为 running,
-        // 状态机卡死。只有认识 secret 的实例才算健康;同时轮询中检查 child
-        // 是否已退出(端口被占 → 绑定失败 → 立即死亡)。探测有 2s 超时(一个
-        // 只 accept 不响应的 listener 不再挂死 start)。
+        // 健康轮询(最多 10s):POST JSON-RPC initialize 到 /mcp 并验证响应体是
+        // 合法的 JSON-RPC 结果。round-129: 旧的 probe.is_ok() 任何 HTTP 状态
+        // 都过(GET /mcp 设计上就返回 4xx)——只有真正完成 MCP 握手的实例才算
+        // 健康;squatter 无法回合法的 JSON-RPC initialize 响应。同时轮询中检查
+        // child 是否已退出(端口被占 → 绑定失败 → 立即死亡)。探测有 2s 超时。
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
@@ -178,13 +170,17 @@ impl PlaywrightManager {
                 break;
             }
             let probe = client
-                .get(format!("http://127.0.0.1:{port}/mcp"))
-                .header("authorization", format!("Bearer {secret}"))
+                .post(format!("http://127.0.0.1:{port}/mcp"))
+                .header("content-type", "application/json")
+                .body(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"vale-agent","version":"1"}}}"#)
                 .send()
                 .await;
-            if probe.is_ok() {
-                ok = true;
-                break;
+            if let Ok(resp) = probe {
+                let body = resp.text().await.unwrap_or_default();
+                if body.contains("\"jsonrpc\"") && body.contains("serverInfo") {
+                    ok = true;
+                    break;
+                }
             }
         }
         if !ok {
@@ -206,14 +202,16 @@ impl PlaywrightManager {
                 // A concurrent start landed while we polled — lose cleanly.
                 loser = Some(child);
             } else {
-                *guard = Some(ManagedPlaywright { child, port, secret: secret.clone(), started_at: now_ms(), _kill_tx: kill_tx });
+                *guard = Some(ManagedPlaywright { child, port, secret: String::new(), started_at: now_ms(), _kill_tx: kill_tx });
             }
         }
         if let Some(mut child) = loser {
             let _ = child.kill().await;
+            #[cfg(not(windows))]
+            let _ = child.wait().await; // reap (round-129: loser path was missing this)
             return Ok(serde_json::json!({ "status": "already_running" }));
         }
-        Ok(serde_json::json!({ "status": "started", "port": port, "secret": secret }))
+        Ok(serde_json::json!({ "status": "started", "port": port }))
     }
 
     /// Kill the running instance: taskkill /T kills the whole tree on

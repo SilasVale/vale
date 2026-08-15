@@ -172,12 +172,22 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
         // watermark and blank the stream — the audit log only grows.
         if (maxSeq <= lastSeqRef.current) return; // nothing new
         lastSeqRef.current = maxSeq;
-        // round-128: tail-cap the RAW events — a chatty long-lived session
-        // (serial console ~11.5KB/s → ~40MB/hour) grew browser memory
-        // unbounded and made every 2s tick re-parse the whole log. Keep the
-        // newest window (mirrors the card output cap); older events are
-        // unreachable anyway once the card/round grouping has consumed them.
-        const tail = evs.length > MAX_RAW_EVENTS ? evs.slice(-MAX_RAW_EVENTS) : evs;
+        // round-128/129: tail-cap the RAW events — a chatty long-lived
+        // session (serial console ~11.5KB/s → ~40MB/hour) grew browser
+        // memory unbounded. The cap respects ROUND BOUNDARIES: a command
+        // still running at the cut point must keep its command/start, or
+        // groupEvents drops the whole live card (output without a start is
+        // discarded) and the trajectory relabels it '(session)'.
+        let tail = evs;
+        if (tail.length > MAX_RAW_EVENTS) {
+          const cut = tail.length - MAX_RAW_EVENTS;
+          // Walk back to the newest command/start at or before the cut.
+          let start = cut;
+          for (let i = cut; i >= 0; i--) {
+            if (tail[i].kind === "command/start") { start = i; break; }
+          }
+          tail = tail.slice(start);
+        }
         setEvents(tail);
       } catch { /* transient — keep the last good events, retry next tick */ }
     };
