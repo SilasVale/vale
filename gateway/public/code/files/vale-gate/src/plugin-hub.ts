@@ -6,6 +6,8 @@
  * storage alarm (timers don't run while hibernating): the extension pings
  * every 20s; the alarm fires 65s after the last message and closes a stale WS.
  */
+import { getPluginByToken } from "./store.ts";
+
 export class PluginHubDO {
   state: DurableObjectState;
   env: any;
@@ -84,6 +86,24 @@ export class PluginHubDO {
       return Response.json({ error: "extension_offline" }, { status: 503 });
     }
     const ws = sockets[0];
+    // round-119: validate the socket's bound link BEFORE delivering the
+    // request frame — the old code sent with no check, so a socket whose
+    // link expired/revoked (30-day TTL, console revoke) kept executing
+    // browser_* commands for up to 20s (next ping) or 65s (silent) after
+    // expiry. Server-initiated delivery must not trust the client's cadence.
+    // round-121: the token lives in the socket ATTACHMENT (per-connection,
+    // auto-dropped on close) — the old ws.id key was shared by every socket
+    // (ws.id does not exist in Cloudflare's WebSocket), so a re-pair after
+    // revoke validated the OLD token forever and locked the device out.
+    const tok = ws.deserializeAttachment?.()?.token || null;
+    if (!tok) {
+      return Response.json({ error: "extension_offline — no bound token" }, { status: 503 });
+    }
+    const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
+    if (!link) {
+      ws.close(4001, "link expired");
+      return Response.json({ error: "extension_offline — link expired or revoked" }, { status: 503 });
+    }
     const result = await new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pending.delete(requestId); // late responses must not leak the entry
@@ -99,18 +119,71 @@ export class PluginHubDO {
     this.state.storage.setAlarm(Date.now() + 65_000);
     let msg: any;
     try { msg = JSON.parse(message as string); } catch { return; }
+    // round-94: the round-92 re-validation only ran on 'hello'/'request'
+    // frames — but the extension sends 'hello' once per socket and NEVER
+    // sends 'request' (callPlugin is unused); its whole post-connect traffic
+    // is 20s 'ping's and 'response' answers to /call, both of which skipped
+    // the check. A live, pinging socket therefore kept browser_* control
+    // past the 30-day link TTL (the exact hole round-92 claimed to close).
+    // Validate the bound token on EVERY frame now — pings included.
+    // round-105: a socket with NO bound token (hello never carried one, or
+    // the DO restarted and the storage key was lost) skipped validation
+    // entirely — a 30-day-TTL bypass for any socket that connected without
+    // a token. Close it: every legit socket binds a token at hello.
+    // round-119: hello frames were EXEMPT from the check — a socket sending
+    // {"type":"hello"} every 20s skipped validation, reset the idle alarm
+    // (line 101 runs before any type check), and re-bound the token to
+    // whatever the frame carried (line 128 overwrote the original with
+    // msg.token || ""), so an expired/revoked link kept browser_* control
+    // indefinitely. Validate hello too — the only case that legitimately
+    // lacks a bound token is the FIRST hello (nothing stored yet); every
+    // later hello must carry a valid, unexpired link.
+    // round-121: token lives in the socket ATTACHMENT (per-connection).
+    const tok = ws.deserializeAttachment?.()?.token || null;
+    if (tok && msg.type !== "hello") {
+      const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
+      if (!link) { ws.close(4001, "link expired"); return; }
+    } else if (!tok && msg.type !== "hello") {
+      // A non-hello frame before any hello ever bound a token — close it.
+      ws.close(4001, "no bound token");
+      return;
+    }
     if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: msg.t })); return; }
     if (msg.type === "hello") {
-      this.state.storage.put("lastSeen", Date.now());
-      // round-84: remember the device bound to this socket so the alarm can
-      // re-validate the plugin link (a revoked/expired link must not keep
-      // browser_* control over a live socket).
-      this.state.storage.put(`ws-device:${(ws as any).id || ""}`, String(msg.device || "")).catch(() => {});
+      // round-119: only the FIRST hello may bind a token (nothing attached
+      // yet); a re-hello with a different/garbage token must NOT overwrite
+      // the bound one, and it must be validated like every other frame.
+      if (!tok) {
+        const newTok = String(msg.token || "");
+        const link = newTok ? await getPluginByToken(this.env, newTok).catch(() => null) : null;
+        if (!link) { ws.close(4001, "invalid plugin token"); return; }
+        this.state.storage.put("lastSeen", Date.now());
+        // round-88: remember the plugin TOKEN bound to this socket. The
+        // attachment is per-connection and auto-dropped on close — the alarm
+        // re-validates the link: a 30-day-expired link must not keep
+        // browser_* control over a live socket.
+        ws.serializeAttachment?.({ token: newTok });
+      } else {
+        // Re-hello: validate the ALREADY-bound token.
+        const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
+        if (!link) { ws.close(4001, "link expired"); return; }
+      }
       return;
     }
     if (msg.type === "response" && msg.id) {
       const resolve = this.pending.get(msg.id);
       if (resolve) { this.pending.delete(msg.id); resolve(msg); }
+      return;
+    }
+    // round-98: extension → hub tool request (callPlugin's path). The hub
+    // has no tool executor (tools run in the main worker's /mcp); the
+    // previous behavior dropped the frame and callPlugin hung until its 65s
+    // timeout. Reply with a clear error so the caller fails fast instead of
+    // hanging — this direction (extension-initiated calls) is not supported;
+    // the supported direction is hub → extension (/call → request frame).
+    if (msg.type === "request" && msg.id) {
+      ws.send(JSON.stringify({ id: msg.id, type: "response", ok: false, error: "extension-initiated calls not supported — use the gateway /mcp instead" }));
+      return;
     }
   }
 
@@ -118,10 +191,30 @@ export class PluginHubDO {
     // Reject all in-flight calls so /call returns a clear error, not a hang.
     const err = { error: "extension_disconnected" };
     for (const [id, resolve] of this.pending) { resolve(err); this.pending.delete(id); }
+    // round-119: resource cleanup — the 65s alarm armed at handshake was
+    // never cancelled (one extra DO wake per connect/close cycle, firing a
+    // no-op alarm() against zero sockets). round-121: the token attachment
+    // is auto-dropped with the socket (no storage key to leak); just clear
+    // the alarm when the last socket closes.
+    if ((this.state.getWebSockets() || []).length === 0) {
+      this.state.storage.deleteAlarm().catch(() => {});
+    }
   }
 
   async alarm() {
     const sockets = this.state.getWebSockets() || [];
-    for (const ws of sockets) ws.close(4001, "idle timeout");
+    for (const ws of sockets) {
+      // round-88: re-validate the plugin link bound to this socket — an
+      // expired (30-day TTL) link must not keep browser_* control.
+      // round-121: token comes from the per-connection attachment.
+      try {
+        const tok = ws.deserializeAttachment?.()?.token || null;
+        if (tok) {
+          const link = await getPluginByToken(this.env, String(tok));
+          if (!link) { ws.close(4001, "link expired"); continue; }
+        }
+      } catch { /* validation failure → idle-close below */ }
+      ws.close(4001, "idle timeout");
+    }
   }
 }

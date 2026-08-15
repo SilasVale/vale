@@ -21,7 +21,7 @@
  * just the entry points.
  */
 
-import { findUserByToken, getUserKeys, getGlobalSetting, getUserRoute } from "../store.ts";
+import { findUserByToken, getUserKeys, getGlobalSetting, getUserRoute, globalSettingEnabled } from "../store.ts";
 import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, toSSE } from "../anthropic-translate.ts";
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "../reliability.ts";
 import { rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
@@ -167,7 +167,10 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   const prefix2 = effectiveModel.split("/")[0];
   // 美国出口开关:控制台 KV 设置优先,回退 Worker secret(env.US_PROXY)。
   // KV 写透传后立即生效(同 isolate 零延迟)。
-  const usProxy = await getGlobalSetting(env, "US_PROXY");
+  const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
+  // round-94: normalize — an explicit OFF is persisted as "0" (truthy as a
+  // string); raw truthiness would treat it as ON.
+  const usProxy = globalSettingEnabled(usProxyRaw) ? "1" : null;
   const baseRoute = pickRoute(prefix2, env, usProxy);
   let upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
@@ -197,7 +200,12 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // requested og/ model answer from the results — the model stays og/, DeepSeek
   // is only the search backend. Requires this user's DEEPSEEK_API_KEY. ds/ and
   // or/ requests pass through untouched (ds/ handles web_search natively).
-  if (isMessages && (route.type === "translate" || route.kind === "opencode")) {
+  // round-119: the vision-preprocess gate excluded ds/ (passthrough+deepseek)
+  // — text-only DeepSeek received raw Anthropic image blocks and answered
+  // blind (or rejected them). Every route kind must preprocess images when
+  // the target model isn't vision-capable; the CPU-guard below (scan raw
+  // text before parsing) still bounds the parse to image/search requests.
+  if (isMessages && (route.type === "translate" || route.kind === "opencode" || route.kind === "deepseek")) {
     // CPU guard: parsing a multi-MB body into an object graph blows the Free
     // plan's 10ms budget (Error 1102) — but web_search detection and image
     // preprocessing NEED the object. The translate path MUST parse (it
@@ -206,7 +214,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // scan the RAW text for the triggers ("web_search" tool, image blocks)
     // BEFORE parsing — a plain text-only request (the common case) skips the
     // parse entirely. Translate models (minimax/mimo/kimi) always parse.
-    if (route.kind === "opencode" && route.type === "passthrough") {
+    if ((route.kind === "opencode" || route.kind === "deepseek") && route.type === "passthrough") {
       // Precise triggers. IMAGE: scan ONLY the LAST user message (from the
       // last '"role":"user"' to the end) — the current image's
       // "type":"image" marker always sits in the freshly-sent message,
@@ -294,10 +302,15 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         // rawWithModel(rawText, upstreamModel), which overwrites the top-level
         // model with upstreamModel; both now say deepseek-v4-flash.
         rawText = JSON.stringify(body);
-        // Re-point the (const) route object at the native passthrough so the
-        // web_search tool rides through to zen /v1/messages untouched.
+        // round-116: the old swap set route.upstream to the RAW OG_ZEN_ANTHROPIC
+        // constant — with US_PROXY=1 this silently bypassed the US exit that
+        // pickRoute's via() had chosen (direct zen is exactly what US_PROXY
+        // exists to avoid; search requests 403'd/timed out while ordinary ones
+        // rode the proxy). Preserve the via() proxy prefix when present.
         route.type = "passthrough";
-        route.upstream = OG_ZEN_ANTHROPIC;
+        route.upstream = usProxy
+          ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/messages")}`
+          : OG_ZEN_ANTHROPIC;
         route.kind = "opencode";
       }
     }
@@ -406,8 +419,11 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         const ra = upstream.headers?.get?.("retry-after");
         if (ra) extra = { "retry-after": ra };
       } catch { /* non-JSON error body */ }
-      // A real response resets the og consecutive-failure count.
-      if (route.kind === "opencode") await recordChannelSuccess(env);
+      // round-118: this branch is `!upstream.ok` — a 429/5xx is NOT a
+      // success. The old code called recordChannelSuccess here, so a dead
+      // channel alternating hangs with fast 429s never accumulated the 3
+      // consecutive failures to trip (the round-55 alternation hole, re-
+      // introduced at this call site). Only a genuinely ok response resets.
       return jsonError(upstream.status, message, type, extra);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
@@ -447,7 +463,12 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     if (detail?.startsWith("network error") || detail?.startsWith("timeout")) {
       await recordChannelFailure(env);
     }
-    return jsonError(502, `og: ${detail || `upstream ${upstream?.status || "error"}`}`, "api_error");
+    // round-116: preserve the upstream status/type — the old code collapsed
+    // EVERY failure to a non-retryable 502 api_error, dropping zen's 429
+    // (client should back off, not fail) and its Retry-After. The passthrough
+    // branch keeps the status; the translate branch must too.
+    const upStatus = upstream?.status || 502;
+    return jsonError(upStatus, `og: ${detail || `upstream ${upStatus}`}`, upStatus === 429 ? "rate_limit_error" : upStatus >= 500 ? "upstream_error" : "api_error");
   }
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure
   // count — otherwise yesterday's blips would combine with today's to trip.
@@ -647,6 +668,14 @@ async function preprocessImages(messages: any, env: any, ukeys: any, model: stri
     for (const b of m.content) {
       if (b.type === "image") {
         const desc = await describeImage(env, ukeys, b.source, visionModel);
+        // round-119: a describe failure was silently injected as
+        // "[图片内容描述]\n(图片描述失败…)" — the client believed the image
+        // was seen and answered blind. A failed describe must FAIL the
+        // request (the client sees the error and retries/removes the image)
+        // instead of fabricating a description.
+        if (/图片描述失败|图片描述为空|图片数据为空/.test(desc)) {
+          throw new Error(`vision preprocessing failed: ${desc.replace(/^\((图片描述失败|图片描述为空|图片数据为空)[：:]?/, "")}`);
+        }
         newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
         changed = true;
       } else {
@@ -677,6 +706,12 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
   if (!data) return "(图片数据为空)";
+  // round-119: vision preprocessing must respect the US exit too — the old
+  // pickRoute(prefix, env) resolved the upstream DIRECT (no usProxy arg),
+  // so with US_PROXY=1 the describe call went straight to a blocked/slow
+  // zen while ordinary requests rode the proxy (and every image turned
+  // into "(图片描述失败…)" placeholders for US users).
+  const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
   // KV description cache: the client re-sends the same base64 image every
   // turn, so a per-image cache turns N vision calls per follow-up into 1.
   // Keyed by a short hash of the payload (hex, no special chars).
@@ -694,7 +729,7 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
     } catch {}
   }
   const prefix = visionModel.split("/")[0];
-  const route = pickRoute(prefix, env);
+  const route = pickRoute(prefix, env, globalSettingEnabled(usProxyRaw) ? "1" : null);
   const upstreamModel = stripBracket(route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel);
   const content = [
     { type: "image", source: { type: "base64", media_type: mediaType, data } },
@@ -776,6 +811,14 @@ const DEFAULT_ROUTE_MODEL = "ds/deepseek-v4-flash";
 export async function resolveAutoModel(env: any, uid: string): Promise<string> {
   const chosen = await getUserRoute(env, uid);
   if (chosen && (await isModelUsable(env, chosen, uid))) return chosen;
+  // round-100: this plugin IS the live /v1 path (R99 made handleGateway
+  // dispatch plugins first) — the usable-fallback fix landed only in the
+  // now-unreachable index.ts copy, so a BYOK user without a DeepSeek key
+  // still got a guaranteed 502 on model=auto. Fall back to the first
+  // usable channel.
+  for (const m of [DEFAULT_ROUTE_MODEL, "qw/qwen3.8-max-preview", "og/deepseek-v4-flash", "or/openai/gpt-5.6-luna:floor[1m]"]) {
+    if (await isModelUsable(env, m, uid)) return m;
+  }
   return DEFAULT_ROUTE_MODEL;
 }
 

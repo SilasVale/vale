@@ -31,13 +31,19 @@ export function App() {
       const host = location.host;
       const tok = isProxy ? (urlToken || "") : (injected || urlToken || stored);
       localStorage.setItem(LS_HOST, host);
-      // round-122: in PROXY mode do NOT persist the token to localStorage —
-      // the vale_pt cookie is the real credential there, and persisting the
-      // plugin token made a plaintext 30-day device-control credential
-      // readable by any script on the console origin (the extension's own
-      // token-hygiene model forbids exactly this). Same-origin (LAN) mode
+      // round-122/124: in PROXY mode do NOT persist the token to
+      // localStorage — the vale_pt cookie is the real credential there, and
+      // persisting the plugin token made a plaintext 30-day device-control
+      // credential readable by any script on the console origin. Also
+      // DELETE any stale pre-R122 value: the proxy's Bearer would win over
+      // the valid cookie and a rotated leftover token would 401 the SSE
+      // stream into a permanent reconnect loop. Same-origin (LAN) mode
       // keeps the stored-token flow.
-      if (tok && !isProxy) localStorage.setItem(LS_TOKEN, tok);
+      if (isProxy) {
+        localStorage.removeItem(LS_TOKEN);
+      } else if (tok) {
+        localStorage.setItem(LS_TOKEN, tok);
+      }
       // round-86: a same-origin visit with NO token (LAN IP / non-allowlisted
       // host, empty storage) must show the conn form — the old code booted
       // connected=true with a placeholder token, silently dead (every call
@@ -92,7 +98,12 @@ export function App() {
     const h = host.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
     if (!h || !token) { setConnError("host + token required"); return; }
     localStorage.setItem(LS_HOST, h);
-    localStorage.setItem(LS_TOKEN, token);
+    // round-124: in proxy mode never persist the token — the vale_pt cookie
+    // is the credential there; persisting the plugin token to console-origin
+    // localStorage is a plaintext 30-day device-control credential readable
+    // by any console-origin script. Same-origin (LAN) mode keeps it.
+    const isProxy = /\/proxy\/panel/.test(location.pathname);
+    if (!isProxy) localStorage.setItem(LS_TOKEN, token);
     initTransport(h, token, () => { setConnected(false); setConnError("session expired — re-enter token"); });
     setConnected(true);
     setConnError("");

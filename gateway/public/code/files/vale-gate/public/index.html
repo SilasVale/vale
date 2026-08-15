@@ -24,6 +24,7 @@
       <div class="auth-tabs" role="tablist">
         <button id="tab-login" class="auth-tab active" data-tab="login" data-i18n="auth.login">登录</button>
         <button id="tab-register" class="auth-tab" data-tab="register" data-i18n="auth.register">注册</button>
+        <button id="tab-reset" class="auth-tab" data-tab="reset" data-i18n="auth.resetTab">忘记密码</button>
       </div>
 
       <form id="form-login" class="auth-form" autocomplete="off">
@@ -49,6 +50,18 @@
         </label>
         <p id="register-msg" class="form-msg" hidden></p>
         <button type="submit" class="btn-primary btn-block" data-i18n="auth.registerBtn">注册并登录</button>
+      </form>
+
+      <form id="form-reset" class="auth-form" hidden autocomplete="off">
+        <p class="muted" data-i18n="auth.resetHint">忘记密码?输入你的管理员 API key(控制台概览页的网关 Token)即可设置新密码。</p>
+        <label><span data-i18n="auth.adminKey">管理员 API Key</span>
+          <input name="adminKey" type="password" placeholder="admin key" required autocomplete="off">
+        </label>
+        <label><span data-i18n="auth.newPassword">新密码</span>
+          <input name="newPassword" type="password" placeholder="New password (≥8 chars)" required autocomplete="new-password">
+        </label>
+        <p id="reset-msg" class="form-msg" hidden></p>
+        <button type="submit" class="btn-primary btn-block" data-i18n="auth.resetBtn">重置密码</button>
       </form>
     </div>
     <p class="auth-foot" data-i18n="auth.foot">注册后带上自己的 DeepSeek / OpenCode Go 密钥即可通过本网关转发。</p>

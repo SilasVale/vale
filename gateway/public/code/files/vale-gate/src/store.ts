@@ -37,6 +37,11 @@ export interface Device {
   name: string;
   hostname: string;
   token: string;
+  /// round-103: the device's proxy secret (X-Vale-Auth) — read from the
+  /// device at registration so the gateway proxy can present it and the
+  /// agent will inject the panel token ONLY for gateway-authenticated
+  /// requests (the R102 marker header was client-spoofable).
+  proxySecret?: string;
 }
 
 export interface PluginLink {
@@ -69,7 +74,7 @@ const AUTH_CACHE_TTL = 60 * 1000;
 // stayed invisible on hot isolates for up to 24h — /proxy and /mcp 404'd on
 // the new device. Plugin tokens gate chrome.debugger-level device control —
 // a revoked link must propagate within a minute, not a day.
-const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:", "devices:", "plugins:"];
+const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:", "devices:", "plugins:", "cf:"];
 const __c = new Map<string, { v: any; exp: number }>(); // kvKey -> { v, exp }; v may be null (cached "not found")
 function cget(k: string): any {
   const e = __c.get(k);
@@ -115,12 +120,30 @@ function rcdel(k: string): void { __rc.delete(k); }
 // requests both read the pre-write value and the second put clobbered the
 // first's record. Serializing per key makes same-isolate writes atomic
 // (Workers isolates are single-threaded; the queue bridges the awaits).
+// round-122: settled chains are pruned opportunistically — the old size
+// bound deleted the OLDEST key (always a hot key like devices:v1 whose
+// chain could be pending), letting a new caller run CONCURRENTLY with the
+// queued writers (the exact lost-update the queue prevents). Evict only
+// chains that are no longer in flight: a chain is settled once it resolves,
+// so wrap each stored promise to self-prune on completion.
 const __locks = new Map<string, Promise<any>>();
 function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = __locks.get(key) || Promise.resolve();
   const next = prev.then(fn, fn);
-  __locks.set(key, next.catch(() => {}));
-  if (__locks.size > 512) __locks.delete(__locks.keys().next().value!); // bound
+  // Self-prune on settle (round-124: the first attempt compared against
+  // `next` but stored the .finally() wrapper — a DIFFERENT object, so the
+  // prune never fired and every key accumulated until the 512 bound evicted
+  // the oldest (hot, possibly-pending) chain). Capture the stored wrapper
+  // and compare against it.
+  const stored = next.catch(() => {}).finally(() => {
+    if (__locks.get(key) === stored) __locks.delete(key);
+  });
+  __locks.set(key, stored);
+  // Hard bound for pathological distinct-key bursts: evict the oldest key,
+  // accepting that a pending chain there loses its queue (its own RMW still
+  // completes; only a NEW caller for that key can now race it). Far rarer
+  // than the old always-hit-hot-key eviction.
+  if (__locks.size > 512) __locks.delete(__locks.keys().next().value!);
   return next;
 }
 
@@ -206,25 +229,40 @@ export async function createUser(env: Env, { username, password, inviteCode, rol
   const name = String(username || "").trim();
   if (!/^[A-Za-z0-9_.-]{2,32}$/.test(name)) throw new Error("Username must be 2-32 chars: letters/digits/_ . -");
   if (!password || String(password).length < 6) throw new Error("Password must be at least 6 chars");
-  if (await env.KEYS.get(`user:${name}`)) throw new Error("Username already taken");
+  // round-107: serialize the WHOLE create per name — a bare check left a
+  // window where concurrent same-name registrations both passed and
+  // overwrote each other's record while both tokens stayed live.
+  return withKeyLock(`user:${name}`, async () => {
+    if (await env.KEYS.get(`user:${name}`)) throw new Error("Username already taken");
 
-  if (role !== "admin") {
-    if (!inviteCode || !(await env.KEYS.get(`invite:${String(inviteCode).trim()}`))) {
-      throw new Error("Invalid invite code");
+    if (role !== "admin") {
+      const code = String(inviteCode || "").trim();
+      // round-94/95: invite consumption is serialized per code (the TTL
+      // claim bounds cross-isolate races).
+      const r = await withKeyLock(`invclaim:${code}`, async () => {
+        const claim = await env.KEYS.get(`invclaim:${code}`);
+        if (claim) throw new Error("Invite code already in use");
+        await env.KEYS.put(`invclaim:${code}`, "1", { expirationTtl: 60 });
+        if (!(await env.KEYS.get(`invite:${code}`))) {
+          await env.KEYS.delete(`invclaim:${code}`);
+          throw new Error("Invalid invite code");
+        }
+        await env.KEYS.delete(`invite:${code}`);
+      });
+      void r;
     }
-    await env.KEYS.delete(`invite:${String(inviteCode).trim()}`);
-  }
 
-  const salt = randomHex(16);
-  const passwordHash = await hashPassword(String(password), salt);
-  const token = generateGatewayToken();
-  // user ID = username → readable KV keys: user:<name> / ukeys:<name> / token:<t> → <name>
-  const user = { id: name, username: name, role, enabled: true, createdAt: Date.now(), passwordHash, salt, token };
-  await env.KEYS.put(`user:${name}`, JSON.stringify(user));
-  await env.KEYS.put(`token:${token}`, name);
-  cset(`user:${name}`, user);
-  cset(`token:${token}`, name);
-  return { id: name, username: name, role, token };
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(String(password), salt);
+    const token = generateGatewayToken();
+    // user ID = username → readable KV keys: user:<name> / ukeys:<name> / token:<t> → <name>
+    const user = { id: name, username: name, role, enabled: true, createdAt: Date.now(), passwordHash, salt, token };
+    await env.KEYS.put(`user:${name}`, JSON.stringify(user));
+    await env.KEYS.put(`token:${token}`, name);
+    cset(`user:${name}`, user);
+    cset(`token:${token}`, name);
+    return { id: name, username: name, role, token };
+  });
 }
 
 export async function getUser(env: Env, id: string): Promise<User | null> {
@@ -264,14 +302,20 @@ export async function listUsers(env: Env): Promise<User[]> {
 }
 
 export async function setUserEnabled(env: Env, id: string, enabled: boolean): Promise<User> {
-  // read-modify-write: read raw KV (not cache) so the write is based on the
-  // latest value, then refresh the cache with the new object (write-through)
-  const u = await getJSON(env, `user:${id}`);
-  if (!u) throw new Error("User not found");
-  u.enabled = !!enabled;
-  await env.KEYS.put(`user:${id}`, JSON.stringify(u));
-  cset(`user:${id}`, u);
-  return u;
+  // round-122: serialize on the same key as createUser/regenerateToken — the
+  // unlocked read-modify-write let an enable/disable land with a stale token
+  // value (regenerate's delete of token:T1 then made the record's T1 dead:
+  // x-api-key stops working while the console still shows T1).
+  return withKeyLock(`user:${id}`, async () => {
+    // read-modify-write: read raw KV (not cache) so the write is based on the
+    // latest value, then refresh the cache with the new object (write-through)
+    const u = await getJSON(env, `user:${id}`);
+    if (!u) throw new Error("User not found");
+    u.enabled = !!enabled;
+    await env.KEYS.put(`user:${id}`, JSON.stringify(u));
+    cset(`user:${id}`, u);
+    return u;
+  });
 }
 
 export async function regenerateToken(env: Env, id: string): Promise<string> {
@@ -365,26 +409,62 @@ export async function setUserRoute(env: Env, id: string, model: string | null | 
 
 /** Read a global setting; falls back to a Worker secret/env of the same name
  *  so the console toggle can override (and persist) a bootstrap value. */
+/** Normalize a raw setting value to the canonical form: "1" = on, null = off.
+ *  "0"/"false" (explicit OFF persisted by the console) → null; anything else
+ *  passes through. (round-95/96) */
+function normalizeSetting(v: string | null | undefined): string | null {
+  if (v !== null && v !== undefined && (v === "0" || v === "false")) return null;
+  return v as string | null;
+}
+
 export async function getGlobalSetting(env: Env, name: string): Promise<string | null> {
   const key = `settings:${name}`;
   const hit = cget(key);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) return normalizeSetting(hit);
   let v = await env.KEYS.get(key);
   if (v === null || v === undefined) v = env[name] ? String(env[name]) : null;
-  if (v === null || v === undefined) v = null;
+  // round-95: normalize AT THE READ — an explicit OFF is persisted as "0"
+  // (shadows the env var, round-94), but every consumer (the real /v1 path in
+  // index.ts, the console GET, the probes) used raw truthiness, which treats
+  // "0" as ON. Returning a canonical value here fixes ALL consumers at once:
+  // "1" = on, null = off.
+  // round-96: the CACHE HIT path (above) bypassed this normalization — the
+  // isolate that just wrote the "0" (setGlobalSetting write-through-caches
+  // the raw value) kept reading "0" as ON for the cache TTL, so the console
+  // PUT response bounced back enabled:true and /v1 routing used the proxy.
+  v = normalizeSetting(v);
   cset(key, v);
   return v;
 }
 
+/** Normalize a global-setting value to a boolean: "0"/"false"/""/null are
+ *  off, anything else on. Consumers must use this instead of raw truthiness —
+ *  an explicit OFF is persisted as "0" (see setGlobalSetting) which is
+ *  truthy as a string. (round-94) */
+export function globalSettingEnabled(v: string | null | undefined): boolean {
+  return !(v === null || v === undefined || v === "" || v === "0" || v === "false");
+}
+
 export async function setGlobalSetting(env: Env, name: string, value: any): Promise<void> {
   const key = `settings:${name}`;
-  if (value === null || value === undefined || value === "" || value === "0" || value === "false") {
+  // round-94: an explicit OFF was stored as a KV delete — getGlobalSetting
+  // then fell back to the Worker var of the same name, so a setting with an
+  // env fallback (US_PROXY as a wrangler var) could be turned ON but never
+  // OFF (the toggle bounced straight back). Distinguish "no value set"
+  // (delete → env fallback) from "explicitly off" (persist "0", which
+  // shadows the var). getGlobalSetting's falsy handling treats "0" as off.
+  if (value === null || value === undefined || value === "") {
     await env.KEYS.delete(key);
     cdel(key);
     return;
   }
-  await env.KEYS.put(key, String(value));
-  cset(key, String(value)); // write-through：切换立即生效（同 isolate 零延迟）
+  const s = String(value);
+  // round-96: persist the CANONICAL value ("1" or "0") — the raw string is
+  // cached write-through and a raw "0" in the cache bypassed the read-side
+  // normalization on this isolate (see getGlobalSetting).
+  const canonical = s === "1" ? "1" : "0";
+  await env.KEYS.put(key, canonical);
+  cset(key, canonical); // write-through：切换立即生效（同 isolate 零延迟）
 }
 
 /* ---- Admin password (stored hashed — never plaintext) ----
@@ -489,7 +569,33 @@ export async function upsertDevice(env: Env, device: Device): Promise<Device> {
   return withKeyLock(DEVICES_KEY, async () => {
     const devs = await readDevicesRaw(env);
     const i = devs.findIndex((d) => d.name === device.name);
-    if (i >= 0) devs[i] = device; else devs.push(device);
+    if (i >= 0) {
+      // round-106: an admin edit REPLACED the whole record and wiped
+      // proxySecret — /panel/ token injection broke permanently until
+      // re-registration. Preserve the secret unless the caller sets one.
+      if (!device.proxySecret && devs[i].proxySecret) {
+        device = { ...device, proxySecret: devs[i].proxySecret };
+      }
+      devs[i] = device;
+    } else {
+      devs.push(device);
+    }
+    await saveDevices(env, devs);
+    return device;
+  });
+}
+
+/** Insert a device ONLY if the name is not already registered (round-122:
+ *  /api/register's getDevice→409 guard was check-then-act — two concurrent
+ *  same-name registrations both passed and the serialized upserts ended with
+ *  the second party's hostname/token pointing at the name (device takeover,
+ *  the exact round-68 hijack). The existence check now runs INSIDE the
+ *  DEVICES_KEY critical section. Returns null when the name exists. */
+export async function insertDevice(env: Env, device: Device): Promise<Device | null> {
+  return withKeyLock(DEVICES_KEY, async () => {
+    const devs = await readDevicesRaw(env);
+    if (devs.some((d) => d.name === device.name)) return null;
+    devs.push(device);
     await saveDevices(env, devs);
     return device;
   });
@@ -598,7 +704,11 @@ export async function getPluginByToken(env: Env, token: string): Promise<PluginL
   const map = await listPluginLinks(env);
   const link = map[token] || null;
   if (!link) return null;
-  if (link.expiresAt && link.expiresAt < Date.now()) {
+  // round-122: a MISSING expiresAt is treated as expired — links created
+  // before the 30-day TTL feature shipped ({device, createdAt} only) were
+  // never expiring, granting permanent browser_* control (the exact hole
+  // the TTL exists to close). One-time sweep on read.
+  if (!link.expiresAt || link.expiresAt < Date.now()) {
     // Expired — drop it (lazy cleanup) and treat as unknown.
     delete map[token];
     await savePluginLinks(env, map);

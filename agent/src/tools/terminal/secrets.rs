@@ -138,17 +138,31 @@ mod secrets_impl {
         match entry(target) {
             Ok(e) => match e.get_password() {
                 Ok(p) => Ok(Some(p)),
-                Err(_) => file_impl::get(target),
+                Err(_) => {
+                    // round-124: legacy pre-R122 entries keyed by RAW target
+                    // (ssh:user@host) — mirror the file store's round-102
+                    // fallback so old keychain passwords stay findable.
+                    match Entry::new(SERVICE, &format!("ssh:{target}")) {
+                        Ok(legacy) => match legacy.get_password() {
+                            Ok(p) => Ok(Some(p)),
+                            Err(_) => file_impl::get(target),
+                        },
+                        Err(_) => file_impl::get(target),
+                    }
+                }
             },
             Err(_) => file_impl::get(target),
         }
     }
     pub fn delete(target: &str) -> Result<(), DeviceError> {
         match entry(target) {
-            Ok(e) => match e.delete_password() {
-                Ok(()) => file_impl::delete(target),
-                Err(_) => file_impl::delete(target),
-            },
+            Ok(e) => {
+                let _ = e.delete_password();
+                // round-124: also clear the legacy raw-key spelling so a
+                // pre-R122 keychain entry does not survive "deleted".
+                let _ = Entry::new(SERVICE, &format!("ssh:{target}")).and_then(|l| l.delete_password());
+                file_impl::delete(target)
+            }
             Err(_) => file_impl::delete(target),
         }
     }

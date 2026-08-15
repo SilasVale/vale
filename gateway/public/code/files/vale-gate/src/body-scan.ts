@@ -180,13 +180,14 @@ export function estimateTokens(jsonStr: any): number {
   const textLen = len - removedChars;
   if (textLen <= 0) return images * 1600;
   const base = (() => {
-    if (textLen > ESTIMATE_WALK_LIMIT) {
-      // ~4 chars/token ASCII, CJK denser — the ceiling is enough for budgeting.
-      return Math.ceil(textLen / 3);
-    }
-    // Sample the head (model + system prompt live there), strip its base64,
-    // and extrapolate the TEXT density to the full textLen. Sampling stays
-    // bounded (round-55/57: walking a multi-MB body blows the 10ms budget).
+    // round-119: the old >ESTIMATE_WALK_LIMIT branch returned
+    // Math.ceil(textLen/3) — discarding the CJK-aware sample. A Chinese-
+    // heavy body just over 1M chars estimated ~0.33 tokens/char vs the real
+    // ~1.8 (~5.4x under): the client's context accounting said it fit, no
+    // compaction, then the upstream rejected with request_too_large — and
+    // the estimate DROPPED discontinuously (1.78M → 337K) at the boundary.
+    // Sampling is bounded (ESTIMATE_SAMPLE head) and cheap at any size, so
+    // use it for the large branch too.
     const sample = s.slice(0, Math.min(ESTIMATE_SAMPLE, len));
     const stripped = sample.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, '"data":"<base64>"');
     let ascii = 0;

@@ -17,6 +17,9 @@
       "auth.usernamePhReg": "用户名（2-32 位字母/数字/_.-）", "auth.passwordPhReg": "密码（至少 6 位）",
       "auth.invitePh": "向管理员索取邀请码",
       "auth.loginBtn": "登录", "auth.registerBtn": "注册并登录",
+      "auth.resetTab": "忘记密码", "auth.resetHint": "忘记密码？输入管理员 API Key（控制台概览页的网关 Token）即可设置新密码。",
+      "auth.adminKey": "管理员 API Key", "auth.newPassword": "新密码",
+      "auth.resetBtn": "重置密码", "auth.resetOk": "密码已重置，请用新密码登录", "auth.resetFail": "重置失败",
       "auth.foot": "注册后带上自己的 DeepSeek / OpenCode Go 密钥即可通过本网关转发。",
       "auth.loginFail": "登录失败", "auth.registerFail": "注册失败",
       "nav.overview": "概览", "nav.keys": "密钥管理", "nav.routes": "模型路由", "nav.users": "用户管理",
@@ -102,6 +105,9 @@
       "auth.usernamePhReg": "Username (2-32 chars: letters/digits/_.-)", "auth.passwordPhReg": "Password (min 6 chars)",
       "auth.invitePh": "Ask the admin for an invite code",
       "auth.loginBtn": "Log in", "auth.registerBtn": "Sign up & log in",
+      "auth.resetTab": "Forgot password", "auth.resetHint": "Forgot your password? Enter your admin API key (the gateway token on the Overview page) to set a new one.",
+      "auth.adminKey": "Admin API Key", "auth.newPassword": "New password",
+      "auth.resetBtn": "Reset password", "auth.resetOk": "Password reset — log in with the new password", "auth.resetFail": "Reset failed",
       "auth.foot": "After signing up, add your own DeepSeek / OpenCode Go keys and route through this gateway.",
       "auth.loginFail": "Login failed", "auth.registerFail": "Registration failed",
       "nav.overview": "Overview", "nav.keys": "API Keys", "nav.routes": "Routing", "nav.users": "Users",
@@ -894,6 +900,7 @@
         $$(".auth-tab").forEach((el) => el.classList.toggle("active", el === tab));
         $("#form-login").hidden = tab.dataset.tab !== "login";
         $("#form-register").hidden = tab.dataset.tab !== "register";
+        $("#form-reset").hidden = tab.dataset.tab !== "reset";
       });
     });
 
@@ -918,6 +925,23 @@
       });
       if (res.ok) init();
       else { msg.hidden = false; msg.textContent = data?.error?.message || t("auth.registerFail"); }
+    });
+
+    $("#form-reset").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const msg = $("#reset-msg"); msg.hidden = true;
+      const f = $("#form-reset");
+      const { res, data } = await api("/api/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ adminKey: f.querySelector("[name=adminKey]").value, newPassword: f.querySelector("[name=newPassword]").value }),
+      });
+      if (res.ok) {
+        // Clear the reset form, jump to the login tab, prefill nothing.
+        f.reset();
+        $$(".auth-tab").forEach((el) => el.classList.toggle("active", el === $("#tab-login")));
+        $("#form-login").hidden = false; $("#form-register").hidden = true; $("#form-reset").hidden = true;
+        const lmsg = $("#login-msg"); lmsg.hidden = false; lmsg.textContent = t("auth.resetOk");
+      } else { msg.hidden = false; msg.textContent = data?.error?.message || t("auth.resetFail"); }
     });
 
     $$(".nav-item").forEach((b) => b.addEventListener("click", () => switchPanel(b.dataset.panel)));
