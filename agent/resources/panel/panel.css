@@ -552,17 +552,226 @@ body {
   min-height: 0;
   overflow-y: auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  flex-direction: column;
 }
 .details-empty {
-  margin: 0;
+  margin: auto;   /* centers only the empty state — content fills the column */
   color: var(--faint);
   font-size: 12px;
   line-height: 1.6;
   text-align: center;
   max-width: 220px;
+}
+
+/* ---------- selected command details (round-admin-ui Task 4) ---------- */
+.details-content {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px;
+}
+.details-cmd {
+  margin: 0;
+  font: 12px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.details-meta {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 7px 10px;
+  font-size: 12px;
+}
+.details-meta-label { color: var(--faint); }
+.details-meta-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.details-block-label {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.details-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.details-block-head .details-block-label { margin-bottom: 0; }
+.details-block-head .cmd-btn { margin-left: auto; }
+/* JsonTree style: mono key/value rows — TEXT-ONLY (never innerHTML). */
+.details-json {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ds-neutral-50);
+  padding: 8px 10px;
+  font: 11px/1.6 var(--font-mono);
+}
+.details-json-row { display: flex; gap: 8px; }
+.details-json-key { flex: none; color: var(--accent-ink); }
+.details-json-val { min-width: 0; overflow-wrap: anywhere; }
+.details-output {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ds-neutral-50);
+  padding: 8px 10px;
+  font: 11px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+/* ---------- command cards stream (round-admin-ui Task 4) ---------- */
+/* Height is RESERVED (fixed, not content-sized): the terminal above keeps a
+   stable height from mount, so the xterm grid never needs a refit when
+   cards appear/stream. */
+#cmd-stream {
+  flex: none;
+  height: 220px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.cmd-stream-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 6px;
+}
+.cmd-stream-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.cmd-stream-count {
+  font-size: 11px;
+  color: var(--faint);
+  background: var(--ds-neutral-100);
+  border: 1px solid var(--line);
+  border-radius: 999px;   /* dsh pill */
+  padding: 0 7px;
+}
+.cmd-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cmd-empty {
+  margin: auto;
+  font-size: 12px;
+  color: var(--faint);
+  text-align: center;
+}
+/* dsh ToolCallTree card: hairline border, hover lift, teal ring when
+   selected (opened in the details column). */
+.cmd-card {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out),
+              box-shadow var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+.cmd-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow); }
+.cmd-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
+}
+.cmd-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.cmd-card-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+/* StateDot: running pulses teal; success teal; failure red; backgrounded /
+   interrupted amber; closed/other neutral. */
+.cmd-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.cmd-dot[data-state="running"] {
+  background: var(--accent);
+  animation: cmd-pulse 1.6s var(--ds-ease-in-out) infinite;
+}
+.cmd-dot[data-state="ok"] { background: var(--accent); }
+.cmd-dot[data-state="fail"] { background: var(--danger); }
+.cmd-dot[data-state="warn"] { background: #d97706; }   /* dsh amber */
+.cmd-dot[data-state="muted"] { background: var(--ds-neutral-400); }
+@keyframes cmd-pulse { 50% { opacity: 0.35; } }
+.cmd-name {
+  flex: 1;
+  min-width: 0;
+  font: 12px var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmd-duration {
+  flex: none;
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.cmd-badge {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;   /* dsh pill */
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.cmd-badge[data-state="running"],
+.cmd-badge[data-state="ok"] { color: var(--accent-ink); background: var(--accent-soft); }
+.cmd-badge[data-state="fail"] { color: var(--danger); background: rgba(220, 38, 38, 0.08); }
+.cmd-badge[data-state="warn"] { color: #b45309; background: rgba(217, 119, 6, 0.12); }
+.cmd-badge[data-state="muted"] { color: var(--faint); background: var(--ds-neutral-100); }
+.cmd-btn {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--faint);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 7px;
+  cursor: pointer;
+  transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+              background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+.cmd-btn:hover { color: var(--accent-ink); background: var(--accent-soft); }
+.cmd-btn.copied { color: var(--accent-ink); }
+.cmd-out {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--ds-neutral-50);
+  font: 11px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 140px;
+  overflow-y: auto;
 }
 
 /* dsh motion respects reduced-motion (design spec) */
@@ -572,5 +781,8 @@ body {
   .frame-handle::after,
   .side-row,
   .side-action,
-  .details-close { transition: none; }
+  .details-close,
+  .cmd-card,
+  .cmd-btn,
+  .cmd-dot { transition: none; animation: none; }
 }

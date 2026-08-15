@@ -1,10 +1,12 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { initTransport } from "./lib/api";
 import { useSessions } from "./hooks/useSessions";
+import { useCommandEvents } from "./hooks/useCommandEvents";
 import { useSSE } from "./hooks/useSSE";
 import { AppFrame } from "./components/AppFrame";
 import { Sidebar } from "./components/Sidebar";
 import { DetailsPanel } from "./components/DetailsPanel";
+import { CommandStream } from "./components/CommandCard";
 import { TerminalPane } from "./components/TerminalPane";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
@@ -79,6 +81,20 @@ export function App() {
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const sessions = useSessions(connected);
+
+  // Command card stream (round-admin-ui Task 4): poll the ACTIVE session's
+  // audit log; the selected card id + derived card live here so the details
+  // column always shows the card's freshest state.
+  const cmdEvents = useCommandEvents(connected && sessions.activeSid ? sessions.activeSid : null);
+  const [selectedCmdId, setSelectedCmdId] = useState<string | null>(null);
+  const selectedCard = selectedCmdId ? cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null : null;
+  // Switching sessions resets the details column — a selected card belongs
+  // to the previous session's stream.
+  useEffect(() => {
+    setSelectedCmdId(null);
+    setDetailsOpen(false);
+  }, [sessions.activeSid]);
+
   // SSE: per-session xterm write callbacks registered by TerminalPane.
   const writeCallbacks = useRef(new Map<string, { write: (bytes: Uint8Array) => void; getRendered: () => number }>());
   const registerWrite = useMemo(() => {
@@ -169,10 +185,22 @@ export function App() {
               sessions.sessions.filter((s) => !s.closed).map((s) => <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />)
             )}
           </div>
+          {/* round-admin-ui Task 4: command card stream for the ACTIVE
+              session, below the terminal. Clicking a card opens the details
+              column. */}
+          <CommandStream
+            cards={cmdEvents.cards}
+            selectedId={selectedCmdId}
+            // Clicking the selected card again closes the details column.
+            onSelect={(id) => {
+              if (id === selectedCmdId) { setSelectedCmdId(null); setDetailsOpen(false); }
+              else { setSelectedCmdId(id); setDetailsOpen(true); }
+            }}
+          />
           <StatusBar sessions={sessions.sessions} status={sessions.status} sseState={sseState} />
         </div>
       )}
-      details={<DetailsPanel onClose={() => setDetailsOpen(false)} />}
+      details={<DetailsPanel card={selectedCard} onClose={() => setDetailsOpen(false)} />}
       detailsOpen={detailsOpen}
     />
   );
