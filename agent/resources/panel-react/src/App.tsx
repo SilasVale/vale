@@ -2,6 +2,9 @@ import { useMemo, useRef, useState } from "react";
 import { initTransport } from "./lib/api";
 import { useSessions } from "./hooks/useSessions";
 import { useSSE } from "./hooks/useSSE";
+import { AppFrame } from "./components/AppFrame";
+import { Sidebar } from "./components/Sidebar";
+import { DetailsPanel } from "./components/DetailsPanel";
 import { TerminalPane } from "./components/TerminalPane";
 import { TabBar } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
@@ -71,6 +74,9 @@ export function App() {
   }
   const [modalKind, setModalKind] = useState<"ssh" | "serial" | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // Details column (round-admin-ui Task 3): closed until a command card is
+  // selected (Task 4); the panel's ✕ closes it.
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const sessions = useSessions(connected);
   // SSE: per-session xterm write callbacks registered by TerminalPane.
@@ -124,40 +130,50 @@ export function App() {
     );
   }
 
+  // round-admin-ui Task 3: three-column AppFrame — session sidebar | main
+  // (the existing terminal pane shell) | details column (placeholder until
+  // Task 4). The toolbar/tabs/terminal/statusbar keep their exact DOM + CSS.
   return (
-    <div id="panel-main">
-      <Toolbar
-        onOpenPty={() => sessions.openSession("pty", "").catch(() => {})}
-        onShowConn={(kind) => setModalKind(kind)}
-        onExportAll={() => sessions.sessions.forEach((s) => sessions.exportSession(s.sid))}
-        onShowSettings={() => setShowSettings(true)}
-      />
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-      {modalKind && (
-        <ConnModal
-          kind={modalKind}
-          onClose={() => setModalKind(null)}
-          onConnect={(target, extra) => sessions.openSession(modalKind, target, extra)}
-        />
-      )}
-      <TabBar sessions={sessions.sessions} activeSid={sessions.activeSid} onActivate={sessions.activate} onClose={sessions.closeSession} onExport={sessions.exportSession} />
-      <div id="term-container">
-        {sessions.sessions.length === 0 ? (
-          <div id="empty-state">
-            <div className="empty-card">
-              <span className="empty-mark">V</span>
-              <p>No sessions yet</p>
-            </div>
+    <AppFrame
+      sidebar={<Sidebar sessions={sessions.sessions} activeSid={sessions.activeSid} onActivate={sessions.activate} />}
+      main={(
+        <div id="panel-main">
+          <Toolbar
+            onOpenPty={() => sessions.openSession("pty", "").catch(() => {})}
+            onShowConn={(kind) => setModalKind(kind)}
+            onExportAll={() => sessions.sessions.forEach((s) => sessions.exportSession(s.sid))}
+            onShowSettings={() => setShowSettings(true)}
+          />
+          {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+          {modalKind && (
+            <ConnModal
+              kind={modalKind}
+              onClose={() => setModalKind(null)}
+              onConnect={(target, extra) => sessions.openSession(modalKind, target, extra)}
+            />
+          )}
+          <TabBar sessions={sessions.sessions} activeSid={sessions.activeSid} onActivate={sessions.activate} onClose={sessions.closeSession} onExport={sessions.exportSession} />
+          <div id="term-container">
+            {sessions.sessions.length === 0 ? (
+              <div id="empty-state">
+                <div className="empty-card">
+                  <span className="empty-mark">V</span>
+                  <p>No sessions yet</p>
+                </div>
+              </div>
+            ) : (
+              // round-113: closed sessions do NOT render a pane — the R99
+              // unregister fix was dead code because closed panes never
+              // unmounted, leaving their write callbacks in the 5s sync loop's
+              // polling set forever. Unmounting releases the callback.
+              sessions.sessions.filter((s) => !s.closed).map((s) => <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />)
+            )}
           </div>
-        ) : (
-          // round-113: closed sessions do NOT render a pane — the R99
-          // unregister fix was dead code because closed panes never
-          // unmounted, leaving their write callbacks in the 5s sync loop's
-          // polling set forever. Unmounting releases the callback.
-          sessions.sessions.filter((s) => !s.closed).map((s) => <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />)
-        )}
-      </div>
-      <StatusBar sessions={sessions.sessions} status={sessions.status} sseState={sseState} />
-    </div>
+          <StatusBar sessions={sessions.sessions} status={sessions.status} sseState={sseState} />
+        </div>
+      )}
+      details={<DetailsPanel onClose={() => setDetailsOpen(false)} />}
+      detailsOpen={detailsOpen}
+    />
   );
 }
