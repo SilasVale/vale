@@ -17,6 +17,11 @@ pub struct PtyBackend {
     /// re-accumulates a parked thread per retry; after a timeout, new
     /// writes fail fast for this window instead of piling on.
     last_write_timeout: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// round-115: unix-ms when the current in-flight write STARTED — a
+    /// dropped caller future (client disconnect mid-write) leaves the gate
+    /// set forever; a gate older than the 5s write timeout is stale and a
+    /// fresh write may clear it and retry.
+    last_write_start: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Master handle — kept for real PTY resize (ResizePseudoConsole on
     /// Windows, TIOCSWINSZ on Unix).
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
@@ -151,6 +156,7 @@ impl PtyBackend {
             writer: Arc::new(Mutex::new(writer)),
             write_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_write_timeout: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            last_write_start: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             master: Arc::new(Mutex::new(master)),
             _slave: slave,
             child: child_slot,
@@ -183,14 +189,29 @@ impl TermBackend for PtyBackend {
         // one in-flight blocking write per session (spawn_blocking + 5s
         // timeout); while one is wedged, subsequent writes fail fast
         // instead of parking another thread behind the same mutex.
+        // round-115: self-healing gate — a dropped caller future (client
+        // disconnect mid-write on the web-panel path) leaves the flag set
+        // forever: the spawn_blocking task finishes but nothing clears it.
+        // A gate whose START is older than the 5s write timeout can no
+        // longer belong to a live writer (a live writer clears it at 5s or
+        // completed); clear it and proceed instead of failing permanently.
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
         if self.write_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            return Box::pin(async move {
-                Err("pty write already in flight (previous write wedged on a full input queue)".into())
-            });
+            let started = self.last_write_start.load(std::sync::atomic::Ordering::SeqCst);
+            if started != 0 && now_ms.saturating_sub(started) >= 5000 {
+                // Stale gate from an abandoned write — reclaim it. The old
+                // spawn_blocking task, if still parked, will drain whenever
+                // the queue frees and write into a consumed buffer (safe).
+                self.write_in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+            } else {
+                return Box::pin(async move {
+                    Err("pty write already in flight (previous write wedged on a full input queue)".into())
+                });
+            }
         }
+        self.last_write_start.store(now_ms, std::sync::atomic::Ordering::SeqCst);
         // round-110: cooldown after a timeout — the wedged queue would
         // re-accumulate a parked thread per retry; fail fast for 5s.
-        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
         let last_t = self.last_write_timeout.load(std::sync::atomic::Ordering::SeqCst);
         // round-112: saturating_sub — a backward system-clock jump wrapped
         // the raw u64 subtraction (and panicked in debug builds).

@@ -259,6 +259,19 @@ fn tool_open(
                             // Spill the evicted bytes BEFORE dropping them —
                             // they are the only copy of the stream's head;
                             // terminal_read merges spill + memory (round-54).
+                            // round-115: cap the spill FILE too — a session
+                            // producing output continuously (serial console,
+                            // tail -f) evicted ~1GB/day and the file grew
+                            // unbounded for the session's life; disk
+                            // exhaustion on the SYSTEM drive. Rotate the file
+                            // (drop the oldest half) once it exceeds the cap.
+                            let spill_len = entry.dropped.saturating_sub(entry.spill_base) + remove as u64;
+                            if spill_len > MAX_SPILL_BYTES {
+                                let keep = MAX_SPILL_BYTES / 2;
+                                let discard = spill_len - keep;
+                                entry.spill_base += discard;
+                                rotate_spill(&sid_buf, discard);
+                            }
                             append_spill(&sid_buf, &entry.data[..remove]);
                             entry.data.drain(..remove);
                             entry.dropped += remove as u64;
@@ -456,8 +469,53 @@ pub fn append_command_newline(command: &str) -> String {
     }
 }
 
+/// Cap for a session's spill file (round-115): the drainer's eviction used
+/// to append every evicted chunk forever — a continuously-producing session
+/// (serial console ~11.5KB/s, tail -f) grew the file ~1GB/day. When the
+/// file exceeds this, rotate_spill drops the oldest half.
+const MAX_SPILL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB per live session
+
 fn spill_path(sid: &str) -> std::path::PathBuf {
     std::env::temp_dir().join("vale").join(format!("{sid}.spill"))
+}
+
+/// Drop the oldest `discard` bytes from a session's spill file (round-115).
+/// The absolute offset base is advanced by the caller (`entry.spill_base`);
+/// `discard` counts from the file's current first byte. The file keeps the
+/// WHOLE tail [discard, len) so the invariant "file covers [spill_base,
+/// dropped)" holds and reads stay continuous. Best-effort: a missing file
+/// is fine. Rewrites via a temp file so a crash mid-rotation can't truncate
+/// the file (append_spill's create_new also refuses to follow a symlink
+/// planted by another local process). A rotation copies up to MAX_SPILL_BYTES
+/// — rare (once per ~128MiB of output) and bounded.
+fn rotate_spill(sid: &str, discard: u64) {
+    use std::io::{Seek, SeekFrom, Write};
+    let p = spill_path(sid);
+    let Ok(mut f) = std::fs::File::open(&p) else { return };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if discard >= len {
+        drop(f);
+        let _ = std::fs::remove_file(&p);
+        return;
+    }
+    let _ = f.seek(SeekFrom::Start(discard));
+    let mut tail = Vec::with_capacity((len - discard) as usize);
+    let mut remain = len - discard;
+    let mut buf = vec![0u8; 65536];
+    while remain > 0 {
+        let want = (remain.min(buf.len() as u64)) as usize;
+        let n = std::io::Read::read(&mut f, &mut buf[..want]).unwrap_or(0);
+        if n == 0 { break; }
+        tail.extend_from_slice(&buf[..n]);
+        remain -= n as u64;
+    }
+    drop(f);
+    let _ = std::fs::remove_file(&p);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    if let Ok(mut nf) = opts.open(&p) {
+        let _ = nf.write_all(&tail);
+    }
 }
 
 fn append_spill(sid: &str, bytes: &[u8]) {
@@ -485,18 +543,25 @@ fn append_spill(sid: &str, bytes: &[u8]) {
 /// than the requested offset and the response start must reflect it (the
 /// R110 cap silently mislabeled the tail as [offset, end), making the
 /// head unreachable AND duplicating on the panel's incremental reads).
-fn read_spill(sid: &str, start: usize, end: usize) -> (Vec<u8>, u64) {
+/// Read absolute bytes [start, end) of a session's spill file. `base` is the
+/// absolute offset of the file's first byte (round-115: the file is rotated
+/// — oldest half dropped — when it exceeds MAX_SPILL_BYTES, so byte 0 of the
+/// file is no longer stream byte 0). Everything before `base` is gone;
+/// requests there return empty with actual_start = max(start, base).
+fn read_spill(sid: &str, start: usize, end: usize, base: u64) -> (Vec<u8>, u64) {
     // round-110/111: the whole spill file was read into RAM then sliced —
     // a log-streaming session accumulates hundreds of MB, so a first
     // no-offset read (cursor 0) OOM'd the agent. Cap a single read at 1MB.
     use std::io::{Read, Seek, SeekFrom};
     const MAX_SPILL_READ: u64 = 1_048_576;
-    let Ok(mut f) = std::fs::File::open(spill_path(sid)) else { return (Vec::new(), start as u64) };
+    let Ok(mut f) = std::fs::File::open(spill_path(sid)) else { return (Vec::new(), start.max(base as usize) as u64) };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    let e = (end as u64).min(len);
-    let s = (start as u64).min(e);
+    // File covers absolute [base, base+len). Intersect the request with it.
+    let file_end = base + len;
+    let e = (end as u64).min(file_end);
+    let s = (start as u64).max(base).min(e);
     let read_start = if e - s > MAX_SPILL_READ { e - MAX_SPILL_READ } else { s };
-    let _ = f.seek(SeekFrom::Start(read_start));
+    let _ = f.seek(SeekFrom::Start(read_start - base)); // file-relative offset
     let mut out = Vec::with_capacity((e - read_start) as usize);
     let _ = f.take(e - read_start).read_to_end(&mut out);
     (out, read_start)
@@ -980,7 +1045,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     fn pipe_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
                         mut stream: R,
                         tx: tokio::sync::mpsc::Sender<Vec<u8>>,
-                    ) {
+                    ) -> tokio::task::JoinHandle<()> {
                         tokio::spawn(async move {
                             let mut buf = [0u8; 8192];
                             loop {
@@ -989,11 +1054,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                     Ok(n) => { if tx.send(buf[..n].to_vec()).await.is_err() { break; } }
                                 }
                             }
-                        });
+                        })
                     }
                     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
-                    pipe_reader(child.stdout.take().unwrap(), tx.clone());
-                    pipe_reader(child.stderr.take().unwrap(), tx.clone());
+                    let reader_stdout = pipe_reader(child.stdout.take().unwrap(), tx.clone());
+                    let reader_stderr = pipe_reader(child.stderr.take().unwrap(), tx.clone());
                     drop(tx); // main loop is the last receiver
 
                     const MAX_LOCAL_BYTES: usize = 1_048_576; // 1 MB tail cap
@@ -1079,10 +1144,17 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             while let Ok(c) = rx.try_recv() {
                                 append_chunk(&mut captured, &mut truncated, c);
                             }
-                            // Close rx so the two pipe_reader tasks stop
-                            // blocking (round-55 leaked 2 tasks + 2 fds per
-                            // execute in the daemon case).
+                            // round-115: the readers block in stream.read(),
+                            // NOT tx.send — closing rx only fails future sends
+                            // and does NOT wake the pending reads (round-55's
+                            // "Close rx so the two pipe_reader tasks stop
+                            // blocking" was wrong for the daemon case: a
+                            // grandchild inherits the pipe write ends, so the
+                            // reads never EOF and 2 tasks + 2 fds leaked per
+                            // execute forever). Abort them explicitly.
                             rx.close();
+                            reader_stdout.abort();
+                            reader_stderr.abort();
                             break;
                         }
                     }
@@ -1254,7 +1326,7 @@ fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                         // making the head unreachable and duplicating on
                         // incremental reads).
                         let (spill_bytes, actual_start) = if spilled {
-                            read_spill(&session_id, offset, in_mem_start)
+                            read_spill(&session_id, offset, in_mem_start, entry.spill_base)
                         } else {
                             (Vec::new(), offset as u64)
                         };

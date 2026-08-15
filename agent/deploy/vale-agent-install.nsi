@@ -273,6 +273,14 @@ Section "Install" SEC01
       ${EndIf}
     ${EndIf}
   ${EndIf}
+  ; round-115: the update-busy marker is released HERE, at install completion
+  ; — the agent used to delete it right after spawning this installer, which
+  ; re-opened the check-then-act window round-54's marker exists to close: a
+  ; second agent_update/tray check could pass the create_new check and spawn
+  ; a SECOND silent installer while this one was mid-install (two taskkills +
+  ; two binary copies racing). The installer is the only process that knows
+  ; the install actually finished.
+  Delete "$PROGRAMDATA\ValeAgent\update-busy"
 SectionEnd
 
 Section "Uninstall"

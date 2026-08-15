@@ -280,14 +280,17 @@ pub fn agent_update() -> ToolDef {
                         }
                     }
 
-                    // Clear the busy marker on SUCCESS too (round-57): the old
-                    // code only removed it on failure — every successful update
-                    // left the marker behind and the NEXT agent_update (or tray
-                    // check) bounced off "already in progress" for up to 60 min.
-                    #[cfg(windows)]
-                    let _ = std::fs::remove_file(&busy_bg);
-                    #[cfg(not(windows))]
-                    let _ = std::fs::remove_file(&busy_bg);
+                    // round-115: the busy marker is NOT cleared here — the
+                    // installer is still running (taskkill, binary copy,
+                    // fix-tunnel, restart take seconds). Removing it right
+                    // after spawn re-opened the check-then-act window
+                    // round-54's marker exists to close: a second
+                    // agent_update/tray check would pass create_new and spawn
+                    // a SECOND silent installer while this one was mid-install
+                    // (two taskkills + two copies racing → half-updated
+                    // install). The NSIS installer deletes the marker when the
+                    // install provably completes; a crashed install falls back
+                    // to the 60-min stale reclaim above.
                 }
                 // round-87: non-Windows — no installer to spawn; clean up so
                 // the marker does not lock updates for an hour and the stale
