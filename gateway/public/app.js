@@ -714,7 +714,7 @@
         </div>
         <div class="user-actions">
           <button class="btn-ghost btn-mini" data-pair="${esc(d.name)}">${t("devices.pair")}</button>
-          <a class="btn-ghost btn-mini" href="https://${esc(d.hostname)}/panel/" target="_blank" rel="noopener">${t("devices.open")}</a>
+          <a class="btn-ghost btn-mini" href="/api/devices/${esc(d.name)}/proxy/panel/" target="_blank" rel="noopener">${t("devices.open")}</a>
           <button class="btn-ghost btn-mini" data-mcp="${esc(d.name)}">${t("devices.copyMcp")}</button>
           <button class="btn-danger btn-mini" data-del="${esc(d.name)}">${t("btn.clear")}</button>
         </div>
