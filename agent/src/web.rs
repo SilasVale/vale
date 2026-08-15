@@ -13,6 +13,8 @@
 //!   GET  /api/events/term    → SSE terminal byte stream (TermOutput JSON frames)
 //!   GET  /api/status         → system status
 //!   GET  /api/spec           → plugin spec
+//!   GET  /api/plugins/status → plugin status (playwright-mcp running state)
+//!   POST /api/plugins/playwright/start|stop → start/stop playwright-mcp
 //!   POST /api/tools/{name}   → generic tool dispatch via PluginRegistry
 //!   /mcp (via TokenGate)     → rmcp streamable HTTP server
 
@@ -549,6 +551,44 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             serde_json::json!({ "ok": true, "buffer_mb": mb })
         }
 
+        // ---- Plugin management (round-admin-ui): playwright-mcp process
+        // ---- control for the panel's plugins page. Auth: all /api/* POSTs
+        // and /api GETs pass the gate above.
+        ("GET", "/api/plugins/status") => {
+            serde_json::json!({ "ok": true, "playwright": state.playwright.status().await })
+        }
+        ("POST", "/api/plugins/playwright/start") => {
+            match state.playwright.start().await {
+                Ok(v) => {
+                    // {ok:true, ...v} — merge the manager payload at top level
+                    let mut obj = v.as_object().cloned().unwrap_or_default();
+                    obj.insert("ok".into(), serde_json::json!(true));
+                    serde_json::Value::Object(obj)
+                }
+                // Dev builds have no bundled node.exe — fail loudly with the
+                // path hint instead of pretending the process started.
+                Err(e) => return built_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "application/json",
+                    Body::from(serde_json::json!({ "ok": false, "error": e.to_string() }).to_string()),
+                ),
+            }
+        }
+        ("POST", "/api/plugins/playwright/stop") => {
+            match state.playwright.stop().await {
+                Ok(v) => {
+                    let mut obj = v.as_object().cloned().unwrap_or_default();
+                    obj.insert("ok".into(), serde_json::json!(true));
+                    serde_json::Value::Object(obj)
+                }
+                Err(e) => return built_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "application/json",
+                    Body::from(serde_json::json!({ "ok": false, "error": e.to_string() }).to_string()),
+                ),
+            }
+        }
+
         // Generic tool dispatch: POST /api/tools/{name}
         ("POST", p) if p.starts_with("/api/tools/") => {
             let tool_name = p.strip_prefix("/api/tools/").unwrap_or("");
@@ -956,6 +996,39 @@ mod tests {
         assert_eq!(v["ok"], false);
         assert!(v["error"].as_str().unwrap().contains("unknown tool"));
         assert_eq!(v["code"], "invalid_params");
+    }
+
+    #[tokio::test]
+    async fn plugins_status_requires_auth() {
+        // /api/plugins/* is inside the same auth gate as every other /api/*
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some("sekret".into());
+        let st = Arc::new(AppState::new(cfg));
+        let resp = handle_request(req("GET", "/api/plugins/status"), st).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn plugins_status_reports_stopped() {
+        let resp = handle_request(req("GET", "/api/plugins/status"), state()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["playwright"]["running"], false);
+    }
+
+    #[tokio::test]
+    async fn plugins_playwright_start_missing_bundle_errors() {
+        // Dev builds carry no bundled node.exe under install_dir/playwright/
+        // — start must fail loudly (500) with the path hint, not pretend
+        // success. The failure happens before any spawn, so no network wait.
+        let resp = handle_request(req("POST", "/api/plugins/playwright/start"), state()).await;
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], false);
+        let err = v["error"].as_str().unwrap_or_default();
+        assert!(err.contains("node.exe"), "error must name the missing node.exe: {err}");
+        assert!(err.contains("playwright"), "error must point at the playwright bundle: {err}");
     }
 
     #[tokio::test]
