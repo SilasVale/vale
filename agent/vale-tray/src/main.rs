@@ -135,15 +135,52 @@ fn token_mask() -> String {
     }
 }
 
-/// Is the local server actually listening? TCP probe on the config port.
+/// Is the local server actually listening? TCP probe on the config host+port.
+/// round-132: the agent binds config.server.host (127.0.0.2 since 1.0.63), NOT
+/// 127.0.0.1 — probing LOCALHOST always refused, so the tray permanently
+/// showed "Stopped" on current installs.
 fn server_running(port: u16) -> bool {
-    let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port);
+    let host = config_value("host")
+        .filter(|h| h != "0.0.0.0" && !h.is_empty())
+        .unwrap_or_else(|| "127.0.0.2".to_string());
+    let ip: std::net::IpAddr = host.parse().unwrap_or_else(|_| Ipv4Addr::LOCALHOST.into());
+    let addr = SocketAddr::new(ip, port);
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
 }
 
 /// Launch a `schtasks` command that controls the ValeAgent scheduled task.
+/// round-132: the old code discarded the result — a non-elevated tray (manual
+/// launch, Restore-Tray fallback) got "Access is denied" from schtasks with
+/// zero feedback, so Stop/Restart silently did nothing. Log the failure to
+/// vale-update.log (the tray's existing diagnostics file).
 fn schtasks(args: &[&str]) {
-    let _ = Command::new("schtasks").args(args).spawn();
+    match Command::new("schtasks").args(args).output() {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            log_line(&format!("schtasks {:?} failed: {msg}", args));
+        }
+        Err(e) => log_line(&format!("schtasks {:?} failed: {e}", args)),
+    }
+}
+
+/// Append a line to vale-update.log in the install dir (tray diagnostics).
+fn log_line(msg: &str) {
+    let p = install_dir().join("vale-update.log");
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+        let _ = writeln!(f, "{} {msg}", chrono_now());
+    }
+}
+
+/// Compact local timestamp (no chrono dep — reuse the PS-style format).
+fn chrono_now() -> String {
+    let s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Windows epoch-ish formatting is overkill — a unix ts is fine for logs.
+    s.to_string()
 }
 
 /// Open a URL in the default browser.
@@ -193,10 +230,22 @@ fn open_local_terminal() {
 }
 
 /// Restart the scheduled task: end, wait for the shutdown, run again.
+/// round-132: the old fire-and-forget chain ran /Run exactly 2s after /End
+/// with no verification — Task Scheduler may still be tearing the tree down
+/// (hung child, AV), /Run fails "task is currently running", and a killed
+/// agent stays DOWN silently. Poll the task state before /Run, and retry.
 fn restart_task() {
-    let _ = Command::new("cmd")
-        .args(["/c", "schtasks /End /TN ValeAgent & timeout /t 2 /nobreak >nul & schtasks /Run /TN ValeAgent"])
-        .spawn();
+    let _ = Command::new("schtasks").args(["/End", "/TN", "ValeAgent"]).output();
+    // Poll until the task is not running (up to ~10s), then run it.
+    for _ in 0..20 {
+        let state = Command::new("schtasks").args(["/Query", "/TN", "ValeAgent", "/FO", "LIST"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        if !state.contains("Running") { break; }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    schtasks(&["/Run", "/TN", "ValeAgent"]);
 }
 
 /// Full auto-upgrade: check the download server for a newer vale-agent and,
@@ -306,7 +355,6 @@ New-Item -ItemType File -Path $busy -Force | Out-Null
 }
 
 /// How often the tray re-checks for updates while the Auto-update toggle is on.
-const AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Silent auto-update: like `check_for_update()` but with no dialogs at all —
 /// query the version endpoint and, if newer, download + run the silent
@@ -532,7 +580,6 @@ fn main() {
     // First auto-update check ~60s after tray start (network is often not up
     // right at logon). Only advances when the check actually runs, so toggling
     // Auto-update on triggers one within a minute.
-    let mut last_auto_check = Instant::now() - AUTO_CHECK_INTERVAL + Duration::from_secs(60);
 
     event_loop
         .run(move |_event, el| {
@@ -543,14 +590,9 @@ fn main() {
                 ui.refresh(&tray);
                 last_refresh = Instant::now();
             }
-            // No periodic auto-update: the hourly check caused surprise
-            // installs/restarts and user asked for push-only (updates happen
-            // via the MCP agent_update or the tray's manual Check for updates). The
-            // auto_update_enabled() toggle stays for the manual path.
-            if false && auto_update_enabled() && last_auto_check.elapsed() >= AUTO_CHECK_INTERVAL {
-                auto_update_check();
-                last_auto_check = Instant::now();
-            }
+            // No periodic auto-update (push-only): the old `if false &&
+            // auto_update_enabled()` made the toggle dead state — round-132
+            // moves the one-shot check into the menu handler below.
             while let Ok(ev) = menu_rx.try_recv() {
                 match ev.id.0.as_str() {
                     "copy_mcp" => copy_mcp_config(),
@@ -558,9 +600,15 @@ fn main() {
                     "open_console" => open_url(&console_url()),
                     "open_terminal" => open_local_terminal(),
                     "check_update" => check_for_update(),
-                    // The OS toggled the checkmark already — persist whatever
-                    // the box now shows (checked → auto-update on).
-                    "auto_update" => set_auto_update(auto_update.is_checked()),
+                    // round-132: turning the toggle ON triggers ONE silent
+                    // check right now (push-only — no scheduler); turning it
+                    // OFF just persists. The old dead `if false` loop made
+                    // the checkmark meaningless.
+                    "auto_update" => {
+                        let on = auto_update.is_checked();
+                        set_auto_update(on);
+                        if on { auto_update_check(); }
+                    }
                     "start" => schtasks(&["/Run", "/TN", "ValeAgent"]),
                     "stop" => schtasks(&["/End", "/TN", "ValeAgent"]),
                     "restart" => restart_task(),

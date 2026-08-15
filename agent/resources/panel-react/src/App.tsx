@@ -96,14 +96,19 @@ export function App() {
   const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
   const sessionView: SessionView = (sessions.activeSid && sessionViews[sessions.activeSid]) || "terminal";
   const trajOpen = !!sessions.activeSid && sessionView === "trajectory";
-  // round-131: refit the xterm when the terminal container un-hides (the
-  // refit effect skips while display:none) — a window resize while in the
-  // trajectory view otherwise leaves a stale grid on switch-back.
+  // round-132: refit the xterm when the terminal container un-hides — the
+  // refit effect skips while display:none, so a window resize while in the
+  // trajectory view leaves a stale grid on switch-back. The dispatch must
+  // run POST-commit (after display:none is removed): the R131 version ran
+  // in the render body, where the container was still hidden and every
+  // refit guard early-returned (a no-op).
   const prevTraj = useRef(trajOpen);
-  if (prevTraj.current && !trajOpen) {
-    window.dispatchEvent(new Event("resize"));
-  }
-  prevTraj.current = trajOpen;
+  useEffect(() => {
+    if (prevTraj.current && !trajOpen) {
+      window.dispatchEvent(new Event("resize"));
+    }
+    prevTraj.current = trajOpen;
+  }, [trajOpen]);
 
   // A selected command card belongs to the sessions view — leaving it drops
   // the details column (a stale card would linger over the plugins page).
