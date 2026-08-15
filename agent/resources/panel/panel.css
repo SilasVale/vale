@@ -13,7 +13,7 @@
   --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
-  --focus-ring: rgba(11, 122, 110, 0.45);
+  --focus-ring: rgba(11, 122, 110, 0.65)  /* round-117: 0.45 was ~1.95:1 — below the 3:1 non-text minimum; 0.65 = ~3:1 */;
   --focus-ring-soft: rgba(11, 122, 110, 0.14);
   --lane-ds: #4f6bed;   /* SSH tab dot (console --lane-ds) */
   --lane-or: #d97706;   /* serial tab dot (console --lane-or) */

@@ -77,6 +77,16 @@ export function useSessions(connected: boolean) {
             if (nextLive) { setActiveSid(nextLive.sid); nextLive.active = true; }
             else setActiveSid(null);
           }
+          // round-117: cap the tombstone count — every session the device
+          // ever hosted (PTY/SSH churn, other clients) accumulated forever,
+          // growing the tab bar and the per-tick O(m) scan. Keep the newest
+          // 32 closed entries; older ones are dropped (their history is
+          // still readable server-side via the sessions dir).
+          const closed = next.filter((s) => s.closed);
+          if (closed.length > 32) {
+            const drop = new Set(closed.slice(0, closed.length - 32).map((s) => s.sid));
+            return next.filter((s) => !drop.has(s.sid));
+          }
           return next;
         });
       } catch { /* transient — next poll retries */ }
@@ -143,8 +153,17 @@ export function useSessions(connected: boolean) {
   }, [activeSid]);
 
   const activate = useCallback((sid: string) => {
-    setActiveSid(sid);
-    setSessions((prev) => prev.map((s) => ({ ...s, active: s.sid === sid })));
+    // round-117: a CLOSED (tombstone) session must not become active —
+    // round-113 unmounted closed panes, so activating one blanks the whole
+    // terminal area (every mounted pane hidden; with no live sessions the
+    // blank is permanent). The round-86 "review closed history" intent died
+    // with round-113; a closed tab click is now a no-op.
+    setSessions((prev) => {
+      const target = prev.find((s) => s.sid === sid);
+      if (!target || target.closed) return prev;
+      setActiveSid(sid);
+      return prev.map((s) => ({ ...s, active: s.sid === sid }));
+    });
   }, []);
 
   const exportSession = useCallback((sid: string) => {

@@ -45,12 +45,17 @@ function backfillGap(
       const rel = Math.max(0, issueOffset - Number(r.start));
       const to = gapEnd === undefined ? bytes.length : Math.min(rel + (gapEnd - issueOffset), bytes.length);
       const from = Math.min(rel, bytes.length);
-      // round-104: re-check at RESPONSE time — if the sync loop (or another
-      // path) already advanced rendered past the gap, skip (no duplicate).
-      const alreadyRendered = Math.max(0, cb.getRendered() - issueOffset);
-      if (to > from && alreadyRendered < (gapEnd === undefined ? Number.MAX_SAFE_INTEGER : gapEnd - issueOffset)) {
-        const effectiveFrom = Math.max(from, rel + alreadyRendered);
-        if (to > effectiveFrom) cb.write(bytes.subarray(effectiveFrom, to));
+      // round-117: the round-104 re-check compared cb.getRendered() at
+      // RESPONSE time against the gap end — but the caller wrote the
+      // post-gap frame (start..start+len) SYNCHRONOUSLY right after issuing
+      // this read, so rendered was always >= gapEnd by the time the read
+      // resolved and the backfill NEVER fired: the dropped range was lost
+      // permanently. The frame's write covers [start, start+len), which does
+      // NOT include the gap [issueOffset, start) — so the only real
+      // duplication risk is the 5s sync loop racing this read. Compare
+      // against the frame's start (the true gap lower bound), not rendered.
+      if (to > from && (gapEnd === undefined || rel < (gapEnd - issueOffset))) {
+        cb.write(bytes.subarray(from, to));
       }
     })
     .catch(() => {});
