@@ -297,10 +297,15 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         // rawWithModel(rawText, upstreamModel), which overwrites the top-level
         // model with upstreamModel; both now say deepseek-v4-flash.
         rawText = JSON.stringify(body);
-        // Re-point the (const) route object at the native passthrough so the
-        // web_search tool rides through to zen /v1/messages untouched.
+        // round-116: the old swap set route.upstream to the RAW OG_ZEN_ANTHROPIC
+        // constant — with US_PROXY=1 this silently bypassed the US exit that
+        // pickRoute's via() had chosen (direct zen is exactly what US_PROXY
+        // exists to avoid; search requests 403'd/timed out while ordinary ones
+        // rode the proxy). Preserve the via() proxy prefix when present.
         route.type = "passthrough";
-        route.upstream = OG_ZEN_ANTHROPIC;
+        route.upstream = usProxy
+          ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/messages")}`
+          : OG_ZEN_ANTHROPIC;
         route.kind = "opencode";
       }
     }
@@ -450,7 +455,12 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     if (detail?.startsWith("network error") || detail?.startsWith("timeout")) {
       await recordChannelFailure(env);
     }
-    return jsonError(502, `og: ${detail || `upstream ${upstream?.status || "error"}`}`, "api_error");
+    // round-116: preserve the upstream status/type — the old code collapsed
+    // EVERY failure to a non-retryable 502 api_error, dropping zen's 429
+    // (client should back off, not fail) and its Retry-After. The passthrough
+    // branch keeps the status; the translate branch must too.
+    const upStatus = upstream?.status || 502;
+    return jsonError(upStatus, `og: ${detail || `upstream ${upStatus}`}`, upStatus === 429 ? "rate_limit_error" : upStatus >= 500 ? "upstream_error" : "api_error");
   }
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure
   // count — otherwise yesterday's blips would combine with today's to trip.
