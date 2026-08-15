@@ -140,7 +140,12 @@ fn token_mask() -> String {
 /// 127.0.0.1 — probing LOCALHOST always refused, so the tray permanently
 /// showed "Stopped" on current installs.
 fn server_running(port: u16) -> bool {
+    // round-133: the shipped config.yaml writes `host: "127.0.0.2"` QUOTED —
+    // config_value returns the quotes intact and IpAddr::parse then fails,
+    // silently falling back to 127.0.0.1 (the wrong address). Strip quotes
+    // like auth_token()/bootstrap already do; also strip on the 0.0.0.0 guard.
     let host = config_value("host")
+        .map(|v| v.trim_matches('"').trim_matches('\'').trim().to_string())
         .filter(|h| h != "0.0.0.0" && !h.is_empty())
         .unwrap_or_else(|| "127.0.0.2".to_string());
     let ip: std::net::IpAddr = host.parse().unwrap_or_else(|_| Ipv4Addr::LOCALHOST.into());
@@ -236,13 +241,13 @@ fn open_local_terminal() {
 /// agent stays DOWN silently. Poll the task state before /Run, and retry.
 fn restart_task() {
     let _ = Command::new("schtasks").args(["/End", "/TN", "ValeAgent"]).output();
-    // Poll until the task is not running (up to ~10s), then run it.
+    // round-133: poll the AGENT PORT instead of parsing schtasks /Query
+    // output — the Status field is localized (Chinese Windows prints
+    // '正在运行', so the old contains("Running") never matched and the
+    // 2s-race returned). The port probe is language-independent and is
+    // exactly the semantic that matters: the agent has stopped serving.
     for _ in 0..20 {
-        let state = Command::new("schtasks").args(["/Query", "/TN", "ValeAgent", "/FO", "LIST"])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default();
-        if !state.contains("Running") { break; }
+        if !server_running(server_port()) { break; }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
     schtasks(&["/Run", "/TN", "ValeAgent"]);
@@ -354,7 +359,7 @@ New-Item -ItemType File -Path $busy -Force | Out-Null
     // already-current install.)
 }
 
-/// How often the tray re-checks for updates while the Auto-update toggle is on.
+/// Kept for reference only — updates are push-only (round-133: the toggle is a one-shot check, no periodic timer).
 
 /// Silent auto-update: like `check_for_update()` but with no dialogs at all —
 /// query the version endpoint and, if newer, download + run the silent
@@ -577,9 +582,6 @@ fn main() {
     let event_loop = winit::event_loop::EventLoop::new().expect("create event loop");
     let menu_rx = MenuEvent::receiver();
     let mut last_refresh = Instant::now() - REFRESH_INTERVAL;
-    // First auto-update check ~60s after tray start (network is often not up
-    // right at logon). Only advances when the check actually runs, so toggling
-    // Auto-update on triggers one within a minute.
 
     event_loop
         .run(move |_event, el| {

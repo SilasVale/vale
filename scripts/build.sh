@@ -84,15 +84,24 @@ deploy_worker() {
       echo "  !! live sha256 mismatch: want $want_sha, got: $live"
       exit 1
     fi
-    # round-132: the manifest check alone never touched the served BINARY —
+    # round-132/133: the manifest check alone never touched the served BINARY —
     # a missing (fresh-clone deploy without the exe in git) or mismatched
     # (interrupt between the index.js sha write and the exe copy) installer
     # shipped with a green smoke, and round-119 made every device refuse the
-    # install permanently. Hash the live download against the manifest.
-    local live_sha
-    live_sha="$(curl -s -m 120 https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe | sha256sum | cut -d' ' -f1)"
+    # install permanently. Hash the live download against the manifest. The
+    # download URL comes from the manifest (retry like the version check —
+    # asset propagation lags a few seconds after wrangler returns).
+    local dl_url live_sha
+    dl_url="$(echo "$live" | grep -oP '"download":"\K[^"]+' | head -1)"
+    [ -n "$dl_url" ] || { echo "  !! manifest has no download URL"; exit 1; }
+    live_sha=""
+    for _ in 1 2 3 4 5; do
+      live_sha="$(curl -s -m 120 "$dl_url" | sha256sum | cut -d' ' -f1)"
+      [ "$live_sha" = "$want_sha" ] && break
+      sleep 3
+    done
     if [ "$live_sha" != "$want_sha" ]; then
-      echo "  !! live binary sha256 mismatch: manifest $want_sha, downloaded $live_sha"
+      echo "  !! live binary sha256 mismatch: manifest $want_sha, downloaded $live_sha ($dl_url)"
       exit 1
     fi
     echo "  ok: /api/version smoke passed (v$want_version, binary sha verified)"
