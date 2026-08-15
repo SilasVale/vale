@@ -74,7 +74,7 @@ const AUTH_CACHE_TTL = 60 * 1000;
 // stayed invisible on hot isolates for up to 24h — /proxy and /mcp 404'd on
 // the new device. Plugin tokens gate chrome.debugger-level device control —
 // a revoked link must propagate within a minute, not a day.
-const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:", "devices:", "plugins:"];
+const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:", "devices:", "plugins:", "cf:"];
 const __c = new Map<string, { v: any; exp: number }>(); // kvKey -> { v, exp }; v may be null (cached "not found")
 function cget(k: string): any {
   const e = __c.get(k);

@@ -87,10 +87,18 @@ export async function callTool(tool: any, env: any, device: any, args: any): Pro
     headers,
     body: JSON.stringify({ tool: tool.name, params: args, requestId: crypto.randomUUID() }),
   });
-  // Never let an auth failure masquerade as success.
+  // Never let a failure masquerade as success. Round-115: the DO returns a
+  // 500 (plain-text body) when the extension socket closed between the
+  // socket check and ws.send — res.json() fails, j={}, and j.result was
+  // undefined → a JSON-RPC SUCCESS with no text told the model the browser
+  // action ran when nothing executed. Treat every non-2xx as an extension
+  // failure.
   if (res.status === 401) throw new Error("hub auth misconfigured (x-do-auth)");
   const j = await res.json().catch(() => ({}));
   if (res.status === 503) throw ToolErr(EXTENSION_OFFLINE, "extension_offline — is the Vale extension running on the device browser?");
+  if (res.status < 200 || res.status >= 300) {
+    throw ToolErr(EXTENSION_OFFLINE, `extension unavailable (hub ${res.status}) — is the Vale extension running on the device browser?`);
+  }
   if (j.error) throw new Error(`extension error: ${j.error}`);
   return j.result;
 }

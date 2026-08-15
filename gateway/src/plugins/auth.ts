@@ -132,19 +132,25 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
     ok = !!user.salt && !!user.passwordHash && (await verifyPassword(body.password || "", user.salt, user.passwordHash));
   }
   if (!ok) {
-    // Track failures: 5th consecutive miss arms the 30s lock.
-    const fails = Number(await env.KEYS.get(lockKey + ":n")) || 0;
-    const next = fails + 1;
-    if (next >= 5) {
+    // round-115: count failures in memory — the old KV counter (lockKey:":n")
+    // burned one KV WRITE per failed attempt, the same quota-exhaustion path
+    // as the register/pair endpoints (round-102/104 gated the rate but a
+    // parallel burst across isolates still landed hundreds of writes). Only
+    // arming the 30s lock touches KV. The lock itself is still KV, so a lock
+    // armed on one isolate throttles every isolate.
+    const fk = `login-fails:${callerIp}:${user.id}`;
+    const fails = (__loginFails.get(fk) || 0) + 1;
+    if (fails >= 5) {
       await env.KEYS.put(lockKey, "1", { expirationTtl: 60 });
-      await env.KEYS.delete(lockKey + ":n");
+      __loginFails.delete(fk);
     } else {
-      await env.KEYS.put(lockKey + ":n", String(next), { expirationTtl: 60 });
+      __loginFails.set(fk, fails);
+      if (__loginFails.size > 4096) __loginFails.delete(__loginFails.keys().next().value);
     }
     return jsonError(401, "Incorrect username or password", "authentication_error");
   }
   // Success clears the failure counter.
-  await env.KEYS.delete(lockKey + ":n");
+  __loginFails.delete(`login-fails:${callerIp}:${user.id}`);
   const token = await issueSessionToken(sessionSecret(env, ap), user.id, user.role);
   return jsonOk({ ok: true, username: user.username, role: user.role }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
 }
@@ -184,6 +190,7 @@ async function authResetPassword(request: Request, env: any): Promise<Response> 
 }
 
 const __loginGate = new Map(); // `login:${ip}:${minute}` → failed-login burst count
+const __loginFails = new Map(); // `login-fails:${ip}:${userId}` → consecutive failures (in-memory, round-115)
 
 /* ---- Logout ---- */
 
