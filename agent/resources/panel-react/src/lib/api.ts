@@ -35,7 +35,23 @@ export async function callApi(path: string, init: RequestInit = {}): Promise<any
   // round-86: a transient 502/500 must THROW — the old code returned the
   // error body as a successful result, so the poll mapped its characters
   // into junk sessions (sid: undefined) and tombstoned the list.
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    // round-86: a transient 502/500 must THROW — the old code returned the
+    // error body as a successful result, so the poll mapped its characters
+    // into junk sessions (sid: undefined) and tombstoned the list.
+    // Agent error bodies ({ok:false,error}) carry the actionable message
+    // (e.g. a playwright spawn failure) — surface it verbatim when the body
+    // is parseable JSON; otherwise keep the HTTP status.
+    let detail = "";
+    try {
+      const body = await res.text();
+      if (body) {
+        const j = JSON.parse(body);
+        if (j && typeof j.error === "string") detail = j.error;
+      }
+    } catch { /* non-JSON error body — the HTTP status is the message */ }
+    throw new Error(detail || `HTTP ${res.status}`);
+  }
   const text = await res.text();
   try { return JSON.parse(text); } catch { return text; }
 }
