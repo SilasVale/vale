@@ -9,6 +9,10 @@ use std::sync::Arc;
 pub struct SerialBackend {
     write_tx: std::sync::mpsc::SyncSender<Vec<u8>>,
     close_tx: std::sync::mpsc::Sender<()>,
+    // round-118: the pool entry must be dropped when the session closes so
+    // the port can be reopened; without this the exclusivity guard leaked.
+    pool: Option<Arc<SerialPool>>,
+    port_id: Option<String>,
 }
 
 impl SerialBackend {
@@ -33,16 +37,20 @@ impl SerialBackend {
         let stop_bits = stop_bits.or(cfg.stop_bits);
         tracing::debug!("[vale-agent] Serial: opening {port_name} at {baud} baud (data_bits={data_bits:?} parity={parity:?} stop_bits={stop_bits:?})");
 
-        // Open in pool, then take ownership out — session owns the port,
-        // so reads/writes never contend on the shared pool lock. The open
-        // itself can block on flaky hardware, so it runs off-executor.
-        let port = {
+        // Open in pool, then BORROW the handle out (round-118: the old
+        // take_port REMOVED the pool entry, defeating open()'s exclusivity
+        // check — a second open of the same port passed and double-opened
+        // the device). The pool entry stays as the guard; the session owns
+        // its cloned handle and reads/writes without pool-lock contention.
+        // release_port drops the entry on close.
+        let (port, port_id) = {
             let pool = pool.clone();
             let port_name = port_name.clone();
             tokio::task::spawn_blocking(move || {
                 let (port_id, _) = pool.open(port_name, Some(baud), data_bits, parity, stop_bits)?;
-                pool.take_port(&port_id)
-                    .ok_or_else(|| DeviceError::SerialPortNotOpen { id: port_id.clone() })
+                let port = pool.borrow_port(&port_id)
+                    .ok_or_else(|| DeviceError::SerialPortNotOpen { id: port_id.clone() })?;
+                Ok::<_, DeviceError>((port, port_id))
             })
             .await
             .map_err(|e| DeviceError::Internal {
@@ -98,7 +106,7 @@ impl SerialBackend {
             }
         });
 
-        Ok(SerialBackend { write_tx, close_tx })
+        Ok(SerialBackend { write_tx, close_tx, pool: Some(pool), port_id: Some(port_id) })
     }
 }
 
@@ -136,5 +144,11 @@ impl TermBackend for SerialBackend {
 impl Drop for SerialBackend {
     fn drop(&mut self) {
         let _ = self.close_tx.send(());
+        // round-118: release the pool entry so the port can be reopened —
+        // the old take_port removed it at open time (breaking exclusivity),
+        // and without a release here the new borrow design would leak it.
+        if let (Some(pool), Some(port_id)) = (self.pool.take(), self.port_id.take()) {
+            pool.release_port(&port_id);
+        }
     }
 }

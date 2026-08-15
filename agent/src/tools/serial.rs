@@ -91,13 +91,20 @@ impl SerialPool {
 
         let mut builder = serialport::new(&port_name, baud).timeout(self.default_timeout);
 
-        // Data bits
+        // round-118: invalid framing values previously SILENTLY defaulted
+        // to 8N1 — a typo'd parity/data_bits/stop_bits opened the port with
+        // the wrong wire format and every frame was corrupted with no error
+        // (on a device needing 7E1, the exact channel round-54 built for
+        // wire-format correctness). Reject unrecognized values instead.
         if let Some(db) = data_bits {
             let db = match db {
                 5 => serialport::DataBits::Five,
                 6 => serialport::DataBits::Six,
                 7 => serialport::DataBits::Seven,
-                _ => serialport::DataBits::Eight,
+                8 => serialport::DataBits::Eight,
+                _ => return Err(DeviceError::Internal {
+                    message: format!("invalid data_bits: {db} (5/6/7/8)"),
+                }),
             };
             builder = builder.data_bits(db);
         }
@@ -107,7 +114,10 @@ impl SerialPool {
             let parity = match p.to_lowercase().as_str() {
                 "odd" => serialport::Parity::Odd,
                 "even" => serialport::Parity::Even,
-                _ => serialport::Parity::None,
+                "none" => serialport::Parity::None,
+                _ => return Err(DeviceError::Internal {
+                    message: format!("invalid parity: {p} (odd/even/none)"),
+                }),
             };
             builder = builder.parity(parity);
         }
@@ -115,8 +125,11 @@ impl SerialPool {
         // Stop bits
         if let Some(sb) = stop_bits {
             let sb = match sb {
+                1 => serialport::StopBits::One,
                 2 => serialport::StopBits::Two,
-                _ => serialport::StopBits::One,
+                _ => return Err(DeviceError::Internal {
+                    message: format!("invalid stop_bits: {sb} (1/2)"),
+                }),
             };
             builder = builder.stop_bits(sb);
         }
@@ -167,13 +180,29 @@ impl SerialPool {
         Ok((id, baud))
     }
 
-    /// Take ownership of a port, removing it from the pool.
-    /// Used by terminal sessions that need exclusive port access without pool lock contention.
+    /// Borrow a port for exclusive use WITHOUT removing the pool entry.
+    /// round-118: the old take_port REMOVED the entry — the exclusivity
+    /// checks in open() (scan the ports map) then saw an empty map and a
+    /// second open of the same port passed, double-opening the device
+    /// (Linux: interleaved reads + termios clobber; Windows: misleading
+    /// "not found" for an in-use port). Keeping the entry makes the map the
+    /// single source of exclusivity; the session holds its own handle and
+    /// reads/writes without pool-lock contention (the lock is only held to
+    /// clone the handle). close() calls release_port to drop the entry.
     #[cfg_attr(not(feature = "terminal"), allow(dead_code))]
-    pub fn take_port(&self, port_id: &str) -> Option<Box<dyn serialport::SerialPort>> {
+    pub fn borrow_port(&self, port_id: &str) -> Option<Box<dyn serialport::SerialPort>> {
+        // OpenPort holds Box<dyn SerialPort>; hand out a CLONE (the session
+        // owns its handle from here — the pool entry stays as the
+        // exclusivity guard, see round-118 note above).
         recover_guard(&self.ports)
-            .remove(port_id)
-            .map(|entry| entry.port)
+            .get(port_id)
+            .and_then(|entry| entry.port.try_clone().ok())
+    }
+
+    /// Drop a port's pool entry (session closed). Idempotent.
+    #[cfg_attr(not(feature = "terminal"), allow(dead_code))]
+    pub fn release_port(&self, port_id: &str) {
+        recover_guard(&self.ports).remove(port_id);
     }
 
     pub fn list_open_ports(&self) -> Vec<OpenPortInfo> {
