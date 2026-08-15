@@ -200,7 +200,12 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // requested og/ model answer from the results — the model stays og/, DeepSeek
   // is only the search backend. Requires this user's DEEPSEEK_API_KEY. ds/ and
   // or/ requests pass through untouched (ds/ handles web_search natively).
-  if (isMessages && (route.type === "translate" || route.kind === "opencode")) {
+  // round-119: the vision-preprocess gate excluded ds/ (passthrough+deepseek)
+  // — text-only DeepSeek received raw Anthropic image blocks and answered
+  // blind (or rejected them). Every route kind must preprocess images when
+  // the target model isn't vision-capable; the CPU-guard below (scan raw
+  // text before parsing) still bounds the parse to image/search requests.
+  if (isMessages && (route.type === "translate" || route.kind === "opencode" || route.kind === "deepseek")) {
     // CPU guard: parsing a multi-MB body into an object graph blows the Free
     // plan's 10ms budget (Error 1102) — but web_search detection and image
     // preprocessing NEED the object. The translate path MUST parse (it
@@ -209,7 +214,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // scan the RAW text for the triggers ("web_search" tool, image blocks)
     // BEFORE parsing — a plain text-only request (the common case) skips the
     // parse entirely. Translate models (minimax/mimo/kimi) always parse.
-    if (route.kind === "opencode" && route.type === "passthrough") {
+    if ((route.kind === "opencode" || route.kind === "deepseek") && route.type === "passthrough") {
       // Precise triggers. IMAGE: scan ONLY the LAST user message (from the
       // last '"role":"user"' to the end) — the current image's
       // "type":"image" marker always sits in the freshly-sent message,
@@ -663,6 +668,14 @@ async function preprocessImages(messages: any, env: any, ukeys: any, model: stri
     for (const b of m.content) {
       if (b.type === "image") {
         const desc = await describeImage(env, ukeys, b.source, visionModel);
+        // round-119: a describe failure was silently injected as
+        // "[图片内容描述]\n(图片描述失败…)" — the client believed the image
+        // was seen and answered blind. A failed describe must FAIL the
+        // request (the client sees the error and retries/removes the image)
+        // instead of fabricating a description.
+        if (/图片描述失败|图片描述为空|图片数据为空/.test(desc)) {
+          throw new Error(`vision preprocessing failed: ${desc.replace(/^\((图片描述失败|图片描述为空|图片数据为空)[：:]?/, "")}`);
+        }
         newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
         changed = true;
       } else {
@@ -693,6 +706,12 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
   if (!data) return "(图片数据为空)";
+  // round-119: vision preprocessing must respect the US exit too — the old
+  // pickRoute(prefix, env) resolved the upstream DIRECT (no usProxy arg),
+  // so with US_PROXY=1 the describe call went straight to a blocked/slow
+  // zen while ordinary requests rode the proxy (and every image turned
+  // into "(图片描述失败…)" placeholders for US users).
+  const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
   // KV description cache: the client re-sends the same base64 image every
   // turn, so a per-image cache turns N vision calls per follow-up into 1.
   // Keyed by a short hash of the payload (hex, no special chars).
@@ -710,7 +729,7 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
     } catch {}
   }
   const prefix = visionModel.split("/")[0];
-  const route = pickRoute(prefix, env);
+  const route = pickRoute(prefix, env, globalSettingEnabled(usProxyRaw) ? "1" : null);
   const upstreamModel = stripBracket(route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel);
   const content = [
     { type: "image", source: { type: "base64", media_type: mediaType, data } },

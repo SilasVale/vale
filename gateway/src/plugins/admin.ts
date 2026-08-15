@@ -137,6 +137,29 @@ async function adminGetPassword(request: Request, env: Env): Promise<Response> {
 }
 
 async function adminPutPassword(request: Request, env: Env): Promise<Response> {
+  // round-119: bootstrap is circular — with NO password set, no session can
+  // ever exist (requireSession returns null on empty getAdminPassword,
+  // login 500s 'not configured'), so the console was unreachable on a fresh
+  // deployment with no ADMIN_PASSWORD secret. Allow a session-less FIRST
+  // password set when none exists (the admin key from KV gates it — the
+  // same credential the reset-password path uses); once a password exists
+  // the current-password + session requirements apply.
+  const hasPw = await hasAdminPassword(env);
+  if (!hasPw) {
+    const body = await readJson(request);
+    const v = String(body?.password || "");
+    if (v.length < 8) return jsonError(400, "Admin password must be at least 8 chars", "invalid_request");
+    // Gate the bootstrap with the admin gateway token (the console Overview
+    // value / Claude Code key) — an unauthenticated internet caller must not
+    // set the console password on a fresh deployment.
+    const admin = await getUser(env, ADMIN_ID);
+    const adminKey = String(body?.adminKey || "").trim();
+    if (!admin?.token || adminKey !== admin.token) {
+      return jsonError(403, "Invalid admin key — cannot set initial password", "authentication_error");
+    }
+    await setAdminPassword(env, v);
+    return jsonOk({ ok: true, changed: true, initial: true });
+  }
   const user = await requireSession(request, env);
   if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
   const body = await readJson(request);
