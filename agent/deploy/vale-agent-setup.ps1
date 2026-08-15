@@ -112,6 +112,9 @@ Write-Host "`n[1/7] vale-agent binary"
 # keep the OLD server serving the device after this install.
 Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
+# round-138: kill playwright's node.exe — it locks the bundle files (the
+# extraction below would fail / keep a stale bundle) and squats port 9229.
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
 # Legacy 0.8.x autostart: the ValeCommand service + tasks. The SCM starts the
 # service before the ValeAgent boot task at every restart and wins the port,
 # so the new server dies on bind. The boot task below is the canonical

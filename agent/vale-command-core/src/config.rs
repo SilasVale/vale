@@ -74,7 +74,16 @@ pub struct BrowserConfig {
 impl Config {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path)?;
-        Ok(serde_yaml::from_str::<Config>(&content)?)
+        let mut cfg: Config = serde_yaml::from_str::<Config>(&content)?;
+        // round-138: `port: 0` parses as u16 but binds an OS EPHEMERAL port —
+        // the server reports healthy while cloudflared's fixed 18080 ingress
+        // connects to nothing, so the device 502s silently with no diagnostics
+        // (every other bad value is loud: out-of-range → quarantine,
+        // unresolvable host → bind error → fatal). Reject 0 explicitly.
+        if cfg.server.port == 0 {
+            anyhow::bail!("server.port must not be 0 (binds an ephemeral port — the tunnel ingress 18080 would 502)");
+        }
+        Ok(cfg)
     }
 }
 
