@@ -128,9 +128,11 @@ export default {
       // mirror (v.saisi.online/dl/) instead. Both serve byte-identical
       // artifacts (same sha256) and device code consumes `download` as-is.
       const cn = request.cf && request.cf.country === "CN";
+      const mirrorBase = (env && env.MIRROR_BASE) || "https://v.saisi.online/dl";
+      const releaseBase = (env && env.GITHUB_RELEASE_BASE) || "https://github.com/SilasVale/vale/releases/latest/download";
       const download = cn
-        ? "https://v.saisi.online/dl/ValeAgent-Setup.exe"
-        : "https://github.com/SilasVale/vale/releases/latest/download/ValeAgent-Setup.exe";
+        ? `${mirrorBase}/ValeAgent-Setup.exe`
+        : `${releaseBase}/ValeAgent-Setup.exe`;
       return new Response(
         JSON.stringify({
           version: "1.0.80",
