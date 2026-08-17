@@ -155,22 +155,19 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // Claude Code 固定模型名 auto：按用户网页选择路由
     model = await resolveAutoModel(env, user.id);
   }
-  // og/gpt-5.6-luna is region-blocked on zen (upstream 403 for CN) but fully
-  // usable via OpenRouter's US exit. Map it to the or/ channel so both og/ and
-  // or/ spellings hit the same working route (OpenRouter key + proxy exit).
+  // gpt-5.6-luna belongs to OpenCode Go. It is region-blocked when zen is
+  // reached directly from some clients, so keep the og/ identity and force
+  // this model through the Vercel US exit instead of changing it to an or/
+  // route (which would incorrectly consume OPENROUTER_API_KEY).
+  const lunaModel = model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]";
   let effectiveModel = model;
-  if (model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]") {
-    effectiveModel = "or/openai/gpt-5.6-luna:floor[1m]";
-  } else {
-    effectiveModel = model;
-  }
   const prefix2 = effectiveModel.split("/")[0];
   // 美国出口开关:控制台 KV 设置优先,回退 Worker secret(env.US_PROXY)。
   // KV 写透传后立即生效(同 isolate 零延迟)。
   const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
   // round-94: normalize — an explicit OFF is persisted as "0" (truthy as a
   // string); raw truthiness would treat it as ON.
-  const usProxy = globalSettingEnabled(usProxyRaw) ? "1" : null;
+  const usProxy = lunaModel || globalSettingEnabled(usProxyRaw) ? "1" : null;
   const baseRoute = pickRoute(prefix2, env, usProxy);
   let upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
