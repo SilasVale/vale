@@ -93,7 +93,7 @@ fn redact_tokens(s: &str) -> String {
 /// /panel/panel.css. Remote pages: the console (gateway) and download site
 /// (index worker) so production design is inspectable. Embedded: the browser
 /// extension's popup/options CSS, which is not served by any HTTP surface.
-pub fn page_view() -> ToolDef {
+pub fn page_view(console_url: String, download_url: String) -> ToolDef {
     ToolDef::new(
         "page_view",
         "View a Vale page's design by fetching its HTML/CSS. \
@@ -122,18 +122,28 @@ pub fn page_view() -> ToolDef {
             },
             "required": ["page"]
         }),
-        |params: Value| async move {
+        move |params: Value| {
+            let console_url = console_url.clone();
+            let download_url = download_url.clone();
+            async move {
             let page = params.get("page").and_then(|v| v.as_str()).unwrap_or("panel");
             let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("127.0.0.1:18080");
             let (host, port) = parse_target(target)?;
             let source = PAGES.iter().find(|(n, _)| *n == page).map(|(_, s)| s)
                 .ok_or_else(|| DeviceError::Internal { message: format!("unknown page: {page}") })?;
+            let remote_url = match page {
+                "console-js" => Some(format!("{}/app.js", console_url.trim_end_matches('/'))),
+                "console" => Some(console_url.trim_end_matches('/').to_string()),
+                "console-css" => Some(format!("{}/style.css", console_url.trim_end_matches('/'))),
+                "download" => Some(download_url.trim_end_matches('/').to_string()),
+                _ => None,
+            };
 
             // Embedded pages (extension popup/options CSS) are compile-time
             // constants — no fetch needed.
             let url = match source {
                 PageSource::Local(p) => format!("http://{host}:{port}{p}"),
-                PageSource::Remote(u) => u.to_string(),
+                PageSource::Remote(u) => remote_url.unwrap_or_else(|| u.to_string()),
                 PageSource::Embedded(_) => String::new(),
             };
             let (body, truncated): (String, bool) = match source {
@@ -179,6 +189,7 @@ pub fn page_view() -> ToolDef {
                 "truncated": truncated,
                 "content": text,
             }))
+            }
         },
     )
 }

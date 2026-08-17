@@ -9,6 +9,22 @@ pub struct Config {
     pub serial: SerialConfig,
     pub terminal: TerminalConfig,
     pub browser: BrowserConfig,
+    pub platform: PlatformConfig,
+}
+
+/// Deployment endpoints — where this agent finds the console and the
+/// release/download site. Defaults are the production saisi.online hosts;
+/// a different deployment overrides them here (setup.ps1 writes the section
+/// when installing with non-default domains). Only the two bases are stored:
+/// the update manifest is always `{download_url}/api/version` — consumers
+/// derive it, so the two can never drift.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformConfig {
+    /// Console base (design page_view sources app.js / / / style.css).
+    pub console_url: String,
+    /// Download-site apex; update manifest = `{download_url}/api/version`.
+    pub download_url: String,
 }
 
 /// Per-session terminal output buffer, in MiB (round-69: was a hardcoded
@@ -161,6 +177,15 @@ impl Default for TerminalConfig {
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self { page_load_timeout_secs: 30, headless_executable: None, headless_cdp_port: None }
+    }
+}
+
+impl Default for PlatformConfig {
+    fn default() -> Self {
+        Self {
+            console_url: "https://api.saisi.online".into(),
+            download_url: "https://agent.saisi.online".into(),
+        }
     }
 }
 

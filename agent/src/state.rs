@@ -42,6 +42,8 @@ fn build_registry(
     event_bus: &Arc<AppEventBus>,
     buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
     playwright: &Arc<PlaywrightManager>,
+    download_url: String,
+    config_console_url: String,
 ) -> PluginRegistry {
     let mut registry = PluginRegistry::new();
     registry.register(Box::new(TerminalPlugin::new(
@@ -50,9 +52,9 @@ fn build_registry(
         event_bus.clone() as Arc<dyn EventBus>,
         buffer_limit.clone(),
     )));
-    registry.register(Box::new(UpdatePlugin::new()));
+    registry.register(Box::new(UpdatePlugin::new(download_url.clone())));
     registry.register(Box::new(McpClientPlugin::new()));
-    registry.register(Box::new(DesignPlugin::new()));
+    registry.register(Box::new(DesignPlugin::new(config_console_url, download_url.clone())));
     registry.register(Box::new(PlaywrightPlugin::new(playwright.clone())));
     registry
 }
@@ -70,7 +72,15 @@ impl AppState {
             (config.terminal.buffer_mb.clamp(1, 64) as usize) * 1024 * 1024,
         ));
         let playwright = PlaywrightManager::new();
-        let plugin_registry = build_registry(&terminal_mgr, &serial_pool, &event_bus, &terminal_buf_bytes, &playwright);
+        let plugin_registry = build_registry(
+            &terminal_mgr,
+            &serial_pool,
+            &event_bus,
+            &terminal_buf_bytes,
+            &playwright,
+            config.platform.download_url.clone(),
+            config.platform.console_url.clone(),
+        );
 
         Self { serial_pool, terminal_mgr, event_bus, plugin_registry, config, config_path: std::sync::Arc::new(std::sync::Mutex::new(None)), terminal_buf_bytes, playwright }
     }
