@@ -23,6 +23,10 @@ export const OG_ZEN_CHAT: string = "https://opencode.ai/zen/go/v1/chat/completio
 // 始终走 translate(chat/completions)。
 export const OG_NATIVE_ANTHROPIC: Set<string> = new Set(["deepseek-v4-flash"]);
 
+export function usProxyBase(env: any): string {
+  return env?.US_PROXY_BASE || "https://v.saisi.online";
+}
+
 export const MODELS: { id: string; owned_by: string }[] = [
   { id: "ds/deepseek-v4-flash", owned_by: "deepseek" },
   { id: "og/deepseek-v4-flash", owned_by: "opencode" },
