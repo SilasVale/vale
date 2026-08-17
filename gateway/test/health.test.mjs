@@ -39,7 +39,10 @@ test("health: breaker closed → all channels ok, recommended still qw", async (
 
 test("health: channels cover all four prefixes in priority order", async () => {
   const h = await buildHealth(closedEnv);
-  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "or"]);
+  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "or"]);
+  // og appears twice (deepseek-v4-flash + gpt-5.6-luna route cards); the
+  // dedup'd set must still cover every priority prefix in order.
+  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or"]);
 });
 
 test("installer round-trip: non-ASCII CLI encodes and decodes losslessly", () => {

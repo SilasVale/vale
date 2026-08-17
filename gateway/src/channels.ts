@@ -75,6 +75,10 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "ds", model: "ds/deepseek-v4-flash" },
   { id: "qw", model: "qw/qwen3.8-max-preview" },
   { id: "og", model: "og/deepseek-v4-flash" },
+  // Second og/ route card: gpt-5.6-luna (auto-routes via the OpenRouter US
+  // exit — translate.ts remaps it). Duplicate ids are safe here: buildHealth
+  // checks the og circuit for both and recommended uses find() (first match).
+  { id: "og", model: "og/gpt-5.6-luna" },
   { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];
