@@ -11,8 +11,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MAKENSIS="${MAKENSIS:-/home/zhengsaisi/tools/nsis/extracted/usr/bin/makensis}"
-NSISDIR="${NSISDIR:-/home/zhengsaisi/tools/nsis/extracted/usr/share/nsis}"
+MAKENSIS="${MAKENSIS:-$HOME/tools/nsis/extracted/usr/bin/makensis}"
+NSISDIR="${NSISDIR:-$HOME/tools/nsis/extracted/usr/share/nsis}"
 TARGET="x86_64-pc-windows-msvc"
 
 # Repack the browser extension into its zip — the extension previously had NO
