@@ -43,21 +43,42 @@ build_agent() {
       && cargo xwin build --target "$TARGET" --release )
   echo "    ok: agent/vale-tray/target/$TARGET/release/vale-tray.exe"
 
-  # round-140: compile the NSIS script at build time — string errors (e.g.
-  # the R139 quote-splitting bug) previously shipped to devices silently.
-  # The File directives need real exes; copy them into a scratch stage.
-  echo "=== [agent] NSIS script compile check ==="
-  local stage; stage="$(mktemp -d)"
-  cp "$ROOT/agent/deploy/vale-agent-install.nsi" "$stage/"
-  cp "$ROOT/agent/deploy/vale-agent.ico" "$stage/" 2>/dev/null || true
-  cp "$ROOT/agent/target/$TARGET/${profile}/vale-agent.exe" "$stage/vale-agent.exe"
-  cp "$ROOT/agent/vale-tray/target/$TARGET/release/vale-tray.exe" "$stage/vale-tray.exe"
-  ( cd "$stage" \
-      && NSISDIR="${NSISDIR:-$ROOT/tools/nsis/extracted/usr/share/nsis}" \
-         "${MAKENSIS:-$ROOT/tools/nsis/extracted/usr/bin/makensis}" vale-agent-install.nsi >/dev/null 2>&1 ) \
-    || { echo "!! NSIS compile failed — check vale-agent-install.nsi"; rm -rf "$stage"; exit 1; }
-  rm -rf "$stage"
-  echo "  ok: NSIS script compiles"
+  # round-140/142: compile the NSIS script at build time — string errors
+  # (e.g. the R139 quote-splitting bug) previously shipped to devices
+  # silently. The stage needs ALL the File-directive inputs (the R140
+  # version omitted 5 and every `build.sh agent` failed); the path defaults
+  # match build-installer.sh's actual NSIS install. Release-only (the
+  # documented fast debug iteration path must not require NSIS tooling).
+  if [[ "$profile" == "release" ]]; then
+    echo "=== [agent] NSIS script compile check ==="
+    local stage; stage="$(mktemp -d)"
+    cp "$ROOT/agent/deploy/vale-agent-install.nsi" "$stage/"
+    cp "$ROOT/agent/deploy/vale-agent.ico" "$stage/"
+    cp "$ROOT/agent/deploy/vale-agent-setup.ps1" "$stage/"
+    cp "$ROOT/agent/deploy/run-setup.bat" "$stage/"
+    cp "$ROOT/agent/deploy/fix-tunnel.ps1" "$stage/"
+    cp "$ROOT/index/public/vale-agent/vale-browser-control.zip" "$stage/" 2>/dev/null || true
+    # The playwright bundle may not exist yet (prepare_playwright builds it
+    # in build-installer.sh) — a placeholder lets the File directive resolve.
+    [ -f "$ROOT/agent/deploy/vale-playwright.zip" ] \
+      && cp "$ROOT/agent/deploy/vale-playwright.zip" "$stage/" \
+      || touch "$stage/vale-playwright.zip"
+    cp "$ROOT/agent/target/$TARGET/${profile}/vale-agent.exe" "$stage/vale-agent.exe"
+    cp "$ROOT/agent/vale-tray/target/$TARGET/release/vale-tray.exe" "$stage/vale-tray.exe"
+    local nsis_out
+    nsis_out="$(cd "$stage" \
+      && NSISDIR="${NSISDIR:-$HOME/tools/nsis/extracted/usr/share/nsis}" \
+         "${MAKENSIS:-$HOME/tools/nsis/extracted/usr/bin/makensis}" vale-agent-install.nsi 2>&1)"
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+      echo "!! NSIS compile failed — check vale-agent-install.nsi:"
+      echo "$nsis_out" | tail -8
+      rm -rf "$stage"
+      exit 1
+    fi
+    rm -rf "$stage"
+    echo "  ok: NSIS script compiles"
+  fi
 }
 
 deploy_worker() {
