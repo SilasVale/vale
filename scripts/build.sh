@@ -58,11 +58,6 @@ build_agent() {
     cp "$ROOT/agent/deploy/run-setup.bat" "$stage/"
     cp "$ROOT/agent/deploy/fix-tunnel.ps1" "$stage/"
     cp "$ROOT/index/public/vale-agent/vale-browser-control.zip" "$stage/" 2>/dev/null || true
-    # The playwright bundle may not exist yet (prepare_playwright builds it
-    # in build-installer.sh) — a placeholder lets the File directive resolve.
-    [ -f "$ROOT/agent/deploy/vale-playwright.zip" ] \
-      && cp "$ROOT/agent/deploy/vale-playwright.zip" "$stage/" \
-      || touch "$stage/vale-playwright.zip"
     cp "$ROOT/agent/target/$TARGET/${profile}/vale-agent.exe" "$stage/vale-agent.exe"
     cp "$ROOT/agent/vale-tray/target/$TARGET/release/vale-tray.exe" "$stage/vale-tray.exe"
     local nsis_out

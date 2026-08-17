@@ -107,9 +107,11 @@ Section "Install" SEC01
   ; unpacked → $INSTDIR\extension). Updated together with the binaries on
   ; every install/upgrade.
   File "vale-browser-control.zip"
-  ; Phase 3: playwright-mcp runtime (node.exe + dist/cli.js + node_modules) —
-  ; the PlaywrightManager spawns $INSTDIR\playwright\ on Start. ~40-50MB.
-  File "vale-playwright.zip"
+  ; Phase 3 (playwright-mcp runtime bundle) REVERTED: the bundle carries
+  ; node.exe (~70MB raw), pushing the installer past the Cloudflare Workers
+  ; Assets 25MiB per-file limit — every index deploy failed. Re-enable once
+  ; the download site can host >25MiB files (R2); the code lives in git
+  ; history (feat(stage-k) Phase 3 commits).
 
   ; 2. NOW stop every vale binary. A running instance locks its exe AND holds
   ;    port 18080, so the restarted boot task cannot bind. This includes the
@@ -121,13 +123,6 @@ Section "Install" SEC01
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
-  ; round-138/139/140: kill ONLY the bundled playwright node. NSIS has NO
-  ; quote-doubling escape — '' inside a ' string splits it (the R139 version
-  ; compiled into 5 tokens and the kill never ran). Backtick-delimit the
-  ; nsExec string so ' and " pass through. The filter anchors on the
-  ; bundle's executable path (\playwright\node.exe) so a user's own
-  ; npx playwright runs are untouched.
-  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*\playwright\node.exe*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgentTray 2>NUL'
   ; Legacy 0.8.x autostart leftovers. The ValeCommand service (sc create from
@@ -227,9 +222,6 @@ Section "Install" SEC01
     ; upgrades skip it (run-setup.bat runs only on fresh installs) — extract
     ; here so $INSTDIR\extension\ stays fresh on every update.
     nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -Recurse -Force \"$INSTDIR\extension\" -ErrorAction SilentlyContinue; Expand-Archive -Force -Path \"$INSTDIR\vale-browser-control.zip\" -DestinationPath \"$INSTDIR\extension\""'
-    ; Phase 3: extract the playwright runtime on every upgrade too (a stale
-    ; bundle would make the Plugins page Start fail against the old code).
-    nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -Recurse -Force \"$INSTDIR\playwright\" -ErrorAction SilentlyContinue; Expand-Archive -Force -Path \"$INSTDIR\vale-playwright.zip\" -DestinationPath \"$INSTDIR\""'
     ; Domain migration (0.8.6): rewrite a *.command.saisi.online tunnel ingress
     ; to *.agent.saisi.online in both cloudflared configs (user + systemprofile),
     ; update the hostname file, restart the cloudflared service. Idempotent —
@@ -309,9 +301,6 @@ Section "Uninstall"
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
-  ; round-138/139/140: kill ONLY the bundled playwright node (backtick
-  ; delimited — NSIS '' is not an escape; anchored on \playwright\node.exe).
-  nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*\playwright\node.exe*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
   ; Stop and remove the scheduled tasks + cloudflared service (best effort)
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgentTray 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgentTray /F 2>NUL'
@@ -330,17 +319,12 @@ Section "Uninstall"
   ; round-129: uninstall left credentials + bundle junk behind — config.yaml
   ; holds the device auth token, fix-tunnel.ps1 / vale-browser-control.zip /
   ; the extension dir were never removed, and RMDir only removes EMPTY dirs
-  ; (so $INSTDIR persisted non-empty). Phase 3 adds playwright/ (~65MB) to
-  ; the same leak — clean all of it.
+  ; (so $INSTDIR persisted non-empty) — clean all of it.
   Delete "$INSTDIR\config.yaml"
   Delete "$INSTDIR\fix-tunnel.ps1"
   Delete "$INSTDIR\vale-browser-control.zip"
-  ; round-138: the Phase 3 bundle zip (40-50MB) was missed by R129's
-  ; uninstall sweep — RMDir only removes EMPTY dirs, so it always survived.
-  Delete "$INSTDIR\vale-playwright.zip"
   Delete "$INSTDIR\vale-agent.exe.bak"
   Delete "$INSTDIR\vale-tray.exe.bak"
   RMDir /r "$INSTDIR\extension"
-  RMDir /r "$INSTDIR\playwright"
   RMDir "$INSTDIR"
 SectionEnd
