@@ -58,6 +58,11 @@ build_agent() {
     cp "$ROOT/agent/deploy/run-setup.bat" "$stage/"
     cp "$ROOT/agent/deploy/fix-tunnel.ps1" "$stage/"
     cp "$ROOT/index/public/vale-agent/vale-browser-control.zip" "$stage/" 2>/dev/null || true
+    # The playwright bundle may not exist yet (prepare_playwright builds it
+    # in build-installer.sh) — a placeholder lets the File directive resolve.
+    [ -f "$ROOT/agent/deploy/vale-playwright.zip" ] \
+      && cp "$ROOT/agent/deploy/vale-playwright.zip" "$stage/" \
+      || touch "$stage/vale-playwright.zip"
     cp "$ROOT/agent/target/$TARGET/${profile}/vale-agent.exe" "$stage/vale-agent.exe"
     cp "$ROOT/agent/vale-tray/target/$TARGET/release/vale-tray.exe" "$stage/vale-tray.exe"
     local nsis_out
@@ -132,8 +137,10 @@ deploy_worker() {
       # otherwise be hashed and burn all retries); `|| live_sha=""` keeps a
       # TRANSPORT failure (timeout/reset during the post-deploy propagation
       # window) inside the retry loop instead of aborting the whole deploy
-      # under set -e.
-      live_sha="$(curl -fsS -m 120 "$dl_url" 2>/dev/null | sha256sum | cut -d' ' -f1)" || live_sha=""
+      # under set -e. -L: the GitHub Releases download URL 302-redirects to
+      # objects.githubusercontent.com; without following it the hash came out
+      # as the empty string's.
+      live_sha="$(curl -fsSL -m 120 "$dl_url" 2>/dev/null | sha256sum | cut -d' ' -f1)" || live_sha=""
       [ "$live_sha" = "$want_sha" ] && break
       sleep 3
     done
@@ -184,6 +191,9 @@ case "$cmd" in
   index)    deploy_worker index "Vale Index" ;;
   proxies)  deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   vercel-proxy) deploy_vercel_proxy ;;
-  deploy)   build_agent "${2:-release}" && ./scripts/build-installer.sh && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  # Order matters: vercel-proxy ships the oversized installer/bundle
+  # (v.saisi.online/dl/*) that the index worker's post-deploy sha guard
+  # downloads — so vercel must go live BEFORE the index deploy verifies.
+  deploy)   build_agent "${2:-release}" && ./scripts/build-installer.sh && deploy_worker gateway "Vale Gate" && deploy_vercel_proxy && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
 esac

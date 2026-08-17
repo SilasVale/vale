@@ -92,7 +92,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
   <p class="lede">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel at its own subdomain and is managed from the <a href="${consoleUrl}">Vale console</a> (admin login).</p>
 
   <div class="install">
-    <a class="install-btn" href="/vale-agent/ValeAgent-Setup.exe" download>Download installer ↓</a>
+    <a class="install-btn" href="https://v.saisi.online/dl/ValeAgent-Setup.exe" download>Download installer ↓</a>
     <span class="install-note">On the Windows machine connected to the device, download and run the installer (pick a directory; it installs a tray icon).</span>
   </div>
 
@@ -121,11 +121,21 @@ export default {
     // AI-triggerable RCE path). Re-generated automatically by
     // scripts/build-installer.sh — do not edit by hand.
     if (new URL(request.url).pathname === "/api/version") {
+      // Geo-routed download: the installer embeds the playwright bundle
+      // (~36MB — over the Workers Assets 25MiB per-file cap), so it lives
+      // outside this worker. GitHub Releases is the worldwide source; it is
+      // slow/unreliable from China, so CN devices get the Vercel static
+      // mirror (v.saisi.online/dl/) instead. Both serve byte-identical
+      // artifacts (same sha256) and device code consumes `download` as-is.
+      const cn = request.cf && request.cf.country === "CN";
+      const download = cn
+        ? "https://v.saisi.online/dl/ValeAgent-Setup.exe"
+        : "https://github.com/SilasVale/vale/releases/latest/download/ValeAgent-Setup.exe";
       return new Response(
         JSON.stringify({
           version: "1.0.80",
-          download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
-          sha256: "a3158d0b05af952a7274a37fba975ee3ecc6d5f0d9fba7ee0bf85e4f6a51299a",
+          download,
+          sha256: "b5c43706412e65a86c0d9ae9d06524cbb1a9fe09952ba51d48f83937b0adf1dc",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
