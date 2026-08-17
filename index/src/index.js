@@ -8,7 +8,7 @@
 
 const FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d1d1f'/%3E%3Cpath d='M20 16 L32 48 L44 16' fill='none' stroke='%23ffffff' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
 
-const PAGE = (consoleUrl) => `<!doctype html>
+const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -92,7 +92,7 @@ const PAGE = (consoleUrl) => `<!doctype html>
   <p class="lede">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel at its own subdomain and is managed from the <a href="${consoleUrl}">Vale console</a> (admin login).</p>
 
   <div class="install">
-    <a class="install-btn" href="https://v.saisi.online/dl/ValeAgent-Setup.exe" download>Download installer ↓</a>
+    <a class="install-btn" href="${installerUrl}" download>Download installer ↓</a>
     <span class="install-note">On the Windows machine connected to the device, download and run the installer (pick a directory; it installs a tray icon).</span>
   </div>
 
@@ -150,7 +150,8 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
     const consoleUrl = (env && env.CONSOLE_URL) || "https://api.saisi.online";
-    return new Response(PAGE(consoleUrl), {
+    const installerUrl = `${(env && env.MIRROR_BASE) || "https://v.saisi.online/dl"}/ValeAgent-Setup.exe`;
+    return new Response(PAGE(consoleUrl, installerUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   },
