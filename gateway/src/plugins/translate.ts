@@ -26,7 +26,7 @@ import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, toSSE } from
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "../reliability.ts";
 import { rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
 import { jsonOk, jsonError, CORS_HEADERS } from "../http.ts";
-import { MODELS, OG_NATIVE_ANTHROPIC, OG_ZEN_ANTHROPIC, VERIFY_PATH } from "../channels.ts";
+import { MODELS, OG_NATIVE_ANTHROPIC, OG_ZEN_ANTHROPIC, VERIFY_PATH, usProxyBase } from "../channels.ts";
 import type { PluginContext } from "./registry.ts";
 
 const COUNT_PATH = "/v1/messages/count_tokens";
@@ -306,7 +306,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         // rode the proxy). Preserve the via() proxy prefix when present.
         route.type = "passthrough";
         route.upstream = usProxy
-          ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/messages")}`
+          ? `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/messages")}`
           : OG_ZEN_ANTHROPIC;
         route.kind = "opencode";
       }
@@ -565,7 +565,7 @@ function pickRoute(prefix: string, env: any, usProxy: string | null = null): Rou
   // path 参数带上游相对路径(代理 base 已含主机级前缀)。usProxy is a local
   // per-request value — never mutate the shared env object with it.
   const via = (direct: string, path: string): string => usProxy
-    ? `https://v.saisi.online/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
+    ? `${usProxyBase(env)}/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
     : direct;
   switch (prefix) {
     case "or":

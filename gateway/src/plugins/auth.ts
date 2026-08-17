@@ -15,7 +15,7 @@
 import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, globalSettingEnabled, type User } from "../store.ts";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "../auth.ts";
 import { fetchWithTimeout } from "../reliability.ts";
-import { MODELS, OG_ZEN_CHAT } from "../channels.ts";
+import { MODELS, OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import type { PluginContext } from "./registry.ts";
 
@@ -340,7 +340,7 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
       // 走代理 1-3s vs 直连 12-13s);关闭时直连。
       const usProxy = await getGlobalSetting(env, "US_PROXY");
       const probeUrl = usProxy
-        ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
+        ? `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
         : OG_ZEN_CHAT;
       const res = await fetchWithTimeout(probeUrl, {
         method: "POST",

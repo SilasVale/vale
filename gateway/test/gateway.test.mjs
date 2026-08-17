@@ -11,7 +11,7 @@ import { handleGateway, scanTopLevelModel, rawWithModel, estimateTokens } from "
 import { __clearCaches } from "../src/store.js";
 
 let uidSeq = 0;
-function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30, usProxy = false } = {}) {
+function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30, usProxy = false, usProxyBase } = {}) {
   const uid = `u${++uidSeq}`;
   const token = `tok-${uid}`;
   const kv = new Map([
@@ -42,6 +42,7 @@ function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30, usP
       BREAKER: breaker,
       UPSTREAM_TIMEOUT_MS: timeout,
       OG_TIMEOUT_MS: timeout, // og translate reads this (60s default)
+      ...(usProxyBase ? { US_PROXY_BASE: usProxyBase } : {}),
     },
     token,
   };
@@ -133,6 +134,16 @@ test("US_PROXY on: og/deepseek-v4-flash walks translate via the proxy (not nativ
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-og");
   assert.equal(res.status, 200);
+});
+
+test("US_PROXY honors a configurable proxy base", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ usProxy: true, usProxyBase: "https://proxy.example.test" });
+  let seen;
+  await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }), { status: 200 }); }, () =>
+    post(env, token, { model: "og/minimax-m3", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(seen.url, "https://proxy.example.test/api/zen?target=og&path=%2Fv1%2Fchat%2Fcompletions");
 });
 
 test("US_PROXY on: ds/ goes through the proxy passthrough", async () => {
