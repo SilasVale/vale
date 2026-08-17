@@ -62,6 +62,14 @@ fn console_url() -> String {
         .unwrap_or_else(|| "https://ai.saisi.online/".to_string())
 }
 
+fn version_url() -> String {
+    std::fs::read_to_string(install_dir().join("vale-agent.version"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://agent.saisi.online/api/version".to_string())
+}
+
 /// The device panel URL — the terminal web panel served by vale-command at
 /// /panel/. The page is public (like the status page); the user enters the
 /// device token in the browser (remembered in localStorage).
@@ -280,10 +288,9 @@ fn restart_task() {
 /// at build time from agent/Cargo.toml by build.rs — never hand-maintained
 /// (a drift caused an hourly reinstall loop).
 const LOCAL_VERSION: &str = env!("VALE_AGENT_VERSION");
-const VERSION_URL: &str = "https://agent.saisi.online/api/version";
-
 fn check_for_update() {
     let dir = install_dir();
+    let version_url = version_url();
     let ps = format!(
         r#"
 $ErrorActionPreference = 'Stop'
@@ -355,7 +362,7 @@ New-Item -ItemType File -Path $busy -Force | Out-Null
   Restore-Tray
 }}
 "#,
-        VERSION_URL, LOCAL_VERSION, dir.display(),
+        version_url, LOCAL_VERSION, dir.display(),
     );
     let _ = Command::new("powershell")
         .args(["-NoProfile", "-Command", &ps])
@@ -383,6 +390,7 @@ New-Item -ItemType File -Path $busy -Force | Out-Null
 /// vs a manual Check for updates click).
 fn auto_update_check() {
     let dir = install_dir();
+    let version_url = version_url();
     let ps = format!(
         r#"
 $ErrorActionPreference = 'Stop'
@@ -436,7 +444,7 @@ try {{
   Remove-Item $busy -Force -ErrorAction SilentlyContinue
 }}
 "#,
-        VERSION_URL, LOCAL_VERSION, dir.display(),
+        version_url, LOCAL_VERSION, dir.display(),
     );
     let _ = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &ps])

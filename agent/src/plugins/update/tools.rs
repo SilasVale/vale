@@ -17,8 +17,10 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-/// Release info endpoint — must match index/src/index.js VERSION.
-const VERSION_URL: &str = "https://agent.saisi.online/api/version";
+/// Build the release manifest endpoint from the configured download site.
+fn version_url(download_url: &str) -> String {
+    format!("{}/api/version", download_url.trim_end_matches('/'))
+}
 
 /// Parse "x.y.z" into comparable parts (missing pieces become 0, so "0.9" == "0.9.0").
 fn parse_version(v: &str) -> Vec<u32> {
@@ -85,7 +87,7 @@ fn install_dir() -> PathBuf {
 /// tool answers "upgrading" before the process dies and the MCP session
 /// reconnects on the new build. `force: true` reinstalls the current version
 /// (repairs a broken install).
-pub fn agent_update() -> ToolDef {
+pub fn agent_update(download_url: String) -> ToolDef {
     ToolDef::new(
         "agent_update",
         "Check the release server for a newer vale-agent and install it on this device. \
@@ -101,7 +103,9 @@ pub fn agent_update() -> ToolDef {
                 }
             }
         }),
-        |params: Value| async move {
+        move |params: Value| {
+            let version_url = version_url(&download_url);
+            async move {
             let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
             let local = env!("CARGO_PKG_VERSION").to_string();
 
@@ -112,7 +116,7 @@ pub fn agent_update() -> ToolDef {
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .map_err(|e| DeviceError::Internal { message: format!("client build failed: {e}") })?
-                .get(VERSION_URL)
+                .get(&version_url)
                 .send()
                 .await
                 .map_err(|e| DeviceError::Internal { message: format!("version check failed: {e}") })?;
@@ -354,6 +358,7 @@ pub fn agent_update() -> ToolDef {
                 "remote": remote,
                 "message": "downloading + installing in the background — vale-agent restarts automatically, MCP reconnects in ~1 minute"
             }))
+            }
         },
     )
 }

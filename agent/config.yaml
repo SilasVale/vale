@@ -9,3 +9,10 @@ server:
 serial:
   default_baud_rate: 115200
   default_timeout_ms: 1000
+
+# Deployment endpoints. Defaults are the production saisi.online hosts;
+# override for a different deployment. The agent_update manifest is polled at
+# {download_url}/api/version.
+platform:
+  console_url: "https://api.saisi.online"
+  download_url: "https://agent.saisi.online"

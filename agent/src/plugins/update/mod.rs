@@ -11,17 +11,19 @@ mod tools;
 use vale_agent_core::ToolDef;
 
 /// Plugin struct — stateless; every tool closes over what it needs.
-pub struct UpdatePlugin;
+pub struct UpdatePlugin {
+    download_url: String,
+}
 
 impl UpdatePlugin {
-    pub fn new() -> Self {
-        Self
+    pub fn new(download_url: String) -> Self {
+        Self { download_url }
     }
 }
 
 impl Default for UpdatePlugin {
     fn default() -> Self {
-        Self::new()
+        Self::new("https://agent.saisi.online".into())
     }
 }
 
@@ -36,6 +38,6 @@ impl vale_agent_core::Plugin for UpdatePlugin {
         "AI-pushed vale-agent updates"
     }
     fn tools(&self) -> Vec<ToolDef> {
-        vec![tools::agent_update()]
+        vec![tools::agent_update(self.download_url.clone())]
     }
 }

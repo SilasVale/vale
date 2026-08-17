@@ -18,6 +18,8 @@ param(
     [string]$Hostname = "",   # empty = auto-assign the next free dN subdomain
     [string]$InstallDir = "C:\vale-agent",
     [string]$Base = "https://agent.saisi.online",
+    [string]$AgentDomain = "agent.saisi.online",
+    [string]$ConsoleUrl = "https://ai.saisi.online",
     [switch]$SkipDownload   # set when the NSIS installer bundles the exe
 )
 
@@ -57,6 +59,10 @@ Require-Admin
 # CLOUDFLARED CONFIG is the ground truth for a re-install (a buggy earlier run
 # can write a stale value into vale-agent.hostname, as happened with d2).
 $hostFile = Join-Path $InstallDir "vale-agent.hostname"
+$Base = $Base.TrimEnd('/')
+$AgentDomain = $AgentDomain.Trim().TrimEnd('/')
+$ConsoleUrl = $ConsoleUrl.Trim().TrimEnd('/')
+$versionEndpoint = "$Base/api/version"
 # round-116: ensure the install dir EXISTS before any Set-Content — a
 # re-install targeting a directory that was never created (or was cleaned
 # up) aborted at the very first write with "未能找到路径 ... 的一部分".
@@ -75,13 +81,13 @@ if (-not $Hostname) {
     # 3. DNS probe for the next free dN (fresh install).
     if (-not $Hostname) {
         for ($n = 1; $n -lt 50; $n++) {
-            $cand = "d$n.agent.saisi.online"
+            $cand = "d$n.$AgentDomain"
             if (-not (Resolve-DnsName $cand -ErrorAction SilentlyContinue)) {
                 $Hostname = $cand
                 break
             }
         }
-        if (-not $Hostname) { $Hostname = "d1.agent.saisi.online" }
+        if (-not $Hostname) { $Hostname = "d1.$AgentDomain" }
     }
     Set-Content -Path $hostFile -Value $Hostname
 }
@@ -90,14 +96,16 @@ if (-not $Hostname) {
 # still on the old domain, rewrite it to the new one so the tunnel ingress and
 # the hostname file both use the new domain. (The DNS CNAME for the new
 # subdomain is added by the operator; this only rewrites the config side.)
-if ($Hostname -match '\.command\.saisi\.online$') {
-    Write-Host "  migrating hostname: $Hostname → $($Hostname -replace '\.command\.saisi\.online$','.agent.saisi.online')"
-    $Hostname = $Hostname -replace '\.command\.saisi\.online$', '.agent.saisi.online'
+if ($Hostname -match '\.command\.[^.]+(?:\.[^.]+)+$') {
+    $legacyDomain = $Hostname -replace '^.*?\.command\.', ''
+    Write-Host "  migrating legacy hostname: $Hostname"
+    $Hostname = $Hostname -replace '\.command\.[^.]+(?:\.[^.]+)+$', ".$AgentDomain"
     Set-Content -Path $hostFile -Value $Hostname
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
-Set-Content -Path (Join-Path $InstallDir "vale-agent.console") -Value "https://ai.saisi.online/"
+Set-Content -Path (Join-Path $InstallDir "vale-agent.console") -Value "$ConsoleUrl/"
+Set-Content -Path (Join-Path $InstallDir "vale-agent.version") -Value $versionEndpoint
 
 
 Write-Host "=== Vale Command one-click install ($Hostname) ==="
@@ -173,9 +181,9 @@ if (Test-Path $extZip) {
 # worldwide, v.saisi.online for CN), and the bundle lives in the same
 # directory. Derive the bundle URL from the manifest so this path follows
 # the same routing; fall back to the mirror if the manifest is unreachable.
-$pwUrl = "https://v.saisi.online/dl/vale-playwright.zip"
+$pwUrl = "$Base/dl/vale-playwright.zip"
 try {
-    $manifest = Invoke-RestMethod "$Base/api/version"
+    $manifest = Invoke-RestMethod $versionEndpoint
     if ($manifest.download) { $pwUrl = (Split-Path $manifest.download -Parent) + "/vale-playwright.zip" }
 } catch { Write-Host "  (manifest unreachable — using default bundle URL)" }
 $pwZip = Join-Path $InstallDir "vale-playwright.zip"
@@ -250,7 +258,7 @@ if (-not $apiToken) {
     }
     if ($regKey) {
         try {
-            $resp = Invoke-RestMethod -Uri "https://ai.saisi.online/api/install/tunnel-token" `
+            $resp = Invoke-RestMethod -Uri "$ConsoleUrl/api/install/tunnel-token" `
                 -Method Post -ContentType "application/json" `
                 -Body (@{ key = $regKey } | ConvertTo-Json)
             if ($resp.apiToken) {
@@ -293,12 +301,13 @@ $ErrorActionPreference = $oldEAP4
 $ns = [regex]::Matches($tunnels, "vale-agent-d(\d+)") | ForEach-Object { [int]$_.Groups[1].Value }
 if ($ns.Count -gt 0) {
     $lowest = ($ns | Measure-Object -Minimum).Minimum
-    $Hostname = "d$lowest.agent.saisi.online"
+    $Hostname = "d$lowest.$AgentDomain"
     Set-Content -Path $hostFile -Value $Hostname
 }
 # Console URL for the tray app ("打开控制台") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
-Set-Content -Path (Join-Path $InstallDir "vale-agent.console") -Value "https://ai.saisi.online/"
+Set-Content -Path (Join-Path $InstallDir "vale-agent.console") -Value "$ConsoleUrl/"
+Set-Content -Path (Join-Path $InstallDir "vale-agent.version") -Value $versionEndpoint
 
 Write-Host "  hostname: $Hostname"
 
@@ -498,7 +507,7 @@ Write-Host ""
 Write-Host "Claude Code config:"
 Write-Host "  { `"mcpServers`": { `"vale-agent`": { `"type`": `"http`", `"url`": `"https://$Hostname/mcp`", `"headers`": { `"Authorization`": `"Bearer <token>`" } } } }"
 Write-Host ""
-Write-Host "Give it ~10 seconds for the tunnel to come up, then connect Claude Code to the MCP URL (or open the console at https://ai.saisi.online/)."
+Write-Host "Give it ~10 seconds for the tunnel to come up, then connect Claude Code to the MCP URL (or open the console at $ConsoleUrl/)."
 
 # Write a result file the NSIS installer's finish page reads to show the token.
 # Strip surrounding quotes: a quoted line (device_token: "<hex>") captured
@@ -521,11 +530,11 @@ if (-not $env:VALE_REG_KEY) {
     if (Test-Path $regKeyFile) { $env:VALE_REG_KEY = (Get-Content $regKeyFile -Raw).Trim() }
 }
 if ($env:VALE_REG_KEY) {
-    Write-Host "`n[8/8] registering with Vale console (ai.saisi.online)"
+    Write-Host "`n[8/8] registering with Vale console ($ConsoleUrl)"
     $regName = ($Hostname -split '\.')[0]
     $regBody = @{ key = $env:VALE_REG_KEY; name = $regName; hostname = $Hostname; token = $tokenVal } | ConvertTo-Json
     try {
-        Invoke-RestMethod -Uri "https://ai.saisi.online/api/register" -Method Post `
+        Invoke-RestMethod -Uri "$ConsoleUrl/api/register" -Method Post `
             -ContentType "application/json" -Body $regBody | Out-Null
         Write-Host "  registered $regName -> console (hostname/token auto-configured)."
     } catch {
