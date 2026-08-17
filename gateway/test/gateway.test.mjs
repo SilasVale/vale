@@ -101,6 +101,25 @@ test("og/minimax-m3 also goes to chat/completions (translate path)", async () =>
   assert.equal(res.status, 200);
 });
 
+test("og/gpt-5.6-luna uses OpenCode Go through the Vercel US exit", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { OPENROUTER_API_KEY: undefined } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({ choices: [{ message: { content: "luna" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "og/gpt-5.6-luna", max_tokens: 10,
+    messages: [{ role: "user", content: "hi" }],
+  }));
+  assert.equal(seen.url, "https://v.saisi.online/api/zen?target=og&path=%2Fv1%2Fchat%2Fcompletions");
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-og");
+  assert.equal(JSON.parse(seen.init.body).model, "gpt-5.6-luna");
+  assert.equal(res.status, 200);
+});
+
+
 // ── US_PROXY switch: on = every channel via the Vercel US exit ──
 
 test("US_PROXY on: og/deepseek-v4-flash walks translate via the proxy (not native)", async () => {
