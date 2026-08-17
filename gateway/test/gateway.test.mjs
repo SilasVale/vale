@@ -102,6 +102,35 @@ test("og/minimax-m3 also goes to chat/completions (translate path)", async () =>
   assert.equal(res.status, 200);
 });
 
+test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({
+    keys: {
+      OPENCODE_GO_API_KEY: undefined,
+      OPENROUTER_API_KEY: "sk-openrouter-glm",
+    },
+  });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      content: [{ type: "text", text: "glm" }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "or/z-ai/glm-5.2:free",
+    max_tokens: 1,
+    messages: [{ role: "user", content: "hi" }],
+  }));
+  assert.match(String(seen.url), /openrouter/);
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-openrouter-glm");
+  assert.equal(JSON.parse(seen.init.body).model, "z-ai/glm-5.2:free");
+  assert.equal(res.status, 200);
+});
+
 test("og/gpt-5.6-luna uses OpenCode Go through the Vercel US exit", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ keys: { OPENROUTER_API_KEY: undefined } });

@@ -39,9 +39,17 @@ test("health: breaker closed → all channels ok, recommended still qw", async (
 
 test("health: channels cover all four prefixes in priority order", async () => {
   const h = await buildHealth(closedEnv);
-  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "or"]);
-  // og appears twice (deepseek-v4-flash + gpt-5.6-luna route cards); the
-  // dedup'd set must still cover every priority prefix in order.
+  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "or", "or"]);
+  assert.deepEqual(h.channels.map((c) => c.model), [
+    "ds/deepseek-v4-flash",
+    "qw/qwen3.8-max-preview",
+    "og/deepseek-v4-flash",
+    "og/gpt-5.6-luna",
+    "or/openai/gpt-5.6-luna:floor[1m]",
+    "or/z-ai/glm-5.2:free",
+  ]);
+  // og and or each appear twice for independent model cards; the dedup'd set
+  // must still cover every priority prefix in order.
   assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or"]);
 });
 
