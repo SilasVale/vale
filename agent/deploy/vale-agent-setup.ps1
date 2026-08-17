@@ -164,18 +164,9 @@ if (Test-Path $extZip) {
     Expand-Archive -Path $extZip -DestinationPath $extDir -Force
     Write-Host "    extracted to $extDir (Load unpacked this dir)"
 }
-# Phase 3: playwright-mcp runtime (node.exe + dist/cli.js + node_modules).
-# The NSIS installer bundles vale-playwright.zip for fresh installs; the
-# script path downloads it on updates. PlaywrightManager spawns
-# $InstallDir\playwright\ on the Plugins page Start.
-$pwZip = Join-Path $InstallDir "vale-playwright.zip"
-if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-playwright.zip" $pwZip -Force }
-$pwDir = Join-Path $InstallDir "playwright"
-if (Test-Path $pwZip) {
-    Remove-Item $pwDir -Recurse -Force -ErrorAction SilentlyContinue
-    Expand-Archive -Path $pwZip -DestinationPath $InstallDir -Force
-    Write-Host "    playwright runtime -> $pwDir"
-}
+# Phase 3 (playwright runtime download) REVERTED: the bundle exceeds the
+# download site's 25MiB per-file limit. Re-enable once hosting allows it;
+# see the Phase 3 commits in git history.
 if (-not (Test-Path $cfg)) {
     Write-Host "  bootstrapping config + auth token"
     & $exe --init $cfg

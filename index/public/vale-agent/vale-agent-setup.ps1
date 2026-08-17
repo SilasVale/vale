@@ -57,6 +57,10 @@ Require-Admin
 # CLOUDFLARED CONFIG is the ground truth for a re-install (a buggy earlier run
 # can write a stale value into vale-agent.hostname, as happened with d2).
 $hostFile = Join-Path $InstallDir "vale-agent.hostname"
+# round-116: ensure the install dir EXISTS before any Set-Content — a
+# re-install targeting a directory that was never created (or was cleaned
+# up) aborted at the very first write with "未能找到路径 ... 的一部分".
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 if (-not $Hostname) {
     # 1. The existing working setup's subdomain (cloudflared config ingress).
     $cfCfg = Join-Path $env:USERPROFILE ".cloudflared\config.yml"
@@ -108,6 +112,13 @@ Write-Host "`n[1/7] vale-agent binary"
 # keep the OLD server serving the device after this install.
 Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process vale-command -ErrorAction SilentlyContinue | Stop-Process -Force
+# round-138/139/140: kill ONLY the bundled playwright node (command-line
+# anchored on the bundle path — Get-Process node would kill every Node
+# process; -ErrorAction SilentlyContinue so a CIM failure degrades to a
+# no-op instead of aborting setup under EAP=Stop).
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*\playwright\node.exe*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 # Legacy 0.8.x autostart: the ValeCommand service + tasks. The SCM starts the
 # service before the ValeAgent boot task at every restart and wins the port,
 # so the new server dies on bind. The boot task below is the canonical
@@ -153,6 +164,9 @@ if (Test-Path $extZip) {
     Expand-Archive -Path $extZip -DestinationPath $extDir -Force
     Write-Host "    extracted to $extDir (Load unpacked this dir)"
 }
+# Phase 3 (playwright runtime download) REVERTED: the bundle exceeds the
+# download site's 25MiB per-file limit. Re-enable once hosting allows it;
+# see the Phase 3 commits in git history.
 if (-not (Test-Path $cfg)) {
     Write-Host "  bootstrapping config + auth token"
     & $exe --init $cfg
@@ -334,7 +348,10 @@ $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 # ExecutionTimeLimit 0 = never kill the task. Default is 72h — the server
 # (and the tray below) would silently stop after 3 days until a reboot.
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
+# round-116: restart on failure — a crashed agent (panic, OOM kill) used to
+# leave the device dark until reboot; the SCM restarts it (3 tries, 1 min
+# apart). ExecutionTimeLimit 0 = never kill the task.
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName "ValeAgent" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 if (-not (Get-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue)) {
     throw "failed to register scheduled task ValeAgent"
@@ -438,11 +455,16 @@ $oldEAP2 = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 sc.exe start Cloudflared 2>$null
 $scCode = $LASTEXITCODE
-$ErrorActionPreference = $oldEAP2
 # 1056 = ERROR_SERVICE_ALREADY_RUNNING. cloudflared's `service install`
 # auto-starts the service, so a redundant start is a benign no-op — treat it
 # as success, not a failure (this used to abort a fully successful install).
 if ($scCode -ne 0 -and $scCode -ne 1056) { throw "cloudflared service failed to start (exit $scCode)" }
+# round-116: failure auto-restart — a crashed cloudflared (memory leak,
+# network blip, process killed) used to take the device OFFLINE until a
+# human restarted the service. Configure the SCM to restart it (5s / 10s /
+# 30s backoff, counter resets after 24h). Idempotent.
+sc.exe failure Cloudflared reset= 86400 actions= restart/5000/restart/10000/restart/30000 2>$null
+$ErrorActionPreference = $oldEAP2
 
 Start-Sleep -Seconds 2
 # 1.0 renamed auth_token → device_token; both may appear depending on the

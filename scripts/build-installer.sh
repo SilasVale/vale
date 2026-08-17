@@ -27,48 +27,12 @@ repack_extension() {
 }
 repack_extension
 
-# Phase 3: bundle the playwright-mcp runtime (node.exe + the full flat
-# node_modules tree) into vale-playwright.zip, staged next to the installer
-# for the NSIS script (File "vale-playwright.zip"). The PlaywrightManager
-# spawns install_dir/playwright/node.exe + the package's cli.js (at the
-# package ROOT — 0.0.79 has no dist/; verified against the npm tarball).
-# The device uses its own Edge (--browser msedge), so no Chromium is
-# bundled and PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD avoids pulling Linux
-# browsers on this build host. Repacked on every run.
-prepare_playwright() {
-  local out="$ROOT/agent/deploy/vale-playwright.zip"
-  local work
-  work="$(mktemp -d)"
-  echo "  preparing playwright bundle..."
-  # 1. node.exe (Windows x64, LTS 20+) — pinned.
-  local node_ver="v20.18.0"
-  curl -fsS -m 300 -o "$work/node.zip" \
-    "https://nodejs.org/dist/$node_ver/node-$node_ver-win-x64.zip"
-  ( cd "$work" && unzip -q node.zip && mv "node-$node_ver-win-x64" node )
-  # 2. @playwright/mcp@0.0.79 + deps (flat node_modules). The postinstall
-  #    would download Linux browsers — skip (the manager runs --browser
-  #    msedge, and browsers are never shipped).
-  ( cd "$work" \
-      && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund @playwright/mcp@0.0.79 >/dev/null 2>&1 )
-  # 3. layout: playwright/{node.exe, node_modules/} — the whole flat tree,
-  #    including node_modules/@playwright/mcp itself (cli.js + index.js +
-  #    package.json live there; cli.js requires './package.json' and
-  #    'playwright-core' from the flattened deps).
-  mkdir -p "$work/playwright"
-  mv "$work/node/node.exe" "$work/playwright/"
-  cp -r "$work/node_modules" "$work/playwright/node_modules"
-  # 4. sanity: the entry the manager spawns must exist.
-  if [ ! -f "$work/playwright/node_modules/@playwright/mcp/cli.js" ]; then
-    echo "  !! playwright bundle missing cli.js — npm install failed?"
-    rm -rf "$work"
-    exit 1
-  fi
-  # 5. zip it
-  ( cd "$work" && zip -r -q "$out" playwright )
-  rm -rf "$work"
-  echo "  staged vale-playwright.zip ($(du -h "$out" | cut -f1))"
-}
-prepare_playwright
+# Phase 3 (playwright-mcp runtime bundle) REVERTED: the bundle carries
+# node.exe (~70MB raw), which pushed the installer past the Cloudflare
+# Workers Assets 25MiB per-file limit — every index deploy failed. The
+# bundle builder lived here (prepare_playwright); restore it from git
+# history once the download site can host >25MiB files (R2).
+rm -f "$ROOT/agent/deploy/vale-playwright.zip"
 
 VALEEXE="$ROOT/agent/target/$TARGET/release/vale-agent.exe"
 TRAYEXE="$ROOT/agent/vale-tray/target/$TARGET/release/vale-tray.exe"
@@ -132,8 +96,7 @@ cp "$VALEEXE" "$TRAYEXE" \
    "$ROOT/agent/deploy/fix-tunnel.ps1" \
    "$ROOT/agent/deploy/vale-agent-install.nsi" \
    "$ROOT/agent/deploy/vale-agent.ico" \
-   "$ROOT/index/public/vale-agent/vale-browser-control.zip" \
-   "$ROOT/agent/deploy/vale-playwright.zip" "$STAGE/"
+   "$ROOT/index/public/vale-agent/vale-browser-control.zip" "$STAGE/"
 
 echo "=== building ValeAgent-Setup.exe (makensis) ==="
 (cd "$STAGE" && NSISDIR="$NSISDIR" "$MAKENSIS" vale-agent-install.nsi >/dev/null 2>&1) \
@@ -158,12 +121,13 @@ fi
 echo "  ok: sha256 $SHA256 → index/src/index.js"
 
 DEST="$ROOT/index/public/vale-agent"
+# With the Phase 3 playwright bundle reverted the installer is back under the
+# Workers Assets 25MiB per-file limit, so it (and the standalone exes) are
+# plain assets again. Clean any stale oversize leftovers from Phase 3 runs.
+rm -f "$DEST/vale-playwright.zip"
 cp "$STAGE/ValeAgent-Setup.exe" "$DEST/ValeAgent-Setup.exe"
 cp "$VALEEXE" "$DEST/vale-agent.exe"
 cp "$TRAYEXE" "$DEST/vale-tray.exe"
-# round-136: the playwright bundle must reach BOTH install paths — NSIS
-# (staged above) and the irm script-install (downloads it from the site).
-cp "$ROOT/agent/deploy/vale-playwright.zip" "$DEST/vale-playwright.zip"
 # Refresh the gateway's code-viewer mirror of the worker source — the public
 # /code/ viewer was drifting 1000+ lines behind live src with no pipeline step.
 # Sync ALL viewer files (round-63): the original list missed

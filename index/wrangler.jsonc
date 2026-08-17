@@ -7,6 +7,9 @@
   // Static assets served first (run_worker_first defaults to false), so
   // /vale-agent/vale-agent-setup.ps1 and /vale-agent/vale-agent.exe are
   // served straight from ./public; everything else hits the Worker.
+  // NOTE: every asset must stay under the 25MiB per-file limit — the Phase 3
+  // playwright bundle exceeded it and broke deploys (reverted; see
+  // scripts/build-installer.sh).
   "assets": { "directory": "./public", "binding": "ASSETS" },
   // Custom domain (added in the Cloudflare dashboard, like the other Vale
   // workers — wrangler 4.x ignores the custom_domains field): <download-host>

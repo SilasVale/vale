@@ -125,7 +125,7 @@ export default {
         JSON.stringify({
           version: "1.0.80",
           download: "https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe",
-          sha256: "351b987f76b1e891873bc3742dc50d26042060545fa7ff2961c755bed3795eae",
+          sha256: "a3158d0b05af952a7274a37fba975ee3ecc6d5f0d9fba7ee0bf85e4f6a51299a",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
