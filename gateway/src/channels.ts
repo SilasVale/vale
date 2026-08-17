@@ -37,6 +37,7 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "og/gpt-5.6-luna", owned_by: "opencode" },
   { id: "og/openai/gpt-5.6-luna:floor[1m]", owned_by: "opencode" },
   { id: "or/openai/gpt-5.6-luna:floor[1m]", owned_by: "openrouter" },
+  { id: "or/z-ai/glm-5.2:free", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
 ];
 
@@ -58,7 +59,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "or/",
     backend: "OpenRouter",
     desc: "openrouter.ai — user's own key, proxied via openrouter-proxy",
-    models: ["openai/gpt-5.6-luna:floor[1m]"],
+    models: ["openai/gpt-5.6-luna:floor[1m]", "z-ai/glm-5.2:free"],
   },
   {
     prefix: "qw/",
@@ -84,5 +85,6 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   // checks the og circuit for both and recommended uses find() (first match).
   { id: "og", model: "og/gpt-5.6-luna" },
   { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
+  { id: "or", model: "or/z-ai/glm-5.2:free" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];
