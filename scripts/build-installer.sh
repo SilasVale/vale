@@ -91,8 +91,9 @@ done
 # THIS script at makensis time — their mtime vs the exe is meaningless, and
 # gating on them wedges the pipeline (editing a ps1 demands an exe rebuild
 # that nothing changes). Only rs/toml sources that actually feed the exe.
-NEWEST_IN="$(find "$ROOT/agent/src" "$ROOT/agent/vale-command-core" "$ROOT/agent/vale-tray" \
-  "$ROOT/agent/Cargo.toml" \
+NEWEST_IN="$(find "$ROOT/agent/src" "$ROOT/agent/vale-command-core" \
+  "$ROOT/agent/vale-tray" "$ROOT/agent/Cargo.toml" \
+  -path '*/target' -prune -o \
   \( -name '*.rs' -o -name '*.toml' \) \
   -newer "$VALEEXE" -print | head -1)"
 if [ -n "$NEWEST_IN" ]; then

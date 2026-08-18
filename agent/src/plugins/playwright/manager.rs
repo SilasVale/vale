@@ -183,9 +183,33 @@ impl PlaywrightManager {
                 .send()
                 .await;
             if let Ok(resp) = probe {
-                let body = resp.text().await.unwrap_or_default();
-                if body.contains("\"jsonrpc\"") && body.contains("serverInfo") {
-                    ok = true;
+                // Streamable HTTP keeps the response open for server-sent
+                // events, so `resp.text().await` waits for EOF and always
+                // times out after a successful initialize. Read only the
+                // first response chunks; the initialize result is sent at
+                // the beginning of the stream.
+                let mut stream = resp.bytes_stream();
+                let mut body = Vec::new();
+                for _ in 0..4 {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        futures::StreamExt::next(&mut stream),
+                    )
+                    .await
+                    {
+                        Ok(Some(Ok(chunk))) => {
+                            body.extend_from_slice(&chunk);
+                            if body.windows(10).any(|w| w == b"serverInfo")
+                                && body.windows(8).any(|w| w == b"jsonrpc")
+                            {
+                                ok = true;
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                if ok {
                     break;
                 }
             }
