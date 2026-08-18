@@ -52,7 +52,12 @@ export interface PluginLink {
 
 export const ADMIN_USERNAME = "admin";
 export const ADMIN_ID = "admin"; // user ID = username → readable KV keys
-export const USER_KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY", "QWEN_API_KEY"];
+export const USER_KEY_NAMES = [
+  "DEEPSEEK_API_KEY",
+  "OPENCODE_GO_API_KEY",
+  "OPENROUTER_API_KEY",
+  "QWEN_API_KEY",
+];
 
 /* ---- Per-isolate TTL cache ----
  *
@@ -74,12 +79,25 @@ const AUTH_CACHE_TTL = 60 * 1000;
 // stayed invisible on hot isolates for up to 24h — /proxy and /mcp 404'd on
 // the new device. Plugin tokens gate chrome.debugger-level device control —
 // a revoked link must propagate within a minute, not a day.
-const AUTH_PREFIXES = ["settings:", "token:", "user:", "ukeys:", "auth:", "route:", "devices:", "plugins:", "cf:"];
+const AUTH_PREFIXES = [
+  "settings:",
+  "token:",
+  "user:",
+  "ukeys:",
+  "auth:",
+  "route:",
+  "devices:",
+  "plugins:",
+  "cf:",
+];
 const __c = new Map<string, { v: any; exp: number }>(); // kvKey -> { v, exp }; v may be null (cached "not found")
 function cget(k: string): any {
   const e = __c.get(k);
   if (!e) return undefined;
-  if (e.exp <= Date.now()) { __c.delete(k); return undefined; }
+  if (e.exp <= Date.now()) {
+    __c.delete(k);
+    return undefined;
+  }
   return e.v;
 }
 function cset(k: string, v: any): void {
@@ -87,7 +105,9 @@ function cset(k: string, v: any): void {
   const ttl = AUTH_PREFIXES.some((p) => k.startsWith(p)) ? AUTH_CACHE_TTL : CACHE_TTL;
   __c.set(k, { v, exp: Date.now() + ttl });
 }
-function cdel(...ks: string[]): void { for (const k of ks) __c.delete(k); }
+function cdel(...ks: string[]): void {
+  for (const k of ks) __c.delete(k);
+}
 /** Test hook: wipe the module-level 24h caches (settings/route/keys). Never
  *  called in production — tests that flip global settings (e.g. US_PROXY)
  *  would otherwise read a stale cached value from an earlier test. */
@@ -115,9 +135,11 @@ function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   // prune never fired and every key accumulated until the 512 bound evicted
   // the oldest (hot, possibly-pending) chain). Capture the stored wrapper
   // and compare against it.
-  const stored = next.catch(() => {}).finally(() => {
-    if (__locks.get(key) === stored) __locks.delete(key);
-  });
+  const stored = next
+    .catch(() => {})
+    .finally(() => {
+      if (__locks.get(key) === stored) __locks.delete(key);
+    });
   __locks.set(key, stored);
   // Hard bound for pathological distinct-key bursts: evict the oldest key,
   // accepting that a pending chain there loses its queue (its own RMW still
@@ -131,11 +153,11 @@ async function getJSON(env: Env, key: string): Promise<any> {
   if (!env.KEYS) return null;
   const raw = await env.KEYS.get(key);
   if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
-}
-async function putJSON(env: Env, key: string, val: any): Promise<void> {
-  if (!env.KEYS) return;
-  await env.KEYS.put(key, JSON.stringify(val));
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 /* ---- Admin seeding ---- */
@@ -162,12 +184,18 @@ export async function seedAdmin(env: Env): Promise<void> {
       if (uks) {
         await env.KEYS.put(`ukeys:${ADMIN_ID}`, uks);
         let parsed = null;
-        try { parsed = JSON.parse(uks); } catch {}
+        try {
+          parsed = JSON.parse(uks);
+        } catch {
+          /* malformed JSON */
+        }
         cset(`ukeys:${ADMIN_ID}`, parsed || {});
         await env.KEYS.delete("ukeys:u-admin");
       }
       await env.KEYS.delete("username:admin");
-    } catch (e) { /* a failed migration must not block startup */ }
+    } catch {
+      /* a failed migration must not block startup */
+    }
   }
 
   if (await env.KEYS.get("_admin_seeded")) return;
@@ -204,11 +232,21 @@ export function generateGatewayToken(): string {
   return randomHex(24);
 }
 
-export async function createUser(env: Env, { username, password, inviteCode, role = "user" }: { username: string; password: string; inviteCode?: string; role?: string }): Promise<any> {
+export async function createUser(
+  env: Env,
+  {
+    username,
+    password,
+    inviteCode,
+    role = "user",
+  }: { username: string; password: string; inviteCode?: string; role?: string },
+): Promise<any> {
   if (!env.KEYS) throw new Error("KV not bound");
   const name = String(username || "").trim();
-  if (!/^[A-Za-z0-9_.-]{2,32}$/.test(name)) throw new Error("Username must be 2-32 chars: letters/digits/_ . -");
-  if (!password || String(password).length < 6) throw new Error("Password must be at least 6 chars");
+  if (!/^[A-Za-z0-9_.-]{2,32}$/.test(name))
+    throw new Error("Username must be 2-32 chars: letters/digits/_ . -");
+  if (!password || String(password).length < 6)
+    throw new Error("Password must be at least 6 chars");
   // round-107: serialize the WHOLE create per name — a bare check left a
   // window where concurrent same-name registrations both passed and
   // overwrote each other's record while both tokens stayed live.
@@ -236,7 +274,16 @@ export async function createUser(env: Env, { username, password, inviteCode, rol
     const passwordHash = await hashPassword(String(password), salt);
     const token = generateGatewayToken();
     // user ID = username → readable KV keys: user:<name> / ukeys:<name> / token:<t> → <name>
-    const user = { id: name, username: name, role, enabled: true, createdAt: Date.now(), passwordHash, salt, token };
+    const user = {
+      id: name,
+      username: name,
+      role,
+      enabled: true,
+      createdAt: Date.now(),
+      passwordHash,
+      salt,
+      token,
+    };
     await env.KEYS.put(`user:${name}`, JSON.stringify(user));
     await env.KEYS.put(`token:${token}`, name);
     cset(`user:${name}`, user);
@@ -319,9 +366,14 @@ export async function regenerateToken(env: Env, id: string): Promise<string> {
       for (const k of list.keys || []) {
         if (k.name === `token:${newToken}`) continue;
         const v = await env.KEYS.get(k.name);
-        if (v === id) { await env.KEYS.delete(k.name); cdel(k.name); }
+        if (v === id) {
+          await env.KEYS.delete(k.name);
+          cdel(k.name);
+        }
       }
-    } catch { /* best-effort sweep */ }
+    } catch {
+      /* best-effort sweep */
+    }
     return newToken;
   });
 }
@@ -343,7 +395,12 @@ export async function getUserKeys(env: Env, id: string): Promise<Record<string, 
   return ukeys;
 }
 
-export async function setUserKey(env: Env, id: string, name: string, value: string): Promise<Record<string, any>> {
+export async function setUserKey(
+  env: Env,
+  id: string,
+  name: string,
+  value: string,
+): Promise<Record<string, any>> {
   return withKeyLock(`ukeys:${id}`, async () => {
     const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
     ukeys[name] = String(value).trim();
@@ -353,7 +410,11 @@ export async function setUserKey(env: Env, id: string, name: string, value: stri
   });
 }
 
-export async function deleteUserKey(env: Env, id: string, name: string): Promise<Record<string, any>> {
+export async function deleteUserKey(
+  env: Env,
+  id: string,
+  name: string,
+): Promise<Record<string, any>> {
   return withKeyLock(`ukeys:${id}`, async () => {
     const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
     delete ukeys[name];
@@ -390,9 +451,15 @@ export async function getUserRoute(env: Env, id: string): Promise<string | null>
   return null;
 }
 
-export async function setUserRoute(env: Env, id: string, model: string | null | undefined): Promise<void> {
+export async function setUserRoute(
+  env: Env,
+  id: string,
+  model: string | null | undefined,
+): Promise<void> {
   if (model === null || model === undefined || model === "") {
-    await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, { method: "DELETE" });
+    await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
     return;
   }
   await routeStub(env).fetch("https://route/route", {
@@ -477,7 +544,8 @@ export async function getAdminPassword(env: Env): Promise<string> {
   const key = "auth:admin_password";
   const hit = cget(key);
   if (hit !== undefined) return hit;
-  if (!env.KEYS) return env.ADMIN_PASSWORD ? `legacy:${await hashPassword(env.ADMIN_PASSWORD, "legacy")}` : "";
+  if (!env.KEYS)
+    return env.ADMIN_PASSWORD ? `legacy:${await hashPassword(env.ADMIN_PASSWORD, "legacy")}` : "";
   let v = await env.KEYS.get(key);
   if (!v && env.ADMIN_PASSWORD) {
     // one-time migration from the Worker secret — store HASHED in the same
@@ -501,7 +569,7 @@ export async function verifyAdminPassword(env: Env, candidate: string): Promise<
   if (!stored) return false;
   // Stored as `salt:hash` — reuse the same PBKDF2 verify as user accounts.
   const [salt, hash] = stored.split(":");
-  return verifyPassword(candidate || "", salt, hash);
+  return verifyPassword(candidate || "", salt || "", hash || "");
 }
 
 export async function setAdminPassword(env: Env, value: string): Promise<void> {
@@ -537,7 +605,12 @@ async function readDevicesRaw(env: Env): Promise<Device[]> {
   if (!env.KEYS) return [];
   const raw = await env.KEYS.get(DEVICES_KEY);
   if (!raw) return [];
-  try { const a = JSON.parse(raw); return Array.isArray(a) ? a : []; } catch { return []; }
+  try {
+    const a = JSON.parse(raw);
+    return Array.isArray(a) ? a : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function listDevices(env: Env): Promise<Device[]> {
@@ -569,8 +642,8 @@ export async function upsertDevice(env: Env, device: Device): Promise<Device> {
       // round-106: an admin edit REPLACED the whole record and wiped
       // proxySecret — /panel/ token injection broke permanently until
       // re-registration. Preserve the secret unless the caller sets one.
-      if (!device.proxySecret && devs[i].proxySecret) {
-        device = { ...device, proxySecret: devs[i].proxySecret };
+      if (!device.proxySecret && devs[i]!.proxySecret) {
+        device = { ...device, proxySecret: devs[i]!.proxySecret };
       }
       devs[i] = device;
     } else {
@@ -620,8 +693,8 @@ export async function deleteDevice(env: Env, name: string): Promise<boolean> {
  * grant, so a real install (tunnel-token → register) completes on one key.
  */
 
-const REGKEY_TTL = 60 * 60;        // 1h — bounded window for a leaked key
-const REGGRANT_TTL = 15 * 60;      // 15 min — same-install register handoff
+const REGKEY_TTL = 60 * 60; // 1h — bounded window for a leaked key
+const REGGRANT_TTL = 15 * 60; // 15 min — same-install register handoff
 
 export async function createRegKey(env: Env): Promise<string> {
   const code = randomHex(8).toLowerCase();
@@ -676,7 +749,13 @@ export async function listPluginLinks(env: Env): Promise<Record<string, PluginLi
   if (cached !== undefined) return cached;
   const raw = await env.KEYS.get(PLUGIN_KEY);
   let map: Record<string, PluginLink> = {};
-  if (raw) { try { map = JSON.parse(raw); } catch { map = {}; } }
+  if (raw) {
+    try {
+      map = JSON.parse(raw);
+    } catch {
+      map = {};
+    }
+  }
   cset(PLUGIN_KEY, map);
   return map;
 }
@@ -715,7 +794,10 @@ export async function getPluginByToken(env: Env, token: string): Promise<PluginL
 export async function removePluginLink(env: Env, token: string): Promise<void> {
   return withKeyLock(PLUGIN_KEY, async () => {
     const map = await listPluginLinks(env);
-    if (map[token]) { delete map[token]; await savePluginLinks(env, map); }
+    if (map[token]) {
+      delete map[token];
+      await savePluginLinks(env, map);
+    }
   });
 }
 
@@ -757,7 +839,7 @@ export async function getCfToken(env: Env): Promise<string> {
   const key = "cf:api_token";
   const hit = cget(key);
   if (hit !== undefined) return hit;
-  const v = (env.KEYS ? (await env.KEYS.get(key)) : null) || "";
+  const v = (env.KEYS ? await env.KEYS.get(key) : null) || "";
   cset(key, v);
   return v;
 }

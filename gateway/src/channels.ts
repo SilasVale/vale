@@ -61,7 +61,11 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "or/",
     backend: "OpenRouter",
     desc: "openrouter.ai — user's own key, proxied via openrouter-proxy",
-    models: ["openai/gpt-5.6-luna:floor[1m]", "z-ai/glm-5.2:free", "deepseek/deepseek-v4-flash-0731"],
+    models: [
+      "openai/gpt-5.6-luna:floor[1m]",
+      "z-ai/glm-5.2:free",
+      "deepseek/deepseek-v4-flash-0731",
+    ],
   },
   {
     prefix: "qw/",

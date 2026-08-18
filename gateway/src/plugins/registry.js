@@ -64,7 +64,7 @@ export function emit(ctx, name, payload) {
   const listeners = ctx.events.get(name);
   if (!listeners) return;
   for (const fn of listeners) {
-    try { Promise.resolve(fn(payload)).catch(() => {}); } catch {}
+    try { Promise.resolve(fn(payload)).catch(() => {}); } catch { /* listener error */ }
   }
 }
 

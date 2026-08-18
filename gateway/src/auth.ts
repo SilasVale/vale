@@ -16,16 +16,22 @@ export function randomHex(bytes: number): string {
 
 export async function hashPassword(password: string, salt: string): Promise<string> {
   const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const key = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, [
+    "deriveBits",
+  ]);
   const bits = await crypto.subtle.deriveBits(
     { name: "PBKDF2", salt: enc.encode(salt), iterations: PASSWORD_ITERATIONS, hash: "SHA-256" },
     key,
-    256
+    256,
   );
   return [...new Uint8Array(bits)].map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-export async function verifyPassword(password: string, salt: string, expectedHash: string): Promise<boolean> {
+export async function verifyPassword(
+  password: string,
+  salt: string,
+  expectedHash: string,
+): Promise<boolean> {
   const h = await hashPassword(password, salt);
   return timingSafeEqual(h, expectedHash);
 }
@@ -43,7 +49,13 @@ export const SESSION_COOKIE = "ag_session";
 export const SESSION_TTL_MS = 24 * 3600 * 1000;
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
 }
 
 function bytesToB64url(bytes: Uint8Array): string {
@@ -61,7 +73,11 @@ function b64urlDecodeStr(s: string): string {
 }
 
 /** Issue a session token: `b64url(payload).hmac`, payload = { uid, role, exp } */
-export async function issueSessionToken(secret: string, uid: string, role: string): Promise<string> {
+export async function issueSessionToken(
+  secret: string,
+  uid: string,
+  role: string,
+): Promise<string> {
   const payload = b64urlEncodeStr(JSON.stringify({ uid, role, exp: Date.now() + SESSION_TTL_MS }));
   const key = await hmacKey(secret);
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
@@ -69,14 +85,19 @@ export async function issueSessionToken(secret: string, uid: string, role: strin
 }
 
 /** Verify a session token; returns { uid, role, exp } on success, or null */
-export async function verifySessionToken(secret: string, token: string): Promise<{ uid: string; role: string } | null> {
+export async function verifySessionToken(
+  secret: string,
+  token: string,
+): Promise<{ uid: string; role: string } | null> {
   if (!secret || !token) return null;
   const dot = token.indexOf(".");
   if (dot < 0) return null;
   const payload = token.slice(0, dot);
   const sig = token.slice(dot + 1);
   const key = await hmacKey(secret);
-  const sigBytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
+  const sigBytes = new Uint8Array(
+    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)),
+  );
   if (!timingSafeEqual(bytesToB64url(sigBytes), sig)) return null;
   try {
     const data = JSON.parse(b64urlDecodeStr(payload));

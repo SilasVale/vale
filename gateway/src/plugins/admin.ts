@@ -16,7 +16,22 @@
  * session check; here the guard is inlined per handler with a 401).
  */
 
-import { getCfToken, setCfToken, createInvite, listUsers, getUserKeys, setUserEnabled, hasAdminPassword, setAdminPassword, verifyAdminPassword, getAdminPassword, getUser, maskKey, ADMIN_ID, USER_KEY_NAMES } from "../store.ts";
+import {
+  getCfToken,
+  setCfToken,
+  createInvite,
+  listUsers,
+  getUserKeys,
+  setUserEnabled,
+  hasAdminPassword,
+  setAdminPassword,
+  verifyAdminPassword,
+  getAdminPassword,
+  getUser,
+  maskKey,
+  ADMIN_ID,
+  USER_KEY_NAMES,
+} from "../store.ts";
 import { parseCookie, verifySessionToken, SESSION_COOKIE } from "../auth.ts";
 import { MODELS, ROUTE_INFO } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
@@ -55,8 +70,12 @@ async function requireSession(request: Request, env: Env): Promise<User | null> 
 
 /* ---- Public: route info (no session) ---- */
 
-async function adminPublic(request: Request, env: Env): Promise<Response> {
-  return jsonOk({ routes: ROUTE_INFO, models: MODELS.map((m) => m.id), apiHost: env.API_HOST || "" });
+async function adminPublic(_request: Request, env: Env): Promise<Response> {
+  return jsonOk({
+    routes: ROUTE_INFO,
+    models: MODELS.map((m) => m.id),
+    apiHost: env.API_HOST || "",
+  });
 }
 
 /* ---- Cloudflare tunnel API token — account-level credential the install
@@ -64,18 +83,24 @@ async function adminPublic(request: Request, env: Env): Promise<Response> {
 
 async function adminGetCfToken(request: Request, env: Env): Promise<Response> {
   const user = await requireSession(request, env);
-  if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
+  if (!user || user.role !== "admin")
+    return jsonError(401, "Not logged in", "authentication_error");
   const token = await getCfToken(env);
   return jsonOk({ configured: !!token, masked: token ? maskKey(token) : "" });
 }
 
 async function adminPutCfToken(request: Request, env: Env): Promise<Response> {
   const user = await requireSession(request, env);
-  if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
+  if (!user || user.role !== "admin")
+    return jsonError(401, "Not logged in", "authentication_error");
   const body = await readJson(request);
   const v = String(body?.token || "").trim();
   if (v && !/^[A-Za-z0-9_-]{20,}$/.test(v)) {
-    return jsonError(400, "Token looks invalid (expected 20+ chars of letters/digits/_ -)", "invalid_request");
+    return jsonError(
+      400,
+      "Token looks invalid (expected 20+ chars of letters/digits/_ -)",
+      "invalid_request",
+    );
   }
   await setCfToken(env, v);
   return jsonOk({ ok: true });
@@ -85,7 +110,8 @@ async function adminPutCfToken(request: Request, env: Env): Promise<Response> {
 
 async function adminInvite(request: Request, env: Env): Promise<Response> {
   const user = await requireSession(request, env);
-  if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
+  if (!user || user.role !== "admin")
+    return jsonError(401, "Not logged in", "authentication_error");
   const code = await createInvite(env);
   return jsonOk({ ok: true, code });
 }
@@ -94,7 +120,8 @@ async function adminInvite(request: Request, env: Env): Promise<Response> {
 
 async function adminListUsers(request: Request, env: Env): Promise<Response> {
   const user = await requireSession(request, env);
-  if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
+  if (!user || user.role !== "admin")
+    return jsonError(401, "Not logged in", "authentication_error");
   const users = await listUsers(env);
   const out = [];
   for (const u of users) {
@@ -114,12 +141,16 @@ async function adminListUsers(request: Request, env: Env): Promise<Response> {
 
 async function adminSetUserEnabled(request: Request, env: Env, url: URL): Promise<Response> {
   const user = await requireSession(request, env);
-  if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
+  if (!user || user.role !== "admin")
+    return jsonError(401, "Not logged in", "authentication_error");
   const path = url.pathname;
   // round-107: malformed percent-escape in the user id threw URIError (500).
   let id: string;
-  try { id = decodeURIComponent(path.slice(`${ADMIN_BASE}/users/`.length, -"/enabled".length)); }
-  catch { return jsonError(400, "Invalid user id", "invalid_request"); }
+  try {
+    id = decodeURIComponent(path.slice(`${ADMIN_BASE}/users/`.length, -"/enabled".length));
+  } catch {
+    return jsonError(400, "Invalid user id", "invalid_request");
+  }
   const body = await readJson(request);
   if (id === ADMIN_ID) return jsonError(400, "Cannot disable the admin account", "invalid_request");
   const u = await setUserEnabled(env, id, !!body.enabled);
@@ -132,7 +163,8 @@ async function adminSetUserEnabled(request: Request, env: Env, url: URL): Promis
 
 async function adminGetPassword(request: Request, env: Env): Promise<Response> {
   const user = await requireSession(request, env);
-  if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
+  if (!user || user.role !== "admin")
+    return jsonError(401, "Not logged in", "authentication_error");
   return jsonOk({ set: await hasAdminPassword(env) });
 }
 
@@ -148,23 +180,30 @@ async function adminPutPassword(request: Request, env: Env): Promise<Response> {
   if (!hasPw) {
     const body = await readJson(request);
     const v = String(body?.password || "");
-    if (v.length < 8) return jsonError(400, "Admin password must be at least 8 chars", "invalid_request");
+    if (v.length < 8)
+      return jsonError(400, "Admin password must be at least 8 chars", "invalid_request");
     // Gate the bootstrap with the admin gateway token (the console Overview
     // value / Claude Code key) — an unauthenticated internet caller must not
     // set the console password on a fresh deployment.
     const admin = await getUser(env, ADMIN_ID);
     const adminKey = String(body?.adminKey || "").trim();
     if (!admin?.token || adminKey !== admin.token) {
-      return jsonError(403, "Invalid admin key — cannot set initial password", "authentication_error");
+      return jsonError(
+        403,
+        "Invalid admin key — cannot set initial password",
+        "authentication_error",
+      );
     }
     await setAdminPassword(env, v);
     return jsonOk({ ok: true, changed: true, initial: true });
   }
   const user = await requireSession(request, env);
-  if (!user || user.role !== "admin") return jsonError(401, "Not logged in", "authentication_error");
+  if (!user || user.role !== "admin")
+    return jsonError(401, "Not logged in", "authentication_error");
   const body = await readJson(request);
   const v = String(body?.password || "");
-  if (v.length < 8) return jsonError(400, "Admin password must be at least 8 chars", "invalid_request");
+  if (v.length < 8)
+    return jsonError(400, "Admin password must be at least 8 chars", "invalid_request");
   // Require the CURRENT password: a hijacked session must not be able to
   // rotate the password and permanently lock out the real admin.
   if (!(await verifyAdminPassword(env, String(body?.currentPassword || "")))) {
@@ -176,7 +215,9 @@ async function adminPutPassword(request: Request, env: Env): Promise<Response> {
 
 /* ---- Helper (copied verbatim from index.js) ---- */
 
-function userKeysStatus(ukeys: Record<string, any>): Record<string, { configured: boolean; masked: string }> {
+function userKeysStatus(
+  ukeys: Record<string, any>,
+): Record<string, { configured: boolean; masked: string }> {
   const out: Record<string, { configured: boolean; masked: string }> = {};
   for (const n of USER_KEY_NAMES) {
     const v = ukeys[n];
@@ -202,7 +243,8 @@ export default {
     // Dynamic path: PUT /api/admin/users/{id}/enabled (startsWith + endsWith,
     // same matcher as the index.js if).
     ctx.routes.push({
-      match: (m, p) => m === "PUT" && p.startsWith(`${ADMIN_BASE}/users/`) && p.endsWith("/enabled"),
+      match: (m, p) =>
+        m === "PUT" && p.startsWith(`${ADMIN_BASE}/users/`) && p.endsWith("/enabled"),
       handler: adminSetUserEnabled,
     });
     add("GET", `${ADMIN_BASE}/password`, adminGetPassword);
