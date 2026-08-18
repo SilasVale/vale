@@ -143,6 +143,12 @@ export default {
       );
     }
     const pathname = new URL(request.url).pathname;
+    // Keep the old installer URL usable for links/bookmarks. The installer is
+    // too large for Workers Assets and is now served by the Vercel mirror.
+    if (pathname === "/vale-agent/ValeAgent-Setup.exe") {
+      const mirrorBase = (env && env.MIRROR_BASE) || "https://v.saisi.online/dl";
+      return Response.redirect(`${mirrorBase}/ValeAgent-Setup.exe`, 302);
+    }
     // A missing binary must 404, not return the download PAGE as 200 HTML —
     // devices silently downloaded HTML as ValeAgent-Setup.exe and the agent
     // never started. Only "/" and "/index.html" render the page.

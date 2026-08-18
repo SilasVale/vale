@@ -6,6 +6,9 @@ Windows deployment for the vale-agent device agent.
 
 ```powershell
 irm https://agent.saisi.online/vale-agent/vale-agent-setup.ps1 | iex
+
+# Installer download (the EXE is served from the mirror):
+# https://v.saisi.online/dl/ValeAgent-Setup.exe
 ```
 
 The script (run as Administrator):
