@@ -551,8 +551,11 @@
     await loadUsProxyCard();
     let current = null;
     try {
+      // effective = what model=auto actually resolves to (stored route if
+      // usable, else the usable fallback) — the "current" badge shows the
+      // real channel even without a manual choice.
       const r = await api("/api/me/route");
-      if (r.res.ok) current = r.data?.model ?? null;
+      if (r.res.ok) current = r.data?.effective ?? r.data?.model ?? null;
     } catch {}
     const health = await api("/api/health");
     if (!health.res.ok || !Array.isArray(health.data?.channels)) {
@@ -570,18 +573,13 @@
         const model = card?.dataset.model;
         if (!model) return;
         // Optimistic UI: immediately show loading + update badge
-        const prevBtn = btn.textContent;
-        const prevDisabled = btn.disabled;
         btn.disabled = true;
         btn.textContent = t("route.switching") || "切换中…";
-        // Move "当前" badge from old card to new card
-        const oldCur = box.querySelector(".key-card .badge.ok");
+        // Move "当前" badge from old card to new card (scoped to .key-name —
+        // the card's status badge is also .badge.ok, which must not be touched)
+        const oldCur = box.querySelector(".key-card .key-name .badge.ok");
+        if (oldCur && oldCur.textContent === t("route.current")) oldCur.remove();
         const newBadge = card.querySelector(".top .key-name");
-        let oldBadgeHTML = "";
-        if (oldCur && oldCur.textContent === t("route.current")) {
-          oldBadgeHTML = oldCur.outerHTML;
-          oldCur.remove();
-        }
         if (newBadge && !newBadge.querySelector(".badge.ok")) {
           newBadge.insertAdjacentHTML("beforeend", ` <span class="badge ok">${t("route.current")}</span>`);
         }
