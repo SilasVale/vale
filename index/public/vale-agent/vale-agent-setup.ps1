@@ -1,5 +1,5 @@
 # vale-agent-setup.ps1 - full headless install on a Windows machine:
-#   - downloads vale-agent.exe (from this same origin)
+#   - downloads vale-agent.exe and vale-tray.exe from the download origin
 #   - bootstraps config.yaml + auth token
 #   - installs cloudflared, authenticates to Cloudflare, creates the tunnel,
 #     routes a subdomain
@@ -17,7 +17,7 @@
 param(
     [string]$Hostname = "",   # empty = auto-assign the next free dN subdomain
     [string]$InstallDir = "C:\vale-agent",
-    [string]$Base = "https://agent.saisi.online",
+    [string]$Base = "https://agent.saisi.online", # download Worker; binaries remain under /vale-agent/
     [string]$AgentDomain = "agent.saisi.online",
     [string]$ConsoleUrl = "https://ai.saisi.online",
     [switch]$SkipDownload   # set when the NSIS installer bundles the exe

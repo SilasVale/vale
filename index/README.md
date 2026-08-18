@@ -18,11 +18,13 @@ dashboard (Workers → vale-dist → Settings → Domains & Routes), same
 as the other Vale workers. `workers_dev: false` so only the custom
 domain is served.
 
-The static assets in `index/public/` (the installer `.exe`, `vale-command-setup.ps1`,
-`vale-command-setup.bat`) are served first via the `ASSETS` binding; everything
-else hits the Worker, which renders the download page with the console link
-from `CONSOLE_URL`. Note the installer `.exe` is gitignored — run
-`./scripts/build-installer.sh` before deploying, or downloads 404.
+The small static assets in `index/public/` (the setup script, agent/tray
+binaries, and browser extension) are served first via the `ASSETS` binding;
+the installer `.exe` is served from the Vercel mirror at
+`https://v.saisi.online/dl/ValeAgent-Setup.exe` because it exceeds the Workers
+Assets per-file limit. Run `./scripts/build-installer.sh` before deploying so
+the release and mirror artifacts are refreshed. The legacy installer path
+`/vale-agent/ValeAgent-Setup.exe` redirects to the mirror.
 
 ## Installing Vale Command on a machine
 
