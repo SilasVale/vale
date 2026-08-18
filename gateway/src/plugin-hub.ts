@@ -47,7 +47,11 @@ export class PluginHubDO {
       return this.handleWs(request, url);
     }
     if (url.pathname === "/call") {
-      const { tool, params, requestId } = await request.json() as { tool?: string; params?: any; requestId?: string };
+      const { tool, params, requestId } = (await request.json()) as {
+        tool?: string;
+        params?: any;
+        requestId?: string;
+      };
       return this.callPlugin(tool || "", params, requestId || "");
     }
     if (url.pathname === "/close-all") {
@@ -95,22 +99,28 @@ export class PluginHubDO {
     // auto-dropped on close) — the old ws.id key was shared by every socket
     // (ws.id does not exist in Cloudflare's WebSocket), so a re-pair after
     // revoke validated the OLD token forever and locked the device out.
-    const tok = ws.deserializeAttachment?.()?.token || null;
+    const tok = ws!.deserializeAttachment?.()?.token || null;
     if (!tok) {
       return Response.json({ error: "extension_offline — no bound token" }, { status: 503 });
     }
     const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
     if (!link) {
-      ws.close(4001, "link expired");
-      return Response.json({ error: "extension_offline — link expired or revoked" }, { status: 503 });
+      ws!.close(4001, "link expired");
+      return Response.json(
+        { error: "extension_offline — link expired or revoked" },
+        { status: 503 },
+      );
     }
     const result = await new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pending.delete(requestId); // late responses must not leak the entry
         resolve({ error: "timeout" });
       }, 60_000);
-      this.pending.set(requestId, (msg) => { clearTimeout(timeout); resolve(msg); });
-      ws.send(JSON.stringify({ id: requestId, type: "request", tool, params }));
+      this.pending.set(requestId, (msg) => {
+        clearTimeout(timeout);
+        resolve(msg);
+      });
+      ws!.send(JSON.stringify({ id: requestId, type: "request", tool, params }));
     });
     return Response.json(result);
   }
@@ -118,7 +128,11 @@ export class PluginHubDO {
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
     this.state.storage.setAlarm(Date.now() + 65_000);
     let msg: any;
-    try { msg = JSON.parse(message as string); } catch { return; }
+    try {
+      msg = JSON.parse(message as string);
+    } catch {
+      return;
+    }
     // round-94: the round-92 re-validation only ran on 'hello'/'request'
     // frames — but the extension sends 'hello' once per socket and NEVER
     // sends 'request' (callPlugin is unused); its whole post-connect traffic
@@ -142,13 +156,19 @@ export class PluginHubDO {
     const tok = ws.deserializeAttachment?.()?.token || null;
     if (tok && msg.type !== "hello") {
       const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
-      if (!link) { ws.close(4001, "link expired"); return; }
+      if (!link) {
+        ws.close(4001, "link expired");
+        return;
+      }
     } else if (!tok && msg.type !== "hello") {
       // A non-hello frame before any hello ever bound a token — close it.
       ws.close(4001, "no bound token");
       return;
     }
-    if (msg.type === "ping") { ws.send(JSON.stringify({ type: "pong", t: msg.t })); return; }
+    if (msg.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong", t: msg.t }));
+      return;
+    }
     if (msg.type === "hello") {
       // round-119: only the FIRST hello may bind a token (nothing attached
       // yet); a re-hello with a different/garbage token must NOT overwrite
@@ -156,7 +176,10 @@ export class PluginHubDO {
       if (!tok) {
         const newTok = String(msg.token || "");
         const link = newTok ? await getPluginByToken(this.env, newTok).catch(() => null) : null;
-        if (!link) { ws.close(4001, "invalid plugin token"); return; }
+        if (!link) {
+          ws.close(4001, "invalid plugin token");
+          return;
+        }
         this.state.storage.put("lastSeen", Date.now());
         // round-88: remember the plugin TOKEN bound to this socket. The
         // attachment is per-connection and auto-dropped on close — the alarm
@@ -166,13 +189,19 @@ export class PluginHubDO {
       } else {
         // Re-hello: validate the ALREADY-bound token.
         const link = await getPluginByToken(this.env, String(tok)).catch(() => null);
-        if (!link) { ws.close(4001, "link expired"); return; }
+        if (!link) {
+          ws.close(4001, "link expired");
+          return;
+        }
       }
       return;
     }
     if (msg.type === "response" && msg.id) {
       const resolve = this.pending.get(msg.id);
-      if (resolve) { this.pending.delete(msg.id); resolve(msg); }
+      if (resolve) {
+        this.pending.delete(msg.id);
+        resolve(msg);
+      }
       return;
     }
     // round-98: extension → hub tool request (callPlugin's path). The hub
@@ -182,15 +211,25 @@ export class PluginHubDO {
     // hanging — this direction (extension-initiated calls) is not supported;
     // the supported direction is hub → extension (/call → request frame).
     if (msg.type === "request" && msg.id) {
-      ws.send(JSON.stringify({ id: msg.id, type: "response", ok: false, error: "extension-initiated calls not supported — use the gateway /mcp instead" }));
+      ws.send(
+        JSON.stringify({
+          id: msg.id,
+          type: "response",
+          ok: false,
+          error: "extension-initiated calls not supported — use the gateway /mcp instead",
+        }),
+      );
       return;
     }
   }
 
-  async webSocketClose(ws: WebSocket, code: number, reason: string) {
+  async webSocketClose(_ws: WebSocket, _code: number, _reason: string) {
     // Reject all in-flight calls so /call returns a clear error, not a hang.
     const err = { error: "extension_disconnected" };
-    for (const [id, resolve] of this.pending) { resolve(err); this.pending.delete(id); }
+    for (const [id, resolve] of this.pending) {
+      resolve(err);
+      this.pending.delete(id);
+    }
     // round-119: resource cleanup — the 65s alarm armed at handshake was
     // never cancelled (one extra DO wake per connect/close cycle, firing a
     // no-op alarm() against zero sockets). round-121: the token attachment
@@ -211,9 +250,14 @@ export class PluginHubDO {
         const tok = ws.deserializeAttachment?.()?.token || null;
         if (tok) {
           const link = await getPluginByToken(this.env, String(tok));
-          if (!link) { ws.close(4001, "link expired"); continue; }
+          if (!link) {
+            ws.close(4001, "link expired");
+            continue;
+          }
         }
-      } catch { /* validation failure → idle-close below */ }
+      } catch {
+        /* validation failure → idle-close below */
+      }
       ws.close(4001, "idle timeout");
     }
   }

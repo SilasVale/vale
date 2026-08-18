@@ -12,8 +12,37 @@
  * derived here the same way handleConsole did: url.protocol === "https:".
  */
 
-import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, globalSettingEnabled, type User } from "../store.ts";
-import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "../auth.ts";
+import {
+  createUser,
+  getUser,
+  findUserByUsername,
+  regenerateToken,
+  getUserKeys,
+  setUserKey,
+  deleteUserKey,
+  getAdminPassword,
+  hasAdminPassword,
+  verifyAdminPassword,
+  setAdminPassword,
+  maskKey,
+  ADMIN_ID,
+  USER_KEY_NAMES,
+  getUserRoute,
+  setUserRoute,
+  getGlobalSetting,
+  setGlobalSetting,
+  globalSettingEnabled,
+  type User,
+} from "../store.ts";
+import {
+  verifyPassword,
+  issueSessionToken,
+  verifySessionToken,
+  parseCookie,
+  sessionCookieHeader,
+  clearSessionCookieHeader,
+  SESSION_COOKIE,
+} from "../auth.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { MODELS, OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
@@ -36,7 +65,9 @@ function authRateLimited(request: Request): boolean {
     __authRate.set(key, hit + 1);
     if (__authRate.size > 4096) __authRate.delete(__authRate.keys().next().value);
     return false;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 // Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
@@ -81,14 +112,18 @@ async function authRegister(request: Request, env: any, secure: boolean): Promis
       role: "user", // always a normal user; the admin can only come from seeding
     });
     const token = await issueSessionToken(sessionSecret(env, ap), created.id, created.role);
-    return jsonOk({ ok: true, username: created.username, role: created.role, token: created.token }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
+    return jsonOk(
+      { ok: true, username: created.username, role: created.role, token: created.token },
+      { "Set-Cookie": sessionCookieHeader(token, 86400, secure) },
+    );
   } catch (e: any) {
     return jsonError(400, e.message, "invalid_request");
   }
 }
 
 async function authLogin(request: Request, env: any, secure: boolean): Promise<Response> {
-  if (!(await hasAdminPassword(env))) return jsonError(500, "Admin password not configured", "config_error");
+  if (!(await hasAdminPassword(env)))
+    return jsonError(500, "Admin password not configured", "config_error");
   // The session-signing key in fallback mode is the stored admin password
   // HASH (same value requireSession uses) — getAdminPassword returns the
   // hash, never the plaintext.
@@ -116,20 +151,27 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
   if (gate > 10) {
     return jsonError(429, "Too many attempts — try again in a moment", "rate_limit_error");
   }
-  const lockKey = `login-lock:${callerIp}:${String(body.username || "").trim().toLowerCase()}`;
+  const lockKey = `login-lock:${callerIp}:${String(body.username || "")
+    .trim()
+    .toLowerCase()}`;
   const locked = await env.KEYS.get(lockKey);
   if (locked) {
     return jsonError(429, "Too many attempts — try again in ~30s", "rate_limit_error");
   }
   const user = await findUserByUsername(env, body.username);
-  if (!user || !user.enabled) return jsonError(401, "Incorrect username or password", "authentication_error");
+  if (!user || !user.enabled)
+    return jsonError(401, "Incorrect username or password", "authentication_error");
+  // eslint-disable-next-line no-useless-assignment
   let ok = false;
   if (user.id === ADMIN_ID) {
     // The admin account logs in with the admin password (stored HASHED —
     // compare via verifyAdminPassword, never read the plaintext).
     ok = await verifyAdminPassword(env, body.password || "");
   } else {
-    ok = !!user.salt && !!user.passwordHash && (await verifyPassword(body.password || "", user.salt, user.passwordHash));
+    ok =
+      !!user.salt &&
+      !!user.passwordHash &&
+      (await verifyPassword(body.password || "", user.salt, user.passwordHash));
   }
   if (!ok) {
     // round-115: count failures in memory — the old KV counter (lockKey:":n")
@@ -152,7 +194,10 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
   // Success clears the failure counter.
   __loginFails.delete(`login-fails:${callerIp}:${user.id}`);
   const token = await issueSessionToken(sessionSecret(env, ap), user.id, user.role);
-  return jsonOk({ ok: true, username: user.username, role: user.role }, { "Set-Cookie": sessionCookieHeader(token, 86400, secure) });
+  return jsonOk(
+    { ok: true, username: user.username, role: user.role },
+    { "Set-Cookie": sessionCookieHeader(token, 86400, secure) },
+  );
 }
 
 /* ---- Reset admin password (by admin gateway token) ----
@@ -202,8 +247,9 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
   // whole handler left the browser cookie alive AND skipped the KV
   // blacklist (the endpoint's entire security purpose).
   if (authRateLimited(request)) {
-    return jsonError(429, "rate limit exceeded", "rate_limit_error",
-      { "set-cookie": clearSessionCookieHeader(secure) });
+    return jsonError(429, "rate limit exceeded", "rate_limit_error", {
+      "set-cookie": clearSessionCookieHeader(secure),
+    });
   }
   // Revoke the session server-side: the HMAC cookie alone was cleared
   // client-side, but a copied cookie stayed valid for the full 24h. Blacklist
@@ -211,7 +257,9 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
   const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
   if (cookie && env.KEYS) {
     try {
-      const payload = JSON.parse(atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") || "{}") || "{}");
+      const payload = JSON.parse(
+        atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") || "{}") || "{}",
+      );
       if (payload.exp) {
         // round-122: exp is stored in MS (issueSessionToken uses Date.now() + SESSION_TTL_MS) — the old *1000 treated it as seconds, overstating the remaining life ~1000x (every logout wrote a 2-day entry).
         // round-124: floor 60 — KV's minimum expirationTtl; the old floor of
@@ -219,7 +267,9 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
         const ttl = Math.max(60, Math.min(86400, Math.ceil((payload.exp - Date.now()) / 1000)));
         await env.KEYS.put(`sess-revoked:${cookie}`, "1", { expirationTtl: ttl });
       }
-    } catch { /* malformed cookie — ignore */ }
+    } catch {
+      /* malformed cookie — ignore */
+    }
   }
   return jsonOk({ ok: true }, { "Set-Cookie": clearSessionCookieHeader(secure) });
 }
@@ -305,8 +355,10 @@ async function mePutKeys(request: Request, env: any): Promise<Response> {
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const body = await readJson(request);
   const { name, value } = body || {};
-  if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
-  if (typeof value !== "string" || !value.trim()) return jsonError(400, "value must not be empty", "invalid_request");
+  if (!USER_KEY_NAMES.includes(name))
+    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  if (typeof value !== "string" || !value.trim())
+    return jsonError(400, "value must not be empty", "invalid_request");
   const v = value.trim();
   await setUserKey(env, user.id, name, v);
   return jsonOk({ ok: true, name, masked: maskKey(v) });
@@ -316,7 +368,8 @@ async function meDeleteKeys(request: Request, env: any, url: URL): Promise<Respo
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const name = url.searchParams.get("name") || "";
-  if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  if (!USER_KEY_NAMES.includes(name))
+    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
   await deleteUserKey(env, user.id, name);
   return jsonOk({ ok: true, name });
 }
@@ -326,7 +379,8 @@ async function meTestKeys(request: Request, env: any): Promise<Response> {
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const body = await readJson(request);
   const name = body?.name;
-  if (!USER_KEY_NAMES.includes(name)) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  if (!USER_KEY_NAMES.includes(name))
+    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
   const ukeys = await getUserKeys(env, user.id);
   return testKey(env, name, ukeys[name]);
 }
@@ -336,7 +390,8 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const body = await readJson(request);
   const name = body?.name;
-  if (name !== "OPENROUTER_API_KEY") return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  if (name !== "OPENROUTER_API_KEY")
+    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
   const ukeys = await getUserKeys(env, user.id);
   const key = ukeys[name];
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
@@ -344,19 +399,26 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
     const res = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", {
       headers: { Authorization: `Bearer ${key}` },
     });
-    if (!res.ok) return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
+    if (!res.ok)
+      return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
     const payload = await res.json();
-    const data = payload?.data;
-    if (!data || typeof data !== "object") return jsonOk({ ok: false, name, status: res.status, detail: "Invalid upstream response" });
+    const data = (payload as any)?.data;
+    if (!data || typeof data !== "object")
+      return jsonOk({ ok: false, name, status: res.status, detail: "Invalid upstream response" });
     const out: any = { ok: true, name, status: res.status };
     for (const field of ["label", "usage", "limit"]) {
-      if (field in data && (data[field] === null || typeof data[field] === "string" || typeof data[field] === "number")) out[field] = data[field];
+      if (
+        field in data &&
+        (data[field] === null || typeof data[field] === "string" || typeof data[field] === "number")
+      )
+        out[field] = data[field];
     }
     if (typeof data.is_free_tier === "boolean") out.isFreeTier = data.is_free_tier;
     if (data.rate_limit && typeof data.rate_limit === "object") {
       const rateLimit: any = {};
       if (typeof data.rate_limit.limit === "number") rateLimit.limit = data.rate_limit.limit;
-      if (typeof data.rate_limit.interval === "string") rateLimit.interval = data.rate_limit.interval;
+      if (typeof data.rate_limit.interval === "string")
+        rateLimit.interval = data.rate_limit.interval;
       if (typeof data.rate_limit.reset === "string") rateLimit.reset = data.rate_limit.reset;
       if (Object.keys(rateLimit).length) out.rateLimit = rateLimit;
     }
@@ -372,12 +434,26 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
   try {
     if (name === "DEEPSEEK_API_KEY") {
-      const res = await fetchWithTimeout("https://api.deepseek.com/models", { headers: { Authorization: `Bearer ${key}` } });
-      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "DeepSeek auth OK" : `Upstream ${res.status}` });
+      const res = await fetchWithTimeout("https://api.deepseek.com/models", {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      return jsonOk({
+        ok: res.ok,
+        name,
+        status: res.status,
+        detail: res.ok ? "DeepSeek auth OK" : `Upstream ${res.status}`,
+      });
     }
     if (name === "OPENROUTER_API_KEY") {
-      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${key}` } });
-      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "OpenRouter auth OK" : `Upstream ${res.status}` });
+      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      return jsonOk({
+        ok: res.ok,
+        name,
+        status: res.status,
+        detail: res.ok ? "OpenRouter auth OK" : `Upstream ${res.status}`,
+      });
     }
     if (name === "OPENCODE_GO_API_KEY") {
       // Do not send the literal "[1m]" suffix — zen rejects it with 401
@@ -409,19 +485,36 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
         return new TextDecoder().decode(value || new Uint8Array());
       })();
       const ok = firstChunk.includes("data:");
-      return jsonOk({ ok, name, status: res.status, detail: ok ? "OpenCode Go auth OK" : "OpenCode Go auth FAILED (no stream data)" });
+      return jsonOk({
+        ok,
+        name,
+        status: res.status,
+        detail: ok ? "OpenCode Go auth OK" : "OpenCode Go auth FAILED (no stream data)",
+      });
     }
     if (name === "QWEN_API_KEY") {
-      const res = await fetchWithTimeout("https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({
-          model: "qwen3.8-max-preview",
-          messages: [{ role: "user", content: "ping" }],
-          max_tokens: 1,
-        }),
+      const res = await fetchWithTimeout(
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "qwen3.8-max-preview",
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+          }),
+        },
+      );
+      return jsonOk({
+        ok: res.ok,
+        name,
+        status: res.status,
+        detail: res.ok ? "Qwen MaaS auth OK" : `Upstream ${res.status}`,
       });
-      return jsonOk({ ok: res.ok, name, status: res.status, detail: res.ok ? "Qwen MaaS auth OK" : `Upstream ${res.status}` });
     }
   } catch (e: any) {
     return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
@@ -429,11 +522,13 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
   return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
 }
 
-function userKeysStatus(ukeys: Record<string, string>): Record<string, { configured: boolean; masked: string }> {
+function userKeysStatus(
+  ukeys: Record<string, string>,
+): Record<string, { configured: boolean; masked: string }> {
   const out: Record<string, { configured: boolean; masked: string }> = {};
   for (const n of USER_KEY_NAMES) {
     const v = ukeys[n];
-    out[n] = { configured: !!v, masked: maskKey(v) };
+    out[n] = { configured: !!v, masked: maskKey(v || "") };
   }
   return out;
 }
@@ -444,15 +539,17 @@ export default {
   setup(ctx: PluginContext) {
     // meGetRoute resolves the effective model via the translate plugin's
     // resolveAutoModel (dep registered before this setup runs).
-    resolveRouteModel = ((ctx.api?.translate as any)?.resolveAutoModel) || null;
+    resolveRouteModel = (ctx.api?.translate as any)?.resolveAutoModel || null;
     // Exact method+path match, same as the index.js if/else chain (the
     // registry's route() helper does prefix matching — exact here so
     // /api/me never swallows /api/me/route etc.). Order mirrors index.js.
     const add = (method: string, path: string, handler: (...args: any[]) => any) =>
       ctx.routes.push({ match: (m: string, p: string) => m === method && p === path, handler });
     // `secure` derived exactly as handleConsole did: url.protocol === "https:"
-    const withSecure = (fn: (request: Request, env: any, secure: boolean) => Response | Promise<Response>) =>
-      (request: Request, env: any, url: URL): Response | Promise<Response> => fn(request, env, url.protocol === "https:");
+    const withSecure =
+      (fn: (request: Request, env: any, secure: boolean) => Response | Promise<Response>) =>
+      (request: Request, env: any, url: URL): Response | Promise<Response> =>
+        fn(request, env, url.protocol === "https:");
     add("POST", `${AUTH_BASE}/register`, withSecure(authRegister));
     add("POST", `${AUTH_BASE}/login`, withSecure(authLogin));
     add("POST", `${AUTH_BASE}/reset-password`, authResetPassword);

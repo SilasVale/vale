@@ -15,7 +15,7 @@
  */
 export class RouteDO {
   state: any;
-  constructor(state: any, env: any) {
+  constructor(state: any, _env: any) {
     this.state = state;
   }
 

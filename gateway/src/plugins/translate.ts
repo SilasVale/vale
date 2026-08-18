@@ -21,12 +21,43 @@
  * just the entry points.
  */
 
-import { findUserByToken, getUserKeys, getGlobalSetting, getUserRoute, globalSettingEnabled } from "../store.ts";
-import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, toSSE } from "../anthropic-translate.ts";
-import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "../reliability.ts";
-import { rawWithDeepSeekProvider, rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
+import {
+  findUserByToken,
+  getUserKeys,
+  getGlobalSetting,
+  getUserRoute,
+  globalSettingEnabled,
+} from "../store.ts";
+import {
+  toOpenAIRequest,
+  toAnthropicResponse,
+  streamOgToAnthropic,
+  toSSE,
+} from "../anthropic-translate.ts";
+import {
+  fetchWithTimeout,
+  fetchWithRetry,
+  upstreamTimeoutMs,
+  ogTimeoutMs,
+  passthroughTimeoutMs,
+  isChannelDegraded,
+  recordChannelFailure,
+  recordChannelSuccess,
+} from "../reliability.ts";
+import {
+  rawWithDeepSeekProvider,
+  rawWithModel,
+  scanTopLevelModel,
+  estimateTokens,
+} from "../body-scan.ts";
 import { jsonOk, jsonError, CORS_HEADERS } from "../http.ts";
-import { MODELS, OG_NATIVE_ANTHROPIC, OG_ZEN_ANTHROPIC, VERIFY_PATH, usProxyBase } from "../channels.ts";
+import {
+  MODELS,
+  OG_NATIVE_ANTHROPIC,
+  OG_ZEN_ANTHROPIC,
+  VERIFY_PATH,
+  usProxyBase,
+} from "../channels.ts";
 import type { PluginContext } from "./registry.ts";
 
 const COUNT_PATH = "/v1/messages/count_tokens";
@@ -48,7 +79,13 @@ interface RouteInfo {
 // once to inherit other isolates' counts.
 const __rlMin = new Map(); // `min:${token}:${minute}` → count
 const __rlDay = new Map(); // `day:${token}:${day}`   → count
-async function handleGatewayImpl(request: Request, env: any, url: URL, preReadText: string | null = null, ctx: { model: string; user?: string } = { model: "" }): Promise<Response> {
+async function handleGatewayImpl(
+  request: Request,
+  env: any,
+  url: URL,
+  preReadText: string | null = null,
+  ctx: { model: string; user?: string } = { model: "" },
+): Promise<Response> {
   const path = url.pathname;
   const method = request.method;
 
@@ -108,7 +145,11 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         const hit = __rlMin.get(mk);
         if (hit !== undefined) return hit;
         let v = 0;
-        try { v = Number(await env.KEYS.get(minuteKey)) || 0; } catch {}
+        try {
+          v = Number(await env.KEYS.get(minuteKey)) || 0;
+        } catch {
+          /* KV read failed */
+        }
         __rlMin.set(mk, v);
         if (__rlMin.size > 4096) __rlMin.delete(__rlMin.keys().next().value);
         return v;
@@ -117,7 +158,11 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         const hit = __rlDay.get(dk);
         if (hit !== undefined) return hit;
         let v = 0;
-        try { v = Number(await env.KEYS.get(dayKey)) || 0; } catch {}
+        try {
+          v = Number(await env.KEYS.get(dayKey)) || 0;
+        } catch {
+          /* KV read failed */
+        }
         __rlDay.set(dk, v);
         if (__rlDay.size > 4096) __rlDay.delete(__rlDay.keys().next().value);
         return v;
@@ -168,7 +213,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // route (which would incorrectly consume OPENROUTER_API_KEY).
   const lunaModel = model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]";
   let effectiveModel = model;
-  const prefix2 = effectiveModel.split("/")[0];
+  const prefix2 = effectiveModel.split("/")[0] || "";
   // 美国出口开关:控制台 KV 设置优先,回退 Worker secret(env.US_PROXY)。
   // KV 写透传后立即生效(同 isolate 零延迟)。
   const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
@@ -176,7 +221,9 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // string); raw truthiness would treat it as ON.
   const usProxy = lunaModel || globalSettingEnabled(usProxyRaw) ? "1" : null;
   const baseRoute = pickRoute(prefix2, env, usProxy);
-  let upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
+  let upstreamModel = stripBracket(
+    baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel,
+  );
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
   // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
@@ -209,7 +256,10 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // blind (or rejected them). Every route kind must preprocess images when
   // the target model isn't vision-capable; the CPU-guard below (scan raw
   // text before parsing) still bounds the parse to image/search requests.
-  if (isMessages && (route.type === "translate" || route.kind === "opencode" || route.kind === "deepseek")) {
+  if (
+    isMessages &&
+    (route.type === "translate" || route.kind === "opencode" || route.kind === "deepseek")
+  ) {
     // CPU guard: parsing a multi-MB body into an object graph blows the Free
     // plan's 10ms budget (Error 1102) — but web_search detection and image
     // preprocessing NEED the object. The translate path MUST parse (it
@@ -243,8 +293,14 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         let end = -1;
         for (let i = toolsStart + 8; i < rawText.length; i++) {
           const ch = rawText[i];
-          if (ch === '[' || ch === '{') depth++;
-          else if (ch === ']' || ch === '}') { depth--; if (depth < 0) { end = i; break; } }
+          if (ch === "[" || ch === "{") depth++;
+          else if (ch === "]" || ch === "}") {
+            depth--;
+            if (depth < 0) {
+              end = i;
+              break;
+            }
+          }
         }
         toolsRegion = end > 0 ? rawText.slice(toolsStart, end + 1) : "";
       }
@@ -287,10 +343,12 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // so a declaration-only check silently hijacked the user's model on
     // every request (round-46 High). The tool_choice check is the true
     // search intent.
-    const webSearchToolChoice = body?.tool_choice &&
+    const webSearchToolChoice =
+      body?.tool_choice &&
       ((body.tool_choice.type === "tool" && body.tool_choice.name === "web_search") ||
-       (body.tool_choice.type === "any" && Array.isArray(body.tool_choice.tools) &&
-        body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
+        (body.tool_choice.type === "any" &&
+          Array.isArray(body.tool_choice.tools) &&
+          body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
     if (webSearchToolChoice && body) {
       const searchModel = "og/deepseek-v4-flash";
       // Swap when the route is NOT already the native search-capable
@@ -299,6 +357,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
       // translation — round-46 Medium #3).
       if (route.type !== "passthrough" || route.upstream !== OG_ZEN_ANTHROPIC) {
         model = searchModel;
+        // eslint-disable-next-line no-useless-assignment
         effectiveModel = searchModel;
         body.model = "deepseek-v4-flash";
         upstreamModel = "deepseek-v4-flash";
@@ -334,14 +393,22 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
 
   // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
   if (route.kind === "openrouter" && !openRouterKey) {
-    return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
+    return jsonError(
+      502,
+      "OPENROUTER_API_KEY not configured — add your own key in the console",
+      "config_error",
+    );
   }
   // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
   // og/ (translate or native) uses their OpenCode Go key — never the DeepSeek key.
-  const bearerKey = route.kind === "openrouter" ? openRouterKey
-    : route.kind === "qwen" ? qwenKey
-    : route.kind === "opencode" ? opencodeGoKey
-    : deepseekKey;
+  const bearerKey =
+    route.kind === "openrouter"
+      ? openRouterKey
+      : route.kind === "qwen"
+        ? qwenKey
+        : route.kind === "opencode"
+          ? opencodeGoKey
+          : deepseekKey;
 
   // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
   // Accepts OpenAI-format requests directly and forwards to the upstream
@@ -349,33 +416,60 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // clients to use og/ models without format conversion.
   if (isChatCompletions) {
     if (route.kind === "opencode" && !opencodeGoKey) {
-      return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "OPENCODE_GO_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
-    if (route.kind === "opencode" && await isChannelDegraded(env)) {
-      return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
+    if (route.kind === "opencode" && (await isChannelDegraded(env))) {
+      return jsonError(
+        502,
+        "og: circuit open (recent upstream failures, try again in ~1 min)",
+        "api_error",
+      );
     }
     if (route.kind === "deepseek" && !deepseekKey) {
-      return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "DEEPSEEK_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
     if (route.kind === "openrouter" && !openRouterKey) {
-      return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "OPENROUTER_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
     if (route.kind === "qwen" && !qwenKey) {
-      return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "QWEN_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
     // Body is already OpenAI format — forward as-is with model field swapped.
     const forwardBody = rawWithModel(rawText, upstreamModel, scanned);
-    const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
-      method: "POST",
-      headers: passthroughHeaders(bearerKey),
-      body: forwardBody,
-    }, { timeoutMs: ogTimeoutMs(env) });
+    const { response: upstream, detail } = await fetchWithRetry(
+      route.upstream,
+      {
+        method: "POST",
+        headers: passthroughHeaders(bearerKey),
+        body: forwardBody,
+      },
+      { timeoutMs: ogTimeoutMs(env) },
+    );
     if (!upstream) {
       if (route.kind === "opencode") await recordChannelFailure(env);
       return jsonError(502, `upstream ${route.kind}: ${detail}`, "api_error");
     }
     if (!upstream.ok) {
-      if (route.kind === "opencode" && (detail?.startsWith("network error") || detail?.startsWith("timeout"))) {
+      if (
+        route.kind === "opencode" &&
+        (detail?.startsWith("network error") || detail?.startsWith("timeout"))
+      ) {
         await recordChannelFailure(env);
       }
       let message = `Upstream ${upstream.status}`;
@@ -384,10 +478,20 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         const err: any = await upstream.json();
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
         const upType = err.error?.type || err.type;
-        const KNOWN = ["rate_limit_error", "overloaded_error", "authentication_error",
-          "invalid_request_error", "permission_error", "not_found_error", "request_too_large", "api_error"];
+        const KNOWN = [
+          "rate_limit_error",
+          "overloaded_error",
+          "authentication_error",
+          "invalid_request_error",
+          "permission_error",
+          "not_found_error",
+          "request_too_large",
+          "api_error",
+        ];
         if (upType && KNOWN.includes(upType)) type = upType;
-      } catch { /* non-JSON error body */ }
+      } catch {
+        /* non-JSON error body */
+      }
       return jsonError(upstream.status, message, type);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
@@ -404,10 +508,18 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // are still real config errors and stay.
   if (isCount) {
     if (route.kind === "deepseek" && !deepseekKey) {
-      return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "DEEPSEEK_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
     if (route.kind === "qwen" && !qwenKey) {
-      return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "QWEN_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
     return jsonOk({ input_tokens: estimateTokens(rawText) });
   }
@@ -417,22 +529,38 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
     if (route.kind === "deepseek" && !deepseekKey) {
-      return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "DEEPSEEK_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
     if (route.kind === "qwen" && !qwenKey) {
-      return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "QWEN_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
     // og-native (deepseek-v4-flash via /v1/messages) needs the OpenCode Go key
     // too — without it the request would go out headerless and return a bare
     // "Upstream 401" instead of a clear config error (translate path checks).
     if (route.kind === "opencode" && !opencodeGoKey) {
-      return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
+      return jsonError(
+        502,
+        "OPENCODE_GO_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
     }
     // The og-native passthrough previously BYPASSED the circuit breaker — a
     // dead channel kept getting routed (health lied, model=auto stuck on it).
     // Check the breaker up front like the translate path does.
-    if (route.kind === "opencode" && await isChannelDegraded(env)) {
-      return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
+    if (route.kind === "opencode" && (await isChannelDegraded(env))) {
+      return jsonError(
+        502,
+        "og: circuit open (recent upstream failures, try again in ~1 min)",
+        "api_error",
+      );
     }
     // og-native parsed the body above (web-search detection, image
     // pre-processing) — forward THAT (images must arrive described, deepseek
@@ -440,19 +568,31 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // model field swapped — no parse, no spread, no full re-stringify (Free
     // plan 10ms CPU budget). og-native authenticates with x-api-key;
     // every other passthrough channel uses Bearer.
-    let forwardBody = body !== null
-      ? JSON.stringify({ ...body, model: upstreamModel })
-      : rawWithModel(rawText, upstreamModel, scanned);
+    let forwardBody =
+      body !== null
+        ? JSON.stringify({ ...body, model: upstreamModel })
+        : rawWithModel(rawText, upstreamModel, scanned);
     if (route.kind === "openrouter" && upstreamModel === "deepseek/deepseek-v4-flash-0731") {
-      forwardBody = body !== null
-        ? JSON.stringify({ ...body, model: upstreamModel, provider: { order: ["deepseek"], allow_fallbacks: false } })
-        : rawWithDeepSeekProvider(forwardBody);
+      forwardBody =
+        body !== null
+          ? JSON.stringify({
+              ...body,
+              model: upstreamModel,
+              provider: { order: ["deepseek"], allow_fallbacks: false },
+            })
+          : rawWithDeepSeekProvider(forwardBody);
     }
-    const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
-      method: "POST",
-      headers: passthroughHeaders(bearerKey, { apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false }),
-      body: forwardBody,
-    }, { timeoutMs: passthroughTimeoutMs(env, route.kind) });
+    const { response: upstream, detail } = await fetchWithRetry(
+      route.upstream,
+      {
+        method: "POST",
+        headers: passthroughHeaders(bearerKey, {
+          apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false,
+        }),
+        body: forwardBody,
+      },
+      { timeoutMs: passthroughTimeoutMs(env, route.kind) },
+    );
     if (!upstream) {
       // Slow failure (timeout / network error) — single attempt, no retry.
       // A hard network failure counts toward the og breaker.
@@ -475,13 +615,23 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         // api_error was NON-retryable for the client. Whitelist the known
         // Anthropic types; unknown → api_error.
         const upType = err.error?.type || err.type;
-        const KNOWN = ["rate_limit_error", "overloaded_error", "authentication_error",
-          "invalid_request_error", "permission_error", "not_found_error", "request_too_large", "api_error"];
+        const KNOWN = [
+          "rate_limit_error",
+          "overloaded_error",
+          "authentication_error",
+          "invalid_request_error",
+          "permission_error",
+          "not_found_error",
+          "request_too_large",
+          "api_error",
+        ];
         if (upType && KNOWN.includes(upType)) type = upType;
         // Carry Retry-After so the client paces against the upstream limit.
         const ra = upstream.headers?.get?.("retry-after");
         if (ra) extra = { "retry-after": ra };
-      } catch { /* non-JSON error body */ }
+      } catch {
+        /* non-JSON error body */
+      }
       // round-118: this branch is `!upstream.ok` — a 429/5xx is NOT a
       // success. The old code called recordChannelSuccess here, so a dead
       // channel alternating hangs with fast 429s never accumulated the 3
@@ -502,21 +652,33 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // then reshape back to Anthropic SSE. deepseek-v4-flash / minimax-m3 never get
   // here — they were switched to passthrough above.
   if (!opencodeGoKey) {
-    return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
+    return jsonError(
+      502,
+      "OPENCODE_GO_API_KEY not configured — add your own key in the console",
+      "config_error",
+    );
   }
   if (await isChannelDegraded(env)) {
     // Circuit open: repeated hard failures — fail fast instead of waiting on zen again.
-    return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
+    return jsonError(
+      502,
+      "og: circuit open (recent upstream failures, try again in ~1 min)",
+      "api_error",
+    );
   }
   const openaiReq = toOpenAIRequest(body, upstreamModel);
-  const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${opencodeGoKey}`,
-      "Content-Type": "application/json",
+  const { response: upstream, detail } = await fetchWithRetry(
+    route.upstream,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${opencodeGoKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(openaiReq),
     },
-    body: JSON.stringify(openaiReq),
-  }, { timeoutMs: ogTimeoutMs(env) });
+    { timeoutMs: ogTimeoutMs(env) },
+  );
   if (!upstream || !upstream.ok) {
     // Count toward the breaker ONLY channel-death signals: a hard network
     // error OR a timeout (a blackholed channel hangs instead of erroring).
@@ -531,7 +693,11 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // (client should back off, not fail) and its Retry-After. The passthrough
     // branch keeps the status; the translate branch must too.
     const upStatus = upstream?.status || 502;
-    return jsonError(upStatus, `og: ${detail || `upstream ${upStatus}`}`, upStatus === 429 ? "rate_limit_error" : upStatus >= 500 ? "upstream_error" : "api_error");
+    return jsonError(
+      upStatus,
+      `og: ${detail || `upstream ${upStatus}`}`,
+      upStatus === 429 ? "rate_limit_error" : upStatus >= 500 ? "upstream_error" : "api_error",
+    );
   }
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure
   // count — otherwise yesterday's blips would combine with today's to trip.
@@ -552,11 +718,19 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         // A 200-wrapped OpenAI ERROR envelope ({error:{...}}) must NOT become
         // a silent empty assistant message — surface it.
         if (json.error || !Array.isArray(json.choices) || json.choices.length === 0) {
-          return jsonError(502, json.error?.message || json.message || "upstream returned an error envelope", "api_error");
+          return jsonError(
+            502,
+            json.error?.message || json.message || "upstream returned an error envelope",
+            "api_error",
+          );
         }
         const oneShot = toSSE(toAnthropicResponse(json, upstreamModel));
         return new Response(oneShot, {
-          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+          headers: {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache",
+            ...CORS_HEADERS,
+          },
         });
       }
       // Parse failed AND the body was consumed — a fall-through to the SSE
@@ -568,17 +742,30 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // keeping a multi-MB parsed body resident the whole time pushes the Free
     // plan's 128MB isolate limit.
     const clientModel = body.model;
-    const streamBody = streamOgToAnthropic(upstream.body as ReadableStream, clientModel, upstreamModel);
+    const streamBody = streamOgToAnthropic(
+      upstream.body as ReadableStream,
+      clientModel,
+      upstreamModel,
+    );
+    // eslint-disable-next-line no-useless-assignment
     body = null;
     return new Response(streamBody, {
-      headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        ...CORS_HEADERS,
+      },
     });
   }
   const upJson: any = await upstream.json().catch(() => null);
   // A 200-wrapped OpenAI error envelope must not become an empty assistant
   // message (silent failure, no retry signal).
   if (!upJson || upJson.error || !Array.isArray(upJson.choices) || upJson.choices.length === 0) {
-    return jsonError(502, upJson?.error?.message || upJson?.message || "upstream returned an invalid response", "api_error");
+    return jsonError(
+      502,
+      upJson?.error?.message || upJson?.message || "upstream returned an invalid response",
+      "api_error",
+    );
   }
   const anthropicRes = toAnthropicResponse(upJson, upstreamModel);
   return jsonOk(anthropicRes);
@@ -601,7 +788,9 @@ export async function handleGateway(request: Request, env: any, url: URL): Promi
   let rawText: string | null = null;
   try {
     rawText = await request.text();
-  } catch { /* impl will re-try; a broken stream fails there with a clear error */ }
+  } catch {
+    /* impl will re-try; a broken stream fails there with a clear error */
+  }
   const ctx = { model: "", user: "" };
   const res = await handleGatewayImpl(request, env, url, rawText, ctx);
   try {
@@ -610,13 +799,19 @@ export async function handleGateway(request: Request, env: any, url: URL): Promi
     // the key's first 8 chars (~48bit entropy) leak token material and
     // cross-correlate requests across logs; findUserByToken already resolved
     // the user in the impl.
-    console.log(JSON.stringify({
-      ts: started, ms: Date.now() - started, status: res.status,
-      user: ctx.user,
-      path: url.pathname,
-      model: ctx.model,
-    }));
-  } catch { /* log must never break the request */ }
+    console.log(
+      JSON.stringify({
+        ts: started,
+        ms: Date.now() - started,
+        status: res.status,
+        user: ctx.user,
+        path: url.pathname,
+        model: ctx.model,
+      }),
+    );
+  } catch {
+    /* log must never break the request */
+  }
   return res;
 }
 // Claude Code appends a [context-window] marker (e.g. [1m]) to model names and strips it
@@ -630,9 +825,10 @@ function pickRoute(prefix: string, env: any, usProxy: string | null = null): Rou
   // 从美国边缘出口访问上游,规避区域限制/拥堵。target=og|ds|qw|or 选上游,
   // path 参数带上游相对路径(代理 base 已含主机级前缀)。usProxy is a local
   // per-request value — never mutate the shared env object with it.
-  const via = (direct: string, path: string): string => usProxy
-    ? `${usProxyBase(env)}/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
-    : direct;
+  const via = (direct: string, path: string): string =>
+    usProxy
+      ? `${usProxyBase(env)}/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
+      : direct;
   switch (prefix) {
     case "or":
       return {
@@ -657,7 +853,10 @@ function pickRoute(prefix: string, env: any, usProxy: string | null = null): Rou
         type: "passthrough",
         kind: "qwen",
         stripPrefix: true,
-        upstream: via("https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH, "/apps/anthropic/v1/messages"),
+        upstream: via(
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
+          "/apps/anthropic/v1/messages",
+        ),
       };
     case "og":
       return {
@@ -677,7 +876,10 @@ function pickRoute(prefix: string, env: any, usProxy: string | null = null): Rou
   }
 }
 
-function passthroughHeaders(bearerKey: string | null, { apiKeyHeader = false }: { apiKeyHeader?: string | false } = {}): Headers {
+function passthroughHeaders(
+  bearerKey: string | null,
+  { apiKeyHeader = false }: { apiKeyHeader?: string | false } = {},
+): Headers {
   const h = new Headers();
   h.set("Content-Type", "application/json");
   // All passthrough targets speak the Anthropic protocol (ds/qw native,
@@ -702,11 +904,19 @@ function passthroughHeaders(bearerKey: string | null, { apiKeyHeader = false }: 
 
 function isVisionCapable(model: string, upstreamModel: string, env: any): boolean {
   const list = String(env.VISION_CAPABLE_MODELS || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   return list.includes(model) || list.includes(upstreamModel);
 }
 
-async function preprocessImages(messages: any, env: any, ukeys: any, model: string, upstreamModel: string): Promise<{ messages: any[]; changed: boolean }> {
+async function preprocessImages(
+  messages: any,
+  env: any,
+  ukeys: any,
+  model: string,
+  upstreamModel: string,
+): Promise<{ messages: any[]; changed: boolean }> {
   if (!Array.isArray(messages)) return { messages, changed: false };
   if (isVisionCapable(model, upstreamModel, env)) return { messages, changed: false };
   const visionModel = env.VISION_MODEL || "og/mimo-v2.5";
@@ -739,7 +949,9 @@ async function preprocessImages(messages: any, env: any, ukeys: any, model: stri
         // request (the client sees the error and retries/removes the image)
         // instead of fabricating a description.
         if (/图片描述失败|图片描述为空|图片数据为空/.test(desc)) {
-          throw new Error(`vision preprocessing failed: ${desc.replace(/^\((图片描述失败|图片描述为空|图片数据为空)[：:]?/, "")}`);
+          throw new Error(
+            `vision preprocessing failed: ${desc.replace(/^\((图片描述失败|图片描述为空|图片数据为空)[：:]?/, "")}`,
+          );
         }
         newContent.push({ type: "text", text: `[图片内容描述]\n${desc}` });
         changed = true;
@@ -765,9 +977,18 @@ function hashHex(str: string): string {
 async function cacheImageDesc(cacheKey: string, env: any, desc: string): Promise<void> {
   if (!cacheKey || !env?.KEYS) return;
   if (!desc || /图片描述失败|图片描述为空/.test(desc)) return;
-  try { await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 }); } catch {}
+  try {
+    await env.KEYS.put(cacheKey, desc, { expirationTtl: 7 * 24 * 60 * 60 });
+  } catch {
+    /* KV write failed */
+  }
 }
-async function describeImage(env: any, ukeys: any, source: any, visionModel: string): Promise<string> {
+async function describeImage(
+  env: any,
+  ukeys: any,
+  source: any,
+  visionModel: string,
+): Promise<string> {
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
   if (!data) return "(图片数据为空)";
@@ -791,35 +1012,55 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
     try {
       const hit = await env.KEYS.get(cacheKey);
       if (hit) return hit;
-    } catch {}
+    } catch {
+      /* KV read failed */
+    }
   }
-  const prefix = visionModel.split("/")[0];
+  const prefix = visionModel.split("/")[0] || "";
   const route = pickRoute(prefix, env, globalSettingEnabled(usProxyRaw) ? "1" : null);
-  const upstreamModel = stripBracket(route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel);
+  const upstreamModel = stripBracket(
+    route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel,
+  );
   const content = [
     { type: "image", source: { type: "base64", media_type: mediaType, data } },
-    { type: "text", text: "请用中文详细描述这张图片的内容，包括所有可见文字（OCR）、界面元素、布局。若是截图或表格，请逐行说明关键内容。只输出描述，不要额外说明。" },
+    {
+      type: "text",
+      text: "请用中文详细描述这张图片的内容，包括所有可见文字（OCR）、界面元素、布局。若是截图或表格，请逐行说明关键内容。只输出描述，不要额外说明。",
+    },
   ];
   const miniReq = { model: visionModel, max_tokens: 1500, messages: [{ role: "user", content }] };
 
   if (route.type === "passthrough") {
     // or/ (openrouter) or ds/ (deepseek) vision model — Anthropic passthrough
-    const bearerKey = route.kind === "openrouter" ? ukeys.OPENROUTER_API_KEY : ukeys.DEEPSEEK_API_KEY;
+    const bearerKey =
+      route.kind === "openrouter" ? ukeys.OPENROUTER_API_KEY : ukeys.DEEPSEEK_API_KEY;
     if (!bearerKey) return "(图片描述失败：视觉模型后端未配置)";
     let resp: any;
     try {
-      resp = await fetchWithTimeout(route.upstream, {
-        method: "POST",
-        headers: passthroughHeaders(bearerKey),
-        body: JSON.stringify({ ...miniReq, model: upstreamModel }),
-      }, upstreamTimeoutMs(env));
+      resp = await fetchWithTimeout(
+        route.upstream,
+        {
+          method: "POST",
+          headers: passthroughHeaders(bearerKey),
+          body: JSON.stringify({ ...miniReq, model: upstreamModel }),
+        },
+        upstreamTimeoutMs(env),
+      );
     } catch (e: any) {
       return `(图片描述失败：${e.message})`;
     }
     if (!resp.ok) return `(图片描述失败：${resp.status})`;
     let json: any;
-    try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
-    const text = (json.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n").trim();
+    try {
+      json = await resp.json();
+    } catch {
+      return "(图片描述失败：响应解析失败)";
+    }
+    const text = (json.content || [])
+      .filter((b: any) => b.type === "text")
+      .map((b: any) => b.text)
+      .join("\n")
+      .trim();
     const descPt = text || "(图片描述为空)";
     await cacheImageDesc(cacheKey, env, descPt);
     return descPt;
@@ -831,17 +1072,28 @@ async function describeImage(env: any, ukeys: any, source: any, visionModel: str
   const openaiReq = toOpenAIRequest(miniReq, upstreamModel);
   let resp: any;
   try {
-    resp = await fetchWithTimeout(route.upstream, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify(openaiReq),
-    }, upstreamTimeoutMs(env));
+    resp = await fetchWithTimeout(
+      route.upstream,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(openaiReq),
+      },
+      upstreamTimeoutMs(env),
+    );
   } catch (e: any) {
     return `(图片描述失败：${e.message})`;
   }
   if (!resp.ok) return `(图片描述失败：${resp.status})`;
   let json: any;
-  try { json = await resp.json(); } catch { return "(图片描述失败：响应解析失败)"; }
+  try {
+    json = await resp.json();
+  } catch {
+    return "(图片描述失败：响应解析失败)";
+  }
   const desc = (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
   await cacheImageDesc(cacheKey, env, desc);
   return desc;
@@ -881,7 +1133,12 @@ export async function resolveAutoModel(env: any, uid: string): Promise<string> {
   // now-unreachable index.ts copy, so a BYOK user without a DeepSeek key
   // still got a guaranteed 502 on model=auto. Fall back to the first
   // usable channel.
-  for (const m of [DEFAULT_ROUTE_MODEL, "qw/qwen3.8-max-preview", "og/deepseek-v4-flash", "or/openai/gpt-5.6-luna:floor[1m]"]) {
+  for (const m of [
+    DEFAULT_ROUTE_MODEL,
+    "qw/qwen3.8-max-preview",
+    "og/deepseek-v4-flash",
+    "or/openai/gpt-5.6-luna:floor[1m]",
+  ]) {
     if (await isModelUsable(env, m, uid)) return m;
   }
   return DEFAULT_ROUTE_MODEL;
@@ -898,7 +1155,10 @@ export default {
     const handler = (request: Request, env: any, url: URL) => handleGateway(request, env, url);
     ctx.routes.push({ match: (m, p) => m === "GET" && p.startsWith("/v1/models"), handler });
     ctx.routes.push({ match: (m, p) => m === "POST" && p.startsWith("/v1/messages"), handler });
-    ctx.routes.push({ match: (m, p) => m === "POST" && p.startsWith("/v1/chat/completions"), handler });
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p.startsWith("/v1/chat/completions"),
+      handler,
+    });
     // Cross-plugin API surface (mirrors the exports index.js exposes today).
     ctx.api.translate = { handleGateway, handleGatewayImpl, resolveAutoModel, isModelUsable };
   },

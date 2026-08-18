@@ -80,7 +80,12 @@ export function registerPlugins(ctx: PluginContext, plugins: Plugin[]): void {
 }
 
 /** Route dispatch: first registered plugin whose match() returns true wins. */
-export function dispatch(ctx: PluginContext, method: string, path: string, ...rest: unknown[]): any {
+export function dispatch(
+  ctx: PluginContext,
+  method: string,
+  path: string,
+  ...rest: unknown[]
+): any {
   for (const r of ctx.routes) {
     if (r.match(method, path)) return r.handler(...rest);
   }
@@ -88,7 +93,12 @@ export function dispatch(ctx: PluginContext, method: string, path: string, ...re
 }
 
 /** Convenience: register a prefix-matched route on the context. */
-export function route(ctx: PluginContext, methods: string | string[], pathPrefix: string, handler: (...args: any[]) => any): void {
+export function route(
+  ctx: PluginContext,
+  methods: string | string[],
+  pathPrefix: string,
+  handler: (...args: any[]) => any,
+): void {
   const ms = Array.isArray(methods) ? methods : [methods];
   ctx.routes.push({
     match: (m, p) => ms.includes(m) && p.startsWith(pathPrefix),
@@ -101,7 +111,11 @@ export function emit(ctx: PluginContext, name: string, payload: unknown): void {
   const listeners = ctx.events.get(name);
   if (!listeners) return;
   for (const fn of listeners) {
-    try { Promise.resolve(fn(payload)).catch(() => {}); } catch {}
+    try {
+      Promise.resolve(fn(payload)).catch(() => {});
+    } catch {
+      /* listener error */
+    }
   }
 }
 
