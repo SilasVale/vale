@@ -137,7 +137,7 @@ export default {
         JSON.stringify({
           version: "1.0.80",
           download,
-          sha256: "17e8f18a6166f6e5bea3f998ee734086e1bf2a7c96006e79c7324200ff75ab1b",
+          sha256: "ba2d2494046c543a0c98db776e0045f3c2b033f413171f35da82cfcd1d62bc16",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );

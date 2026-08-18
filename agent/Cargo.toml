@@ -45,7 +45,7 @@ serde_yaml = "0.9"
 
 # HTTP client for the update plugin (agent_update MCP tool). rustls-tls keeps the
 # cross-compile pure-Rust — native-tls pulls Windows schannel and breaks xwin.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 
 # Installer integrity check (agent_update): the release server publishes the
 # SHA-256 of ValeAgent-Setup.exe; the agent verifies the download before
