@@ -180,31 +180,59 @@ test("listUsers reads raw (not cached)", async () => {
 });
 
 // ── Per-user route selection (model=auto) ──────────────────────
+// Route storage now uses RouteDO (Durable Object) instead of KV.
+// Mock RouteDO for unit tests.
 
-test("getUserRoute / setUserRoute: cached read, write-through refresh", async () => {
-  const kv = makeKV({});
-  assert.equal(await store.getUserRoute(kv, "admin"), null); // miss → 1 get
-  await store.setUserRoute(kv, "admin", "qw/qwen3.8-max-preview"); // put + cache
-  assert.equal(await store.getUserRoute(kv, "admin"), "qw/qwen3.8-max-preview"); // cache hit
-  assert.equal(kv.counters.get, 1); // 只有首次读 KV
-  await store.setUserRoute(kv, "admin", "ds/deepseek-v4-flash"); // write-through
-  assert.equal(await store.getUserRoute(kv, "admin"), "ds/deepseek-v4-flash");
-  assert.equal(kv.counters.get, 1); // 仍无新 KV 读
+function makeRouteDO() {
+  const store = new Map();
+  return {
+    idFromName: () => ({}),
+    get: () => ({
+      fetch: async (req, init) => {
+        const method = init?.method || "GET";
+        const url = new URL(typeof req === "string" ? req : req.url);
+        const uid = url.searchParams.get("uid");
+        if (method === "GET") {
+          return new Response(JSON.stringify({ model: store.get(uid) || null }));
+        }
+        if (method === "PUT") {
+          const body = JSON.parse(init.body || "{}");
+          store.set(body.uid, body.model);
+          return new Response(JSON.stringify({ ok: true }));
+        }
+        if (method === "DELETE") {
+          store.delete(uid);
+          return new Response(JSON.stringify({ ok: true }));
+        }
+        return new Response("not found", { status: 404 });
+      },
+    }),
+  };
+}
+
+test("getUserRoute / setUserRoute: DO-based read/write", async () => {
+  const env = { ROUTE: makeRouteDO() };
+  assert.equal(await store.getUserRoute(env, "admin"), null);
+  await store.setUserRoute(env, "admin", "qw/qwen3.8-max-preview");
+  assert.equal(await store.getUserRoute(env, "admin"), "qw/qwen3.8-max-preview");
+  await store.setUserRoute(env, "admin", "ds/deepseek-v4-flash");
+  assert.equal(await store.getUserRoute(env, "admin"), "ds/deepseek-v4-flash");
 });
 
-test("getUserRoute: cache expires after the 60s route TTL", async () => {
-  const kv = makeKV({});
-  const realNow = Date.now;
-  try {
-    await store.setUserRoute(kv, "erin", "qw/qwen3.8-max-preview"); // put + cache
-    assert.equal(await store.getUserRoute(kv, "erin"), "qw/qwen3.8-max-preview"); // cache hit
-    assert.equal(kv.counters.get, 0);
-    Date.now = () => realNow() + 61 * 1000; // advance 61s — past the route TTL
-    assert.equal(await store.getUserRoute(kv, "erin"), "qw/qwen3.8-max-preview"); // expired → re-read KV
-    assert.equal(kv.counters.get, 1);
-  } finally {
-    Date.now = realNow;
-  }
+test("getUserRoute / setUserRoute: clear route with null", async () => {
+  const env = { ROUTE: makeRouteDO() };
+  await store.setUserRoute(env, "erin", "qw/qwen3.8-max-preview");
+  assert.equal(await store.getUserRoute(env, "erin"), "qw/qwen3.8-max-preview");
+  await store.setUserRoute(env, "erin", null);
+  assert.equal(await store.getUserRoute(env, "erin"), null);
+});
+
+test("getUserRoute / setUserRoute: isolated per user", async () => {
+  const env = { ROUTE: makeRouteDO() };
+  await store.setUserRoute(env, "alice", "og/deepseek-v4-flash");
+  await store.setUserRoute(env, "bob", "qw/qwen3.8-max-preview");
+  assert.equal(await store.getUserRoute(env, "alice"), "og/deepseek-v4-flash");
+  assert.equal(await store.getUserRoute(env, "bob"), "qw/qwen3.8-max-preview");
 });
 
 test("getGlobalSetting: auth keys expire after 60s (not 24h)", async () => {

@@ -19,6 +19,10 @@
       {
         "name": "PLUGIN_HUB",
         "class_name": "PluginHubDO"
+      },
+      {
+        "name": "ROUTE",
+        "class_name": "RouteDO"
       }
     ]
   },
@@ -30,6 +34,10 @@
     {
       "tag": "v2-plugin-hub",
       "new_sqlite_classes": ["PluginHubDO"]
+    },
+    {
+      "tag": "v3-route",
+      "new_sqlite_classes": ["RouteDO"]
     }
   ],
   "assets": {

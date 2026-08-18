@@ -39,14 +39,16 @@ test("health: breaker closed → all channels ok, recommended still qw", async (
 
 test("health: channels cover all four prefixes in priority order", async () => {
   const h = await buildHealth(closedEnv);
-  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "or", "or"]);
+  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "og", "or", "or", "or"]);
   assert.deepEqual(h.channels.map((c) => c.model), [
     "ds/deepseek-v4-flash",
     "qw/qwen3.8-max-preview",
     "og/deepseek-v4-flash",
     "og/gpt-5.6-luna",
+    "og/mimo-v2.5",
     "or/openai/gpt-5.6-luna:floor[1m]",
     "or/z-ai/glm-5.2:free",
+    "or/deepseek/deepseek-v4-flash-0731",
   ]);
   // og and or each appear twice for independent model cards; the dedup'd set
   // must still cover every priority prefix in order.
@@ -238,19 +240,43 @@ test("probeRateLimited: KV 错误时 fail-open（不拦请求）", async () => {
 });
 
 // ── auto route resolution ────────────────────────────
-// env with KV mock: route:<uid> → chosen model
+// env with mock RouteDO: route:<uid> → chosen model
 function routeEnv(routeValue, breakerOpen = false, uid = "admin") {
-  const m = new Map();
-  if (routeValue !== null) m.set(`route:${uid}`, routeValue);
+  const routeStore = new Map();
+  if (routeValue !== null) routeStore.set(uid, routeValue);
   return {
     KEYS: {
-      async get(k) { return m.has(k) ? m.get(k) : null; },
-      async put(k, v) { m.set(k, String(v)); },
-      async delete(k) { m.delete(k); },
+      async get(k) { return null; },
+      async put(k, v) {},
+      async delete(k) {},
     },
     BREAKER: {
       idFromName: () => ({}),
       get: () => ({ fetch: async () => new Response(breakerOpen ? "1" : "0") }),
+    },
+    ROUTE: {
+      idFromName: () => ({}),
+      get: () => ({
+        fetch: async (req, init) => {
+          const method = init?.method || "GET";
+          const url = new URL(typeof req === "string" ? req : req.url);
+          const uid = url.searchParams.get("uid");
+          if (method === "GET") {
+            const model = routeStore.get(uid) || null;
+            return new Response(JSON.stringify({ model }));
+          }
+          if (method === "PUT") {
+            const body = JSON.parse(init.body || "{}");
+            routeStore.set(body.uid, body.model);
+            return new Response(JSON.stringify({ ok: true }));
+          }
+          if (method === "DELETE") {
+            routeStore.delete(uid);
+            return new Response(JSON.stringify({ ok: true }));
+          }
+          return new Response("not found", { status: 404 });
+        },
+      }),
     },
     DEEPSEEK_API_KEY: "sk-ds", QWEN_API_KEY: "sk-qw",
     OPENROUTER_API_KEY: "sk-or", OPENCODE_GO_API_KEY: "sk-og",

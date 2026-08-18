@@ -36,10 +36,37 @@ function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30, usP
       },
     }),
   };
+  // Mock RouteDO: in-memory storage keyed by uid
+  const routeStore = new Map();
+  const routeDo = {
+    idFromName: () => ({}),
+    get: () => ({
+      fetch: async (req, init) => {
+        const method = init?.method || "GET";
+        const url = new URL(typeof req === "string" ? req : req.url);
+        const uid = url.searchParams.get("uid");
+        if (method === "GET") {
+          const model = routeStore.get(uid) || null;
+          return new Response(JSON.stringify({ model }));
+        }
+        if (method === "PUT") {
+          const body = JSON.parse(init.body || "{}");
+          routeStore.set(body.uid, body.model);
+          return new Response(JSON.stringify({ ok: true }));
+        }
+        if (method === "DELETE") {
+          routeStore.delete(uid);
+          return new Response(JSON.stringify({ ok: true }));
+        }
+        return new Response("not found", { status: 404 });
+      },
+    }),
+  };
   return {
     env: {
       KEYS: { get: async (k) => (kv.has(k) ? kv.get(k) : null), put: async () => {}, delete: async () => {} },
       BREAKER: breaker,
+      ROUTE: routeDo,
       UPSTREAM_TIMEOUT_MS: timeout,
       OG_TIMEOUT_MS: timeout, // og translate reads this (60s default)
       ...(usProxyBase ? { US_PROXY_BASE: usProxyBase } : {}),
@@ -122,7 +149,7 @@ test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {
     max_tokens: 1,
     messages: [{ role: "user", content: "hi" }],
   }));
-  assert.match(String(seen.url), /openrouter/);
+  assert.match(String(seen.url), /(?:openrouter|v\.saisi\.online\/api\/proxy)/);
   const auth = seen.init.headers.get
     ? seen.init.headers.get("authorization")
     : seen.init.headers.Authorization;
@@ -144,7 +171,7 @@ test("or/deepseek/deepseek-v4-flash-0731 uses direct OpenRouter with fixed DeepS
     max_tokens: 1,
     messages: [{ role: "user", content: "hi" }],
   }));
-  assert.equal(seen.url, "https://openrouter.example.com/api/proxy/v1/messages");
+  assert.equal(seen.url, "https://v.saisi.online/api/proxy/v1/messages");
   const sent = JSON.parse(seen.init.body);
   assert.equal(sent.model, "deepseek/deepseek-v4-flash-0731");
   assert.deepEqual(sent.provider, { order: ["deepseek"], allow_fallbacks: false });
