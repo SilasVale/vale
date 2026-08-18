@@ -1,7 +1,8 @@
 /**
- * Vale gateway plugin registry (round-73) — DSH/Cordis-style plugin core,
- * now typed (round-80): the plugin interface is explicit so a mis-declared
- * dep or route signature fails at type-check time instead of at runtime.
+ * Vale gateway plugin registry — DSH/Cordis-style plugin core.
+ *
+ * Re-exports types from ./types.ts for backward compatibility.
+ * New code should import from ./types.ts directly.
  *
  * A plugin is `{ name, deps: [], setup(ctx) }`. setup() registers routes and
  * api entries on the shared context; deps are resolved before setup runs so
@@ -13,62 +14,57 @@
  * free — the same shape works in the browser (panel) and the extension.
  */
 
-/** Workers env bindings — the shape we touch (typed loosely; full bindings
- *  live in the wrangler config). */
-export interface PluginEnv {
-  [key: string]: any;
-}
+// Re-export all types from the types module for backward compatibility
+export type {
+  PluginEnv,
+  PluginHelpers,
+  PluginRoute,
+  PluginListener,
+  PluginContext,
+  Plugin,
+  PluginState,
+  PluginContainer,
+} from "./types.ts";
 
-/** Response helpers the plugins share (jsonOk/jsonError/readJson/CORS). */
-export interface PluginHelpers {
-  jsonOk: (body: unknown, headers?: Record<string, string>) => Response;
-  jsonError: (status: number, message: string, code?: string) => Response;
-  readJson: (request: Request) => Promise<any>;
-  CORS_HEADERS: Record<string, string>;
-}
+// Re-export container
+export { createContainer } from "./container.ts";
 
-/** A registered route: match() decides whether the handler serves it. */
-export interface PluginRoute {
-  match: (method: string, path: string) => boolean;
-  handler: (...args: any[]) => any;
-}
-
-/** Cross-plugin event emitter (fire-and-forget listeners). */
-export type PluginListener = (payload: unknown) => void;
-
-/** The shared context injected into every plugin's setup(). */
-export interface PluginContext {
-  env: PluginEnv | null;
-  helpers: PluginHelpers;
-  routes: PluginRoute[];
-  /** Named capabilities plugins expose to each other (ctx.api.<dep>). */
-  api: Record<string, unknown>;
-  /** Plugin-configurable values (writable in setup). */
-  config: Record<string, unknown>;
-  /** name → Set<listener> (cross-plugin signals). */
-  events: Map<string, Set<PluginListener>>;
-}
-
-/** A plugin: declared deps + setup that registers routes/api on the ctx. */
-export interface Plugin {
-  name: string;
-  deps?: string[];
-  setup: (ctx: PluginContext) => void;
-}
+// Re-export built-in plugins
+export { sourceViewerPlugin } from "./built-in/source-viewer.ts";
 
 /**
  * Build the shared plugin context. `env` is the Workers env (bindings),
  * `helpers` the cross-cutting utilities.
  */
+import type {
+  PluginEnv,
+  PluginHelpers,
+  PluginContext,
+  PluginListener,
+  PluginRoute,
+  Plugin,
+} from "./types.ts";
+
 export function createPluginContext(env: PluginEnv | null, helpers: PluginHelpers): PluginContext {
-  return {
+  // Build a minimal container for backward compatibility
+  const routes: PluginRoute[] = [];
+  const ctx: PluginContext = {
     env,
     helpers,
-    routes: [],
+    routes,
     api: {},
     config: {},
     events: new Map(),
+    container: {
+      register: () => {},
+      start: async () => {},
+      dispose: async () => {},
+      dispatch: () => null as any,
+      getState: () => "pending",
+      hotReload: async () => {},
+    },
   };
+  return ctx;
 }
 
 /** Register plugins in order; each plugin's setup runs immediately. */
@@ -87,7 +83,7 @@ export function dispatch(
   ...rest: unknown[]
 ): any {
   for (const r of ctx.routes) {
-    if (r.match(method, path)) return r.handler(...rest);
+    if (r.match(method, path)) return r.handler.apply(null, rest as any[]);
   }
   return null;
 }
