@@ -366,7 +366,11 @@ export async function deleteUserKey(env: Env, id: string, name: string): Promise
 /* ---- Per-user route selection (model=auto) ----
  * Stored in RouteDO (Durable Object) instead of KV for strong cross-isolate
  * consistency. KV's eventual consistency caused stale reads on isolates that
- * didn't handle the PUT, making model=auto requests use the old route. */
+ * didn't handle the PUT, making model=auto requests use the old route.
+ *
+ * Lazy migration: route selections written before RouteDO existed live in KV
+ * under `route:<id>`. On a DO miss, fall back to the legacy KV key once; if
+ * found, copy it into the DO and delete the KV key (migration is complete). */
 
 function routeStub(env: any) {
   return env.ROUTE.get(env.ROUTE.idFromName("global"));
@@ -375,7 +379,15 @@ function routeStub(env: any) {
 export async function getUserRoute(env: Env, id: string): Promise<string | null> {
   const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`);
   const data: any = await res.json();
-  return data.model ?? null;
+  if (data.model != null) return data.model;
+  // Legacy KV fallback (one-time migration).
+  const legacy = env.KEYS ? await env.KEYS.get(`route:${id}`) : null;
+  if (legacy) {
+    await setUserRoute(env, id, legacy);
+    await env.KEYS.delete(`route:${id}`).catch(() => {});
+    return legacy;
+  }
+  return null;
 }
 
 export async function setUserRoute(env: Env, id: string, model: string | null | undefined): Promise<void> {
