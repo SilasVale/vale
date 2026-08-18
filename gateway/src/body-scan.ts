@@ -27,6 +27,67 @@ export function rawWithModel(raw: string, newModel: any, scanned?: { valueStart:
   return raw.slice(0, valueStart) + JSON.stringify(newModel) + raw.slice(valueEnd);
 }
 
+/** Force a top-level JSON object field without parsing the full request body. */
+export function rawWithTopLevelField(raw: string, field: string, value: unknown): string {
+  const found = scanTopLevelField(raw, field);
+  const encoded = JSON.stringify(value);
+  if (found) return raw.slice(0, found.valueStart) + encoded + raw.slice(found.valueEnd);
+  const close = raw.lastIndexOf("}");
+  if (close < 0) return raw;
+  const before = raw.slice(0, close).trimEnd();
+  const separator = before.endsWith("{") ? "" : ",";
+  return before + separator + JSON.stringify(field) + ":" + encoded + raw.slice(close);
+}
+
+function scanTopLevelField(raw: string, field: string): { valueStart: number; valueEnd: number } | null {
+  let depth = 0;
+  let i = 0;
+  while (i < raw.length) {
+    if (raw[i] === '"') {
+      const start = i++;
+      while (i < raw.length) {
+        if (raw[i] === "\\") i += 2;
+        else if (raw[i++] === '"') break;
+      }
+      if (depth === 1 && raw.slice(start + 1, i - 1) === field) {
+        while (/\s/.test(raw[i] || "")) i++;
+        if (raw[i++] !== ":") continue;
+        while (/\s/.test(raw[i] || "")) i++;
+        const valueStart = i;
+        let braces = 0;
+        let inString = false;
+        while (i < raw.length) {
+          const c = raw[i];
+          if (inString) {
+            if (c === "\\") i += 2;
+            else { if (c === '"') inString = false; i++; }
+            continue;
+          }
+          if (c === '"') { inString = true; i++; continue; }
+          if (c === "{" || c === "[") braces++;
+          else if (c === "}" || c === "]") {
+            if (braces === 0) break;
+            braces--;
+          } else if (braces === 0 && (c === "," || c === "}")) break;
+          i++;
+        }
+        let valueEnd = i;
+        while (valueEnd > valueStart && /\s/.test(raw[valueEnd - 1])) valueEnd--;
+        return { valueStart, valueEnd };
+      }
+      continue;
+    }
+    if (raw[i] === "{") depth++;
+    else if (raw[i] === "}") depth--;
+    i++;
+  }
+  return null;
+}
+
+export function rawWithDeepSeekProvider(raw: string): string {
+  return rawWithTopLevelField(raw, "provider", { order: ["deepseek"], allow_fallbacks: false });
+}
+
 /**
  * Lightweight scan of a JSON request body for the TOP-LEVEL "model" field,
  * WITHOUT building the object graph (avoids the full parse + re-stringify

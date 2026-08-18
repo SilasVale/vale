@@ -131,6 +131,25 @@ test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {
   assert.equal(res.status, 200);
 });
 
+test("or/deepseek/deepseek-v4-flash-0731 uses direct OpenRouter with fixed DeepSeek provider", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ usProxy: true });
+  let seen;
+  await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({ content: [{ type: "text", text: "deepseek" }] }), { status: 200 });
+  }, () => post(env, token, {
+    model: "or/deepseek/deepseek-v4-flash-0731",
+    provider: { order: ["other"], allow_fallbacks: true },
+    max_tokens: 1,
+    messages: [{ role: "user", content: "hi" }],
+  }));
+  assert.equal(seen.url, "https://openrouter.example.com/api/proxy/v1/messages");
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "deepseek/deepseek-v4-flash-0731");
+  assert.deepEqual(sent.provider, { order: ["deepseek"], allow_fallbacks: false });
+});
+
 test("og/gpt-5.6-luna uses OpenCode Go through the Vercel US exit", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ keys: { OPENROUTER_API_KEY: undefined } });

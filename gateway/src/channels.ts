@@ -38,6 +38,7 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "og/openai/gpt-5.6-luna:floor[1m]", owned_by: "opencode" },
   { id: "or/openai/gpt-5.6-luna:floor[1m]", owned_by: "openrouter" },
   { id: "or/z-ai/glm-5.2:free", owned_by: "openrouter" },
+  { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
 ];
 
@@ -59,7 +60,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "or/",
     backend: "OpenRouter",
     desc: "openrouter.ai — user's own key, proxied via openrouter-proxy",
-    models: ["openai/gpt-5.6-luna:floor[1m]", "z-ai/glm-5.2:free"],
+    models: ["openai/gpt-5.6-luna:floor[1m]", "z-ai/glm-5.2:free", "deepseek/deepseek-v4-flash-0731"],
   },
   {
     prefix: "qw/",

@@ -327,6 +327,9 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
         headers: {
           "Location": clean.pathname + clean.search,
           "Set-Cookie": `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
+          // round-126: a cached 302 would drop the Set-Cookie on a re-pair
+          // (stale cookie → panel 401s forever).
+          "Cache-Control": "no-store",
         },
       });
     }
@@ -503,6 +506,20 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
     if (outHeaders.has("content-length")) {
       outHeaders.set("content-length", String(new TextEncoder().encode(rewritten).length));
     }
+    // round-132/133: REVERTED the round-131 CSP sandbox — sandbox without
+    // allow-same-origin makes the panel origin opaque: localStorage throws
+    // SecurityError at mount (white screen) and cookies are never sent (all
+    // /proxy/* API calls 401). The sandbox is fundamentally incompatible
+    // with the panel's same-origin architecture.
+    // ACTUAL INVARIANT (round-133/134): the ADMIN 打开面板 flow opens the
+    // panel at the DEVICE origin (https://<hostname>/panel/) where no console
+    // cookie is reachable — that surface is closed. The console-origin proxy
+    // path (/api/devices/<n>/proxy/panel/) remains reachable by BOTH the
+    // extension flow AND an admin visiting it directly; device HTML runs at
+    // a CONSOLE_HOST origin there and could read console APIs. This is an
+    // ACCEPTED trust limitation (opening a device's panel is an explicit
+    // trust action; the sandbox alternative breaks the panel entirely), and
+    // it applies to every entry point of the proxy path.
     return new Response(rewritten, { status: resp.status, headers: outHeaders });
   }
 

@@ -15,7 +15,7 @@
 import { createUser, getUser, findUserByUsername, regenerateToken, getUserKeys, setUserKey, deleteUserKey, getAdminPassword, hasAdminPassword, verifyAdminPassword, setAdminPassword, maskKey, ADMIN_ID, USER_KEY_NAMES, getUserRoute, setUserRoute, getGlobalSetting, setGlobalSetting, globalSettingEnabled, type User } from "../store.ts";
 import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE } from "../auth.ts";
 import { fetchWithTimeout } from "../reliability.ts";
-import { MODELS, OG_ZEN_CHAT } from "../channels.ts";
+import { MODELS, OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import type { PluginContext } from "./registry.ts";
 
@@ -321,6 +321,41 @@ async function meTestKeys(request: Request, env: any): Promise<Response> {
   return testKey(env, name, ukeys[name]);
 }
 
+async function meKeyUsage(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const body = await readJson(request);
+  const name = body?.name;
+  if (name !== "OPENROUTER_API_KEY") return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  const ukeys = await getUserKeys(env, user.id);
+  const key = ukeys[name];
+  if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
+  try {
+    const res = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (!res.ok) return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
+    const payload = await res.json();
+    const data = payload?.data;
+    if (!data || typeof data !== "object") return jsonOk({ ok: false, name, status: res.status, detail: "Invalid upstream response" });
+    const out: any = { ok: true, name, status: res.status };
+    for (const field of ["label", "usage", "limit"]) {
+      if (field in data && (data[field] === null || typeof data[field] === "string" || typeof data[field] === "number")) out[field] = data[field];
+    }
+    if (typeof data.is_free_tier === "boolean") out.isFreeTier = data.is_free_tier;
+    if (data.rate_limit && typeof data.rate_limit === "object") {
+      const rateLimit: any = {};
+      if (typeof data.rate_limit.limit === "number") rateLimit.limit = data.rate_limit.limit;
+      if (typeof data.rate_limit.interval === "string") rateLimit.interval = data.rate_limit.interval;
+      if (typeof data.rate_limit.reset === "string") rateLimit.reset = data.rate_limit.reset;
+      if (Object.keys(rateLimit).length) out.rateLimit = rateLimit;
+    }
+    return jsonOk(out);
+  } catch {
+    return jsonOk({ ok: false, name, detail: "Usage query failed" });
+  }
+}
+
 /* ---- Connectivity tests ---- */
 
 async function testKey(env: any, name: string, key: string): Promise<Response> {
@@ -340,7 +375,7 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
       // 走代理 1-3s vs 直连 12-13s);关闭时直连。
       const usProxy = await getGlobalSetting(env, "US_PROXY");
       const probeUrl = usProxy
-        ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
+        ? `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
         : OG_ZEN_CHAT;
       const res = await fetchWithTimeout(probeUrl, {
         method: "POST",
@@ -418,5 +453,6 @@ export default {
     add("PUT", `${ME_BASE}/keys`, mePutKeys);
     add("DELETE", `${ME_BASE}/keys`, meDeleteKeys);
     add("POST", `${ME_BASE}/keys/test`, meTestKeys);
+    add("POST", `${ME_BASE}/keys/usage`, meKeyUsage);
   },
 };
