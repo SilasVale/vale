@@ -38,7 +38,8 @@
       "route.current": "当前",
       "route.bad": "异常",
       "route.auto": "恢复默认渠道（ds）",
-      "route.switched": "已切换，下次请求生效",
+      "route.switched": "已切换",
+      "route.switching": "切换中…",
       "route.fail": "切换失败",
       "route.loadFail": "渠道状态加载失败",
       "usproxy.title": "美国出口",
@@ -53,8 +54,9 @@
       "key.ds.backend": "DeepSeek", "key.ds.hint": "api.deepseek.com 申请",
       "key.og.backend": "OpenCode Go", "key.og.hint": "opencode.ai/zen/go 申请",
       "key.or.backend": "OpenRouter", "key.or.hint": "openrouter.ai/keys 申请",
-      "btn.edit": "编辑", "btn.test": "测试连通", "btn.testing": "测试中…", "btn.clear": "清除", "btn.save": "保存", "btn.cancel": "取消",
+      "btn.edit": "编辑", "btn.test": "测试连通", "btn.testing": "测试中…", "btn.usage": "查询额度", "btn.usageLoading": "查询中…", "btn.clear": "清除", "btn.save": "保存", "btn.cancel": "取消",
       "key.emptyValue": "值不能为空", "key.saved": "已保存", "key.saveFail": "保存失败",
+      "key.usageAccount": "账户", "key.usageUsed": "已用", "key.usageLimit": "额度", "key.usageRemaining": "剩余", "key.usageUnlimited": "不限额", "key.usageUnavailable": "暂无数据", "key.usageRateLimit": "速率限制", "key.usageFail": "查询额度失败",
       "key.clearConfirm": "确定清除 {name} 吗？之后走该路由会返回 502。", "key.cleared": "已清除",
       "key.testOk": "✓ 连通正常（HTTP {status}）", "key.testFail": "✗ {detail}",
       "client.title": "客户端接入示例（Claude Code）",
@@ -126,7 +128,8 @@
       "route.current": "Current",
       "route.bad": "Down",
       "route.auto": "Restore default (ds)",
-      "route.switched": "Switched — takes effect on the next request",
+      "route.switched": "Switched",
+      "route.switching": "Switching…",
       "route.fail": "Switch failed",
       "route.loadFail": "Failed to load channel status",
       "usproxy.title": "US exit",
@@ -141,8 +144,9 @@
       "key.ds.backend": "DeepSeek", "key.ds.hint": "from api.deepseek.com",
       "key.og.backend": "OpenCode Go", "key.og.hint": "from opencode.ai/zen/go",
       "key.or.backend": "OpenRouter", "key.or.hint": "from openrouter.ai/keys",
-      "btn.edit": "Edit", "btn.test": "Test", "btn.testing": "Testing…", "btn.clear": "Clear", "btn.save": "Save", "btn.cancel": "Cancel",
+      "btn.edit": "Edit", "btn.test": "Test", "btn.testing": "Testing…", "btn.usage": "Usage", "btn.usageLoading": "Loading…", "btn.clear": "Clear", "btn.save": "Save", "btn.cancel": "Cancel",
       "key.emptyValue": "Value cannot be empty", "key.saved": "Saved", "key.saveFail": "Save failed",
+      "key.usageAccount": "Account", "key.usageUsed": "Used", "key.usageLimit": "Limit", "key.usageRemaining": "Remaining", "key.usageUnlimited": "Unlimited", "key.usageUnavailable": "Unavailable", "key.usageRateLimit": "Rate limit", "key.usageFail": "Usage query failed",
       "key.clearConfirm": "Clear {name}? Routes using it will return 502.", "key.cleared": "Cleared",
       "key.testOk": "✓ OK (HTTP {status})", "key.testFail": "✗ {detail}",
       "client.title": "Client setup example (Claude Code)",
@@ -389,6 +393,7 @@
         <div class="key-actions">
           <button class="btn-primary btn-mini" data-act="edit">${t("btn.edit")}</button>
           <button class="btn-ghost btn-mini" data-act="test">${t("btn.test")}</button>
+          ${name === "OPENROUTER_API_KEY" ? `<button class="btn-ghost btn-mini" data-act="usage">${t("btn.usage")}</button>` : ""}
           <button class="btn-danger btn-mini" data-act="clear">${t("btn.clear")}</button>
         </div>
         <div data-edit hidden>
@@ -438,6 +443,14 @@
         return;
       }
 
+      if (act === "usage") {
+        btn.disabled = true; btn.textContent = t("btn.usageLoading");
+        const { res, data } = await api("/api/me/keys/usage", { method: "POST", body: JSON.stringify({ name }) });
+        btn.disabled = false; btn.textContent = t("btn.usage");
+        showUsageResult(card, res.ok ? data : { ok: false, detail: data?.error?.message || t("key.usageFail") });
+        return;
+      }
+
       if (act === "clear") {
         if (!confirm(t("key.clearConfirm", { name }))) return;
         const { res, data } = await api(`/api/me/keys?name=${encodeURIComponent(name)}`, { method: "DELETE" });
@@ -455,6 +468,23 @@
       ? t("key.testOk", { status: d.status || 200 }) + (d.detail ? " · " + d.detail : "")
       : t("key.testFail", { detail: d.detail || "…" });
   }
+
+  function showUsageResult(card, d) {
+    const box = card.querySelector("[data-result]");
+    box.hidden = false;
+    box.className = "test-result " + (d.ok ? "ok" : "err");
+    if (!d.ok) { box.textContent = d.detail || t("key.usageFail"); return; }
+    const money = (v) => typeof v === "number" && Number.isFinite(v) ? `$${v.toFixed(4)}` : t("key.usageUnavailable");
+    const parts = [];
+    if (d.label) parts.push(`${t("key.usageAccount")}: ${d.label}`);
+    parts.push(`${t("key.usageUsed")}: ${money(d.usage)}`);
+    parts.push(`${t("key.usageLimit")}: ${d.limit === null ? t("key.usageUnlimited") : money(d.limit)}`);
+    if (typeof d.usage === "number" && typeof d.limit === "number") parts.push(`${t("key.usageRemaining")}: ${money(Math.max(0, d.limit - d.usage))}`);
+    if (d.rateLimit?.limit != null) parts.push(`${t("key.usageRateLimit")}: ${d.rateLimit.limit}${d.rateLimit.interval ? `/${d.rateLimit.interval}` : ""}`);
+    box.textContent = parts.join(" · ");
+  }
+
+
 
   function flash(card, msg, ok) {
     const box = card.querySelector("[data-result]");
@@ -539,9 +569,29 @@
         const card = btn.closest(".key-card");
         const model = card?.dataset.model;
         if (!model) return;
+        // Optimistic UI: immediately show loading + update badge
+        const prevBtn = btn.textContent;
+        const prevDisabled = btn.disabled;
+        btn.disabled = true;
+        btn.textContent = t("route.switching") || "切换中…";
+        // Move "当前" badge from old card to new card
+        const oldCur = box.querySelector(".key-card .badge.ok");
+        const newBadge = card.querySelector(".top .key-name");
+        let oldBadgeHTML = "";
+        if (oldCur && oldCur.textContent === t("route.current")) {
+          oldBadgeHTML = oldCur.outerHTML;
+          oldCur.remove();
+        }
+        if (newBadge && !newBadge.querySelector(".badge.ok")) {
+          newBadge.insertAdjacentHTML("beforeend", ` <span class="badge ok">${t("route.current")}</span>`);
+        }
         const r = await api("/api/me/route", { method: "PUT", body: JSON.stringify({ model }) });
         if (r.res.ok) { toast(t("route.switched")); await loadRouteCards(); }
-        else toast(t("route.fail"), true);
+        else {
+          // Revert optimistic update on failure
+          toast(t("route.fail"), true);
+          await loadRouteCards();
+        }
       });
     }
   }

@@ -93,27 +93,7 @@ function cdel(...ks: string[]): void { for (const k of ks) __c.delete(k); }
  *  would otherwise read a stale cached value from an earlier test. */
 export function __clearCaches(): void {
   __c.clear();
-  __rc.clear();
 }
-
-/* Route selection (model=auto): short-TTL cache — a switch must take effect
- * fast across isolates; 60s bounds staleness to a minute. */
-// 2s: a model=auto route switch must take effect nearly immediately across
-// isolates (was 60s — the user clicked 'switch channel' and the next request
-// on a different isolate still used the old route for a minute).
-const ROUTE_CACHE_TTL = 2 * 1000;
-const __rc = new Map<string, { v: any; exp: number }>(); // route:<id> -> { v, exp }
-function rcget(k: string): any {
-  const e = __rc.get(k);
-  if (!e) return undefined;
-  if (e.exp <= Date.now()) { __rc.delete(k); return undefined; }
-  return e.v;
-}
-function rcset(k: string, v: any): void {
-  if (__rc.size >= 512) __rc.delete(__rc.keys().next().value!);
-  __rc.set(k, { v, exp: Date.now() + ROUTE_CACHE_TTL });
-}
-function rcdel(k: string): void { __rc.delete(k); }
 
 // Per-key single-flight queue: concurrent read-modify-write on the same KV
 // blob (ukeys:<id>, devices:v1, plugins:v1) previously LOST updates — two
@@ -383,26 +363,30 @@ export async function deleteUserKey(env: Env, id: string, name: string): Promise
   });
 }
 
-/* ---- Per-user route selection (model=auto) ---- */
+/* ---- Per-user route selection (model=auto) ----
+ * Stored in RouteDO (Durable Object) instead of KV for strong cross-isolate
+ * consistency. KV's eventual consistency caused stale reads on isolates that
+ * didn't handle the PUT, making model=auto requests use the old route. */
+
+function routeStub(env: any) {
+  return env.ROUTE.get(env.ROUTE.idFromName("global"));
+}
 
 export async function getUserRoute(env: Env, id: string): Promise<string | null> {
-  const key = `route:${id}`;
-  const hit = rcget(key);
-  if (hit !== undefined) return hit;
-  const v = (await env.KEYS.get(key)) || null;
-  rcset(key, v);
-  return v;
+  const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`);
+  const data: any = await res.json();
+  return data.model ?? null;
 }
 
 export async function setUserRoute(env: Env, id: string, model: string | null | undefined): Promise<void> {
-  const key = `route:${id}`;
   if (model === null || model === undefined || model === "") {
-    await env.KEYS.delete(key);
-    rcdel(key);
+    await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, { method: "DELETE" });
     return;
   }
-  await env.KEYS.put(key, String(model));
-  rcset(key, String(model)); // write-through：切换立即生效（同 isolate 零延迟）
+  await routeStub(env).fetch("https://route/route", {
+    method: "PUT",
+    body: JSON.stringify({ uid: id, model: String(model) }),
+  });
 }
 
 /* ---- Global settings (console-controlled, e.g. US_PROXY exit switch) ---- */

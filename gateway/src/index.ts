@@ -36,6 +36,7 @@ import { verifyPassword, issueSessionToken, verifySessionToken, parseCookie, ses
 import { build101Response, deviceFetch } from "./device-fetch.ts";
 import { handleMcp } from "./mcp.ts";
 import { PluginHubDO } from "./plugin-hub.ts";
+import { RouteDO } from "./route-do.ts";
 import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE } from "./anthropic-translate.ts";
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.ts";
 import { rawWithModel, scanTopLevelModel, estimateTokens } from "./body-scan.ts";
@@ -47,6 +48,7 @@ export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStr
 export { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess };
 export { rawWithModel, scanTopLevelModel, estimateTokens };
 export { PluginHubDO };
+export { RouteDO };
 import { createPluginContext, registerPlugins, dispatch } from "./plugins/registry.ts";
 import authPlugin from "./plugins/auth.ts";
 import devicesPlugin from "./plugins/devices.ts";
@@ -1037,7 +1039,7 @@ function pickRoute(prefix: string, env: any, usProxy?: string | null) {
         stripPrefix: true,
         // 代理 base 是 openrouter.ai/api,path 只用 /v1/messages(不含 /api,
         // 否则拼出 openrouter.ai/api/api/v1/messages → 404)
-        upstream: via((env.OPENROUTER_PROXY_URL || "https://openrouter.example.com/api/proxy") + VERIFY_PATH, "/v1/messages"),
+        upstream: via((env.OPENROUTER_PROXY_URL || "https://v.saisi.online/api/proxy") + VERIFY_PATH, "/v1/messages"),
       };
     case "ds":
       return {
