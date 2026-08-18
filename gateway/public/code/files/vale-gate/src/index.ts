@@ -40,7 +40,7 @@ import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStr
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, BreakerDO, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "./reliability.ts";
 import { rawWithModel, scanTopLevelModel, estimateTokens } from "./body-scan.ts";
 import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.ts";
-import { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH } from "./channels.ts";
+import { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH, usProxyBase } from "./channels.ts";
 export { MODELS, ROUTE_INFO, HEALTH_CHANNELS, HEALTH_PRIORITY, OG_ZEN_ANTHROPIC, OG_ZEN_CHAT, OG_NATIVE_ANTHROPIC, VERIFY_PATH };
 export { jsonOk, jsonError, readJson, CORS_HEADERS };
 export { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, AnthropicStreamEncoder, sse, toSSE };
@@ -961,7 +961,7 @@ async function testKey(env: any, name: string, key: string) {
       // 走代理 1-3s vs 直连 12-13s);关闭时直连。
       const usProxy = await getGlobalSetting(env, "US_PROXY");
       const probeUrl = usProxy
-        ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
+        ? `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
         : OG_ZEN_CHAT;
       const res = await fetchWithTimeout(probeUrl, {
         method: "POST",
@@ -1027,7 +1027,7 @@ function pickRoute(prefix: string, env: any, usProxy?: string | null) {
   // path 参数带上游相对路径(代理 base 已含主机级前缀)。usProxy is a local
   // per-request value — never mutate the shared env object with it.
   const via = (direct: string, path: string) => usProxy
-    ? `https://v.saisi.online/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
+    ? `${usProxyBase(env)}/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
     : direct;
   switch (prefix) {
     case "or":

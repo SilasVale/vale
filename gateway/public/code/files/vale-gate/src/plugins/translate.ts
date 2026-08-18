@@ -24,9 +24,9 @@
 import { findUserByToken, getUserKeys, getGlobalSetting, getUserRoute, globalSettingEnabled } from "../store.ts";
 import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, toSSE } from "../anthropic-translate.ts";
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "../reliability.ts";
-import { rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
+import { rawWithDeepSeekProvider, rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
 import { jsonOk, jsonError, CORS_HEADERS } from "../http.ts";
-import { MODELS, OG_NATIVE_ANTHROPIC, OG_ZEN_ANTHROPIC, VERIFY_PATH } from "../channels.ts";
+import { MODELS, OG_NATIVE_ANTHROPIC, OG_ZEN_ANTHROPIC, VERIFY_PATH, usProxyBase } from "../channels.ts";
 import type { PluginContext } from "./registry.ts";
 
 const COUNT_PATH = "/v1/messages/count_tokens";
@@ -155,22 +155,19 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // Claude Code 固定模型名 auto：按用户网页选择路由
     model = await resolveAutoModel(env, user.id);
   }
-  // og/gpt-5.6-luna is region-blocked on zen (upstream 403 for CN) but fully
-  // usable via OpenRouter's US exit. Map it to the or/ channel so both og/ and
-  // or/ spellings hit the same working route (OpenRouter key + proxy exit).
+  // gpt-5.6-luna belongs to OpenCode Go. It is region-blocked when zen is
+  // reached directly from some clients, so keep the og/ identity and force
+  // this model through the Vercel US exit instead of changing it to an or/
+  // route (which would incorrectly consume OPENROUTER_API_KEY).
+  const lunaModel = model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]";
   let effectiveModel = model;
-  if (model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]") {
-    effectiveModel = "or/openai/gpt-5.6-luna:floor[1m]";
-  } else {
-    effectiveModel = model;
-  }
   const prefix2 = effectiveModel.split("/")[0];
   // 美国出口开关:控制台 KV 设置优先,回退 Worker secret(env.US_PROXY)。
   // KV 写透传后立即生效(同 isolate 零延迟)。
   const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
   // round-94: normalize — an explicit OFF is persisted as "0" (truthy as a
   // string); raw truthiness would treat it as ON.
-  const usProxy = globalSettingEnabled(usProxyRaw) ? "1" : null;
+  const usProxy = lunaModel || globalSettingEnabled(usProxyRaw) ? "1" : null;
   const baseRoute = pickRoute(prefix2, env, usProxy);
   let upstreamModel = stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel);
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
@@ -309,7 +306,7 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
         // rode the proxy). Preserve the via() proxy prefix when present.
         route.type = "passthrough";
         route.upstream = usProxy
-          ? `https://v.saisi.online/api/zen?target=og&path=${encodeURIComponent("/v1/messages")}`
+          ? `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/messages")}`
           : OG_ZEN_ANTHROPIC;
         route.kind = "opencode";
       }
@@ -382,9 +379,14 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // model field swapped — no parse, no spread, no full re-stringify (Free
     // plan 10ms CPU budget). og-native authenticates with x-api-key;
     // every other passthrough channel uses Bearer.
-    const forwardBody = body !== null
+    let forwardBody = body !== null
       ? JSON.stringify({ ...body, model: upstreamModel })
       : rawWithModel(rawText, upstreamModel, scanned);
+    if (route.kind === "openrouter" && upstreamModel === "deepseek/deepseek-v4-flash-0731") {
+      forwardBody = body !== null
+        ? JSON.stringify({ ...body, model: upstreamModel, provider: { order: ["deepseek"], allow_fallbacks: false } })
+        : rawWithDeepSeekProvider(forwardBody);
+    }
     const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
       method: "POST",
       headers: passthroughHeaders(bearerKey, { apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false }),
@@ -568,7 +570,7 @@ function pickRoute(prefix: string, env: any, usProxy: string | null = null): Rou
   // path 参数带上游相对路径(代理 base 已含主机级前缀)。usProxy is a local
   // per-request value — never mutate the shared env object with it.
   const via = (direct: string, path: string): string => usProxy
-    ? `https://v.saisi.online/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
+    ? `${usProxyBase(env)}/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
     : direct;
   switch (prefix) {
     case "or":
@@ -578,7 +580,9 @@ function pickRoute(prefix: string, env: any, usProxy: string | null = null): Rou
         stripPrefix: true,
         // 代理 base 是 openrouter.ai/api,path 只用 /v1/messages(不含 /api,
         // 否则拼出 openrouter.ai/api/api/v1/messages → 404)
-        upstream: via((env.OPENROUTER_PROXY_URL || "https://openrouter.example.com/api/proxy") + VERIFY_PATH, "/v1/messages"),
+        // OpenRouter routes stay direct; US_PROXY is only for channels that
+        // require a regional exit (not this provider-neutral API).
+        upstream: (env.OPENROUTER_PROXY_URL || "https://openrouter.example.com/api/proxy") + VERIFY_PATH,
       };
     case "ds":
       return {

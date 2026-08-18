@@ -24,7 +24,7 @@
 import { findUserByToken, getUserKeys, getGlobalSetting, getUserRoute, globalSettingEnabled } from "../store.ts";
 import { toOpenAIRequest, toAnthropicResponse, streamOgToAnthropic, toSSE } from "../anthropic-translate.ts";
 import { fetchWithTimeout, fetchWithRetry, upstreamTimeoutMs, ogTimeoutMs, passthroughTimeoutMs, isChannelDegraded, recordChannelFailure, recordChannelSuccess } from "../reliability.ts";
-import { rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
+import { rawWithDeepSeekProvider, rawWithModel, scanTopLevelModel, estimateTokens } from "../body-scan.ts";
 import { jsonOk, jsonError, CORS_HEADERS } from "../http.ts";
 import { MODELS, OG_NATIVE_ANTHROPIC, OG_ZEN_ANTHROPIC, VERIFY_PATH, usProxyBase } from "../channels.ts";
 import type { PluginContext } from "./registry.ts";
@@ -379,9 +379,14 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     // model field swapped — no parse, no spread, no full re-stringify (Free
     // plan 10ms CPU budget). og-native authenticates with x-api-key;
     // every other passthrough channel uses Bearer.
-    const forwardBody = body !== null
+    let forwardBody = body !== null
       ? JSON.stringify({ ...body, model: upstreamModel })
       : rawWithModel(rawText, upstreamModel, scanned);
+    if (route.kind === "openrouter" && upstreamModel === "deepseek/deepseek-v4-flash-0731") {
+      forwardBody = body !== null
+        ? JSON.stringify({ ...body, model: upstreamModel, provider: { order: ["deepseek"], allow_fallbacks: false } })
+        : rawWithDeepSeekProvider(forwardBody);
+    }
     const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
       method: "POST",
       headers: passthroughHeaders(bearerKey, { apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false }),
@@ -575,7 +580,9 @@ function pickRoute(prefix: string, env: any, usProxy: string | null = null): Rou
         stripPrefix: true,
         // 代理 base 是 openrouter.ai/api,path 只用 /v1/messages(不含 /api,
         // 否则拼出 openrouter.ai/api/api/v1/messages → 404)
-        upstream: via((env.OPENROUTER_PROXY_URL || "https://openrouter.example.com/api/proxy") + VERIFY_PATH, "/v1/messages"),
+        // OpenRouter routes stay direct; US_PROXY is only for channels that
+        // require a regional exit (not this provider-neutral API).
+        upstream: (env.OPENROUTER_PROXY_URL || "https://openrouter.example.com/api/proxy") + VERIFY_PATH,
       };
     case "ds":
       return {
