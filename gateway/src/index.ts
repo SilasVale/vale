@@ -164,6 +164,13 @@ export default {
         return await handleMcp(request, env);
       }
 
+      // ---- OpenAI-compatible alias: /models → /v1/models, /chat/completions → /v1/chat/completions ----
+      if ((path === "/models" || path === "/chat/completions") && request.method !== "OPTIONS") {
+        const v1Url = new URL(url);
+        v1Url.pathname = "/v1" + path;
+        return await handleGateway(request, env, v1Url);
+      }
+
       // ---- Static page (Workers Assets): non-/v1/ paths → ai domain only ----
       if (!path.startsWith("/v1/")) {
         if (!isPageHost) return jsonError(404, "Not Found", "not_found_error");
