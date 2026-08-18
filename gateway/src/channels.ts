@@ -31,6 +31,7 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "ds/deepseek-v4-flash", owned_by: "deepseek" },
   { id: "og/deepseek-v4-flash", owned_by: "opencode" },
   { id: "og/minimax-m3", owned_by: "opencode" },
+  { id: "og/mimo-v2.5", owned_by: "opencode" },
   // og/ spellings of luna are accepted here and remapped to the or/ channel
   // (translate.ts): zen region-blocks gpt-5.6-luna for CN, OpenRouter's US
   // exit works. Both og/ variants resolve to the same working route.
@@ -48,7 +49,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "og/",
     backend: "OpenCode Go",
     desc: "opencode.ai/zen/go — deepseek-v4-flash native /v1/messages; others chat/completions translation; gpt-5.6-luna auto-routes via OpenRouter US exit (zen region-blocks it)",
-    models: ["deepseek-v4-flash", "minimax-m3", "gpt-5.6-luna"],
+    models: ["deepseek-v4-flash", "minimax-m3", "mimo-v2.5", "gpt-5.6-luna"],
   },
   {
     prefix: "ds/",
@@ -85,7 +86,9 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   // exit — translate.ts remaps it). Duplicate ids are safe here: buildHealth
   // checks the og circuit for both and recommended uses find() (first match).
   { id: "og", model: "og/gpt-5.6-luna" },
+  { id: "og", model: "og/mimo-v2.5" },
   { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
   { id: "or", model: "or/z-ai/glm-5.2:free" },
+  { id: "or", model: "or/deepseek/deepseek-v4-flash-0731" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];

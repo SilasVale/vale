@@ -52,9 +52,28 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   const path = url.pathname;
   const method = request.method;
 
-  // Auth: x-api-key = the user's gateway token
+  // GET /v1/models — public, no auth required (DSH/OpenAI clients list models first)
+  if (method === "GET" && path.endsWith("/models")) {
+    return jsonOk({
+      object: "list",
+      data: MODELS.map((m, i) => ({
+        id: m.id,
+        object: "model",
+        created: 1785000000 + i,
+        owned_by: m.owned_by,
+      })),
+    });
+  }
+
+  // Auth: x-api-key = the user's gateway token; also accept Authorization: Bearer
+  // (OpenAI-compatible clients like DSH send Bearer, not x-api-key)
   const token = request.headers.get("x-api-key") || "";
-  const user = await findUserByToken(env, token);
+  const bearerToken = (() => {
+    const auth = request.headers.get("authorization") || "";
+    return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  })();
+  const effectiveToken = token || bearerToken;
+  const user = await findUserByToken(env, effectiveToken);
   // For the log wrapper (round-58): resolved user id, not the token prefix.
   ctx.user = user?.id || "";
   if (!user || !user.enabled) {
@@ -80,10 +99,10 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
   // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
   // the double-count that halved the effective budget for Claude Code turns.
   if (env.KEYS && method === "POST" && path.endsWith("/messages") && !path.endsWith(COUNT_PATH)) {
-    const minuteKey = `rl-min:${token}:${Math.floor(Date.now() / 60000)}`;
-    const dayKey = `rl-day:${token}:${Math.floor(Date.now() / 86400000)}`;
-    const mk = `min:${token}:${Math.floor(Date.now() / 60000)}`;
-    const dk = `day:${token}:${Math.floor(Date.now() / 86400000)}`;
+    const minuteKey = `rl-min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
+    const dayKey = `rl-day:${effectiveToken}:${Math.floor(Date.now() / 86400000)}`;
+    const mk = `min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
+    const dk = `day:${effectiveToken}:${Math.floor(Date.now() / 86400000)}`;
     const [minute, day] = await Promise.all([
       (async () => {
         const hit = __rlMin.get(mk);
@@ -114,22 +133,10 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     __rlDay.set(dk, day + 1);
   }
 
-  // GET /v1/models — list of prefixed models this gateway supports
-  if (method === "GET" && path.endsWith("/models")) {
-    return jsonOk({
-      object: "list",
-      data: MODELS.map((m, i) => ({
-        id: m.id,
-        object: "model",
-        created: 1785000000 + i,
-        owned_by: m.owned_by,
-      })),
-    });
-  }
-
   const isCount = method === "POST" && path.endsWith(COUNT_PATH);
   const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);
-  if (!(isCount || isMessages)) {
+  const isChatCompletions = method === "POST" && path.endsWith("/v1/chat/completions");
+  if (!(isCount || isMessages || isChatCompletions)) {
     return jsonError(404, "Not Found", "not_found_error");
   }
 
@@ -335,6 +342,60 @@ async function handleGatewayImpl(request: Request, env: any, url: URL, preReadTe
     : route.kind === "qwen" ? qwenKey
     : route.kind === "opencode" ? opencodeGoKey
     : deepseekKey;
+
+  // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
+  // Accepts OpenAI-format requests directly and forwards to the upstream
+  // without Anthropic↔OpenAI translation. Enables DSH and other OpenAI-native
+  // clients to use og/ models without format conversion.
+  if (isChatCompletions) {
+    if (route.kind === "opencode" && !opencodeGoKey) {
+      return jsonError(502, "OPENCODE_GO_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    if (route.kind === "opencode" && await isChannelDegraded(env)) {
+      return jsonError(502, "og: circuit open (recent upstream failures, try again in ~1 min)", "api_error");
+    }
+    if (route.kind === "deepseek" && !deepseekKey) {
+      return jsonError(502, "DEEPSEEK_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    if (route.kind === "openrouter" && !openRouterKey) {
+      return jsonError(502, "OPENROUTER_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    if (route.kind === "qwen" && !qwenKey) {
+      return jsonError(502, "QWEN_API_KEY not configured — add your own key in the console", "config_error");
+    }
+    // Body is already OpenAI format — forward as-is with model field swapped.
+    const forwardBody = rawWithModel(rawText, upstreamModel, scanned);
+    const { response: upstream, detail } = await fetchWithRetry(route.upstream, {
+      method: "POST",
+      headers: passthroughHeaders(bearerKey),
+      body: forwardBody,
+    }, { timeoutMs: ogTimeoutMs(env) });
+    if (!upstream) {
+      if (route.kind === "opencode") await recordChannelFailure(env);
+      return jsonError(502, `upstream ${route.kind}: ${detail}`, "api_error");
+    }
+    if (!upstream.ok) {
+      if (route.kind === "opencode" && (detail?.startsWith("network error") || detail?.startsWith("timeout"))) {
+        await recordChannelFailure(env);
+      }
+      let message = `Upstream ${upstream.status}`;
+      let type = "api_error";
+      try {
+        const err: any = await upstream.json();
+        message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
+        const upType = err.error?.type || err.type;
+        const KNOWN = ["rate_limit_error", "overloaded_error", "authentication_error",
+          "invalid_request_error", "permission_error", "not_found_error", "request_too_large", "api_error"];
+        if (upType && KNOWN.includes(upType)) type = upType;
+      } catch { /* non-JSON error body */ }
+      return jsonError(upstream.status, message, type);
+    }
+    if (route.kind === "opencode") await recordChannelSuccess(env);
+    // Direct passthrough — upstream returns OpenAI format, return it as-is.
+    const headers = new Headers(upstream.headers);
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(upstream.body, { status: upstream.status, headers });
+  }
 
   // count_tokens — local estimate for EVERY channel (2026-08-12). The upstream
   // count endpoint used to be called per-request (one extra round-trip on every
@@ -582,7 +643,7 @@ function pickRoute(prefix: string, env: any, usProxy: string | null = null): Rou
         // 否则拼出 openrouter.ai/api/api/v1/messages → 404)
         // OpenRouter routes stay direct; US_PROXY is only for channels that
         // require a regional exit (not this provider-neutral API).
-        upstream: (env.OPENROUTER_PROXY_URL || "https://openrouter.example.com/api/proxy") + VERIFY_PATH,
+        upstream: (env.OPENROUTER_PROXY_URL || "https://v.saisi.online/api/proxy") + VERIFY_PATH,
       };
     case "ds":
       return {
