@@ -14,14 +14,8 @@ export default function Layout() {
 
   if (loading) {
     return (
-      <div className="auth-wrap">
-        <div className="brand-lg" style={{ justifyContent: "center", flexDirection: "column", alignItems: "center" }}>
-          <span className="brand-mark lg">V</span>
-          <div style={{ marginTop: 16 }}>
-            <div className="brand-name" style={{ fontSize: 18 }}>Vale</div>
-          </div>
-          <div className="loading-spinner" style={{ marginTop: 20 }} />
-        </div>
+      <div className="loading">
+        <div className="loading-spinner" />
       </div>
     );
   }
