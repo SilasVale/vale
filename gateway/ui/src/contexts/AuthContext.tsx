@@ -13,6 +13,12 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/** Global 401 handler — set by AuthProvider, called by the api client. */
+let _onUnauthorized: (() => void) | null = null;
+export function notifyUnauthorized() {
+  _onUnauthorized?.();
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
@@ -24,6 +30,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setUser(null);
     }
+  }, []);
+
+  // Register the global 401 handler
+  useEffect(() => {
+    _onUnauthorized = () => setUser(null);
+    return () => { _onUnauthorized = null; };
   }, []);
 
   useEffect(() => {
