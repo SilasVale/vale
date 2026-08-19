@@ -162,7 +162,7 @@ export default function Keys() {
                 >
                   {testing === name ? t("btn.testing") : t("btn.test")}
                 </button>
-                {name === "OPENROUTER_API_KEY" && (
+                {(name === "OPENROUTER_API_KEY" || name === "OPENCODE_GO_API_KEY") && (
                   <button
                     className="btn-ghost btn-mini"
                     disabled={usageLoading === name}
