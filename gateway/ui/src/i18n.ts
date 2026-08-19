@@ -1,0 +1,425 @@
+import { useCallback, useSyncExternalStore } from "react";
+
+const I18N = {
+  zh: {
+    "app.sub": "Vale 平台 · AI 网关与设备",
+    "auth.login": "登录",
+    "auth.register": "注册",
+    "auth.username": "用户名",
+    "auth.password": "密码",
+    "auth.inviteCode": "邀请码",
+    "auth.usernamePh": "用户名",
+    "auth.passwordPh": "密码",
+    "auth.usernamePhReg": "用户名（2-32 位字母/数字/_.-）",
+    "auth.passwordPhReg": "密码（至少 6 位）",
+    "auth.invitePh": "向管理员索取邀请码",
+    "auth.loginBtn": "登录",
+    "auth.registerBtn": "注册并登录",
+    "auth.resetTab": "忘记密码",
+    "auth.resetHint": "忘记密码？输入管理员 API Key（控制台概览页的网关 Token）即可设置新密码。",
+    "auth.adminKey": "管理员 API Key",
+    "auth.newPassword": "新密码",
+    "auth.resetBtn": "重置密码",
+    "auth.resetOk": "密码已重置，请用新密码登录",
+    "auth.resetFail": "重置失败",
+    "auth.foot": "注册后带上自己的 DeepSeek / OpenCode Go 密钥即可通过本网关转发。",
+    "auth.loginFail": "登录失败",
+    "auth.registerFail": "注册失败",
+    "nav.overview": "概览",
+    "nav.keys": "密钥管理",
+    "nav.routes": "模型路由",
+    "nav.users": "用户管理",
+    "nav.devices": "设备管理",
+    "btn.logout": "退出登录",
+    "btn.copy": "复制",
+    "btn.show": "显示",
+    "btn.hide": "隐藏",
+    "btn.regenerate": "重新生成 Token",
+    "btn.edit": "编辑",
+    "btn.test": "测试连通",
+    "btn.testing": "测试中…",
+    "btn.usage": "查询额度",
+    "btn.usageLoading": "查询中…",
+    "btn.clear": "清除",
+    "btn.save": "保存",
+    "btn.cancel": "取消",
+    "btn.disable": "禁用",
+    "btn.enable": "启用",
+    "role.admin": "管理员",
+    "role.user": "用户",
+    "overview.title": "概览",
+    "overview.lede": "你的网关凭证与后端密钥状态。",
+    "token.title": "网关 Token",
+    "token.desc": "客户端 <code>x-api-key</code> 填这个值；模型名用 <code>og/…</code>、<code>ds/…</code> 前缀路由。",
+    "token.copied": "已复制网关 Token",
+    "token.copyFail": "复制失败，请手动选择复制",
+    "token.regenerateConfirm":
+      "重生成网关 Token 后，旧 Token 立即失效，所有用旧 Token 的客户端需更新。\n\n注意：你是管理员，重生成后旧 CLIENT_KEY（settings.json 里的）将失效，需同步更新。",
+    "token.regenerated": "已生成新 Token，旧 Token 已失效。请同步更新客户端配置。",
+    "token.regenerateFail": "重生成失败",
+    "routes.title": "路由状态",
+    "routes.lede": '请求模型名按 <code>前缀/模型</code> 路由到对应后端；无前缀默认走 DeepSeek 官方。',
+    "route.title": "渠道切换",
+    "route.desc": 'Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。未选择时默认走 <code>ds/deepseek-v4-flash</code>。',
+    "route.use": "使用",
+    "route.current": "当前",
+    "route.bad": "异常",
+    "route.auto": "恢复默认渠道（ds）",
+    "route.switched": "已切换",
+    "route.switching": "切换中…",
+    "route.fail": "切换失败",
+    "route.loadFail": "渠道状态加载失败",
+    "usproxy.title": "美国出口",
+    "usproxy.desc": "所有模型经 Vercel 美国节点访问上游，规避区域限制。注意：og/deepseek-v4-flash 的慢在 zen 服务器自身，此开关对它无改善。",
+    "usproxy.on": "已开启：请求走美国出口",
+    "usproxy.off": "已关闭：请求直连上游",
+    "usproxy.toggle": "切换",
+    "usproxy.switched": "已切换，下次请求生效",
+    "usproxy.fail": "切换失败",
+    "keys.title": "密钥管理",
+    "keys.lede": "填入你自己在对应服务商申请的 API key，网关转发时只使用你自己的 key，各算各的额度。",
+    "key.configured": "已配置",
+    "key.notConfigured": "未配置",
+    "key.ds.backend": "DeepSeek",
+    "key.ds.hint": "api.deepseek.com 申请",
+    "key.og.backend": "OpenCode Go",
+    "key.og.hint": "opencode.ai/zen/go 申请",
+    "key.or.backend": "OpenRouter",
+    "key.or.hint": "openrouter.ai/keys 申请",
+    "key.emptyValue": "值不能为空",
+    "key.saved": "已保存",
+    "key.saveFail": "保存失败",
+    "key.usageAccount": "账户",
+    "key.usageUsed": "已用",
+    "key.usageLimit": "额度",
+    "key.usageRemaining": "剩余",
+    "key.usageUnlimited": "不限额",
+    "key.usageUnavailable": "暂无数据",
+    "key.usageRateLimit": "速率限制",
+    "key.usageFail": "查询额度失败",
+    "key.clearConfirm": "确定清除 {name} 吗？之后走该路由会返回 502。",
+    "key.cleared": "已清除",
+    "key.testOk": "✓ 连通正常（HTTP {status}）",
+    "key.testFail": "✗ {detail}",
+    "client.title": "客户端接入示例（Claude Code）",
+    "client.note": '模型名里的 <code>[1m]</code> 是 Claude Code 的 1M 上下文窗口标记，上行前它自己会剥掉，网关按前缀路由不受影响。curl 手测勿发带 <code>[1m]</code> 的字面模型名。',
+    "route.og.backend": "OpenCode Go 套餐",
+    "route.og.desc": "opencode.ai/zen/go，Anthropic↔OpenAI 转译，含工具调用与 thinking 回传",
+    "route.ds.backend": "DeepSeek 官方",
+    "route.ds.desc": "api.deepseek.com/anthropic，Bearer 透传",
+    "route.or.backend": "OpenRouter",
+    "route.or.desc": "openrouter.ai，透传用户自己的 key（经 openrouter-proxy 代理）",
+    "route.none.label": "无前缀",
+    "route.none.backend": "DeepSeek 官方（默认）",
+    "route.none.desc": "兜底路由",
+    "users.lede": "管理员密码、邀请码与用户列表。",
+    "adminpw.title": "管理员密码",
+    "adminpw.desc": "控制台登录用的密码。密码已加密存储，改完用新密码登录。",
+    "adminpw.placeholder": "新密码（至少 8 位）",
+    "adminpw.change": "修改密码",
+    "adminpw.short": "管理员密码至少 8 位",
+    "adminpw.changed": "密码已修改，请用新密码登录。",
+    "adminpw.changeFail": "修改失败",
+    "invite.title": "邀请码",
+    "invite.gen": "生成邀请码",
+    "invite.new": "新邀请码：{code}（一次性，用完即焚）",
+    "invite.genFail": "生成失败",
+    "users.list": "用户列表",
+    "user.enabled": "启用",
+    "user.disabled": "禁用",
+    "user.disableToast": "已禁用",
+    "user.enableToast": "已启用",
+    "devices.lede": "注册每台 Windows 设备（vale-agent）的 token，控制台即可代理到设备面板、复制 MCP 配置。",
+    "devices.addTitle": "添加 / 更新设备",
+    "devices.listTitle": "设备列表",
+    "devices.namePh": "设备名（如 d1）",
+    "devices.hostPh": "d1.agent.saisi.online",
+    "devices.tokenPh": "Bearer token（安装时生成）",
+    "devices.saved": "设备已保存",
+    "devices.saveFail": "保存失败",
+    "devices.deleted": "已删除",
+    "devices.deleteConfirm": "删除设备 {name}？",
+    "devices.open": "打开面板",
+    "devices.copyMcp": "复制 MCP 配置",
+    "devices.mcpCopied": "MCP 配置已复制",
+    "devices.empty": "还没有设备。用注册码自动登记，或手动填一台（名 / 主机 / token）。",
+    "cf.title": "Cloudflare 隧道凭据",
+    "cf.configured": "已配置",
+    "cf.notConfigured": "未配置",
+    "cf.desc": "安装时自动配置隧道的账户级 API token（需 Tunnel:Edit + Zone:DNS:Edit 权限）。存这里后，Windows 安装带注册码即可自动取用，无需浏览器授权。",
+    "cf.saved": "已保存",
+    "cf.empty": "已清除（安装时将回退到浏览器授权）",
+    "devices.regKeyTitle": "安装新设备",
+    "devices.genKey": "生成注册码",
+    "devices.downloadInstall": "下载安装程序 ↓",
+    "devices.regKeyDesc": '下载安装程序 → 生成注册码 → Windows 上设置 <code>$env:VALE_REG_KEY</code> 后安装，装完自动登记到下方列表（无需手动抄 token）。',
+    "devices.keyGenerated": "注册码（一次性，装完即焚）：{code}",
+    "devices.regKeyCmd": "在 Windows 安装时先设置这个环境变量，再运行安装：",
+    "devices.genKeyFail": "生成失败",
+    "devices.keyCopied": "注册码已复制",
+    "devices.online": "在线",
+    "devices.offline": "离线",
+    "devices.pair": "配对扩展",
+    "devices.pairFor": "设备：{name}",
+    "devices.pairHint": "在扩展 popup 输入此码完成配对。一次性，10 分钟内有效。",
+    "devices.pairCopied": "已复制配对码",
+    "devices.pairFail": "生成配对码失败",
+    "gwMcp.title": "网关 MCP 配置",
+    "gwMcp.desc": "Claude Code 通过本配置接入网关（浏览器 / 终端工具），使用你当前账户的 token。",
+    "gwMcp.copy": "复制网关 MCP 配置",
+    "ext.title": "安装浏览器扩展",
+    "ext.download": "下载扩展 ↓",
+    "ext.desc": "在 Windows 设备的 Chrome/Edge 里加载此扩展，AI 才能操作设备浏览器。三步：下载 zip → 解压 → chrome://extensions 打开「开发者模式」→「加载已解压的扩展程序」选解压文件夹。装好后在本页对应设备点「配对扩展」。",
+    "loading": "加载中…",
+    "err.loadRoutes": "路由信息加载失败",
+  },
+  en: {
+    "app.sub": "Vale platform — AI relay & devices",
+    "auth.login": "Log in",
+    "auth.register": "Sign up",
+    "auth.username": "Username",
+    "auth.password": "Password",
+    "auth.inviteCode": "Invite code",
+    "auth.usernamePh": "Username",
+    "auth.passwordPh": "Password",
+    "auth.usernamePhReg": "Username (2-32 chars: letters/digits/_.-)",
+    "auth.passwordPhReg": "Password (min 6 chars)",
+    "auth.invitePh": "Ask the admin for an invite code",
+    "auth.loginBtn": "Log in",
+    "auth.registerBtn": "Sign up & log in",
+    "auth.resetTab": "Forgot password",
+    "auth.resetHint":
+      "Forgot your password? Enter your admin API key (the gateway token on the Overview page) to set a new one.",
+    "auth.adminKey": "Admin API Key",
+    "auth.newPassword": "New password",
+    "auth.resetBtn": "Reset password",
+    "auth.resetOk": "Password reset — log in with the new password",
+    "auth.resetFail": "Reset failed",
+    "auth.foot": "After signing up, add your own DeepSeek / OpenCode Go keys and route through this gateway.",
+    "auth.loginFail": "Login failed",
+    "auth.registerFail": "Registration failed",
+    "nav.overview": "Overview",
+    "nav.keys": "API Keys",
+    "nav.routes": "Routing",
+    "nav.users": "Users",
+    "nav.devices": "Devices",
+    "btn.logout": "Log out",
+    "btn.copy": "Copy",
+    "btn.show": "Show",
+    "btn.hide": "Hide",
+    "btn.regenerate": "Regenerate token",
+    "btn.edit": "Edit",
+    "btn.test": "Test",
+    "btn.testing": "Testing…",
+    "btn.usage": "Usage",
+    "btn.usageLoading": "Loading…",
+    "btn.clear": "Clear",
+    "btn.save": "Save",
+    "btn.cancel": "Cancel",
+    "btn.disable": "Disable",
+    "btn.enable": "Enable",
+    "role.admin": "Admin",
+    "role.user": "User",
+    "overview.title": "Overview",
+    "overview.lede": "Your gateway credentials and backend key status.",
+    "token.title": "Gateway Token",
+    "token.desc": 'Set this as the client <code>x-api-key</code>; prefix model names with <code>og/…</code>, <code>ds/…</code> for routing.',
+    "token.copied": "Gateway token copied",
+    "token.copyFail": "Copy failed — select and copy manually",
+    "token.regenerateConfirm":
+      "Regenerating invalidates the old token immediately; all clients using it must update.\n\nNote: you are the admin — the old CLIENT_KEY (in settings.json) will stop working; update it too.",
+    "token.regenerated": "New token generated; the old one is invalid. Update your client configs.",
+    "token.regenerateFail": "Regenerate failed",
+    "routes.title": "Routing status",
+    "routes.lede": "Model names are routed by prefix; no prefix defaults to DeepSeek official.",
+    "route.title": "Channel switch",
+    "route.desc":
+      "Set the Claude Code model to <code>auto</code>, then flip channels here — no restart needed. Defaults to <code>ds/deepseek-v4-flash</code> when unset.",
+    "route.use": "Use",
+    "route.current": "Current",
+    "route.bad": "Down",
+    "route.auto": "Restore default (ds)",
+    "route.switched": "Switched",
+    "route.switching": "Switching…",
+    "route.fail": "Switch failed",
+    "route.loadFail": "Failed to load channel status",
+    "usproxy.title": "US exit",
+    "usproxy.desc":
+      "Route all models via the Vercel US node to bypass regional blocks. Note: og/deepseek-v4-flash slowness is zen's own servers; this switch does not help it.",
+    "usproxy.on": "ON: requests go via the US exit",
+    "usproxy.off": "OFF: requests go direct",
+    "usproxy.toggle": "Toggle",
+    "usproxy.switched": "Switched — takes effect on the next request",
+    "usproxy.fail": "Switch failed",
+    "keys.title": "API Keys",
+    "keys.lede":
+      "Add your own API keys from each provider; the gateway only uses your keys, so each user pays for their own usage.",
+    "key.configured": "Configured",
+    "key.notConfigured": "Not configured",
+    "key.ds.backend": "DeepSeek",
+    "key.ds.hint": "from api.deepseek.com",
+    "key.og.backend": "OpenCode Go",
+    "key.og.hint": "from opencode.ai/zen/go",
+    "key.or.backend": "OpenRouter",
+    "key.or.hint": "from openrouter.ai/keys",
+    "key.emptyValue": "Value cannot be empty",
+    "key.saved": "Saved",
+    "key.saveFail": "Save failed",
+    "key.usageAccount": "Account",
+    "key.usageUsed": "Used",
+    "key.usageLimit": "Limit",
+    "key.usageRemaining": "Remaining",
+    "key.usageUnlimited": "Unlimited",
+    "key.usageUnavailable": "Unavailable",
+    "key.usageRateLimit": "Rate limit",
+    "key.usageFail": "Usage query failed",
+    "key.clearConfirm": "Clear {name}? Routes using it will return 502.",
+    "key.cleared": "Cleared",
+    "key.testOk": "✓ OK (HTTP {status})",
+    "key.testFail": "✗ {detail}",
+    "client.title": "Client setup example (Claude Code)",
+    "client.note":
+      "The <code>[1m]</code> suffix is Claude Code's 1M-context marker; it strips it before sending, so prefix routing is unaffected. When testing with curl, don't send a literal <code>[1m]</code>.",
+    "route.og.backend": "OpenCode Go",
+    "route.og.desc": "opencode.ai/zen/go — Anthropic↔OpenAI translation, tool calls & thinking",
+    "route.ds.backend": "DeepSeek Official",
+    "route.ds.desc": "api.deepseek.com/anthropic — Bearer passthrough",
+    "route.or.backend": "OpenRouter",
+    "route.or.desc": "openrouter.ai — user's own key, proxied via openrouter-proxy",
+    "route.none.label": "default",
+    "route.none.backend": "DeepSeek Official (default)",
+    "route.none.desc": "fallback route",
+    "users.lede": "Admin password, invite codes and the user list.",
+    "adminpw.title": "Admin password",
+    "adminpw.desc": "The console login password. Stored hashed; log in with the new one after changing.",
+    "adminpw.placeholder": "New password (min 8 chars)",
+    "adminpw.change": "Change password",
+    "adminpw.short": "Admin password must be at least 8 chars",
+    "adminpw.changed": "Password changed — log in with the new one.",
+    "adminpw.changeFail": "Change failed",
+    "invite.title": "Invite codes",
+    "invite.gen": "Generate invite",
+    "invite.new": "New invite: {code} (one-time)",
+    "invite.genFail": "Generation failed",
+    "users.list": "Users",
+    "user.enabled": "Enabled",
+    "user.disabled": "Disabled",
+    "user.disableToast": "Disabled",
+    "user.enableToast": "Enabled",
+    "devices.lede":
+      "Register each Windows device (vale-agent) token so the console can proxy to its panel and copy MCP configs.",
+    "devices.addTitle": "Add / update device",
+    "devices.listTitle": "Devices",
+    "devices.namePh": "Device name (e.g. d1)",
+    "devices.hostPh": "d1.agent.saisi.online",
+    "devices.tokenPh": "Bearer token (from install)",
+    "devices.saved": "Device saved",
+    "devices.saveFail": "Save failed",
+    "devices.deleted": "Deleted",
+    "devices.deleteConfirm": "Delete device {name}?",
+    "devices.open": "Open panel",
+    "devices.copyMcp": "Copy MCP config",
+    "devices.mcpCopied": "MCP config copied",
+    "devices.empty": "No devices yet. Auto-register with a key, or add one manually (name / host / token).",
+    "cf.title": "Cloudflare tunnel credential",
+    "cf.configured": "Configured",
+    "cf.notConfigured": "Not configured",
+    "cf.desc":
+      "Account-level API token used by installs to set up the tunnel (needs Tunnel:Edit + Zone:DNS:Edit). Once saved, Windows installs fetch it with a registration key — no browser login.",
+    "cf.saved": "Saved",
+    "cf.empty": "Cleared (installs will fall back to browser auth)",
+    "devices.regKeyTitle": "Install a device",
+    "devices.genKey": "Generate key",
+    "devices.downloadInstall": "Download installer ↓",
+    "devices.regKeyDesc":
+      "Download the installer → generate a key → set <code>$env:VALE_REG_KEY</code> on Windows and install. The device registers itself below — no token copy-paste.",
+    "devices.keyGenerated": "Registration key (one-time, consumed on use): {code}",
+    "devices.regKeyCmd": "Set this env var on the Windows machine before install, then run:",
+    "devices.genKeyFail": "Generation failed",
+    "devices.keyCopied": "Registration key copied",
+    "devices.online": "Online",
+    "devices.offline": "Offline",
+    "devices.pair": "Pair extension",
+    "devices.pairFor": "Device: {name}",
+    "devices.pairHint": "Enter this code in the extension popup to pair. One-time, valid for 10 minutes.",
+    "devices.pairCopied": "Pairing code copied",
+    "devices.pairFail": "Failed to generate pairing code",
+    "gwMcp.title": "Gateway MCP config",
+    "gwMcp.desc": "Claude Code connects to the gateway (browser / terminal tools) with this config, using your current account's token.",
+    "gwMcp.copy": "Copy gateway MCP config",
+    "ext.title": "Install browser extension",
+    "ext.download": "Download extension ↓",
+    "ext.desc":
+      "Load this extension in the device's Chrome/Edge so the AI can operate the device browser. Three steps: download zip → unzip → chrome://extensions enable Developer mode → Load unpacked → pick the folder. Then click Pair on the device below.",
+    "loading": "Loading…",
+    "err.loadRoutes": "Failed to load routes",
+  },
+} as const;
+
+type Lang = "zh" | "en";
+type TranslationKey = keyof (typeof I18N)["zh"];
+
+let lang: Lang = "zh";
+try {
+  const stored = localStorage.getItem("valegate-lang");
+  if (stored === "zh" || stored === "en") lang = stored;
+  else lang = (navigator.language || "zh").startsWith("zh") ? "zh" : "en";
+} catch {
+  lang = "zh";
+}
+
+const listeners = new Set<() => void>();
+
+function emitChange() {
+  for (const l of listeners) l();
+}
+
+export function getLang(): Lang {
+  return lang;
+}
+
+export function setLang(next: Lang) {
+  lang = next;
+  try {
+    localStorage.setItem("valegate-lang", lang);
+  } catch {
+    /* ignore */
+  }
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  emitChange();
+}
+
+export function t(key: TranslationKey, vars?: Record<string, string>): string {
+  const dict = I18N[lang] as Record<string, string>;
+  const fallback = I18N.zh[key] as string;
+  let s = dict[key] || fallback || key;
+  if (vars) {
+    for (const k of Object.keys(vars)) {
+      s = s.replace(new RegExp("\\{" + k + "\\}", "g"), vars[k]);
+    }
+  }
+  return s;
+}
+
+/** Escape HTML special chars — returns a string safe for JSX dangerouslySetInnerHTML. */
+export function esc(s: string | null | undefined): string {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as Record<string, string>)[c],
+  );
+}
+
+/**
+ * React hook: re-renders when language changes.
+ */
+export function useTranslation() {
+  const subscribe = useCallback((cb: () => void) => {
+    listeners.add(cb);
+    return () => listeners.delete(cb);
+  }, []);
+
+  const getSnapshot = useCallback(() => lang, []);
+
+  useSyncExternalStore(subscribe, getSnapshot);
+
+  return { t, lang, setLang, esc };
+}
