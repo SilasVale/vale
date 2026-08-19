@@ -54,32 +54,36 @@ export default function Overview() {
 
   return (
     <div>
-      <h1>{t("overview.title")}</h1>
-      <p className="lede">{t("overview.lede")}</p>
+      <div className="page-header">
+        <h1 className="page-title">{t("overview.title")}</h1>
+        <p className="page-description">{t("overview.lede")}</p>
+      </div>
 
       <div className="card">
-        <div className="card-head">
-          <h2>{t("token.title")}</h2>
-          <span className={`badge ${user?.role === "admin" ? "admin" : "user"}`}>
+        <div className="card-header">
+          <div>
+            <div className="card-title">{t("token.title")}</div>
+            <div className="card-description" dangerouslySetInnerHTML={{ __html: t("token.desc") }} />
+          </div>
+          <span className={`badge ${user?.role === "admin" ? "badge-admin" : "badge-user"}`}>
             {t(user?.role === "admin" ? "role.admin" : "role.user")}
           </span>
         </div>
-        <p className="muted" dangerouslySetInnerHTML={{ __html: t("token.desc") }} />
         <div className="token-row">
-          <code className="token mono">{tokenDisplay}</code>
-          <button className="btn-primary" onClick={handleCopy}>
+          <code className="token">{tokenDisplay}</code>
+          <button className="btn btn-primary" onClick={handleCopy}>
             {copied ? "✓" : t("btn.copy")}
           </button>
-          <button className="btn-ghost" onClick={() => setTokenRevealed(!tokenRevealed)}>
+          <button className="btn btn-ghost" onClick={() => setTokenRevealed(!tokenRevealed)}>
             {tokenRevealed ? t("btn.hide") : t("btn.show")}
           </button>
         </div>
         <div className="token-actions">
-          <button className="btn-ghost danger-text" onClick={handleRegenerate}>
+          <button className="btn btn-ghost btn-danger" onClick={handleRegenerate}>
             {t("btn.regenerate")}
           </button>
         </div>
-        {tokenNote && <p className="note">{tokenNote}</p>}
+        {tokenNote && <p className="form-message form-message-success">{tokenNote}</p>}
       </div>
     </div>
   );
