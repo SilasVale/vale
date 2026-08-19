@@ -3,11 +3,11 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/admin/",
+  base: "/",
   root: ".",
   build: {
-    outDir: "../public/admin",
-    emptyOutDir: true,
+    outDir: "../public",
+    emptyOutDir: false,
   },
   server: {
     proxy: {
