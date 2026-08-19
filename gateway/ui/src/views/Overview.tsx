@@ -16,6 +16,7 @@ export default function Overview() {
   const { toast } = useToast();
   const [tokenRevealed, setTokenRevealed] = useState(false);
   const [tokenNote, setTokenNote] = useState("");
+  const [copied, setCopied] = useState(false);
   const [routes, setRoutes] = useState<RouteInfo[]>([]);
 
   const loadRoutes = useCallback(async () => {
@@ -35,7 +36,9 @@ export default function Overview() {
     if (!user?.token) return;
     try {
       await navigator.clipboard.writeText(user.token);
+      setCopied(true);
       toast(t("token.copied"));
+      setTimeout(() => setCopied(false), 2000);
     } catch {
       toast(t("token.copyFail"), true);
     }
@@ -88,7 +91,7 @@ export default function Overview() {
         <div className="token-row">
           <code className="token mono">{tokenDisplay}</code>
           <button className="btn-primary" onClick={handleCopy}>
-            {t("btn.copy")}
+            {copied ? "✓" : t("btn.copy")}
           </button>
           <button className="btn-ghost" onClick={() => setTokenRevealed(!tokenRevealed)}>
             {tokenRevealed ? t("btn.hide") : t("btn.show")}
