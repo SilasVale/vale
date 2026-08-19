@@ -69,7 +69,7 @@ export default function Auth() {
           </button>
         </div>
         <div className="brand-lg">
-          <span className="brand-mark">V</span>
+          <span className="brand-mark lg">V</span>
           <div>
             <div className="brand-name">Vale</div>
             <div className="brand-sub">{t("app.sub")}</div>

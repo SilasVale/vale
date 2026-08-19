@@ -19,6 +19,7 @@ export default function Sidebar({ activePanel, onPanelChange }: SidebarProps) {
   ];
 
   const isAdmin = user?.role === "admin";
+  const userInitial = user?.username?.charAt(0)?.toUpperCase() || "U";
 
   return (
     <aside className="sidebar">
@@ -42,10 +43,13 @@ export default function Sidebar({ activePanel, onPanelChange }: SidebarProps) {
       </nav>
       <div className="sidebar-foot">
         {user && (
-          <div className="side-user">
-            <div className="name">{user.username}</div>
-            <div className="role">
-              {t(user.role === "admin" ? "role.admin" : "role.user")}
+          <div className="sidebar-user">
+            <div className="sidebar-avatar">{userInitial}</div>
+            <div className="sidebar-user-info">
+              <div className="name">{user.username}</div>
+              <div className="role">
+                {t(user.role === "admin" ? "role.admin" : "role.user")}
+              </div>
             </div>
           </div>
         )}
