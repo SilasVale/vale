@@ -94,7 +94,9 @@ export default function Routes() {
   if (loading) {
     return (
       <div>
-        <h1>{t("nav.routes")}</h1>
+        <div className="page-header">
+          <h1 className="page-title">{t("nav.routes")}</h1>
+        </div>
         <p className="muted">{t("loading")}</p>
       </div>
     );
@@ -102,88 +104,95 @@ export default function Routes() {
 
   return (
     <div>
-      <h1>{t("nav.routes")}</h1>
-      <p className="lede" dangerouslySetInnerHTML={{ __html: t("routes.lede") }} />
-
-      <div className="card">
-        <div className="card-head">
-          <h2>{t("route.title")}</h2>
-        </div>
-        <div className="card-body">
-          <p className="muted" dangerouslySetInnerHTML={{ __html: t("route.desc") }} />
-
-          {/* US Proxy toggle (admin only) */}
-          {user?.role === "admin" && (
-            <div className="key-card" style={{ marginBottom: 16 }}>
-              <div className="top">
-                <div>
-                  <div className="key-name">{t("usproxy.title")}</div>
-                  <div className="key-desc">{t("usproxy.desc")}</div>
-                </div>
-                <span className={`badge ${usproxyOn ? "ok" : "off"}`}>
-                  {usproxyOn ? t("usproxy.on") : t("usproxy.off")}
-                </span>
-              </div>
-              <div className="key-actions">
-                <button
-                  className="btn-primary btn-mini"
-                  disabled={usproxyLoading}
-                  onClick={handleToggleProxy}
-                >
-                  {t("usproxy.toggle")}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Channel cards */}
-          <div className="cards">
-            {channels.map((ch) => {
-              const isCurrent = current === ch.model;
-              return (
-                <div className="key-card" key={ch.model} style={{ margin: 0 }}>
-                  <div className="top">
-                    <div>
-                      <div className="key-name">
-                        {ch.id + "/"}
-                        {isCurrent && <span className="badge ok"> {t("route.current")}</span>}
-                      </div>
-                      <div className="key-desc">{ch.model}</div>
-                    </div>
-                    {ch.ok ? (
-                      <span className="badge ok">{t("route.use")}</span>
-                    ) : (
-                      <span className="badge off">{esc(ch.reason || t("route.bad"))}</span>
-                    )}
-                  </div>
-                  <div className="key-actions">
-                    <button
-                      className="btn-primary btn-mini"
-                      disabled={!ch.ok || switching === ch.model}
-                      onClick={() => handleSwitch(ch.model)}
-                    >
-                      {switching === ch.model ? t("route.switching") : t("route.use")}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <button className="btn-ghost" style={{ marginTop: 12 }} onClick={handleClearRoute}>
-            {t("route.auto")}
-          </button>
-        </div>
+      <div className="page-header">
+        <h1 className="page-title">{t("nav.routes")}</h1>
+        <p className="page-description" dangerouslySetInnerHTML={{ __html: t("routes.lede") }} />
       </div>
 
       <div className="card">
-        <div className="card-head">
-          <h2>{t("client.title")}</h2>
+        <div className="card-header">
+          <div className="card-title">{t("route.title")}</div>
         </div>
-        <pre>
+        <p className="muted" dangerouslySetInnerHTML={{ __html: t("route.desc") }} />
+
+        {/* US Proxy toggle (admin only) */}
+        {user?.role === "admin" && (
+          <div className="lane" style={{ marginTop: 16, marginBottom: 16 }}>
+            <div className="lane-port" style={{ background: "var(--dsw-info)" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+            </div>
+            <div className="lane-body">
+              <div className="lane-backend">{t("usproxy.title")}</div>
+              <div className="lane-desc">{t("usproxy.desc")}</div>
+            </div>
+            <span className={`badge ${usproxyOn ? "badge-success" : "badge-warning"}`}>
+              {usproxyOn ? t("usproxy.on") : t("usproxy.off")}
+            </span>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={usproxyLoading}
+              onClick={handleToggleProxy}
+            >
+              {t("usproxy.toggle")}
+            </button>
+          </div>
+        )}
+
+        {/* Channel list */}
+        <div style={{ marginTop: 16 }}>
+          {channels.map((ch) => {
+            const isCurrent = current === ch.model;
+            const laneClass = ch.id.startsWith("og") ? "lane-og"
+              : ch.id.startsWith("ds") ? "lane-ds"
+              : ch.id.startsWith("or") ? "lane-or"
+              : ch.id.startsWith("qw") ? "lane-qw"
+              : "lane-def";
+            return (
+              <div className={`lane ${laneClass}`} key={ch.model} style={{ marginBottom: 8 }}>
+                <div className="lane-port">{ch.id.replace("/", "")}</div>
+                <div className="lane-arrow">→</div>
+                <div className="lane-body">
+                  <div className="lane-backend">
+                    {ch.model}
+                    {isCurrent && <span className="badge badge-success" style={{ marginLeft: 8 }}>{t("route.current")}</span>}
+                  </div>
+                  <div className="lane-desc">{ch.id}</div>
+                </div>
+                {ch.ok ? (
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={switching === ch.model}
+                    onClick={() => handleSwitch(ch.model)}
+                  >
+                    {switching === ch.model ? t("route.switching") : t("route.use")}
+                  </button>
+                ) : (
+                  <span className="badge badge-error">{esc(ch.reason || t("route.bad"))}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={handleClearRoute}>
+          {t("route.auto")}
+        </button>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title">{t("client.title")}</div>
+        </div>
+        <pre style={{ marginTop: 12 }}>
           <code>{clientExample}</code>
         </pre>
         <div
-          className="note"
+          className="muted"
+          style={{ marginTop: 12 }}
           dangerouslySetInnerHTML={{ __html: t("client.note") }}
         />
       </div>
