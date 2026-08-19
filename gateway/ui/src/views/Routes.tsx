@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext.tsx";
-import { useTranslation, esc } from "../i18n.ts";
+import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { api, type HealthChannel } from "../api/client.ts";
 
@@ -87,9 +87,9 @@ export default function Routes() {
   ];
   const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
   const token = user?.token || "<your gateway token>";
-  const env: Record<string, string> = { ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: token };
-  for (const k of modelKeys) env[k] = "auto[1m]";
-  const clientExample = JSON.stringify({ env }, null, 2);
+  const envConfig: Record<string, string> = { ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: token };
+  for (const k of modelKeys) envConfig[k] = "auto[1m]";
+  const clientExample = JSON.stringify({ env: envConfig }, null, 2);
 
   if (loading) {
     return (
@@ -97,97 +97,110 @@ export default function Routes() {
         <div className="page-header">
           <h1 className="page-title">{t("nav.routes")}</h1>
         </div>
-        <p className="muted">{t("loading")}</p>
+        <div className="card">
+          <div className="muted">{t("loading")}</div>
+        </div>
       </div>
     );
   }
+
+  // Group channels by prefix
+  const grouped = channels.reduce((acc, ch) => {
+    const prefix = ch.id;
+    if (!acc[prefix]) acc[prefix] = [];
+    acc[prefix].push(ch);
+    return acc;
+  }, {} as Record<string, HealthChannel[]>);
 
   return (
     <div>
       <div className="page-header">
         <h1 className="page-title">{t("nav.routes")}</h1>
-        <p className="page-description" dangerouslySetInnerHTML={{ __html: t("routes.lede") }} />
+        <p className="page-description">{t("routes.lede")}</p>
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">{t("route.title")}</div>
-        </div>
-        <p className="muted" dangerouslySetInnerHTML={{ __html: t("route.desc") }} />
-
-        {/* US Proxy toggle (admin only) */}
-        {user?.role === "admin" && (
-          <div className="lane" style={{ marginTop: 16, marginBottom: 16 }}>
-            <div className="lane-port" style={{ background: "var(--dsw-info)" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="2" y1="12" x2="22" y2="12"/>
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-              </svg>
-            </div>
-            <div className="lane-body">
-              <div className="lane-backend">{t("usproxy.title")}</div>
-              <div className="lane-desc">{t("usproxy.desc")}</div>
+      {/* US Proxy toggle */}
+      {user?.role === "admin" && (
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <div className="card-title">{t("usproxy.title")}</div>
+              <div className="card-description">{t("usproxy.desc")}</div>
             </div>
             <span className={`badge ${usproxyOn ? "badge-success" : "badge-warning"}`}>
               {usproxyOn ? t("usproxy.on") : t("usproxy.off")}
             </span>
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={usproxyLoading}
-              onClick={handleToggleProxy}
-            >
-              {t("usproxy.toggle")}
-            </button>
           </div>
-        )}
+          <button
+            className="btn btn-primary"
+            disabled={usproxyLoading}
+            onClick={handleToggleProxy}
+          >
+            {t("usproxy.toggle")}
+          </button>
+        </div>
+      )}
 
-        {/* Channel list */}
-        <div style={{ marginTop: 16 }}>
-          {channels.map((ch) => {
-            const isCurrent = current === ch.model;
-            const laneClass = ch.id.startsWith("og") ? "lane-og"
-              : ch.id.startsWith("ds") ? "lane-ds"
-              : ch.id.startsWith("or") ? "lane-or"
-              : ch.id.startsWith("qw") ? "lane-qw"
-              : "lane-def";
-            return (
-              <div className={`lane ${laneClass}`} key={ch.model} style={{ marginBottom: 8 }}>
-                <div className="lane-port">{ch.id.replace("/", "")}</div>
-                <div className="lane-arrow">→</div>
-                <div className="lane-body">
-                  <div className="lane-backend">
-                    {ch.model}
-                    {isCurrent && <span className="badge badge-success" style={{ marginLeft: 8 }}>{t("route.current")}</span>}
-                  </div>
-                  <div className="lane-desc">{ch.id}</div>
-                </div>
-                {ch.ok ? (
-                  <button
-                    className="btn btn-primary btn-sm"
-                    disabled={switching === ch.model}
-                    onClick={() => handleSwitch(ch.model)}
-                  >
-                    {switching === ch.model ? t("route.switching") : t("route.use")}
-                  </button>
-                ) : (
-                  <span className="badge badge-error">{esc(ch.reason || t("route.bad"))}</span>
-                )}
-              </div>
-            );
-          })}
+      {/* Auto-discovered models */}
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <div className="card-title">{t("route.title")}</div>
+            <div className="card-description">{t("route.desc")}</div>
+          </div>
+          <button className="btn btn-secondary" onClick={handleClearRoute}>
+            {t("route.auto")}
+          </button>
         </div>
 
-        <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={handleClearRoute}>
-          {t("route.auto")}
-        </button>
+        {/* Channel groups */}
+        {Object.entries(grouped).map(([prefix, models]) => (
+          <div key={prefix} style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--dsw-text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              {prefix.toUpperCase()}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {models.map((ch) => {
+                const isCurrent = current === ch.model;
+                const laneClass = prefix.startsWith("og") ? "lane-og"
+                  : prefix.startsWith("ds") ? "lane-ds"
+                  : prefix.startsWith("or") ? "lane-or"
+                  : prefix.startsWith("qw") ? "lane-qw"
+                  : "lane-def";
+                return (
+                  <div className={`lane ${laneClass}`} key={ch.model}>
+                    <div className="lane-port">{prefix}</div>
+                    <div className="lane-body">
+                      <div className="lane-backend">
+                        {ch.model}
+                        {isCurrent && <span className="badge badge-success" style={{ marginLeft: 8 }}>{t("route.current")}</span>}
+                      </div>
+                    </div>
+                    {ch.ok ? (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        disabled={switching === ch.model}
+                        onClick={() => handleSwitch(ch.model)}
+                      >
+                        {switching === ch.model ? "..." : t("route.use")}
+                      </button>
+                    ) : (
+                      <span className="badge badge-error">{ch.reason || t("route.bad")}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
+      {/* Client example */}
       <div className="card">
         <div className="card-header">
           <div className="card-title">{t("client.title")}</div>
         </div>
-        <pre style={{ marginTop: 12 }}>
+        <pre style={{ marginTop: 12, fontSize: 12 }}>
           <code>{clientExample}</code>
         </pre>
         <div
