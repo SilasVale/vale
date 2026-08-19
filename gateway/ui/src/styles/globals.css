@@ -555,6 +555,16 @@ button { font-family: var(--dsw-font-family); }
 .btn-block { display: flex; width: 100%; }
 .danger-text { color: var(--dsw-alias-state-error-primary); }
 
+/* <a> elements styled as buttons (download links etc.) */
+a.btn-primary,
+a.btn-ghost,
+a.btn-danger {
+  text-decoration: none;
+  box-sizing: border-box;
+  line-height: 1;
+}
+a.btn-primary:hover { text-decoration: none; }
+
 .btn-mini {
   height: 28px;
   padding: 0 10px;
@@ -844,6 +854,19 @@ body[data-ds-dark-theme] .token {
 .test-result { font-size: 13px; line-height: 20px; margin-top: 8px; }
 .test-result.ok { color: var(--dsw-alias-state-success-primary); }
 .test-result.err { color: var(--dsw-alias-state-error-primary); }
+
+/* ── Route panel: flatten channel cards into list rows ── */
+/* The channel switch cards inside the route panel's main card get flat styling
+   (no border, transparent bg) to avoid card-in-card visual nesting. */
+.card .cards .key-card {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+.card .cards .key-card:last-child { border-bottom: none; }
+.card .cards .key-card:hover { border-color: var(--dsw-alias-border-l1); }
 
 /* ================================================================
    Device management

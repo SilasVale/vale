@@ -1,8 +1,10 @@
 /**
  * API client — thin wrapper around fetch with credentials: 'same-origin'
- * and automatic JSON parsing. 401 responses are surfaced as a special
- * error so components can redirect to auth.
+ * and automatic JSON parsing. 401 responses trigger a global auth reset
+ * (via notifyUnauthorized) so the UI switches to the login page.
  */
+
+import { notifyUnauthorized } from "../contexts/AuthContext.tsx";
 
 export class ApiError extends Error {
   status: number;
@@ -34,6 +36,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     /* noop */
   }
   if (res.status === 401) {
+    notifyUnauthorized();
     throw new ApiError(401, "Unauthorized", data);
   }
   if (!res.ok) {
