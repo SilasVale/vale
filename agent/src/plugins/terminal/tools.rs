@@ -706,6 +706,44 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     if !terminal_mgr.term_try_execute(&sid).await? {
                         return Err(DeviceError::SessionBusy { id: sid.clone() });
                     }
+                    // First-prompt gate: marker-injected PTY whose first prompt
+                    // hasn't been seen yet — wait for it before writing. A
+                    // command entering PowerShell during profile-init got split
+                    // into continuation prompts and output was lost (observed).
+                    let gate_marker = terminal_mgr.term_marker_injected(&sid).await;
+                    let gate_needed = recover_guard(&buf)
+                        .live.get(&sid).map(|e| !e.first_prompt_seen).unwrap_or(false);
+                    if gate_marker && gate_needed {
+                        let gate_deadline = Instant::now() + std::time::Duration::from_secs(3);
+                        let mut scan_from = recover_guard(&buf)
+                            .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
+                        let mut pend: Vec<u8> = Vec::new();
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            if terminal_mgr.term_info(&sid).await.is_none() { break; }
+                            let (chunk, n) = recover_guard(&buf)
+                                .live.get(&sid)
+                                .map(|e| {
+                                    if e.dropped as usize > scan_from { scan_from = e.dropped as usize; }
+                                    let sl = e.slice_from(scan_from);
+                                    (sl.to_vec(), sl.len())
+                                })
+                                .unwrap_or_default();
+                            if n > 0 {
+                                scan_from += n;
+                                pend.extend_from_slice(&chunk);
+                            }
+                            let cut = pend.len().saturating_sub(64);
+                            if cut > 0 { pend.drain(..cut); }
+                            if find_prompt_marker(&pend).is_some() {
+                                recover_guard(&buf)
+                                    .live.get_mut(&sid)
+                                    .map(|e| e.first_prompt_seen = true);
+                                break;
+                            }
+                            if Instant::now() >= gate_deadline { break; }
+                        }
+                    }
                     // Settle-drain: consume whatever still streams in from the
                     // PREVIOUS command before sampling the start offset —
                     // sampling end_abs while an earlier tail was mid-flight
@@ -958,6 +996,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 pending.drain(..end);
                                 marker_code = Some(code);
                                 marker_seen_at = Some(Instant::now());
+                                recover_guard(&buf)
+                                    .live.get_mut(&sid)
+                                    .map(|e| e.first_prompt_seen = true);
                             }
                             // round-103/104: output AFTER a marker could be a
                             // false positive (literal OSC 133 in a log line)
