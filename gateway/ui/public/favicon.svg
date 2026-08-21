@@ -1,34 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-  <!-- Vale brand mark v2: the valley at sunrise — layered peaks, rising signal, glass sheen -->
+  <!-- Vale brand mark: the vale at sunrise — near hill, far ridge, signal over the pass -->
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffca57"/>
-      <stop offset=".52" stop-color="#f59f00"/>
+      <stop offset="0" stop-color="#f59f00"/>
       <stop offset="1" stop-color="#e8590c"/>
     </linearGradient>
     <radialGradient id="glow" cx=".5" cy=".5" r=".5">
-      <stop offset="0" stop-color="#fff8e1" stop-opacity=".9"/>
-      <stop offset=".5" stop-color="#ffe8a3" stop-opacity=".38"/>
+      <stop offset="0" stop-color="#fff8e1" stop-opacity=".55"/>
       <stop offset="1" stop-color="#ffe8a3" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity=".26"/>
-      <stop offset=".42" stop-color="#ffffff" stop-opacity=".05"/>
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".25"/>
       <stop offset=".45" stop-color="#ffffff" stop-opacity="0"/>
-      <stop offset="1" stop-color="#7c2d12" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#7c2d12" stop-opacity=".10"/>
     </linearGradient>
   </defs>
 
   <rect width="48" height="48" rx="11" fill="url(#sky)"/>
 
-  <!-- rising signal: glow + disc, set in the notch between the two summits -->
-  <circle cx="24" cy="16.5" r="10" fill="url(#glow)"/>
-  <circle cx="24" cy="16.5" r="4" fill="#fff8e1"/>
+  <!-- signal rising over the pass -->
+  <circle cx="21" cy="14" r="7.5" fill="url(#glow)"/>
+  <circle cx="21" cy="14" r="4" fill="#fff8e1"/>
 
-  <!-- far ridge (morning haze) -->
-  <path fill="#ffffff" opacity=".62" d="M16 41L30 17l16 24H16z"/>
-  <!-- near ridge (solid) -->
-  <path fill="#ffffff" d="M2 41L15 15l15 26H2z"/>
+  <!-- far ridge (haze) -->
+  <path fill="#ffffff" opacity=".78" d="M14 41Q26 16 44 41Z"/>
+  <!-- near hill (solid) -->
+  <path fill="#ffffff" d="M2 41Q12 20 24 41Z"/>
 
   <!-- glass sheen -->
   <rect width="48" height="48" rx="11" fill="url(#sheen)"/>
