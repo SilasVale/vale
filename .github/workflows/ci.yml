@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    name: gateway (test + typecheck + lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gateway/package-lock.json
+      - name: Install deps
+        run: npm ci
+        working-directory: gateway
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: gateway
+      - name: Tests
+        run: npm test
+        working-directory: gateway
+      - name: Lint
+        run: npm run lint
+        working-directory: gateway
+      - name: Format
+        run: npm run format:check
+        working-directory: gateway
+
+  ui:
+    name: ui (tsc + build + render smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gateway/ui/package-lock.json
+      - name: Build
+        run: npm ci && npm run build
+        working-directory: gateway/ui
+      - name: Render smoke (jsdom)
+        run: |
+          JS=$(grep -o 'index-[^"]*\.js' ../public/index.html | head -1)
+          node render-smoke.mjs "../public/assets/$JS"
+        working-directory: gateway/ui
+
+  agent:
+    name: agent (cargo test + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+      - name: Tests
+        run: cargo test -p vale-agent --features terminal,keyring
+        working-directory: agent
+      - name: Clippy (zero warnings)
+        run: cargo clippy -p vale-agent --features terminal,keyring --all-targets -- -D warnings
+        working-directory: agent
+
+  agent-windows-target:
+    # Windows MSVC 目标的编译检查（xwin 拉取 SDK，独立 job 便于缓存）
+    name: agent (xwin check windows-msvc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+      - name: Install cargo-xwin
+        run: cargo install cargo-xwin --locked
+      - name: Xwin check
+        run: cargo xwin check -p vale-agent --target x86_64-pc-windows-msvc --features terminal,keyring
+        working-directory: agent
