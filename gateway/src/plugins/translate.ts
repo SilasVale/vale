@@ -60,7 +60,7 @@ import {
 } from "../channels.ts";
 // Route table lives in the shared upstream module (also used by index.ts's
 // valeProbe — the copies had drifted on the or/ US_PROXY behavior).
-import { pickRoute, passthroughHeaders, stripBracket, type RouteInfo } from "../upstream.ts";
+import { pickRoute, passthroughHeaders, stripBracket } from "../upstream.ts";
 import type { PluginContext } from "./registry.ts";
 
 const COUNT_PATH = "/v1/messages/count_tokens";

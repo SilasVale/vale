@@ -389,7 +389,9 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
       for (const field of ["label", "usage", "limit"]) {
         if (
           field in data &&
-          (data[field] === null || typeof data[field] === "string" || typeof data[field] === "number")
+          (data[field] === null ||
+            typeof data[field] === "string" ||
+            typeof data[field] === "number")
         )
           out[field] = data[field];
       }

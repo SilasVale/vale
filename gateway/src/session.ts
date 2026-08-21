@@ -46,10 +46,7 @@ export async function requireSession(request: Request, env: any): Promise<User |
  * the session and requires role === "admin". Returns the user, or a Response
  * the handler should return directly (401 not logged in / 403 non-admin).
  */
-export async function requireAdmin(
-  request: Request,
-  env: any,
-): Promise<User | Response> {
+export async function requireAdmin(request: Request, env: any): Promise<User | Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   if (user.role !== "admin") {
