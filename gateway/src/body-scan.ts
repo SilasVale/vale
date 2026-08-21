@@ -102,6 +102,11 @@ export function rawWithDeepSeekProvider(raw: string): string {
   return rawWithTopLevelField(raw, "provider", { order: ["deepseek"], allow_fallbacks: false });
 }
 
+/** Pin Ox Alpha's unified reasoning effort (replaces any client-sent value). */
+export function rawWithOxAlphaReasoning(raw: string): string {
+  return rawWithTopLevelField(raw, "reasoning", { effort: "max" });
+}
+
 /**
  * Lightweight scan of a JSON request body for the TOP-LEVEL "model" field,
  * WITHOUT building the object graph (avoids the full parse + re-stringify
