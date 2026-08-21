@@ -21,7 +21,7 @@ function ps(script) {
 
 const commands = {
   status() {
-    const running = spawnSync("tasklist", ["/FI", `IMAGENAME eq vale-agent.exe`], { shell: true, encoding: "utf8" }).stdout || "";
+    const running = spawnSync("tasklist", ["/FI", `IMAGENAME eq vale-agent*`], { shell: true, encoding: "utf8" }).stdout || "";
     console.log(running.includes("vale-agent.exe") ? "status: RUNNING" : "status: STOPPED");
     console.log("install dir:", DIR);
     console.log("panel:", fs.existsSync(EXE_DST) ? "http://127.0.0.1:18080/panel/" : "(not installed)");
