@@ -2,7 +2,6 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useTranslation } from "../i18n.ts";
 import { getTheme, toggleTheme } from "../lib/theme.ts";
-import { Logo } from "./ui.tsx";
 import { useState } from "react";
 
 /* Sidebar icons — 16px stroke set, currentColor. */
@@ -68,7 +67,7 @@ export default function Layout() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="sidebar-brand">
-            <Logo size={34} />
+            <img className="brand-img" src="/favicon.svg" alt="Vale" width={34} />
             <div>
               <div className="sidebar-title">Vale</div>
               <div className="sidebar-subtitle">{t("app.sub")}</div>

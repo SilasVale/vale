@@ -2,7 +2,6 @@ import { useState, type FormEvent } from "react";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useTranslation } from "../i18n.ts";
 import { ApiError } from "../api/client.ts";
-import { Logo } from "./ui.tsx";
 
 type Tab = "login" | "register" | "reset";
 
@@ -66,7 +65,7 @@ export default function Auth() {
           </button>
         </div>
         <div className="auth-brand">
-          <Logo size={46} />
+          <img className="brand-img" src="/favicon.svg" alt="Vale" width={46} />
           <div>
             <h1>Vale</h1>
             <p>{t("app.sub")}</p>
