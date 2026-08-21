@@ -1,10 +1,8 @@
 /**
  * Vale gateway plugin: admin — /api/admin/* (console admin APIs).
  *
- * round-73 plugin extraction: all handler/helper logic copied VERBATIM from
- * index.js (handleConsole); zero behavior change. The wiring phase (next)
- * dispatches through the registry and removes the now-duplicated routes
- * from index.js.
+ * round-73 plugin extraction; the migration is COMPLETE — this plugin is
+ * the only implementation of these routes (index.ts's inline copies are gone).
  *
  * Dispatch contract: handlers receive (request, env, url) — the same triple
  * handleConsole(request, env, url) got.
