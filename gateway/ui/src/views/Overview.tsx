@@ -5,7 +5,7 @@ import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { api, ApiError } from "../api/client.ts";
 import { maskToken } from "../lib/format.ts";
-import { Card, PageHeader, Badge, CopyButton, type BadgeTone } from "../components/ui.tsx";
+import { Card, PageHeader, Badge, CopyButton, StatusChip } from "../components/ui.tsx";
 
 const KEY_ORDER = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "QWEN_API_KEY", "OPENROUTER_API_KEY"];
 
@@ -60,7 +60,7 @@ export default function Overview() {
         title={t("token.title")}
         description={<span dangerouslySetInnerHTML={{ __html: t("token.desc") }} />}
         headerExtra={
-          <Badge tone={configuredCount > 0 ? "success" : "warning"}>
+          <Badge tone={configuredCount > 0 ? "muted" : "warning"}>
             {configuredCount}/{keyEntries.length}
           </Badge>
         }
@@ -91,9 +91,9 @@ export default function Overview() {
         </p>
         <div className="row">
           {keyEntries.map(({ name, info }) => (
-            <Badge key={name} tone={(info?.configured ? "success" : "muted") as BadgeTone}>
+            <StatusChip key={name} state={info?.configured ? "ok" : "off"}>
               {name.replace("_API_KEY", "")}
-            </Badge>
+            </StatusChip>
           ))}
         </div>
       </Card>
