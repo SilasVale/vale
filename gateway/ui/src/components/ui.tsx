@@ -7,27 +7,6 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "../i18n.ts";
 
-/* ── Brand mark: Vale bolt on the gradient tile ── */
-
-export function BoltIcon({ size = 16, color = "currentColor" }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} aria-hidden="true">
-      <path d="M13.5 2.1c.5-.6 1.5-.1 1.3.6l-2 6.8h5.4c.6 0 1 .75.6 1.2l-9.3 11.2c-.5.6-1.5.1-1.3-.6l2-6.8H4.8c-.6 0-1-.75-.6-1.2L13.5 2.1z" />
-    </svg>
-  );
-}
-
-export function Logo({ size = 34, radius }: { size?: number; radius?: number }) {
-  return (
-    <span
-      className="logo-tile"
-      style={{ width: size, height: size, borderRadius: radius ?? Math.round(size * 0.29) }}
-    >
-      <BoltIcon size={Math.round(size * 0.58)} color="#fff" />
-    </span>
-  );
-}
-
 /* ── Page header ── */
 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
