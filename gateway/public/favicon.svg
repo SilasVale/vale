@@ -1,13 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-  <!-- Vale brand mark: original bolt silhouette, black/white contrast -->
+  <!-- Vale brand mark: the valley — two peaks, one rising signal (Vale = valley) -->
   <defs>
-    <linearGradient id="b" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#c0c4cc"/>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f59f00"/>
+      <stop offset="1" stop-color="#e8590c"/>
     </linearGradient>
   </defs>
-  <rect width="48" height="48" rx="11" fill="#0a0a0c"/>
-  <g transform="translate(5 5.9) scale(0.79)">
-    <path fill="url(#b)" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/>
-  </g>
+  <rect width="48" height="48" rx="11" fill="url(#sky)"/>
+  <circle cx="24" cy="19" r="4.2" fill="#fff8e1"/>
+  <path fill="#ffffff" opacity=".95" d="M4 40L15.5 15l6.2 13.4L26 18l18 22H4z"/>
 </svg>
