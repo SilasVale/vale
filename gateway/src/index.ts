@@ -33,11 +33,7 @@
 
 import { seedAdmin } from "./store.ts";
 import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.ts";
-import {
-  fetchWithTimeout,
-  upstreamTimeoutMs,
-  isChannelDegraded,
-} from "./reliability.ts";
+import { fetchWithTimeout, upstreamTimeoutMs, isChannelDegraded } from "./reliability.ts";
 import {
   HEALTH_CHANNELS,
   HEALTH_PRIORITY,
@@ -211,7 +207,15 @@ export default {
       // ---- Console API + MCP endpoint (page hosts) — all plugin-owned ----
       if (isPageHost && (path.startsWith("/api/") || path === "/mcp")) {
         const pctx = ensurePluginCtx();
-        const hit = dispatch(pctx, request.method, path, request, env, url, url.protocol === "https:");
+        const hit = dispatch(
+          pctx,
+          request.method,
+          path,
+          request,
+          env,
+          url,
+          url.protocol === "https:",
+        );
         if (hit !== null) return hit;
         return jsonError(404, "Not Found", "not_found_error");
       }

@@ -32,7 +32,6 @@ import {
 import { MODELS, ROUTE_INFO } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import { requireSession } from "../session.ts";
-import type { User } from "../store.ts";
 import type { PluginContext } from "./registry.ts";
 
 const ADMIN_BASE = "/api/admin";
