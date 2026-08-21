@@ -6,7 +6,7 @@
 // screenshot result ({image:...}) becomes an MCP image content block.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleMcp, callTool } from "../src/mcp.js";
+import { handleMcp, callTool } from "../src/mcp.ts";
 
 const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 

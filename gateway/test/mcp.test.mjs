@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allMcpTools } from "../src/mcp-tools.js";
+import { allMcpTools } from "../src/mcp-tools.ts";
 
 test("mcp tools: all tools take a device param", () => {
   const tools = allMcpTools();

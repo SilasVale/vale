@@ -11,8 +11,8 @@
 // global fetch stands in for the device panel (mirrors mcp-handler.test.mjs).
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "../src/index.js";
-import { issueSessionToken, SESSION_COOKIE } from "../src/auth.js";
+import worker from "../src/index.ts";
+import { issueSessionToken, SESSION_COOKIE } from "../src/auth.ts";
 
 const ADMIN_PW = "test-admin-password";
 const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };

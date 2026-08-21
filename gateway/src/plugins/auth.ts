@@ -32,12 +32,10 @@ import {
   getGlobalSetting,
   setGlobalSetting,
   globalSettingEnabled,
-  type User,
 } from "../store.ts";
 import {
   verifyPassword,
   issueSessionToken,
-  verifySessionToken,
   parseCookie,
   sessionCookieHeader,
   clearSessionCookieHeader,
@@ -70,27 +68,9 @@ function authRateLimited(request: Request): boolean {
   }
 }
 
-// Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
-// secret) over the admin password. Using the password directly lets any invited
-// user offline-brute-force it from their own signed cookie (HMAC-SHA256 is not
-// memory-hard); with SESSION_SECRET set, the password is never a signing key.
-function sessionSecret(env: any, adminPassword: string): string {
-  return env.SESSION_SECRET || adminPassword;
-}
-
-async function requireSession(request: Request, env: any): Promise<User | null> {
-  const ap = await getAdminPassword(env);
-  if (!ap) return null;
-  const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
-  if (!cookie) return null;
-  // Revoked by logout (server-side blacklist — a copied cookie dies too).
-  if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) return null;
-  const session = await verifySessionToken(sessionSecret(env, ap), cookie);
-  if (!session) return null;
-  const user = await getUser(env, session.uid);
-  if (!user || !user.enabled) return null;
-  return user;
-}
+// Session HMAC key + session resolution live in the shared session module
+// (one requireSession contract across index + all plugins).
+import { sessionSecret, requireSession } from "../session.ts";
 
 /* ---- Register / Login ---- */
 

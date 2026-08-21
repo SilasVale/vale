@@ -1,70 +1,77 @@
 /**
  * Vale gateway plugin registry — DSH/Cordis-style plugin core.
  *
- * Re-exports types from ./types.ts for backward compatibility.
- * New code should import from ./types.ts directly.
- *
  * A plugin is `{ name, deps: [], setup(ctx) }`. setup() registers routes and
- * api entries on the shared context; deps are resolved before setup runs so
- * a plugin can call `ctx.api.<dep>` during its own setup. The whole gateway
- * routes through this registry — index.ts becomes a thin bootstrap that
- * builds the context, registers the plugin list, and dispatches.
+ * api entries on the shared context; deps are resolved by registration order,
+ * so a plugin can call `ctx.api.<dep>` during its own setup (e.g. auth reads
+ * translate's resolveAutoModel). The whole gateway routes through this
+ * registry — index.ts is a thin bootstrap that builds the context, registers
+ * the plugin list, and dispatches.
  *
  * Environment: Cloudflare Workers (JS/TS only). This module is dependency-
  * free — the same shape works in the browser (panel) and the extension.
+ *
+ * (The parallel container.ts/types.ts "lifecycle" implementation was removed:
+ * it was never wired in — its dispatch was a placeholder returning null — and
+ * the duplicated PluginContext type let plugins drift between two contracts.)
  */
 
-// Re-export all types from the types module for backward compatibility
-export type {
-  PluginEnv,
-  PluginHelpers,
-  PluginRoute,
-  PluginListener,
-  PluginContext,
-  Plugin,
-  PluginState,
-  PluginContainer,
-} from "./types.ts";
+/** Workers env bindings — the shape we touch (typed loosely; full bindings live in wrangler config). */
+export type PluginEnv = Record<string, any>;
 
-// Re-export container
-export { createContainer } from "./container.ts";
+/** Response helpers the plugins share (jsonOk/jsonError/readJson/CORS). */
+export interface PluginHelpers {
+  jsonOk: (body: any, headers?: Record<string, string>) => Response;
+  jsonError: (status: number, message: string, code?: string) => Response;
+  readJson: (request: Request) => Promise<any>;
+  CORS_HEADERS: Record<string, string>;
+}
 
-// Re-export built-in plugins
-export { sourceViewerPlugin } from "./built-in/source-viewer.ts";
+/** A registered route: match() decides whether the handler serves it. */
+export interface PluginRoute {
+  match: (method: string, path: string) => boolean;
+  handler: (...args: any[]) => any;
+}
+
+/** Cross-plugin event emitter (fire-and-forget listeners). */
+export type PluginListener = (payload: unknown) => void | Promise<void>;
+
+/** The shared context injected into every plugin's setup(). */
+export interface PluginContext {
+  /** Cloudflare Workers env bindings (null while bootstrapping). */
+  env: PluginEnv | null;
+  /** Cross-cutting utilities (jsonOk, jsonError, readJson, CORS). */
+  helpers: PluginHelpers;
+  /** Registered routes (first-match wins). */
+  routes: PluginRoute[];
+  /** Named capabilities plugins expose to each other (ctx.api.<dep>). */
+  api: Record<string, unknown>;
+  /** Plugin-configurable values (writable in setup). */
+  config: Record<string, unknown>;
+  /** Cross-plugin event bus. */
+  events: Map<string, Set<PluginListener>>;
+}
+
+/** A plugin: declared deps + setup that registers routes/api on the ctx. */
+export interface Plugin {
+  name: string;
+  deps?: string[];
+  setup: (ctx: PluginContext) => void | Promise<void>;
+}
 
 /**
  * Build the shared plugin context. `env` is the Workers env (bindings),
  * `helpers` the cross-cutting utilities.
  */
-import type {
-  PluginEnv,
-  PluginHelpers,
-  PluginContext,
-  PluginListener,
-  PluginRoute,
-  Plugin,
-} from "./types.ts";
-
 export function createPluginContext(env: PluginEnv | null, helpers: PluginHelpers): PluginContext {
-  // Build a minimal container for backward compatibility
-  const routes: PluginRoute[] = [];
-  const ctx: PluginContext = {
+  return {
     env,
     helpers,
-    routes,
+    routes: [],
     api: {},
     config: {},
     events: new Map(),
-    container: {
-      register: () => {},
-      start: async () => {},
-      dispose: async () => {},
-      dispatch: () => null as any,
-      getState: () => "pending",
-      hotReload: async () => {},
-    },
   };
-  return ctx;
 }
 
 /** Register plugins in order; each plugin's setup runs immediately. */

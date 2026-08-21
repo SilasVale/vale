@@ -7,8 +7,9 @@
 // store.js keeps a module-level 24h cache, so every test uses a distinct token/user.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleGateway, scanTopLevelModel, rawWithModel, estimateTokens } from "../src/index.js";
-import { __clearCaches } from "../src/store.js";
+import { handleGateway } from "../src/index.ts";
+import { scanTopLevelModel, rawWithModel, estimateTokens } from "../src/body-scan.ts";
+import { __clearCaches } from "../src/store.ts";
 
 let uidSeq = 0;
 function gwEnv({ keys = {}, breakerOpen = false, trips = null, timeout = 30, usProxy = false, usProxyBase } = {}) {
@@ -96,24 +97,24 @@ const post = (env, token, body, path = "/v1/messages") =>
     new URL(`https://g${path}`),
   );
 
-// ── og models: deepseek-v4-flash native Anthropic passthrough, others translate ──
+// ── og models: ALL route via zen chat/completions (OpenAI translate path) ──
+// (2026-08: OG_NATIVE_ANTHROPIC emptied — zen natively speaks OpenAI format
+// for every model, so the /v1/messages native passthrough is gone.)
 
-test("og/deepseek-v4-flash goes to zen /v1/messages with x-api-key (native Anthropic)", async () => {
+test("og/deepseek-v4-flash goes to zen chat/completions with Bearer (translate path)", async () => {
   const { env, token } = gwEnv();
   let seen;
-  const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+  const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
     post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
   );
-  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/messages");
-  // Native passthrough sends x-api-key (zen's messages endpoint), never Bearer.
-  const apiKey = seen.init.headers.get ? seen.init.headers.get("x-api-key") : seen.init.headers["x-api-key"];
-  assert.equal(apiKey, "sk-og");
+  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
+  // Translate path authenticates with Bearer; no x-api-key on this route.
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
-  assert.equal(auth, null); // no Bearer on the native path
+  assert.equal(auth, "Bearer sk-og");
   const sent = JSON.parse(seen.init.body);
   assert.equal(sent.model, "deepseek-v4-flash"); // og/ prefix stripped
   assert.equal(sent.stream, false);
-  const body = await res.json();
+  const body = await res.json(); // translated back to Anthropic shape
   assert.equal(body.type, "message");
   assert.equal(body.content[0].text, "ok");
 });
@@ -232,14 +233,14 @@ test("US_PROXY on: ds/ goes through the proxy passthrough", async () => {
   assert.equal(res.status, 200);
 });
 
-test("US_PROXY off (default): flash keeps native direct passthrough", async () => {
+test("US_PROXY off (default): flash goes direct via chat/completions", async () => {
   __clearCaches(); // 24h settings cache would poison the switch test
   const { env, token } = gwEnv(); // no settings:US_PROXY key
   let seen;
-  await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
+  await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
     post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
   );
-  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/messages");
+  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
 });
 
 test("og/mimo-v2.5 keeps the translate path (chat/completions, Anthropic JSON out)", async () => {
@@ -259,7 +260,7 @@ test("og/mimo-v2.5 keeps the translate path (chat/completions, Anthropic JSON ou
   assert.equal(body.content[0].text, "ok");
 });
 
-test("og native: image request forwards the preprocessed body (described, no raw image)", async () => {
+test("og image request forwards the preprocessed body (described, no raw image)", async () => {
   const { env, token } = gwEnv();
   const calls = [];
   await withFetch(async (url, init) => {
@@ -275,11 +276,11 @@ test("og native: image request forwards the preprocessed body (described, no raw
       messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGk=" } }] }],
     }),
   );
-  assert.equal(calls.length, 2); // describe + native main
+  assert.equal(calls.length, 2); // describe + main
   const main = calls[1];
-  assert.equal(main.url, "https://opencode.ai/zen/go/v1/messages");
-  const apiKey = main.headers.get ? main.headers.get("x-api-key") : main.headers["x-api-key"];
-  assert.equal(apiKey, "sk-og");
+  assert.equal(main.url, "https://opencode.ai/zen/go/v1/chat/completions");
+  const auth = main.headers.get ? main.headers.get("authorization") : main.headers.Authorization;
+  assert.equal(auth, "Bearer sk-og");
   const content = main.body.messages[0].content;
   assert.ok(content.every((b) => b.type !== "image"), "image must be described before native passthrough");
   assert.ok(content.some((b) => b.type === "text" && b.text.includes("a screenshot")), "described text present");

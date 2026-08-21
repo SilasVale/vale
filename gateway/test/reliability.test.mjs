@@ -12,11 +12,10 @@ import {
   ogTimeoutMs,
   passthroughTimeoutMs,
   upstreamTimeoutMs,
-  estimateTokens,
   BreakerDO,
-  toAnthropicResponse,
-  AnthropicStreamEncoder,
-} from "../src/index.js";
+} from "../src/reliability.ts";
+import { estimateTokens } from "../src/body-scan.ts";
+import { toAnthropicResponse, AnthropicStreamEncoder } from "../src/anthropic-translate.ts";
 
 const ok = (status = 200, body = {}) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 // A fetch that hangs until the caller's AbortController fires — like a real
@@ -254,7 +253,7 @@ test("stream encoder: PARALLEL tool calls each get their own block, args not con
 // ── streamOgToAnthropic: upstream dies mid-stream → graceful close ──
 
 test("stream: upstream throw closes the stream gracefully (no hang)", async () => {
-  const { streamOgToAnthropic } = await import("../src/anthropic-translate.js");
+  const { streamOgToAnthropic } = await import("../src/anthropic-translate.ts");
   // A body whose reader.read() throws once.
   const failing = new ReadableStream({
     start(controller) { controller.error(new Error("upstream died")); },

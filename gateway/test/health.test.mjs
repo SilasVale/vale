@@ -2,8 +2,9 @@
 // breaker and fetch.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, resolveAutoModel, valeProbe } from "../src/index.js";
-import { __clearDegradedCache } from "../src/reliability.js";
+import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, valeProbe } from "../src/index.ts";
+import { resolveAutoModel } from "../src/plugins/translate.ts";
+import { __clearDegradedCache } from "../src/reliability.ts";
 
 // The in-isolate breaker cache is shared across tests in this file — clear it
 // before each so a test that flipped open/closed doesn't poison the next.
@@ -109,14 +110,14 @@ test("valeProbe: og with open breaker short-circuits, no upstream call", async (
   assert.equal(body.detail, "circuit open");
 });
 
-test("valeProbe: og native model probes zen /v1/messages with x-api-key", async () => {
+test("valeProbe: og flash probes zen chat/completions with Bearer (translate path)", async () => {
   let seen;
   const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response("{}", { status: 200 }); }, () =>
     valeProbe(keyedEnv, "og/deepseek-v4-flash"),
   );
-  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/messages");
-  const apiKey = seen.init.headers.get ? seen.init.headers.get("x-api-key") : seen.init.headers["x-api-key"];
-  assert.equal(apiKey, "sk-og");
+  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-og");
   assert.equal(JSON.parse(seen.init.body).model, "deepseek-v4-flash");
   const body = await res.json();
   assert.equal(body.ok, true);
