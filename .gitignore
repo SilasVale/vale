@@ -1,1 +1,6 @@
 .mcp.json
+.wrangler/
+nohup.out
+.claude/
+gateway/public_backup/
+屏幕截图*.png

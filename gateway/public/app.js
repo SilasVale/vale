@@ -393,7 +393,7 @@
         <div class="key-actions">
           <button class="btn-primary btn-mini" data-act="edit">${t("btn.edit")}</button>
           <button class="btn-ghost btn-mini" data-act="test">${t("btn.test")}</button>
-          ${name === "OPENROUTER_API_KEY" ? `<button class="btn-ghost btn-mini" data-act="usage">${t("btn.usage")}</button>` : ""}
+          ${name === "OPENROUTER_API_KEY" || name === "OPENCODE_GO_API_KEY" ? `<button class="btn-ghost btn-mini" data-act="usage">${t("btn.usage")}</button>` : ""}
           <button class="btn-danger btn-mini" data-act="clear">${t("btn.clear")}</button>
         </div>
         <div data-edit hidden>
@@ -477,9 +477,24 @@
     const money = (v) => typeof v === "number" && Number.isFinite(v) ? `$${v.toFixed(4)}` : t("key.usageUnavailable");
     const parts = [];
     if (d.label) parts.push(`${t("key.usageAccount")}: ${d.label}`);
-    parts.push(`${t("key.usageUsed")}: ${money(d.usage)}`);
-    parts.push(`${t("key.usageLimit")}: ${d.limit === null ? t("key.usageUnlimited") : money(d.limit)}`);
-    if (typeof d.usage === "number" && typeof d.limit === "number") parts.push(`${t("key.usageRemaining")}: ${money(Math.max(0, d.limit - d.usage))}`);
+    // OpenCode Go multi-window response
+    if (d.windows && typeof d.windows === "object") {
+      const winLabels = { "5h": "5h", weekly: "周", monthly: "月" };
+      for (const [wk, wv] of Object.entries(d.windows)) {
+        const label = winLabels[wk] || wk;
+        const pct = typeof wv.used === "number" && typeof wv.limit === "number" && wv.limit > 0
+          ? ` ${Math.round(wv.used / wv.limit * 100)}%` : "";
+        const remain = typeof wv.remaining === "number" ? ` · ${t("key.usageRemaining")}: ${money(wv.remaining)}` : "";
+        const reset = wv.resetAt ? ` · ${wv.resetAt}` : "";
+        parts.push(`${label}: ${money(wv.used)} / ${wv.limit === null ? t("key.usageUnlimited") : money(wv.limit)}${pct}${remain}${reset}`);
+      }
+    } else {
+      // Single-value response (OpenRouter / flat OpenCode Go)
+      parts.push(`${t("key.usageUsed")}: ${money(d.usage)}`);
+      parts.push(`${t("key.usageLimit")}: ${d.limit === null ? t("key.usageUnlimited") : money(d.limit)}`);
+      if (typeof d.usage === "number" && typeof d.limit === "number") parts.push(`${t("key.usageRemaining")}: ${money(Math.max(0, d.limit - d.usage))}`);
+      if (typeof d.balance === "number") parts.push(`余额: ${money(d.balance)}`);
+    }
     if (d.rateLimit?.limit != null) parts.push(`${t("key.usageRateLimit")}: ${d.rateLimit.limit}${d.rateLimit.interval ? `/${d.rateLimit.interval}` : ""}`);
     box.textContent = parts.join(" · ");
   }

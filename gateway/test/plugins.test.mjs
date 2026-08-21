@@ -202,3 +202,84 @@ test("reset-password: too-short new password → 400", async () => {
   const res = await apiFetch(env, "/api/auth/reset-password", { body: JSON.stringify({ adminKey: "ADMIN_KEY_123", newPassword: "short" }) });
   assert.equal(res.status, 400);
 });
+
+test("OpenRouter usage: authenticated request normalizes account data", async () => {
+  __clearCaches();
+  const env = makeEnv();
+  await env.KEYS.put("ukeys:admin", JSON.stringify({ OPENROUTER_API_KEY: "or-secret" }));
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  const originalFetch = globalThis.fetch;
+  let called;
+  globalThis.fetch = async (url, init) => {
+    called = { url, init };
+    return new Response(JSON.stringify({ data: {
+      label: "admin@example.com",
+      usage: 1.25,
+      limit: 10,
+      is_free_tier: false,
+      rate_limit: { limit: 200, interval: "1s" },
+      unrelated: "must not leak",
+    } }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const req = new Request("https://x/api/me/keys/usage", {
+      method: "POST",
+      headers: { cookie: `ag_session=${cookie}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "OPENROUTER_API_KEY" }),
+    });
+    const res = await worker.fetch(req, env);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {
+      ok: true,
+      name: "OPENROUTER_API_KEY",
+      status: 200,
+      label: "admin@example.com",
+      usage: 1.25,
+      limit: 10,
+      isFreeTier: false,
+      rateLimit: { limit: 200, interval: "1s" },
+    });
+    assert.equal(called.url, "https://openrouter.ai/api/v1/auth/key");
+    assert.equal(called.init.headers.Authorization, "Bearer or-secret");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("OpenRouter usage: no session → 401 and invalid provider → 400", async () => {
+  __clearCaches();
+  const env = makeEnv();
+  const unauth = await apiFetch(env, "/api/me/keys/usage", { body: JSON.stringify({ name: "OPENROUTER_API_KEY" }) });
+  assert.equal(unauth.status, 401);
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  const req = new Request("https://x/api/me/keys/usage", {
+    method: "POST",
+    headers: { cookie: `ag_session=${cookie}`, "content-type": "application/json" },
+    body: JSON.stringify({ name: "DEEPSEEK_API_KEY" }),
+  });
+  const bad = await worker.fetch(req, env);
+  assert.equal(bad.status, 400);
+});
+
+test("OpenRouter usage: missing key and upstream failure are safe", async () => {
+  __clearCaches();
+  const env = makeEnv();
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  const request = () => new Request("https://x/api/me/keys/usage", {
+    method: "POST",
+    headers: { cookie: `ag_session=${cookie}`, "content-type": "application/json" },
+    body: JSON.stringify({ name: "OPENROUTER_API_KEY" }),
+  });
+  const missing = await worker.fetch(request(), env);
+  assert.deepEqual(await missing.json(), { ok: false, name: "OPENROUTER_API_KEY", detail: "Key not configured" });
+  await env.KEYS.put("ukeys:admin", JSON.stringify({ OPENROUTER_API_KEY: "or-secret" }));
+  __clearCaches();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("provider secret", { status: 429 });
+  try {
+    const failed = await worker.fetch(request(), env);
+    assert.deepEqual(await failed.json(), { ok: false, name: "OPENROUTER_API_KEY", status: 429, detail: "Upstream 429" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -20,6 +20,8 @@ const DEFAULT_MODELS = [
   { id: "qw/qwen3.8-max-preview", object: "model", owned_by: "qwen" },
   { id: "og/deepseek-v4-flash", object: "model", owned_by: "opencode" },
   { id: "og/minimax-m3", object: "model", owned_by: "opencode" },
+  { id: "og/mimo-v2.5", object: "model", owned_by: "opencode" },
+  { id: "og/ox-alpha-free", object: "model", owned_by: "opencode" },
   { id: "or/openai/gpt-5.6-luna:floor[1m]", object: "model", owned_by: "openrouter" },
 ];
 
@@ -282,6 +284,8 @@ test("models: 列出全部模型（含 og/minimax-m3）", async () => {
     const r = await run(["models"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /og\/minimax-m3/);
+    assert.match(r.stdout, /og\/mimo-v2.5/);
+    assert.match(r.stdout, /og\/ox-alpha-free/);
     assert.match(r.stdout, /qw\/qwen3.8-max-preview/);
     assert.match(r.stdout, /ds\/deepseek-v4-flash/);
   } finally { server.close(); }
@@ -296,6 +300,19 @@ test("use og/minimax-m3: 白名单内的完整模型名 → 切换", async () =>
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
     assert.equal(after.env.ANTHROPIC_MODEL, "og/minimax-m3");
     assert.equal(after.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "og/minimax-m3");
+    assert.equal(after.env.ANTHROPIC_BASE_URL, "https://api.saisi.online");
+  } finally { server.close(); }
+});
+
+test("use og/mimo-v2.5: 白名单内的完整模型名 → 切换", async () => {
+  const { server, port } = await makeGateway();
+  try {
+    const { file } = makeSettings();
+    const r = await run(["use", "og/mimo-v2.5"], file, gw(port));
+    assert.equal(r.status, 0, r.stderr);
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after.env.ANTHROPIC_MODEL, "og/mimo-v2.5");
+    assert.equal(after.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "og/mimo-v2.5");
     assert.equal(after.env.ANTHROPIC_BASE_URL, "https://api.saisi.online");
   } finally { server.close(); }
 });
