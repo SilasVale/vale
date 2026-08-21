@@ -29,12 +29,12 @@
   --text-faint: #adb5bd;
 
   /* Vale brand — violet (matches the glossy bolt favicon) */
-  --accent: #7048e8;
-  --accent-light: #f1ebff;
-  --accent-hover: #6741d9;
-  --accent-dark: #5f3dc4;
-  --accent-ring: rgba(134, 59, 255, 0.18);
-  --accent-shadow: rgba(112, 72, 232, 0.35);
+  --accent: #d9480f;
+  --accent-light: #ffefe5;
+  --accent-hover: #bf3a0a;
+  --accent-dark: #a63308;
+  --accent-ring: rgba(232, 89, 12, 0.18);
+  --accent-shadow: rgba(217, 72, 15, 0.3);
 
   /* States */
   --success: #2f9e44;
@@ -74,11 +74,11 @@ body[data-theme="dark"] {
   --text-muted: #6b6e76;
   --text-faint: #46494f;
 
-  --accent: #9775fa;
-  --accent-light: #2e2856;
-  --accent-hover: #b3a3ff;
-  --accent-dark: #7952f0;
-  --accent-ring: rgba(151, 117, 250, 0.22);
+  --accent: #ffa94d;
+  --accent-light: #3d2817;
+  --accent-hover: #ffc078;
+  --accent-dark: #e8590c;
+  --accent-ring: rgba(255, 169, 77, 0.22);
   --accent-shadow: rgba(0, 0, 0, 0.45);
 
   --success: #51cf66;
@@ -763,7 +763,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 
 .lane-og .lane-port { background: var(--accent); }
 .lane-ds .lane-port { background: #4f6bed; }
-.lane-or .lane-port { background: #b45309; }
+.lane-or .lane-port { background: #7048e8; }
 .lane-qw .lane-port { background: #c2255c; }
 .lane-def .lane-port { background: var(--text-muted); }
 
