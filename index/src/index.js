@@ -5,8 +5,11 @@
 // (admin-only). This page only distributes the installer + setup scripts and
 // points users to the console. The console URL is set per-deployment via the
 // CONSOLE_URL var (no production domain is hardcoded here).
+//
+// Design aligned with DeepSeek Harness (DSH) web GUI: dark-first design
+// system, --dsw-alias-* tokens, 12px radius cards, layered shadows.
 
-const FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231d1d1f'/%3E%3Cpath d='M20 16 L32 48 L44 16' fill='none' stroke='%23ffffff' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
+const FAVICON = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f1115'/%3E%3Cpath d='M20 16 L32 48 L44 16' fill='none' stroke='%23f9fafb' stroke-width='7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
 
 const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
 <html lang="en">
@@ -17,97 +20,285 @@ const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
 <link rel="icon" href="${FAVICON}">
 <style>
   :root {
-    /* Canonical Vale tokens (match panel.css / console style.css — the
-       previous block renamed --accent-ink→--accent-hover, --font→--sans,
-       --font-mono→--mono and held the shadow-lg value under --shadow, so
-       cross-surface token diffs misled designers). */
-    --bg: #f5f5f7;
-    --surface: #ffffff;
-    --surface-glass: rgba(255,255,255,0.72);
-    --line: rgba(0,0,0,0.08);
-    --line-strong: rgba(0,0,0,0.14);
-    --ink: #1d1d1f;
-    --muted: #6e6e73;
-    --faint: #6e6e73;   /* darkened #86868b→#6e6e73: 3.62→5.07:1 on white (AA) */
-    --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
-    --accent-ink: #0b7a6e;
-    --accent-soft: #e7f5f2;
-    --focus-ring-soft: rgba(11, 122, 110, 0.14);
-    --danger: #dc2626;
-    --radius: 14px;
-    --radius-sm: 10px;
-    --radius-lg: 20px;
-    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-    --shadow-lg: 0 12px 32px rgba(0,0,0,0.12);
-    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-    --font: -apple-system, "SF Pro Text", "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    /* DSH-aligned design tokens — light theme */
+    --dsw-alias-bg-base: #ffffff;
+    --dsw-alias-bg-layer-1: #f7f8f9;
+    --dsw-alias-bg-layer-2: #f0f1f3;
+    --dsw-alias-bg-mask-1: rgba(0,0,0,0.4);
+    --dsw-alias-label-primary: #0f1115;
+    --dsw-alias-label-secondary: #5f666b;
+    --dsw-alias-label-tertiary: #81858c;
+    --dsw-alias-label-dimmed: #b0b4ba;
+    --dsw-alias-border-l1: rgba(0,0,0,0.06);
+    --dsw-alias-border-l2: rgba(0,0,0,0.10);
+    --dsw-alias-border-l3: rgba(0,0,0,0.14);
+    --dsw-alias-brand-primary: #4d6bfe;
+    --dsw-alias-button-primary-fill: #0f1115;
+    --dsw-alias-button-primary-hover: #2a2d33;
+    --dsw-alias-button-primary-foreground: #ffffff;
+    --dsw-alias-state-business-primary: #4d6bfe;
+    --dsw-alias-state-success-primary: #22c55e;
+    --dsw-alias-state-error-primary: #ef4444;
+    --dsw-alias-state-warn-primary: #f59e0b;
+    --dsw-alias-interactive-bg-hover: rgba(0,0,0,0.04);
+    --dsw-alias-interactive-bg-active: rgba(0,0,0,0.06);
+    --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.06);
+    --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.08);
+    --dsw-shadow-lv3: 0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06);
+    --ds-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --ds-font-family-code: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, Courier, "PingFang SC", "Microsoft YaHei";
+    --ds-transition-duration: 0.15s;
+    --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   }
+
+  body[data-ds-dark-theme] {
+    --dsw-alias-bg-base: #151517;
+    --dsw-alias-bg-layer-1: #1c1c1f;
+    --dsw-alias-bg-layer-2: #232326;
+    --dsw-alias-bg-mask-1: rgba(0,0,0,0.6);
+    --dsw-alias-label-primary: #f9fafb;
+    --dsw-alias-label-secondary: #cfd3d6;
+    --dsw-alias-label-tertiary: #adb2b8;
+    --dsw-alias-label-dimmed: #6b7078;
+    --dsw-alias-border-l1: rgba(255,255,255,0.06);
+    --dsw-alias-border-l2: rgba(255,255,255,0.10);
+    --dsw-alias-border-l3: rgba(255,255,255,0.14);
+    --dsw-alias-brand-primary: #6b8aff;
+    --dsw-alias-button-primary-fill: #f9fafb;
+    --dsw-alias-button-primary-hover: #e5e7eb;
+    --dsw-alias-button-primary-foreground: #0f1115;
+    --dsw-alias-state-business-primary: #6b8aff;
+    --dsw-alias-interactive-bg-hover: rgba(255,255,255,0.06);
+    --dsw-alias-interactive-bg-active: rgba(255,255,255,0.10);
+    --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.24);
+    --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.32);
+    --dsw-shadow-lv3: 0 8px 24px rgba(0,0,0,0.40), 0 2px 6px rgba(0,0,0,0.24);
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { -webkit-text-size-adjust: 100%; }
-  body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font); min-height: 100vh; }
+  body {
+    background: var(--dsw-alias-bg-base);
+    color: var(--dsw-alias-label-primary);
+    font: 14px/1.5 var(--ds-font-family);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background var(--ds-transition-duration) var(--ds-ease-in-out),
+                color var(--ds-transition-duration) var(--ds-ease-in-out);
+  }
 
-  .wrap { max-width: 760px; margin: 0 auto; padding: 56px 24px 44px; }
-  .brand { display: flex; align-items: center; gap: 14px; }
-  .brand .mark { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px;
-                 border-radius: var(--radius-sm); background: var(--ink); color: #fff; font-size: 24px; font-weight: 700; }
-  .brand .name { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
-  .brand .tag { font: 12px/1 var(--font-mono); color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
-  .lede { color: var(--muted); margin-top: 12px; font-size: 14px; max-width: 640px; }
-  .lede a { color: var(--accent); }
+  /* ── Layout ─────────────────────────────────────── */
+  .app { display: flex; flex-direction: column; min-height: 100vh; }
+  .main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 24px; }
+  .card { width: 100%; max-width: 440px; }
 
-  .install { display: flex; align-items: center; gap: 10px; margin-top: 24px; flex-wrap: wrap; }
-  .install-btn { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff;
-                 text-decoration: none; font-size: 14px; font-weight: 600; padding: 10px 18px; border-radius: var(--radius-sm);
-                 transition: background .15s ease, transform .15s ease; }
-  .install-btn:hover { background: var(--accent-ink); transform: translateY(-1px); }
-  .install-btn:focus-visible { box-shadow: 0 0 0 3px var(--focus-ring-soft); outline: none; } /* unified .14 focus ring */
-  .install-note { color: var(--faint); font-size: 12px; }
+  /* ── Brand ──────────────────────────────────────── */
+  .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+  .brand-mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; border-radius: 10px;
+    background: var(--dsw-alias-button-primary-fill);
+    color: var(--dsw-alias-button-primary-foreground);
+    font: 600 18px/1 var(--ds-font-family);
+    box-shadow: var(--dsw-shadow-lv1);
+  }
+  .brand-text { display: flex; flex-direction: column; gap: 2px; }
+  .brand-name { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: var(--dsw-alias-label-primary); }
+  .brand-tag {
+    font: 11px/1 var(--ds-font-family-code);
+    color: var(--dsw-alias-label-tertiary);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
 
-  .steps { margin-top: 32px; display: flex; flex-direction: column; gap: 12px; }
-  .step { display: flex; gap: 14px; align-items: flex-start; background: var(--surface-glass);
-          backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
-          border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px 16px;
-          box-shadow: var(--shadow-lg); } /* glass card: 20px + shadow-lg like other surfaces */
-  .step .n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
-             color: #fff; display: flex; align-items: center; justify-content: center;
-             font: 700 13px/1 var(--font); margin-top: 1px; }
-  .step .body { color: var(--ink); font-size: 14px; }
-  .step code { font: 12px/1.5 var(--font-mono); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+  /* ── Description ────────────────────────────────── */
+  .desc {
+    color: var(--dsw-alias-label-secondary);
+    font-size: 14px;
+    line-height: 1.6;
+    margin-bottom: 24px;
+  }
+  .desc a {
+    color: var(--dsw-alias-state-business-primary);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out);
+  }
+  .desc a:hover { border-bottom-color: var(--dsw-alias-state-business-primary); }
 
-  .mono { font-family: var(--font-mono); }
+  /* ── Primary action ─────────────────────────────── */
+  .actions { display: flex; flex-direction: column; gap: 12px; margin-bottom: 28px; }
+  .btn-primary {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: 40px; padding: 0 20px;
+    background: var(--dsw-alias-button-primary-fill);
+    color: var(--dsw-alias-button-primary-foreground);
+    border: none; border-radius: 20px;
+    font: 500 14px/1 var(--ds-font-family);
+    cursor: pointer; text-decoration: none;
+    transition: background var(--ds-transition-duration) var(--ds-ease-in-out),
+                transform var(--ds-transition-duration) var(--ds-ease-in-out),
+                box-shadow var(--ds-transition-duration) var(--ds-ease-in-out);
+    box-shadow: var(--dsw-shadow-lv1);
+  }
+  .btn-primary:hover {
+    background: var(--dsw-alias-button-primary-hover);
+    transform: translateY(-1px);
+    box-shadow: var(--dsw-shadow-lv2);
+  }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:focus-visible {
+    outline: 2px solid var(--dsw-alias-state-business-primary);
+    outline-offset: 2px;
+  }
+  .btn-primary svg { width: 16px; height: 16px; flex: none; }
+  .hint { font-size: 12px; color: var(--dsw-alias-label-tertiary); line-height: 1.5; }
 
-  footer { max-width: 760px; margin: 0 auto; padding: 0 24px 44px; color: var(--faint); font-size: 12px;
-           display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  /* ── Steps ──────────────────────────────────────── */
+  .steps { display: flex; flex-direction: column; gap: 2px; }
+  .step {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
+  }
+  .step:hover { background: var(--dsw-alias-interactive-bg-hover); }
+  .step-num {
+    flex: none; width: 22px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--dsw-alias-bg-layer-2);
+    color: var(--dsw-alias-label-secondary);
+    font: 500 12px/1 var(--ds-font-family);
+    border: 1px solid var(--dsw-alias-border-l2);
+    margin-top: 1px;
+  }
+  .step-body { font-size: 13px; line-height: 1.55; color: var(--dsw-alias-label-secondary); }
+  .step-body a {
+    color: var(--dsw-alias-state-business-primary);
+    text-decoration: none;
+  }
+  .step-body a:hover { text-decoration: underline; }
+  .step-body code {
+    font: 12px/1.4 var(--ds-font-family-code);
+    background: var(--dsw-alias-bg-layer-1);
+    border: 1px solid var(--dsw-alias-border-l1);
+    border-radius: 5px;
+    padding: 1px 5px;
+    color: var(--dsw-alias-label-primary);
+  }
+
+  /* ── Footer ─────────────────────────────────────── */
+  footer {
+    padding: 16px 24px;
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+    border-top: 1px solid var(--dsw-alias-border-l1);
+    font-size: 12px; color: var(--dsw-alias-label-tertiary);
+  }
+  footer .mono { font-family: var(--ds-font-family-code); }
+
+  /* ── Theme toggle ───────────────────────────────── */
+  .theme-toggle {
+    position: fixed; top: 16px; right: 16px; z-index: 10;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    background: var(--dsw-alias-bg-layer-1);
+    border: 1px solid var(--dsw-alias-border-l2);
+    border-radius: 8px;
+    color: var(--dsw-alias-label-secondary);
+    cursor: pointer;
+    transition: background var(--ds-transition-duration) var(--ds-ease-in-out),
+                color var(--ds-transition-duration) var(--ds-ease-in-out);
+  }
+  .theme-toggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+  .theme-toggle svg { width: 16px; height: 16px; }
+  .theme-toggle .icon-sun { display: none; }
+  body[data-ds-dark-theme] .theme-toggle .icon-moon { display: none; }
+  body[data-ds-dark-theme] .theme-toggle .icon-sun { display: block; }
+
+  /* ── Responsive ─────────────────────────────────── */
+  @media (max-width: 480px) {
+    .main { padding: 32px 16px; }
+    footer { padding: 12px 16px; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="brand">
-    <span class="mark">V</span>
-    <div>
-      <div class="name">Vale Agent</div>
-      <div class="tag">device agent</div>
+<script>
+// DSH-style theme init: respect system preference, allow manual toggle
+(function() {
+  var stored = localStorage.getItem('vale-theme');
+  var systemDark = stored === null
+    && typeof matchMedia !== 'undefined'
+    && matchMedia('(prefers-color-scheme: dark)').matches;
+  var dark = stored === 'dark' || (stored === null && systemDark);
+  if (dark) document.body.setAttribute('data-ds-dark-theme', '');
+})();
+</script>
+
+<div class="app">
+  <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+    <svg class="icon-moon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.36 10.06A6 6 0 0 1 5.94 2.64 6 6 0 1 0 13.36 10.06Z"/></svg>
+    <svg class="icon-sun" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41"/></svg>
+  </button>
+
+  <main class="main">
+    <div class="card">
+      <div class="brand">
+        <span class="brand-mark">V</span>
+        <div class="brand-text">
+          <div class="brand-name">Vale Agent</div>
+          <div class="brand-tag">device agent</div>
+        </div>
+      </div>
+
+      <p class="desc">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel and managed from the <a href="${consoleUrl}">Vale console</a>.</p>
+
+      <div class="actions">
+        <a class="btn-primary" href="${installerUrl}" download>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7.5 8 11l3.5-3.5M2 13h12"/></svg>
+          Download installer
+        </a>
+        <span class="hint">Run on the Windows machine connected to the device. Requires admin rights.</span>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">Download and run the installer on Windows. It automates Cloudflare auth, creates a tunnel, and registers auto-start.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">The installer finishes by showing the panel URL and token. Copy these for the next step.</div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">Log in to the <a href="${consoleUrl}">Vale console</a> → Devices, add this device (name / host / token) — or use a registration key to auto-register.</div>
+        </div>
+      </div>
     </div>
-  </div>
-  <p class="lede">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel at its own subdomain and is managed from the <a href="${consoleUrl}">Vale console</a> (admin login).</p>
+  </main>
 
-  <div class="install">
-    <a class="install-btn" href="${installerUrl}" download>Download installer ↓</a>
-    <span class="install-note">On the Windows machine connected to the device, download and run the installer (pick a directory; it installs a tray icon).</span>
-  </div>
-
-  <div class="steps">
-    <div class="step"><div class="n">1</div><div class="body">Download the installer and double-click it on Windows (admin rights required).</div></div>
-    <div class="step"><div class="n">2</div><div class="body">The install automates Cloudflare auth, creates a tunnel and registers auto-start; it finishes by showing the panel URL and token.</div></div>
-    <div class="step"><div class="n">3</div><div class="body">Log in to the <a href="${consoleUrl}">Vale console</a> → Devices, add this device (name / host / token) — or use a registration key to auto-register — then copy the MCP config or open the panel through the console.</div></div>
-  </div>
+  <footer>
+    <span>Vale Agent — device access for AI agents</span>
+    <span class="mono" id="foot-time"></span>
+  </footer>
 </div>
-<footer>
-  <span>Vale Agent — device access for AI agents</span>
-  <span class="mono" id="foot-time"></span>
-</footer>
+
 <script>
 document.getElementById('foot-time').textContent = new Date().toISOString().replace('T',' ').slice(0,19) + ' UTC';
+
+function toggleTheme() {
+  var isDark = document.body.hasAttribute('data-ds-dark-theme');
+  if (isDark) {
+    document.body.removeAttribute('data-ds-dark-theme');
+    localStorage.setItem('vale-theme', 'light');
+  } else {
+    document.body.setAttribute('data-ds-dark-theme', '');
+    localStorage.setItem('vale-theme', 'dark');
+  }
+}
 </script>
 </body>
 </html>`;

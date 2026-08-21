@@ -83,12 +83,32 @@ export default function Keys() {
           typeof v === "number" && Number.isFinite(v) ? `$${v.toFixed(4)}` : t("key.usageUnavailable");
         const parts: string[] = [];
         if (data.label) parts.push(`${t("key.usageAccount")}: ${data.label}`);
-        parts.push(`${t("key.usageUsed")}: ${money(data.usage)}`);
-        parts.push(
-          `${t("key.usageLimit")}: ${data.limit === null ? t("key.usageUnlimited") : money(data.limit)}`,
-        );
-        if (typeof data.usage === "number" && typeof data.limit === "number")
-          parts.push(`${t("key.usageRemaining")}: ${money(Math.max(0, data.limit - data.usage))}`);
+        // OpenCode Go multi-window response
+        if (data.windows && typeof data.windows === "object") {
+          const winLabels: Record<string, string> = { "5h": "5h", weekly: "周", monthly: "月" };
+          for (const [wk, wv] of Object.entries(data.windows) as [string, any][]) {
+            const label = winLabels[wk] || wk;
+            const pct =
+              typeof wv.used === "number" && typeof wv.limit === "number" && wv.limit > 0
+                ? ` ${Math.round((wv.used / wv.limit) * 100)}%`
+                : "";
+            const remain =
+              typeof wv.remaining === "number" ? ` · ${t("key.usageRemaining")}: ${money(wv.remaining)}` : "";
+            const reset = wv.resetAt ? ` · ${wv.resetAt}` : "";
+            parts.push(
+              `${label}: ${money(wv.used)} / ${wv.limit === null ? t("key.usageUnlimited") : money(wv.limit)}${pct}${remain}${reset}`,
+            );
+          }
+        } else {
+          // Single-value response (OpenRouter / flat OpenCode Go)
+          parts.push(`${t("key.usageUsed")}: ${money(data.usage)}`);
+          parts.push(
+            `${t("key.usageLimit")}: ${data.limit === null ? t("key.usageUnlimited") : money(data.limit)}`,
+          );
+          if (typeof data.usage === "number" && typeof data.limit === "number")
+            parts.push(`${t("key.usageRemaining")}: ${money(Math.max(0, data.limit - data.usage))}`);
+          if (typeof data.balance === "number") parts.push(`余额: ${money(data.balance)}`);
+        }
         if (data.rateLimit?.limit != null)
           parts.push(
             `${t("key.usageRateLimit")}: ${data.rateLimit.limit}${data.rateLimit.interval ? `/${data.rateLimit.interval}` : ""}`,
@@ -162,7 +182,7 @@ export default function Keys() {
                 >
                   {testing === name ? t("btn.testing") : t("btn.test")}
                 </button>
-                {name === "OPENROUTER_API_KEY" && (
+                {(name === "OPENROUTER_API_KEY" || name === "OPENCODE_GO_API_KEY") && (
                   <button
                     className="btn-ghost btn-mini"
                     disabled={usageLoading === name}

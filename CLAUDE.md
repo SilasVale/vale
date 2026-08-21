@@ -22,3 +22,17 @@ Subprojects have their own build docs:
 - **Subproject changes**: verify inside that subdir (agent: cargo test/clippy/xwin check; gateway/index: wrangler deploy).
 - **Worker name**: the gateway worker is `vale-gate`. If the Cloudflare dashboard still binds the console domain to an old-named worker, rebind it to `vale-gate`.
 - **Design docs**: `gateway/DEVICE-INTEGRATION.md` (device module).
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues for `SilasVale/vale` using the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain layout with a root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.

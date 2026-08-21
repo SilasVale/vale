@@ -343,6 +343,25 @@ async function handleGatewayImpl(
     // so a declaration-only check silently hijacked the user's model on
     // every request (round-46 High). The tool_choice check is the true
     // search intent.
+    // Dedicated search-only requests (DSH's web-search provider et al):
+    // the tools array holds EXACTLY the web_search server tool and no
+    // tool_choice. zen/go then treats the search as optional, the model may
+    // decline, and the response comes back with EMPTY content blocks. A
+    // request whose only tool is web_search exists solely to search, so
+    // inject the force HERE — before the detection below — so the existing
+    // swap machinery (native /v1/messages route incl. the US_PROXY via()
+    // branch) takes over unchanged. The exact-one-tool guard keeps Claude
+    // Code's multi-tool ordinary turns untouched.
+    if (
+      body &&
+      route.kind === "opencode" &&
+      !body.tool_choice &&
+      Array.isArray(body.tools) &&
+      body.tools.length === 1 &&
+      body.tools[0]?.type === "web_search_20250305"
+    ) {
+      body.tool_choice = { type: "tool", name: "web_search" };
+    }
     const webSearchToolChoice =
       body?.tool_choice &&
       ((body.tool_choice.type === "tool" && body.tool_choice.name === "web_search") ||
@@ -451,7 +470,14 @@ async function handleGatewayImpl(
       );
     }
     // Body is already OpenAI format — forward as-is with model field swapped.
-    const forwardBody = rawWithModel(rawText, upstreamModel, scanned);
+    let forwardBody = rawWithModel(rawText, upstreamModel, scanned);
+    // zen/go rejects OpenAI's "developer" role with "[1214] Incorrect role
+    // information". Reasoning-effort-aware SDKs switch system→developer when
+    // reasoning_effort is set (the o-series convention). Normalize the role so
+    // effort-carrying requests from DSH & co. pass through unchanged.
+    if (forwardBody.includes('"role":"developer"')) {
+      forwardBody = forwardBody.split('"role":"developer"').join('"role":"system"');
+    }
     const { response: upstream, detail } = await fetchWithRetry(
       route.upstream,
       {
