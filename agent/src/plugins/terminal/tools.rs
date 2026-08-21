@@ -33,6 +33,28 @@ fn jobs_map() -> JobsMap {
     JOBS.get_or_init(|| std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()))).clone()
 }
 
+/// Sessions that existed before the last agent restart (Phase 4). PTYs die
+/// with the process; keeping their metadata lets errors say "this session
+/// existed before the restart" instead of a bare not-found. Capped at 128.
+fn pre_restart_map() -> std::sync::Arc<std::sync::Mutex<HashMap<String, serde_json::Value>>> {
+    static PRE: OnceLock<std::sync::Arc<std::sync::Mutex<HashMap<String, serde_json::Value>>>> =
+        OnceLock::new();
+    PRE.get_or_init(|| {
+        let path = super::log_dir().join("sessions-pre-restart.json");
+        let loaded: HashMap<String, serde_json::Value> = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        std::sync::Arc::new(std::sync::Mutex::new(loaded))
+    }).clone()
+}
+fn persist_pre_restart(map: &HashMap<String, serde_json::Value>) {
+    let path = super::log_dir().join("sessions-pre-restart.json");
+    if let Ok(bytes) = serde_json::to_vec(map) {
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
 pub(super) fn build(
     terminal_mgr: &Arc<TerminalManager>,
     serial_pool: &Arc<SerialPool>,
@@ -119,6 +141,22 @@ fn tool_open(
                     stop_bits,
                 };
                 let (id, _rx) = terminal_mgr.term_open(&req).await?;
+                // Phase 4: persist metadata so post-restart errors can say
+                // "this session existed before the restart" (the PTY itself
+                // dies with the process — only the record survives).
+                {
+                    let map = pre_restart_map();
+                    let mut m = map.lock().unwrap_or_else(|p| p.into_inner());
+                    if m.len() > 128 { m.clear(); }
+                    m.insert(id.clone(), serde_json::json!({
+                        "kind": kind,
+                        "target": req.target,
+                        "opened_unix": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs()).unwrap_or(0),
+                    }));
+                    persist_pre_restart(&m);
+                }
                 // Audit trail: session opened (round-54).
                 logger.log_status(&id, "opened");
                 // Prompt-marker injection (round-54): teach the PTY shell to
@@ -735,8 +773,22 @@ async fn session_lost(mgr: &Arc<TerminalManager>, sid: &str) -> DeviceError {
         open.iter().map(|i| i.id.clone()).collect::<Vec<_>>().join(", ")
     };
     DeviceError::InvalidParams { message: format!(
-        "Session not found: {sid}. Open sessions: [{list}]. Re-open with terminal_open(kind,target) then retry."
+        "Session not found: {sid}.{} Open sessions: [{list}]. Re-open with terminal_open(kind,target) then retry.",
+        pre_restart_context(sid)
     ) }
+}
+
+/// Phase 4: "existed before the last agent restart" context from persisted
+/// metadata — PTYs cannot survive restarts, but the record explains why the
+/// session vanished instead of a bare not-found.
+fn pre_restart_context(sid: &str) -> String {
+    let map = pre_restart_map();
+    let existed = map.lock().unwrap_or_else(|p| p.into_inner()).contains_key(sid);
+    if existed {
+        " This session existed before the last agent restart - PTYs cannot survive restarts.".to_string()
+    } else {
+        String::new()
+    }
 }
 
 // ── Execute ──────────────────────────────────────
