@@ -5,23 +5,15 @@
  * index.js (2026-08-12).
  */
 
-// OpenCode Zen/Go endpoints. deepseek-v4-flash is Anthropic-native on
-// zen/go/v1/messages (announced 2026-08-06) and authenticates with x-api-key
-// (verified 2026-08-10 per handoff 2.5.6: ~54s full response, thinking +
-// answer). Native passthrough forwards the Anthropic stream untouched — no
-// per-chunk OpenAI translation, so no 1102 CPU risk on huge streams. Other og
-// models (minimax-m3, mimo-v2.5) only speak chat/completions and keep the
-// translate path (verified 2026-08-07 with this user's key).
+// OpenCode Zen/Go endpoints. All og/ models (including deepseek-v4-flash)
+// route through /v1/chat/completions (OpenAI format) — zen natively supports
+// OpenAI format for all models. No Anthropic passthrough needed.
 export const VERIFY_PATH: string = "/v1/messages";
 export const OG_ZEN_ANTHROPIC: string = "https://opencode.ai/zen/go" + VERIFY_PATH;
 export const OG_ZEN_CHAT: string = "https://opencode.ai/zen/go/v1/chat/completions";
-// deepseek-v4-flash 走原生 /v1/messages(US_PROXY 关时直连原生,US_PROXY 开时
-// 走 translate chat 代理)。2026-08-11 交错实测:本时段原生直连总耗时最优
-// (10.7-14.4s vs chat 直连 13.8-16.1s);首字节 chat 直连最稳,原生也不差。
-// 时段敏感:之前测过 chat 代理 1.6s 最快——固定路径无法保证长期最优,
-// 控制台 US_PROXY 开关可随时切换。其他 og 模型(minimax/mimo/kimi/glm)
-// 始终走 translate(chat/completions)。
-export const OG_NATIVE_ANTHROPIC: Set<string> = new Set(["deepseek-v4-flash"]);
+// Reserved for future use — currently empty. Models listed here would bypass
+// the OpenAI translate path and use native Anthropic /v1/messages passthrough.
+export const OG_NATIVE_ANTHROPIC: Set<string> = new Set();
 
 export function usProxyBase(env: any): string {
   return env?.US_PROXY_BASE || "https://v.saisi.online";
@@ -32,6 +24,7 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "og/deepseek-v4-flash", owned_by: "opencode" },
   { id: "og/minimax-m3", owned_by: "opencode" },
   { id: "og/mimo-v2.5", owned_by: "opencode" },
+  { id: "og/ox-alpha-free", owned_by: "opencode" },
   // og/ spellings of luna are accepted here and remapped to the or/ channel
   // (translate.ts): zen region-blocks gpt-5.6-luna for CN, OpenRouter's US
   // exit works. Both og/ variants resolve to the same working route.
@@ -49,8 +42,8 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
   {
     prefix: "og/",
     backend: "OpenCode Go",
-    desc: "opencode.ai/zen/go — deepseek-v4-flash native /v1/messages; others chat/completions translation; gpt-5.6-luna auto-routes via OpenRouter US exit (zen region-blocks it)",
-    models: ["deepseek-v4-flash", "minimax-m3", "mimo-v2.5", "gpt-5.6-luna"],
+    desc: "opencode.ai/zen/go — all models via chat/completions (OpenAI format); gpt-5.6-luna auto-routes via OpenRouter US exit (zen region-blocks it)",
+    models: ["deepseek-v4-flash", "minimax-m3", "mimo-v2.5", "ox-alpha-free", "gpt-5.6-luna"],
   },
   {
     prefix: "ds/",
@@ -62,7 +55,12 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "or/",
     backend: "OpenRouter",
     desc: "openrouter.ai — user's own key, proxied via openrouter-proxy",
-    models: ["openai/gpt-5.6-luna:floor[1m]", "z-ai/glm-5.2:free", "stealth/ox-alpha", "deepseek/deepseek-v4-flash-0731"],
+    models: [
+      "openai/gpt-5.6-luna:floor[1m]",
+      "z-ai/glm-5.2:free",
+      "stealth/ox-alpha",
+      "deepseek/deepseek-v4-flash-0731",
+    ],
   },
   {
     prefix: "qw/",
@@ -83,11 +81,13 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "ds", model: "ds/deepseek-v4-flash" },
   { id: "qw", model: "qw/qwen3.8-max-preview" },
   { id: "og", model: "og/deepseek-v4-flash" },
-  // Second og/ route card: gpt-5.6-luna (auto-routes via the OpenRouter US
-  // exit — translate.ts remaps it). Duplicate ids are safe here: buildHealth
-  // checks the og circuit for both and recommended uses find() (first match).
+  // More og/ route cards: gpt-5.6-luna (auto-routes via the OpenRouter US
+  // exit — translate.ts remaps it), mimo, ox-alpha. Duplicate ids are safe
+  // here: buildHealth checks the og circuit for each and recommended uses
+  // find() (first match).
   { id: "og", model: "og/gpt-5.6-luna" },
   { id: "og", model: "og/mimo-v2.5" },
+  { id: "og", model: "og/ox-alpha-free" },
   { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
   { id: "or", model: "or/z-ai/glm-5.2:free" },
   { id: "or", model: "or/stealth/ox-alpha" },

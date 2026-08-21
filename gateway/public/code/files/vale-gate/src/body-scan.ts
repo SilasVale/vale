@@ -21,7 +21,11 @@
  * (round-55: the handler already scanned for routing; re-scanning a multi-MB
  * body just to swap the model doubled the CPU).
  */
-export function rawWithModel(raw: string, newModel: any, scanned?: { valueStart: number; valueEnd: number }) {
+export function rawWithModel(
+  raw: string,
+  newModel: any,
+  scanned?: { valueStart: number; valueEnd: number },
+) {
   const { valueStart, valueEnd } = scanned || scanTopLevelModel(raw);
   if (valueStart < 0 || valueEnd <= valueStart) return raw;
   return raw.slice(0, valueStart) + JSON.stringify(newModel) + raw.slice(valueEnd);
@@ -39,7 +43,10 @@ export function rawWithTopLevelField(raw: string, field: string, value: unknown)
   return before + separator + JSON.stringify(field) + ":" + encoded + raw.slice(close);
 }
 
-function scanTopLevelField(raw: string, field: string): { valueStart: number; valueEnd: number } | null {
+function scanTopLevelField(
+  raw: string,
+  field: string,
+): { valueStart: number; valueEnd: number } | null {
   let depth = 0;
   let i = 0;
   while (i < raw.length) {
@@ -60,10 +67,17 @@ function scanTopLevelField(raw: string, field: string): { valueStart: number; va
           const c = raw[i];
           if (inString) {
             if (c === "\\") i += 2;
-            else { if (c === '"') inString = false; i++; }
+            else {
+              if (c === '"') inString = false;
+              i++;
+            }
             continue;
           }
-          if (c === '"') { inString = true; i++; continue; }
+          if (c === '"') {
+            inString = true;
+            i++;
+            continue;
+          }
           if (c === "{" || c === "[") braces++;
           else if (c === "}" || c === "]") {
             if (braces === 0) break;
@@ -72,7 +86,7 @@ function scanTopLevelField(raw: string, field: string): { valueStart: number; va
           i++;
         }
         let valueEnd = i;
-        while (valueEnd > valueStart && /\s/.test(raw[valueEnd - 1])) valueEnd--;
+        while (valueEnd > valueStart && /\s/.test(raw[valueEnd - 1]!)) valueEnd--;
         return { valueStart, valueEnd };
       }
       continue;
@@ -88,6 +102,11 @@ export function rawWithDeepSeekProvider(raw: string): string {
   return rawWithTopLevelField(raw, "provider", { order: ["deepseek"], allow_fallbacks: false });
 }
 
+/** Pin Ox Alpha's unified reasoning effort (replaces any client-sent value). */
+export function rawWithOxAlphaReasoning(raw: string): string {
+  return rawWithTopLevelField(raw, "reasoning", { effort: "max" });
+}
+
 /**
  * Lightweight scan of a JSON request body for the TOP-LEVEL "model" field,
  * WITHOUT building the object graph (avoids the full parse + re-stringify
@@ -98,18 +117,25 @@ export function rawWithDeepSeekProvider(raw: string): string {
  * bound the model string value (including its quotes) for in-place
  * replacement; model is null when absent.
  */
-export function scanTopLevelModel(raw: string): { model: string | null; valueStart: number; valueEnd: number } {
+export function scanTopLevelModel(raw: string): {
+  model: string | null;
+  valueStart: number;
+  valueEnd: number;
+} {
   let i = 0;
   const n = raw.length;
   let depth = 0; // {} and [] nesting — model must sit at depth 0
   let inStr = false;
   let keyStart = -1; // first char of the key text (after its opening quote)
-  let keyEnd = -1;   // index of the key's closing quote
+  let keyEnd = -1; // index of the key's closing quote
   let pendingKey = false;
   while (i < n) {
     const c = raw[i];
     if (inStr) {
-      if (c === "\\") { i += 2; continue; }
+      if (c === "\\") {
+        i += 2;
+        continue;
+      }
       if (c === '"') {
         inStr = false;
         if (keyStart >= 0) keyEnd = i; // closing quote of a key string
@@ -151,16 +177,26 @@ export function scanTopLevelModel(raw: string): { model: string | null; valueSta
     }
     if (c === ":") {
       // key "model" at top level? keyStart..keyEnd bound the key text.
-      if (depth === 1 && keyStart >= 0 && keyEnd > keyStart && raw.slice(keyStart, keyEnd) === "model") {
+      if (
+        depth === 1 &&
+        keyStart >= 0 &&
+        keyEnd > keyStart &&
+        raw.slice(keyStart, keyEnd) === "model"
+      ) {
         // value follows — skip whitespace, expect a string.
         let j = i + 1;
-        while (j < n && (raw[j] === " " || raw[j] === "\t" || raw[j] === "\n" || raw[j] === "\r")) j += 1;
+        while (j < n && (raw[j] === " " || raw[j] === "\t" || raw[j] === "\n" || raw[j] === "\r"))
+          j += 1;
         if (j < n && raw[j] === '"') {
           const vs = j;
           let k = j + 1;
           let val = "";
           while (k < n) {
-            if (raw[k] === "\\") { val += raw[k] + (raw[k + 1] || ""); k += 2; continue; }
+            if (raw[k] === "\\") {
+              val += raw[k] + (raw[k + 1] || "");
+              k += 2;
+              continue;
+            }
             if (raw[k] === '"') break;
             val += raw[k];
             k += 1;
@@ -189,7 +225,7 @@ export function scanTopLevelModel(raw: string): { model: string | null; valueSta
  * byte-length approximation (never stringify+walk them) — count_tokens only
  * needs a context-budget estimate, ±20% is fine.
  */
-const ESTIMATE_WALK_LIMIT = 1_000_000; // chars: beyond this, approximate
+
 // Sampling window: walking every char of a 1M-char body costs ~17ms and alone
 // blows the Workers Free 10ms CPU budget (Error 1102). Sampling the first
 // ESTIMATE_SAMPLE chars and extrapolating keeps it O(1) with ±20% accuracy —
@@ -221,7 +257,12 @@ export function estimateTokens(jsonStr: any): number {
   // eat the 10ms Free-plan budget. Range compares are ~10x faster, same
   // semantics (A-Z a-z 0-9 + / =).
   const isB64 = (c: number) =>
-    (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 43 || c === 47 || c === 61;
+    (c >= 48 && c <= 57) ||
+    (c >= 65 && c <= 90) ||
+    (c >= 97 && c <= 122) ||
+    c === 43 ||
+    c === 47 ||
+    c === 61;
   while ((idx = s.indexOf(DATA_KEY, searchFrom)) !== -1) {
     // Only count when it looks like a base64 payload (long alnum run).
     let j = idx + DATA_KEY.length;
@@ -260,7 +301,7 @@ export function estimateTokens(jsonStr: any): number {
     // stripped contains the <base64> markers (18 chars each) — their text
     // density is negligible; extrapolate by the stripped length.
     const r = textLen / stripped.length;
-    return Math.ceil((ascii * r) / 4 + (other * r) * 1.8);
+    return Math.ceil((ascii * r) / 4 + other * r * 1.8);
   })();
   return base + images * 1600; // ~1600 tokens per image (real vision cost)
 }

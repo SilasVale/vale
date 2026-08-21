@@ -38,7 +38,8 @@
       "route.current": "当前",
       "route.bad": "异常",
       "route.auto": "恢复默认渠道（ds）",
-      "route.switched": "已切换，下次请求生效",
+      "route.switched": "已切换",
+      "route.switching": "切换中…",
       "route.fail": "切换失败",
       "route.loadFail": "渠道状态加载失败",
       "usproxy.title": "美国出口",
@@ -127,7 +128,8 @@
       "route.current": "Current",
       "route.bad": "Down",
       "route.auto": "Restore default (ds)",
-      "route.switched": "Switched — takes effect on the next request",
+      "route.switched": "Switched",
+      "route.switching": "Switching…",
       "route.fail": "Switch failed",
       "route.loadFail": "Failed to load channel status",
       "usproxy.title": "US exit",
@@ -391,7 +393,7 @@
         <div class="key-actions">
           <button class="btn-primary btn-mini" data-act="edit">${t("btn.edit")}</button>
           <button class="btn-ghost btn-mini" data-act="test">${t("btn.test")}</button>
-          ${name === "OPENROUTER_API_KEY" ? `<button class="btn-ghost btn-mini" data-act="usage">${t("btn.usage")}</button>` : ""}
+          ${name === "OPENROUTER_API_KEY" || name === "OPENCODE_GO_API_KEY" ? `<button class="btn-ghost btn-mini" data-act="usage">${t("btn.usage")}</button>` : ""}
           <button class="btn-danger btn-mini" data-act="clear">${t("btn.clear")}</button>
         </div>
         <div data-edit hidden>
@@ -475,9 +477,24 @@
     const money = (v) => typeof v === "number" && Number.isFinite(v) ? `$${v.toFixed(4)}` : t("key.usageUnavailable");
     const parts = [];
     if (d.label) parts.push(`${t("key.usageAccount")}: ${d.label}`);
-    parts.push(`${t("key.usageUsed")}: ${money(d.usage)}`);
-    parts.push(`${t("key.usageLimit")}: ${d.limit === null ? t("key.usageUnlimited") : money(d.limit)}`);
-    if (typeof d.usage === "number" && typeof d.limit === "number") parts.push(`${t("key.usageRemaining")}: ${money(Math.max(0, d.limit - d.usage))}`);
+    // OpenCode Go multi-window response
+    if (d.windows && typeof d.windows === "object") {
+      const winLabels = { "5h": "5h", weekly: "周", monthly: "月" };
+      for (const [wk, wv] of Object.entries(d.windows)) {
+        const label = winLabels[wk] || wk;
+        const pct = typeof wv.used === "number" && typeof wv.limit === "number" && wv.limit > 0
+          ? ` ${Math.round(wv.used / wv.limit * 100)}%` : "";
+        const remain = typeof wv.remaining === "number" ? ` · ${t("key.usageRemaining")}: ${money(wv.remaining)}` : "";
+        const reset = wv.resetAt ? ` · ${wv.resetAt}` : "";
+        parts.push(`${label}: ${money(wv.used)} / ${wv.limit === null ? t("key.usageUnlimited") : money(wv.limit)}${pct}${remain}${reset}`);
+      }
+    } else {
+      // Single-value response (OpenRouter / flat OpenCode Go)
+      parts.push(`${t("key.usageUsed")}: ${money(d.usage)}`);
+      parts.push(`${t("key.usageLimit")}: ${d.limit === null ? t("key.usageUnlimited") : money(d.limit)}`);
+      if (typeof d.usage === "number" && typeof d.limit === "number") parts.push(`${t("key.usageRemaining")}: ${money(Math.max(0, d.limit - d.usage))}`);
+      if (typeof d.balance === "number") parts.push(`余额: ${money(d.balance)}`);
+    }
     if (d.rateLimit?.limit != null) parts.push(`${t("key.usageRateLimit")}: ${d.rateLimit.limit}${d.rateLimit.interval ? `/${d.rateLimit.interval}` : ""}`);
     box.textContent = parts.join(" · ");
   }
@@ -549,8 +566,11 @@
     await loadUsProxyCard();
     let current = null;
     try {
+      // effective = what model=auto actually resolves to (stored route if
+      // usable, else the usable fallback) — the "current" badge shows the
+      // real channel even without a manual choice.
       const r = await api("/api/me/route");
-      if (r.res.ok) current = r.data?.model ?? null;
+      if (r.res.ok) current = r.data?.effective ?? r.data?.model ?? null;
     } catch {}
     const health = await api("/api/health");
     if (!health.res.ok || !Array.isArray(health.data?.channels)) {
@@ -567,9 +587,24 @@
         const card = btn.closest(".key-card");
         const model = card?.dataset.model;
         if (!model) return;
+        // Optimistic UI: immediately show loading + update badge
+        btn.disabled = true;
+        btn.textContent = t("route.switching") || "切换中…";
+        // Move "当前" badge from old card to new card (scoped to .key-name —
+        // the card's status badge is also .badge.ok, which must not be touched)
+        const oldCur = box.querySelector(".key-card .key-name .badge.ok");
+        if (oldCur && oldCur.textContent === t("route.current")) oldCur.remove();
+        const newBadge = card.querySelector(".top .key-name");
+        if (newBadge && !newBadge.querySelector(".badge.ok")) {
+          newBadge.insertAdjacentHTML("beforeend", ` <span class="badge ok">${t("route.current")}</span>`);
+        }
         const r = await api("/api/me/route", { method: "PUT", body: JSON.stringify({ model }) });
         if (r.res.ok) { toast(t("route.switched")); await loadRouteCards(); }
-        else toast(t("route.fail"), true);
+        else {
+          // Revert optimistic update on failure
+          toast(t("route.fail"), true);
+          await loadRouteCards();
+        }
       });
     }
   }
