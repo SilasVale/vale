@@ -64,6 +64,29 @@ npx wrangler deploy
 
 The post-deploy E2E script (pair → browser_open → screenshot → click → terminal) is in `gateway/DEVICE-INTEGRATION.md`.
 
+## Ecosystem（三个仓库，各司其职）
+
+| 仓库 | 角色 | 说明 |
+|---|---|---|
+| **vale**（本仓库） | 平台运行时 | gateway / agent / index / extension / proxies |
+| `SilasVale/vale-forge` | 开发者工具链 MCP | OpenWrt 编译控制、板子 SSH、TAPD —— 与设备 MCP 并行注册于 Claude Code |
+| `SilasVale/vale-deploy` | 运维凭证与重建手册 | CF/GitHub/Vercel 凭证、worker 清单、bootstrap 一键重建（私密） |
+
+合并评估详见 `docs/adr/0003-repo-topology-and-brand.md`（结论：保持分离，
+按受众分工；整合发生在客户端层——两路 MCP 同时注册）。
+
+## 设备安装 / 升级（npm 一键流）
+
+```powershell
+npm.cmd i -g https://agent.saisi.online/vale-agent/vale-agent-npm.tgz
+$env:VALE_AGENT_DIR='D:\vale-agent'
+vale.cmd setup --reg-key <注册码>    # 全新设备
+vale.cmd update                      # 已装设备：停止→换 exe→重启任务
+```
+
+NSIS 安装器（ValeAgent-Setup.exe）保留为无 Node 设备的备用通道。
+详见 `SilasVale/vale-deploy` README §0.5。
+
 ## Core design
 
 - **Gateway plugin core (DSH-style)**: every `/api/*` route, `/mcp` and `/v1/*` lives in a plugin (`gateway/src/plugins/`: auth / devices / mcp / translate / admin) registered on a shared context; `index.ts` is a thin front door (host split, assets, `/v1` dispatch). Cross-cutting concerns have single implementations: `src/session.ts` (session auth), `src/upstream.ts` (channel route table), `src/http.ts`, `src/reliability.ts`. See `docs/adr/0001-plugin-core-single-dispatch.md`.
