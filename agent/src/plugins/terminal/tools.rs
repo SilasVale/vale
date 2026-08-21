@@ -364,6 +364,9 @@ fn tool_write(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
             let terminal_mgr = terminal_mgr.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
+                if terminal_mgr.term_info(&session_id).await.is_none() {
+                    return Err(session_lost(&terminal_mgr, &session_id).await);
+                }
                 // data_base64 wins — it is the only path that can carry
                 // arbitrary bytes (round-54); `data` is UTF-8 text.
                 let bytes: Vec<u8> = if let Some(b64) = params.get("data_base64").and_then(|v| v.as_str()) {
@@ -722,6 +725,22 @@ fn tool_jobs(jobs: &JobsMap) -> ToolDef {
 
 // ── Execute ──────────────────────────────────────
 
+/// Enriched "session not found" error: lists currently open sessions so the
+/// caller can self-recover (agent restarts drop in-memory PTY sessions).
+async fn session_lost(mgr: &Arc<TerminalManager>, sid: &str) -> DeviceError {
+    let open = mgr.term_list().await;
+    let list = if open.is_empty() {
+        "(none — agent restarted? re-open with terminal_open)".to_string()
+    } else {
+        open.iter().map(|i| i.id.clone()).collect::<Vec<_>>().join(", ")
+    };
+    DeviceError::InvalidParams { message: format!(
+        "Session not found: {sid}. Open sessions: [{list}]. Re-open with terminal_open(kind,target) then retry."
+    ) }
+}
+
+// ── Execute ──────────────────────────────────────
+
 fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf, logger: &crate::session_log::SessionLogger, jobs: &JobsMap) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let buf = output_buf.clone();
@@ -754,6 +773,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // Refactor 1.0.81: session kind drives the idle-confirm
                     // window below — SSH commands run REMOTELY and their long
                     // silent stretches must not read as "command finished".
+                    if terminal_mgr.term_info(&sid).await.is_none() {
+                        return Err(session_lost(&terminal_mgr, &sid).await);
+                    }
                     let sess_kind = terminal_mgr.term_info(&sid).await
                         .map(|i| i.kind).unwrap_or_default();
                     // Background mode (round-60): write the command and return
