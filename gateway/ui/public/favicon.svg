@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-  <!-- Vale brand mark: the vale with a hidden V — the sky between the two
-       hills forms the brand letter, the signal rests on its apex -->
+  <!-- Vale brand mark: the vale at sunrise — near hill, far ridge, signal over the pass -->
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#f59f00"/>
@@ -10,16 +9,24 @@
       <stop offset="0" stop-color="#fff8e1" stop-opacity=".55"/>
       <stop offset="1" stop-color="#ffe8a3" stop-opacity="0"/>
     </radialGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".25"/>
+      <stop offset=".45" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#7c2d12" stop-opacity=".10"/>
+    </linearGradient>
   </defs>
 
   <rect width="48" height="48" rx="11" fill="url(#sky)"/>
 
-  <!-- signal resting on the V -->
-  <circle cx="24" cy="18" r="7" fill="url(#glow)"/>
-  <circle cx="24" cy="18" r="4" fill="#fff8e1"/>
+  <!-- signal rising over the pass -->
+  <circle cx="21" cy="14" r="7.5" fill="url(#glow)"/>
+  <circle cx="21" cy="14" r="4" fill="#fff8e1"/>
 
-  <!-- far ridge (haze), inner edge straight -->
-  <path fill="#ffffff" opacity=".78" d="M46 41Q40 19 33 25L24 37Z"/>
-  <!-- near hill (solid), inner edge straight — together the sky forms a V -->
-  <path fill="#ffffff" d="M2 41Q8 20 15 26L24 37Z"/>
+  <!-- far ridge (haze) -->
+  <path fill="#ffffff" opacity=".78" d="M14 41Q26 16 44 41Z"/>
+  <!-- near hill (solid) -->
+  <path fill="#ffffff" d="M2 41Q12 20 24 41Z"/>
+
+  <!-- glass sheen -->
+  <rect width="48" height="48" rx="11" fill="url(#sheen)"/>
 </svg>
