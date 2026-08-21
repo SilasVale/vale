@@ -1,14 +1,13 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { api, ApiError } from "../api/client.ts";
+import { maskToken } from "../lib/format.ts";
+import { Card, PageHeader, Badge, CopyButton, type BadgeTone } from "../components/ui.tsx";
 
-function maskToken(tok: string) {
-  if (!tok) return "";
-  if (tok.length <= 8) return tok[0] + "…" + tok.slice(-3);
-  return tok.slice(0, 6) + "…" + tok.slice(-4);
-}
+const KEY_ORDER = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "QWEN_API_KEY", "OPENROUTER_API_KEY"];
 
 export default function Overview() {
   const { user, refreshUser } = useAuth();
@@ -16,19 +15,6 @@ export default function Overview() {
   const { toast } = useToast();
   const [tokenRevealed, setTokenRevealed] = useState(false);
   const [tokenNote, setTokenNote] = useState("");
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    if (!user?.token) return;
-    try {
-      await navigator.clipboard.writeText(user.token);
-      setCopied(true);
-      toast(t("token.copied"));
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast(t("token.copyFail"), true);
-    }
-  };
 
   const handleRegenerate = async () => {
     const warn =
@@ -45,46 +31,72 @@ export default function Overview() {
         toast(t("btn.regenerate"));
       }
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : t("token.regenerateFail");
-      toast(msg, true);
+      toast(err instanceof ApiError ? err.message : t("token.regenerateFail"), true);
     }
   };
 
-  const tokenDisplay = tokenRevealed ? user?.token || "" : maskToken(user?.token || "");
+  const tokenDisplay = tokenRevealed ? user?.token || "" : maskToken(user?.token);
+
+  // Backend key status strip — a compact "is each channel usable" readout.
+  const keyEntries = KEY_ORDER.map((name) => ({
+    name,
+    info: user?.keys?.[name],
+  }));
+  const configuredCount = keyEntries.filter((k) => k.info?.configured).length;
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">{t("overview.title")}</h1>
-        <p className="page-description">{t("overview.lede")}</p>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <div className="card-title">{t("token.title")}</div>
-            <div className="card-description" dangerouslySetInnerHTML={{ __html: t("token.desc") }} />
-          </div>
-          <span className={`badge ${user?.role === "admin" ? "badge-admin" : "badge-user"}`}>
+      <PageHeader
+        title={t("overview.title")}
+        description={t("overview.lede")}
+        actions={
+          <Badge tone={user?.role === "admin" ? "info" : "muted"}>
             {t(user?.role === "admin" ? "role.admin" : "role.user")}
-          </span>
-        </div>
+          </Badge>
+        }
+      />
+
+      <Card
+        title={t("token.title")}
+        description={<span dangerouslySetInnerHTML={{ __html: t("token.desc") }} />}
+        headerExtra={
+          <Badge tone={configuredCount > 0 ? "success" : "warning"}>
+            {configuredCount}/{keyEntries.length}
+          </Badge>
+        }
+      >
         <div className="token-row">
           <code className="token">{tokenDisplay}</code>
-          <button className="btn btn-primary" onClick={handleCopy}>
-            {copied ? "✓" : t("btn.copy")}
-          </button>
+          <CopyButton
+            text={user?.token || ""}
+            tone="primary"
+            onCopied={() => toast(t("token.copied"))}
+          />
           <button className="btn btn-ghost" onClick={() => setTokenRevealed(!tokenRevealed)}>
             {tokenRevealed ? t("btn.hide") : t("btn.show")}
           </button>
         </div>
         <div className="token-actions">
-          <button className="btn btn-ghost btn-danger" onClick={handleRegenerate}>
+          <button className="btn btn-danger btn-sm" onClick={handleRegenerate}>
             {t("btn.regenerate")}
           </button>
         </div>
         {tokenNote && <p className="form-message form-message-success">{tokenNote}</p>}
-      </div>
+      </Card>
+
+      <Card title={t("keys.title")}>
+        <p className="muted" style={{ marginBottom: 12 }}>
+          {t("overview.keysHint")}{" "}
+          <Link to="/keys">{t("nav.keys")} →</Link>
+        </p>
+        <div className="row">
+          {keyEntries.map(({ name, info }) => (
+            <Badge key={name} tone={(info?.configured ? "success" : "muted") as BadgeTone}>
+              {name.replace("_API_KEY", "")}
+            </Badge>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }

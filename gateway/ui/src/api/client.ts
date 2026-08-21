@@ -151,7 +151,16 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   usageKey: (name: string) =>
-    request<{ ok: boolean; label?: string; usage?: number; limit?: number | null; rateLimit?: { limit?: number; interval?: string }; detail?: string }>("/api/me/keys/usage", {
+    request<{
+      ok: boolean;
+      label?: string;
+      usage?: number;
+      limit?: number | null;
+      balance?: number;
+      windows?: Record<string, { used?: number; limit?: number | null; remaining?: number; resetAt?: string }>;
+      rateLimit?: { limit?: number; interval?: string };
+      detail?: string;
+    }>("/api/me/keys/usage", {
       method: "POST",
       body: JSON.stringify({ name }),
     }),

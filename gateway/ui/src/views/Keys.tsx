@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { useTranslation, esc } from "../i18n.ts";
+import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { api, ApiError } from "../api/client.ts";
+import { PageHeader, Badge, CopyButton } from "../components/ui.tsx";
 
 const KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY"];
 
@@ -49,8 +50,7 @@ export default function Keys() {
       toast(`${t("key.saved")} ${name}`);
       await loadKeys();
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : t("key.saveFail");
-      setResultBox({ name, ok: false, msg });
+      setResultBox({ name, ok: false, msg: err instanceof ApiError ? err.message : t("key.saveFail") });
     }
   };
 
@@ -116,8 +116,7 @@ export default function Keys() {
         setResultBox({ name, ok: true, msg: parts.join(" · ") });
       }
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : t("key.usageFail");
-      setResultBox({ name, ok: false, msg });
+      setResultBox({ name, ok: false, msg: err instanceof ApiError ? err.message : t("key.usageFail") });
     }
     setUsageLoading(null);
   };
@@ -129,15 +128,13 @@ export default function Keys() {
       toast(`${t("key.cleared")} ${name}`);
       await loadKeys();
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : t("key.saveFail");
-      toast(msg, true);
+      toast(err instanceof ApiError ? err.message : t("key.saveFail"), true);
     }
   };
 
   return (
     <div>
-      <h1>{t("keys.title")}</h1>
-      <p className="lede">{t("keys.lede")}</p>
+      <PageHeader title={t("keys.title")} description={t("keys.lede")} />
       <div className="cards">
         {KEY_NAMES.map((name) => {
           const info = keys[name];
@@ -150,23 +147,28 @@ export default function Keys() {
 
           return (
             <div className="key-card" key={name}>
-              <div className="top">
+              <div className="key-card-top">
                 <div>
-                  <div className="key-name">{name}</div>
-                  <div className="key-desc">
-                    {esc(backend)} · {esc(hint)}
+                  <div className="key-card-name">{name}</div>
+                  <div className="key-card-desc">
+                    {backend} · {hint}
                   </div>
                 </div>
-                {configured ? (
-                  <span className="badge ok">{t("key.configured")}</span>
-                ) : (
-                  <span className="badge empty">{t("key.notConfigured")}</span>
-                )}
+                <Badge tone={configured ? "success" : "muted"}>
+                  {configured ? t("key.configured") : t("key.notConfigured")}
+                </Badge>
               </div>
-              <div className="key-value">{info?.masked || t("key.notConfigured")}</div>
-              <div className="key-actions">
+
+              <div className="row">
+                <code className="token" style={{ flex: 1 }}>
+                  {info?.masked || t("key.notConfigured")}
+                </code>
+                {configured && <CopyButton text={info?.masked || ""} small />}
+              </div>
+
+              <div className="key-card-actions">
                 <button
-                  className="btn-primary btn-mini"
+                  className="btn btn-primary btn-mini"
                   onClick={() => {
                     setEditingName(name);
                     setEditValue("");
@@ -176,7 +178,7 @@ export default function Keys() {
                   {t("btn.edit")}
                 </button>
                 <button
-                  className="btn-ghost btn-mini"
+                  className="btn btn-ghost btn-mini"
                   disabled={testing === name}
                   onClick={() => handleTest(name)}
                 >
@@ -184,32 +186,35 @@ export default function Keys() {
                 </button>
                 {(name === "OPENROUTER_API_KEY" || name === "OPENCODE_GO_API_KEY") && (
                   <button
-                    className="btn-ghost btn-mini"
+                    className="btn btn-ghost btn-mini"
                     disabled={usageLoading === name}
                     onClick={() => handleUsage(name)}
                   >
                     {usageLoading === name ? t("btn.usageLoading") : t("btn.usage")}
                   </button>
                 )}
-                <button className="btn-danger btn-mini" onClick={() => handleClear(name)}>
+                <button className="btn btn-danger btn-mini" onClick={() => handleClear(name)}>
                   {t("btn.clear")}
                 </button>
               </div>
 
               {isEditing && (
-                <div className="key-edit-row">
+                <div className="input-row">
                   <input
+                    className="form-input"
                     type="text"
-                    placeholder="…"
+                    placeholder="sk-…"
                     autoComplete="off"
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSave(name)}
+                    autoFocus
                   />
-                  <button className="btn-primary btn-mini" onClick={() => handleSave(name)}>
+                  <button className="btn btn-primary btn-mini" onClick={() => handleSave(name)}>
                     {t("btn.save")}
                   </button>
                   <button
-                    className="btn-ghost btn-mini"
+                    className="btn btn-ghost btn-mini"
                     onClick={() => {
                       setEditingName(null);
                       setEditValue("");

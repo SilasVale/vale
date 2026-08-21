@@ -30,8 +30,7 @@ export default function Auth() {
     try {
       await login(loginUser, loginPass);
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : t("auth.loginFail");
-      setLoginMsg(msg);
+      setLoginMsg(err instanceof ApiError ? err.message : t("auth.loginFail"));
     }
   }
 
@@ -41,8 +40,7 @@ export default function Auth() {
     try {
       await register(regUser, regPass, regInvite);
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : t("auth.registerFail");
-      setRegMsg(msg);
+      setRegMsg(err instanceof ApiError ? err.message : t("auth.registerFail"));
     }
   }
 
@@ -51,28 +49,26 @@ export default function Auth() {
     setResetMsg("");
     try {
       await resetPassword(resetKey, resetNewPass);
-      // Jump to login tab after success
       setTab("login");
       setLoginMsg(t("auth.resetOk"));
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : t("auth.resetFail");
-      setResetMsg(msg);
+      setResetMsg(err instanceof ApiError ? err.message : t("auth.resetFail"));
     }
   }
 
   return (
     <div className="auth-wrap">
       <div className="auth-card">
-        <div className="lang-toggle">
+        <div className="auth-lang">
           <button className="lang-btn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
             {lang === "zh" ? "EN" : "中文"}
           </button>
         </div>
-        <div className="brand-lg">
-          <span className="brand-mark lg">V</span>
+        <div className="auth-brand">
+          <span className="auth-logo">V</span>
           <div>
-            <div className="brand-name">Vale</div>
-            <div className="brand-sub">{t("app.sub")}</div>
+            <h1>Vale</h1>
+            <p>{t("app.sub")}</p>
           </div>
         </div>
 
@@ -123,7 +119,7 @@ export default function Auth() {
               />
             </label>
             {loginMsg && <p className="form-msg">{loginMsg}</p>}
-            <button type="submit" className="btn-primary btn-block">
+            <button type="submit" className="btn btn-accent btn-block">
               {t("auth.loginBtn")}
             </button>
           </form>
@@ -165,7 +161,7 @@ export default function Auth() {
               />
             </label>
             {regMsg && <p className="form-msg">{regMsg}</p>}
-            <button type="submit" className="btn-primary btn-block">
+            <button type="submit" className="btn btn-accent btn-block">
               {t("auth.registerBtn")}
             </button>
           </form>
@@ -173,7 +169,7 @@ export default function Auth() {
 
         {tab === "reset" && (
           <form className="auth-form" onSubmit={handleReset} autoComplete="off">
-            <p className="muted" style={{ marginBottom: 14 }}>{t("auth.resetHint")}</p>
+            <p className="muted">{t("auth.resetHint")}</p>
             <label>
               <span>{t("auth.adminKey")}</span>
               <input
@@ -199,7 +195,7 @@ export default function Auth() {
               />
             </label>
             {resetMsg && <p className="form-msg">{resetMsg}</p>}
-            <button type="submit" className="btn-primary btn-block">
+            <button type="submit" className="btn btn-accent btn-block">
               {t("auth.resetBtn")}
             </button>
           </form>
