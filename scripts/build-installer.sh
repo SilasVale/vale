@@ -49,7 +49,8 @@ prepare_playwright() {
   #    would download Linux browsers — skip (the manager runs --browser
   #    msedge, and browsers are never shipped).
   ( cd "$work" \
-      && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund @playwright/mcp@0.0.79 >/dev/null 2>&1 )
+      && npm init -y >/dev/null 2>&1 \
+      && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund --no-package-lock @playwright/mcp@0.0.79 >/dev/null 2>&1 )
   # 3. layout: playwright/{node.exe, node_modules/} — the whole flat tree,
   #    including node_modules/@playwright/mcp itself (cli.js + index.js +
   #    package.json live there; cli.js requires './package.json' and
@@ -217,7 +218,10 @@ cp "$TRAYEXE" "$DEST/vale-tray.exe"
 # versions that never existed in production.
 CODE_DIR="$ROOT/gateway/public/code/files/vale-gate"
 if [ -d "$CODE_DIR" ]; then
-  cp "$ROOT"/gateway/src/*.js "$CODE_DIR/src/"
+  # 2026-08: gateway src migrated to TypeScript (shims deleted) — mirror .ts
+  mkdir -p "$CODE_DIR/src"
+  cp "$ROOT"/gateway/src/*.ts "$CODE_DIR/src/"
+  cp -r "$ROOT"/gateway/src/plugins "$CODE_DIR/src/plugins"
   cp "$ROOT/gateway/public/index.html" "$CODE_DIR/public/index.html"
   cp "$ROOT/gateway/public/app.js" "$CODE_DIR/public/app.js"
   cp "$ROOT/gateway/public/style.css" "$CODE_DIR/public/style.css"

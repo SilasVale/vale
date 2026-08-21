@@ -12,10 +12,17 @@ export const CORS_HEADERS: Record<string, string> = {
 };
 
 export function jsonOk(data: any, extraHeaders: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json", ...CORS_HEADERS, ...extraHeaders } });
+  return new Response(JSON.stringify(data), {
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS, ...extraHeaders },
+  });
 }
 
-export function jsonError(status: number, message: string, type: string, extraHeaders: Record<string, string> = {}): Response {
+export function jsonError(
+  status: number,
+  message: string,
+  type: string,
+  extraHeaders: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify({ type: "error", error: { type, message } }), {
     status,
     headers: { "Content-Type": "application/json", ...CORS_HEADERS, ...extraHeaders },
@@ -25,6 +32,10 @@ export function jsonError(status: number, message: string, type: string, extraHe
 /** Parse a request body as JSON, tolerating empty/invalid input. */
 export async function readJson(request: Request): Promise<any> {
   let body = {};
-  try { body = await request.json(); } catch {}
+  try {
+    body = await request.json();
+  } catch {
+    /* empty body */
+  }
   return body;
 }

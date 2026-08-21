@@ -7,7 +7,10 @@ export function toOpenAIRequest(req: any, model: string): any {
   const messages = [];
   if (req.system) {
     const text = Array.isArray(req.system)
-      ? req.system.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n")
+      ? req.system
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("\n")
       : req.system;
     if (text) messages.push({ role: "system", content: text });
   }
@@ -21,12 +24,19 @@ export function toOpenAIRequest(req: any, model: string): any {
         // og/ translation forwards images (vision models) instead of dropping them.
         const parts = [];
         let textBuf: any[] = [];
-        const flush = () => { if (textBuf.length) { parts.push({ type: "text", text: textBuf.join("\n") }); textBuf = []; } };
+        const flush = () => {
+          if (textBuf.length) {
+            parts.push({ type: "text", text: textBuf.join("\n") });
+            textBuf = [];
+          }
+        };
         for (const b of content) {
           if (b.type === "tool_result") {
             flush();
             const toolText =
-              typeof b.content === "string" ? b.content : (b.content || []).map((c: any) => c.text || c.thinking || "").join("\n");
+              typeof b.content === "string"
+                ? b.content
+                : (b.content || []).map((c: any) => c.text || c.thinking || "").join("\n");
             messages.push({ role: "tool", tool_call_id: b.tool_use_id, content: toolText });
           } else if (b.type === "text") {
             textBuf.push(b.text);
@@ -34,7 +44,11 @@ export function toOpenAIRequest(req: any, model: string): any {
             flush();
             const mediaType = b.source?.media_type || "image/png";
             const data = b.source?.data || "";
-            if (data) parts.push({ type: "image_url", image_url: { url: `data:${mediaType};base64,${data}` } });
+            if (data)
+              parts.push({
+                type: "image_url",
+                image_url: { url: `data:${mediaType};base64,${data}` },
+              });
           }
         }
         flush();
@@ -43,14 +57,20 @@ export function toOpenAIRequest(req: any, model: string): any {
     } else if (m.role === "assistant") {
       const msg: any = { role: "assistant", content: null };
       const content = typeof m.content === "string" ? m.content : m.content || [];
-      const textParts = [], thinkParts = [], toolCalls = [];
+      const textParts = [],
+        thinkParts = [],
+        toolCalls = [];
       if (typeof content === "string") textParts.push(content);
       else {
         for (const b of content) {
           if (b.type === "thinking") thinkParts.push(b.thinking);
           else if (b.type === "text") textParts.push(b.text);
           else if (b.type === "tool_use") {
-            toolCalls.push({ id: b.id, type: "function", function: { name: b.name, arguments: JSON.stringify(b.input || {}) } });
+            toolCalls.push({
+              id: b.id,
+              type: "function",
+              function: { name: b.name, arguments: JSON.stringify(b.input || {}) },
+            });
           }
         }
       }
@@ -59,7 +79,10 @@ export function toOpenAIRequest(req: any, model: string): any {
       if (toolCalls.length) msg.tool_calls = toolCalls;
       messages.push(msg);
     } else {
-      messages.push({ role: m.role, content: typeof m.content === "string" ? m.content : JSON.stringify(m.content) });
+      messages.push({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      });
     }
   }
 
@@ -74,7 +97,10 @@ export function toOpenAIRequest(req: any, model: string): any {
       // like web_search, which some backends (opencode zen) reject. Normalize it.
       const raw = t.input_schema && typeof t.input_schema === "object" ? t.input_schema : {};
       const parameters = raw.type ? raw : { type: "object", properties: raw.properties || {} };
-      return { type: "function", function: { name: t.name, description: t.description || "", parameters } };
+      return {
+        type: "function",
+        function: { name: t.name, description: t.description || "", parameters },
+      };
     });
     if (req.tool_choice) {
       const tc = req.tool_choice;
@@ -86,23 +112,30 @@ export function toOpenAIRequest(req: any, model: string): any {
   return out;
 }
 
-
-
 export function toAnthropicResponse(up: any, model: string): any {
   const choice = up.choices?.[0];
   const msg = choice?.message || {};
   const blocks = [];
-  if (msg.reasoning_content) blocks.push({ type: "thinking", thinking: msg.reasoning_content, signature: "" });
+  if (msg.reasoning_content)
+    blocks.push({ type: "thinking", thinking: msg.reasoning_content, signature: "" });
   if (msg.content) blocks.push({ type: "text", text: msg.content });
   for (const tc of msg.tool_calls || []) {
     let input = {};
-    try { input = JSON.parse(tc.function?.arguments || "{}"); } catch {}
+    try {
+      input = JSON.parse(tc.function?.arguments || "{}");
+    } catch {
+      /* malformed args */
+    }
     blocks.push({ type: "tool_use", id: tc.id, name: tc.function?.name || "unknown", input });
   }
   return {
-    id: up.id, type: "message", role: "assistant", model,
+    id: up.id,
+    type: "message",
+    role: "assistant",
+    model,
     content: blocks,
-    stop_reason: STREAM_STOP_MAP[choice?.finish_reason] || "end_turn", stop_sequence: null,
+    stop_reason: STREAM_STOP_MAP[choice?.finish_reason] || "end_turn",
+    stop_sequence: null,
     usage: {
       input_tokens: up.usage?.prompt_tokens || 0,
       output_tokens: up.usage?.completion_tokens || 0,
@@ -122,14 +155,23 @@ export function toAnthropicResponse(up: any, model: string): any {
 // could time out on big generations. Instead we stream:true upstream and translate
 // each OpenAI chunk to an Anthropic incremental event as it arrives.
 
-const STREAM_STOP_MAP: Record<string, string> = { stop: "end_turn", tool_calls: "tool_use", function_call: "tool_use", length: "max_tokens" };
+const STREAM_STOP_MAP: Record<string, string> = {
+  stop: "end_turn",
+  tool_calls: "tool_use",
+  function_call: "tool_use",
+  length: "max_tokens",
+};
 
 /**
  * Convert an OpenAI chat.completion.chunk stream into an Anthropic message event
  * stream. `upstreamBody` is a ReadableStream of OpenAI SSE (`data: {...}\n\n`,
  * terminated by `data: [DONE]`). Returns a ReadableStream emitting Anthropic SSE.
  */
-export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: string, upstreamModel: string): ReadableStream {
+export function streamOgToAnthropic(
+  upstreamBody: ReadableStream,
+  clientModel: string,
+  upstreamModel: string,
+): ReadableStream {
   const encoder = new TextEncoder();
   const encoderStream = new AnthropicStreamEncoder(clientModel, upstreamModel);
 
@@ -158,7 +200,7 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
         let chunk;
         try {
           chunk = await reader.read();
-        } catch (e) {
+        } catch {
           // Mid-stream upstream death AFTER content was emitted must NOT be
           // fabricated into a clean completed message — emit an error event
           // so the client retries instead of showing an empty turn.
@@ -166,7 +208,11 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           // the terminal error; a read-throw after it must not double-report
           // a contradictory "died mid-response".
           if ((buffer || encoderStream.started) && !encoderStream.finished) {
-            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream died mid-response" } })}\n\n`));
+            controller.enqueue(
+              encoder.encode(
+                `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream stream died mid-response" } })}\n\n`,
+              ),
+            );
           }
           const tail = encoderStream.finish(buffer);
           if (tail) controller.enqueue(encoder.encode(tail));
@@ -189,7 +235,11 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           // a silent empty turn. Any stream that never produced a single
           // content event is the same failure class.
           if (!encoderStream.started) {
-            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream returned an empty/non-SSE stream" } })}\n\n`));
+            controller.enqueue(
+              encoder.encode(
+                `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: "upstream returned an empty/non-SSE stream" } })}\n\n`,
+              ),
+            );
             controller.close();
             return;
           }
@@ -217,7 +267,11 @@ export function streamOgToAnthropic(upstreamBody: ReadableStream, clientModel: s
           const payload = dataLine.slice(5).trim();
           if (payload === "[DONE]") continue;
           let chunk;
-          try { chunk = JSON.parse(payload); } catch { continue; }
+          try {
+            chunk = JSON.parse(payload);
+          } catch {
+            continue;
+          }
           encoderStream.push(chunk);
           const events = encoderStream.take();
           if (events.length) {
@@ -249,13 +303,13 @@ export class AnthropicStreamEncoder {
   started = false;
   finished = false;
   blockIndex = -1;
-  blockType: string | null = null;      // "thinking" | "text" | "tool_use"
-  toolIdx: number | undefined = undefined;   // current OpenAI tool index (parallel calls)
-  nextToolBlockIdx = 0;  // running content-block index for tool blocks
-  toolBlockIdxMap: Record<number, number> = {};  // tool index → its content-block index
-  toolMeta: Record<number, { id: string; name: string }> = {};  // tool index → real id/name (round-116)
+  blockType: string | null = null; // "thinking" | "text" | "tool_use"
+  toolIdx: number | undefined = undefined; // current OpenAI tool index (parallel calls)
+  nextToolBlockIdx = 0; // running content-block index for tool blocks
+  toolBlockIdxMap: Record<number, number> = {}; // tool index → its content-block index
+  toolMeta: Record<number, { id: string; name: string }> = {}; // tool index → real id/name (round-116)
   startedBlocks: Set<number> = new Set(); // content-block indices whose start was emitted (round-116)
-  openToolInputs: Record<number, string> = {};   // tool index → accumulated arguments string
+  openToolInputs: Record<number, string> = {}; // tool index → accumulated arguments string
   // round-96: content-block indices already stopped by a type-switch close —
   // finish() must NOT emit a duplicate content_block_stop for them, but the
   // toolBlockIdxMap entry must SURVIVE (an interleaved stream can resume the
@@ -265,7 +319,12 @@ export class AnthropicStreamEncoder {
   pending: string[] = [];
   lastStopReason = "end_turn";
   id = "";
-  usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  usage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+  };
   declare toolName?: string; // assigned only in ensureToolBlock (write-only in the original JS)
 
   constructor(clientModel: string, upstreamModel: string) {
@@ -274,15 +333,20 @@ export class AnthropicStreamEncoder {
     this.started = false;
     this.finished = false;
     this.blockIndex = -1;
-    this.blockType = null;      // "thinking" | "text" | "tool_use"
-    this.toolIdx = undefined;   // current OpenAI tool index (parallel calls)
-    this.nextToolBlockIdx = 0;  // running content-block index for tool blocks
-    this.toolBlockIdxMap = {};  // tool index → its content-block index
-    this.openToolInputs = {};   // tool index → accumulated arguments string
+    this.blockType = null; // "thinking" | "text" | "tool_use"
+    this.toolIdx = undefined; // current OpenAI tool index (parallel calls)
+    this.nextToolBlockIdx = 0; // running content-block index for tool blocks
+    this.toolBlockIdxMap = {}; // tool index → its content-block index
+    this.openToolInputs = {}; // tool index → accumulated arguments string
     this.pending = [];
     this.lastStopReason = "end_turn";
     this.id = "";
-    this.usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    this.usage = {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
   }
 
   push(chunk: any): void {
@@ -297,7 +361,9 @@ export class AnthropicStreamEncoder {
       // zen reports cache hits as usage.prompt_tokens_details.cached_tokens —
       // read both names, same as toAnthropicResponse.
       this.usage.cache_read_input_tokens =
-        chunk.usage.prompt_cache_hit_tokens || chunk.usage.prompt_tokens_details?.cached_tokens || 0;
+        chunk.usage.prompt_cache_hit_tokens ||
+        chunk.usage.prompt_tokens_details?.cached_tokens ||
+        0;
     }
     // round-123/124: a mid-stream upstream error frame (OpenAI shape
     // {"error":{...}}) was silently dropped by the choices guard below — the
@@ -309,7 +375,9 @@ export class AnthropicStreamEncoder {
     // with a misleading second error).
     if (chunk.error) {
       const msg = chunk.error?.message || "upstream stream error";
-      this.pending.push(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: `upstream mid-stream error: ${msg}` } })}\n\n`);
+      this.pending.push(
+        `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: `upstream mid-stream error: ${msg}` } })}\n\n`,
+      );
       this.started = true; // suppress the done-branch empty-stream error
       this.finished = true;
       return;
@@ -318,7 +386,8 @@ export class AnthropicStreamEncoder {
     if (!choice) return;
     const delta = choice.delta || {};
     if (!this.id && chunk.id) this.id = chunk.id;
-    if (choice.finish_reason) this.lastStopReason = STREAM_STOP_MAP[choice.finish_reason] || "end_turn";
+    if (choice.finish_reason)
+      this.lastStopReason = STREAM_STOP_MAP[choice.finish_reason] || "end_turn";
 
     if (delta.reasoning_content) {
       this.ensureBlock("thinking", { thinking: delta.reasoning_content, signature: "" });
@@ -343,7 +412,11 @@ export class AnthropicStreamEncoder {
       if (dataLine) {
         const payload = dataLine.slice(5).trim();
         if (payload && payload !== "[DONE]") {
-          try { this.push(JSON.parse(payload)); } catch {}
+          try {
+            this.push(JSON.parse(payload));
+          } catch {
+            /* malformed JSON */
+          }
         }
       }
     }
@@ -355,11 +428,18 @@ export class AnthropicStreamEncoder {
     for (const [idx, bi] of Object.entries(this.toolBlockIdxMap)) {
       const meta = this.toolMeta[Number(idx)];
       if (!meta || this.stoppedToolBlocks.has(bi) || this.startedBlocks.has(bi)) continue;
-      this.pending.push(sse("content_block_start", {
-        type: "content_block_start",
-        index: bi,
-        content_block: { type: "tool_use", id: meta.id || "", name: meta.name || "unknown", input: {} },
-      }));
+      this.pending.push(
+        sse("content_block_start", {
+          type: "content_block_start",
+          index: bi,
+          content_block: {
+            type: "tool_use",
+            id: meta.id || "",
+            name: meta.name || "unknown",
+            input: {},
+          },
+        }),
+      );
     }
     // Close EVERY still-open tool block (parallel calls leave several open).
     // round-96: skip blocks already stopped by a type-switch (they'd get a
@@ -378,16 +458,18 @@ export class AnthropicStreamEncoder {
     this.toolBlockIdxMap = {};
     this.blockIndex = -1;
     this.blockType = null;
-    this.pending.push(sse("message_delta", {
-      type: "message_delta",
-      delta: { stop_reason: this.lastStopReason, stop_sequence: null },
-      // round-116: the old delta carried ONLY output_tokens — input and
-      // cache-read were dropped, so the client's cache-hit tracking read 0%
-      // and its usage accounting was wrong (the non-stream path delivers
-      // all three). The usage-only final chunk is now captured in push()
-      // and reported here.
-      usage: { ...this.usage },
-    }));
+    this.pending.push(
+      sse("message_delta", {
+        type: "message_delta",
+        delta: { stop_reason: this.lastStopReason, stop_sequence: null },
+        // round-116: the old delta carried ONLY output_tokens — input and
+        // cache-read were dropped, so the client's cache-hit tracking read 0%
+        // and its usage accounting was wrong (the non-stream path delivers
+        // all three). The usage-only final chunk is now captured in push()
+        // and reported here.
+        usage: { ...this.usage },
+      }),
+    );
     this.pending.push(sse("message_stop", { type: "message_stop" }));
     return this.take();
   }
@@ -405,19 +487,21 @@ export class AnthropicStreamEncoder {
   emitStart(): void {
     if (this.started) return;
     this.started = true;
-    this.pending.push(sse("message_start", {
-      type: "message_start",
-      message: {
-        id: this.id,
-        type: "message",
-        role: "assistant",
-        model: this.upstreamModel,
-        content: [],
-        stop_reason: null,
-        stop_sequence: null,
-        usage: { ...this.usage },
-      },
-    }));
+    this.pending.push(
+      sse("message_start", {
+        type: "message_start",
+        message: {
+          id: this.id,
+          type: "message",
+          role: "assistant",
+          model: this.upstreamModel,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { ...this.usage },
+        },
+      }),
+    );
   }
 
   ensureBlock(type: string, block: any): void {
@@ -433,44 +517,55 @@ export class AnthropicStreamEncoder {
       // delta below, so clients got the first chunk twice (the Anthropic SDK
       // seeds the block from start, then appends deltas). Start with an empty
       // content block; the deltas carry everything.
-      const contentBlock = type === "thinking"
-        // round-97: keep the `signature` field (empty) — strict client
-        // parsers hard-fail on its absence (claude-agent-sdk-python
-        // KeyError 'signature'; anthropic-sdk-csharp threw on eager access).
-        ? { type: "thinking", thinking: "", signature: "" }
-        : type === "text"
-          ? { type: "text", text: "" }
-          : { type: "tool_use", id: block.id || "", name: block.name || "unknown", input: {} };
-      this.pending.push(sse("content_block_start", {
-        type: "content_block_start",
-        index: this.blockIndex,
-        content_block: contentBlock,
-      }));
+      const contentBlock =
+        type === "thinking"
+          ? // round-97: keep the `signature` field (empty) — strict client
+            // parsers hard-fail on its absence (claude-agent-sdk-python
+            // KeyError 'signature'; anthropic-sdk-csharp threw on eager access).
+            { type: "thinking", thinking: "", signature: "" }
+          : type === "text"
+            ? { type: "text", text: "" }
+            : { type: "tool_use", id: block.id || "", name: block.name || "unknown", input: {} };
+      this.pending.push(
+        sse("content_block_start", {
+          type: "content_block_start",
+          index: this.blockIndex,
+          content_block: contentBlock,
+        }),
+      );
       if (type === "thinking") {
-        this.pending.push(sse("content_block_delta", {
+        this.pending.push(
+          sse("content_block_delta", {
+            type: "content_block_delta",
+            index: this.blockIndex,
+            delta: { type: "thinking_delta", thinking: block.thinking },
+          }),
+        );
+      } else if (type === "text") {
+        this.pending.push(
+          sse("content_block_delta", {
+            type: "content_block_delta",
+            index: this.blockIndex,
+            delta: { type: "text_delta", text: block.text },
+          }),
+        );
+      }
+    } else if (type === "thinking") {
+      this.pending.push(
+        sse("content_block_delta", {
           type: "content_block_delta",
           index: this.blockIndex,
           delta: { type: "thinking_delta", thinking: block.thinking },
-        }));
-      } else if (type === "text") {
-        this.pending.push(sse("content_block_delta", {
+        }),
+      );
+    } else if (type === "text") {
+      this.pending.push(
+        sse("content_block_delta", {
           type: "content_block_delta",
           index: this.blockIndex,
           delta: { type: "text_delta", text: block.text },
-        }));
-      }
-    } else if (type === "thinking") {
-      this.pending.push(sse("content_block_delta", {
-        type: "content_block_delta",
-        index: this.blockIndex,
-        delta: { type: "thinking_delta", thinking: block.thinking },
-      }));
-    } else if (type === "text") {
-      this.pending.push(sse("content_block_delta", {
-        type: "content_block_delta",
-        index: this.blockIndex,
-        delta: { type: "text_delta", text: block.text },
-      }));
+        }),
+      );
     }
   }
 
@@ -492,7 +587,11 @@ export class AnthropicStreamEncoder {
     // could never match the tool_result round-trip. The start is now
     // DELAYED until a chunk carries the id or name (or until finish()).
     const meta = this.toolBlockIdxMap[idx] !== undefined;
-    if (meta && (id || name)) this.toolMeta[idx] = { id: id || this.toolMeta[idx]?.id || "", name: name || this.toolMeta[idx]?.name || "" };
+    if (meta && (id || name))
+      this.toolMeta[idx] = {
+        id: id || this.toolMeta[idx]?.id || "",
+        name: name || this.toolMeta[idx]?.name || "",
+      };
     // If this tool already has a block, route to it (interleaved streams
     // return to tool 0 after tool 1 started) — never re-open.
     if (this.toolBlockIdxMap[idx] !== undefined) {
@@ -509,11 +608,13 @@ export class AnthropicStreamEncoder {
       if (argsDelta) {
         const cur = this.openToolInputs[idx] || "";
         this.openToolInputs[idx] = cur + argsDelta;
-        this.pending.push(sse("content_block_delta", {
-          type: "content_block_delta",
-          index: this.blockIndex,
-          delta: { type: "input_json_delta", partial_json: argsDelta },
-        }));
+        this.pending.push(
+          sse("content_block_delta", {
+            type: "content_block_delta",
+            index: this.blockIndex,
+            delta: { type: "input_json_delta", partial_json: argsDelta },
+          }),
+        );
       }
       return;
     }
@@ -529,7 +630,8 @@ export class AnthropicStreamEncoder {
     // round-116: remember this tool's real id/name even when they arrive on
     // a LATER chunk — used to re-open with the correct name at finish() if
     // the start went out as "unknown".
-    if (id || name) this.toolMeta[idx] = { id: id || "", name: name || this.toolMeta[idx]?.name || "" };
+    if (id || name)
+      this.toolMeta[idx] = { id: id || "", name: name || this.toolMeta[idx]?.name || "" };
     // round-116: delay content_block_start until the id or name is known —
     // an upstream streaming {index, arguments} first would otherwise lock
     // the block to id:""/name:"unknown" forever (the map-hit branch dropped
@@ -539,11 +641,18 @@ export class AnthropicStreamEncoder {
     const haveMeta = !!(id || name || this.toolMeta[idx]?.name);
     if (haveMeta) {
       const m = this.toolMeta[idx] || { id: "", name: "" };
-      this.pending.push(sse("content_block_start", {
-        type: "content_block_start",
-        index: this.blockIndex,
-        content_block: { type: "tool_use", id: m.id || id || "", name: m.name || name || "unknown", input: {} },
-      }));
+      this.pending.push(
+        sse("content_block_start", {
+          type: "content_block_start",
+          index: this.blockIndex,
+          content_block: {
+            type: "tool_use",
+            id: m.id || id || "",
+            name: m.name || name || "unknown",
+            input: {},
+          },
+        }),
+      );
       this.startedBlocks.add(this.blockIndex);
       if (name) this.toolName = name;
     }
@@ -553,17 +662,21 @@ export class AnthropicStreamEncoder {
       this.openToolInputs[idx] = next;
       // Route the delta to THIS tool's block index (interleaved streams).
       const deltaIdx = this.toolBlockIdxMap[idx] ?? this.blockIndex;
-      this.pending.push(sse("content_block_delta", {
-        type: "content_block_delta",
-        index: deltaIdx,
-        delta: { type: "input_json_delta", partial_json: argsDelta },
-      }));
+      this.pending.push(
+        sse("content_block_delta", {
+          type: "content_block_delta",
+          index: deltaIdx,
+          delta: { type: "input_json_delta", partial_json: argsDelta },
+        }),
+      );
     }
   }
 
   closeBlock(): void {
     if (this.blockIndex >= 0) {
-      this.pending.push(sse("content_block_stop", { type: "content_block_stop", index: this.blockIndex }));
+      this.pending.push(
+        sse("content_block_stop", { type: "content_block_stop", index: this.blockIndex }),
+      );
       // round-95: a block closed here (type switch mid-stream) must not be
       // stopped AGAIN by finish()'s toolBlockIdxMap loop — that emitted a
       // duplicate content_block_stop for an already-stopped index (protocol
@@ -587,7 +700,10 @@ export function sse(name: string, data: any): string {
 
 export function toSSE(res: any): string {
   let out = "";
-  out += sse("message_start", { type: "message_start", message: { ...res, content: [], stop_reason: null, stop_sequence: null } });
+  out += sse("message_start", {
+    type: "message_start",
+    message: { ...res, content: [], stop_reason: null, stop_sequence: null },
+  });
   res.content.forEach((block: any, i: number) => {
     // server_tool_use starts with empty input in Anthropic's wire format; the query
     // arrives via input_json_delta. web_search_tool_result carries its full content
@@ -595,20 +711,48 @@ export function toSSE(res: any): string {
     // round-96: content_block_start initializes the block EMPTY — the full
     // content was also emitted as the first delta below (double-emit).
     const startBlock = { ...block, text: "", thinking: "", input: {} };
-    out += sse("content_block_start", { type: "content_block_start", index: i, content_block: startBlock });
+    out += sse("content_block_start", {
+      type: "content_block_start",
+      index: i,
+      content_block: startBlock,
+    });
     if (block.type === "thinking") {
-      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "thinking_delta", thinking: block.thinking } });
-      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "signature_delta", signature: block.signature || "" } });
+      out += sse("content_block_delta", {
+        type: "content_block_delta",
+        index: i,
+        delta: { type: "thinking_delta", thinking: block.thinking },
+      });
+      out += sse("content_block_delta", {
+        type: "content_block_delta",
+        index: i,
+        delta: { type: "signature_delta", signature: block.signature || "" },
+      });
     } else if (block.type === "text") {
-      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "text_delta", text: block.text } });
+      out += sse("content_block_delta", {
+        type: "content_block_delta",
+        index: i,
+        delta: { type: "text_delta", text: block.text },
+      });
     } else if (block.type === "tool_use") {
-      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) } });
+      out += sse("content_block_delta", {
+        type: "content_block_delta",
+        index: i,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input) },
+      });
     } else if (block.type === "server_tool_use") {
-      out += sse("content_block_delta", { type: "content_block_delta", index: i, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input || {}) } });
+      out += sse("content_block_delta", {
+        type: "content_block_delta",
+        index: i,
+        delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input || {}) },
+      });
     }
     out += sse("content_block_stop", { type: "content_block_stop", index: i });
   });
-  out += sse("message_delta", { type: "message_delta", delta: { stop_reason: res.stop_reason, stop_sequence: null }, usage: { output_tokens: res.usage?.output_tokens || 0 } });
+  out += sse("message_delta", {
+    type: "message_delta",
+    delta: { stop_reason: res.stop_reason, stop_sequence: null },
+    usage: { output_tokens: res.usage?.output_tokens || 0 },
+  });
   out += sse("message_stop", { type: "message_stop" });
   return out;
 }

@@ -18,14 +18,24 @@
  * takes 45s to fail will simply fail again; retries only help fast 5xx/429s.
  * Returns { response, detail } where detail explains the failure for the 502.
  */
-export async function fetchWithRetry(url: string, init: any, { attempts = 3, backoffMs = 750, timeoutMs = 30000, idempotent = false }: { attempts?: number; backoffMs?: number; timeoutMs?: number; idempotent?: boolean } = {}) {
+export async function fetchWithRetry(
+  url: string,
+  init: any,
+  {
+    attempts = 3,
+    backoffMs = 750,
+    timeoutMs = 30000,
+    idempotent = false,
+  }: { attempts?: number; backoffMs?: number; timeoutMs?: number; idempotent?: boolean } = {},
+) {
   let last = null;
   let detail = "";
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       last = await fetchWithTimeout(url, { ...init, body: init.body }, timeoutMs);
     } catch (e: any) {
-      detail = e.name === "TimeoutError" ? `timeout after ${timeoutMs}ms` : `network error: ${e.message}`;
+      detail =
+        e.name === "TimeoutError" ? `timeout after ${timeoutMs}ms` : `network error: ${e.message}`;
       break;
     }
     if (last.ok || !(last.status >= 500 || last.status === 429)) {
@@ -55,8 +65,11 @@ export async function fetchWithRetry(url: string, init: any, { attempts = 3, bac
   return { response: last, detail };
 }
 
-
-export async function fetchWithTimeout(url: string, init: any = {}, ms: number = 15000): Promise<Response> {
+export async function fetchWithTimeout(
+  url: string,
+  init: any = {},
+  ms: number = 15000,
+): Promise<Response> {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -131,7 +144,7 @@ const BREAKER_WINDOW_MS = 10 * 60 * 1000;
 /** Durable Object holding the breaker state (single instance per channel name). */
 export class BreakerDO {
   state: any;
-  constructor(state: any, env: any) {
+  constructor(state: any, _env: any) {
     this.state = state;
   }
 

@@ -15,28 +15,50 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const user = token ? await findUserByToken(env, token) : null;
   if (!user || user.role !== "admin") {
-    return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized: admin token required" }, id: null }), { status: 401, headers: { "content-type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32001, message: "Unauthorized: admin token required" },
+        id: null,
+      }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    );
   }
 
   if (request.method === "GET") {
     return mcpSseStream();
   }
   if (request.method !== "POST") {
-    return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code: -32600, message: "Method not allowed" }, id: null }), { status: 405, headers: { "content-type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32600, message: "Method not allowed" },
+        id: null,
+      }),
+      { status: 405, headers: { "content-type": "application/json" } },
+    );
   }
 
   let body: any;
-  try { body = await request.json(); } catch {
-    return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null }), { status: 400, headers: { "content-type": "application/json" } });
+  try {
+    body = await request.json();
+  } catch {
+    return new Response(
+      JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
   }
 
   const { method, params, id } = body;
   if (method === "initialize") {
-    return mcpJson({
-      protocolVersion: params?.protocolVersion || "2025-03-26",
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "vale-gate", version: "0.1.0" },
-    }, id);
+    return mcpJson(
+      {
+        protocolVersion: params?.protocolVersion || "2025-03-26",
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: "vale-gate", version: "0.1.0" },
+      },
+      id,
+    );
   }
   if (method === "notifications/initialized" || method === "notifications/cancelled") {
     return new Response(null, { status: 202 }); // JSON-RPC 2.0 notifications are not answered; streamable HTTP: 202, empty body
@@ -95,9 +117,16 @@ export async function callTool(tool: any, env: any, device: any, args: any): Pro
   // failure.
   if (res.status === 401) throw new Error("hub auth misconfigured (x-do-auth)");
   const j = await res.json().catch(() => ({}));
-  if (res.status === 503) throw ToolErr(EXTENSION_OFFLINE, "extension_offline — is the Vale extension running on the device browser?");
+  if (res.status === 503)
+    throw ToolErr(
+      EXTENSION_OFFLINE,
+      "extension_offline — is the Vale extension running on the device browser?",
+    );
   if (res.status < 200 || res.status >= 300) {
-    throw ToolErr(EXTENSION_OFFLINE, `extension unavailable (hub ${res.status}) — is the Vale extension running on the device browser?`);
+    throw ToolErr(
+      EXTENSION_OFFLINE,
+      `extension unavailable (hub ${res.status}) — is the Vale extension running on the device browser?`,
+    );
   }
   if (j.error) throw new Error(`extension error: ${j.error}`);
   return j.result;
@@ -171,21 +200,29 @@ async function callTerminalTool(name: string, env: any, device: any, args: any):
     // stable code); fall back to message-text guessing only for older
     // agents that predate it.
     const msg = data?.error || `Device returned ${resp.status}`;
-    const code = data?.code === "session_not_found" ? SESSION_NOT_FOUND
-      : data?.code === "session_busy" ? SESSION_BUSY
-      : data?.code === "ssh_timeout" ? TIMEOUT
-      // round-64: the agent ships NINE typed codes (round-59) but only three
-      // were mapped — ssh_connect_failed / serial_port_not_found /
-      // serial_port_not_open / invalid_params / keychain / internal ALL fell
-      // into DEVICE_UNREACHABLE. A live device reporting "serial port not
-      // found" read as "device offline", sending clients on a device-recovery
-      // detour instead of fixing the parameter. Any typed code that is not
-      // one of the mapped ones is a device-UP tool failure.
-      : data?.code ? TOOL_ERROR
-      : /Session not found/i.test(msg) ? SESSION_NOT_FOUND
-      : /Session busy/i.test(msg) ? SESSION_BUSY
-      : /timed out/i.test(msg) ? TIMEOUT
-      : DEVICE_UNREACHABLE;
+    const code =
+      data?.code === "session_not_found"
+        ? SESSION_NOT_FOUND
+        : data?.code === "session_busy"
+          ? SESSION_BUSY
+          : data?.code === "ssh_timeout"
+            ? TIMEOUT
+            : // round-64: the agent ships NINE typed codes (round-59) but only three
+              // were mapped — ssh_connect_failed / serial_port_not_found /
+              // serial_port_not_open / invalid_params / keychain / internal ALL fell
+              // into DEVICE_UNREACHABLE. A live device reporting "serial port not
+              // found" read as "device offline", sending clients on a device-recovery
+              // detour instead of fixing the parameter. Any typed code that is not
+              // one of the mapped ones is a device-UP tool failure.
+              data?.code
+              ? TOOL_ERROR
+              : /Session not found/i.test(msg)
+                ? SESSION_NOT_FOUND
+                : /Session busy/i.test(msg)
+                  ? SESSION_BUSY
+                  : /timed out/i.test(msg)
+                    ? TIMEOUT
+                    : DEVICE_UNREACHABLE;
     throw ToolErr(code, msg);
   }
   // No heartbeat here (round-54): the agent's own execute wait-loop pings
@@ -203,18 +240,24 @@ async function callTerminalTool(name: string, env: any, device: any, args: any):
  */
 function formatResult(result: any) {
   if (result && typeof result === "object" && result.image) {
-    return [{ type: "image", data: result.image.data, mimeType: result.image.mimeType || "image/png" }];
+    return [
+      { type: "image", data: result.image.data, mimeType: result.image.mimeType || "image/png" },
+    ];
   }
   return [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }];
 }
 
 function mcpJson(result: any, id: any): Response {
-  return new Response(JSON.stringify({ jsonrpc: "2.0", result, id }), { headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify({ jsonrpc: "2.0", result, id }), {
+    headers: { "content-type": "application/json" },
+  });
 }
 function mcpError(code: number, message: string, id: any, data?: any): Response {
   const error: any = { code, message };
   if (data) error.data = { code: data };
-  return new Response(JSON.stringify({ jsonrpc: "2.0", error, id }), { headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify({ jsonrpc: "2.0", error, id }), {
+    headers: { "content-type": "application/json" },
+  });
 }
 
 function mcpSseStream(): Response {
@@ -238,5 +281,7 @@ function mcpSseStream(): Response {
       timer = null;
     },
   });
-  return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
+  return new Response(stream, {
+    headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
+  });
 }
