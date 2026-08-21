@@ -294,7 +294,7 @@ pub struct TerminalPlugin {
 /// Install dir of the audit log — next to the exe, same place as
 /// vale-known-hosts.json (the only location guaranteed writable and stable
 /// across upgrades).
-fn log_dir() -> std::path::PathBuf {
+pub(super) fn log_dir() -> std::path::PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
