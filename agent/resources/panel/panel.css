@@ -10,9 +10,9 @@
   --faint: #6e6e73;   /* darkened #86868b→#6e6e73: white-bg text 3.62→5.07:1 (AA) */
   --line: rgba(0, 0, 0, 0.08);
   --line-strong: rgba(0, 0, 0, 0.14);
-  --accent: #0b7a6e;   /* darkened #0e9384→#0b7a6e: white-on-accent 3.80→5.22:1 (AA) */
-  --accent-ink: #0b7a6e;
-  --accent-soft: #e7f5f2;
+  --accent: #d9480f;   /* amber vale sunrise: white-on-accent ~4.5:1 */
+  --accent-ink: #d9480f;
+  --accent-soft: #ffefe5;
   --focus-ring: rgba(11, 122, 110, 0.65)  /* round-117: 0.45 was ~1.95:1 — below the 3:1 non-text minimum; 0.65 = ~3:1 */;
   --focus-ring-soft: rgba(11, 122, 110, 0.14);
   --lane-ds: #4f6bed;   /* SSH tab dot (console --lane-ds) */
@@ -34,14 +34,14 @@
 }
 /* dsh 视觉语言 (round-admin-ui Task 3): motion tokens + neutral scale from
    the design spec (docs/superpowers/specs/2026-08-15-agent-admin-ui-design.md).
-   Vale brand tokens (--accent #0b7a6e, --faint #6e6e73) stay the source of
+   Vale brand tokens (--accent #d9480f, --faint #6e6e73) stay the source of
    truth for brand colors — the neutral scale only serves dsh gray surfaces. */
 :root {
   --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ds-transition-duration: 0.2s;
   --ds-transition-duration-fast: 0.1s;
   --ds-transition-duration-slow: 0.3s;
-  --vale-accent: #0b7a6e;   /* alias of --accent (dsh-style name) */
+  --vale-accent: #d9480f;   /* alias of --accent (dsh-style name) */
   --ds-neutral-50: #fafafa;
   --ds-neutral-100: #f4f4f5;
   --ds-neutral-200: #e4e4e7;

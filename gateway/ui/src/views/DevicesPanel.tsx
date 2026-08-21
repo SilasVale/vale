@@ -58,10 +58,10 @@ export default function DevicesPanel() {
     loadCfToken();
   }, [loadDevices, loadCfToken]);
 
-  // Poll device status every 30s
+  // Poll device status every 60s (KV-budget friendly; manual refresh anytime)
   useEffect(() => {
     loadDeviceStatus();
-    const poll = setInterval(loadDeviceStatus, 30000);
+    const poll = setInterval(loadDeviceStatus, 60000);
     return () => clearInterval(poll);
   }, [loadDeviceStatus]);
 
@@ -209,6 +209,13 @@ export default function DevicesPanel() {
             <pre className="mt-8">
               <code>{`$env:VALE_REG_KEY = "${regKey}"; irm https://agent.saisi.online/vale-agent/vale-agent-setup.ps1 | iex`}</code>
             </pre>
+            <div className="row mt-8">
+              <CopyButton
+                text={`$env:VALE_REG_KEY = "${regKey}"; irm https://agent.saisi.online/vale-agent/vale-agent-setup.ps1 | iex`}
+                small
+                onCopied={() => toast(t("devices.keyCopied"))}
+              />
+            </div>
           </div>
         )}
       </Card>

@@ -43,7 +43,7 @@ const STATUS_PAGE: &str = concat!(
     ".mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:10px;background:#1d1d1f;color:#fff;font-weight:700;font-size:22px}",
     "h1{font-size:22px;margin:14px 0 4px;font-weight:650;letter-spacing:-.01em}",
     "p{color:#6e6e73;font-size:13px;margin:4px 0}",
-    "code{background:#e7f5f2;color:#0b7a6e;padding:1px 6px;border-radius:5px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:12px}",
+    "code{background:#ffefe5;color:#d9480f;padding:1px 6px;border-radius:5px;font-family:ui-monospace,'SF Mono',Consolas,monospace;font-size:12px}",
     "</style></head>",
     "<body><div class=\"card\"><span class=\"mark\">V</span><h1>vale-agent</h1>",
     "<p>MCP endpoint: <code>/mcp</code></p>",

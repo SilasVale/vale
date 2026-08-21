@@ -655,7 +655,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
     let logger = logger.clone();
     ToolDef::new(
         "terminal_execute",
-        "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Returns {kind, text, wait_reason, exit_code, truncated} (session) or {kind, text, truncated} (local). `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
+        "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Session mode returns {kind, state, text, read_from, wait_reason, exit_code, truncated}: state=done means text is COMPLETE; partial/timeout means text is a PREFIX — continue with terminal_read(offset=read_from). Long silent SSH commands: prefer run_in_background:true or bigger timeout_secs (idle window scales: ssh 1.2s, serial 1.5s). Local mode returns {kind, text, truncated}. `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
         json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."}},"required":["command"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
@@ -675,6 +675,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                 if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()) {
                     // ── Session-aware mode: write + wait for output ──
                     let sid = session_id.to_string();
+                    // Refactor 1.0.81: session kind drives the idle-confirm
+                    // window below — SSH commands run REMOTELY and their long
+                    // silent stretches must not read as "command finished".
+                    let sess_kind = terminal_mgr.term_info(&sid).await
+                        .map(|i| i.kind).unwrap_or_default();
                     // Background mode (round-60): write the command and return
                     // IMMEDIATELY — no wait loop, no busy lock. The caller
                     // collects output via terminal_read with the returned
@@ -686,8 +691,6 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // UTF-8 lossy conversion and 1MB eviction can never
                     // desynchronize the index (the old String-length-based
                     // offset could panic on an out-of-range slice).
-                    let mut read_abs = recover_guard(&buf)
-                        .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
                     // Write command + newline. Windows PowerShell only recognizes
                     // the end of a command on CRLF (\r\n) — a bare \n drops it
                     // into the multi-line continuation prompt (>>), so the
@@ -703,6 +706,24 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     if !terminal_mgr.term_try_execute(&sid).await? {
                         return Err(DeviceError::SessionBusy { id: sid.clone() });
                     }
+                    // Settle-drain: consume whatever still streams in from the
+                    // PREVIOUS command before sampling the start offset —
+                    // sampling end_abs while an earlier tail was mid-flight
+                    // baked stale bytes into THIS result (observed live).
+                    {
+                        let settle_deadline = Instant::now() + std::time::Duration::from_millis(600);
+                        let mut last_len: Option<usize> = None;
+                        loop {
+                            let cur = recover_guard(&buf)
+                                .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
+                            if Some(cur) == last_len { break; }
+                            last_len = Some(cur);
+                            if Instant::now() >= settle_deadline { break; }
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+                    }
+                    let mut read_abs = recover_guard(&buf)
+                        .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
                     // Write the command; on failure (session reaped mid-write)
                     // release the lock — the command never ran, nothing to
                     // audit, and the next execute must not bounce off a stale
@@ -803,6 +824,13 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // bash prints the prompt and then hands the tty back, and
                     // a too-eager return could race that handoff.
                     let marker_confirm = std::time::Duration::from_millis(300);
+                    // Idle confirm scales with session kind — SSH commands run
+                    // remotely; their silent stretches must not read as done.
+                    let idle_confirm = match sess_kind.as_str() {
+                        "ssh" => std::time::Duration::from_millis(1200),
+                        "serial" => std::time::Duration::from_millis(1500),
+                        _ => std::time::Duration::from_millis(300),
+                    };
                     let mut quiet_since: Option<Instant> = None;
                     // round-105: the quiet path extends ONCE (marker-injected
                     // PTYs: echo → quiet → marker at next prompt). A second
@@ -1002,7 +1030,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                     if !quiet_extended {
                                         quiet_extended = true;
                                         quiet_since = Some(Instant::now());
-                                        quiet_confirm_at = Some(Instant::now() + marker_confirm);
+                                        quiet_confirm_at = Some(Instant::now() + idle_confirm);
                                     } else if quiet_confirm_at.map(|t| Instant::now() >= t).unwrap_or(true) {
                                         wait_reason = "idle";
                                         break;
@@ -1057,13 +1085,23 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // is the shell's own exit status when a marker was seen.
                     // `kind` unifies the two execute modes for the model
                     // (round-60); old clients keep parsing `text`.
+                    // Contract: state=done -> text is complete output;
+                    // partial/timeout -> text is only a PREFIX, resume with
+                    // terminal_read(offset=read_from).
+                    let state = match wait_reason {
+                        "marker" => "done",
+                        "timeout" => "timeout",
+                        _ => "partial",
+                    };
                     Ok(json!({
                         "kind": "session",
+                        "state": state,
                         "text": result,
                         "truncated": truncated,
                         "timed_out": timed_out,
                         "wait_reason": wait_reason,
                         "exit_code": marker_code,
+                        "read_from": read_abs,
                     }))
                 } else {
                     // ── Local shell mode with enforced timeout (tokio::process) ──

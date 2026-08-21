@@ -159,6 +159,35 @@ test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {
   assert.equal(res.status, 200);
 });
 
+test("or/stealth/ox-alpha uses OpenRouter BYOK passthrough", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({
+    keys: {
+      OPENCODE_GO_API_KEY: undefined,
+      OPENROUTER_API_KEY: "sk-openrouter-ox",
+    },
+  });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      content: [{ type: "text", text: "ox" }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "or/stealth/ox-alpha",
+    max_tokens: 1,
+    messages: [{ role: "user", content: "hi" }],
+  }));
+  assert.match(String(seen.url), /(?:openrouter|v\.saisi\.online\/api\/proxy)/);
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-openrouter-ox");
+  assert.equal(JSON.parse(seen.init.body).model, "stealth/ox-alpha");
+  assert.equal(res.status, 200);
+});
+
 test("or/deepseek/deepseek-v4-flash-0731 uses direct OpenRouter with fixed DeepSeek provider", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ usProxy: true });
