@@ -27,13 +27,29 @@ export function sessionSecret(env: any, adminPassword: string): string {
   return env.SESSION_SECRET || adminPassword;
 }
 
+// Negative-cache for the revocation check — this was the LAST raw KV read on
+// every console request (the 30s status poll alone burned ~3k reads/day
+// against the free tier). Tradeoff matches AUTH_CACHE_TTL elsewhere in the
+// store: a logout takes <=60s to propagate to a hot isolate.
+const __notRevoked = new Map<string, { revoked: boolean; exp: number }>();
+
 export async function requireSession(request: Request, env: any): Promise<User | null> {
   const ap = await getAdminPassword(env);
   if (!ap) return null;
   const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
   if (!cookie) return null;
   // Revoked by logout (server-side blacklist — a copied cookie dies too).
-  if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) return null;
+  if (env.KEYS) {
+    const hit = __notRevoked.get(cookie);
+    if (hit && hit.exp > Date.now()) {
+      if (hit.revoked) return null;
+    } else {
+      const revoked = (await env.KEYS.get(`sess-revoked:${cookie}`)) === "1";
+      if (__notRevoked.size >= 512) __notRevoked.clear();
+      __notRevoked.set(cookie, { revoked, exp: Date.now() + 60_000 });
+      if (revoked) return null;
+    }
+  }
   const session = await verifySessionToken(sessionSecret(env, ap), cookie);
   if (!session) return null;
   const user = await getUser(env, session.uid);

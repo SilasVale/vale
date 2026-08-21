@@ -4,3 +4,7 @@ nohup.out
 .claude/
 gateway/public_backup/
 屏幕截图*.png
+index/public/vale-agent/*.exe
+index/public/vale-agent/*.tgz
+agent/vale-agent-npm/*.exe
+agent/vale-agent-npm/*.tgz

@@ -379,7 +379,7 @@ impl SessionLogger {
                     // misreported every completed background command as
                     // "interrupted". Treat any post-start status line
                     // (backgrounded/closed/exited) as a terminal marker.
-                    Some(k) if k == "status" => {
+                    Some("status") => {
                         // round-100: SessionEvent::status() serializes the
                         // value in the `status` field, not `text` (both are
                         // skip-if-none, so a status line has no "text" key)

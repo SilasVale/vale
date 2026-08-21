@@ -1,0 +1,10 @@
+{
+  "name": "vale-agent",
+  "version": "1.0.81",
+  "description": "Vale Agent — Windows device MCP server (terminal/SSH/serial) + panel. Self-hosted npm distribution.",
+  "bin": { "vale": "bin/vale.js" },
+  "files": ["bin/", "vale-agent.exe", "README.md"],
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "license": "MIT"
+}
