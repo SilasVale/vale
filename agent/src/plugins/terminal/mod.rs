@@ -360,7 +360,7 @@ mod tests {
     fn tool_count_and_names() {
         let tools = plugin().tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(tools.len(), 18);
+        assert_eq!(tools.len(), 19);
         for expected in [
             "terminal_open", "terminal_write", "terminal_close", "terminal_list",
             "terminal_execute", "terminal_list_ports", "terminal_resize",
@@ -368,6 +368,7 @@ mod tests {
             "terminal_history", "terminal_diag_write", "terminal_diag_read",
             "secret_set", "secret_get", "secret_delete",
             "terminal_saved_connections", "terminal_connect_saved",
+            "terminal_jobs",
         ] {
             assert!(names.contains(&expected), "missing tool: {expected}");
         }

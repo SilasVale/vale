@@ -13,6 +13,25 @@ use crate::plugins::{require_str, to_value_or_empty};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::{parse_serial_target, parse_ssh_target, TerminalManager};
 use super::{clean_terminal_output, DiagStore, OutputBuf, RetainedSession, SessionBuf};
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+/// Background-job registry (refactor Phase 3): gives run_in_background
+/// commands completion semantics — callers poll terminal_jobs instead of
+/// blind-read loops. Process-lifetime only.
+#[derive(Debug, Clone)]
+pub struct JobInfo {
+    pub sid: String,
+    pub command: String,
+    pub started_unix: u64,
+    pub done: bool,
+    pub exit_code: Option<i32>,
+}
+type JobsMap = std::sync::Arc<std::sync::Mutex<HashMap<String, JobInfo>>>;
+fn jobs_map() -> JobsMap {
+    static JOBS: OnceLock<JobsMap> = OnceLock::new();
+    JOBS.get_or_init(|| std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()))).clone()
+}
 
 pub(super) fn build(
     terminal_mgr: &Arc<TerminalManager>,
@@ -23,13 +42,15 @@ pub(super) fn build(
     logger: &crate::session_log::SessionLogger,
     buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
 ) -> Vec<ToolDef> {
+    let jobs: JobsMap = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     vec![
         tool_open(terminal_mgr, bus, output_buf, logger, buffer_limit),
+        tool_jobs(&jobs),
         tool_write(terminal_mgr),
         tool_close(terminal_mgr, bus, output_buf),
         tool_list(terminal_mgr),
         tool_history(terminal_mgr, output_buf),
-        tool_execute(terminal_mgr, bus, output_buf, logger),
+        tool_execute(terminal_mgr, bus, output_buf, logger, &jobs),
         tool_list_ports(serial_pool),
         tool_resize(terminal_mgr),
         tool_select(terminal_mgr),
@@ -646,13 +667,67 @@ fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
 }
 
 
+// ── Jobs (Phase 3) ───────────────────────────────
+
+fn tool_jobs(jobs: &JobsMap) -> ToolDef {
+    let jobs = jobs.clone();
+    ToolDef::new(
+        "terminal_jobs",
+        "Background-job registry. With no params: list recent run_in_background jobs {job_id, command, done, exit_code}. With {job_id, wait_secs}: block until that job finishes or the timeout elapses, then return its final state.",
+        json!({"type":"object","properties":{
+            "job_id":{"type":"string","description":"Job id returned by terminal_execute(run_in_background:true)."},
+            "wait_secs":{"type":"integer","description":"Max seconds to wait for completion when job_id is given. Default 0 (instant snapshot)."}
+        }}),
+        move |params: Value| {
+            let jobs = jobs.clone();
+            async move {
+                let deadline_secs = params.get("wait_secs").and_then(|v| v.as_u64()).unwrap_or(0).min(3600);
+                let target = params.get("job_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(deadline_secs);
+                loop {
+                    {
+                        let jm = jobs.lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some(id) = &target {
+                            match jm.get(id) {
+                                Some(j) if j.done => {
+                                    return Ok(json!({"job_id": id, "state": "done", "exit_code": j.exit_code}));
+                                }
+                                None => {
+                                    return Err(DeviceError::InvalidParams { message: format!("unknown job_id: {}", id) });
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            let mut out = Vec::new();
+                            for (k, j) in jm.iter() {
+                                out.push(json!({
+                                    "job_id": k, "session": j.sid, "command": j.command,
+                                    "done": j.done, "exit_code": j.exit_code,
+                                    "started_unix": j.started_unix,
+                                }));
+                            }
+                            return Ok(json!({"jobs": out}));
+                        }
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        let state = if target.is_some() { "running" } else { "snapshot" };
+                        return Ok(json!({"state": state}));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+        },
+    )
+}
+
 // ── Execute ──────────────────────────────────────
 
-fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf, logger: &crate::session_log::SessionLogger) -> ToolDef {
+fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf, logger: &crate::session_log::SessionLogger, jobs: &JobsMap) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let buf = output_buf.clone();
     let bus = bus.clone();
     let logger = logger.clone();
+    let jobs = jobs.clone();
     ToolDef::new(
         "terminal_execute",
         "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Session mode returns {kind, state, text, read_from, wait_reason, exit_code, truncated}: state=done means text is COMPLETE; partial/timeout means text is a PREFIX — continue with terminal_read(offset=read_from). Long silent SSH commands: prefer run_in_background:true or bigger timeout_secs (idle window scales: ssh 1.2s, serial 1.5s). Local mode returns {kind, text, truncated}. `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
@@ -662,6 +737,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
             let buf = buf.clone();
             let bus = bus.clone();
             let logger = logger.clone();
+            let jobs = jobs.clone();
             async move {
                 let command = require_str(&params, "command")?;
                 // round-98: clamp — a client-supplied u64::MAX made
@@ -736,9 +812,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             let cut = pend.len().saturating_sub(64);
                             if cut > 0 { pend.drain(..cut); }
                             if find_prompt_marker(&pend).is_some() {
-                                recover_guard(&buf)
-                                    .live.get_mut(&sid)
-                                    .map(|e| e.first_prompt_seen = true);
+                                if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
+                                    e.first_prompt_seen = true;
+                                }
                                 break;
                             }
                             if Instant::now() >= gate_deadline { break; }
@@ -795,6 +871,28 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         // shell; without an end line the trail permanently
                         // misreports it as "interrupted" on the next boot.
                         logger.log_status(&sid, "backgrounded");
+                        // Phase 3: queryable job record — callers poll
+                        // terminal_jobs instead of blind-read loops.
+                        let job_id = format!("{}#{}", sid, start);
+                        {
+                            let jm_arc = jobs.clone();
+                            let mut jm = jm_arc.lock().unwrap_or_else(|p| p.into_inner());
+                            if jm.len() > 64 {
+                                let mut finished: Vec<String> = jm.iter()
+                                    .filter(|(_, j)| j.done).map(|(k, _)| k.clone()).collect();
+                                finished.sort();
+                                let excess = jm.len().saturating_sub(64);
+                                for k in finished.into_iter().take(excess) { jm.remove(&k); }
+                            }
+                            jm.insert(job_id.clone(), JobInfo {
+                                sid: sid.clone(), command: command.clone(),
+                                started_unix: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs()).unwrap_or(0),
+                                done: false, exit_code: None,
+                            });
+                        }
+                        let job_id2 = job_id.clone();
                         let marker_confirm = std::time::Duration::from_millis(300);
                         let mgr2 = terminal_mgr.clone();
                         let buf2 = buf.clone();
@@ -826,10 +924,16 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 if chunk_len > 0 {
                                     read_abs += chunk_len;
                                     pending.extend_from_slice(&chunk);
-                                    while let Some((mstart, mend, _code)) = find_prompt_marker(&pending) {
+                                    while let Some((mstart, mend, code)) = find_prompt_marker(&pending) {
                                         pending.drain(..mend);
                                         marker_seen_at = Some(Instant::now());
                                         let _ = mstart;
+                                        if let Ok(mut jm) = jobs_map().lock() {
+                                            if let Some(j) = jm.get_mut(&job_id2) {
+                                                j.done = true;
+                                                j.exit_code = Some(code);
+                                            }
+                                        }
                                     }
                                     let keep = pending.len().saturating_sub(64);
                                     if keep > 0 { pending.drain(..keep); }
@@ -848,7 +952,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         return Ok(json!({
                             "kind": "session",
                             "status": "running",
-                            "job": sid,
+                            "job_id": job_id,
                             "read_from": start,
                             "hint": "collect output with terminal_read offset=read_from; command may still be running",
                         }));
@@ -996,9 +1100,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 pending.drain(..end);
                                 marker_code = Some(code);
                                 marker_seen_at = Some(Instant::now());
-                                recover_guard(&buf)
-                                    .live.get_mut(&sid)
-                                    .map(|e| e.first_prompt_seen = true);
+                                if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
+                                    e.first_prompt_seen = true;
+                                }
                             }
                             // round-103/104: output AFTER a marker could be a
                             // false positive (literal OSC 133 in a log line)
