@@ -28,11 +28,13 @@
   --text-muted: #868e96;
   --text-faint: #adb5bd;
 
-  /* Vale brand */
-  --accent: #0b7a6e;
-  --accent-light: #e7f5f2;
-  --accent-hover: #0a6d62;
-  --accent-dark: #065a50;
+  /* Vale brand — violet (matches the glossy bolt favicon) */
+  --accent: #7048e8;
+  --accent-light: #f1ebff;
+  --accent-hover: #6741d9;
+  --accent-dark: #5f3dc4;
+  --accent-ring: rgba(134, 59, 255, 0.18);
+  --accent-shadow: rgba(112, 72, 232, 0.35);
 
   /* States */
   --success: #2f9e44;
@@ -72,10 +74,12 @@ body[data-theme="dark"] {
   --text-muted: #6b6e76;
   --text-faint: #46494f;
 
-  --accent: #12b59f;
-  --accent-light: #11302b;
-  --accent-hover: #14c4ac;
-  --accent-dark: #0d8a79;
+  --accent: #9775fa;
+  --accent-light: #2e2856;
+  --accent-hover: #b3a3ff;
+  --accent-dark: #7952f0;
+  --accent-ring: rgba(151, 117, 250, 0.22);
+  --accent-shadow: rgba(0, 0, 0, 0.45);
 
   --success: #51cf66;
   --success-bg: #21362a;
@@ -194,8 +198,19 @@ pre code { background: none; padding: 0; }
   justify-content: center;
   font-weight: 700;
   font-size: 15px;
-  box-shadow: 0 2px 8px rgba(11, 122, 110, 0.35);
+  box-shadow: 0 2px 8px var(--accent-shadow);
   flex-shrink: 0;
+}
+
+/* Brand tile (Logo component) — gradient tile + white bolt */
+.logo-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px var(--accent-shadow);
 }
 
 .sidebar-title {
@@ -445,6 +460,34 @@ pre code { background: none; padding: 0; }
 .badge-warning { background: var(--warning-bg); color: var(--warning); }
 .badge-info { background: var(--info-bg); color: var(--info); }
 .badge-muted { background: var(--bg-tertiary); color: var(--text-muted); }
+
+/* Neutral chip with a small state dot — for INFORMATIONAL listings (key
+   configured?, channel up?). Keeps saturated green/red for real alerts,
+   so a healthy console doesn't paint the whole page green. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 11px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.chip .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chip.ok .dot { background: var(--success); }
+.chip.warn .dot { background: var(--warning); }
+.chip.err .dot { background: var(--error); }
+.chip.off .dot { background: var(--text-faint); }
 
 /* Legacy aliases */
 .badge.ok { background: var(--success-bg); color: var(--success); }
@@ -724,7 +767,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 .lane-og .lane-port { background: var(--accent); }
 .lane-ds .lane-port { background: #4f6bed; }
 .lane-or .lane-port { background: #b45309; }
-.lane-qw .lane-port { background: #7048e8; }
+.lane-qw .lane-port { background: #c2255c; }
 .lane-def .lane-port { background: var(--text-muted); }
 
 .lane-body { flex: 1; min-width: 0; }
@@ -875,7 +918,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 .form-input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(11, 122, 110, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .form-input::placeholder { color: var(--text-faint); }
@@ -910,7 +953,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 .device-form input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(11, 122, 110, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .device-form {
@@ -1019,7 +1062,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
   justify-content: center;
   font-weight: 700;
   font-size: 21px;
-  box-shadow: 0 4px 16px rgba(11, 122, 110, 0.3);
+  box-shadow: 0 4px 16px var(--accent-shadow);
   flex-shrink: 0;
 }
 
@@ -1097,7 +1140,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .auth-form input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(11, 122, 110, 0.15);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .auth-form input::placeholder { color: var(--text-faint); }
