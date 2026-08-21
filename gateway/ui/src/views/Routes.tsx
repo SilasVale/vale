@@ -3,8 +3,17 @@ import { useAuth } from "../contexts/AuthContext.tsx";
 import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { api, type HealthChannel } from "../api/client.ts";
+import { Card, PageHeader, Badge, CopyButton } from "../components/ui.tsx";
 
-export default function Routes() {
+function laneClass(prefix: string): string {
+  if (prefix.startsWith("og")) return "lane-og";
+  if (prefix.startsWith("ds")) return "lane-ds";
+  if (prefix.startsWith("or")) return "lane-or";
+  if (prefix.startsWith("qw")) return "lane-qw";
+  return "lane-def";
+}
+
+export default function RoutesView() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -94,12 +103,10 @@ export default function Routes() {
   if (loading) {
     return (
       <div>
-        <div className="page-header">
-          <h1 className="page-title">{t("nav.routes")}</h1>
-        </div>
-        <div className="card">
-          <div className="muted">{t("loading")}</div>
-        </div>
+        <PageHeader title={t("nav.routes")} />
+        <Card>
+          <p className="muted">{t("loading")}</p>
+        </Card>
       </div>
     );
   }
@@ -114,78 +121,58 @@ export default function Routes() {
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">{t("nav.routes")}</h1>
-        <p className="page-description">{t("routes.lede")}</p>
-      </div>
+      <PageHeader title={t("nav.routes")} description={<span dangerouslySetInnerHTML={{ __html: t("routes.lede") }} />} />
 
       {/* US Proxy toggle */}
       {user?.role === "admin" && (
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <div className="card-title">{t("usproxy.title")}</div>
-              <div className="card-description">{t("usproxy.desc")}</div>
-            </div>
-            <span className={`badge ${usproxyOn ? "badge-success" : "badge-warning"}`}>
+        <Card
+          title={t("usproxy.title")}
+          description={t("usproxy.desc")}
+          headerExtra={
+            <Badge tone={usproxyOn ? "success" : "warning"}>
               {usproxyOn ? t("usproxy.on") : t("usproxy.off")}
-            </span>
-          </div>
-          <button
-            className="btn btn-primary"
-            disabled={usproxyLoading}
-            onClick={handleToggleProxy}
-          >
+            </Badge>
+          }
+        >
+          <button className="btn btn-secondary btn-sm" disabled={usproxyLoading} onClick={handleToggleProxy}>
             {t("usproxy.toggle")}
           </button>
-        </div>
+        </Card>
       )}
 
-      {/* Auto-discovered models */}
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <div className="card-title">{t("route.title")}</div>
-            <div className="card-description">{t("route.desc")}</div>
-          </div>
-          <button className="btn btn-secondary" onClick={handleClearRoute}>
+      {/* Channel switch */}
+      <Card
+        title={t("route.title")}
+        description={<span dangerouslySetInnerHTML={{ __html: t("route.desc") }} />}
+        headerExtra={
+          <button className="btn btn-ghost btn-sm" onClick={handleClearRoute}>
             {t("route.auto")}
           </button>
-        </div>
-
-        {/* Channel groups */}
+        }
+      >
         {Object.entries(grouped).map(([prefix, models]) => (
-          <div key={prefix} style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--dsw-text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              {prefix.toUpperCase()}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="channel-group" key={prefix}>
+            <div className="channel-label">{prefix}</div>
+            <div className="switchboard">
               {models.map((ch) => {
                 const isCurrent = current === ch.model;
-                const laneClass = prefix.startsWith("og") ? "lane-og"
-                  : prefix.startsWith("ds") ? "lane-ds"
-                  : prefix.startsWith("or") ? "lane-or"
-                  : prefix.startsWith("qw") ? "lane-qw"
-                  : "lane-def";
                 return (
-                  <div className={`lane ${laneClass}`} key={ch.model}>
-                    <div className="lane-port">{prefix}</div>
+                  <div className={`lane ${laneClass(prefix)}${isCurrent ? " current" : ""}`} key={ch.model}>
+                    <div className="lane-port">{prefix.replace("/", "")}</div>
                     <div className="lane-body">
-                      <div className="lane-backend">
-                        {ch.model}
-                        {isCurrent && <span className="badge badge-success" style={{ marginLeft: 8 }}>{t("route.current")}</span>}
-                      </div>
+                      <div className="lane-backend">{ch.model}</div>
                     </div>
+                    {isCurrent && <Badge tone="success">{t("route.current")}</Badge>}
                     {ch.ok ? (
                       <button
                         className="btn btn-primary btn-sm"
                         disabled={switching === ch.model}
                         onClick={() => handleSwitch(ch.model)}
                       >
-                        {switching === ch.model ? "..." : t("route.use")}
+                        {switching === ch.model ? t("route.switching") : t("route.use")}
                       </button>
                     ) : (
-                      <span className="badge badge-error">{ch.reason || t("route.bad")}</span>
+                      <Badge tone="error">{ch.reason || t("route.bad")}</Badge>
                     )}
                   </div>
                 );
@@ -193,22 +180,18 @@ export default function Routes() {
             </div>
           </div>
         ))}
-      </div>
+      </Card>
 
       {/* Client example */}
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title">{t("client.title")}</div>
-        </div>
-        <pre style={{ marginTop: 12, fontSize: 12 }}>
+      <Card title={t("client.title")}>
+        <pre style={{ marginTop: 12 }}>
           <code>{clientExample}</code>
         </pre>
-        <div
-          className="muted"
-          style={{ marginTop: 12 }}
-          dangerouslySetInnerHTML={{ __html: t("client.note") }}
-        />
-      </div>
+        <div className="row mt-12">
+          <CopyButton text={clientExample} small onCopied={() => toast(t("token.copied"))} />
+        </div>
+        <p className="muted mt-12" dangerouslySetInnerHTML={{ __html: t("client.note") }} />
+      </Card>
     </div>
   );
 }
