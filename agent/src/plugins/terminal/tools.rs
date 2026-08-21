@@ -819,6 +819,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                             if Instant::now() >= gate_deadline { break; }
                         }
+                        // Gate expired WITHOUT a first marker: the injection
+                        // line was eaten by shell init (observed on sessions
+                        // opened right after boot). Demote this session to
+                        // non-injected so the idle path returns promptly
+                        // instead of blocking to the full deadline.
+                        terminal_mgr.term_set_marker_injected(&sid, false).await;
                     }
                     // Settle-drain: consume whatever still streams in from the
                     // PREVIOUS command before sampling the start offset —
@@ -983,13 +989,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // expiry fires marker_confirm after the FIRST expiry
                     // (not 2x quiet_dur, and never a future panic).
                     let mut quiet_confirm_at: Option<Instant> = None;
+                    // Read AFTER the first-prompt gate: a failed injection
+                    // demotes the session (gate above), flipping this flag.
+                    let marker_injected = terminal_mgr.term_marker_injected(&sid).await;
                     // round-108: marker-injected PTY sessions NEVER break on
                     // quiet — the marker arrives at the NEXT prompt (command
                     // end), which can be seconds after the echo (`sleep 2 &&
                     // echo done`). Only the marker or the deadline ends the
                     // wait. Marker-less backends (SSH/serial) keep the
                     // bounded quiet path.
-                    let marker_injected = terminal_mgr.term_marker_injected(&sid).await;
                     let mut result = String::new();
                     // round-105: cap the session-mode result like the local
                     // mode (1 MB tail) — the old code grew to the command's
