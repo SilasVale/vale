@@ -26,6 +26,11 @@ pub struct SessionBuf {
     pub data: Vec<u8>,
     pub cursor: usize,    // bytes already consumed by terminal_read (index into data)
     pub dropped: u64,     // total bytes evicted from the front (absolute offset base)
+    /// Marker-injected PTY only: set once the shell's FIRST prompt marker
+    /// has been observed. terminal_execute refuses to write before this —
+    /// a command entering PowerShell mid-profile-init gets shredded into
+    /// continuation prompts (observed live as `>>` + lost output).
+    pub first_prompt_seen: bool,
     pub spill_base: u64,  // absolute offset of the spill FILE's first byte (round-115: the file
                           // is rotated when it exceeds MAX_SPILL_BYTES — the head is dropped,
                           // so reads must offset by this base to stay continuous)
