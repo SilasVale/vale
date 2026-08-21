@@ -46,6 +46,7 @@ import {
 } from "../reliability.ts";
 import {
   rawWithDeepSeekProvider,
+  rawWithOxAlphaReasoning,
   rawWithModel,
   scanTopLevelModel,
   estimateTokens,
@@ -473,6 +474,10 @@ async function handleGatewayImpl(
     if (forwardBody.includes('"role":"developer"')) {
       forwardBody = forwardBody.split('"role":"developer"').join('"role":"system"');
     }
+    // or/stealth/ox-alpha: pin reasoning.effort=max (see the /v1/messages site).
+    if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
+      forwardBody = rawWithOxAlphaReasoning(forwardBody);
+    }
     const { response: upstream, detail } = await fetchWithRetry(
       route.upstream,
       {
@@ -602,6 +607,16 @@ async function handleGatewayImpl(
               provider: { order: ["deepseek"], allow_fallbacks: false },
             })
           : rawWithDeepSeekProvider(forwardBody);
+    }
+    // Ox Alpha reasons with effort levels (low/high/max) and OpenRouter takes
+    // the unified `reasoning` param on both /v1/messages and chat/completions —
+    // pin effort=max for every or/stealth/ox-alpha request (overrides any
+    // client-sent reasoning).
+    if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
+      forwardBody =
+        body !== null
+          ? JSON.stringify({ ...body, model: upstreamModel, reasoning: { effort: "max" } })
+          : rawWithOxAlphaReasoning(forwardBody);
     }
     const { response: upstream, detail } = await fetchWithRetry(
       route.upstream,

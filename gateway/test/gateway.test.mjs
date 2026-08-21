@@ -184,7 +184,33 @@ test("or/stealth/ox-alpha uses OpenRouter BYOK passthrough", async () => {
     ? seen.init.headers.get("authorization")
     : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-openrouter-ox");
-  assert.equal(JSON.parse(seen.init.body).model, "stealth/ox-alpha");
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "stealth/ox-alpha");
+  // reasoning.effort=max is pinned on every ox-alpha request (overrides client).
+  assert.deepEqual(sent.reasoning, { effort: "max" });
+  assert.equal(res.status, 200);
+});
+
+test("or/stealth/ox-alpha chat/completions also pins reasoning.effort=max", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({
+    keys: {
+      OPENCODE_GO_API_KEY: undefined,
+      OPENROUTER_API_KEY: "sk-openrouter-ox",
+    },
+  });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "or/stealth/ox-alpha",
+    max_tokens: 1,
+    messages: [{ role: "user", content: "hi" }],
+  }, "/v1/chat/completions"));
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "stealth/ox-alpha");
+  assert.deepEqual(sent.reasoning, { effort: "max" });
   assert.equal(res.status, 200);
 });
 
