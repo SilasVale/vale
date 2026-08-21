@@ -4,7 +4,7 @@
 // try/catch fallback that returns the original resp untouched.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { build101Response } from "../src/device-fetch.js";
+import { build101Response } from "../src/device-fetch.ts";
 
 test("build101Response returns webSocket-bearing 101 Response", () => {
   const fakeWS = { send() {}, close() {} };

@@ -16,10 +16,10 @@
  */
 
 import { handleMcp } from "../mcp.ts";
-import { listDevices, getAdminPassword, getUser, type Device } from "../store.ts";
+import { listDevices, type Device } from "../store.ts";
 import { deviceFetch } from "../device-fetch.ts";
 import { jsonOk, jsonError } from "../http.ts";
-import { parseCookie, verifySessionToken, SESSION_COOKIE } from "../auth.ts";
+import { requireSession } from "../session.ts";
 import type { Plugin, PluginContext } from "./registry.ts";
 
 const PLUGIN_BASE = "/api/plugins";
@@ -105,23 +105,14 @@ export default {
     // ---- GET /api/plugins/status (was inside handleConsole, admin-gated) ----
     // round-83: the migration dropped the admin gate — the plugin route runs
     // BEFORE the legacy session checks, so it returned the device inventory
-    // to unauthenticated callers (verified live). Restore the guard.
+    // to unauthenticated callers (verified live). Restore the guard through
+    // the shared session module (round-88's full contract: sess-revoked
+    // blacklist + enabled check — the hand-rolled copy had drifted).
     ctx.routes.push({
       match: (m, p) => m === "GET" && p === `${PLUGIN_BASE}/status`,
       handler: async (request: Request, env: any) => {
-        const ap = await getAdminPassword(env);
-        const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
-        // round-88: the hand-rolled gate must match requireSession — the
-        // sess-revoked blacklist (a copied pre-logout cookie) and the
-        // enabled check were missing, so a logged-out admin's copied cookie
-        // kept reading the device inventory for up to 24h.
-        if (!cookie || !ap) return jsonError(401, "Not logged in", "authentication_error");
-        if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) {
-          return jsonError(401, "Not logged in", "authentication_error");
-        }
-        const session = await verifySessionToken(env.SESSION_SECRET || ap, cookie);
-        const user = session ? await getUser(env, session.uid) : null;
-        if (!user || user.role !== "admin" || !user.enabled) {
+        const user = await requireSession(request, env);
+        if (!user || user.role !== "admin") {
           return jsonError(401, "Not logged in", "authentication_error");
         }
         return pluginStatus(request, env);

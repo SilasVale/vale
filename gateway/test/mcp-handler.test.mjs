@@ -10,7 +10,7 @@
 // stubbing fetch exercises the full handleMcp → callTool → deviceFetch pipeline unchanged).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { handleMcp } from "../src/mcp.js";
+import { handleMcp } from "../src/mcp.ts";
 
 const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 
@@ -142,7 +142,7 @@ test("mcp: GET → 200 text/event-stream keepalive stream; cancel() clears the t
 // before round-54).
 
 test("contract: every agent terminal tool is registered in the gateway list", async () => {
-  const { allMcpTools } = await import("../src/mcp-tools.js");
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
   const names = allMcpTools().map((t) => t.name);
   // Snapshot of agent /api/spec tool names (agent/src/plugins/terminal/tools.rs).
   const AGENT_SPEC_TOOLS = [
@@ -164,7 +164,7 @@ test("contract: every agent terminal tool is registered in the gateway list", as
 });
 
 test("contract: terminal_execute schema/quiet default match the agent", async () => {
-  const { allMcpTools } = await import("../src/mcp-tools.js");
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
   const t = allMcpTools().find((t) => t.name === "terminal_execute");
   assert.ok(t, "terminal_execute registered");
   // The gateway exposes `input` (mapped to the agent's `command` in mcp.js);

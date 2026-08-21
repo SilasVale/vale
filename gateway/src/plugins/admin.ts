@@ -26,15 +26,14 @@ import {
   hasAdminPassword,
   setAdminPassword,
   verifyAdminPassword,
-  getAdminPassword,
   getUser,
   maskKey,
   ADMIN_ID,
   USER_KEY_NAMES,
 } from "../store.ts";
-import { parseCookie, verifySessionToken, SESSION_COOKIE } from "../auth.ts";
 import { MODELS, ROUTE_INFO } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
+import { requireSession } from "../session.ts";
 import type { User } from "../store.ts";
 import type { PluginContext } from "./registry.ts";
 
@@ -44,28 +43,6 @@ const ADMIN_BASE = "/api/admin";
  *  store.ts / registry.ts). */
 interface Env {
   [key: string]: any;
-}
-
-// Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
-// secret) over the admin password. Using the password directly lets any invited
-// user offline-brute-force it from their own signed cookie (HMAC-SHA256 is not
-// memory-hard); with SESSION_SECRET set, the password is never a signing key.
-function sessionSecret(env: Env, adminPassword: string): string {
-  return env.SESSION_SECRET || adminPassword;
-}
-
-async function requireSession(request: Request, env: Env): Promise<User | null> {
-  const ap = await getAdminPassword(env);
-  if (!ap) return null;
-  const cookie = parseCookie(request.headers.get("Cookie") ?? "")[SESSION_COOKIE];
-  if (!cookie) return null;
-  // Revoked by logout (server-side blacklist — a copied cookie dies too).
-  if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) return null;
-  const session = await verifySessionToken(sessionSecret(env, ap), cookie);
-  if (!session) return null;
-  const user = await getUser(env, session.uid);
-  if (!user || !user.enabled) return null;
-  return user;
 }
 
 /* ---- Public: route info (no session) ---- */

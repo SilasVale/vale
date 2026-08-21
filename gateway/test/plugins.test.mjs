@@ -4,8 +4,8 @@
 // stub stands in for the Workers binding.
 import test from "node:test";
 import assert from "node:assert/strict";
-import worker from "../src/index.js";
-import { createPairCode, consumePairCode, addPluginLink, getPluginByToken, removePluginLink, createWsTicket, consumeWsTicket, __clearCaches } from "../src/store.js";
+import worker from "../src/index.ts";
+import { createPairCode, consumePairCode, addPluginLink, getPluginByToken, removePluginLink, createWsTicket, consumeWsTicket, __clearCaches } from "../src/store.ts";
 
 // Full worker fetch: pair/claim + ws-ticket are public (no admin session) —
 // the extension has no session cookie. Asserted by behavior, not source order.

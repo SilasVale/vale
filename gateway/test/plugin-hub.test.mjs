@@ -5,7 +5,7 @@
 // so no real Cloudflare runtime is needed.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PluginHubDO } from "../src/plugin-hub.js";
+import { PluginHubDO } from "../src/plugin-hub.ts";
 
 function makeState(initialSockets = []) {
   const sockets = [...initialSockets];

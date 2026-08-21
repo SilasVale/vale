@@ -35,9 +35,9 @@ import {
   deleteRegKey,
   deleteRegGrant,
   consumeRegKey,
+  createRegKey,
+  createPairCode,
   getCfToken,
-  getAdminPassword,
-  getUser,
   maskKey,
   listDevices,
   addPluginLink,
@@ -47,40 +47,16 @@ import {
   consumePairCode,
   createWsTicket,
   consumeWsTicket,
-  type User,
   type Device,
 } from "../store.ts";
-import { parseCookie, SESSION_COOKIE, verifySessionToken, randomHex } from "../auth.ts";
+import { parseCookie, randomHex } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
+import { requireSession } from "../session.ts";
 import { route, type Plugin, type PluginContext } from "./registry.ts";
 
 const DEVICE_BASE = "/api/devices";
 const PLUGIN_BASE = "/api/plugins";
-
-/* ---------------- Session auth (copied from index.js) ---------------- */
-
-// Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
-// secret) over the admin password. Using the password directly lets any invited
-// user offline-brute-force it from their own signed cookie (HMAC-SHA256 is not
-// memory-hard); with SESSION_SECRET set, the password is never a signing key.
-function sessionSecret(env: any, adminPassword: string): string {
-  return env.SESSION_SECRET || adminPassword;
-}
-
-async function requireSession(request: Request, env: any): Promise<User | null> {
-  const ap = await getAdminPassword(env);
-  if (!ap) return null;
-  const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
-  if (!cookie) return null;
-  // Revoked by logout (server-side blacklist — a copied cookie dies too).
-  if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) return null;
-  const session = await verifySessionToken(sessionSecret(env, ap), cookie);
-  if (!session) return null;
-  const user = await getUser(env, session.uid);
-  if (!user || !user.enabled) return null;
-  return user;
-}
 
 /* ---------------- Route handlers (bodies copied verbatim from index.js) ---------------- */
 
@@ -483,6 +459,60 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
   return jsonOk({ ok: true });
 }
 
+// POST /api/devices/register-key — generate a one-time install key.
+// (the last admin-gated route still served by index.ts's inline chain)
+async function handleRegisterKey(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const key = await createRegKey(env);
+  return jsonOk({ ok: true, key });
+}
+
+// POST /api/plugins/pair — mint a one-time pairing code for a device (admin).
+async function handlePair(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const { device }: any = (await request.json().catch(() => ({}))) || {};
+  const d = device ? await getDevice(env, String(device)) : null;
+  if (!d) return jsonError(404, "Device not found", "not_found_error");
+  const code = await createPairCode(env, d.name);
+  return jsonOk({ code });
+}
+
+// POST /api/plugins/unpair — drop all plugin links for a device (admin).
+async function handleUnpair(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const { device }: any = (await request.json().catch(() => ({}))) || {};
+  const links = await listPluginLinks(env);
+  for (const [t, l] of Object.entries(links))
+    if (l.device === device) await removePluginLink(env, t);
+  // round-92: removing the KV links was not enough — the extension's LIVE
+  // hub socket kept relaying browser_* commands past the unpair (the socket
+  // stays in the DO and its 20s pings keep the idle alarm from ever firing,
+  // so alarm()'s token re-validation never runs either). revoke() (round-84)
+  // already knew this and calls /close-all; unpair is the same revocation
+  // contract and must do the same.
+  if (env.PLUGIN_HUB) {
+    try {
+      const id = env.PLUGIN_HUB.idFromName(device);
+      const hub = env.PLUGIN_HUB.get(id);
+      const req = new Request("https://hub/close-all", { method: "POST" });
+      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
+      await hub.fetch(req).catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+  }
+  return jsonOk({ ok: true });
+}
+
 /* ---------------- Device module helpers (copied verbatim from index.js) ---------------- */
 
 // round-107: decode a URL-encoded device name, null on malformed escapes
@@ -740,6 +770,22 @@ export default {
     ctx.routes.push({
       match: (m, p) => m === "DELETE" && /^\/api\/devices\/[^/]+$/.test(p),
       handler: handleDeviceDelete,
+    });
+    // Admin-gated pairing/install flows (the last routes index.ts still
+    // served inline — moved here to complete the plugin migration). Exact
+    // matches: a prefix match on /api/plugins/pair would swallow the public
+    // /api/plugins/pair/claim registered above.
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === `${DEVICE_BASE}/register-key`,
+      handler: handleRegisterKey,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === `${PLUGIN_BASE}/pair`,
+      handler: handlePair,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === `${PLUGIN_BASE}/unpair`,
+      handler: handleUnpair,
     });
   },
 } satisfies Plugin;

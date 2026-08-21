@@ -7,7 +7,7 @@
 // Workers binding.
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as store from "../src/store.js";
+import * as store from "../src/store.ts";
 
 // ── Counting mock KV ───────────────────────────────────────────
 
