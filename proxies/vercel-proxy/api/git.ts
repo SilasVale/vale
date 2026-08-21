@@ -17,6 +17,7 @@ const REQUEST_HEADERS = [
 ];
 const RESPONSE_HEADERS = [
   "cache-control",
+  "clear-site-data",
   "content-encoding",
   "content-length",
   "content-type",
@@ -30,7 +31,12 @@ const MAX_REDIRECTS = 3;
 function errorResponse(message: string, status = 400): Response {
   return new Response(JSON.stringify({ error: message }), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    // Errors (404/401/413...) must not be edge-cached either — a cached
+    // transient failure would outlive its cause.
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store, max-age=0, must-revalidate",
+    },
   });
 }
 
@@ -100,9 +106,13 @@ export default async function handler(request: Request): Promise<Response> {
       });
       const target = allowedRedirect(response, upstream);
       if (!target || response.status < 300 || response.status >= 400) {
+        const out = responseHeaders(response);
+        // Git metadata MUST NOT be edge-cached: a cached info/refs made
+        // pushes appear to fail (stale 404s / stale refs for minutes).
+        out.set("cache-control", "no-store, max-age=0, must-revalidate");
         return new Response(response.body, {
           status: response.status,
-          headers: responseHeaders(response),
+          headers: out,
         });
       }
       if (redirects >= MAX_REDIRECTS) return errorResponse("too many GitHub redirects", 502);
