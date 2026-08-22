@@ -465,6 +465,13 @@ async function handleGatewayImpl(
         "config_error",
       );
     }
+    // OpenAI 格式必须打到 OpenRouter 的 chat/completions 端点——messages 流程
+    // 选出的 route.upstream 是 /v1/messages,直接复用会把 OpenAI body 塞进
+    // Anthropic 端点(bugfix 2026-08-22)。按开关重取 chat 路径的上游:
+    // 关=直连 openrouter.ai/api/v1/chat/completions;开=经美国出口(target=or)。
+    if (route.kind === "openrouter") {
+      route.upstream = pickRoute("or", env, usProxy, "/v1/chat/completions").upstream;
+    }
     // Body is already OpenAI format — forward as-is with model field swapped.
     let forwardBody = rawWithModel(rawText, upstreamModel, scanned);
     // zen/go rejects OpenAI's "developer" role with "[1214] Incorrect role
