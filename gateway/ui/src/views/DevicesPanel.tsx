@@ -126,6 +126,18 @@ export default function DevicesPanel() {
     }
   };
 
+  const openPanel = async (name: string) => {
+    try {
+      const data = await api.getDeviceMcp(name);
+      const cfg = JSON.parse(data.mcp.json);
+      const auth = cfg.mcpServers["vale-agent"].headers.Authorization; // "Bearer <device_token>"
+      const tok = auth.replace("Bearer ", "");
+      window.open(`https://${name}.agent.saisi.online/panel/?token=${tok}`, "_blank");
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : t("devices.saveFail"), true);
+    }
+  };
+
   const handlePair = async (name: string) => {
     try {
       const data = await api.pairDevice(name);
@@ -307,14 +319,12 @@ export default function DevicesPanel() {
                     <button className="btn btn-ghost btn-mini" onClick={() => handlePair(d.name)}>
                       {t("devices.pair")}
                     </button>
-                    <a
+                    <button
                       className="btn btn-ghost btn-mini"
-                      href={`https://${d.hostname}/panel/`}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      onClick={() => openPanel(d.name)}
                     >
                       {t("devices.open")}
-                    </a>
+                    </button>
                     <button className="btn btn-ghost btn-mini" onClick={() => handleCopyMcp(d.name)}>
                       {t("devices.copyMcp")}
                     </button>
