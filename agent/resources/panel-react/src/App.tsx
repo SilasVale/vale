@@ -11,6 +11,7 @@ import { DetailsPanel } from "./components/DetailsPanel";
 import { CommandStream } from "./components/CommandCard";
 import { TrajectoryView } from "./components/TrajectoryView";
 import { TerminalPane } from "./components/TerminalPane";
+import BrowserPane from "./components/BrowserPane";
 import { TabBar } from "./components/TabBar";
 import type { SessionView } from "./components/TabBar";
 import { Toolbar } from "./components/Toolbar";
@@ -253,7 +254,11 @@ export function App() {
               // unregister fix was dead code because closed panes never
               // unmounted, leaving their write callbacks in the 5s sync loop's
               // polling set forever. Unmounting releases the callback.
-              sessions.sessions.filter((s) => !s.closed).map((s) => <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />)
+              sessions.sessions.filter((s) => !s.closed).map((s) =>
+                s.kind === "browser"
+                  ? <BrowserPane key={s.sid} session={{ sid: s.sid, url: "", active: s.active }} apiBase="" token={localStorage.getItem("vale_token") || ""} />
+                  : <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />
+              )
             )}
           </div>
           {/* round-admin-ui Task 4/5: command card stream for the ACTIVE
