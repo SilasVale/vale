@@ -152,13 +152,8 @@ try {
     $ErrorActionPreference = $oldEAP
 }
 if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-agent.exe" $exe -Force }
-# Tray app: re-download on updates too. The NSIS installer bundles it for fresh
-# installs, but the script path must fetch it so an update also refreshes the
-# tray (and its scheduled-task registration below). Kill strays first — a
-# running exe locks the file.
-$trayExe = Join-Path $InstallDir "vale-tray.exe"
-Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
-if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-tray.exe" $trayExe -Force }
+# Tray app retired (2026-08-22): management moved to the web panel + `vale`
+# CLI; the vale-tray download/task blocks were removed with it.
 # Browser extension: extract vale-browser-control.zip into $INSTDIR\extension\
 # so Chrome's "Load unpacked" points at the same install dir (updated together
 # with the binaries on every install/upgrade). The NSIS installer bundles the
@@ -411,19 +406,19 @@ if ($agentOk) {
     if (Test-Path $sl) { Get-Content $sl } else { Write-Warning "  (no startup.log at $sl)" }
 }
 
-# Tray app: register an at-logon task so the tray icon appears for the logged-in
-# user (highest privileges so it can start/stop the SYSTEM ValeAgent task).
-$trayExe = Join-Path $InstallDir "vale-tray.exe"
-if (Test-Path $trayExe) {
-    Unregister-ScheduledTask -TaskName "ValeAgentTray" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-    $trayAction = New-ScheduledTaskAction -Execute $trayExe
-    $trayTrigger = New-ScheduledTaskTrigger -AtLogOn
-    $trayPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-    # Same unlimited ExecutionTimeLimit as the ValeAgent task — a tray app
-    # must never be killed by the default 72h task limit.
-    Register-ScheduledTask -TaskName "ValeAgentTray" -Action $trayAction -Trigger $trayTrigger -Principal $trayPrincipal -Settings $settings -Force | Out-Null
-    Start-ScheduledTask -TaskName "ValeAgentTray" | Out-Null
-}
+# Desktop shortcut "Vale Panel" -> local panel URL (DSH-style browser-first
+# management; the native tray retired 2026-08-22 after recurring icon loss).
+Write-Host "`n[6.5/7] desktop shortcut"
+try {
+    $ws = New-Object -ComObject WScript.Shell
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $sc = $ws.CreateShortcut((Join-Path $desktop 'Vale Panel.lnk'))
+    $sc.TargetPath = 'http://127.0.0.1:18080/panel/'
+    $sc.IconLocation = (Join-Path $InstallDir 'vale-agent.ico') + ',0'
+    $sc.Description = 'Vale Agent panel'
+    $sc.Save()
+    Write-Host '  ok: desktop shortcut created'
+} catch { Write-Warning "shortcut failed: $_" }
 
 # 7. cloudflared as a service - bake the tunnel token into the service so it
 #    connects regardless of the service's user profile. A config-file-based
