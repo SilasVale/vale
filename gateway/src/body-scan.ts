@@ -102,8 +102,11 @@ export function rawWithDeepSeekProvider(raw: string): string {
   return rawWithTopLevelField(raw, "provider", { order: ["deepseek"], allow_fallbacks: false });
 }
 
-/** Pin Ox Alpha's unified reasoning effort (replaces any client-sent value). */
-export function rawWithOxAlphaReasoning(raw: string): string {
+/** Ox Alpha's unified reasoning param: respect a client-sent top-level
+ *  "reasoning" field as-is; only when absent default it to effort=max.
+ *  (2026-08-22: was an unconditional max override — clients had no say.) */
+export function rawWithOxAlphaReasoningDefault(raw: string): string {
+  if (scanTopLevelField(raw, "reasoning")) return raw;
   return rawWithTopLevelField(raw, "reasoning", { effort: "max" });
 }
 

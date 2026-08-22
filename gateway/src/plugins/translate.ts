@@ -46,7 +46,7 @@ import {
 } from "../reliability.ts";
 import {
   rawWithDeepSeekProvider,
-  rawWithOxAlphaReasoning,
+  rawWithOxAlphaReasoningDefault,
   rawWithModel,
   scanTopLevelModel,
   estimateTokens,
@@ -482,9 +482,10 @@ async function handleGatewayImpl(
     if (forwardBody.includes('"role":"developer"')) {
       forwardBody = forwardBody.split('"role":"developer"').join('"role":"system"');
     }
-    // or/stealth/ox-alpha: pin reasoning.effort=max (see the /v1/messages site).
+    // or/stealth/ox-alpha: default reasoning.effort=max only when the client
+    // sent no top-level reasoning (see the /v1/messages site).
     if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
-      forwardBody = rawWithOxAlphaReasoning(forwardBody);
+      forwardBody = rawWithOxAlphaReasoningDefault(forwardBody);
     }
     const { response: upstream, detail } = await fetchWithRetry(
       route.upstream,
@@ -617,14 +618,11 @@ async function handleGatewayImpl(
           : rawWithDeepSeekProvider(forwardBody);
     }
     // Ox Alpha reasons with effort levels (low/high/max) and OpenRouter takes
-    // the unified `reasoning` param on both /v1/messages and chat/completions —
-    // pin effort=max for every or/stealth/ox-alpha request (overrides any
-    // client-sent reasoning).
+    // the unified `reasoning` param on both /v1/messages and chat/completions.
+    // 2026-08-22: respect a client-sent top-level reasoning as-is; only
+    // default to effort=max when the request carries none.
     if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
-      forwardBody =
-        body !== null
-          ? JSON.stringify({ ...body, model: upstreamModel, reasoning: { effort: "max" } })
-          : rawWithOxAlphaReasoning(forwardBody);
+      forwardBody = rawWithOxAlphaReasoningDefault(forwardBody);
     }
     const { response: upstream, detail } = await fetchWithRetry(
       route.upstream,
