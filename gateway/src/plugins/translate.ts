@@ -709,6 +709,13 @@ async function handleGatewayImpl(
     );
   }
   const openaiReq = toOpenAIRequest(body, upstreamModel);
+  // ox-alpha-free takes reasoning effort levels (low/high/max) via the unified
+  // reasoning param — mirror the or/ rule on this translate path: respect a
+  // client-sent reasoning, else default effort=max (2026-08-22). Claude Code's
+  // Anthropic `thinking` param is not mapped; the default covers it.
+  if (upstreamModel === "ox-alpha-free" && openaiReq.reasoning === undefined) {
+    openaiReq.reasoning = { effort: "max" };
+  }
   const { response: upstream, detail } = await fetchWithRetry(
     route.upstream,
     {
