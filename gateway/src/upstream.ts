@@ -25,7 +25,12 @@ export function stripBracket(s: string): string {
   return s.replace(/\[[^\]]*\]$/, "");
 }
 
-export function pickRoute(prefix: string, env: any, usProxy: string | null = null): RouteInfo {
+export function pickRoute(
+  prefix: string,
+  env: any,
+  usProxy: string | null = null,
+  requestPath: string = VERIFY_PATH,
+): RouteInfo {
   // 美国出口开关:US_PROXY=1 时所有模型经 Vercel 代理(v.saisi.online/api/zen)
   // 从美国边缘出口访问上游,规避区域限制/拥堵。target=og|ds|qw|or 选上游,
   // path 参数带上游相对路径(代理 base 已含主机级前缀)。usProxy is a local
@@ -35,17 +40,19 @@ export function pickRoute(prefix: string, env: any, usProxy: string | null = nul
       ? `${usProxyBase(env)}/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
       : direct;
   switch (prefix) {
-    case "or":
+    case "or": {
+      // 开关统一管到 or(2026-08-22):关=直连 openrouter.ai;开=经美国出口。
+      // requestPath 区分双格式:/v1/messages(Claude Code)与
+      // /v1/chat/completions(DSH)。出口实测为纯管道——透传 Authorization,
+      // BYOK 不受影响。openrouter-proxy 不再在链路上(worker 保留但闲置)。
+      const upstreamPath = requestPath || VERIFY_PATH;
       return {
         type: "passthrough",
         kind: "openrouter", // passes through the user's own OPENROUTER_API_KEY
         stripPrefix: true,
-        // 代理 base 是 openrouter.ai/api,path 只用 /v1/messages(不含 /api,
-        // 否则拼出 openrouter.ai/api/api/v1/messages → 404)
-        // OpenRouter routes stay direct; US_PROXY is only for channels that
-        // require a regional exit (not this provider-neutral API).
-        upstream: (env.OPENROUTER_PROXY_URL || "https://v.saisi.online/api/proxy") + VERIFY_PATH,
+        upstream: via("https://openrouter.ai/api" + upstreamPath, upstreamPath),
       };
+    }
     case "ds":
       return {
         type: "passthrough",
