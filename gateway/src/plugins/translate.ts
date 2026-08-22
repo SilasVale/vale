@@ -406,7 +406,8 @@ async function handleGatewayImpl(
     }
   }
 
-  // or/ goes through the openrouter-proxy using "this user's" OpenRouter key (BYOK)
+  // or/ uses "this user's" OpenRouter key (BYOK); upstream is direct
+  // openrouter.ai or the US exit per the proxy switch (see pickRoute).
   if (route.kind === "openrouter" && !openRouterKey) {
     return jsonError(
       502,
