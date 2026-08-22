@@ -54,7 +54,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
   {
     prefix: "or/",
     backend: "OpenRouter",
-    desc: "openrouter.ai — user's own key, proxied via openrouter-proxy",
+    desc: "openrouter.ai — user's own key (BYOK); dual-format passthrough, US-proxy switch decides direct vs exit",
     models: [
       "openai/gpt-5.6-luna:floor[1m]",
       "z-ai/glm-5.2:free",
