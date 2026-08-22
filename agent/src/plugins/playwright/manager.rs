@@ -148,10 +148,6 @@ impl PlaywrightManager {
         let mut child = tokio::process::Command::new(&node)
             .arg(&entry)
             .arg("--port").arg(port.to_string())
-            // Force IPv4 binding — the default binds [::1] (IPv6) on some
-            // systems, which the health check and mcp_client (both dialing
-            // 127.0.0.1) can never reach.
-            .arg("--host").arg("127.0.0.1")
             .arg("--browser").arg("msedge")
             // round-131: playwright-mcp 的 Host 比较是 RAW 串含端口 —
             // 非默认端口 9229 上必须写 "127.0.0.1:9229"(写 "127.0.0.1"
@@ -178,7 +174,7 @@ impl PlaywrightManager {
                 break;
             }
             let probe = client
-                .post(format!("http://127.0.0.1:{port}/mcp"))
+                .post(format!("http://localhost:{port}/mcp"))
                 .header("content-type", "application/json")
                 // round-131: MCP 传输要求 Accept: application/json,
                 // text/event-stream — 缺了返回 406,探测永远失败。
@@ -235,7 +231,7 @@ impl PlaywrightManager {
             let _ = child.wait().await;
             return Err(DeviceError::Internal {
                 message: format!(
-                    "playwright-mcp did not become healthy on 127.0.0.1:{port}{}",
+                    "playwright-mcp did not become healthy on localhost:{port}{}",
                     if stderr_hint.is_empty() { String::new() } else { format!(": {}", stderr_hint) }
                 ),
             });

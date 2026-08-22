@@ -21,7 +21,7 @@ use rmcp::{
 };
 
 /// The local browser MCP server endpoint (playwright-mcp --port 9229).
-const DEFAULT_URL: &str = "http://127.0.0.1:9229/mcp";
+const DEFAULT_URL: &str = "http://localhost:9229/mcp";
 
 /// Shared remote-peer slot: set by `mcp_client_connect`, used by `call`/`list`.
 /// Carries the session's cancel token so `disconnect` can tear the session
@@ -73,14 +73,14 @@ pub fn mcp_client_connect() -> ToolDef {
         "mcp_client_connect",
         "Connect this device to a local browser MCP server (playwright-mcp / \
          chrome-devtools-mcp). The server must already be running on this device \
-         (default http://127.0.0.1:9229/mcp). Returns the number of tools exposed \
+         (default http://localhost:9229/mcp). Returns the number of tools exposed \
          by the server once connected.",
         json!({
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "MCP server URL (default http://127.0.0.1:9229/mcp)"
+                    "description": "MCP server URL (default http://localhost:9229/mcp)"
                 }
             }
         }),
