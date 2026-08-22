@@ -80,7 +80,7 @@ async function handleGatewayImpl(
   env: any,
   url: URL,
   preReadText: string | null = null,
-  ctx: { model: string; user?: string } = { model: "" },
+  ctx: { model: string; user?: string; generationId?: string } = { model: "" },
 ): Promise<Response> {
   const path = url.pathname;
   const method = request.method;
@@ -533,6 +533,10 @@ async function handleGatewayImpl(
     // Direct passthrough — upstream returns OpenAI format, return it as-is.
     const headers = new Headers(upstream.headers);
     headers.set("Access-Control-Allow-Origin", "*");
+    // OpenRouter's per-generation id — the correlation key for the upstream
+    // dashboard when a client reports EMPTY_RESPONSE (a 200 stream that ended
+    // with no content, typically an in-stream upstream error pi-ai skips).
+    ctx.generationId = upstream.headers.get("x-generation-id") || undefined;
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 
@@ -840,7 +844,7 @@ export async function handleGateway(request: Request, env: any, url: URL): Promi
   } catch {
     /* impl will re-try; a broken stream fails there with a clear error */
   }
-  const ctx = { model: "", user: "" };
+  const ctx = { model: "", user: "", generationId: "" };
   const res = await handleGatewayImpl(request, env, url, rawText, ctx);
   try {
     // One structured line per /v1 request — tail-visible usage/health signal.
@@ -856,6 +860,7 @@ export async function handleGateway(request: Request, env: any, url: URL): Promi
         user: ctx.user,
         path: url.pathname,
         model: ctx.model,
+        generation_id: ctx.generationId || undefined,
       }),
     );
   } catch {
