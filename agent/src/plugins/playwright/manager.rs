@@ -148,6 +148,10 @@ impl PlaywrightManager {
         let mut child = tokio::process::Command::new(&node)
             .arg(&entry)
             .arg("--port").arg(port.to_string())
+            // Force IPv4 binding — the default binds [::1] (IPv6) on some
+            // systems, which the health check and mcp_client (both dialing
+            // 127.0.0.1) can never reach.
+            .arg("--host").arg("127.0.0.1")
             .arg("--browser").arg("msedge")
             // round-131: playwright-mcp 的 Host 比较是 RAW 串含端口 —
             // 非默认端口 9229 上必须写 "127.0.0.1:9229"(写 "127.0.0.1"
@@ -215,11 +219,25 @@ impl PlaywrightManager {
             }
         }
         if !ok {
+            let stderr_hint = {
+                use tokio::io::AsyncReadExt;
+                let mut buf = Vec::new();
+                if let Some(mut s) = child.stderr.take() {
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(500),
+                        s.read_to_end(&mut buf),
+                    ).await;
+                }
+                String::from_utf8_lossy(&buf).chars().rev().take(500).collect::<String>().chars().rev().collect::<String>()
+            };
             let _ = child.kill().await;
             #[cfg(not(windows))]
-            let _ = child.wait().await; // reap the zombie (unix dev builds)
+            let _ = child.wait().await;
             return Err(DeviceError::Internal {
-                message: format!("playwright-mcp did not become healthy on 127.0.0.1:{port}"),
+                message: format!(
+                    "playwright-mcp did not become healthy on 127.0.0.1:{port}{}",
+                    if stderr_hint.is_empty() { String::new() } else { format!(": {}", stderr_hint) }
+                ),
             });
         }
         // Win/lose decided atomically under the lock; the loser's child is
