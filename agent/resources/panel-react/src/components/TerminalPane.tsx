@@ -51,8 +51,10 @@ export function TerminalPane({ session, registerWrite }: {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
-    fit.fit();
-    termRef.current = term;
+    // rAF ×2: wait for the browser to paint the container at its final
+    // size before fitting — an immediate fit() reads pre-layout dimensions
+    // and produces a partial grid (the "not filling the screen" bug).
+    requestAnimationFrame(() => requestAnimationFrame(() => { try { fit.fit(); } catch {} }));
 
     // Keystrokes up: POST terminal_write.
     const sub = term.onData((data) => {
@@ -133,14 +135,20 @@ export function TerminalPane({ session, registerWrite }: {
       } catch {}
     };
     if (session.active) {
+      const cleanupRef: (() => void)[] = [];
       const t = setTimeout(refit, 50);
       window.addEventListener("resize", refit);
       document.addEventListener("visibilitychange", refit);
+      if (containerRef.current && typeof ResizeObserver !== "undefined") {
+        const ro = new ResizeObserver(() => refit());
+        ro.observe(containerRef.current);
+        cleanupRef.push(() => ro.disconnect());
+      }
       // round-94: focus the terminal on activation — keystrokes previously
       // landed nowhere (focus stayed on the toolbar/button that opened the
       // session, and Enter/Space re-triggered it).
       setTimeout(() => { try { termRef.current?.focus?.(); } catch {} }, 60);
-      return () => { clearTimeout(t); window.removeEventListener("resize", refit); document.removeEventListener("visibilitychange", refit); };
+      return () => { clearTimeout(t); window.removeEventListener("resize", refit); document.removeEventListener("visibilitychange", refit); cleanupRef.forEach(fn => fn()); };
     }
   }, [session.active]);
 
