@@ -227,7 +227,9 @@ test("or/deepseek/deepseek-v4-flash-0731 uses direct OpenRouter with fixed DeepS
     max_tokens: 1,
     messages: [{ role: "user", content: "hi" }],
   }));
-  assert.equal(seen.url, "https://v.saisi.online/api/proxy/v1/messages");
+  // 2026-08-22: or/ walks the US exit like every channel (openrouter-proxy
+  // retired from the chain); the DeepSeek provider pin rides in the body.
+  assert.equal(seen.url, "https://v.saisi.online/api/zen?target=or&path=%2Fv1%2Fmessages");
   const sent = JSON.parse(seen.init.body);
   assert.equal(sent.model, "deepseek/deepseek-v4-flash-0731");
   assert.deepEqual(sent.provider, { order: ["deepseek"], allow_fallbacks: false });
