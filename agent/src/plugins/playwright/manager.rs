@@ -175,7 +175,9 @@ impl PlaywrightManager {
                 break;
             }
             let probe = client
-                .post(format!("http://localhost:{port}/mcp"))
+                // round-118: 127.0.0.1 而非 localhost — 子进程 --host 127.0.0.1
+                // 只绑 IPv4,localhost 解析到 [::1] 会让健康轮询永远失败。
+                .post(format!("http://127.0.0.1:{port}/mcp"))
                 .header("content-type", "application/json")
                 // round-131: MCP 传输要求 Accept: application/json,
                 // text/event-stream — 缺了返回 406,探测永远失败。

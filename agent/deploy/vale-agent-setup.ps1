@@ -415,6 +415,32 @@ if ($agentOk) {
     if (Test-Path $sl) { Get-Content $sl } else { Write-Warning "  (no startup.log at $sl)" }
 }
 
+# [6b] ValePlaywright — playwright-mcp hosted in the INTERACTIVE user session.
+# Edge cannot run under the agent's SYSTEM/session-0 token (exitCode=1002:
+# no desktop heap for the browser), but the same binary works fine launched
+# from a logged-in user. The task binds 127.0.0.1:9229 only (--allowed-hosts
+# blocks DNS-rebinding; the Host check compares RAW host:port) and the same
+# 5-min repetition sweep as the boot task restarts it if it dies. The agent's
+# mcp_client connects to http://127.0.0.1:9229/mcp — never "localhost", which
+# resolves to [::1] first and can hit a stale session-0 instance instead.
+Write-Host "`n[6b/7] playwright-mcp interactive task"
+$pwNode = Join-Path $InstallDir "playwright\node.exe"
+$pwCli = Join-Path $InstallDir "playwright\node_modules\@playwright\mcp\cli.js"
+if (Test-Path $pwNode) {
+    Unregister-ScheduledTask -TaskName "ValePlaywright" -Confirm:$false -ErrorAction SilentlyContinue
+    $pwAction = New-ScheduledTaskAction -Execute $pwNode `
+        -Argument "`"$pwCli`" --port 9229 --browser msedge --host 127.0.0.1 --headless --allowed-hosts `"127.0.0.1:9229,localhost:9229`""
+    $pwBoot = New-ScheduledTaskTrigger -AtLogOn
+    $pwWatch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $pwSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    Register-ScheduledTask -TaskName "ValePlaywright" -Action $pwAction -Trigger @($pwBoot, $pwWatch) -Principal (New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited) -Settings $pwSettings -Force | Out-Null
+    Start-ScheduledTask -TaskName "ValePlaywright" | Out-Null
+    Write-Host "  OK: ValePlaywright registered (session-1 browser server on 127.0.0.1:9229)"
+} else {
+    Write-Warning "  playwright runtime missing at $pwNode — browser tools disabled"
+}
+
+
 # Desktop shortcut "Vale Panel" -> local panel URL (DSH-style browser-first
 # management; the native tray retired 2026-08-22 after recurring icon loss).
 Write-Host "`n[6.5/7] desktop shortcut"

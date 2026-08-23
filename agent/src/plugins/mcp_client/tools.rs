@@ -21,7 +21,10 @@ use rmcp::{
 };
 
 /// The local browser MCP server endpoint (playwright-mcp --port 9229).
-const DEFAULT_URL: &str = "http://localhost:9229/mcp";
+/// round-118: 127.0.0.1, not "localhost" — localhost resolves to [::1] first
+/// on Windows, so a client could latch onto a stale session-0 instance instead
+/// of the session-1 ValePlaywright task server (which binds 127.0.0.1 only).
+const DEFAULT_URL: &str = "http://127.0.0.1:9229/mcp";
 
 /// Shared remote-peer slot: set by `mcp_client_connect`, used by `call`/`list`.
 /// Carries the session's cancel token so `disconnect` can tear the session
