@@ -92,9 +92,15 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
 
 /** Browser tools → agent 的 mcp_client_call → playwright-mcp。
  *  替代旧的 PluginHubDO/extension 路径。playwright-mcp 需在设备上运行。 */
-async function callMcpClientBridge(name: string, env: any, device: any, args: any): Promise<any> {
+async function callMcpClientBridge(
+  name: string,
+  _env: any,
+  device: any,
+  args: any,
+): Promise<any> {
   const token = device.token || "";
-  const url = `https://${device.hostname}/api/tools/mcp_client_call`;
+  const base = `https://${device.hostname}`;
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
   // 工具名映射：gateway 名 → playwright-mcp 名
   const toolMap: Record<string, string> = {
     browser_open: "browser_navigate",
@@ -106,16 +112,36 @@ async function callMcpClientBridge(name: string, env: any, device: any, args: an
     browser_close: "browser_close",
   };
   const pmTool = toolMap[name] || name;
-  const body = JSON.stringify({ tool: pmTool, arguments: args });
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body,
-  });
-  if (!res.ok) {
-    throw new Error(`mcp_client_call failed: ${res.status}`);
+  const invoke = async (): Promise<any> => {
+    const res = await fetch(`${base}/api/tools/mcp_client_call`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ tool: pmTool, arguments: args }),
+    });
+    // agent 的工具 API 恒返回 200 + {ok:false,error,code}（web.rs api_call_tool），
+    // 失败信息在 body 里，不能只看 res.ok。
+    try {
+      return await res.json();
+    } catch {
+      throw new Error(`mcp_client_call failed: ${res.status}`);
+    }
+  };
+  let out = await invoke();
+  if (out && out.ok === false) {
+    const msg = String(out.error || "");
+    // round-118 自愈：设备重启后没有任何组件拉起 playwright-mcp、也没有人建
+    // client session — 第一次 browser_* 必然 not connected，只能人工介入。
+    // 这里 start → connect → 重试一次，让浏览器链路开机自愈。
+    if (/not connected|server running|refused|timed out/i.test(msg)) {
+      await fetch(`${base}/api/plugins/playwright/start`, { method: "POST", headers });
+      await fetch(`${base}/api/tools/mcp_client_connect`, { method: "POST", headers, body: "{}" });
+      out = await invoke();
+    }
+    if (out && out.ok === false) {
+      throw new Error(String(out.error || "mcp_client_call failed"));
+    }
   }
-  return res.json();
+  return out;
 }
 
 export async function callTool(tool: any, env: any, device: any, args: any): Promise<any> {
@@ -276,6 +302,19 @@ function formatResult(result: any) {
     return [
       { type: "image", data: result.image.data, mimeType: result.image.mimeType || "image/png" },
     ];
+  }
+  // round-118: mcp_client 桥的截图以 data-URL 文本返回（agent 把 image content
+  // 渲染成 "data:image/png;base64,..."），解包回 MCP image block，别让模型
+  // 啃一整屏 base64 文本。
+  if (
+    result &&
+    typeof result === "object" &&
+    result.ok === true &&
+    typeof result.result === "string" &&
+    result.result.startsWith("data:image/")
+  ) {
+    const m = /^data:(image\/[a-z+]+);base64,(.+)$/.exec(result.result);
+    if (m) return [{ type: "image", mimeType: m[1], data: m[2] }];
   }
   return [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }];
 }
