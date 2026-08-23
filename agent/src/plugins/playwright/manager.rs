@@ -149,6 +149,7 @@ impl PlaywrightManager {
             .arg(&entry)
             .arg("--port").arg(port.to_string())
             .arg("--browser").arg("msedge")
+            .arg("--host").arg("127.0.0.1")
             // round-131: playwright-mcp 的 Host 比较是 RAW 串含端口 —
             // 非默认端口 9229 上必须写 "127.0.0.1:9229"(写 "127.0.0.1"
             // 永不匹配,所有请求 403,start 永远失败)。含 localhost 同义。
