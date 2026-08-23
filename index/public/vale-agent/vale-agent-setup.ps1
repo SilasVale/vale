@@ -152,13 +152,8 @@ try {
     $ErrorActionPreference = $oldEAP
 }
 if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-agent.exe" $exe -Force }
-# Tray app: re-download on updates too. The NSIS installer bundles it for fresh
-# installs, but the script path must fetch it so an update also refreshes the
-# tray (and its scheduled-task registration below). Kill strays first — a
-# running exe locks the file.
-$trayExe = Join-Path $InstallDir "vale-tray.exe"
-Get-Process vale-tray -ErrorAction SilentlyContinue | Stop-Process -Force
-if (-not $SkipDownload) { Download-File "$Base/vale-agent/vale-tray.exe" $trayExe -Force }
+# Tray app retired (2026-08-22): management moved to the web panel + `vale`
+# CLI; the vale-tray download/task blocks were removed with it.
 # Browser extension: extract vale-browser-control.zip into $INSTDIR\extension\
 # so Chrome's "Load unpacked" points at the same install dir (updated together
 # with the binaries on every install/upgrade). The NSIS installer bundles the
@@ -373,14 +368,23 @@ Stop-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue | Out-Nul
 Unregister-ScheduledTask -TaskName "ValeAgent" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 $action = New-ScheduledTaskAction -Execute $exe -Argument "`"$cfg`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
+# round-118: 5-min repetition sweep — a self-heal watchdog. IgnoreNew makes it
+# a no-op while the agent runs; if the process dies by any means not covered
+# by RestartOnFailure (exit code 0, killed parent, scheduler hiccup), the next
+# tick restarts it within <=5 min instead of leaving the device dark until a
+# human reboots. Duration omitted = repeats indefinitely (verified on PS 5.1:
+# [TimeSpan]::MaxValue produces an XML duration Task Scheduler rejects).
+$watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(90) -RepetitionInterval (New-TimeSpan -Minutes 5)
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 # ExecutionTimeLimit 0 = never kill the task. Default is 72h — the server
-# (and the tray below) would silently stop after 3 days until a reboot.
+# would silently stop after 3 days until a reboot.
 # round-116: restart on failure — a crashed agent (panic, OOM kill) used to
-# leave the device dark until reboot; the SCM restarts it (3 tries, 1 min
-# apart). ExecutionTimeLimit 0 = never kill the task.
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName "ValeAgent" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+# leave the device dark until reboot; the scheduler retries it.
+# round-118: 8 tries, battery-safe (a UPS/power-plan flap used to stop the
+# task outright via StopIfGoingOnBatteries=true) + StartWhenAvailable so a
+# missed boot trigger still fires when the machine becomes available.
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 8 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+Register-ScheduledTask -TaskName "ValeAgent" -Action $action -Trigger @($trigger, $watchdog) -Principal $principal -Settings $settings -Force | Out-Null
 if (-not (Get-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue)) {
     throw "failed to register scheduled task ValeAgent"
 }
@@ -411,19 +415,45 @@ if ($agentOk) {
     if (Test-Path $sl) { Get-Content $sl } else { Write-Warning "  (no startup.log at $sl)" }
 }
 
-# Tray app: register an at-logon task so the tray icon appears for the logged-in
-# user (highest privileges so it can start/stop the SYSTEM ValeAgent task).
-$trayExe = Join-Path $InstallDir "vale-tray.exe"
-if (Test-Path $trayExe) {
-    Unregister-ScheduledTask -TaskName "ValeAgentTray" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
-    $trayAction = New-ScheduledTaskAction -Execute $trayExe
-    $trayTrigger = New-ScheduledTaskTrigger -AtLogOn
-    $trayPrincipal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
-    # Same unlimited ExecutionTimeLimit as the ValeAgent task — a tray app
-    # must never be killed by the default 72h task limit.
-    Register-ScheduledTask -TaskName "ValeAgentTray" -Action $trayAction -Trigger $trayTrigger -Principal $trayPrincipal -Settings $settings -Force | Out-Null
-    Start-ScheduledTask -TaskName "ValeAgentTray" | Out-Null
+# [6b] ValePlaywright — playwright-mcp hosted in the INTERACTIVE user session.
+# Edge cannot run under the agent's SYSTEM/session-0 token (exitCode=1002:
+# no desktop heap for the browser), but the same binary works fine launched
+# from a logged-in user. The task binds 127.0.0.1:9229 only (--allowed-hosts
+# blocks DNS-rebinding; the Host check compares RAW host:port) and the same
+# 5-min repetition sweep as the boot task restarts it if it dies. The agent's
+# mcp_client connects to http://127.0.0.1:9229/mcp — never "localhost", which
+# resolves to [::1] first and can hit a stale session-0 instance instead.
+Write-Host "`n[6b/7] playwright-mcp interactive task"
+$pwNode = Join-Path $InstallDir "playwright\node.exe"
+$pwCli = Join-Path $InstallDir "playwright\node_modules\@playwright\mcp\cli.js"
+if (Test-Path $pwNode) {
+    Unregister-ScheduledTask -TaskName "ValePlaywright" -Confirm:$false -ErrorAction SilentlyContinue
+    $pwAction = New-ScheduledTaskAction -Execute $pwNode `
+        -Argument "`"$pwCli`" --port 9229 --browser msedge --host 127.0.0.1 --headless --allowed-hosts `"127.0.0.1:9229,localhost:9229`""
+    $pwBoot = New-ScheduledTaskTrigger -AtLogOn
+    $pwWatch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $pwSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    Register-ScheduledTask -TaskName "ValePlaywright" -Action $pwAction -Trigger @($pwBoot, $pwWatch) -Principal (New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited) -Settings $pwSettings -Force | Out-Null
+    Start-ScheduledTask -TaskName "ValePlaywright" | Out-Null
+    Write-Host "  OK: ValePlaywright registered (session-1 browser server on 127.0.0.1:9229)"
+} else {
+    Write-Warning "  playwright runtime missing at $pwNode — browser tools disabled"
 }
+
+
+# Desktop shortcut "Vale Panel" -> local panel URL (DSH-style browser-first
+# management; the native tray retired 2026-08-22 after recurring icon loss).
+Write-Host "`n[6.5/7] desktop shortcut"
+try {
+    $ws = New-Object -ComObject WScript.Shell
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $sc = $ws.CreateShortcut((Join-Path $desktop 'Vale Panel.lnk'))
+    $sc.TargetPath = 'http://127.0.0.1:18080/panel/'
+    $sc.IconLocation = (Join-Path $InstallDir 'vale-agent.ico') + ',0'
+    $sc.Description = 'Vale Agent panel'
+    $sc.Save()
+    Write-Host '  ok: desktop shortcut created'
+} catch { Write-Warning "shortcut failed: $_" }
 
 # 7. cloudflared as a service - bake the tunnel token into the service so it
 #    connects regardless of the service's user profile. A config-file-based
