@@ -368,14 +368,23 @@ Stop-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue | Out-Nul
 Unregister-ScheduledTask -TaskName "ValeAgent" -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 $action = New-ScheduledTaskAction -Execute $exe -Argument "`"$cfg`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
+# round-118: 5-min repetition sweep — a self-heal watchdog. IgnoreNew makes it
+# a no-op while the agent runs; if the process dies by any means not covered
+# by RestartOnFailure (exit code 0, killed parent, scheduler hiccup), the next
+# tick restarts it within <=5 min instead of leaving the device dark until a
+# human reboots. Duration omitted = repeats indefinitely (verified on PS 5.1:
+# [TimeSpan]::MaxValue produces an XML duration Task Scheduler rejects).
+$watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(90) -RepetitionInterval (New-TimeSpan -Minutes 5)
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 # ExecutionTimeLimit 0 = never kill the task. Default is 72h — the server
-# (and the tray below) would silently stop after 3 days until a reboot.
+# would silently stop after 3 days until a reboot.
 # round-116: restart on failure — a crashed agent (panic, OOM kill) used to
-# leave the device dark until reboot; the SCM restarts it (3 tries, 1 min
-# apart). ExecutionTimeLimit 0 = never kill the task.
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName "ValeAgent" -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+# leave the device dark until reboot; the scheduler retries it.
+# round-118: 8 tries, battery-safe (a UPS/power-plan flap used to stop the
+# task outright via StopIfGoingOnBatteries=true) + StartWhenAvailable so a
+# missed boot trigger still fires when the machine becomes available.
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 8 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+Register-ScheduledTask -TaskName "ValeAgent" -Action $action -Trigger @($trigger, $watchdog) -Principal $principal -Settings $settings -Force | Out-Null
 if (-not (Get-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue)) {
     throw "failed to register scheduled task ValeAgent"
 }

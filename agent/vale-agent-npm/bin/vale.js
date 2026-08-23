@@ -41,10 +41,27 @@ const commands = {
     fs.copyFileSync(EXE_SRC, EXE_DST);
     // Register boot-start task (SYSTEM) and kick it once; the agent's own
     // first-run flow registers the device with the console using the key.
-    ps(
-      `schtasks /Create /F /TN ${TASK} /SC ONSTART /RU SYSTEM /RL HIGHEST /TR "'${EXE_DST}' --register '${regKey}'"`
-    );
-    ps(`schtasks /Run /TN ${TASK}`);
+    //
+    // round-118: this used to be a raw `schtasks /Create /SC ONSTART`, which
+    // inherits Task Scheduler defaults — a 72h execution limit that silently
+    // kills the agent after 3 days (device goes dark until reboot), plus no
+    // restart-on-failure. Register via ScheduledTask cmdlets with the full
+    // hardening set instead (mirrors deploy/vale-agent-setup.ps1):
+    //   - ExecutionTimeLimit 0        never kill the running task
+    //   - RestartOnFailure 8 x 1min   scheduler retries after a crash
+    //   - battery-safe + StartWhenAvailable
+    //   - 5-min repetition watchdog   IgnoreNew = no-op while running;
+    //                                 restarts within <=5 min if dead
+    const reg = [
+      `$action = New-ScheduledTaskAction -Execute '${EXE_DST}' -Argument "'${EXE_DST}' --register '${regKey}'"`,
+      "$boot = New-ScheduledTaskTrigger -AtStartup",
+      "$watch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)",
+      "$principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest",
+      "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 8 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable",
+      "Register-ScheduledTask ValeAgent -Action $action -Trigger @($boot,$watch) -Principal $principal -Settings $settings -Force | Out-Null",
+      "Start-ScheduledTask ValeAgent",
+    ].join("; ");
+    ps(reg);
     console.log("setup: installed to", DIR);
     console.log("setup: device registers on start — check the console Devices list");
   },
