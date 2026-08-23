@@ -89,9 +89,42 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
   return mcpError(-32601, `Method not found: ${method}`, id);
 }
 
+
+/** Browser tools → agent 的 mcp_client_call → playwright-mcp。
+ *  替代旧的 PluginHubDO/extension 路径。playwright-mcp 需在设备上运行。 */
+async function callMcpClientBridge(name: string, env: any, device: any, args: any): Promise<any> {
+  const token = device.token || "";
+  const url = `https://${device.hostname}/api/tools/mcp_client_call`;
+  // 工具名映射：gateway 名 → playwright-mcp 名
+  const toolMap: Record<string, string> = {
+    browser_open: "browser_navigate",
+    browser_snapshot: "browser_snapshot",
+    browser_screenshot: "browser_take_screenshot",
+    browser_click: "browser_click",
+    browser_type: "browser_type",
+    browser_wait: "browser_wait_for",
+    browser_close: "browser_close",
+  };
+  const pmTool = toolMap[name] || name;
+  const body = JSON.stringify({ tool: pmTool, arguments: args });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body,
+  });
+  if (!res.ok) {
+    throw new Error(`mcp_client_call failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function callTool(tool: any, env: any, device: any, args: any): Promise<any> {
   if (tool.name.startsWith("terminal_")) {
     return callTerminalTool(tool.name, env, device, args);
+  }
+  // Browser tools route through Playwright (mcp_client) on the device.
+  if (tool.name.startsWith("browser_")) {
+    return callMcpClientBridge(tool.name, env, device, args);
   }
   // Browser tools route via PluginHubDO → WS → extension (chrome.debugger) on
   // the device's browser. The DO resolves with the extension's response frame
