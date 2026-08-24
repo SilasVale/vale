@@ -132,7 +132,9 @@ async function callMcpClientBridge(
     // round-118 自愈：设备重启后没有任何组件拉起 playwright-mcp、也没有人建
     // client session — 第一次 browser_* 必然 not connected，只能人工介入。
     // 这里 start → connect → 重试一次，让浏览器链路开机自愈。
-    if (/not connected|server running|refused|timed out/i.test(msg)) {
+    // round-132: "Session not found" 也纳入自愈——playwright-mcp 0.0.79
+    // 的会话在闲置 ~15s 后被服务端回收，重发 connect 即可恢复。
+    if (/not connected|server running|refused|timed out|session not found/i.test(msg)) {
       await fetch(`${base}/api/plugins/playwright/start`, { method: "POST", headers });
       await fetch(`${base}/api/tools/mcp_client_connect`, { method: "POST", headers, body: "{}" });
       out = await invoke();
