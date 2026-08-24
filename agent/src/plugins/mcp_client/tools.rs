@@ -2,72 +2,145 @@
 //! local browser MCP server over Streamable HTTP.
 //!
 //! Connection lifecycle is RUNTIME-driven (not register-time): the plugin is
-//! stateless; `mcp_client_connect` opens a client session and caches the
-//! remote Peer in a process-global slot, `mcp_client_call` dispatches through
-//! it. This mirrors DSH's mcp-client plugin (connect on demand, tools under a
-//! qualified namespace) while keeping Vale's "tools built once at register"
-//! invariant — the remote tool LIST is discovered at connect time and exposed
-//! through `mcp_client_list` instead of being statically registered.
+//! stateless; `mcp_client_connect` opens a client session and caches it in a
+//! process-global slot, `mcp_client_call` dispatches through it. This mirrors
+//! DSH's mcp-client plugin (connect on demand, tools under a qualified
+//! namespace) while keeping Vale's "tools built once at register" invariant —
+//! the remote tool LIST is discovered at connect time and exposed through
+//! `mcp_client_list` instead of being statically registered.
+//!
+//! round-132: 直接手写 Streamable HTTP 的 JSON-RPC 会话，替换 rmcp 客户端。
+//! 根因：rmcp 客户端与本设备捆绑的 playwright-mcp 在 tools/call 的响应通路
+//! 上失配——initialize/tools/list 往返正常（秒回），唯独 call 的响应永远等
+//! 不到（连 about:blank 都 180s 超时），而同一服务器的原始 HTTP 调用实测
+//! 1 秒返回。与其继续依赖黑盒库的会话行为，不如按协议规范自己驱动：
+//!   POST initialize        → 200, 响应头带 mcp-session-id
+//!   POST initialized 通知   → 202/200 空体
+//!   POST tools/call ...    → 200, 体为 SSE("data: {...}") 或裸 JSON
+//! 会话状态就是 base_url + mcp-session-id + 自增 id，无后台任务、无取消
+//! 令牌、无重连循环——断开即丢弃状态。
 
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 use vale_agent_core::{DeviceError, ToolDef};
-use rmcp::{
-    model::{CallToolRequestParams, ClientInfo, ErrorCode},
-    service::{NotificationContext, Peer, RequestContext, Service, ServiceExt, ServiceRole},
-    transport::StreamableHttpClientTransport,
-    ErrorData, RoleClient,
-};
 
 /// The local browser MCP server endpoint (playwright-mcp --port 9229).
 /// round-118: 127.0.0.1, not "localhost" — localhost resolves to [::1] first
-/// on Windows, so a client could latch onto a stale session-0 instance instead
-/// of the session-1 ValePlaywright task server (which binds 127.0.0.1 only).
+/// on Windows, so a client could latch onto a stale instance instead of the
+/// one the task actually hosts.
 const DEFAULT_URL: &str = "http://127.0.0.1:9229/mcp";
 
-/// Shared remote-peer slot: set by `mcp_client_connect`, used by `call`/`list`.
-/// Carries the session's cancel token so `disconnect` can tear the session
-/// down for real (round-99: dropping the Peer alone left the connect's
-/// spawned session task alive, leaking sessions on the browser server).
-struct PeerSession {
-    peer: Peer<RoleClient>,
-    cancel: rmcp::service::RunningServiceCancellationToken,
-    /// The server URL this session was opened to (round-118: already_connected
-    /// used to echo the REQUESTED url without checking it matched the cached
-    /// session — connecting to a different server silently kept using the old
-    /// one).
+/// Shared session slot: set by `mcp_client_connect`, used by call/list.
+struct McpSession {
     url: String,
+    /// Streamable HTTP 的会话标识 —— initialize 响应头下发，后续请求必带。
+    session_id: Option<String>,
+    next_id: AtomicU64,
+    http: reqwest::Client,
 }
-static PEER: Mutex<Option<PeerSession>> = Mutex::const_new(None);
+static SESSION: Mutex<Option<McpSession>> = Mutex::const_new(None);
 
-/// A minimal client-side service — we only call tools, never serve requests.
-struct EmptyClientService;
+/// 单次 JSON-RPC POST 的统一入口：处理会话头、自增 id、SSE/裸 JSON 双格式
+/// 响应解析。id=None 表示通知（无响应体）。
+async fn rpc_ref(
+    sess: &mut McpSession,
+    id: Option<u64>,
+    method: &str,
+    params: Value,
+    timeout_secs: u64,
+) -> Result<Value, DeviceError> {
+    let mut envelope = json!({"jsonrpc": "2.0", "method": method});
+    if let Some(i) = id {
+        envelope["id"] = json!(i);
+    }
+    if !params.is_null() {
+        envelope["params"] = params;
+    }
+    let mut req = sess
+        .http
+        .post(&sess.url)
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .timeout(Duration::from_secs(timeout_secs))
+        .json(&envelope);
+    if let Some(sid) = &sess.session_id {
+        req = req.header("mcp-session-id", sid);
+    }
+    let resp = req.send().await.map_err(|e| {
+        DeviceError::Internal { message: format!("MCP request failed: {e}") }
+    })?;
+    if method == "initialize" {
+        if let Some(sid) = resp.headers().get("mcp-session-id").and_then(|v| v.to_str().ok()) {
+            sess.session_id = Some(sid.to_string());
+        }
+    }
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| {
+        DeviceError::Internal { message: format!("MCP response read failed: {e}") }
+    })?;
+    if !status.is_success() {
+        return Err(DeviceError::Internal {
+            message: format!("MCP server returned HTTP {}: {}", status.as_u16(), truncate(&text, 200)),
+        });
+    }
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    parse_envelope(&text, id)
+}
 
-impl Service<RoleClient> for EmptyClientService {
-    async fn handle_request(
-        &self,
-        _request: <RoleClient as ServiceRole>::PeerReq,
-        _context: RequestContext<RoleClient>,
-    ) -> Result<<RoleClient as ServiceRole>::Resp, ErrorData> {
-        // A browser MCP server never calls back into us; reject such a
-        // request (there is no handler to satisfy it).
-        Err(ErrorData {
-            code: ErrorCode::METHOD_NOT_FOUND,
-            message: "unexpected server→client request".into(),
-            data: None,
-        })
+/// 从响应体提取 JSON-RPC 信封。服务器可能返回：
+///   * 裸 JSON（application/json）
+///   * SSE 文本（"event: message\ndata: {...}\n\n"，可能多帧）
+///
+/// 取最后一个能解析且（带 id 时）id 匹配的信封。
+fn parse_envelope(body: &str, id: Option<u64>) -> Result<Value, DeviceError> {
+    let trimmed = body.trim();
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
+        return check_envelope(v, id);
     }
-    async fn handle_notification(
-        &self,
-        _notification: <RoleClient as ServiceRole>::PeerNot,
-        _context: NotificationContext<RoleClient>,
-    ) -> Result<(), ErrorData> {
-        Ok(())
+    // SSE 帧：把连续的 "data:" 行拼成候选载荷逐个尝试。
+    let mut candidates: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for line in body.lines() {
+        if let Some(rest) = line.strip_prefix("data:") {
+            cur.push_str(rest.trim());
+        } else if !cur.is_empty() {
+            candidates.push(std::mem::take(&mut cur));
+        }
     }
-    fn get_info(&self) -> <RoleClient as ServiceRole>::Info {
-        ClientInfo::default()
+    if !cur.is_empty() {
+        candidates.push(cur);
     }
+    for cand in candidates.iter().rev() {
+        if let Ok(v) = serde_json::from_str::<Value>(cand) {
+            if id.map(|i| v.get("id").and_then(|x| x.as_u64()) == Some(i)).unwrap_or(true) {
+                return check_envelope(v, id);
+            }
+        }
+    }
+    Err(DeviceError::Internal {
+        message: format!("MCP response did not contain a usable JSON-RPC message: {}", truncate(body, 200)),
+    })
+}
+
+fn check_envelope(v: Value, id: Option<u64>) -> Result<Value, DeviceError> {
+    if let Some(err) = v.get("error") {
+        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown MCP error");
+        return Err(DeviceError::Internal { message: format!("MCP error: {msg}") });
+    }
+    match v.get("result") {
+        Some(r) => Ok(r.clone()),
+        None if id.is_none() => Ok(Value::Null), // 通知：无响应体
+        None => Err(DeviceError::Internal { message: "MCP response missing result".into() }),
+    }
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    if s.len() <= n { s.to_string() } else { format!("{}…", &s[..n]) }
 }
 
 /// `mcp_client_connect` — open a client session to a local browser MCP server.
@@ -90,105 +163,75 @@ pub fn mcp_client_connect() -> ToolDef {
         |params: Value| async move {
             let url = params.get("url").and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-                .unwrap_or(DEFAULT_URL);
-            // Reuse an existing connection — connecting twice would leak a
-            // second client session.
-            // round-118: only reuse when the cached session points at the SAME
-            // url — the old check echoed the requested url back without
-            // matching, so a connect to a different server silently kept using
-            // the old one.
-            if let Ok(guard) = PEER.try_lock() {
+                .unwrap_or(DEFAULT_URL)
+                .to_string();
+
+            // 同 URL 复用现有会话；不同 URL 则丢弃旧会话重建（round-118）。
+            {
+                let guard = SESSION.lock().await;
                 if let Some(s) = guard.as_ref() {
                     if s.url == url {
                         return Ok(json!({ "status": "already_connected", "url": url }));
-                    }
-                    // Different server — tear down the old session and connect
-                    // to the new one (the caller asked for THIS url).
-                    drop(guard);
-                    if let Some(s) = PEER.lock().await.take() {
-                        s.cancel.cancel();
                     }
                 }
             }
 
-            // rmcp client: WorkerTransport over reqwest, served by our empty
-            // client service. The RunningService must stay alive for the
-            // session — drop it and the worker task dies with it.
-            //
-            // round-93: the serve() call MUST be bounded. rmcp's SSE retry
-            // policy defaults to FixedInterval { max_times: None } — an
-            // infinite 1s reconnect loop when the server is not up. A server
-            // that isn't running (playwright-mcp not installed/started yet)
-            // made serve() never return, wedging the MCP worker that awaited
-            // this handler and cascading into API errors for every tool on
-            // that connection. Fail fast with a clear "is the server running?"
-            // error instead of hanging the session.
-            let transport = StreamableHttpClientTransport::from_uri(url);
-            let running = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                EmptyClientService.serve(transport),
-            )
-            .await
-            .map_err(|_| DeviceError::Internal {
-                message: format!(
-                    "MCP connect timed out after 5s — is the browser MCP server running at {url}? \
-                     (playwright-mcp / chrome-devtools-mcp)"
-                ),
-            })?
-            .map_err(|e| DeviceError::Internal { message: format!("MCP connect failed: {e}") })?;
-            let peer = running.peer().clone();
-            // The session's cancel token — disconnect() cancels it to tear
-            // the session down for real (round-99). The spawned waiting()
-            // task keeps the session alive until then.
-            let cancel = running.cancellation_token();
-            // round-113: `cancel(self)` consumes the wrapper and it has no
-            // Clone — take fresh wrappers (sharing the same inner token)
-            // before `running` is moved into the spawn task below, one per
-            // consumer: the two list-error closures and PeerSession itself.
-            let cancel_list_timeout = running.cancellation_token();
-            let cancel_list_err = running.cancellation_token();
-            tokio::spawn(async move { let _ = running.waiting().await; });
+            let mut sess = McpSession {
+                url: url.clone(),
+                session_id: None,
+                next_id: AtomicU64::new(1),
+                http: reqwest::Client::new(),
+            };
 
-            let tools = tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                peer.list_all_tools(),
-            )
-            .await
-            .map_err(|_| {
-                // round-113: the session was opened (serve() succeeded) but
-                // listing failed — cancel it or the remote session leaks
-                // forever (round-99 fixed disconnect, not this path).
-                cancel_list_timeout.cancel();
-                DeviceError::Internal { message: "list tools timed out after 30s".into() }
-            })?
-            .map_err(|e| {
-                cancel_list_err.cancel();
-                DeviceError::Internal { message: format!("list tools failed: {e}") }
-            })?;
-            // round-113: re-check under the lock — a concurrent connect may
-            // have won between the early check and here; last-writer-wins
-            // would orphan this session's task.
+            // initialize：响应头下发 mcp-session-id；initialized 通知：无 id。
+            let server = handshake(&mut sess).await?;
+
+            let tools = list_tools_ref(&mut sess).await?;
+
             {
-                let mut guard = PEER.lock().await;
+                let mut guard = SESSION.lock().await;
                 if let Some(s) = guard.as_ref() {
-                    // round-118: same-url reuse only (the early check may have
-                    // been raced); a different-url session is replaced below.
                     if s.url == url {
-                        cancel.cancel();
                         return Ok(json!({ "status": "already_connected", "url": url }));
                     }
                 }
-                *guard = Some(PeerSession { peer, cancel, url: url.to_string() });
+                *guard = Some(sess);
             }
 
             Ok(json!({
                 "status": "connected",
                 "url": url,
+                "server": server,
                 "tool_count": tools.len(),
-                "tools": tools.iter().map(|t| t.name.as_ref().to_string()).collect::<Vec<_>>(),
+                "tools": tools.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
             }))
         },
     )
+}
+
+/// `mcp_client_list` — list tools exposed by the connected browser server.
+/// 握手：initialize（拿会话 id）+ initialized 通知。返回服务器信息。
+async fn handshake(sess: &mut McpSession) -> Result<Value, DeviceError> {
+    let init_id = sess.next_id.fetch_add(1, Ordering::Relaxed);
+    let resp = rpc_ref(sess, Some(init_id), "initialize", json!({
+        "protocolVersion": "2025-03-26",
+        "capabilities": {},
+        "clientInfo": {"name": "vale-agent", "version": "1"}
+    }), 30).await?;
+    rpc_ref(sess, None, "notifications/initialized", Value::Null, 10).await?;
+    Ok(resp.get("serverInfo").cloned().unwrap_or(json!(null)))
+}
+
+async fn list_tools_ref(sess: &mut McpSession) -> Result<Vec<(String, String)>, DeviceError> {
+    let id = sess.next_id.fetch_add(1, Ordering::Relaxed);
+    let r = rpc_ref(sess, Some(id), "tools/list", json!({}), 30).await?;
+    let arr = r.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+    Ok(arr.into_iter().map(|t| {
+        (
+            t.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+            t.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+        )
+    }).collect())
 }
 
 /// `mcp_client_list` — list tools exposed by the connected browser server.
@@ -199,32 +242,15 @@ pub fn mcp_client_list() -> ToolDef {
          browser_navigate, browser_snapshot, browser_click, ...).",
         json!({ "type": "object" }),
         |_: Value| async move {
-            // round-118: the lock must NOT be held across the remote call —
-            // it used to serialize ALL browser-bridge traffic (call/list/
-            // disconnect) behind one in-flight op for up to 60s. Clone the
-            // peer under the lock and release it before the await.
-            let peer = {
-                let guard = PEER.lock().await;
-                guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
-                    message: "not connected — call mcp_client_connect first".into(),
-                })?.peer.clone()
-            };
-            // round-93: bounded like connect — a hung remote must not wedge
-            // this MCP worker.
-            let tools = tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                peer.list_all_tools(),
-            )
-            .await
-            .map_err(|_| DeviceError::Internal { message: "list tools timed out after 30s".into() })?
-            .map_err(|e| DeviceError::Internal { message: format!("list tools failed: {e}") })?;
+            let mut guard = SESSION.lock().await;
+            let sess = guard.as_mut().ok_or_else(|| DeviceError::InvalidParams {
+                message: "not connected — call mcp_client_connect first".into(),
+            })?;
+            let tools = list_tools_ref(sess).await?;
             Ok(json!({
                 "tool_count": tools.len(),
-                "tools": tools.iter().map(|t| {
-                    json!({
-                        "name": t.name.as_ref(),
-                        "description": t.description.as_deref().unwrap_or(""),
-                    })
+                "tools": tools.iter().map(|(n, d)| {
+                    json!({"name": n, "description": d})
                 }).collect::<Vec<_>>(),
             }))
         },
@@ -257,51 +283,62 @@ pub fn mcp_client_call() -> ToolDef {
                 .ok_or_else(|| DeviceError::InvalidParams { message: "missing required field: tool".into() })?
                 .to_string();
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            let mut req = CallToolRequestParams::new(tool.clone());
-            if let Some(obj) = args.as_object() {
-                req = req.with_arguments(obj.clone());
-            }
 
-            // round-118: same as list — clone the peer under the lock, call
-            // outside it (the lock used to serialize every browser op behind
-            // one in-flight call for up to 60s, and blocked disconnect too).
-            let peer = {
-                let guard = PEER.lock().await;
-                guard.as_ref().ok_or_else(|| DeviceError::InvalidParams {
-                    message: "not connected — call mcp_client_connect first".into(),
-                })?.peer.clone()
+            let mut guard = SESSION.lock().await;
+            let sess = guard.as_mut().ok_or_else(|| DeviceError::InvalidParams {
+                message: "not connected — call mcp_client_connect first".into(),
+            })?;
+            // round-131: 180s —— 首次导航含浏览器冷启动，60s 会误超时；
+            // 且超时后远程操作仍在运行，会占住会话队列饿死后续调用。
+            let id = sess.next_id.fetch_add(1, Ordering::Relaxed);
+            let call = rpc_ref(sess, Some(id), "tools/call", json!({
+                "name": tool,
+                "arguments": args,
+            }), 180).await;
+            // round-132: playwright-mcp 的会话可能在两次调用之间被服务端回收
+            // （404 Session not found）——自动重新握手并重试一次，调用方无感。
+            let result = match call {
+                Err(DeviceError::Internal { message }) if
+                    message.contains("Session not found") || message.contains("HTTP 404") =>
+                {
+                    handshake(sess).await?;
+                    let retry_id = sess.next_id.fetch_add(1, Ordering::Relaxed);
+                    rpc_ref(sess, Some(retry_id), "tools/call", json!({
+                        "name": tool,
+                        "arguments": args,
+                    }), 180).await?
+                }
+                r => r?,
             };
-            // round-93: browser operations can be slow (navigation, waiting),
-            // but never infinite — a hung remote must not wedge this MCP
-            // worker.
-            // round-118: rmcp 2.2.0's call_tool macro hardcodes
-            // no_options() — the remote-cancel path
-            // (send_timeout_cancel_notification) is unreachable, so a
-            // timed-out op keeps running on the remote and can race a retry.
-            // The local timeout at least stops THIS caller from wedging; the
-            // session cancel token is the only lever (disconnect uses it).
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(60),
-                peer.call_tool(req),
-            )
-            .await
-            .map_err(|_| DeviceError::Internal { message: format!("call {tool} timed out after 60s — the remote op may still be running; call mcp_client_disconnect to abort it") })?
-            .map_err(|e| DeviceError::Internal { message: format!("call {tool} failed: {e}") })?;
 
-            // Extract the text content the way MCP clients render it — a
-            // screenshot comes back as image content (PNG base64) which we
-            // pass through untouched for the caller to decode.
-            let text = result.content.iter().filter_map(|c| match c {
-                rmcp::model::ContentBlock::Text(t) => Some(t.text.clone()),
-                rmcp::model::ContentBlock::Image(img) => Some(format!("data:image/{};base64,{}", img.mime_type, img.data)),
-                _ => None,
-            }).collect::<Vec<_>>().join("\n");
-            let structured = result.structured_content.clone();
-            if structured.is_some() {
-                Ok(json!({ "ok": true, "result": structured }))
-            } else {
-                Ok(json!({ "ok": true, "result": text }))
+            // 与原实现一致：优先 structuredContent，否则拼接文本内容
+            // （截图是 image 内容块，转成 data URI 原样透传给调用方解码）。
+            if let Some(sc) = result.get("structuredContent") {
+                if !sc.is_null() {
+                    return Ok(json!({ "ok": true, "result": sc }));
+                }
             }
+            let empty = Vec::new();
+            let content = result.get("content").and_then(|c| c.as_array()).unwrap_or(&empty);
+            let mut texts: Vec<String> = Vec::new();
+            for c in content {
+                let ctype = c.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                match ctype {
+                    "text" => {
+                        if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
+                            texts.push(t.to_string());
+                        }
+                    }
+                    "image" => {
+                        let mime = c.get("mimeType").and_then(|m| m.as_str()).unwrap_or("image/png");
+                        if let Some(d) = c.get("data").and_then(|d| d.as_str()) {
+                            texts.push(format!("data:{mime};base64,{d}"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(json!({ "ok": true, "result": texts.join("\n") }))
         },
     )
 }
@@ -313,14 +350,16 @@ pub fn mcp_client_disconnect() -> ToolDef {
         "Close the browser MCP client session (frees the connection).",
         json!({ "type": "object" }),
         |_: Value| async move {
-            // round-99: just dropping the slot left the connect's
-            // tokio::spawn(running.waiting()) session task alive (the Peer
-            // clone it holds kept the MCP session open) — connect/disconnect
-            // cycles leaked sessions on the browser server. Cancel the
-            // session's token to tear it down for real.
-            let sess = PEER.lock().await.take();
+            let sess = SESSION.lock().await.take();
             if let Some(s) = sess {
-                s.cancel.cancel();
+                // Streamable HTTP 的会话终止：DELETE /mcp（尽力而为）。
+                let mut req = s.http.delete(&s.url)
+                    .header("content-type", "application/json")
+                    .timeout(Duration::from_secs(5));
+                if let Some(sid) = &s.session_id {
+                    req = req.header("mcp-session-id", sid);
+                }
+                let _ = req.send().await;
             }
             Ok(json!({ "status": "disconnected" }))
         },

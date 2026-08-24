@@ -189,6 +189,15 @@ if (Test-Path $pwZip) {
     Expand-Archive -Path $pwZip -DestinationPath $InstallDir -Force
     Write-Host "    playwright runtime -> $pwDir"
 }
+# Chromium browser (Edge 151+ cannot launch headless in session 0 — the agent
+# uses bundled chromium via --browser chromium). ~160MB download, cached in
+# %LOCALAPPDATA%\ms-playwright; skipped on -SkipDownload (offline installs
+# must pre-seed that dir out of band).
+$pwNodeCli = Join-Path $pwDir "node_modules\playwright-core\cli.js"
+if (-not $SkipDownload -and (Test-Path $pwNodeCli)) {
+    Write-Host "  downloading playwright chromium (~160MB)..."
+    & (Join-Path $pwDir "node.exe") $pwNodeCli install chromium 2>&1 | Out-Null
+}
 if (-not (Test-Path $cfg)) {
     Write-Host "  bootstrapping config + auth token"
     & $exe --init $cfg
@@ -429,7 +438,7 @@ $pwCli = Join-Path $InstallDir "playwright\node_modules\@playwright\mcp\cli.js"
 if (Test-Path $pwNode) {
     Unregister-ScheduledTask -TaskName "ValePlaywright" -Confirm:$false -ErrorAction SilentlyContinue
     $pwAction = New-ScheduledTaskAction -Execute $pwNode `
-        -Argument "`"$pwCli`" --port 9229 --browser msedge --host 127.0.0.1 --headless --allowed-hosts `"127.0.0.1:9229,localhost:9229`""
+        -Argument "`"$pwCli`" --port 9229 --browser chromium --host 127.0.0.1 --headless --ignore-https-errors --allowed-hosts `"127.0.0.1:9229,localhost:9229`""
     $pwBoot = New-ScheduledTaskTrigger -AtLogOn
     $pwWatch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
     $pwSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable

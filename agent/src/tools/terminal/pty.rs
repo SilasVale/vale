@@ -226,31 +226,71 @@ impl TermBackend for PtyBackend {
         let last_timeout = self.last_write_timeout.clone();
         let d = data.to_vec();
         Box::pin(async move {
-            let res = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                tokio::task::spawn_blocking(move || {
-                    let mut w = writer.lock().unwrap_or_else(|p| p.into_inner());
-                    let _ = w.write_all(&d);
-                    let _ = w.flush();
-                }),
-            ).await;
-            // round-109/111: clear the gate on BOTH outcomes (a stuck gate
-            // made the session permanently write-dead), but on TIMEOUT
-            // RECORD the moment (round-111: the store was missing — the
-            // cooldown was dead code) so new writes fail fast instead of
-            // spawning another parked thread behind the wedged one.
-            in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
-            match res {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(e)) => Err(format!("pty write task failed: {e}")),
-                Err(_) => {
-                    last_timeout.store(
-                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
-                        std::sync::atomic::Ordering::SeqCst,
-                    );
-                    Err("pty write timed out after 5s (input queue full)".into())
+            // round-132: 分块写入 + 块间让渡。根因实测(Windows ConPTY):
+            // 整段 write_all 一次性灌入时,控制台输入记录队列被 PSReadLine
+            // 的增量渲染慢慢消费,5s 预算内写不完 → 写被中途放弃 → 命令
+            // 无声截断(长 base64 字面量稳定断在 ~300 字节)、残余字节稍后
+            // 落盘造成乱序回显(">>" 续行伪影的另一半成因)。256B 分块 +
+            // 15ms 让渡让队列永不写满;顺序由顺序 await 保证。总预算 30s。
+            const CHUNK: usize = 64;
+            const GAP_MS: u64 = 40;
+            let mut off = 0usize;
+            let mut res = Ok(());
+            while off < d.len() {
+                let end = (off + CHUNK).min(d.len());
+                let slice = d[off..end].to_vec();
+                let w2 = writer.clone();
+                let step = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    tokio::task::spawn_blocking(move || {
+                        // round-132: 不能再 `let _ =` 吞错——ConPTY 输入管道
+                        // 写满时 write 返回 WouldBlock/短写,静默忽略=整块
+                        // 丢失(实测长命令中段缺 ~250B)。逐字节推进:短写
+                        // /错误都退避重试,直到本块写完或超时。
+                        let mut w = w2.lock().unwrap_or_else(|p| p.into_inner());
+                        let mut done = 0usize;
+                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(9);
+                        while done < slice.len() {
+                            if std::time::Instant::now() >= deadline { return; }
+                            match w.write(&slice[done..]) {
+                                Ok(0) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                                Ok(n) => done += n,
+                                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                                Err(_) => std::thread::sleep(std::time::Duration::from_millis(20)),
+                            }
+                        }
+                        let _ = w.flush();
+                    }),
+                ).await;
+                match step {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => { res = Err(format!("pty write task failed: {e}")); break; }
+                    Err(_) => { res = Err("pty write timed out after 10s (input queue full)".into()); break; }
+                }
+                off = end;
+                if off < d.len() {
+                    tokio::time::sleep(std::time::Duration::from_millis(GAP_MS)).await;
                 }
             }
+            if res.is_err() {
+                last_timeout.store(
+                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+            }
+            in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+            // round-132: 写入侧诊断——与 term_execute 的 recv_len 对照,
+            // 判断丢字发生在网关隧道还是 PTY 写入。
+            let _ = std::fs::OpenOptions::new().create(true).append(true)
+                .open("D:\\vale-agent\\diag.log")
+                .and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "[pty_write] total={} ok={} head={:?} tail={:?}",
+                        d.len(), res.is_ok(),
+                        &d[..d.len().min(24)],
+                        &d[d.len().saturating_sub(24)..])
+                });
+            res
         })
     }
     fn resize(&self, rows: u16, cols: u16) {

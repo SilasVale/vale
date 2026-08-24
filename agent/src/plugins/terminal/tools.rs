@@ -186,7 +186,12 @@ fn tool_open(
                         let cmd = std::path::Path::new(&target)
                             .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
                         if cmd.is_empty() || cmd.eq_ignore_ascii_case("powershell.exe") || cmd.eq_ignore_ascii_case("pwsh.exe") {
-                            (r#"function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"#.to_string() + "\r\n", true)
+                            // round-132: 先移除 PSReadLine——它与 ConPTY 的输入
+                        // 处理在长行粘贴时互相干扰：续行提示符 ">>" 伪影、
+                        // 回显碎片重排、偶发把后续输入吞进未完成的字符串。
+                        // 移除后回退为原始逐行读取，自动化场景可靠性优先；
+                        // Prompt 函数与 OSC133 标记不受影响。
+                        (r#"Remove-Module PSReadLine -ErrorAction SilentlyContinue; function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"#.to_string() + "\r\n", true)
                         } else { (String::new(), false) }
                     } else {
                         let cmd = std::path::Path::new(&target)
@@ -922,6 +927,18 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // release the lock — the command never ran, nothing to
                     // audit, and the next execute must not bounce off a stale
                     // busy flag.
+                    // round-132: 接收侧诊断——长命令经网关链路偶发中段缺字,
+                    // 记录 agent 实际收到的长度与首尾片段,定位丢失发生在
+                    // 哪一层(网关隧道 vs PTY 写入)。
+                    let _ = std::fs::OpenOptions::new().create(true).append(true)
+                        .open("D:\\vale-agent\\diag.log")
+                        .and_then(|mut f| {
+                            use std::io::Write;
+                            writeln!(f, "[term_execute] sid={sid} recv_len={} head={:?} tail={:?}",
+                                cmd_with_nl.len(),
+                                &cmd_with_nl[..cmd_with_nl.len().min(24)],
+                                &cmd_with_nl[cmd_with_nl.len().saturating_sub(24)..])
+                        });
                     if let Err(e) = terminal_mgr.term_write(&sid, &cmd_with_nl).await {
                         terminal_mgr.term_release_execute(&sid).await;
                         return Err(e);

@@ -148,12 +148,22 @@ impl PlaywrightManager {
         let mut child = tokio::process::Command::new(&node)
             .arg(&entry)
             .arg("--port").arg(port.to_string())
-            .arg("--browser").arg("msedge")
+            // round-131: playwright-mcp 的 Host 比较是 RAW 串含端口 —
+            // 非默认端口 9229 上必须写 "127.0.0.1:9229"(写 "127.0.0.1"
+            // 永不匹配,所有请求 403,start 永远失败)。含 localhost 同义。
+            .arg("--allowed-hosts").arg("127.0.0.1:9229,localhost:9229")
+            // Edge 151+ 在 session 0(SYSTEM 服务)下启动即崩(exitCode 1002,
+            // 连 --headless --dump-dom 都复现)——改用 Playwright 自带 chromium
+            // (setup.ps1 Phase 3 / install-browser 落到 %LOCALAPPDATA%\ms-playwright)。
+            .arg("--browser").arg("chromium")
             .arg("--host").arg("127.0.0.1")
             // round-131: playwright-mcp 的 Host 比较是 RAW 串含端口 —
             // 非默认端口 9229 上必须写 "127.0.0.1:9229"(写 "127.0.0.1"
             // 永不匹配,所有请求 403,start 永远失败)。含 localhost 同义。
             .arg("--allowed-hosts").arg("127.0.0.1:9229,localhost:9229")
+            // 设备 Web UI 用自签名 HTTPS 证书——忽略证书错误,否则导航
+            // 一律 net::ERR_CERT_AUTHORITY_INVALID。
+            .arg("--ignore-https-errors")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
