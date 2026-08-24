@@ -86,7 +86,7 @@ export function PluginsView({ plugins }: { plugins: ReturnType<typeof usePlugins
               port {pw.playwright.port} · up {fmtUptime(pw.playwright.started_at ?? Date.now())}
             </span>
           ) : (
-            <span className="plug-meta">bundled playwright-mcp · Edge (msedge)</span>
+            <span className="plug-meta">bundled playwright-mcp · Chromium (task-hosted)</span>
           )}
           <span className="plug-actions">
             <button

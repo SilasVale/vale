@@ -87,7 +87,11 @@ export function App() {
   // round-admin-ui Task 6: main-area view switch — the sidebar nav toggles
   // between the session workspace and the plugins page.
   const [view, setView] = useState<"sessions" | "plugins">("sessions");
-  const plugins = usePlugins(connected && view === "plugins");
+  const [browserActive, setBrowserActive] = useState(false);
+  // round-133: 状态轮询改为常开——Sessions 视图的 Browser 会话行依赖它。
+  const plugins = usePlugins(connected);
+  const pwRunning = !!plugins.playwright?.running;
+  const BROWSER_SID = "__browser__";
 
   const sessions = useSessions(connected);
 
@@ -121,6 +125,32 @@ export function App() {
       setDetailsOpen(false);
       setSelectedCmdId(null);
     }
+  };
+
+  // round-133: playwright-mcp 托管实例运行时注入一个 Browser 会话行——
+  // 点击打开实时预览(BrowserPane)。激活状态由 browserActive 管理,
+  // 与终端会话互斥(同一时间主区只显示一个面板)。
+  const allSessions = useMemo(() => {
+    if (!pwRunning) return sessions.sessions.filter((s) => !s.closed || true);
+    const base = sessions.sessions.map((s) => ({ ...s, active: false }));
+    return [...base, { sid: BROWSER_SID, label: "Browser", kind: "browser", closed: false, savedOnly: false, active: browserActive, openedAt: Date.now(), closedAt: null }] as typeof sessions.sessions;
+  }, [sessions.sessions, pwRunning, browserActive]);
+
+  const effectiveActiveSid = browserActive && pwRunning ? BROWSER_SID : sessions.activeSid;
+
+  const activateWrap = (sid: string) => {
+    if (sid === BROWSER_SID) {
+      setBrowserActive(true);
+      return;
+    }
+    setBrowserActive(false);
+    sessions.activate(sid);
+  };
+
+  const newSessionWrap = (kind: "pty" | "ssh" | "serial") => {
+    setBrowserActive(false);
+    if (kind === "pty") { sessions.openSession("pty", "").catch(() => {}); }
+    else setModalKind(kind);
   };
 
   // Command card stream (round-admin-ui Task 4): poll the ACTIVE session's
@@ -194,11 +224,12 @@ export function App() {
     <AppFrame
       sidebar={
         <Sidebar
-          sessions={sessions.sessions}
-          activeSid={sessions.activeSid}
-          onActivate={sessions.activate}
+          sessions={allSessions as typeof sessions.sessions}
+          activeSid={effectiveActiveSid}
+          onActivate={activateWrap}
           view={view}
           onViewChange={switchView}
+          onNewSession={newSessionWrap}
           plugins={plugins}
         />
       }
@@ -210,8 +241,6 @@ export function App() {
             terminal state. */}
         <div id="panel-main" className={view === "plugins" ? "hidden" : undefined}>
           <Toolbar
-            onOpenPty={() => sessions.openSession("pty", "").catch(() => {})}
-            onShowConn={(kind) => setModalKind(kind)}
             onExportAll={() => sessions.sessions.forEach((s) => sessions.exportSession(s.sid))}
             onShowSettings={() => setShowSettings(true)}
           />
@@ -224,10 +253,13 @@ export function App() {
             />
           )}
           <TabBar
-            sessions={sessions.sessions}
-            activeSid={sessions.activeSid}
-            onActivate={sessions.activate}
-            onClose={sessions.closeSession}
+            sessions={allSessions as typeof sessions.sessions}
+            activeSid={effectiveActiveSid}
+            onActivate={activateWrap}
+            onClose={(sid) => {
+              if (sid === BROWSER_SID) { setBrowserActive(false); return; }
+              sessions.closeSession(sid);
+            }}
             onExport={sessions.exportSession}
             view={sessionView}
             onViewChange={(v) => {
@@ -241,8 +273,10 @@ export function App() {
               exact terminal state. round-131: the refit effect skips while
               hidden — fire a resize when un-hiding so the grid (local xterm +
               backend cols/rows) refits to the now-visible size. */}
-          <div id="term-container" style={trajOpen ? { display: "none" } : undefined}>
-            {sessions.sessions.length === 0 ? (
+          <div id="term-container" style={browserActive ? { display: "none" } : (trajOpen ? { display: "none" } : undefined)}>
+            {browserActive && pwRunning ? (
+              <BrowserPane key={BROWSER_SID} session={{ sid: BROWSER_SID, url: "", active: true }} apiBase="" token={localStorage.getItem("vale_token") || ""} />
+            ) : sessions.sessions.length === 0 ? (
               <div id="empty-state">
                 <div className="empty-card">
                   <span className="empty-mark">V</span>

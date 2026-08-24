@@ -1267,3 +1267,25 @@ body {
   .traj-chev,
   .traj-ev-dot { transition: none; animation: none; }
 }
+
+/* round-133: Sessions 标题旁的 "+ 新建会话" 下拉(dsh 风格)。 */
+.side-header { position: relative; }
+.side-add-wrap { margin-left: auto; position: relative; }
+.side-add {
+  background: none; border: none; color: var(--ink-muted, #6b7280);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 8px;
+  border-radius: 8px; font-weight: 500;
+}
+.side-add:hover { background: rgba(0,0,0,.06); color: var(--ink, #111); }
+.side-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; min-width: 150px;
+  background: var(--surface, #fff); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0,0,0,.16), 0 0 0 1px rgba(0,0,0,.06);
+  z-index: 40;
+}
+.side-menu button {
+  display: block; width: 100%; text-align: left; padding: 9px 14px;
+  background: none; border: none; font-size: 13px; cursor: pointer;
+  color: var(--ink, #111);
+}
+.side-menu button:hover { background: rgba(0,0,0,.05); }

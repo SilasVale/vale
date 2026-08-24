@@ -29,7 +29,6 @@ pub struct PlaywrightManager {
 /// 一个运行中的 playwright-mcp 实例。
 struct ManagedPlaywright {
     child: Child,
-    port: u16,
     /// Kept for a later feature that needs the per-launch token again
     /// (e.g. auto-configuring mcp_client_connect) — start() returns it to
     /// the caller, nothing reads the field yet (round-admin-ui).
@@ -88,6 +87,23 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// round-132: 探测 9229 端口是否有健康的 playwright-mcp 实例在服务——
+/// 不关心它是谁拉起的(计划任务/面板/手动)。生产拓扑由 ValePlaywright
+/// 计划任务在交互会话托管实例,agent 只是客户端;status() 必须把这种
+/// "外部托管"形态如实上报为 Running,否则面板永远显示 Stopped。
+async fn probe_healthy() -> bool {
+    // round-132 v2: TCP 连接检查替代 HTTP initialize 探测——后者会为每次
+    // 探测在服务器上创建新会话,且分片读取窗口容易误判。端口在监听 =
+    // playwright-mcp 在服务,对状态展示而言足够可靠。
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::net::TcpStream::connect(("127.0.0.1", MCP_PORT)),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false)
+}
+
 impl PlaywrightManager {
     pub fn new() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self { inner: Mutex::new(None) })
@@ -98,19 +114,46 @@ impl PlaywrightManager {
     /// running/healthy — try_wait detects exit; the record is dropped so
     /// start() can recover.
     pub async fn status(&self) -> serde_json::Value {
-        let mut guard = recover_guard(&self.inner);
-        let Some(m) = guard.as_mut() else {
-            return serde_json::json!({ "running": false });
+        // round-132: 锁的作用域用内层块严格限制——std MutexGuard 不能跨
+        // await(否则整个 HTTP service future 变 !Send)。探测外部实例的
+        // 健康检查在锁外进行。
+        let (has_live_child, child_exited, started_at) = {
+            let mut guard = recover_guard(&self.inner);
+            match guard.as_mut() {
+                Some(m) => {
+                    let started = m.started_at;
+                    let exited = m.child.try_wait().ok().flatten().is_some();
+                    if exited {
+                        let _ = guard.take(); // dead — clear for relaunch
+                        (true, true, started)
+                    } else {
+                        (true, false, started)
+                    }
+                }
+                None => (false, false, 0),
+            }
         };
-        let exited = m.child.try_wait().ok().flatten().is_some();
-        if exited {
-            let _ = guard.take(); // dead — clear so start() can relaunch
-            return serde_json::json!({ "running": false, "error": "child exited" });
+        if !has_live_child || child_exited {
+            // round-132: 没有自己拉起的子进程(或已退出)≠ 服务不可用——
+            // 生产拓扑由 ValePlaywright 计划任务在交互会话托管实例。探测
+            // 健康再下结论,否则面板永远显示 Stopped。
+            if probe_healthy().await {
+                return serde_json::json!({
+                    "running": true,
+                    "port": MCP_PORT,
+                    "external": true,
+                    "healthy": true,
+                });
+            }
+            if child_exited {
+                return serde_json::json!({ "running": false, "error": "child exited" });
+            }
+            return serde_json::json!({ "running": false });
         }
         serde_json::json!({
             "running": true,
-            "port": m.port,
-            "started_at": m.started_at,
+            "port": MCP_PORT,
+            "started_at": started_at,
             "healthy": true,
         })
     }
@@ -137,6 +180,16 @@ impl PlaywrightManager {
                 }
             }
         }
+        // round-132: 已有健康实例(计划任务/面板托管)占着 9229——直接复用,
+        // 不再 spawn(spawn 会绑定失败、子进程秒死、面板报错)。
+        if probe_healthy().await {
+            return Ok(serde_json::json!({
+                "status": "already_running",
+                "external": true,
+                "port": MCP_PORT,
+            }));
+        }
+
         // round-129: @playwright/mcp 无 --mcp-token flag(实测 0.0.79 及更早
         // 版本都不接受,child 会立即退出)——per-launch secret 方案不可落地。
         // 防 squatting 改为:127.0.0.1-only 绑定(playwright-mcp 默认)+
@@ -260,7 +313,7 @@ impl PlaywrightManager {
                 // A concurrent start landed while we polled — lose cleanly.
                 loser = Some(child);
             } else {
-                *guard = Some(ManagedPlaywright { child, port, secret: String::new(), started_at: now_ms(), _kill_tx: kill_tx });
+                *guard = Some(ManagedPlaywright { child, secret: String::new(), started_at: now_ms(), _kill_tx: kill_tx });
             }
         }
         if let Some(mut child) = loser {

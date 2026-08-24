@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Session } from "../hooks/useSessions";
 import type { usePlugins } from "../hooks/usePlugins";
 
@@ -6,12 +6,8 @@ import type { usePlugins } from "../hooks/usePlugins";
 // StateDot + label + relative time; hovering swaps the time for
 // rename/archive actions.
 //
-// Rename/archive are CLIENT-SIDE for now — Phase 1 core has no server-side
-// rename/archive API (the agent's /api/sessions list is read-only, and the
-// design spec scopes row actions to the sidebar). A rename overrides the
-// label locally, archive hides the row; both survive the 3s useSessions
-// poll (it mutates the same array in place, it never recreates rows).
-// Server-side persistence lands when an API exists.
+// round-133: "Sessions" 标题旁新增 "+" 下拉菜单(PTY/SSH/Serial)——新建入口
+// 从主区工具栏移到侧栏标题旁(dsh 风格)。Browser 会话行由 App 注入。
 function relTime(ts: number): string {
   const sec = Math.max(0, (Date.now() - ts) / 1000);
   if (sec < 60) return "now";
@@ -23,22 +19,33 @@ function relTime(ts: number): string {
   return day < 7 ? `${day}d` : new Date(ts).toLocaleDateString();
 }
 
-export function Sidebar({ sessions, activeSid, onActivate, view, onViewChange, plugins }: {
+export function Sidebar({ sessions, activeSid, onActivate, onViewChange, onNewSession, plugins }: {
   sessions: Session[];
   activeSid: string | null;
   onActivate: (sid: string) => void;
-  view: "sessions" | "plugins";
   onViewChange: (v: "sessions" | "plugins") => void;
+  onNewSession: (kind: "pty" | "ssh" | "serial") => void;
   plugins: ReturnType<typeof usePlugins>;
 }) {
   const [labels, setLabels] = useState<Map<string, string>>(new Map());
   const [archived, setArchived] = useState<Set<string>>(new Set());
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   // Re-render so relative times stay fresh (dsh shows "3m"-style labels).
   const [, setTick] = useState(0);
   useEffect(() => {
     const t = window.setInterval(() => setTick((n) => n + 1), 30000);
     return () => clearInterval(t);
   }, []);
+  // 点击面板其它区域关闭新建菜单
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuOpen]);
 
   const rename = (sid: string, current: string) => {
     const name = window.prompt("Rename session", current);
@@ -97,6 +104,22 @@ export function Sidebar({ sessions, activeSid, onActivate, view, onViewChange, p
       <div className="side-header">
         <h1 className="side-title">Sessions</h1>
         <span className="side-count">{sessions.length}</span>
+        {/* round-133: 新建会话入口移到标题旁(dsh 风格 "+")。 */}
+        <div className="side-add-wrap" ref={menuRef}>
+          <button
+            className="side-add"
+            title="New session"
+            aria-label="New session"
+            onClick={() => setMenuOpen((m) => !m)}
+          >+</button>
+          {menuOpen && (
+            <div className="side-menu" role="menu">
+              <button role="menuitem" onClick={() => { onNewSession("pty"); setMenuOpen(false); }}>Local shell</button>
+              <button role="menuitem" onClick={() => { onNewSession("ssh"); setMenuOpen(false); }}>SSH…</button>
+              <button role="menuitem" onClick={() => { onNewSession("serial"); setMenuOpen(false); }}>Serial…</button>
+            </div>
+          )}
+        </div>
       </div>
       <div className="side-list">
         {rows.length === 0 && <p className="side-empty">No sessions yet</p>}
