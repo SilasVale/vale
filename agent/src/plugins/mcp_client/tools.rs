@@ -1,24 +1,18 @@
-//! Tool builders for the MCP client plugin — connect/list/call/disconnect a
-//! local browser MCP server over Streamable HTTP.
+//! round-137 实测定理（d1 真机探针，2026-08-25）：
+//! playwright-mcp 0.0.79 的 Streamable HTTP 会话在每次 tools/call 响应完成
+//! 后约 4 秒被无条件回收（"Session not found"）。客户端侧保活手段全部证伪：
 //!
-//! Connection lifecycle is RUNTIME-driven (not register-time): the plugin is
-//! stateless; `mcp_client_connect` opens a client session and caches it in a
-//! process-global slot, `mcp_client_call` dispatches through it. This mirrors
-//! DSH's mcp-client plugin (connect on demand, tools under a qualified
-//! namespace) while keeping Vale's "tools built once at register" invariant —
-//! the remote tool LIST is discovered at connect time and exposed through
-//! `mcp_client_list` instead of being statically registered.
+//! - tools/list 心跳：探测本身不续命（+3s 探测成功、+5s 仍死），且窗口只有
+//!   ~4s，任何轮询间隔都赢不了；
+//! - 单条长连接静默保持：与会话无关，keep-alive socket 上照样死；
+//! - 标准 GET /mcp SSE 事件流：服务器主动关流（status 200）并杀会话。
 //!
-//! round-132: 直接手写 Streamable HTTP 的 JSON-RPC 会话，替换 rmcp 客户端。
-//! 根因：rmcp 客户端与本设备捆绑的 playwright-mcp 在 tools/call 的响应通路
-//! 上失配——initialize/tools/list 往返正常（秒回），唯独 call 的响应永远等
-//! 不到（连 about:blank 都 180s 超时），而同一服务器的原始 HTTP 调用实测
-//! 1 秒返回。与其继续依赖黑盒库的会话行为，不如按协议规范自己驱动：
-//!   POST initialize        → 200, 响应头带 mcp-session-id
-//!   POST initialized 通知   → 202/200 空体
-//!   POST tools/call ...    → 200, 体为 SSE("data: {...}") 或裸 JSON
-//! 会话状态就是 base_url + mcp-session-id + 自增 id，无后台任务、无取消
-//! 令牌、无重连循环——断开即丢弃状态。
+//! 因此客户端唯一正确的形态：放弃保活，接受"每次调用都可能撞上死会话"，
+//! 撞上就自愈——重握手 + 用 last_url 把页面导航回去（恢复上下文），再重试
+//! 原调用。last_url 从 browser_navigate 参数与任意响应文本里的
+//! "Page URL:" 行双向跟踪，跨会话保持浏览器画面连续。
+//!
+//! 会话状态就是 base_url + mcp-session-id + 自增 id + last_url，无后台任务。
 
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,59 +28,37 @@ use vale_agent_core::{DeviceError, ToolDef};
 const DEFAULT_URL: &str = "http://127.0.0.1:9229/mcp";
 
 /// Shared session slot: set by `mcp_client_connect`, used by call/list.
-/// round-132: 不要给这个服务器开 GET /mcp 事件流——实测它会终止整个会话
-/// （第一次调用成功、第二次即 404 Session not found）。会话保活靠的是
-/// 低频 tools/list 心跳（spawn_heartbeat）+ 404 时自愈握手。
 struct McpSession {
     url: String,
     /// Streamable HTTP 的会话标识 —— initialize 响应头下发，后续请求必带。
+    /// round-137：该会话约在每次 tools/call 完成后 ~4s 被服务端回收，这里
+    /// 的缓存值随时可能失效；所有请求路径都必须处理 404 自愈。
     session_id: Option<String>,
-    /// 最后一次 browser_navigate 的 URL —— 会话被服务端回收后重连时，
-    /// 自动导航回这个地址，恢复页面状态（否则每次自愈都回到空白页）。
+    /// 最近一次已知的页面地址 —— 自愈重握手后用它把新会话的当前标签页
+    /// 导航回去（否则新会话落在新空白页上，browser 会话永远"看不到画面"）。
+    /// 来源：browser_navigate 的 url 参数 + 任意工具响应文本的 "Page URL:"
+    /// 行（点击/表单跳转不经过 navigate 也能跟上）。
     last_url: Option<String>,
     next_id: AtomicU64,
     http: reqwest::Client,
-    /// 心跳任务中止句柄（disconnect/重建时中止）。
-    heartbeat_abort: Option<tokio::task::AbortHandle>,
 }
 static SESSION: Mutex<Option<McpSession>> = Mutex::const_new(None);
 
-/// 活动保活心跳：实测该服务器在客户端闲置 ~30s 后即回收会话（第二次
-/// 调用 404 Session not found），而快速连续调用则一直存活。每 6 秒一次
-/// 零副作用的 tools/list 探测即可保活；探测失败说明会话已死，停止心跳，
-/// 交由调用层的 404 自愈逻辑重建。
-fn spawn_heartbeat(sess: &mut McpSession) {
-    if let Some(h) = sess.heartbeat_abort.take() {
-        h.abort();
-    }
-    let Some(sid) = sess.session_id.clone() else { return };
-    let http = sess.http.clone();
-    let url = sess.url.clone();
-    let handle = tokio::spawn(async move {
-        for n in 1u64..=600u64 {
-            tokio::time::sleep(Duration::from_secs(6)).await;
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 9000 + n,
-                "method": "tools/list",
-                "params": {}
-            });
-            let r = http
-                .post(&url)
-                .header("content-type", "application/json")
-                .header("accept", "application/json, text/event-stream")
-                .header("mcp-session-id", &sid)
-                .timeout(Duration::from_secs(10))
-                .json(&body)
-                .send()
-                .await;
-            match r {
-                Ok(resp) if resp.status().is_success() => continue,
-                _ => break, // 会话已失效——停心跳，等调用层自愈重建
-            }
-        }
-    });
-    sess.heartbeat_abort = Some(handle.abort_handle());
+/// 带时间戳的诊断日志（round-132 引入的 mcp_diag.log，round-137 加时间戳
+/// 与 [heal]/[restore] 标记——之前无时间戳，无法和真机探针对时）。
+fn diag_log(line: &str) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("D:\\vale-agent\\mcp_diag.log")
+        .and_then(|mut f| {
+            use std::io::Write;
+            writeln!(f, "[{ts}] {line}")
+        });
 }
 
 /// 单次 JSON-RPC POST 的统一入口：处理会话头、自增 id、SSE/裸 JSON 双格式
@@ -127,16 +99,15 @@ async fn rpc_ref(
     let text = resp.text().await.map_err(|e| {
         DeviceError::Internal { message: format!("MCP response read failed: {e}") }
     })?;
-    // round-132 诊断：记录每次 MCP 往返的方法/id/所用会话/状态。
+    // round-132 诊断：记录每次 MCP 往返的方法/id/所用会话/状态（round-137
+    // 起带毫秒时间戳）。
     {
         let sid_used = sess.session_id.clone().unwrap_or_default();
-        let _ = std::fs::OpenOptions::new().create(true).append(true)
-            .open("D:\\vale-agent\\mcp_diag.log")
-            .and_then(|mut f| {
-                use std::io::Write;
-                writeln!(f, "[rpc] method={method} id={id:?} sid={sid_used} http={} body_head={:?}",
-                    status.as_u16(), &text[..text.len().min(80)])
-            });
+        diag_log(&format!(
+            "[rpc] method={method} id={id:?} sid={sid_used} http={} body_head={:?}",
+            status.as_u16(),
+            &text[..text.len().min(80)]
+        ));
     }
     if !status.is_success() {
         return Err(DeviceError::Internal {
@@ -239,7 +210,6 @@ pub fn mcp_client_connect() -> ToolDef {
                 last_url: None,
                 next_id: AtomicU64::new(1),
                 http: reqwest::Client::new(),
-                heartbeat_abort: None,
             };
 
             // initialize：响应头下发 mcp-session-id；initialized 通知：无 id。
@@ -271,6 +241,52 @@ pub fn mcp_client_connect() -> ToolDef {
     )
 }
 
+/// 判断一次失败是否为"会话已被服务端回收"（round-137：每次 tools/call 完成
+/// 后 ~4s 必然发生，属常态而非异常）。
+fn is_session_gone(msg: &str) -> bool {
+    msg.contains("Session not found") || msg.contains("HTTP 404")
+}
+
+/// 自愈：丢弃失效的 mcp-session-id → 重握手 → 用 last_url 把新会话的当前
+/// 标签页导航回已知页面。没有 last_url（从未成功导航过）就只重握手——
+/// 新会话落在新空白页上，这与浏览器刚启动时的初始状态一致，是诚实的。
+async fn heal_and_restore(sess: &mut McpSession) -> Result<(), DeviceError> {
+    // 旧会话头必须清掉：带着失效的 mcp-session-id 去 initialize，服务器
+    // 直接 404 而不是下发新会话（round-134 实测）。
+    sess.session_id = None;
+    diag_log("[heal] re-handshaking after session recycle");
+    handshake(sess).await?;
+    if let Some(url) = sess.last_url.clone() {
+        let id = sess.next_id.fetch_add(1, Ordering::Relaxed);
+        diag_log(&format!("[restore] navigating back to {url}"));
+        // 恢复导航失败不致命：原调用照常重试（大不了落在空白页，总比
+        // 直接报错好）。超时给足——冷页面可能慢。
+        let _ = rpc_ref(sess, Some(id), "tools/call", json!({
+            "name": "browser_navigate",
+            "arguments": { "url": url },
+        }), 60).await;
+    }
+    Ok(())
+}
+
+/// 从工具响应文本里提取 "- Page URL: <url>" 行，更新 last_url —— 点击、
+/// 表单提交、前端路由跳转都不经过 browser_navigate，只有从响应里跟才能
+/// 让恢复点始终贴近用户真实所在的页面。
+fn track_page_url(sess: &mut McpSession, result: &Value) {
+    let Ok(text) = serde_json::to_string(result) else { return };
+    for marker in ["- Page URL: ", "\\n- Page URL: ", "### Page\\n- Page URL: "] {
+        if let Some(pos) = text.find(marker) {
+            let rest = &text[pos + marker.len()..];
+            let end = rest.find(['"', '\\', '\n']).unwrap_or(rest.len());
+            let url = rest[..end].trim_end_matches('\\').trim();
+            if url.starts_with("http") || url.starts_with("about:") || url.starts_with("data:") {
+                sess.last_url = Some(url.to_string());
+                return;
+            }
+        }
+    }
+}
+
 /// 握手：initialize（拿会话 id）+ initialized 通知。返回服务器信息。
 async fn handshake(sess: &mut McpSession) -> Result<Value, DeviceError> {
     let init_id = sess.next_id.fetch_add(1, Ordering::Relaxed);
@@ -280,7 +296,6 @@ async fn handshake(sess: &mut McpSession) -> Result<Value, DeviceError> {
         "clientInfo": {"name": "vale-agent", "version": "1"}
     }), 30).await?;
     rpc_ref(sess, None, "notifications/initialized", Value::Null, 10).await?;
-    spawn_heartbeat(sess);
     Ok(resp.get("serverInfo").cloned().unwrap_or(json!(null)))
 }
 
@@ -308,13 +323,26 @@ pub fn mcp_client_list() -> ToolDef {
             let sess = guard.as_mut().ok_or_else(|| DeviceError::InvalidParams {
                 message: "not connected — call mcp_client_connect first".into(),
             })?;
-            let tools = list_tools_ref(sess).await?;
-            Ok(json!({
-                "tool_count": tools.len(),
-                "tools": tools.iter().map(|(n, d)| {
-                    json!({"name": n, "description": d})
-                }).collect::<Vec<_>>(),
-            }))
+            // round-137: 会话随时可能已被回收（~4s TTL），list 同样要自愈。
+            match list_tools_ref(sess).await {
+                Ok(tools) => Ok(json!({
+                    "tool_count": tools.len(),
+                    "tools": tools.iter().map(|(n, d)| {
+                        json!({"name": n, "description": d})
+                    }).collect::<Vec<_>>(),
+                })),
+                Err(DeviceError::Internal { message }) if is_session_gone(&message) => {
+                    heal_and_restore(sess).await?;
+                    let tools = list_tools_ref(sess).await?;
+                    Ok(json!({
+                        "tool_count": tools.len(),
+                        "tools": tools.iter().map(|(n, d)| {
+                            json!({"name": n, "description": d})
+                        }).collect::<Vec<_>>(),
+                    }))
+                }
+                Err(e) => Err(e),
+            }
         },
     )
 }
@@ -351,41 +379,40 @@ pub fn mcp_client_call() -> ToolDef {
                 message: "not connected — call mcp_client_connect first".into(),
             })?;
 
-            // round-132 根因适配：实测 playwright-mcp 0.0.79 的 MCP 会话是
-            // "一次有效调用"语义——首次 tools/call 的响应流关闭后会话即被
-            // 服务端回收（第二次调用 404 Session not found）。但只有会话是
-            // 一次性的：Chromium 实例持久（无 --isolated，持久 profile），
-            // 新会话的第一次 tools/call 直接落在当前标签页上。
+            // round-137 根因适配：playwright-mcp 0.0.79 的会话在每次
+            // tools/call 完成后 ~4 秒被无条件回收（真机探针证实：心跳、
+            // 长连接、GET 事件流全部救不了）。所以 404 不是异常而是常态：
+            // 撞上就自愈——重握手 + 导航回 last_url 恢复页面上下文，再重试
+            // 原调用。恢复导航在原调用之前执行，因此本次调用的响应仍然是
+            // 原工具自己的结果（round-134 的"导航结果污染响应"问题靠这个
+            // 顺序保证，而不是靠不做恢复）。
             //
-            // round-134 修正：旧自愈在 404 后用"导航回 last_url"消耗新会话，
-            // 并把导航结果当作本次调用的答案返回——browser_take_screenshot
-            // 永远执行不到，面板浏览器预览因此永远拿不到截图。现在改为
-            // 重握手后直接重试原调用，无需任何恢复导航。
-
             // round-131: 180s —— 首次导航含浏览器冷启动，60s 会误超时。
-            let id = sess.next_id.fetch_add(1, Ordering::Relaxed);
-            let call = rpc_ref(sess, Some(id), "tools/call", json!({
+            let call_body = || json!({
                 "name": tool,
                 "arguments": args,
-            }), 180).await;
+            });
+            let id = sess.next_id.fetch_add(1, Ordering::Relaxed);
+            let call = rpc_ref(sess, Some(id), "tools/call", call_body(), 180).await;
             let mut result = match call {
-                Err(DeviceError::Internal { message }) if
-                    message.contains("Session not found") || message.contains("HTTP 404") =>
-                {
-                    // 旧会话头必须清掉：带着失效的 mcp-session-id 去
-                    // initialize，服务器直接 404 而不是下发新会话。
-                    sess.session_id = None;
-                    handshake(sess).await?;
-                    // 新会话的第一次调用 = 原调用本身（浏览器/标签页持久，
-                    // 无需恢复导航）。若这次仍 404 则如实报错。
+                Err(DeviceError::Internal { message }) if is_session_gone(&message) => {
+                    heal_and_restore(sess).await?;
+                    // 若这次仍 404 则如实报错。
                     let retry_id = sess.next_id.fetch_add(1, Ordering::Relaxed);
-                    rpc_ref(sess, Some(retry_id), "tools/call", json!({
-                        "name": tool,
-                        "arguments": args,
-                    }), 180).await?
+                    rpc_ref(sess, Some(retry_id), "tools/call", call_body(), 180).await?
                 }
                 r => r?,
             };
+
+            // round-137: 页面跟踪 —— browser_navigate 的参数是权威来源；
+            // 其他工具（点击/表单/路由跳转）从响应文本的 "Page URL:" 行
+            // 跟踪。last_url 是下次自愈时的恢复点。
+            if tool == "browser_navigate" {
+                if let Some(u) = args.get("url").and_then(|v| v.as_str()) {
+                    sess.last_url = Some(u.to_string());
+                }
+            }
+            track_page_url(sess, &result);
 
             // playwright-mcp 1.6x saves screenshots to %TEMP%\.playwright-mcp
             // and returns a text REFERENCE instead of inline image content.
@@ -484,9 +511,6 @@ pub fn mcp_client_disconnect() -> ToolDef {
         |_: Value| async move {
             let sess = SESSION.lock().await.take();
             if let Some(s) = sess {
-                if let Some(h) = s.heartbeat_abort {
-                    h.abort();
-                }
                 let mut req = s.http.delete(&s.url)
                     .header("content-type", "application/json")
                     .timeout(Duration::from_secs(5));
