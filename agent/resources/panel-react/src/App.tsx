@@ -274,7 +274,7 @@ export function App() {
               hidden — fire a resize when un-hiding so the grid (local xterm +
               backend cols/rows) refits to the now-visible size. */}
           <div id="term-container" style={browserActive ? { display: "none" } : (trajOpen ? { display: "none" } : undefined)}>
-            {browserActive && pwRunning ? (
+            {browserActive ? (
               <BrowserPane key={BROWSER_SID} session={{ sid: BROWSER_SID, url: "", active: true }} apiBase="" token={token} />
             ) : sessions.sessions.length === 0 ? (
               <div id="empty-state">
