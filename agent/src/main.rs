@@ -92,6 +92,14 @@ fn main() {
         }
     }
 
+    // Must run before ANY child spawns: every PTY shell, SSH/serial session,
+    // and helper this process creates joins our kill-on-close job, so the
+    // kernel reaps them whenever the agent dies — update swap, Stop-Process,
+    // crash. Before round-134 an update orphaned every open shell (observed
+    // on d1: shells from hours-old sessions survived four restarts).
+    #[cfg(windows)]
+    setup_child_reaper_job();
+
     // If the Service Control Manager launched us, run as a Windows service.
     // service_dispatcher::start() succeeds only when the process was started by
     // the SCM; a normal console launch fails fast (ERROR_FAILED_SERVICE_CONTROLLER_CONNECT)
@@ -284,6 +292,47 @@ fn self_heal() {
         });
     }
     log_line("self-heal: complete");
+}
+
+/// Put this process into a kill-on-close Job Object: every child we spawn
+/// (PTY shells, SSH/serial sessions, playwright-mcp, short-lived helpers)
+/// inherits membership, and when the agent exits for ANY reason the kernel
+/// closes our job handle and terminates them all. Nested jobs (Win8+) make
+/// this safe under Task Scheduler's own job wrapper.
+#[cfg(windows)]
+fn setup_child_reaper_job() {
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job == 0 {
+            log_line("child-reaper job: CreateJobObject failed — update orphans possible");
+            return;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const core::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) == 0
+        {
+            log_line("child-reaper job: SetInformation failed — orphans possible on update");
+            return;
+        }
+        if AssignProcessToJobObject(job, GetCurrentProcess()) == 0 {
+            log_line("child-reaper job: AssignProcess failed — nested jobs unsupported?");
+            return;
+        }
+        // The handle is intentionally never closed: it lives until process
+        // exit, whose implicit CloseHandle triggers the kill-on-close.
+        log_line("child-reaper job: active — children die with the agent");
+    }
 }
 
 /// Run a Windows helper process with a hard 30s timeout. Self-heal must never
