@@ -494,7 +494,12 @@ async function handleGatewayImpl(
         headers: passthroughHeaders(bearerKey),
         body: forwardBody,
       },
-      { timeoutMs: ogTimeoutMs(env) },
+      // or/: OpenRouter's free pool answers 429 with Retry-After and rejects
+      // pre-processing overloads with 502 — both are safe to pace-and-retry
+      // here (see reliability.ts retryWaitMs / retry502).
+      route.kind === "openrouter"
+        ? { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
+        : { timeoutMs: ogTimeoutMs(env) },
     );
     if (!upstream) {
       if (route.kind === "opencode") await recordChannelFailure(env);
@@ -637,7 +642,10 @@ async function handleGatewayImpl(
         }),
         body: forwardBody,
       },
-      { timeoutMs: passthroughTimeoutMs(env, route.kind) },
+      // or/: same free-pool pacing as the chat/completions site above.
+      route.kind === "openrouter"
+        ? { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
+        : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
     );
     if (!upstream) {
       // Slow failure (timeout / network error) — single attempt, no retry.

@@ -17,6 +17,13 @@
  * Slow failures (timeout / network error) are NOT retried — an upstream that
  * takes 45s to fail will simply fail again; retries only help fast 5xx/429s.
  * Returns { response, detail } where detail explains the failure for the 502.
+ *
+ * Retry pacing (2026-08-24): the fixed backoffMs×attempt ladder raced free-pool
+ * rate limits — OpenRouter's glm/nemotron :free providers answer 429 with
+ * `Retry-After: 5` while the old ladder re-hit at 0.75s/1.5s/2.25s, i.e. every
+ * retry landed INSIDE the upstream's cooldown and failed identically. The wait
+ * now honors the Retry-After header (capped by maxWaitMs) and adds jitter so
+ * concurrent workers don't retry in lockstep.
  */
 export async function fetchWithRetry(
   url: string,
@@ -26,11 +33,36 @@ export async function fetchWithRetry(
     backoffMs = 750,
     timeoutMs = 30000,
     idempotent = false,
-  }: { attempts?: number; backoffMs?: number; timeoutMs?: number; idempotent?: boolean } = {},
+    retry502 = false,
+    maxWaitMs = 10000,
+  }: {
+    attempts?: number;
+    backoffMs?: number;
+    timeoutMs?: number;
+    idempotent?: boolean;
+    /** Treat 502/503 as retryable — caller asserts the upstream rejects BEFORE
+     * processing (OpenRouter's "Provider returned error"/provider-overload
+     * envelope), so re-sending cannot double-bill a BYOK key. Other 5xx stay
+     * gated by `idempotent`. */
+    retry502?: boolean;
+    maxWaitMs?: number;
+  } = {},
 ) {
-  let last = null;
+  let last: any = null;
   let detail = "";
-  for (let attempt = 1; attempt <= attempts; attempt++) {
+  const mayRetry5xx = (status: number) =>
+    status === 502 || status === 503 ? idempotent || retry502 : idempotent;
+  /** Wait between attempts: honor Retry-After (seconds) when the upstream sent
+   * one, else the legacy linear ladder; jitter ±400ms desynchronizes workers;
+   * everything clamped to maxWaitMs so a huge header can't stall the request. */
+  const retryWaitMs = (): number => {
+    const ra = Number(last?.headers?.get?.("retry-after"));
+    const raMs = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 0;
+    const jitter = Math.floor(Math.random() * 400);
+    return Math.min(Math.max(raMs, backoffMs * attempt) + jitter, maxWaitMs);
+  };
+  let attempt = 1;
+  for (; attempt <= attempts; attempt++) {
     try {
       last = await fetchWithTimeout(url, { ...init, body: init.body }, timeoutMs);
     } catch (e: any) {
@@ -42,25 +74,26 @@ export async function fetchWithRetry(
       return { response: last, detail: "" };
     }
     // A 5xx AFTER the upstream processed the request may have billed the
-    // user's BYOK key — re-sending the identical POST double-charges. Only
-    // retry 5xx when the caller says the request is idempotent (safe probes).
-    // 429 (rate-limited, NOT processed) is always safe to retry.
-    if (last.status === 429) {
-      detail = `upstream 429 (retried ${attempt}/${attempts})`;
-      console.error(`[gateway] upstream 429 on attempt ${attempt}/${attempts} — retrying`);
+    // user's BYOK key — re-sending the identical POST double-charges. Retry
+    // 5xx only when the caller vouches for it (idempotent probes, or the
+    // retry502 pre-processing contract above). 429 (rate-limited, NOT
+    // processed) is always safe to retry.
+    if (last.status === 429 || (last.status >= 500 && mayRetry5xx(last.status))) {
+      detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
+      console.error(`[gateway] upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
       if (attempt < attempts) {
-        await new Promise((r) => setTimeout(r, backoffMs * attempt));
+        await new Promise((r) => setTimeout(r, retryWaitMs()));
         continue;
       }
       return { response: last, detail };
     }
-    if (!idempotent || attempt >= attempts) {
-      detail = `upstream ${last.status} (${idempotent ? `retried ${attempt}/${attempts}` : "not retried — POST may have been billed"})`;
+    if (attempt >= attempts) {
+      detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
       return { response: last, detail };
     }
-    detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
-    console.error(`[gateway] upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
-    await new Promise((r) => setTimeout(r, backoffMs * attempt));
+    detail = `upstream ${last.status} (not retried — POST may have been billed)`;
+    console.error(`[gateway] upstream ${last.status} — not retryable (billing guard)`);
+    return { response: last, detail };
   }
   return { response: last, detail };
 }

@@ -86,6 +86,74 @@ test("429 counts as retryable (not processed — safe)", async () => {
   });
 });
 
+// ── Retry pacing: honor Retry-After + the or/ retry502 contract ──
+// Evidence 2026-08-24: OpenRouter's free pool (Decart serving glm-5.2:free)
+// answers 429 with `Retry-After: 5` — the old fixed ladder (0.75s/1.5s) re-hit
+// INSIDE that cooldown so every retry failed identically.
+
+const ra = (seconds) =>
+  new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+    status: 429,
+    headers: { "content-type": "application/json", "retry-after": String(seconds) },
+  });
+
+test("429 honors Retry-After: second attempt waits out the cooldown", async () => {
+  let n = 0;
+  await withFetch(async () => (++n === 1 ? ra(1) : ok(200, { id: "x" })), async () => {
+    const t0 = Date.now();
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, {
+      timeoutMs: 1000,
+      backoffMs: 10, // ladder must NOT dominate — the header should
+    });
+    const elapsed = Date.now() - t0;
+    assert.equal(response.status, 200);
+    assert.equal(detail, "");
+    assertFetchCalls(2);
+    assert.ok(elapsed >= 950, `waited ${elapsed}ms — Retry-After:1 was ignored`);
+  });
+});
+
+test("Retry-After is clamped by maxWaitMs (a huge header can't stall the request)", async () => {
+  let n = 0;
+  await withFetch(async () => (++n === 1 ? ra(600) : ok(200)), async () => {
+    const t0 = Date.now();
+    const { response } = await fetchWithRetry("https://zen.example", reqInit, {
+      timeoutMs: 1000,
+      backoffMs: 10,
+      maxWaitMs: 300,
+    });
+    const elapsed = Date.now() - t0;
+    assert.equal(response.status, 200);
+    assertFetchCalls(2);
+    assert.ok(elapsed < 3000, `clamped wait took ${elapsed}ms — maxWaitMs ignored`);
+  });
+});
+
+test("or/ contract: 502 retried when retry502 is set (pre-processing overload)", async () => {
+  let n = 0;
+  await withFetch(async () => (++n === 1 ? ok(502, { error: { code: 502 } }) : ok(200, { id: "x" })), async () => {
+    const { response, detail } = await fetchWithRetry("https://openrouter.example", reqInit, {
+      timeoutMs: 1000,
+      backoffMs: 5,
+      retry502: true,
+    });
+    assert.equal(response.status, 200);
+    assert.equal(detail, "");
+    assertFetchCalls(2);
+  });
+});
+
+test("billing guard intact: 502 NOT retried when retry502 unset and not idempotent", async () => {
+  await withFetch(async () => ok(502, { error: { code: 502 } }), async () => {
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, {
+      timeoutMs: 1000,
+    });
+    assert.equal(response.status, 502);
+    assert.match(detail, /not retried/);
+    assertFetchCalls(1);
+  });
+});
+
 test("fetchWithTimeout throws TimeoutError on abort", async () => {
   await withFetch(never, async () => {
     await assert.rejects(() => fetchWithTimeout("https://x", {}, 20), (e) => e.name === "TimeoutError" && /timeout after 20ms/.test(e.message));
