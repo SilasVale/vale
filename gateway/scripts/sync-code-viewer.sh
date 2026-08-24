@@ -11,7 +11,9 @@ mkdir -p "$DEST/vale-gate/src" "$DEST/vale-gate/public" "$DEST/openrouter-proxy"
 # vale-gate sources — the TS migration (round-83) moved the real source to
 # .ts files; the .js files are re-export shims. Copy EVERYTHING (incl.
 # plugins/) so the published snapshot shows the implementation, not shims.
-cp "$PWD"/src/*.ts "$PWD"/src/*.js "$DEST/vale-gate/src/"
+cp "$PWD"/src/*.ts "$DEST/vale-gate/src/"
+# The TS migration removed the re-export .js shims; tolerate their absence.
+cp "$PWD"/src/*.js "$DEST/vale-gate/src/" 2>/dev/null || true
 mkdir -p "$DEST/vale-gate/src/plugins"
 cp "$PWD"/src/plugins/*.ts "$PWD"/src/plugins/*.js "$DEST/vale-gate/src/plugins/" 2>/dev/null || true
 cp public/index.html public/app.js public/style.css "$DEST/vale-gate/public/"

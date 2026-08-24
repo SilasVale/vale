@@ -32,6 +32,7 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "og/openai/gpt-5.6-luna:floor[1m]", owned_by: "opencode" },
   { id: "or/openai/gpt-5.6-luna:floor[1m]", owned_by: "openrouter" },
   { id: "or/z-ai/glm-5.2:free", owned_by: "openrouter" },
+  { id: "or/nvidia/nemotron-3-ultra-550b-a55b:free", owned_by: "openrouter" },
   { id: "or/stealth/ox-alpha", owned_by: "openrouter" },
   { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
@@ -54,10 +55,11 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
   {
     prefix: "or/",
     backend: "OpenRouter",
-    desc: "openrouter.ai — user's own key, proxied via openrouter-proxy",
+    desc: "openrouter.ai — user's own key (BYOK); dual-format passthrough, US-proxy switch decides direct vs exit",
     models: [
       "openai/gpt-5.6-luna:floor[1m]",
       "z-ai/glm-5.2:free",
+      "nvidia/nemotron-3-ultra-550b-a55b:free",
       "stealth/ox-alpha",
       "deepseek/deepseek-v4-flash-0731",
     ],
@@ -90,6 +92,7 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "og", model: "og/ox-alpha-free" },
   { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
   { id: "or", model: "or/z-ai/glm-5.2:free" },
+  { id: "or", model: "or/nvidia/nemotron-3-ultra-550b-a55b:free" },
   { id: "or", model: "or/stealth/ox-alpha" },
   { id: "or", model: "or/deepseek/deepseek-v4-flash-0731" },
 ];

@@ -25,38 +25,38 @@
  * Handler convention: dispatch(ctx, method, path, request, env, url) →
  * handler(request, env, url).
  */
-import { hasRegKey, hasRegGrant, getDevice, upsertDevice, insertDevice, deleteDevice, deleteRegKey, deleteRegGrant, consumeRegKey, getCfToken, getAdminPassword, getUser, maskKey, listDevices, addPluginLink, getPluginByToken, removePluginLink, listPluginLinks, consumePairCode, createWsTicket, consumeWsTicket, type User, type Device } from "../store.ts";
-import { parseCookie, SESSION_COOKIE, verifySessionToken, randomHex } from "../auth.ts";
+import {
+  hasRegKey,
+  hasRegGrant,
+  getDevice,
+  upsertDevice,
+  insertDevice,
+  deleteDevice,
+  deleteRegKey,
+  deleteRegGrant,
+  consumeRegKey,
+  createRegKey,
+  createPairCode,
+  getCfToken,
+  maskKey,
+  listDevices,
+  addPluginLink,
+  getPluginByToken,
+  removePluginLink,
+  listPluginLinks,
+  consumePairCode,
+  createWsTicket,
+  consumeWsTicket,
+  type Device,
+} from "../store.ts";
+import { parseCookie, randomHex } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
+import { requireSession } from "../session.ts";
 import { route, type Plugin, type PluginContext } from "./registry.ts";
 
 const DEVICE_BASE = "/api/devices";
 const PLUGIN_BASE = "/api/plugins";
-
-/* ---------------- Session auth (copied from index.js) ---------------- */
-
-// Session HMAC key: prefer the dedicated high-entropy SESSION_SECRET (wrangler
-// secret) over the admin password. Using the password directly lets any invited
-// user offline-brute-force it from their own signed cookie (HMAC-SHA256 is not
-// memory-hard); with SESSION_SECRET set, the password is never a signing key.
-function sessionSecret(env: any, adminPassword: string): string {
-  return env.SESSION_SECRET || adminPassword;
-}
-
-async function requireSession(request: Request, env: any): Promise<User | null> {
-  const ap = await getAdminPassword(env);
-  if (!ap) return null;
-  const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
-  if (!cookie) return null;
-  // Revoked by logout (server-side blacklist — a copied cookie dies too).
-  if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) return null;
-  const session = await verifySessionToken(sessionSecret(env, ap), cookie);
-  if (!session) return null;
-  const user = await getUser(env, session.uid);
-  if (!user || !user.enabled) return null;
-  return user;
-}
 
 /* ---------------- Route handlers (bodies copied verbatim from index.js) ---------------- */
 
@@ -88,32 +88,46 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
     let device: Device;
-    try { device = validateDevice(body); } catch (e) { return jsonError(400, (e as Error).message, "invalid_request"); }
+    try {
+      device = validateDevice(body);
+    } catch (e) {
+      return jsonError(400, (e as Error).message, "invalid_request");
+    }
     // round-68: a one-time-key holder could upsert an EXISTING device name —
     // the register endpoint silently replaced a production device's
     // hostname/token, redirecting console terminal tools + the proxy to the
     // attacker. Refuse when the name is already registered; re-registering
     // an existing device is an admin action.
     if (await getDevice(env, device.name)) {
-      return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+      return jsonError(
+        409,
+        `Device '${device.name}' already registered — use the console (admin) to update it`,
+        "conflict",
+      );
     }
     // round-103: read the device's proxy secret so the gateway proxy can
     // present X-Vale-Auth for /panel/ (token-injection gate).
     try {
       const status = await deviceFetch(env, device, "/api/status");
       if (status && status.resp) {
-        const j = await status.resp.json().catch(() => null);
+        const j: any = await status.resp.json().catch(() => null);
         if (j && typeof j.proxy_secret === "string" && j.proxy_secret.length >= 32) {
           device.proxySecret = j.proxy_secret;
         }
       }
-    } catch { /* best-effort — panel injection just won't work until admin updates */ }
+    } catch {
+      /* best-effort — panel injection just won't work until admin updates */
+    }
     // round-122: insertDevice does the existence check INSIDE the lock —
     // the old getDevice→409 check-then-act let two concurrent same-name
     // registrations both pass and the second upsert took over the name.
     const inserted = await insertDevice(env, device);
     if (!inserted) {
-      return jsonError(409, `Device '${device.name}' already registered — use the console (admin) to update it`, "conflict");
+      return jsonError(
+        409,
+        `Device '${device.name}' already registered — use the console (admin) to update it`,
+        "conflict",
+      );
     }
     await deleteRegKey(env, k); // one-time — consumed only after success
     await deleteRegGrant(env, k);
@@ -199,7 +213,9 @@ async function handleRevoke(request: Request, env: any): Promise<Response> {
       const req = new Request("https://hub/close-all", { method: "POST" });
       if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
       await hub.fetch(req).catch(() => {});
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
   return jsonOk({ ok: true });
 }
@@ -273,7 +289,7 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   const proxyMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/proxy(.*)$`))!;
   // round-106/107: a malformed percent-escape in the device name (e.g. %zz)
   // made decodeURIComponent throw URIError — an unhandled 500. 400 instead.
-  const deviceName = decodeDeviceName(proxyMatch[1]);
+  const deviceName = decodeDeviceName(proxyMatch[1]!);
   if (deviceName === null) return jsonError(400, "Invalid device name", "invalid_request");
   const d = await getDevice(env, deviceName);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
@@ -306,8 +322,12 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   // plugin-link map (hex tokens are a no-op, but the decode must exist).
   let cookieToken = "";
   try {
-    cookieToken = decodeURIComponent(parseCookie(request.headers.get("cookie") || "")[`vale_pt_${deviceName}`] || "");
-  } catch { /* malformed — treat as absent */ }
+    cookieToken = decodeURIComponent(
+      parseCookie(request.headers.get("cookie") || "")[`vale_pt_${deviceName}`] || "",
+    );
+  } catch {
+    /* malformed — treat as absent */
+  }
   const token = (auth.startsWith("Bearer ") ? auth.slice(7).trim() : "") || qToken || cookieToken;
   const link = token ? await getPluginByToken(env, token) : null;
   if (link && link.device === deviceName) {
@@ -325,7 +345,7 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
       return new Response(null, {
         status: 302,
         headers: {
-          "Location": clean.pathname + clean.search,
+          Location: clean.pathname + clean.search,
           "Set-Cookie": `vale_pt_${deviceName}=${encodeURIComponent(qToken)}; Path=${DEVICE_BASE}/${deviceName}/proxy; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`,
           // round-126: a cached 302 would drop the Set-Cookie on a re-pair
           // (stale cookie → panel 401s forever).
@@ -344,7 +364,7 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   if (!auth && isNav) {
     return new Response(
       `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vale — session expired</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;color:#1d1d1f;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:14px;padding:32px 40px;max-width:400px;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.12)}h1{font-size:18px;margin:0 0 8px}p{color:#6e6e73;font-size:14px;margin:0 0 4px}.mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:10px;background:#1d1d1f;color:#fff;font-weight:700;font-size:24px;margin-bottom:14px}</style></head><body><div class="card"><span class="mark">V</span><h1>Device session expired</h1><p>This device pairing has expired or the browser was restarted.</p><p>Open the Vale extension and re-pair to access the terminal.</p></div></body></html>`,
-      { status: 401, headers: { "content-type": "text/html; charset=utf-8" } }
+      { status: 401, headers: { "content-type": "text/html; charset=utf-8" } },
     );
   }
   return jsonError(401, "Not logged in or invalid plugin token", "authentication_error");
@@ -362,12 +382,15 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
 async function handleDevicesList(request: Request, env: any): Promise<Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
   const devices = await listDevices(env);
   return jsonOk({
     devices: devices.map((d) => ({
-      name: d.name, hostname: d.hostname,
-      token: maskKey(d.token), mcp: mcpConfig(d),
+      name: d.name,
+      hostname: d.hostname,
+      token: maskKey(d.token),
+      mcp: mcpConfig(d),
     })),
   });
 }
@@ -375,21 +398,30 @@ async function handleDevicesList(request: Request, env: any): Promise<Response> 
 async function handleDevicesAdd(request: Request, env: any): Promise<Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
   const body = await readJson(request);
   let device: Device;
-  try { device = validateDevice(body); } catch (e) { return jsonError(400, (e as Error).message, "invalid_request"); }
+  try {
+    device = validateDevice(body);
+  } catch (e) {
+    return jsonError(400, (e as Error).message, "invalid_request");
+  }
   await upsertDevice(env, device);
-  return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname, token: maskKey(device.token) } });
+  return jsonOk({
+    ok: true,
+    device: { name: device.name, hostname: device.hostname, token: maskKey(device.token) },
+  });
 }
 
 async function handleDeviceMcp(request: Request, env: any, url: URL): Promise<Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
   const path = url.pathname;
   const mcpMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/mcp$`))!;
-  const devName = decodeDeviceName(mcpMatch[1]);
+  const devName = decodeDeviceName(mcpMatch[1]!);
   if (devName === null) return jsonError(400, "Invalid device name", "invalid_request");
   const d = await getDevice(env, devName);
   if (!d) return jsonError(404, "Device not found", "not_found_error");
@@ -399,10 +431,11 @@ async function handleDeviceMcp(request: Request, env: any, url: URL): Promise<Re
 async function handleDeviceDelete(request: Request, env: any, url: URL): Promise<Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin") return jsonError(403, "Admin permission required", "authorization_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
   const path = url.pathname;
   const delMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)$`))!;
-  const delName = decodeDeviceName(delMatch[1]);
+  const delName = decodeDeviceName(delMatch[1]!);
   if (delName === null) return jsonError(400, "Invalid device name", "invalid_request");
   // round-115: deleteDevice alone left the device's plugin links (30-day TTL)
   // and its live hub socket alive — a same-name re-registration resurrected
@@ -418,9 +451,65 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
       const req = new Request("https://hub/close-all", { method: "POST" });
       if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
       await hub.fetch(req).catch(() => {});
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
   }
   await deleteDevice(env, delName);
+  return jsonOk({ ok: true });
+}
+
+// POST /api/devices/register-key — generate a one-time install key.
+// (the last admin-gated route still served by index.ts's inline chain)
+async function handleRegisterKey(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const key = await createRegKey(env);
+  return jsonOk({ ok: true, key });
+}
+
+// POST /api/plugins/pair — mint a one-time pairing code for a device (admin).
+async function handlePair(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const { device }: any = (await request.json().catch(() => ({}))) || {};
+  const d = device ? await getDevice(env, String(device)) : null;
+  if (!d) return jsonError(404, "Device not found", "not_found_error");
+  const code = await createPairCode(env, d.name);
+  return jsonOk({ code });
+}
+
+// POST /api/plugins/unpair — drop all plugin links for a device (admin).
+async function handleUnpair(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const { device }: any = (await request.json().catch(() => ({}))) || {};
+  const links = await listPluginLinks(env);
+  for (const [t, l] of Object.entries(links))
+    if (l.device === device) await removePluginLink(env, t);
+  // round-92: removing the KV links was not enough — the extension's LIVE
+  // hub socket kept relaying browser_* commands past the unpair (the socket
+  // stays in the DO and its 20s pings keep the idle alarm from ever firing,
+  // so alarm()'s token re-validation never runs either). revoke() (round-84)
+  // already knew this and calls /close-all; unpair is the same revocation
+  // contract and must do the same.
+  if (env.PLUGIN_HUB) {
+    try {
+      const id = env.PLUGIN_HUB.idFromName(device);
+      const hub = env.PLUGIN_HUB.get(id);
+      const req = new Request("https://hub/close-all", { method: "POST" });
+      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
+      await hub.fetch(req).catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+  }
   return jsonOk({ ok: true });
 }
 
@@ -429,16 +518,21 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
 // round-107: decode a URL-encoded device name, null on malformed escapes
 // (a raw decodeURIComponent threw URIError → unhandled 500).
 function decodeDeviceName(seg: string): string | null {
-  try { return decodeURIComponent(seg); }
-  catch { return null; }
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return null;
+  }
 }
 
 function validateDevice(body: any): Device {
   const name = String(body?.name || "").trim();
   const hostname = String(body?.hostname || "").trim();
   const token = String(body?.token || "").trim();
-  if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) throw new Error("Device name must be 1-32 chars: letters/digits/_ -");
-  if (!/^([a-z0-9-]+\.)+[a-z0-9-]+$/i.test(hostname)) throw new Error("hostname must be a domain like d1.agent.saisi.online");
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(name))
+    throw new Error("Device name must be 1-32 chars: letters/digits/_ -");
+  if (!/^([a-z0-9-]+\.)+[a-z0-9-]+$/i.test(hostname))
+    throw new Error("hostname must be a domain like d1.agent.saisi.online");
   if (token.length < 8) throw new Error("Token must be at least 8 chars");
   return { name, hostname, token };
 }
@@ -455,7 +549,12 @@ function mcpConfig(d: Device): { url: string; json: string } {
 }
 
 /** Reverse-proxy to the device panel, injecting the Bearer token server-side. */
-async function proxyDevice(request: Request, env: any, device: Device, restPath: string): Promise<Response> {
+async function proxyDevice(
+  request: Request,
+  env: any,
+  device: Device,
+  restPath: string,
+): Promise<Response> {
   const url = new URL(request.url);
 
   // The panel sits behind a tunnel that adds its own x-forwarded-*; don't pass
@@ -538,7 +637,9 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
         }
         return new Response(out, { status: resp.status, headers: outHeaders });
       }
-    } catch { /* non-JSON — fall through */ }
+    } catch {
+      /* non-JSON — fall through */
+    }
     return new Response(text, { status: resp.status, headers: outHeaders });
   }
   return new Response(resp.body, { status: resp.status, headers: outHeaders });
@@ -548,9 +649,22 @@ async function proxyDevice(request: Request, env: any, device: Device, restPath:
 // through the console they must carry the proxy mount so the SPA's absolute
 // paths (/api/*, /app.js, /ui/*, ...) keep resolving through the proxy.
 const PANEL_ROOT_PATHS: string[] = [
-  "/api/", "/mcp", "/app.js", "/styles.css", "/state.js", "/ipc.js",
-  "/events.js", "/transport.js", "/view.js", "/tabs.js", "/browser.js",
-  "/term.js", "/conn.js", "/icons.js", "/ui/", "/vendor/",
+  "/api/",
+  "/mcp",
+  "/app.js",
+  "/styles.css",
+  "/state.js",
+  "/ipc.js",
+  "/events.js",
+  "/transport.js",
+  "/view.js",
+  "/tabs.js",
+  "/browser.js",
+  "/term.js",
+  "/conn.js",
+  "/icons.js",
+  "/ui/",
+  "/vendor/",
 ];
 
 function rewriteDeviceBody(text: string, name: string): string {
@@ -576,7 +690,7 @@ function rewriteDeviceBody(text: string, name: string): string {
   // a console-origin page (DOM/devtools/XSS) and keeping direct control of
   // /api/tools/* and /mcp after the plugin-link TTL or unpair — the exact
   // revocation scope the plugin token exists to enforce.
-  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*"[^"]*"/g, "window.__PANEL_TOKEN__=\"\"");
+  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*"[^"]*"/g, 'window.__PANEL_TOKEN__=""');
   return out;
 }
 
@@ -604,9 +718,12 @@ export default {
         __publicRate.set(key, hit + 1);
         if (__publicRate.size > 4096) __publicRate.delete(__publicRate.keys().next().value);
         return false;
-      } catch { return false; }
+      } catch {
+        return false;
+      }
     };
-    const gate = (fn: (request: Request, env: any, ...rest: any[]) => Promise<Response>) =>
+    const gate =
+      (fn: (request: Request, env: any, ...rest: any[]) => Promise<Response>) =>
       async (request: Request, env: any, ...rest: any[]) => {
         if (publicRateLimited(request)) {
           return jsonError(429, "rate limit exceeded", "rate_limit_error");
@@ -631,15 +748,21 @@ export default {
     // exactly like index.js (it also authenticates with the paired plugin
     // token, so it lives above the session gate).
     ctx.routes.push({
-      match: (m, p) => /^\/api\/devices\/[^/]+\/proxy/.test(p),
+      match: (_m, p) => /^\/api\/devices\/[^/]+\/proxy/.test(p),
       handler: handleDeviceProxy,
     });
 
     // Admin-gated device module. Exact matches: index.js compared these
     // paths with === and regexes, so prefix matching would capture subpaths
     // that index.js let fall through to 404.
-    ctx.routes.push({ match: (m, p) => m === "GET" && p === DEVICE_BASE, handler: handleDevicesList });
-    ctx.routes.push({ match: (m, p) => m === "POST" && p === DEVICE_BASE, handler: handleDevicesAdd });
+    ctx.routes.push({
+      match: (m, p) => m === "GET" && p === DEVICE_BASE,
+      handler: handleDevicesList,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === DEVICE_BASE,
+      handler: handleDevicesAdd,
+    });
     ctx.routes.push({
       match: (m, p) => m === "GET" && /^\/api\/devices\/[^/]+\/mcp$/.test(p),
       handler: handleDeviceMcp,
@@ -647,6 +770,22 @@ export default {
     ctx.routes.push({
       match: (m, p) => m === "DELETE" && /^\/api\/devices\/[^/]+$/.test(p),
       handler: handleDeviceDelete,
+    });
+    // Admin-gated pairing/install flows (the last routes index.ts still
+    // served inline — moved here to complete the plugin migration). Exact
+    // matches: a prefix match on /api/plugins/pair would swallow the public
+    // /api/plugins/pair/claim registered above.
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === `${DEVICE_BASE}/register-key`,
+      handler: handleRegisterKey,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === `${PLUGIN_BASE}/pair`,
+      handler: handlePair,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === `${PLUGIN_BASE}/unpair`,
+      handler: handleUnpair,
     });
   },
 } satisfies Plugin;

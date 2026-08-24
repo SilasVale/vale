@@ -16,10 +16,10 @@
  */
 
 import { handleMcp } from "../mcp.ts";
-import { listDevices, getAdminPassword, getUser, type Device } from "../store.ts";
+import { listDevices, type Device } from "../store.ts";
 import { deviceFetch } from "../device-fetch.ts";
 import { jsonOk, jsonError } from "../http.ts";
-import { parseCookie, verifySessionToken, SESSION_COOKIE } from "../auth.ts";
+import { requireSession } from "../session.ts";
 import type { Plugin, PluginContext } from "./registry.ts";
 
 const PLUGIN_BASE = "/api/plugins";
@@ -51,10 +51,11 @@ async function cachedDeviceProbe(env: any, device: Device): Promise<DeviceProbeS
   // old try/catch left tunnel=true always (the catch was unreachable) and a
   // down device showed tunnel_up:true. Classify from the returned shape:
   // the 502-with-unreachable error string is the tunnel-level case.
-  let state: DeviceProbeState = { tunnel: false, agent: false, ts: Date.now() };
+  const state: DeviceProbeState = { tunnel: false, agent: false, ts: Date.now() };
   const res = await deviceFetch(env, device, "/api/status");
   if (res && res.status !== undefined) {
-    const tunnelLevel = !res.ok && typeof res.error === "string" && res.error.includes("Device unreachable");
+    const tunnelLevel =
+      !res.ok && typeof res.error === "string" && res.error.includes("Device unreachable");
     state.tunnel = !tunnelLevel;
     state.agent = res.ok;
   }
@@ -67,7 +68,7 @@ async function cachedDeviceProbe(env: any, device: Device): Promise<DeviceProbeS
 
 // GET /api/plugins/status — online/offline per device (via PluginHubDO)
 // (handler body copied verbatim from index.js handleConsole)
-async function pluginStatus(request: Request, env: any): Promise<Response> {
+async function pluginStatus(_request: Request, env: any): Promise<Response> {
   const devices = await listDevices(env);
   const out: Record<string, { online: boolean; agent_up: boolean; tunnel_up: boolean }> = {};
   for (const d of devices) {
@@ -80,7 +81,9 @@ async function pluginStatus(request: Request, env: any): Promise<Response> {
       if (env.DO_AUTH) statusReq.headers.set("x-do-auth", env.DO_AUTH);
       const res = await hub.fetch(statusReq);
       extOnline = !!(await res.json()).online;
-    } catch { /* hub unreachable */ }
+    } catch {
+      /* hub unreachable */
+    }
     // Agent + tunnel health: probe the device's own /api/status through its
     // tunnel (cached 30s — the console polls every 30s already).
     const probe = await cachedDeviceProbe(env, d);
@@ -96,29 +99,20 @@ export default {
     // ---- MCP endpoint (Claude Code) — admin token, page host only ----
     // index.js had no method filter here (GET = SSE stream, POST = JSON-RPC).
     ctx.routes.push({
-      match: (m, p) => p === "/mcp",
+      match: (_m, p) => p === "/mcp",
       handler: (request, env) => handleMcp(request, env),
     });
     // ---- GET /api/plugins/status (was inside handleConsole, admin-gated) ----
     // round-83: the migration dropped the admin gate — the plugin route runs
     // BEFORE the legacy session checks, so it returned the device inventory
-    // to unauthenticated callers (verified live). Restore the guard.
+    // to unauthenticated callers (verified live). Restore the guard through
+    // the shared session module (round-88's full contract: sess-revoked
+    // blacklist + enabled check — the hand-rolled copy had drifted).
     ctx.routes.push({
       match: (m, p) => m === "GET" && p === `${PLUGIN_BASE}/status`,
       handler: async (request: Request, env: any) => {
-        const ap = await getAdminPassword(env);
-        const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
-        // round-88: the hand-rolled gate must match requireSession — the
-        // sess-revoked blacklist (a copied pre-logout cookie) and the
-        // enabled check were missing, so a logged-out admin's copied cookie
-        // kept reading the device inventory for up to 24h.
-        if (!cookie || !ap) return jsonError(401, "Not logged in", "authentication_error");
-        if (env.KEYS && (await env.KEYS.get(`sess-revoked:${cookie}`))) {
-          return jsonError(401, "Not logged in", "authentication_error");
-        }
-        const session = await verifySessionToken(env.SESSION_SECRET || ap, cookie);
-        const user = session ? await getUser(env, session.uid) : null;
-        if (!user || user.role !== "admin" || !user.enabled) {
+        const user = await requireSession(request, env);
+        if (!user || user.role !== "admin") {
           return jsonError(401, "Not logged in", "authentication_error");
         }
         return pluginStatus(request, env);
