@@ -40,10 +40,15 @@ export default function BrowserPane({ session, apiBase, token }: Props) {
       });
       const data = await res.json();
       if (data.ok && data.result) {
-        // playwright returns base64 PNG in content[0].text or data.content
-        const b64 = typeof data.result === "string"
-          ? data.result.replace(/^data:image\/png;base64,/, "")
-          : data.result?.content?.find((c: any) => c.type === "image")?.data ?? "";
+        // playwright-mcp ≥1.6 flattens results to TEXT that embeds the shot
+        // as a data URI (plus older shapes: pure base64 string or image
+        // content items). Find the data URI wherever it sits.
+        let b64 = "";
+        if (typeof data.result === "string") {
+          b64 = data.result.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/)?.[1] ?? "";
+        } else {
+          b64 = data.result?.content?.find((c: any) => c.type === "image")?.data ?? "";
+        }
         if (b64) setScreenshot(`data:image/png;base64,${b64}`);
       }
       setError("");

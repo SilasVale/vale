@@ -351,17 +351,16 @@ pub fn mcp_client_call() -> ToolDef {
                 message: "not connected — call mcp_client_connect first".into(),
             })?;
 
-            // round-132 根因适配：实测 playwright-mcp 0.0.79 的会话是
+            // round-132 根因适配：实测 playwright-mcp 0.0.79 的 MCP 会话是
             // "一次有效调用"语义——首次 tools/call 的响应流关闭后会话即被
-            // 服务端回收（第二次调用 404 Session not found）。因此：
-            //   1) 记住最后导航的 URL；
-            //   2) 会话失效（404）时自动重握手 + 导航回 last_url 恢复页面，
-            //      再执行本次请求——调用方拿到的是预期页面上的结果。
-            if tool == "browser_navigate" {
-                if let Some(u) = args.get("url").and_then(|v| v.as_str()) {
-                    sess.last_url = Some(u.to_string());
-                }
-            }
+            // 服务端回收（第二次调用 404 Session not found）。但只有会话是
+            // 一次性的：Chromium 实例持久（无 --isolated，持久 profile），
+            // 新会话的第一次 tools/call 直接落在当前标签页上。
+            //
+            // round-134 修正：旧自愈在 404 后用"导航回 last_url"消耗新会话，
+            // 并把导航结果当作本次调用的答案返回——browser_take_screenshot
+            // 永远执行不到，面板浏览器预览因此永远拿不到截图。现在改为
+            // 重握手后直接重试原调用，无需任何恢复导航。
 
             // round-131: 180s —— 首次导航含浏览器冷启动，60s 会误超时。
             let id = sess.next_id.fetch_add(1, Ordering::Relaxed);
@@ -369,7 +368,7 @@ pub fn mcp_client_call() -> ToolDef {
                 "name": tool,
                 "arguments": args,
             }), 180).await;
-            let result = match call {
+            let mut result = match call {
                 Err(DeviceError::Internal { message }) if
                     message.contains("Session not found") || message.contains("HTTP 404") =>
                 {
@@ -377,23 +376,8 @@ pub fn mcp_client_call() -> ToolDef {
                     // initialize，服务器直接 404 而不是下发新会话。
                     sess.session_id = None;
                     handshake(sess).await?;
-                    // 会话一次性语义：恢复导航消耗本会话唯一一次调用，
-                    // 其结果（含 Page+Snapshot）正是读取类工具想要的答案；
-                    // 操作类工具则明确报错，指引先 browser_open 重开页面。
-                    if let Some(u) = sess.last_url.clone() {
-                        let rid = sess.next_id.fetch_add(1, Ordering::Relaxed);
-                        let nav = rpc_ref(sess, Some(rid), "tools/call", json!({
-                            "name": "browser_navigate",
-                            "arguments": {"url": u},
-                        }), 120).await?;
-                        return Ok(json!({
-                            "ok": true,
-                            "result": nav,
-                            "note": format!(
-                                "browser session recycled by playwright-mcp; page restored to {u} — result above is from the restore navigation"
-                            ),
-                        }));
-                    }
+                    // 新会话的第一次调用 = 原调用本身（浏览器/标签页持久，
+                    // 无需恢复导航）。若这次仍 404 则如实报错。
                     let retry_id = sess.next_id.fetch_add(1, Ordering::Relaxed);
                     rpc_ref(sess, Some(retry_id), "tools/call", json!({
                         "name": tool,
@@ -402,6 +386,62 @@ pub fn mcp_client_call() -> ToolDef {
                 }
                 r => r?,
             };
+
+            // playwright-mcp 1.6x saves screenshots to %TEMP%\.playwright-mcp
+            // and returns a text REFERENCE instead of inline image content.
+            // The panel needs real bytes: resolve the referenced file and
+            // append an image content item (base64) so BrowserPane can render
+            // the live page.
+            {
+                let text = serde_json::to_string(&result).unwrap_or_default();
+                // Locate "(<path>\.playwright-mcp\<name>.png)" without regex:
+                // find the marker dir, walk back to '(' and forward to the
+                // closing extension + ')'.
+                let mut resolved: Option<String> = None;
+                if let Some(marker) = text.find(".playwright-mcp") {
+                    let bytes = text.as_bytes();
+                    // back to the '(' that opens this reference
+                    let open = text[..marker].rfind('(').unwrap_or(marker);
+                    if let Some(dot) = text[marker..].find(".png\"")
+                        .or_else(|| text[marker..].find(".jpg\""))
+                        .or_else(|| text[marker..].find(".jpeg\"")) {
+                        let end_rel = marker + dot + 4; // include extension
+                        if end_rel < text.len() && bytes.get(end_rel) == Some(&b')') {
+                            let rel = &text[open + 1..end_rel];
+                            resolved = Some(rel.to_string());
+                        }
+                    }
+                }
+                if let Some(rel) = resolved {
+                    let rel = rel.replace("\\\\", "\\");
+                    let name = std::path::Path::new(&rel)
+                        .file_name().map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+                    candidates.push(std::path::PathBuf::from(&rel));
+                    if let Ok(cwd) = std::env::current_dir() { candidates.push(cwd.join(&rel)); }
+                    for base in [
+                        std::env::temp_dir(),
+                        std::path::PathBuf::from("C:\\Users\\Administrator\\AppData\\Local\\Temp"),
+                    ] {
+                        candidates.push(base.join(".playwright-mcp").join(&name));
+                    }
+                    for cand in &candidates {
+                        if let Ok(bytes) = std::fs::read(cand) {
+                            use base64::Engine as _;
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            // Early-return the structured shape BrowserPane
+                            // parses (content[].type=image) — falling through
+                            // would flatten everything into a text string.
+                            if let Some(arr) = result.get_mut("content").and_then(|c| c.as_array_mut()) {
+                                arr.push(json!({"type": "image", "data": b64, "mimeType": "image/png"}));
+                                return Ok(json!({ "ok": true, "result": result }));
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
 
             // 与原实现一致：优先 structuredContent，否则拼接文本内容
             // （截图是 image 内容块，转成 data URI 原样透传给调用方解码）。
