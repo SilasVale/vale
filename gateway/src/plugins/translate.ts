@@ -494,11 +494,19 @@ async function handleGatewayImpl(
         headers: passthroughHeaders(bearerKey),
         body: forwardBody,
       },
-      // or/: OpenRouter's free pool answers 429 with Retry-After and rejects
-      // pre-processing overloads with 502 — both are safe to pace-and-retry
-      // here (see reliability.ts retryWaitMs / retry502).
+      // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
+      // knocks win slots but paced retries never land (2026-08-24). Other or/
+      // models, paid and free alike, keep the standard paced retry.
       route.kind === "openrouter"
-        ? { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
+        ? upstreamModel === "z-ai/glm-5.2:free"
+          ? {
+              timeoutMs: ogTimeoutMs(env),
+              attempts: 10,
+              backoffMs: 300,
+              retry502: true,
+              ignoreRetryAfter: true,
+            }
+          : { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
         : { timeoutMs: ogTimeoutMs(env) },
     );
     if (!upstream) {
@@ -642,9 +650,17 @@ async function handleGatewayImpl(
         }),
         body: forwardBody,
       },
-      // or/: same free-pool pacing as the chat/completions site above.
+      // or/: same free-pool lottery pacing as the chat/completions site above.
       route.kind === "openrouter"
-        ? { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
+        ? upstreamModel === "z-ai/glm-5.2:free"
+          ? {
+              timeoutMs: passthroughTimeoutMs(env, route.kind),
+              attempts: 10,
+              backoffMs: 300,
+              retry502: true,
+              ignoreRetryAfter: true,
+            }
+          : { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
         : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
     );
     if (!upstream) {

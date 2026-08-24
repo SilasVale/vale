@@ -35,6 +35,7 @@ export async function fetchWithRetry(
     idempotent = false,
     retry502 = false,
     maxWaitMs = 10000,
+    ignoreRetryAfter = false,
   }: {
     attempts?: number;
     backoffMs?: number;
@@ -46,6 +47,12 @@ export async function fetchWithRetry(
      * gated by `idempotent`. */
     retry502?: boolean;
     maxWaitMs?: number;
+    /** Lottery pacing for OpenRouter's :free shared pools: their 429 carries
+     * `Retry-After: 5`, but empirically slots are won by RAPID knocks (~9th
+     * attempt at sub-second spacing), not by waiting out the header — pacing
+     * spreads attempts so thin that none lands. When true, the header is
+     * ignored and attempts fire at backoffMs spacing. */
+    ignoreRetryAfter?: boolean;
   } = {},
 ) {
   let last: any = null;
@@ -56,9 +63,10 @@ export async function fetchWithRetry(
    * one, else the legacy linear ladder; jitter ±400ms desynchronizes workers;
    * everything clamped to maxWaitMs so a huge header can't stall the request. */
   const retryWaitMs = (): number => {
+    const jitter = Math.floor(Math.random() * 200);
+    if (ignoreRetryAfter) return Math.min(backoffMs + jitter, maxWaitMs);
     const ra = Number(last?.headers?.get?.("retry-after"));
     const raMs = Number.isFinite(ra) && ra > 0 ? ra * 1000 : 0;
-    const jitter = Math.floor(Math.random() * 400);
     return Math.min(Math.max(raMs, backoffMs * attempt) + jitter, maxWaitMs);
   };
   let attempt = 1;

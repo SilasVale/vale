@@ -129,6 +129,25 @@ test("Retry-After is clamped by maxWaitMs (a huge header can't stall the request
   });
 });
 
+test("free-pool lottery mode: ignoreRetryAfter beats the header, rapid spacing", async () => {
+  // glm-5.2:free evidence: ~9th rapid knock wins where paced retries all fail.
+  let n = 0;
+  await withFetch(async () => (++n === 1 ? ra(5) : ok(200, { id: "x" })), async () => {
+    const t0 = Date.now();
+    const { response, detail } = await fetchWithRetry("https://openrouter.example", reqInit, {
+      timeoutMs: 1000,
+      backoffMs: 30,
+      attempts: 8,
+      ignoreRetryAfter: true,
+    });
+    const elapsed = Date.now() - t0;
+    assert.equal(response.status, 200);
+    assert.equal(detail, "");
+    assertFetchCalls(2); // second attempt landed — no forced 5s cooldown
+    assert.ok(elapsed < 2000, `lottery retry took ${elapsed}ms — Retry-After still honored?`);
+  });
+});
+
 test("or/ contract: 502 retried when retry502 is set (pre-processing overload)", async () => {
   let n = 0;
   await withFetch(async () => (++n === 1 ? ok(502, { error: { code: 502 } }) : ok(200, { id: "x" })), async () => {
