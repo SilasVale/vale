@@ -5,22 +5,6 @@
  */
 
 /**
- * Result of inspecting one successful (2xx) response before it is handed back
- * to the caller. Used by the SSE in-band error guard: an OpenRouter-style
- * upstream can accept the request (HTTP 200) and THEN fail inside the stream.
- */
-export interface RetryInspection {
-  /** false → treat this 2xx as a failed attempt and run the retry ladder. */
-  accepted: boolean;
-  /** When rejected: human-readable failure detail for the surfaced error. */
-  detail?: string;
-  /** When rejected: numeric upstream status the in-band failure carried, if any. */
-  status?: number;
-  /** When accepted: replacement response (e.g. body re-joined after buffering). */
-  response?: any;
-}
-
-/**
  * Fetch an upstream with retry on transient failures (5xx / 429).
  *
  * Used by the og translate path (zen/go, which intermittently returns 500 —
@@ -33,8 +17,6 @@ export interface RetryInspection {
  * Slow failures (timeout / network error) are NOT retried — an upstream that
  * takes 45s to fail will simply fail again; retries only help fast 5xx/429s.
  * Returns { response, detail } where detail explains the failure for the 502.
- * With `inspect`, a rejected 2xx returns { response: null, detail,
- * inspectFailure } so callers can surface status digits from the in-band body.
  *
  * Retry pacing (2026-08-24): the fixed backoffMs×attempt ladder raced free-pool
  * rate limits — OpenRouter's glm/nemotron :free providers answer 429 with
@@ -43,7 +25,6 @@ export interface RetryInspection {
  * now honors the Retry-After header (capped by maxWaitMs) and adds jitter so
  * concurrent workers don't retry in lockstep.
  */
-
 export async function fetchWithRetry(
   url: string,
   init: any,
@@ -55,7 +36,6 @@ export async function fetchWithRetry(
     retry502 = false,
     maxWaitMs = 10000,
     ignoreRetryAfter = false,
-    inspect = undefined,
   }: {
     attempts?: number;
     backoffMs?: number;
@@ -73,16 +53,10 @@ export async function fetchWithRetry(
      * spreads attempts so thin that none lands. When true, the header is
      * ignored and attempts fire at backoffMs spacing. */
     ignoreRetryAfter?: boolean;
-    /** Inspect every 2xx response before returning it; rejecting counts as a
-     * failed attempt against the same attempt/backoff budget. Nothing has been
-     * forwarded to the client at inspection time, so a rejection cannot leak
-     * partial output. */
-    inspect?: (response: any) => Promise<RetryInspection>;
   } = {},
 ) {
   let last: any = null;
   let detail = "";
-  let inspectFailure: { status?: number } | undefined;
   const mayRetry5xx = (status: number) =>
     status === 502 || status === 503 ? idempotent || retry502 : idempotent;
   /** Wait between attempts: honor Retry-After (seconds) when the upstream sent
@@ -105,27 +79,6 @@ export async function fetchWithRetry(
       break;
     }
     if (last.ok || !(last.status >= 500 || last.status === 429)) {
-      // 2xx (or a non-retryable status the caller must see): inspect before
-      // handing back — an in-band stream failure counts as a failed attempt.
-      if (inspect && last.ok) {
-        let insp: RetryInspection;
-        try {
-          insp = await inspect(last);
-        } catch (e: any) {
-          insp = { accepted: false, detail: `inspection failed: ${e.message}` };
-        }
-        if (!insp.accepted) {
-          detail = `in-band upstream error${insp.status ? ` ${insp.status}` : ""}: ${insp.detail || "rejected by inspection"}`;
-          console.error(`[gateway] upstream 200 rejected on attempt ${attempt}/${attempts} — ${detail}`);
-          inspectFailure = { status: insp.status };
-          if (attempt < attempts) {
-            await new Promise((r) => setTimeout(r, retryWaitMs()));
-            continue;
-          }
-          return { response: null as any, detail, inspectFailure };
-        }
-        if (insp.response !== undefined) last = insp.response;
-      }
       return { response: last, detail: "" };
     }
     // A 5xx AFTER the upstream processed the request may have billed the
@@ -150,7 +103,7 @@ export async function fetchWithRetry(
     console.error(`[gateway] upstream ${last.status} — not retryable (billing guard)`);
     return { response: last, detail };
   }
-  return { response: last, detail, inspectFailure };
+  return { response: last, detail };
 }
 
 export async function fetchWithTimeout(
