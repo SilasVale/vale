@@ -35,6 +35,8 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "or/nvidia/nemotron-3-ultra-550b-a55b:free", owned_by: "openrouter" },
   // nv/ — NVIDIA NIM official API (dedicated key capacity, no shared pool)
   { id: "nv/nvidia/nemotron-3-ultra-550b-a55b", owned_by: "nvidia" },
+  { id: "nv/minimaxai/minimax-m3", owned_by: "nvidia" },
+  { id: "nv/moonshotai/kimi-k3", owned_by: "nvidia" },
   { id: "or/stealth/ox-alpha", owned_by: "openrouter" },
   { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
@@ -70,7 +72,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "nv/",
     backend: "NVIDIA NIM",
     desc: "integrate.api.nvidia.com — official nemotron API, dedicated key capacity (build.nvidia.com), OpenAI format",
-    models: ["nvidia/nemotron-3-ultra-550b-a55b"],
+    models: ["nvidia/nemotron-3-ultra-550b-a55b", "minimaxai/minimax-m3", "moonshotai/kimi-k3"],
   },
   {
     prefix: "qw/",
