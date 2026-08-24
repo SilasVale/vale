@@ -61,13 +61,51 @@ function decodeClientFrames(buf, onMessage) {
   const ctx = await chromium.launchPersistentContext(USER_DATA_DIR, {
     headless: true, viewport: { width: 1280, height: 800 },
   });
-  const page = ctx.pages()[0] || await ctx.newPage();
+  let page = ctx.pages()[0] || await ctx.newPage();
   await page.goto('about:blank').catch(() => {});
-  const cdp = await ctx.newCDPSession(page);
+  let cdp = await ctx.newCDPSession(page);
+  // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
+  // after closes and switches the CDP pipe so screencast follows selection.
+  let selPage = page;
+  function pagesList() {
+    const ps = ctx.pages();
+    if (!ps.includes(selPage)) selPage = ps[0] || null;
+    return ps;
+  }
+  async function attachSel() {
+    try { await cdp.detach(); } catch {}
+    if (!selPage) return;
+    cdp = await ctx.newCDPSession(selPage);
+    bindScreencast(cdp);
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 55, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800 }).catch(() => {});
+  }
 
   // --- Shared input dispatcher (WS + HTTP) ---
   async function handleInput(m) {
     try {
+      if (m.t === 'tabs') {
+        pagesList();
+        return { tabs: ctx.pages().map((p, i) => ({ i, url: p.url() })), sel: ctx.pages().indexOf(selPage) };
+      }
+      if (m.t === 'tabnew') {
+        const np = await ctx.newPage();
+        if (m.url) await np.goto(m.url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+        selPage = np; await attachSel();
+        return { ok: true };
+      }
+      if (m.t === 'tabclose') {
+        pagesList();
+        const ps = ctx.pages();
+        const victim = ps[m.i ?? -1];
+        if (victim && ps.length > 1) { if (victim === selPage) selPage = ps[ps.length - 1] === victim ? ps[0] : ps[ps.length - 1]; await victim.close(); await attachSel(); }
+        return { ok: true };
+      }
+      if (m.t === 'tabsel') {
+        const ps = ctx.pages(); const p = ps[m.i ?? -1];
+        if (p) { selPage = p; page = p; await p.bringToFront().catch(() => {}); await attachSel(); }
+        return { ok: true, url: selPage?.url() };
+      }
+      page = selPage || page;
       if (m.t === 'nav') await page.goto(m.url, { waitUntil: 'domcontentloaded' });
       else if (m.t === 'm') {
         const type = m.k === 'down' ? 'mousePressed' : m.k === 'up' ? 'mouseReleased' : 'mouseMoved';
@@ -99,13 +137,16 @@ function decodeClientFrames(buf, onMessage) {
       else { res.writeHead(204); res.end(); }
       return;
     }
-    if (u.pathname === '/input' && req.method === 'POST') {
-      let body = '';
-      req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
-      req.on('end', () => {
-        try { handleInput(JSON.parse(body)); } catch {}
-        res.writeHead(204); res.end();
-      });
+    if (u.pathname === '/input') {
+      if (req.method === 'POST') {
+        let body = '';
+        req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+        req.on('end', () => { try { handleInput(JSON.parse(body)); } catch {} res.writeHead(204); res.end(); });
+      } else {
+        handleInput(JSON.parse(u.searchParams.get('d') || '{}'))
+          .then((out) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out || {})); })
+          .catch(() => { res.writeHead(204); res.end(); });
+      }
       return;
     }
     res.writeHead(200, { 'content-type': 'text/html' });
@@ -148,15 +189,17 @@ function decodeClientFrames(buf, onMessage) {
   // --- Screencast: JPEG frames -> all sockets ---
   let lastJpeg = null;
   let lastAck = 0;
-  cdp.on('Page.screencastFrame', async (ev) => {
-    try { await cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }); } catch {}
-    const jpeg = Buffer.from(ev.data, 'base64');
-    if (jpeg.length < 800) return; // skip near-empty frames
-    lastJpeg = jpeg;
-    lastAck = Date.now();
-    const frame = encodeFrame(2, jpeg);
-    for (const s of sockets) { try { s.write(frame); } catch {} }
-  });
+  function bindScreencast(c) {
+    c.on('Page.screencastFrame', async (ev) => {
+      try { await c.send('Page.screencastFrameAck', { sessionId: ev.sessionId }); } catch {}
+      const jpeg = Buffer.from(ev.data, 'base64');
+      if (jpeg.length < 800) return; // skip near-empty frames
+      lastJpeg = jpeg;
+      lastAck = Date.now();
+      const frame = encodeFrame(2, jpeg);
+      for (const s of sockets) { try { s.write(frame); } catch {} }
+    });
+  }
 
   await new Promise(r => srv.listen(PORT, '127.0.0.1', r));
   console.log(`bridge listening on 127.0.0.1:${PORT} profile=${USER_DATA_DIR}`);
