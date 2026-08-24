@@ -23,6 +23,9 @@ interface Props {
 const VIEW_W = 1280;
 const VIEW_H = 800;
 const FRAME_MS = 140;
+const TABS_MS = 1500;
+
+interface TabInfo { i: number; url: string }
 
 function inputUrl(apiBase: string, token: string, ev: unknown): string {
   const d = encodeURIComponent(JSON.stringify(ev));
@@ -33,6 +36,8 @@ export default function BrowserPane({ session, apiBase, token }: Props) {
   const [url, setUrl] = useState(session.url || "https://www.wikipedia.org");
   const [error, setError] = useState("");
   const [fps, setFps] = useState(0);
+  const [tabs, setTabs] = useState<TabInfo[]>([]);
+  const [sel, setSel] = useState(0);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const aliveRef = useRef(true);
@@ -45,7 +50,18 @@ export default function BrowserPane({ session, apiBase, token }: Props) {
     const tick = () => {
       if (!aliveRef.current || !imgRef.current) return;
       const t = Date.now();
-      imgRef.current.src = `${apiBase}/api/browser/frame?t=${token}&tick=${t}`;
+      fetch(`${apiBase}/api/browser/frame`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+        .then((b) => {
+          if (!aliveRef.current || !imgRef.current) return;
+          const old = imgRef.current.src;
+          imgRef.current.src = URL.createObjectURL(b);
+          if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+          setError("");
+          const c = counters.current; c.n++;
+          if (t - c.t >= 1000) { setFps(Math.round((c.n * 1000) / (Date.now() - c.t))); c.n = 0; c.t = t; }
+        })
+        .catch((e) => setError(e.message === "401" ? "认证失败" : e.message));
       const c = counters.current;
       c.n++;
       if (t - c.t >= 1000) { setFps(Math.round((c.n * 1000) / (Date.now() - c.t))); c.n = 0; c.t = t; }
@@ -56,10 +72,23 @@ export default function BrowserPane({ session, apiBase, token }: Props) {
   }, [apiBase, token]);
 
   const send = useCallback(async (ev: unknown) => {
-    try {
-      await fetch(inputUrl(apiBase, token, ev), { method: "GET", mode: "no-cors" });
-    } catch { /* transient */ }
+    try { await fetch(inputUrl(apiBase, token, ev), { headers: { Authorization: `Bearer ${token}` } }); } catch { /* transient */ }
   }, [apiBase, token]);
+
+  const sendR = useCallback(async (ev: unknown): Promise<any> => {
+    try { return await (await fetch(inputUrl(apiBase, token, ev), { headers: { Authorization: `Bearer ${token}` } })).json(); } catch { return {}; }
+  }, [apiBase, token]);
+
+  const refreshTabs = useCallback(async () => {
+    const r = await sendR({ t: "tabs" });
+    if (Array.isArray(r.tabs)) { setTabs(r.tabs); setSel(r.sel ?? 0); }
+  }, [sendR]);
+
+  useEffect(() => { refreshTabs(); const t = window.setInterval(refreshTabs, TABS_MS); return () => window.clearInterval(t); }, [refreshTabs]);
+
+  const newTab = async () => { await send({ t: "tabnew", url: "about:blank" }); refreshTabs(); };
+  const selTab = async (i: number) => { await send({ t: "tabsel", i }); refreshTabs(); };
+  const closeTab = async (i: number) => { await send({ t: "tabclose", i }); refreshTabs(); };
 
   const mapXY = (e: React.MouseEvent): { x: number; y: number } => {
     const el = e.currentTarget as HTMLElement;
@@ -99,6 +128,22 @@ export default function BrowserPane({ session, apiBase, token }: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 0 }}>
+      {/* Tab strip */}
+      <div style={{ display: "flex", gap: 4, padding: "4px 8px", background: "#eef0f3", borderBottom: "1px solid #dee2e6", overflowX: "auto" }}>
+        {tabs.map((tb) => (
+          <span key={tb.i} onClick={() => selTab(tb.i)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, maxWidth: 180, padding: "3px 8px", borderRadius: 6,
+              background: tb.i === sel ? "#fff" : "transparent", border: `1px solid ${tb.i === sel ? "#c9ced6" : "transparent"}`,
+              fontSize: 11, cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden" }}
+            title={tb.url}>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{tb.url.replace(/^https?:\/\//, "") || "空白页"}</span>
+            <span onClick={(e) => { e.stopPropagation(); void closeTab(tb.i); }} style={{ color: "#98a2b3", cursor: "pointer" }}>×</span>
+          </span>
+        ))}
+        <span onClick={newTab} title="New tab"
+          style={{ padding: "3px 8px", borderRadius: 6, fontSize: 12, cursor: "pointer", border: "1px dashed #c9ced6" }}>+</span>
+      </div>
+
       {/* URL bar */}
       <div style={{ display: "flex", gap: 6, padding: "6px 10px", background: "#f8f9fa", borderBottom: "1px solid #dee2e6" }}>
         <input
