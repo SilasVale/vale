@@ -74,7 +74,24 @@ fn serve_panel_file(file: &str, content_type: &'static str) -> Response {
         "vendor/xterm-addon-fit.min.js" => FIT_JS,
         _ => return built_response(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", Body::from("not found")),
     };
-    let mut resp = built_response(StatusCode::OK, content_type, Body::from(body));
+    // Version-query the bundle URLs on the HTML: Cloudflare overrides our
+    // no-cache with Browser-Cache-TTL 4h for .js/.css, so after an update
+    // browsers kept running the PREVIOUS panel for hours (blank page if it
+    // was a broken build). Per-release query strings give each build a
+    // distinct cache key; the ?v= is stripped below before whitelist match.
+    let html_ver = if file == "index.html" {
+        Some(env!("CARGO_PKG_VERSION"))
+    } else {
+        None
+    };
+    let body = match html_ver {
+        Some(ver) => Body::from(
+            body.replacen("panel.css", &format!("panel.css?v={ver}"), 1)
+                .replacen("panel.js", &format!("panel.js?v={ver}"), 1),
+        ),
+        None => Body::from(body),
+    };
+    let mut resp = built_response(StatusCode::OK, content_type, body);
     resp.headers_mut().insert(
         axum::http::HeaderName::from_static("cache-control"),
         axum::http::HeaderValue::from_static("no-cache"),
@@ -375,7 +392,8 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         return resp;
     }
     if method == Method::GET && path.starts_with("/panel/") {
-        let file = &path["/panel/".len()..];
+        // Strip any ?v=… cache-buster before whitelist matching.
+        let file = path["/panel/".len()..].split('?').next().unwrap_or("");
         return serve_panel_file(file, panel_content_type(file));
     }
 
