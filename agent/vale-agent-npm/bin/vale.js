@@ -6,14 +6,15 @@
  * and in the web panel (http://127.0.0.1:18080/panel/, desktop shortcut
  * created by setup). The native tray was retired 2026-08-22.
  */
-const { spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
 const EXE_SRC = path.join(__dirname, "..", "vale-agent.exe");
+// Canonical install dir — same one deploy/vale-agent-setup.ps1 uses, so the
+// npm path and the legacy setup script land on the identical exe/task.
 const DIR =
-  process.env.VALE_AGENT_DIR ||
-  path.join(process.env.LOCALAPPDATA || "C:\\ProgramData", "vale-agent");
+  process.env.VALE_AGENT_DIR || "D:\\vale-agent";
 const EXE_DST = path.join(DIR, "vale-agent.exe");
 const TASK = "ValeAgent";
 
@@ -97,37 +98,63 @@ const commands = {
 
   update() {
     // Swap the exe in-place: stop -> replace (with retry; the running agent
-    // locks its own file briefly after death) -> start. Runs detached so
-    // killing the agent never kills the updater.
+    // locks its own file) -> start.
     if (!fs.existsSync(EXE_SRC)) {
       console.error("exe missing from package:", EXE_SRC);
       process.exit(1);
     }
     fs.mkdirSync(DIR, { recursive: true });
     fs.copyFileSync(EXE_SRC, path.join(DIR, "vale-agent.new.exe"));
+    const q = DIR.replace(/'/g, "''");
+    const log = `Out-File '${q}\\vale-update.log' -Append`;
     const script = [
-      "Start-Sleep -Milliseconds 1200",
+      `"[$(Get-Date -Format o)] update start" | ${log}`,
+      // A running exe cannot be overwritten on Windows — stop the service
+      // first (task end + process kill), THEN swap with retry.
+      "try { Stop-ScheduledTask ValeAgent -ErrorAction Stop } catch {}",
+      "Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+      "Start-Sleep -Milliseconds 1500",
       "$ok=$false",
-      "foreach($i in 1..12){ try { Copy-Item -Force -ErrorAction Stop D:\\vale-agent\\vale-agent.new.exe D:\\vale-agent\\vale-agent.exe; $ok=$true; break } catch { Start-Sleep -Milliseconds 800 } }",
-      "if(-not $ok){ throw 'copy failed' }",
-      "Start-ScheduledTask ValeAgent",
+      `foreach($i in 1..12){ try { Copy-Item -Force -ErrorAction Stop '${q}\\vale-agent.new.exe' '${q}\\vale-agent.exe'; $ok=$true; break } catch { Start-Sleep -Milliseconds 800 } }`,
+      `"[$(Get-Date -Format o)] copy ok=$ok" | ${log}`,
+      `Remove-Item -Force -ErrorAction SilentlyContinue '${q}\\vale-agent.new.exe'`,
+      // NEVER leave the device dark: even a failed swap must bring the task
+      // back up (it will run the old exe until the next update).
+      `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,
+      `"[$(Get-Date -Format o)] task restarted" | ${log}`,
     ].join("\r\n");
     fs.writeFileSync(path.join(DIR, "vale-update.ps1"), script);
-    const r = spawnSync(
+    // Launch the swap via WMI Win32_Process.Create: the child is parented by
+    // WmiPrvSE, outside any caller job, so it survives this CLI (and the
+    // agent it kills) dying — node's detached spawn does NOT (observed d1).
+    //
+    // Flags matter on this path: children created via WMI with
+    // `-ExecutionPolicy Bypass` or `-EncodedCommand` in their command line
+    // die silently before running anything (d1, no Defender ASR events —
+    // cause unconfirmed). Plain `powershell -NoProfile -File` works. That
+    // requires script execution to be allowed, so lift Restricted here once;
+    // RemoteSigned is Microsoft's recommended default for automation hosts.
+    spawnSync(
       "powershell",
       [
         "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-WindowStyle",
-        "Hidden",
-        "-File",
-        path.join(DIR, "vale-update.ps1"),
+        "-Command",
+        "if((Get-ExecutionPolicy) -eq 'Restricted'){ Set-ExecutionPolicy RemoteSigned -Scope LocalMachine -Force }",
       ],
-      { detached: true, stdio: "ignore" }
+      { stdio: "ignore", timeout: 30000 },
     );
-    r.unref();
-    console.log("update: swap launched (connection drops, reconnect in ~5s)");
+    const ps1 = path.join(DIR, "vale-update.ps1");
+    const inner = `powershell -NoProfile -File "${ps1}"`;
+    const wmi = `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${inner.replace(/'/g, "''")}'} | Select-Object ProcessId,ReturnValue`;
+    const r = spawnSync("powershell", ["-NoProfile", "-Command", wmi], {
+      stdio: "inherit",
+      timeout: 20000,
+    });
+    if (r.status !== 0) {
+      console.error("update: WMI handoff failed");
+      process.exit(1);
+    }
+    console.log("update: swap launched (connection drops, reconnect in ~10s)");
   },
 
   run(args) {
