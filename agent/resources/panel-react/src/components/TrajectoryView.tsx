@@ -3,6 +3,7 @@ import type { CommandEvent } from "../hooks/useCommandEvents";
 import { terminalStatus } from "../hooks/useCommandEvents";
 import { useTrajectory } from "../hooks/useTrajectory";
 import type { TrajRound } from "../hooks/useTrajectory";
+import { stripAnsi } from "../lib/ansi";
 import { cardState, fmtDuration } from "./CommandCard";
 import type { CommandCard } from "../hooks/useCommandEvents";
 
@@ -36,7 +37,7 @@ function roundState(r: TrajRound): { state: "running" | "ok" | "fail" | "warn" |
 }
 
 function evMatches(ev: CommandEvent, needle: string): boolean {
-  return (ev.text ?? "").toLowerCase().includes(needle)
+  return stripAnsi(ev.text ?? "").toLowerCase().includes(needle)
     || (ev.command ?? "").toLowerCase().includes(needle)
     || (ev.status ?? "").toLowerCase().includes(needle)
     || (ev.reason ?? "").toLowerCase().includes(needle);
@@ -68,7 +69,7 @@ function EventRow({ ev }: { ev: CommandEvent }) {
       </span>
       <div className="traj-ev-content">
         {ev.kind === "output" ? (
-          <pre className="traj-ev-out">{ev.text}</pre>
+          <pre className="traj-ev-out">{stripAnsi(ev.text)}</pre>
         ) : ev.kind === "command/end" ? (
           <span className="traj-ev-end">
             <span className="traj-ev-code" data-state={dot}>exit {ev.exit_code ?? "?"}</span>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { callApi } from "../lib/api";
+import { stripAnsi } from "../lib/ansi";
 
 // Command event stream for one session (round-admin-ui Task 4): polls
 // GET /api/sessions/{sid} — the audit JSONL (command/start → output →
@@ -64,7 +65,8 @@ export function terminalStatus(st: string): { exitCode: number | null; reason: s
 }
 
 function finishCard(start: CommandEvent, outputs: string[], ended: boolean, exitCode: number | null, reason: string | null, durationMs: number | null): CommandCard {
-  let output = outputs.join("");
+  // Raw SSE bytes carry ANSI/OSC control sequences — strip for text cards.
+  let output = stripAnsi(outputs.join(""));
   if (output.length > MAX_OUTPUT_CHARS) output = TRUNC_MARK + output.slice(-MAX_OUTPUT_CHARS);
   return {
     id: `c-${start.seq}`,
