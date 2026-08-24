@@ -275,7 +275,7 @@ export function App() {
               backend cols/rows) refits to the now-visible size. */}
           <div id="term-container" style={browserActive ? { display: "none" } : (trajOpen ? { display: "none" } : undefined)}>
             {browserActive && pwRunning ? (
-              <BrowserPane key={BROWSER_SID} session={{ sid: BROWSER_SID, url: "", active: true }} apiBase="" token={localStorage.getItem("vale_token") || ""} />
+              <BrowserPane key={BROWSER_SID} session={{ sid: BROWSER_SID, url: "", active: true }} apiBase="" token={token} />
             ) : sessions.sessions.length === 0 ? (
               <div id="empty-state">
                 <div className="empty-card">
@@ -290,7 +290,7 @@ export function App() {
               // polling set forever. Unmounting releases the callback.
               sessions.sessions.filter((s) => !s.closed).map((s) =>
                 s.kind === "browser"
-                  ? <BrowserPane key={s.sid} session={{ sid: s.sid, url: "", active: s.active }} apiBase="" token={localStorage.getItem("vale_token") || ""} />
+                  ? <BrowserPane key={s.sid} session={{ sid: s.sid, url: "", active: s.active }} apiBase="" token={token} />
                   : <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />
               )
             )}
