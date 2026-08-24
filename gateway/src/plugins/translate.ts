@@ -509,17 +509,24 @@ async function handleGatewayImpl(
       // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
       // knocks win slots but paced retries never land (2026-08-24). Other or/
       // models, paid and free alike, keep the standard paced retry.
-      route.kind === "openrouter"
-        ? upstreamModel === "z-ai/glm-5.2:free"
-          ? {
-              timeoutMs: ogTimeoutMs(env),
-              attempts: 10,
-              backoffMs: 300,
-              retry502: true,
-              ignoreRetryAfter: true,
-            }
-          : { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
-        : { timeoutMs: ogTimeoutMs(env) },
+      // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
+      // knocks win slots but paced retries never land (2026-08-24). Other or/
+      // models, paid and free alike, keep the standard paced retry.
+      // nv/: NIM sheds bursts with fast 5xx BEFORE processing — retry502
+      // absorbs them instead of surfacing "temporarily overloaded".
+      route.kind === "nvidia"
+        ? { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
+        : route.kind === "openrouter"
+          ? upstreamModel === "z-ai/glm-5.2:free"
+            ? {
+                timeoutMs: ogTimeoutMs(env),
+                attempts: 10,
+                backoffMs: 300,
+                retry502: true,
+                ignoreRetryAfter: true,
+              }
+            : { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
+          : { timeoutMs: ogTimeoutMs(env) },
     );
     if (!upstream) {
       if (route.kind === "opencode") await recordChannelFailure(env);
@@ -673,17 +680,21 @@ async function handleGatewayImpl(
         body: forwardBody,
       },
       // or/: same free-pool lottery pacing as the chat/completions site above.
-      route.kind === "openrouter"
-        ? upstreamModel === "z-ai/glm-5.2:free"
-          ? {
-              timeoutMs: passthroughTimeoutMs(env, route.kind),
-              attempts: 10,
-              backoffMs: 300,
-              retry502: true,
-              ignoreRetryAfter: true,
-            }
-          : { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
-        : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
+      // or/: same as the chat/completions site above.
+      // nv/: NIM 5xx burst-shedding gets retried here too.
+      route.kind === "nvidia"
+        ? { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
+        : route.kind === "openrouter"
+          ? upstreamModel === "z-ai/glm-5.2:free"
+            ? {
+                timeoutMs: passthroughTimeoutMs(env, route.kind),
+                attempts: 10,
+                backoffMs: 300,
+                retry502: true,
+                ignoreRetryAfter: true,
+              }
+            : { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
+          : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
     );
     if (!upstream) {
       // Slow failure (timeout / network error) — single attempt, no retry.
