@@ -1,11 +1,12 @@
 /**
- * BrowserPane — renders a headless browser session as a live screenshot.
+ * BrowserPane — LIVE interactive remote browser (round-135 M1).
  *
- * Unlike terminal sessions (xterm.js character grid), browser sessions show
- * a visual preview of the page the AI is interacting with. Screenshots are
- * captured after each browser action and streamed to this component.
+ * Polls JPEG frames from the device bridge (/api/browser/frame, ~7fps) into
+ * a canvas, and forwards mouse/keyboard/wheel/navigation as CDP-injected
+ * events (/api/browser/input). Coordinates are mapped from displayed CSS px
+ * to the bridge viewport (1280x800).
  */
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 export interface BrowserSessionData {
   sid: string;
@@ -15,74 +16,86 @@ export interface BrowserSessionData {
 
 interface Props {
   session: BrowserSessionData;
-  apiBase: string; // e.g. "" (same-origin) or gateway proxy base
+  apiBase: string; // "" (same-origin) or gateway proxy base
   token: string;
 }
 
+const VIEW_W = 1280;
+const VIEW_H = 800;
+const FRAME_MS = 140;
+
+function inputUrl(apiBase: string, token: string, ev: unknown): string {
+  const d = encodeURIComponent(JSON.stringify(ev));
+  return `${apiBase}/api/browser/input?d=${d}&t=${encodeURIComponent(token)}`;
+}
+
 export default function BrowserPane({ session, apiBase, token }: Props) {
-  const [screenshot, setScreenshot] = useState<string | null>(null);
-  const [url, setUrl] = useState(session.url || "about:blank");
-  const [loading, setLoading] = useState(false);
+  const [url, setUrl] = useState(session.url || "https://www.wikipedia.org");
   const [error, setError] = useState("");
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [fps, setFps] = useState(0);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const aliveRef = useRef(true);
+  const counters = useRef({ n: 0, t: 0 });
 
-  const capture = useCallback(async () => {
-    if (!session.active) return;
-    setLoading(true);
-    try {
-      const res = await fetch(`${apiBase}/api/tools/mcp_client_call`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ tool: "browser_take_screenshot", arguments: {} }),
-      });
-      const data = await res.json();
-      if (data.ok && data.result) {
-        // playwright-mcp ≥1.6 flattens results to TEXT that embeds the shot
-        // as a data URI (plus older shapes: pure base64 string or image
-        // content items). Find the data URI wherever it sits.
-        let b64 = "";
-        if (typeof data.result === "string") {
-          b64 = data.result.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/)?.[1] ?? "";
-        } else {
-          b64 = data.result?.content?.find((c: any) => c.type === "image")?.data ?? "";
-        }
-        if (b64) setScreenshot(`data:image/png;base64,${b64}`);
-      }
-      setError("");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [session.active, token, apiBase]);
-
-  const navigate = useCallback(async (targetUrl: string) => {
-    setLoading(true);
-    try {
-      await fetch(`${apiBase}/api/tools/mcp_client_call`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ tool: "browser_navigate", arguments: { url: targetUrl } }),
-      });
-      setUrl(targetUrl);
-      setTimeout(capture, 1000); // wait for page load then screenshot
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [capture, token, apiBase]);
-
-  // Auto-capture every 3s while active
+  // Frame pump: replace <img> src periodically (no-store server side).
   useEffect(() => {
-    if (!session.active) return;
-    capture();
-    intervalRef.current = setInterval(capture, 3000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [session.active, capture]);
+    aliveRef.current = true;
+    let timer: number | undefined;
+    const tick = () => {
+      if (!aliveRef.current || !imgRef.current) return;
+      const t = Date.now();
+      imgRef.current.src = `${apiBase}/api/browser/frame?t=${token}&tick=${t}`;
+      const c = counters.current;
+      c.n++;
+      if (t - c.t >= 1000) { setFps(Math.round((c.n * 1000) / (Date.now() - c.t))); c.n = 0; c.t = t; }
+    };
+    tick();
+    timer = window.setInterval(tick, FRAME_MS);
+    return () => { aliveRef.current = false; if (timer) window.clearInterval(timer); };
+  }, [apiBase, token]);
+
+  const send = useCallback(async (ev: unknown) => {
+    try {
+      await fetch(inputUrl(apiBase, token, ev), { method: "GET", mode: "no-cors" });
+    } catch { /* transient */ }
+  }, [apiBase, token]);
+
+  const mapXY = (e: React.MouseEvent): { x: number; y: number } => {
+    const el = e.currentTarget as HTMLElement;
+    const r = el.getBoundingClientRect();
+    return {
+      x: Math.round(((e.clientX - r.left) / r.width) * VIEW_W),
+      y: Math.round(((e.clientY - r.top) / r.height) * VIEW_H),
+    };
+  };
+
+  const onMouse = (k: "move" | "down" | "up") => (e: React.MouseEvent) => {
+    const { x, y } = mapXY(e);
+    void send({ t: "m", x, y, k });
+  };
+
+  const onWheel = (e: React.WheelEvent) => {
+    const { x, y } = mapXY(e as unknown as React.MouseEvent);
+    void send({ t: "wheel", x, y, dx: e.deltaX, dy: e.deltaY });
+    e.preventDefault();
+  };
+
+  const onKey = (down: boolean) => (e: React.KeyboardEvent) => {
+    e.preventDefault();
+    const printable = down && e.key.length === 1;
+    void send({
+      t: "k", down,
+      key: e.key, code: e.code, vk: e.keyCode,
+      text: printable ? e.key : undefined,
+    });
+  };
+
+  const navigate = async () => {
+    const u = url.startsWith("http") ? url : `https://${url}`;
+    setUrl(u);
+    await send({ t: "nav", url: u });
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", padding: 0 }}>
@@ -91,23 +104,31 @@ export default function BrowserPane({ session, apiBase, token }: Props) {
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && navigate(url)}
-          placeholder="Enter URL..."
+          onKeyDown={(e) => e.key === "Enter" && navigate()}
+          placeholder="Enter URL and press Go — the page below is live and clickable"
           style={{ flex: 1, padding: "5px 8px", border: "1px solid #ced4da", borderRadius: 6, fontSize: 12 }}
         />
-        <button onClick={() => navigate(url)} style={{ padding: "4px 10px", cursor: "pointer" }}>Go</button>
-        <button onClick={capture} title="Refresh screenshot" style={{ padding: "4px 8px", cursor: "pointer" }}>⟳</button>
+        <button onClick={navigate} style={{ padding: "4px 10px", cursor: "pointer" }}>Go</button>
+        <span title="frames per second" style={{ alignSelf: "center", fontSize: 11, color: "#6b7280", minWidth: 34, textAlign: "right" }}>{fps}fps</span>
       </div>
 
-      {/* Screenshot viewport */}
-      <div style={{ flex: 1, overflow: "auto", background: "#1a1b1e", position: "relative" }}>
-        {screenshot ? (
-          <img src={screenshot} alt="Browser preview" style={{ width: "100%", display: "block" }} />
-        ) : (
-          <div style={{ color: "#6b7280", textAlign: "center", paddingTop: 40 }}>
-            {loading ? "Loading..." : "No screenshot yet"}
-          </div>
-        )}
+      {/* Live viewport */}
+      <div ref={wrapRef} style={{ flex: 1, overflow: "auto", background: "#1a1b1e", position: "relative" }}>
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+        <img
+          ref={imgRef}
+          alt="Remote browser"
+          tabIndex={0}
+          onMouseMove={onMouse("move")}
+          onMouseDown={onMouse("down")}
+          onMouseUp={onMouse("up")}
+          onWheel={onWheel}
+          onKeyDown={onKey(true)}
+          onKeyUp={onKey(false)}
+          style={{ width: "100%", display: "block", cursor: "text", outline: "none" }}
+          onError={() => setError("frame unreachable")}
+          onLoad={() => { setError(""); imgRef.current?.focus(); }}
+        />
       </div>
 
       {error && <div style={{ color: "#dc2626", fontSize: 11, padding: "4px 8px" }}>{error}</div>}

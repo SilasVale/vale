@@ -65,10 +65,49 @@ function decodeClientFrames(buf, onMessage) {
   await page.goto('about:blank').catch(() => {});
   const cdp = await ctx.newCDPSession(page);
 
+  // --- Shared input dispatcher (WS + HTTP) ---
+  async function handleInput(m) {
+    try {
+      if (m.t === 'nav') await page.goto(m.url, { waitUntil: 'domcontentloaded' });
+      else if (m.t === 'm') {
+        const type = m.k === 'down' ? 'mousePressed' : m.k === 'up' ? 'mouseReleased' : 'mouseMoved';
+        const btn = (m.k === 'down' || m.k === 'up') ? 'left' : 'none';
+        await cdp.send('Input.dispatchMouseEvent', { type, x: m.x, y: m.y, button: btn, clickCount: btn !== 'none' ? 1 : undefined });
+      } else if (m.t === 'wheel') {
+        await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: m.x, y: m.y, deltaX: m.dx || 0, deltaY: m.dy || 0 });
+      } else if (m.t === 'k') {
+        const type = m.down ? (m.text ? 'keyDown' : 'rawKeyDown') : 'keyUp';
+        const p = { type, key: m.key, code: m.code, windowsVirtualKeyCode: m.vk || 0 };
+        if (m.down && m.text) p.text = m.text;
+        await cdp.send('Input.dispatchKeyEvent', p);
+      } else if (m.t === 'resize') {
+        await page.setViewportSize({ width: m.w | 0, height: m.h | 0 });
+      }
+    } catch (e) { /* transient races fine */ }
+  }
+
   // --- Minimal WebSocket server (no dependencies) ---
   const http = require('http');
   const sockets = new Set();
+  const isLoop = (rq) => { const a=(rq.socket&&rq.socket.remoteAddress)||''; return a==='127.0.0.1'||a==='::1'||a==='::ffff:127.0.0.1'; };
+  const authed = (u, rq) => !TOKEN || u.searchParams.get('t') === TOKEN || isLoop(rq);
   const srv = http.createServer((req, res) => {
+    const u = new URL(req.url, 'http://x');
+    if (!authed(u, req)) { res.writeHead(403); res.end(); return; }
+    if (u.pathname === '/frame') {
+      if (lastJpeg) { res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' }); res.end(lastJpeg); }
+      else { res.writeHead(204); res.end(); }
+      return;
+    }
+    if (u.pathname === '/input' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => { body += c; if (body.length > 4096) req.destroy(); });
+      req.on('end', () => {
+        try { handleInput(JSON.parse(body)); } catch {}
+        res.writeHead(204); res.end();
+      });
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end('<html><title>vale bridge</title><body style="background:#111;color:#eee;font-family:sans-serif">vale browser bridge running</body></html>');
   });
@@ -84,7 +123,7 @@ function decodeClientFrames(buf, onMessage) {
       rem = Buffer.concat([rem, d]);
       rem = decodeClientFrames(rem, async (msg) => {
         let m; try { m = JSON.parse(msg); } catch { return; }
-        try {
+        try { handleInput(m);
           if (m.t === 'nav') await page.goto(m.url, { waitUntil: 'domcontentloaded' });
           else if (m.t === 'm') {
             const type = m.k === 'down' ? 'mousePressed' : m.k === 'up' ? 'mouseReleased' : 'mouseMoved';
@@ -98,8 +137,6 @@ function decodeClientFrames(buf, onMessage) {
             const p = { type, key: m.key, code: m.code, windowsVirtualKeyCode: m.vk || 0 };
             if (m.down && m.text) p.text = m.text;
             await cdp.send('Input.dispatchKeyEvent', p);
-          } else if (m.t === 'resize') {
-            await page.setViewportSize({ width: m.w | 0, height: m.h | 0 });
           }
         } catch (e) { /* transient input races are fine */ }
       });
@@ -109,11 +146,13 @@ function decodeClientFrames(buf, onMessage) {
   });
 
   // --- Screencast: JPEG frames -> all sockets ---
+  let lastJpeg = null;
   let lastAck = 0;
   cdp.on('Page.screencastFrame', async (ev) => {
     try { await cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }); } catch {}
     const jpeg = Buffer.from(ev.data, 'base64');
     if (jpeg.length < 800) return; // skip near-empty frames
+    lastJpeg = jpeg;
     lastAck = Date.now();
     const frame = encodeFrame(2, jpeg);
     for (const s of sockets) { try { s.write(frame); } catch {} }

@@ -294,6 +294,36 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         return sse_term_stream(state).await;
     }
 
+    // Browser bridge proxy (round-135): pull latest JPEG frame / push input
+    // events to the device-local bridge on 127.0.0.1:9224. Standard bearer
+    // gate applies (both paths start with /api). GET-only passthrough.
+    if method == Method::GET && (path == "/api/browser/frame" || path == "/api/browser/input") {
+        if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        let q = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+        let sub = if path.ends_with("frame") { "/frame" } else { "/input" };
+        let cli = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .build() {
+            Ok(c) => c,
+            Err(_) => return built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge client")),
+        };
+        return match cli.get(format!("http://127.0.0.1:9224{}{}", sub, q)).send().await {
+            Ok(up) => {
+                let st = StatusCode::from_u16(up.status().as_u16()).unwrap_or(StatusCode::OK);
+                // built_response takes &'static str — bridge only emits these two.
+                let ct: &'static str = if sub == "/frame" { "image/jpeg" } else { "application/json" };
+                let body = up.bytes().await.unwrap_or_default();
+                let mut resp = built_response(st, ct, Body::from(body));
+                resp.headers_mut().insert(
+                    axum::http::HeaderName::from_static("cache-control"),
+                    axum::http::HeaderValue::from_static("no-store"),
+                );
+                resp
+            }
+            Err(_) => built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge down")),
+        };
+    }
+
     // Terminal panel (static page, public like the status page — it shows no
     // data until the user enters the device token in the browser). Assets are
     // embedded at compile time from resources/panel/.
