@@ -166,6 +166,28 @@ fn main() {
         }
     }
 
+    // round-135: auto-start the browser bridge (interactive remote browser
+    // core). Lifecycle is deliberately tied to THIS process via the
+    // child-reaper job — an update restarts both, so the bridge is never
+    // stale and never orphaned. Skip when 9224 is already serving.
+    #[cfg(windows)]
+    {
+        use std::net::TcpStream;
+        let busy = TcpStream::connect("127.0.0.1:9224").is_ok();
+        let install_dir = std::env::current_exe().ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
+        let bridge = install_dir.join("bridge.js");
+        let node = install_dir.join("playwright").join("node.exe");
+        if !busy && bridge.exists() && node.exists() {
+            let _ = std::process::Command::new(&node)
+                .arg(&bridge).arg("9224")
+                .spawn();
+            log_line("browser bridge: launched on 127.0.0.1:9224");
+        } else if busy {
+            log_line("browser bridge: already running");
+        }
+    }
+
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(run_server(config_path));
 }
