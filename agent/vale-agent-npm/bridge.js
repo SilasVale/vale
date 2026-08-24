@@ -87,6 +87,14 @@ function decodeClientFrames(buf, onMessage) {
   // --- Shared input dispatcher (WS + HTTP) ---
   async function handleInput(m) {
     try {
+      if (m.t === 'diag') {
+        const info = await page.evaluate(() => {
+          const a = document.querySelector('a');
+          const r = a ? a.getBoundingClientRect() : null;
+          return { title: document.title, url: location.href, link: r ? { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), text: (a.textContent || '').trim() } : null };
+        });
+        return info;
+      }
       if (m.t === 'tabs') {
         pagesList();
         return { tabs: ctx.pages().map((p, i) => ({ i, url: p.url() })), sel: ctx.pages().indexOf(selPage) };
