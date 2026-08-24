@@ -188,6 +188,48 @@ test("or/nvidia/nemotron-3-ultra-550b-a55b:free uses OpenRouter BYOK passthrough
   assert.equal(res.status, 200);
 });
 
+test("nv/nvidia/nemotron via NIM official API (dedicated key, model swap)", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({
+    keys: {
+      OPENCODE_GO_API_KEY: undefined,
+      NVAPI_KEY: "nvapi-test-123",
+    },
+  });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "nv/nvidia/nemotron-3-ultra-550b-a55b",
+    max_tokens: 10,
+    messages: [{ role: "user", content: "hi" }],
+  }, "/v1/chat/completions"));
+  assert.equal(seen.url, "https://integrate.api.nvidia.com/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer nvapi-test-123");
+  assert.equal(JSON.parse(seen.init.body).model, "nvidia/nemotron-3-ultra-550b-a55b");
+  assert.equal(res.status, 200);
+});
+
+test("nv/ on /v1/messages → 400 (NIM speaks OpenAI only)", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { NVAPI_KEY: "nvapi-test-123" } });
+  const res = await post(env, token, {
+    model: "nv/nvidia/nemotron-3-ultra-550b-a55b",
+    max_tokens: 10,
+    messages: [{ role: "user", content: "hi" }],
+  }); // default path = /v1/messages
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(body.error?.message || "", /OpenAI format only/);
+});
+
 test("or/stealth/ox-alpha uses OpenRouter BYOK passthrough", async () => {
   __clearCaches();
   const { env, token } = gwEnv({

@@ -33,6 +33,8 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "or/openai/gpt-5.6-luna:floor[1m]", owned_by: "openrouter" },
   { id: "or/z-ai/glm-5.2:free", owned_by: "openrouter" },
   { id: "or/nvidia/nemotron-3-ultra-550b-a55b:free", owned_by: "openrouter" },
+  // nv/ — NVIDIA NIM official API (dedicated key capacity, no shared pool)
+  { id: "nv/nvidia/nemotron-3-ultra-550b-a55b", owned_by: "nvidia" },
   { id: "or/stealth/ox-alpha", owned_by: "openrouter" },
   { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
@@ -65,6 +67,12 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     ],
   },
   {
+    prefix: "nv/",
+    backend: "NVIDIA NIM",
+    desc: "integrate.api.nvidia.com — official nemotron API, dedicated key capacity (build.nvidia.com), OpenAI format",
+    models: ["nvidia/nemotron-3-ultra-550b-a55b"],
+  },
+  {
     prefix: "qw/",
     backend: "Qwen MaaS (Aliyun)",
     desc: "token-plan.ap-southeast-1.maas.aliyuncs.com — Anthropic passthrough",
@@ -95,5 +103,6 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "or", model: "or/nvidia/nemotron-3-ultra-550b-a55b:free" },
   { id: "or", model: "or/stealth/ox-alpha" },
   { id: "or", model: "or/deepseek/deepseek-v4-flash-0731" },
+  { id: "nv", model: "nv/nvidia/nemotron-3-ultra-550b-a55b" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];

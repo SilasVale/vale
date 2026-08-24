@@ -77,6 +77,17 @@ export function pickRoute(
         stripPrefix: true,
         upstream: via("https://opencode.ai/zen/go/v1/chat/completions", "/v1/chat/completions"),
       };
+    case "nv": {
+      // NVIDIA NIM official API — OpenAI format only, dedicated per-key
+      // capacity (no shared free pool). Registered models: nemotron family.
+      const upstreamPath = "/v1/chat/completions";
+      return {
+        type: "passthrough",
+        kind: "nvidia",
+        stripPrefix: true,
+        upstream: via("https://integrate.api.nvidia.com" + upstreamPath, upstreamPath),
+      };
+    }
     default:
       // No prefix / unknown prefix → DeepSeek official
       return {

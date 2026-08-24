@@ -117,6 +117,9 @@ async function handleGatewayImpl(
   const opencodeGoKey = ukeys.OPENCODE_GO_API_KEY || null;
   const openRouterKey = ukeys.OPENROUTER_API_KEY || null;
   const qwenKey = ukeys.QWEN_API_KEY || null;
+  // NVIDIA NIM official API (build.nvidia.com key) — dedicated per-key capacity,
+  // no shared free pool. Stored in the same ukeys blob as the other BYOK keys.
+  const nvKey = ukeys.NVAPI_KEY || null;
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
   // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
@@ -422,15 +425,24 @@ async function handleGatewayImpl(
       ? openRouterKey
       : route.kind === "qwen"
         ? qwenKey
-        : route.kind === "opencode"
-          ? opencodeGoKey
-          : deepseekKey;
+        : route.kind === "nvidia"
+          ? nvKey
+          : route.kind === "opencode"
+            ? opencodeGoKey
+            : deepseekKey;
 
   // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
   // Accepts OpenAI-format requests directly and forwards to the upstream
   // without Anthropic↔OpenAI translation. Enables DSH and other OpenAI-native
   // clients to use og/ models without format conversion.
   if (isChatCompletions) {
+    if (route.kind === "nvidia" && !nvKey) {
+      return jsonError(
+        502,
+        "NVAPI_KEY not configured — add your NVIDIA build.nvidia.com key",
+        "config_error",
+      );
+    }
     if (route.kind === "opencode" && !opencodeGoKey) {
       return jsonError(
         502,
@@ -580,6 +592,16 @@ async function handleGatewayImpl(
   // Passthrough routes (or/ds/qw): the upstream already speaks the Anthropic
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
+    // nv/ upstream (NVIDIA NIM) is OpenAI-format only — an Anthropic body
+    // forwarded there would be misparsed garbage. Point the client at the
+    // OpenAI entry instead of failing obscurely at the upstream.
+    if (route.kind === "nvidia") {
+      return jsonError(
+        400,
+        "nv/ models speak OpenAI format only — use /v1/chat/completions",
+        "invalid_request_error",
+      );
+    }
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(
         502,
