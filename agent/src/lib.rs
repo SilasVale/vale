@@ -11,6 +11,7 @@ pub mod plugins;
 pub mod state;
 pub mod tools;
 pub mod web;
+pub mod ws_relay;
 
 /// Default config.yaml embedded at compile time.
 pub const DEFAULT_CONFIG_YAML: &str = include_str!("../config.yaml");

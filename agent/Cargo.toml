@@ -4,7 +4,7 @@ default-members = ["."]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.82"
+version = "1.0.83"
 
 [package]
 name = "vale-agent"
@@ -56,6 +56,13 @@ sha2 = "0.10"
 # string argument goes through UTF-8 validation, so non-UTF-8 serial frames
 # (control bytes, binary protocols) need an explicit base64 path (round-54).
 base64 = "0.22"
+
+# round-137 方案 C: /api/browser/ws 手工 WebSocket 升级需要计算
+# Sec-WebSocket-Accept(SHA-1);hyper 显式引入以使用 upgrade::on 拿到
+# 升级后的裸 IO(axum 0.8 本就依赖 hyper 1,零新增编译)。
+sha1 = "0.10"
+hyper = { version = "1", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 
 # Windows-only: lets the headless binary register itself as the `ValeCommand`
 # Windows service (SCM protocol). Ignored entirely on Linux/macOS builds.

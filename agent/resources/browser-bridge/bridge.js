@@ -187,22 +187,15 @@ function decodeClientFrames(buf, onMessage) {
       rem = Buffer.concat([rem, d]);
       rem = decodeClientFrames(rem, async (msg) => {
         let m; try { m = JSON.parse(msg); } catch { return; }
-        try { handleInput(m);
-          if (m.t === 'nav') await page.goto(m.url, { waitUntil: 'domcontentloaded' });
-          else if (m.t === 'm') {
-            const type = m.k === 'down' ? 'mousePressed' : m.k === 'up' ? 'mouseReleased' : 'mouseMoved';
-            const btn = (m.k === 'down' || m.k === 'up') ? 'left' : 'none';
-            const clickCount = (m.k === 'down' || m.k === 'up') ? 1 : undefined;
-            await cdp.send('Input.dispatchMouseEvent', { type, x: m.x, y: m.y, button: btn, clickCount, buttons: m.k === 'down' ? 1 : 0 });
-          } else if (m.t === 'wheel') {
-            await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: m.x, y: m.y, deltaX: m.dx || 0, deltaY: m.dy || 0 });
-          } else if (m.t === 'k') {
-            const type = m.down ? (m.text ? 'keyDown' : 'rawKeyDown') : 'keyUp';
-            const p = { type, key: m.key, code: m.code, windowsVirtualKeyCode: m.vk || 0 };
-            if (m.down && m.text) p.text = m.text;
-            await cdp.send('Input.dispatchKeyEvent', p);
-          }
-        } catch (e) { /* transient input races are fine */ }
+        // round-138: 单一分发——旧代码 handleInput 之后又手动重复一遍
+        // nav/m/k 的 CDP 注入(点击等于按两次);现在统一走 handleInput。
+        let out;
+        try { out = await handleInput(m); } catch (e) { /* transient races are fine */ }
+        // round-137 方案 C: 带 id 的请求回执(tabs/diag 等查询的关联键),
+        // 面板不再需要旁路轮询就能拿到结构化应答。
+        if (typeof m.id !== 'undefined' && sock.writable) {
+          try { sock.write(encodeFrame(1, JSON.stringify(Object.assign({ id: m.id }, out || {})))); } catch {}
+        }
       });
     });
     sock.on('close', () => sockets.delete(sock));
@@ -212,17 +205,39 @@ function decodeClientFrames(buf, onMessage) {
   // --- Screencast: JPEG frames -> all sockets ---
   let lastJpeg = null;
   let lastAck = 0;
+  let capturing = false;
+
+  function pushFrame(jpeg) {
+    lastJpeg = jpeg;
+    lastAck = Date.now();
+    const frame = encodeFrame(2, jpeg);
+    for (const s of sockets) { try { s.write(frame); } catch {} }
+  }
+
   function bindScreencast(c) {
     c.on('Page.screencastFrame', async (ev) => {
       try { await c.send('Page.screencastFrameAck', { sessionId: ev.sessionId }); } catch {}
       const jpeg = Buffer.from(ev.data, 'base64');
       if (jpeg.length < 800) return; // skip near-empty frames
-      lastJpeg = jpeg;
-      lastAck = Date.now();
-      const frame = encodeFrame(2, jpeg);
-      for (const s of sockets) { try { s.write(frame); } catch {} }
+      pushFrame(jpeg);
     });
   }
+
+  // round-137 方案 C: 空闲出帧保证。screencast 是变化驱动——headless 页面
+  // 视觉静止时合成器不出帧,WS 观众会盯着最后一张旧图。有观众且静默超过
+  // 700ms 时兜底一张真实截图(静止页 ≤1 capture/s,对比旧轮询路径
+  // 7 req/s + ≤2.5 captures/s;活跃页由 screencast 接管,不叠加)。
+  setInterval(() => {
+    if (sockets.size === 0 || capturing) return;
+    if (Date.now() - lastAck < 700) return; // screencast 仍然活跃
+    const target = selPage || page;
+    if (!target) return;
+    capturing = true;
+    target.screenshot({ type: 'jpeg', quality: 55 })
+      .then((jpeg) => pushFrame(jpeg))
+      .catch(() => {})
+      .finally(() => { capturing = false; });
+  }, 300);
 
   await new Promise(r => srv.listen(PORT, '127.0.0.1', r));
   console.log(`bridge listening on 127.0.0.1:${PORT} profile=${USER_DATA_DIR}`);

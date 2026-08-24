@@ -299,7 +299,8 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // gate applies (both paths start with /api). GET-only passthrough.
     if method == Method::GET && (path == "/api/browser/frame" || path == "/api/browser/input") {
         if let Err(resp) = check_auth(&req, &state) { return *resp; }
-        let q = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+        let q = req.uri().query().map(|q| q.to_string());
+        let q = q.as_deref().map(|q| format!("?{}", q)).unwrap_or_default();
         let sub = if path.ends_with("frame") { "/frame" } else { "/input" };
         let cli = match reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(8))
@@ -321,6 +322,36 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 resp
             }
             Err(_) => built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge down")),
+        };
+    }
+
+    // round-137 方案 C: interactive-browser WebSocket relay. MUST sit before
+    // the standard auth gate — browsers cannot attach an Authorization header
+    // to a WebSocket handshake, so auth is the one-time ?ticket= minted by
+    // POST /api/browser/ws-ticket (Bearer-gated below). Raw byte pipe both
+    // ways; framing belongs to the two ends (browser ↔ bridge.js).
+    if method == Method::GET && path == "/api/browser/ws" {
+        let mut req = req;
+        let query = req.uri().query().map(|q| q.to_string());
+        let ticket = query.as_deref().and_then(|q| query_param(Some(q), "ticket")).unwrap_or("");
+        if !crate::ws_relay::redeem_ticket(ticket) {
+            return built_response(StatusCode::FORBIDDEN, "text/plain", Body::from("invalid or expired ticket"));
+        }
+        let Some(key) = req.headers()
+            .get("sec-websocket-key")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string())
+        else {
+            return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("not a websocket handshake"));
+        };
+        // hyper 把待完成的升级句柄放进请求扩展;拿走它(axum ws 同款),
+        // 返回 101 后由 spawned task 接管裸 IO。
+        let Some(on_upgrade) = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>() else {
+            return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("upgrade unsupported"));
+        };
+        return match crate::ws_relay::relay_to_bridge(key, on_upgrade).await {
+            Ok(resp) => resp,
+            Err(e) => built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from(e)),
         };
     }
 
@@ -488,6 +519,20 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let result: serde_json::Value = match (method.as_str(), path.as_str()) {
         ("GET", "/api/spec") => api_spec(&state),
         ("GET", "/api/status") => api_status(&state).await,
+        // round-137 方案 C: mint a one-time WS relay ticket. Bearer-gated
+        // like every other /api route; the ticket itself is what the browser
+        // WebSocket handshake presents (?ticket=), keeping the long-lived
+        // device token out of URLs entirely.
+        ("POST", "/api/browser/ws-ticket") => match crate::ws_relay::issue_ticket() {
+            Some(t) => serde_json::json!({ "ok": true, "ticket": t }),
+            None => {
+                return built_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "application/json",
+                    Body::from(r#"{"ok":false,"error":"ws ticket budget exceeded"}"#),
+                )
+            }
+        },
         // Audit trail: session list with terminal state (round-56). The
         // logger lives in the terminal plugin's private field — read the
         // same directory directly (cheap: one file per session).
