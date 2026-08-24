@@ -377,17 +377,22 @@ pub fn mcp_client_call() -> ToolDef {
                     // initialize，服务器直接 404 而不是下发新会话。
                     sess.session_id = None;
                     handshake(sess).await?;
-                    if let Some(u) = &sess.last_url {
+                    // 会话一次性语义：恢复导航消耗本会话唯一一次调用，
+                    // 其结果（含 Page+Snapshot）正是读取类工具想要的答案；
+                    // 操作类工具则明确报错，指引先 browser_open 重开页面。
+                    if let Some(u) = sess.last_url.clone() {
                         let rid = sess.next_id.fetch_add(1, Ordering::Relaxed);
-                        let _ = rpc_ref(sess, Some(rid), "tools/call", json!({
+                        let nav = rpc_ref(sess, Some(rid), "tools/call", json!({
                             "name": "browser_navigate",
                             "arguments": {"url": u},
-                        }), 120).await;
-                        // SPA 渲染等待（会话窗口 ~15-25s 内完成）：
-                        // 否则快照/截图拿到的永远是空白 Loading。
-                        // SPA 渲染等待（会话有效窗口 ~15-25s 内完成）：
-                        // 否则快照/截图拿到的永远是空白 Loading。
-                        tokio::time::sleep(Duration::from_secs(20)).await;
+                        }), 120).await?;
+                        return Ok(json!({
+                            "ok": true,
+                            "result": nav,
+                            "note": format!(
+                                "browser session recycled by playwright-mcp; page restored to {u} — result above is from the restore navigation"
+                            ),
+                        }));
                     }
                     let retry_id = sess.next_id.fetch_add(1, Ordering::Relaxed);
                     rpc_ref(sess, Some(retry_id), "tools/call", json!({
