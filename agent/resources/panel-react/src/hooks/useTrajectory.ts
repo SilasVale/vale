@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { terminalStatus, useSessionEvents } from "./useCommandEvents";
+import { terminalStatus } from "./useCommandEvents";
 import type { CommandEvent } from "./useCommandEvents";
 
 // Trajectory (round-admin-ui Task 5): the RAW audit event timeline for a

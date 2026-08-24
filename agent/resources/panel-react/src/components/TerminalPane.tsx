@@ -12,7 +12,7 @@ import type { Session } from "../hooks/useSessions";
 // skipped so the read's text doesn't double-render.
 export function TerminalPane({ session, registerWrite }: {
   session: Session;
-  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => void;
+  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);

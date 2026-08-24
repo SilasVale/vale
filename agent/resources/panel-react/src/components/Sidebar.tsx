@@ -19,9 +19,10 @@ function relTime(ts: number): string {
   return day < 7 ? `${day}d` : new Date(ts).toLocaleDateString();
 }
 
-export function Sidebar({ sessions, activeSid, onActivate, onViewChange, onNewSession, plugins }: {
+export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, onNewSession, plugins }: {
   sessions: Session[];
   activeSid: string | null;
+  view: "sessions" | "plugins";
   onActivate: (sid: string) => void;
   onViewChange: (v: "sessions" | "plugins") => void;
   onNewSession: (kind: "pty" | "ssh" | "serial") => void;

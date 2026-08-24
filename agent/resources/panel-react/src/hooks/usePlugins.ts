@@ -131,9 +131,10 @@ export function usePlugins(active: boolean) {
   // stopped → warn.
   const rows = useMemo<PluginRow[]>(() => spec.map((p) => {
     if (p.name === "playwright") {
-      if (playwright?.running) return { ...p, enabled: true, state: "ongoing", stateLabel: "Running", playwright };
-      if (actionError) return { ...p, enabled: true, state: "error", stateLabel: "Error", playwright };
-      return { ...p, enabled: true, state: "warn", stateLabel: "Stopped", playwright };
+      const pw = playwright ?? undefined; // PluginRow.playwright is `?`, not nullable
+      if (playwright?.running) return { ...p, enabled: true, state: "ongoing", stateLabel: "Running", playwright: pw };
+      if (actionError) return { ...p, enabled: true, state: "error", stateLabel: "Error", playwright: pw };
+      return { ...p, enabled: true, state: "warn", stateLabel: "Stopped", playwright: pw };
     }
     return { ...p, enabled: true, state: "success", stateLabel: "Loaded" };
   }), [spec, playwright, actionError]);
