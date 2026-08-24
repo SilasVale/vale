@@ -23,6 +23,10 @@ const [, , portArg, tokenArg, dirArg] = process.argv;
 const PORT = Number(portArg || 9224);
 const TOKEN = tokenArg || '';
 const USER_DATA_DIR = dirArg || 'C:/Users/Administrator/AppData/Local/vale-browser-profile';
+// Headless pages emit no compositor frames while visually idle; a styled
+// welcome page guarantees the first screencast frames are non-empty.
+const WELCOME = 'data:text/html,' + encodeURIComponent(
+  '<body style="margin:0;background:linear-gradient(135deg,#f59f00,#e8590c);color:#fff;font-family:sans-serif;padding:48px;font-size:30px">Vale 远程浏览器已就绪<br><span style="font-size:16px;opacity:.8">在上方地址栏输入网址开始</span></body>');
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
@@ -62,7 +66,7 @@ function decodeClientFrames(buf, onMessage) {
     headless: true, viewport: { width: 1280, height: 800 },
   });
   let page = ctx.pages()[0] || await ctx.newPage();
-  await page.goto('about:blank').catch(() => {});
+  if (page.url() === 'about:blank') await page.goto(WELCOME).catch(() => {});
   let cdp = await ctx.newCDPSession(page);
   // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
   // after closes and switches the CDP pipe so screencast follows selection.
@@ -89,7 +93,7 @@ function decodeClientFrames(buf, onMessage) {
       }
       if (m.t === 'tabnew') {
         const np = await ctx.newPage();
-        if (m.url) await np.goto(m.url, { waitUntil: 'domcontentloaded' }).catch(() => {});
+        await np.goto(m.url || WELCOME, { waitUntil: 'domcontentloaded' }).catch(() => {});
         selPage = np; await attachSel();
         return { ok: true };
       }
@@ -133,8 +137,19 @@ function decodeClientFrames(buf, onMessage) {
     const u = new URL(req.url, 'http://x');
     if (!authed(u, req)) { res.writeHead(403); res.end(); return; }
     if (u.pathname === '/frame') {
-      if (lastJpeg) { res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' }); res.end(lastJpeg); }
-      else { res.writeHead(204); res.end(); }
+      // Deterministic capture: headless pages emit no compositor frames while
+      // idle, so CDP screencast alone yields nothing to poll. Take a real
+      // screenshot per request (deduped while one is in flight).
+      const serve = (jpeg) => {
+        res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' });
+        res.end(jpeg);
+      };
+      if (!lastJpeg || Date.now() - lastAck > 400) {
+        const target = selPage || page;
+        target.screenshot({ type: 'jpeg', quality: 55 })
+          .then((jpeg) => { lastJpeg = jpeg; lastAck = Date.now(); serve(jpeg); })
+          .catch(() => { if (lastJpeg) serve(lastJpeg); else { res.writeHead(204); res.end(); } });
+      } else if (lastJpeg) { serve(lastJpeg); }
       return;
     }
     if (u.pathname === '/input') {
