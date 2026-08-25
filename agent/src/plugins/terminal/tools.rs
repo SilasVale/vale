@@ -186,12 +186,14 @@ fn tool_open(
                         let cmd = std::path::Path::new(&target)
                             .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
                         if cmd.is_empty() || cmd.eq_ignore_ascii_case("powershell.exe") || cmd.eq_ignore_ascii_case("pwsh.exe") {
-                            // round-132: 先移除 PSReadLine——它与 ConPTY 的输入
-                        // 处理在长行粘贴时互相干扰：续行提示符 ">>" 伪影、
-                        // 回显碎片重排、偶发把后续输入吞进未完成的字符串。
-                        // 移除后回退为原始逐行读取，自动化场景可靠性优先；
-                        // Prompt 函数与 OSC133 标记不受影响。
-                        (r#"Remove-Module PSReadLine -ErrorAction SilentlyContinue; function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"#.to_string() + "\r\n", true)
+                            // round-132: 曾移除 PSReadLine 换取长行粘贴的自动化
+                        // 可靠性;副作用是 ConPTY 原始回显在长行下碎裂,面板
+                        // 终端显示乱成一团(round-139 用户报告)。恢复
+                        // PSReadLine:行编辑/回显由它原子重绘,显示干净;
+                        // 自动化命令经由 tools 逐条下发且都很短,不再触发
+                        // 当年的粘贴问题。注入后 Clear-Host 清掉启动横幅与
+                        // 注入行,会话从干净画面开始。OSC133 标记不变。
+                        (r#"function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"#.to_string() + "\r\nClear-Host\r\n", true)
                         } else { (String::new(), false) }
                     } else {
                         let cmd = std::path::Path::new(&target)
