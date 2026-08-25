@@ -6,6 +6,10 @@ const DEFAULT_ORIGIN = "https://api.saisi.online";
 async function load() {
   const { consoleOrigin } = await chrome.storage.local.get("consoleOrigin");
   $("consoleOrigin").value = consoleOrigin || DEFAULT_ORIGIN;
+  const st = await chrome.storage.local.get(["studioOrigin", "studioToken", "studioLinksEnabled"]);
+  $("studioOrigin").value = st.studioOrigin || "https://code.saisi.online";
+  $("studioToken").value = st.studioToken || "";
+  $("studioLinksEnabled").checked = st.studioLinksEnabled !== false;
 }
 
 $("save").addEventListener("click", async () => {
@@ -24,7 +28,12 @@ $("save").addEventListener("click", async () => {
     setTimeout(() => { s.classList.add("hidden"); s.style.color = ""; }, 3000);
     return;
   }
-  await chrome.storage.local.set({ consoleOrigin: value });
+  await chrome.storage.local.set({
+    consoleOrigin: value,
+    studioOrigin: ($("studioOrigin").value.trim() || "https://code.saisi.online").replace(/\/+$/, ""),
+    studioToken: $("studioToken").value.trim(),
+    studioLinksEnabled: $("studioLinksEnabled").checked,
+  });
   await chrome.runtime.sendMessage({ type: "optionsChanged" }).catch(() => {});
   const s = $("saved");
   s.classList.remove("hidden");

@@ -4,6 +4,7 @@ window.VS = window.VS || {};
 
 VS.editor = (() => {
   let monacoReady = false;
+  let curTheme = document.documentElement.dataset.theme === "dark" ? "vs-dark" : "vs";
   const tabs = [];                    // {path, hostEl, ed, model, sha, dirty, viewState}
   let active = null;
   const hosts = document.getElementById("editor-host");
@@ -39,7 +40,7 @@ VS.editor = (() => {
     };
     require(["vs/editor/editor.main"], () => {
       monacoReady = true;
-      monaco.editor.setTheme("vs-dark");
+      monaco.editor.setTheme(curTheme);
       flushPending();
     });
   }
@@ -115,7 +116,7 @@ VS.editor = (() => {
       automaticLayout: true,
       minimap: { enabled: true },
       fontSize: 13,
-      fontFamily: 'var(--mono), "SF Mono", Menlo, Consolas, monospace',
+      fontFamily: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
       renderWhitespace: "selection",
       scrollBeyondLastLine: false,
       tabSize: 2,
@@ -339,9 +340,14 @@ VS.editor = (() => {
     window.dispatchEvent(new Event("vs-open-changed"));
   }
 
+  function setTheme(t) {
+    curTheme = t === "dark" ? "vs-dark" : "vs";
+    if (monacoReady) monaco.editor.setTheme(curTheme);
+  }
+
   return {
     init, openFile, saveTab, reloadFromDisk, externalChange, gotoPosition,
-    openPaths, notifyOpenChanged,
+    openPaths, notifyOpenChanged, setTheme,
     get active() { return active; }, get tabs() { return tabs; },
   };
 })();

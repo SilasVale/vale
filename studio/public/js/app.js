@@ -51,6 +51,23 @@
     VS.toast("已清除本机令牌");
   });
 
+  // ── theme toggle ───────────────────────────────────────────────────────────
+  const themeBtn = $("#btn-theme");
+  function paintThemeBtn() {
+    themeBtn.textContent = document.documentElement.dataset.theme === "dark" ? "☀️" : "🌙";
+  }
+  function applyTheme(t) {
+    document.documentElement.dataset.theme = t;
+    localStorage.setItem("vs-theme", t);
+    VS.editor.setTheme(t);
+    VS.terminal.setTheme(t);
+    paintThemeBtn();
+  }
+  themeBtn.addEventListener("click", () => {
+    applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  });
+  paintThemeBtn();
+
   // ── deep-link routing ──────────────────────────────────────────────────────
   // #/open?p=<abs>&l=596&c=8&sel=l.c-l.c
   let lastHash = null;

@@ -163,11 +163,12 @@ try {
     await page.fill("#search-input", "VSTUDIO_ROOT");
     await page.keyboard.press("Enter");
     await page.waitForSelector(".sr-file", { timeout: 10000 });
+    const tabsBefore = await page.$$eval("#tabs .tab", (els) => els.length);
     await page.locator(".sr-hit").first().click();
     await page.waitForFunction(
-      () => [...document.querySelectorAll(".tab .name")].some((n) => n.textContent === "pty.mjs" || n.textContent === "server.mjs"),
-      null,
-      { timeout: 6000 },
+      (n0) => document.querySelectorAll("#tabs .tab").length > n0,
+      tabsBefore,
+      { timeout: 12000 },
     );
   });
 

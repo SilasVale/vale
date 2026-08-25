@@ -3,6 +3,13 @@
 window.VS = window.VS || {};
 
 VS.terminal = (() => {
+  const THEMES = {
+    light: { background: "#ffffff", foreground: "#1d1d1f", cursorAccent: "#ffffff",
+             selectionBackground: "rgba(13,148,136,.30)", black: "#1d1d1f", white: "#6e6e73" },
+    dark: { background: "#1e1e1e", foreground: "#d4d4d4", cursorAccent: "#1e1e1e",
+            selectionBackground: "rgba(38,79,120,.99)" },
+  };
+  let curTheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
   const panel = document.getElementById("terminal-panel");
   const tablist = document.getElementById("term-tablist");
   const hosts = document.getElementById("term-hosts");
@@ -45,14 +52,9 @@ VS.terminal = (() => {
       return;
     }
     const term = new window.Terminal({
-      fontFamily: 'var(--mono), "SF Mono", Menlo, Consolas, monospace',
+      fontFamily: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
       fontSize: 12.5,
-      theme: {
-        background: "#1e1e1e",
-        foreground: "#d4d4d4",
-        cursorAccent: "#1e1e1e",
-        selectionBackground: "rgba(38,79,120,.99)",
-      },
+      theme: THEMES[curTheme],
       scrollback: 5000,
       cursorBlink: true,
     });
@@ -209,5 +211,10 @@ VS.terminal = (() => {
 
   window.addEventListener("resize", refitActive);
 
-  return { toggle, newTerminal, refitActive, get activeId() { return activeId; } };
+  function setTheme(name) {
+    curTheme = name;
+    for (const [, t0] of terms) if (t0.term) t0.term.options.theme = THEMES[name];
+  }
+
+  return { toggle, newTerminal, refitActive, setTheme, get activeId() { return activeId; } };
 })();

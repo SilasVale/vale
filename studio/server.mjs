@@ -340,6 +340,17 @@ function assertWritable() {
   if (CONFIG.readOnly) throw new ApiError(403, "read_only", "server is in read-only mode");
 }
 
+// Lightweight existence probe for the DSH-side link rewriter (CORS-enabled):
+// resolves relative paths against candidate roots without transferring content.
+route("GET", "/api/stat", async (req, url) => {
+  const p = safeResolve(url.searchParams.get("p"), ROOTS, { mustExist: false });
+  let stat = null;
+  try {
+    stat = await fsp.stat(p);
+  } catch {}
+  return { path: p, exists: !!stat && !stat.isDirectory(), dir: !!stat?.isDirectory() };
+});
+
 // ── terminals ────────────────────────────────────────────────────────────────
 
 const RING_MAX = 64 * 1024;
@@ -361,8 +372,16 @@ route("POST", "/api/term", async (req) => {
   let cwd = ROOTS[0];
   if (body.cwd) cwd = safeResolve(String(body.cwd), ROOTS);
   const id = `t${++termSeq}-${crypto.randomBytes(3).toString("hex")}`;
+  const tmuxWrap = !!CONFIG.terminal.tmuxWrap;
+  // tmux persistence: the pty attaches to `tmux new -A` (attach-or-create).
+  // If vale-studio restarts, the tmux SERVER keeps the session alive and a
+  // recreated terminal with the same name re-attaches with full history.
+  const shellArgs = tmuxWrap
+    ? ["new", "-A", "-s", `vs-${id}`, CONFIG.terminal.shell]
+    : [];
   const session = await createPty({
-    shell: CONFIG.terminal.shell,
+    shell: tmuxWrap ? "tmux" : CONFIG.terminal.shell,
+    args: shellArgs,
     cwd,
     cols: Number(body.cols) || 80,
     rows: Number(body.rows) || 24,
@@ -373,6 +392,7 @@ route("POST", "/api/term", async (req) => {
     name: `bash · ${path.basename(cwd)}`,
     cwd,
     backend: session.backend,
+    tmuxName: tmuxWrap ? `vs-${id}` : null,
     ring: ringBuffer(RING_MAX),
     viewers: new Set(),
     session,
@@ -416,6 +436,11 @@ route("GET", "/api/terms", async () => ({
 route("DELETE", "/api/term/:id", async (req, url, params) => {
   const t = terminals.get(params.id);
   if (!t) throw new ApiError(404, "not_found", "no such terminal");
+  // explicit close must also remove a wrapped tmux session, not just detach
+  if (t.tmuxName) {
+    const { execFile } = await import("node:child_process");
+    execFile("tmux", ["kill-session", "-t", t.tmuxName], () => {});
+  }
   t.session.kill();
   return { ok: true };
 });
@@ -663,6 +688,65 @@ server.listen(CONFIG.port, CONFIG.bind, () => {
   console.log(`    local:  http://127.0.0.1:${CONFIG.port}/?token=${CONFIG.token}`);
   if (CONFIG.publicHost) console.log(`    public: ${loginLink(CONFIG.publicHost)}`);
 });
+
+// Adopt vs-* tmux sessions left behind by a previous run: they stay alive in
+// the tmux server across restarts, so re-register them instead of orphaning.
+async function adoptTmuxSessions() {
+  if (!CONFIG.terminal.tmuxWrap || CONFIG.readOnly || !CONFIG.terminal.enabled) return;
+  const { promisify } = await import("node:util");
+  const { execFile: ef } = await import("node:child_process");
+  const run = promisify(ef);
+  let out;
+  try {
+    out = (await run("tmux", ["list-sessions", "-F", "#{session_name}"])).stdout;
+  } catch {
+    return; // no tmux or no sessions
+  }
+  for (const name of out.trim().split("\n")) {
+    if (!name?.startsWith("vs-t")) continue;
+    // resolve where the session was last working (falls back to first root)
+    let cwd = ROOTS[0];
+    try {
+      const p = (
+        await run("tmux", ["display-message", "-p", "-t", name, "#{pane_current_path}"])
+      ).stdout.trim();
+      if (p) safeResolve(p, ROOTS), (cwd = p);
+      else safeResolve(cwd, ROOTS);
+    } catch {
+      continue; // outside allowed roots
+    }
+    const id = `t${++termSeq}-${crypto.randomBytes(3).toString("hex")}`;
+    const session = await createPty({
+      shell: "tmux",
+      args: ["new", "-A", "-s", name, CONFIG.terminal.shell],
+      cwd,
+      env: {},
+    });
+    const t = {
+      id,
+      name: `bash · ${path.basename(cwd)} (restored)`,
+      cwd,
+      backend: session.backend,
+      tmuxName: name,
+      ring: ringBuffer(RING_MAX),
+      viewers: new Set(),
+      session,
+      exitCode: null,
+      deadAt: null,
+    };
+    terminals.set(id, t);
+    session.onData((d) => termBroadcast(t, Buffer.from(d)));
+    session.onExit((code) => {
+      t.exitCode = code;
+      t.deadAt = Date.now();
+      setTimeout(() => terminals.delete(id), 60_000).unref?.();
+    });
+    console.log(`[studio] adopted tmux session ${name} -> terminal ${id}`);
+  }
+}
+
+
+adoptTmuxSessions();
 
 for (const sig of ["SIGTERM", "SIGINT"]) {
   process.on(sig, () => {
