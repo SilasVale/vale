@@ -105,6 +105,12 @@ const commands = {
     }
     fs.mkdirSync(DIR, { recursive: true });
     fs.copyFileSync(EXE_SRC, path.join(DIR, "vale-agent.new.exe"));
+    // round-137 方案 C: bridge.js 与 exe 同步分发——否则设备一直跑旧桥,
+    // 新协议(空闲出帧/命令回执)永远到不了真机(exe 换了桥没换,d1 实测踩坑)。
+    const BRIDGE_SRC = path.join(__dirname, "..", "bridge.js");
+    if (fs.existsSync(BRIDGE_SRC)) {
+      fs.copyFileSync(BRIDGE_SRC, path.join(DIR, "bridge.new.js"));
+    }
     const q = DIR.replace(/'/g, "''");
     const log = `Out-File '${q}\\vale-update.log' -Append`;
     const script = [
@@ -113,11 +119,15 @@ const commands = {
       // first (task end + process kill), THEN swap with retry.
       "try { Stop-ScheduledTask ValeAgent -ErrorAction Stop } catch {}",
       "Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
+      // The bridge is a child of the agent (node bridge.js on 9224); killing
+      // the tree frees 9224 so the restarted agent re-spawns the NEW bridge.
+      "Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*vale-agent*' } | Stop-Process -Force -ErrorAction SilentlyContinue",
       "Start-Sleep -Milliseconds 1500",
       "$ok=$false",
       `foreach($i in 1..12){ try { Copy-Item -Force -ErrorAction Stop '${q}\\vale-agent.new.exe' '${q}\\vale-agent.exe'; $ok=$true; break } catch { Start-Sleep -Milliseconds 800 } }`,
       `"[$(Get-Date -Format o)] copy ok=$ok" | ${log}`,
       `Remove-Item -Force -ErrorAction SilentlyContinue '${q}\\vale-agent.new.exe'`,
+      `if (Test-Path '${q}\\bridge.new.js') { Copy-Item -Force '${q}\\bridge.new.js' '${q}\\bridge.js'; Remove-Item -Force '${q}\\bridge.new.js' }`,
       // NEVER leave the device dark: even a failed swap must bring the task
       // back up (it will run the old exe until the next update).
       `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,

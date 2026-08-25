@@ -144,6 +144,18 @@ function decodeClientFrames(buf, onMessage) {
   const srv = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     if (!authed(u, req)) { res.writeHead(403); res.end(); return; }
+    if (u.pathname === '/diag') {
+      // round-138 调试: 观察观众数/最后帧时间/页面状态,定位"有观众无帧"。
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({
+        sockets: sockets.size,
+        sinceLastFrameMs: lastJpeg ? Date.now() - lastAck : -1,
+        hasFrame: !!lastJpeg,
+        pages: ctx.pages().length,
+        selUrl: (selPage || page)?.url?.() ?? null,
+      }));
+      return;
+    }
     if (u.pathname === '/frame') {
       // Deterministic capture: headless pages emit no compositor frames while
       // idle, so CDP screencast alone yields nothing to poll. Take a real
