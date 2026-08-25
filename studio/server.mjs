@@ -52,6 +52,10 @@ function arg(flag) {
   return i >= 0 ? process.argv[i + 1] : null;
 }
 
+function hasFlag(flag) {
+  return process.argv.includes(flag);
+}
+
 const CONFIG_PATH = arg("--config") || path.join(os.homedir(), ".vale-studio", "config.json");
 
 async function loadConfig() {
@@ -82,6 +86,7 @@ async function loadConfig() {
   cfg.corsOrigins = Array.isArray(cfg.corsOrigins) ? cfg.corsOrigins : [];
   cfg.readOnly = !!cfg.readOnly;
   cfg.maxFileSizeMB = cfg.maxFileSizeMB || 8;
+  cfg.publicHost = cfg.publicHost || "code.saisi.online"; // shown in the login link
   cfg.terminal = { enabled: true, shell: process.env.SHELL || "/bin/bash", ...(cfg.terminal || {}) };
   return cfg;
 }
@@ -635,8 +640,18 @@ server.on("upgrade", async (req, socket, head) => {
   });
 });
 
-if (arg("--help") || arg("-h")) {
-  console.log("usage: node server.mjs [--config PATH] [--port N]");
+if (hasFlag("--help") || hasFlag("-h")) {
+  console.log("usage: node server.mjs [--config PATH] [--port N] [--link]");
+  process.exit(0);
+}
+
+// One-click login link: the public URL + token. `--link` prints it and exits.
+function loginLink(host) {
+  return `https://${host}/?token=${CONFIG.token}`;
+}
+
+if (hasFlag("--link")) {
+  console.log(loginLink("code.saisi.online"));
   process.exit(0);
 }
 
@@ -644,6 +659,9 @@ server.listen(CONFIG.port, CONFIG.bind, () => {
   console.log(`[studio] listening on http://${CONFIG.bind}:${CONFIG.port}`);
   console.log(`[studio] roots: ${ROOTS.join(", ") || "(none)"}`);
   console.log(`[studio] readOnly=${CONFIG.readOnly} terminal=${CONFIG.terminal.enabled && !CONFIG.readOnly}`);
+  console.log(`[studio] login link (one click per device):`);
+  console.log(`    local:  http://127.0.0.1:${CONFIG.port}/?token=${CONFIG.token}`);
+  if (CONFIG.publicHost) console.log(`    public: ${loginLink(CONFIG.publicHost)}`);
 });
 
 for (const sig of ["SIGTERM", "SIGINT"]) {

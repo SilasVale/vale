@@ -6,6 +6,7 @@
   "main": "server.mjs",
   "scripts": {
     "start": "node server.mjs",
+    "link": "node server.mjs --link",
     "test": "node --test test/api.test.mjs"
   },
   "dependencies": {
