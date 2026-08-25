@@ -10,5 +10,16 @@ module.exports = {
     env: {
       NODE_ENV: 'production'
     }
+  }, {
+    name: 'vale-studio',
+    script: 'server.mjs',
+    cwd: '/home/zhengsaisi/vale/studio',
+    interpreter: '/home/zhengsaisi/.nvm/versions/node/v22.22.3/bin/node',
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '600M',
+    env: {
+      NODE_ENV: 'production'
+    }
   }]
 }

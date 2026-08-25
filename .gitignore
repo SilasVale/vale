@@ -9,3 +9,9 @@ index/public/vale-agent/*.tgz
 agent/vale-agent-npm/*.exe
 agent/vale-agent-npm/*.tgz
 agent/target-staging.exe
+
+# vale-studio
+studio/node_modules/
+studio/test/artifacts/
+.vale-tmp-*
+studio/vendor/
