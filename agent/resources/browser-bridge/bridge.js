@@ -139,6 +139,7 @@ function decodeClientFrames(buf, onMessage) {
   // --- Minimal WebSocket server (no dependencies) ---
   const http = require('http');
   const sockets = new Set();
+  let lastCmd = null, lastErr = null;
   const isLoop = (rq) => { const a=(rq.socket&&rq.socket.remoteAddress)||''; return a==='127.0.0.1'||a==='::1'||a==='::ffff:127.0.0.1'; };
   const authed = (u, rq) => !TOKEN || u.searchParams.get('t') === TOKEN || isLoop(rq);
   const srv = http.createServer((req, res) => {
@@ -149,6 +150,7 @@ function decodeClientFrames(buf, onMessage) {
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({
         sockets: sockets.size,
+        lastCmd, lastErr,
         sinceLastFrameMs: lastJpeg ? Date.now() - lastAck : -1,
         hasFrame: !!lastJpeg,
         pages: ctx.pages().length,
@@ -201,12 +203,16 @@ function decodeClientFrames(buf, onMessage) {
         let m; try { m = JSON.parse(msg); } catch { return; }
         // round-138: 单一分发——旧代码 handleInput 之后又手动重复一遍
         // nav/m/k 的 CDP 注入(点击等于按两次);现在统一走 handleInput。
+        lastCmd = JSON.stringify(m).slice(0, 120);
         let out;
-        try { out = await handleInput(m); } catch (e) { /* transient races are fine */ }
+        try { out = await handleInput(m); } catch (e) { lastErr = String(e && e.message || e).slice(0, 120); }
         // round-137 方案 C: 带 id 的请求回执(tabs/diag 等查询的关联键),
         // 面板不再需要旁路轮询就能拿到结构化应答。
+        // round-138: payload 必须是 Buffer——直接传字符串会让 encodeFrame 的
+        // Buffer.concat 抛 ERR_INVALID_ARG_TYPE,被 try/catch 静默吞掉,
+        // 回执永远发不出(d1 直连实测踩坑)。
         if (typeof m.id !== 'undefined' && sock.writable) {
-          try { sock.write(encodeFrame(1, JSON.stringify(Object.assign({ id: m.id }, out || {})))); } catch {}
+          try { sock.write(encodeFrame(1, Buffer.from(JSON.stringify(Object.assign({ id: m.id }, out || {}))))); } catch {}
         }
       });
     });
