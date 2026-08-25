@@ -23,6 +23,7 @@
     <div id="activitybar">
       <button class="act-btn active" data-view="explorer" title="资源管理器 (文件树)">📄</button>
       <button class="act-btn" data-view="search" title="全局搜索 (Ctrl+Shift+F)">🔍</button>
+      <button class="act-btn" data-view="git" title="源代码管理 (git 变更)">⑂<span id="act-git-badge" class="act-badge" hidden></span></button>
       <button class="act-btn" data-view="settings" title="设置">⚙</button>
     </div>
 
@@ -48,6 +49,17 @@
           <label class="chk"><input type="checkbox" id="search-case"> Aa 区分大小写</label>
         </div>
         <div id="search-results" class="search-results"></div>
+      </div>
+      <!-- git view -->
+      <div id="view-git" class="side-view" hidden>
+        <div class="side-head">
+          <span>源代码管理</span>
+          <span class="head-actions">
+            <button id="btn-git-refresh" class="icon-btn" title="刷新 git 状态">⟳</button>
+          </span>
+        </div>
+        <div id="git-branch" class="git-branch"></div>
+        <div id="git-changes" class="git-changes"></div>
       </div>
       <!-- settings view -->
       <div id="view-settings" class="side-view" hidden>

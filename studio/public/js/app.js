@@ -127,6 +127,7 @@
     updateGitInfo();
     fileCache = null; // bust quick-open cache
     $("#sb-root").textContent = currentRoot();
+    VS.git.refresh(); // badges + SCM view follow the selected root
   });
 
   // Re-pull /api/boot so branch/dirty counts reflect reality; keeps the
@@ -153,6 +154,7 @@
       const view = btn.dataset.view;
       for (const v of document.querySelectorAll(".side-view")) v.hidden = v.id !== "view-" + view;
       if (view === "search") $("#search-input").focus();
+      if (view === "git") VS.git.refresh();
     });
   });
   function switchView(name) {
@@ -337,6 +339,116 @@
   };
   document.addEventListener("click", hideMenu);
 
+  // ── git integration ────────────────────────────────────────────────────────
+  // Parses `git status --porcelain -b` once per root, then feeds three UIs:
+  // the source-control sidebar, file-tree badges, and the activity-bar dot.
+  const gitState = { top: null, branch: "", changes: new Map() }; // abspath -> code
+  let gitSeq = 0;
+
+  function unquoteGitPath(p) {
+    if (p.startsWith('"') && p.endsWith('"')) {
+      try { return JSON.parse(p); } catch { return p.slice(1, -1); }
+    }
+    return p;
+  }
+
+  function parseStatus(text, top) {
+    const changes = new Map();
+    let branch = "";
+    for (const raw of String(text || "").split("\n")) {
+      const line = raw.replace(/\r$/, "");
+      if (!line) continue;
+      if (line.startsWith("## ")) {
+        branch = line.slice(3).split("...")[0].replace(/\s+\[.*$/, "").trim();
+        continue;
+      }
+      if (line.length < 4) continue;
+      const x = line[0];
+      const y = line[1];
+      let rel = line.slice(3);
+      const arrow = rel.indexOf(" -> ");
+      if (arrow >= 0) rel = rel.slice(arrow + 4); // renames point at the new path
+      rel = unquoteGitPath(rel);
+      const code = x === "?" ? "?" : x !== " " ? x : y;
+      changes.set(top.replace(/\/$/, "") + "/" + rel, code);
+    }
+    return { branch, changes };
+  }
+
+  async function gitRefresh() {
+    const seq = ++gitSeq;
+    const root = currentRoot();
+    let ok = false;
+    try {
+      const data = await VS.api(`/api/git/status?p=${encodeURIComponent(root)}`);
+      if (seq !== gitSeq) return;
+      const parsed = parseStatus(data.status, data.top);
+      gitState.top = data.top;
+      gitState.branch = parsed.branch;
+      gitState.changes = parsed.changes;
+      ok = true;
+    } catch (e) { /* not a repo — fall through to empty state */ }
+    if (seq !== gitSeq) return;
+    if (!ok) {
+      gitState.top = null; gitState.branch = ""; gitState.changes = new Map();
+    }
+    paintGitView(ok);
+    if (VS.tree.applyBadges) VS.tree.applyBadges();
+    const badge = $("#act-git-badge");
+    const n = gitState.changes.size;
+    badge.hidden = n === 0;
+    badge.textContent = n > 99 ? "99+" : String(n);
+  }
+
+  function paintGitView(hasRepo) {
+    const head = $("#git-branch");
+    const list = $("#git-changes");
+    list.innerHTML = "";
+    if (!hasRepo) {
+      head.textContent = "";
+      list.innerHTML = '<div class="tree-empty">当前根目录不在 git 仓库内</div>';
+      return;
+    }
+    head.textContent = `⑂ ${gitState.branch || "HEAD"} · ${gitState.changes.size} 个变更`;
+    if (!gitState.changes.size) {
+      list.innerHTML = '<div class="tree-empty">工作区干净 ✓</div>';
+      return;
+    }
+    const rel = (p) => (gitState.top && p.startsWith(gitState.top + "/"))
+      ? p.slice(gitState.top.length + 1) : p;
+    for (const [p, code] of gitState.changes) {
+      const b = document.createElement("button");
+      b.className = "git-change";
+      const badge = document.createElement("span");
+      badge.className = "git-badge";
+      badge.dataset.code = code;
+      badge.textContent = code === "?" ? "U" : code;
+      const path = document.createElement("span");
+      path.className = "gc-path";
+      path.textContent = rel(p);
+      path.title = p;
+      b.append(badge, path);
+      b.addEventListener("click", () => VS.editor.openFile(p));
+      list.append(b);
+    }
+  }
+
+  $("#btn-git-refresh").addEventListener("click", () => gitRefresh());
+  let gitDebounce = null;
+  window.addEventListener("vs-saved", () => {
+    clearTimeout(gitDebounce);
+    gitDebounce = setTimeout(() => { gitRefresh(); }, 600); // settle bursts of saves
+  });
+
+  // expose for editor.js gutter + tree badges
+  VS.git = {
+    refresh: gitRefresh,
+    badge: (p) => gitState.changes.get(p) || null,
+    get changes() { return gitState.changes; },
+    get top() { return gitState.top; },
+    get branch() { return gitState.branch; },
+  };
+
   // ── watch WS ───────────────────────────────────────────────────────────────
   // Targeted watching: tell the server which files are open; it watches only
   // those directories and pushes external-change events back.
@@ -372,6 +484,7 @@
     VS.editor.init();
     VS.tree.loadRoot(currentRoot());
     connectWatch();
+    gitRefresh();
     handleHash(); // honor deep link on first paint
   }
 
@@ -385,7 +498,7 @@
 
   // refresh git info when switching back to the tab (cheap heuristic)
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && boot) refreshRoots();
+    if (!document.hidden && boot) { refreshRoots(); VS.git.refresh(); }
   });
 
   // guard against losing unsaved buffers to an accidental reload/close

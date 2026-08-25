@@ -182,6 +182,7 @@ VS.editor = (() => {
       previewImg.src = tab.dataUrl;
       previewImg.alt = tab.path;
       previewHost.style.visibility = "";
+      clearDiff();
       updateStatusbar(tab);
       renderTabs();
       return;
@@ -196,6 +197,7 @@ VS.editor = (() => {
     ed.focus();
     renderTabs();
     updateStatusbar(tab);
+    paintDiff(tab); // refresh the change gutter for this file
   }
 
   function closeTab(tab) {
@@ -213,6 +215,7 @@ VS.editor = (() => {
         welcome.style.display = "";
         if (ed) hosts.style.visibility = "hidden";
         previewHost.style.visibility = "hidden";
+        clearDiff();
         document.getElementById("sb-lang").textContent = "";
         renderTabs();
       }
@@ -250,6 +253,11 @@ VS.editor = (() => {
   }
 
   // ── save ───────────────────────────────────────────────────────────────────
+  function emitSaved() {
+    window.dispatchEvent(new Event("vs-saved")); // git view + tree badges refresh
+    if (active && active.kind === "text") paintDiff(active); // gutter follows too
+  }
+
   async function saveTab(tab) {
     if (!tab || tab.kind !== "text") return;
     if (!tab.dirty && !tab.conflict) return;
@@ -262,6 +270,7 @@ VS.editor = (() => {
       setDirty(tab, false);
       hideConflict();
       VS.toast("已保存 " + basename(tab.path));
+      emitSaved();
     } catch (e) {
       if (e.code === "conflict") {
         tab.conflict = e.currentSha256;
@@ -282,6 +291,7 @@ VS.editor = (() => {
       setDirty(tab, false);
       hideConflict();
       VS.toast("已从磁盘重新加载");
+      emitSaved();
     } catch (e) {
       VS.toast("重载失败: " + e.message, "error");
     }
@@ -299,6 +309,7 @@ VS.editor = (() => {
       setDirty(tab, false);
       hideConflict();
       VS.toast("已强制覆盖保存");
+      emitSaved();
     } catch (e) {
       VS.toast("覆盖失败: " + e.message, "error");
     }
@@ -322,6 +333,70 @@ VS.editor = (() => {
     if (conflictTab) forceSave(conflictTab);
   });
   document.getElementById("conflict-dismiss").addEventListener("click", hideConflict);
+
+  // ── diff gutter (git changes vs HEAD) ──────────────────────────────────────
+  // Parses `git diff HEAD` hunk headers and paints add/modify bars in the
+  // gutter. Deleted lines have no on-disk line to attach to, so they surface
+  // indirectly: an addition directly after deletions is classified "mod".
+  let diffDecos = [];
+  let diffSeq = 0;
+
+  function parseHunks(diff) {
+    const out = [];
+    if (!diff) return out;
+    const lines = diff.split("\n");
+    const push = (line, type) => {
+      const last = out[out.length - 1];
+      if (last && last.type === type && line <= last.end + 1) {
+        last.end = line; // merge consecutive same-kind lines
+        return;
+      }
+      out.push({ start: line, end: line, type });
+    };
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
+      if (!m) continue;
+      let nl = Number(m[1]);
+      let pendingDel = false;
+      i++;
+      for (; i < lines.length && !lines[i].startsWith("@@"); i++) {
+        const l = lines[i];
+        if (l.startsWith("+")) { push(nl, pendingDel ? "mod" : "add"); nl++; pendingDel = false; }
+        else if (l.startsWith("-")) { pendingDel = true; }
+        else if (l.startsWith(" ") || l === "") { nl++; pendingDel = false; }
+        // "\ No newline at end of file" and anything else: ignore
+      }
+      i--;
+    }
+    return out;
+  }
+
+  async function paintDiff(tab) {
+    if (!ed || !tab || tab.kind !== "text") return;
+    const seq = ++diffSeq;
+    try {
+      const data = await VS.api(`/api/git/diff?p=${encodeURIComponent(tab.path)}`);
+      if (seq !== diffSeq || active !== tab || !ed) return;
+      const ranges = parseHunks(data.diff || "");
+      diffDecos = ed.deltaDecorations(diffDecos, ranges.map((r) => ({
+        range: { startLineNumber: r.start, endLineNumber: r.end, startColumn: 1, endColumn: 1 },
+        options: {
+          isWholeLine: true,
+          className: r.type === "add" ? "git-line-add" : "git-line-mod",
+          linesDecorationsClassName: "gbar " + (r.type === "add" ? "gbar-add" : "gbar-mod"),
+        },
+      })));
+    } catch (e) {
+      if (seq === diffSeq && active === tab && ed) {
+        diffDecos = ed.deltaDecorations(diffDecos, []); // not a repo / file untracked
+      }
+    }
+  }
+
+  function clearDiff() {
+    diffSeq++;
+    if (ed) diffDecos = ed.deltaDecorations(diffDecos, []);
+  }
 
   // ── navigation / deep links ────────────────────────────────────────────────
   function gotoPosition(tab, line, col, sel) {

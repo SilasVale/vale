@@ -94,6 +94,7 @@ VS.tree = (() => {
     if (selected === full) row.classList.add("selected");
 
     row.append(twist, ic, label);
+    paintBadge(row, full);
 
     if (entry.type === "dir") {
       const kids = document.createElement("div");
@@ -133,6 +134,28 @@ VS.tree = (() => {
     selected = path;
     el.querySelectorAll(".tree-item").forEach((n) =>
       n.classList.toggle("selected", n.dataset.path === path));
+  }
+
+  // ── git badges ─────────────────────────────────────────────────────────────
+  function paintBadge(row, full) {
+    const code = VS.git ? VS.git.badge(full) : null;
+    let span = row.querySelector(".git-badge");
+    if (!code) {
+      if (span) span.remove();
+      return;
+    }
+    if (!span) {
+      span = document.createElement("span");
+      span.className = "git-badge";
+      row.append(span);
+    }
+    span.dataset.code = code;
+    span.textContent = code === "?" ? "U" : code;
+  }
+
+  // Re-stamp badges on already-rendered rows without refetching directories.
+  function applyBadges() {
+    el.querySelectorAll(".tree-item").forEach((row) => paintBadge(row, row.dataset.path));
   }
 
   // Re-render the visible tree preserving expansion state. Parents must be
@@ -182,7 +205,7 @@ VS.tree = (() => {
     if (target) target.scrollIntoView({ block: "nearest" });
   }
 
-  return { loadRoot, refresh, reveal, select, get root() { return currentRoot; } };
+  return { loadRoot, refresh, reveal, select, applyBadges, get root() { return currentRoot; } };
 })();
 
 // toast helper lives here too
