@@ -54,6 +54,7 @@
         <div class="side-head"><span>设置</span></div>
         <div class="settings-body">
           <p>Token: <button id="btn-forget-token" class="mini-btn">清除本机 token</button></p>
+          <p>编辑器: <button id="btn-wordwrap" class="mini-btn">切换自动换行</button></p>
           <p id="settings-server"></p>
         </div>
       </div>
@@ -80,6 +81,9 @@
           </ul>
         </div>
         <div id="editor-host"></div>
+        <div id="preview-host" style="visibility:hidden">
+          <img id="preview-img" alt="">
+        </div>
         <div id="conflict-banner" hidden>
           <span id="conflict-text"></span>
           <button id="conflict-reload" class="mini-btn">从磁盘重新加载</button>

@@ -1,13 +1,23 @@
-// editor.js — Monaco lifecycle, tabs, save with optimistic locking, deep links
+// editor.js — Monaco lifecycle, tabs, save with optimistic locking, deep links.
+//
+// One SHARED Monaco instance swaps between per-file models (VS Code's own
+// shape). A monaco editor per tab cost ~10-30MB each and made switching
+// sluggish; models are cheap, editors are not. Tabs carry {model|image,
+// viewState}; activating a tab = setModel + restoreViewState.
 "use strict";
 window.VS = window.VS || {};
 
 VS.editor = (() => {
   let monacoReady = false;
   let curTheme = document.documentElement.dataset.theme === "dark" ? "vs-dark" : "vs";
-  const tabs = [];                    // {path, hostEl, ed, model, sha, dirty, viewState}
+  // text tab: {kind:"text", path, model, sha, dirty, conflict, viewState, _subs[]}
+  // image tab: {kind:"image", path, dataUrl}
+  const tabs = [];
   let active = null;
+  let ed = null; // the one shared editor
   const hosts = document.getElementById("editor-host");
+  const previewHost = document.getElementById("preview-host");
+  const previewImg = document.getElementById("preview-img");
   const tabbar = document.getElementById("tabs");
   const welcome = document.getElementById("welcome");
 
@@ -41,6 +51,7 @@ VS.editor = (() => {
     require(["vs/editor/editor.main"], () => {
       monacoReady = true;
       monaco.editor.setTheme(curTheme);
+      applyWrapPref();
       flushPending();
     });
   }
@@ -48,6 +59,42 @@ VS.editor = (() => {
   const pendingOpens = [];
   function flushPending() {
     while (pendingOpens.length) openFile(...pendingOpens.shift());
+  }
+
+  function applyWrapPref() {
+    if (!ed) return;
+    const wrap = localStorage.getItem("vs-word-wrap") === "1";
+    ed.updateOptions({ wordWrap: wrap ? "on" : "off" });
+  }
+
+  function toggleWordWrap() {
+    const cur = localStorage.getItem("vs-word-wrap") === "1";
+    localStorage.setItem("vs-word-wrap", cur ? "0" : "1");
+    applyWrapPref();
+    VS.toast(cur ? "已关闭自动换行" : "已开启自动换行");
+  }
+
+  // ── the shared editor ──────────────────────────────────────────────────────
+  function ensureEditor(model) {
+    if (ed) {
+      hosts.style.visibility = "";
+      return ed;
+    }
+    ed = monaco.editor.create(hosts, {
+      model,
+      theme: curTheme,
+      automaticLayout: true,
+      minimap: { enabled: true },
+      fontSize: 13,
+      fontFamily: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
+      renderWhitespace: "selection",
+      scrollBeyondLastLine: false,
+      tabSize: 2,
+      stickyScroll: { enabled: false },
+    });
+    ed.onDidChangeCursorPosition((e) => updatePos(e.position));
+    applyWrapPref();
+    return ed;
   }
 
   // ── model cache ────────────────────────────────────────────────────────────
@@ -79,7 +126,7 @@ VS.editor = (() => {
       activate(existing);
       VS.tree.select(path);
       VS.tree.reveal(path).catch(() => {});
-      if (opts.line != null) gotoPosition(existing, opts.line, opts.col || 1, opts.sel);
+      if (opts.line != null && existing.kind === "text") gotoPosition(existing, opts.line, opts.col || 1, opts.sel);
       return Promise.resolve(existing);
     }
     let p = opening.get(path);
@@ -98,87 +145,76 @@ VS.editor = (() => {
       VS.toast(e.message, "error");
       return;
     }
+    let tab;
     if (loaded.kind === "image") {
-      VS.toast("图片文件在新窗口预览：" + path);
-      window.open(loaded.data.dataUrl, "_blank");
-      return;
+      tab = { kind: "image", path, dataUrl: loaded.data.dataUrl };
+    } else {
+      const subs = [];
+      subs.push(loaded.model.onDidChangeContent(() => setDirty(tab, true)));
+      tab = {
+        kind: "text",
+        path,
+        model: loaded.model,
+        sha: loaded.sha,
+        dirty: false,
+        conflict: null,
+        viewState: null,
+        _subs: subs,
+      };
     }
-    const hostWrap = document.createElement("div");
-    hostWrap.className = "monaco-host-tab";
-    const hostInner = document.createElement("div");
-    hostInner.style.cssText = "position:absolute;inset:0";
-    hostWrap.append(hostInner);
-    hosts.append(hostWrap);
-    hostWrap.classList.add("active"); // measure BEFORE creating the editor
-    const ed = monaco.editor.create(hostInner, {
-      model: loaded.model,
-      theme: curTheme, // NEVER hardcode: passing "vs-dark" flips the global theme service
-      automaticLayout: true,
-      minimap: { enabled: true },
-      fontSize: 13,
-      fontFamily: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
-      renderWhitespace: "selection",
-      scrollBeyondLastLine: false,
-      tabSize: 2,
-      stickyScroll: { enabled: false },
-    });
-    requestAnimationFrame(() => ed.layout());
-    const tab = {
-      path,
-      hostWrap,
-      ed,
-      model: loaded.model,
-      sha: loaded.sha,
-      dirty: false,
-      conflict: null,
-      viewState: null,
-      _disposables: [],
-    };
-    tab._disposables.push(
-      loaded.model.onDidChangeContent(() => setDirty(tab, true)),
-      ed.onDidChangeCursorPosition((e) => updatePos(e.position)),
-    );
     tabs.push(tab);
     notifyOpenChanged();
     welcome.style.display = "none";
     activate(tab);
     VS.tree.select(path);
     VS.tree.reveal(path).catch(() => {});
-    if (opts.line != null) gotoPosition(tab, opts.line, opts.col || 1, opts.sel);
+    if (opts.line != null && tab.kind === "text") gotoPosition(tab, opts.line, opts.col || 1, opts.sel);
     return tab;
   }
 
   function activate(tab) {
-    if (active && active !== tab) {
-      active.viewState = active.ed.saveViewState();
-      active.hostWrap.classList.remove("active");
+    if (active && active !== tab && active.kind === "text") {
+      active.viewState = ed.saveViewState();
     }
     active = tab;
-    tab.hostWrap.classList.add("active");
+    if (tab.kind === "image") {
+      if (ed) hosts.style.visibility = "hidden";
+      previewImg.src = tab.dataUrl;
+      previewImg.alt = tab.path;
+      previewHost.style.visibility = "";
+      updateStatusbar(tab);
+      renderTabs();
+      return;
+    }
+    previewHost.style.visibility = "hidden";
+    ensureEditor(tab.model).setModel(tab.model);
+    if (tab.viewState) ed.restoreViewState(tab.viewState);
     welcome.style.display = "none";
-    // re-measure in case the window resized while this tab was hidden
-    requestAnimationFrame(() => tab.ed.layout());
-    const pos = tab.ed.getPosition();
+    requestAnimationFrame(() => ed.layout());
+    const pos = ed.getPosition();
     if (pos) updatePos(pos); // status bar must reflect THIS tab, not the previous one
-    tab.ed.focus();
+    ed.focus();
     renderTabs();
     updateStatusbar(tab);
   }
 
   function closeTab(tab) {
-    if (tab.dirty && !confirm(`${basename(tab.path)} 有未保存修改，确定关闭？`)) return;
-    tab._disposables.forEach((d) => d.dispose());
-    tab.ed.dispose();
-    tab.model.dispose();
-    tab.hostWrap.remove();
+    if (tab.kind === "text" && tab.dirty && !confirm(`${basename(tab.path)} 有未保存修改，确定关闭？`)) return;
+    if (tab.kind === "text") {
+      tab._subs.forEach((d) => d.dispose());
+      tab.model.dispose();
+    }
     tabs.splice(tabs.indexOf(tab), 1);
     if (active === tab) {
-      active = tabs[tabs.length - 1] || null;
-      if (active) {
-        active.hostWrap.classList.add("active");
-        active.ed.restoreViewState(active.viewState || {});
-      } else {
+      active = null;
+      const next = tabs[tabs.length - 1] || null;
+      if (next) activate(next);
+      else {
         welcome.style.display = "";
+        if (ed) hosts.style.visibility = "hidden";
+        previewHost.style.visibility = "hidden";
+        document.getElementById("sb-lang").textContent = "";
+        renderTabs();
       }
     }
     renderTabs();
@@ -199,6 +235,10 @@ VS.editor = (() => {
       close.addEventListener("click", (e) => { e.stopPropagation(); closeTab(t); });
       el.append(name, close);
       el.addEventListener("click", () => activate(t));
+      // middle-click closes, like every real editor
+      el.addEventListener("auxclick", (e) => {
+        if (e.button === 1) { e.preventDefault(); closeTab(t); }
+      });
       tabbar.append(el);
     }
   }
@@ -211,6 +251,7 @@ VS.editor = (() => {
 
   // ── save ───────────────────────────────────────────────────────────────────
   async function saveTab(tab) {
+    if (!tab || tab.kind !== "text") return;
     if (!tab.dirty && !tab.conflict) return;
     try {
       const result = await VS.api("/api/file", {
@@ -232,6 +273,7 @@ VS.editor = (() => {
   }
 
   async function reloadFromDisk(tab) {
+    if (!tab || tab.kind !== "text") return;
     try {
       const data = await VS.api(`/api/file?p=${encodeURIComponent(tab.path)}`);
       tab.model.setValue(data.content);
@@ -246,6 +288,7 @@ VS.editor = (() => {
   }
 
   async function forceSave(tab) {
+    if (!tab || tab.kind !== "text") return;
     try {
       const result = await VS.api("/api/file", {
         method: "PUT",
@@ -282,19 +325,20 @@ VS.editor = (() => {
 
   // ── navigation / deep links ────────────────────────────────────────────────
   function gotoPosition(tab, line, col, sel) {
-    tab.ed.revealLineInCenter(line);
+    if (tab !== active || tab.kind !== "text") activate(tab);
+    ed.revealLineInCenter(line);
     const pos = { lineNumber: Math.min(line, tab.model.getLineCount()), column: Math.max(1, col || 1) };
-    tab.ed.setPosition(pos);
-    tab.ed.focus();
+    ed.setPosition(pos);
+    ed.focus();
     // flash highlight
     const range = sel
       ? parseSel(sel)
       : { startLineNumber: pos.lineNumber, endLineNumber: pos.lineNumber, startColumn: 1, endColumn: Math.max(1, tab.model.getLineMaxColumn(pos.lineNumber)) };
-    const dec = tab.ed.deltaDecorations([], [{
+    const dec = ed.deltaDecorations([], [{
       range,
       options: { className: "vs-flash", isWholeLine: !sel, stickiness: 1 },
     }]);
-    setTimeout(() => tab.ed.deltaDecorations(dec, []), 1600);
+    setTimeout(() => ed.deltaDecorations(dec, []), 1600);
     updatePos(pos);
   }
 
@@ -312,14 +356,16 @@ VS.editor = (() => {
 
   // keep the status-bar language slot in sync with the active tab
   function updateStatusbar(tab) {
-    if (tab !== active) return;
     const el = document.getElementById("sb-lang");
-    if (el) el.textContent = langOf(tab.path) === "plaintext" ? "" : langOf(tab.path);
+    if (!el) return;
+    if (!tab || tab.kind !== "text") { el.textContent = tab ? "图片预览" : ""; return; }
+    const l = langOf(tab.path);
+    el.textContent = l === "plaintext" ? "" : l;
   }
 
   // ── external change handling (from watch WS) ───────────────────────────────
   function externalChange(path) {
-    const tab = tabs.find((t) => t.path === path);
+    const tab = tabs.find((t) => t.path === path && t.kind === "text");
     if (!tab) return;
     if (!tab.dirty) {
       reloadFromDisk(tab); // silently refresh clean editors
@@ -344,7 +390,7 @@ VS.editor = (() => {
   });
 
   function openPaths() {
-    return tabs.map((t) => t.path);
+    return tabs.filter((t) => t.kind === "text").map((t) => t.path);
   }
   function notifyOpenChanged() {
     window.dispatchEvent(new Event("vs-open-changed"));
@@ -357,7 +403,7 @@ VS.editor = (() => {
 
   return {
     init, openFile, saveTab, reloadFromDisk, externalChange, gotoPosition,
-    openPaths, notifyOpenChanged, setTheme,
+    openPaths, notifyOpenChanged, setTheme, toggleWordWrap,
     get active() { return active; }, get tabs() { return tabs; },
   };
 })();

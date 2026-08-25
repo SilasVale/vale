@@ -51,6 +51,8 @@
     VS.toast("已清除本机令牌");
   });
 
+  $("#btn-wordwrap").addEventListener("click", () => VS.editor.toggleWordWrap());
+
   // ── theme toggle ───────────────────────────────────────────────────────────
   const themeBtn = $("#btn-theme");
   function paintThemeBtn() {

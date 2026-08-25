@@ -145,6 +145,14 @@ button, .tree-item, .tab, .term-tab { transition: background-color 0.12s ease, c
 .monaco-host-tab { position: absolute; inset: 0; display: none; }
 .monaco-host-tab.active { display: block; }
 
+/* inline image preview tab */
+#preview-host { position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; overflow: auto; padding: 28px;
+  background-image: conic-gradient(var(--hover) 0 25%, transparent 0 50%, var(--hover) 0 75%, transparent 0);
+  background-size: 22px 22px; }
+#preview-img { max-width: min(100%, 900px); max-height: 100%; border-radius: 8px;
+  box-shadow: var(--shadow); background: #fff; }
+
 #conflict-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   background: var(--warn-bg); border: 1px solid var(--warn); color: var(--ink); border-radius: 10px;
   padding: 8px 14px; display: flex; gap: 10px; align-items: center; z-index: 30; font-size: 12.5px;
