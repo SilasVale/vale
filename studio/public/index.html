@@ -7,7 +7,7 @@
 <title>Vale Studio · Workspace Editor</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230b7a6e'/%3E%3Ctext x='50' y='68' font-size='55' text-anchor='middle' fill='white' font-family='monospace'%3EV%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="/vendor/xterm/xterm.css">
-<link rel="stylesheet" href="/style.css?v=11">
+<link rel="stylesheet" href="/style.css?v=12">
 </head>
 <body>
 <div id="app">
@@ -85,10 +85,11 @@
           <h1>Vale Studio</h1>
           <p>saisi.online 工作区代码编辑器 · 连接真实文件</p>
           <ul>
-            <li><b>左侧</b> 打开文件树浏览</li>
-            <li><b>Ctrl+P</b> 快速打开文件</li>
-            <li><b>Ctrl+S</b> 保存到磁盘</li>
-            <li><b>Ctrl+`</b> 集成终端</li>
+            <li><b>Ctrl+P</b> 快速打开（<b>name:42</b> 直达行号）</li>
+            <li><b>Ctrl+S</b> 保存到磁盘（乐观锁保护）</li>
+            <li><b>Ctrl+Shift+F</b> 全局搜索 · 输入即搜</li>
+            <li><b>Ctrl+B</b> 侧栏 · <b>Ctrl+J / Ctrl+`</b> 终端</li>
+            <li><b>⑂ 源代码管理</b> 查看 git 变更，行内 gutter 标注增改</li>
             <li>从 DSH 聊天里的文件路径可以直接点过来</li>
           </ul>
         </div>
@@ -152,10 +153,10 @@
 <script src="/vendor/xterm/addon-fit.js"></script>
 <script src="/vendor/xterm/addon-web-links.js"></script>
 <script src="/vendor/monaco/vs/loader.js"></script>
-<script src="/js/api.js?v=11"></script>
-<script src="/js/tree.js?v=11"></script>
-<script src="/js/editor.js?v=11"></script>
-<script src="/js/terminal.js?v=11"></script>
-<script src="/js/app.js?v=11"></script>
+<script src="/js/api.js?v=12"></script>
+<script src="/js/tree.js?v=12"></script>
+<script src="/js/editor.js?v=12"></script>
+<script src="/js/terminal.js?v=12"></script>
+<script src="/js/app.js?v=12"></script>
 </body>
 </html>
