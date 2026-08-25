@@ -201,10 +201,11 @@ impl PlaywrightManager {
         let mut child = tokio::process::Command::new(&node)
             .arg(&entry)
             .arg("--port").arg(port.to_string())
-            // round-131: playwright-mcp 的 Host 比较是 RAW 串含端口 —
-            // 非默认端口 9229 上必须写 "127.0.0.1:9229"(写 "127.0.0.1"
-            // 永不匹配,所有请求 403,start 永远失败)。含 localhost 同义。
-            .arg("--allowed-hosts").arg("127.0.0.1:9229,localhost:9229")
+            // round-142: 与可工作的 ValePlaywright 计划任务命令行对齐——
+            // 此前 agent 托管路径少了 --headless,SYSTEM 会话 0 里 headed
+            // chromium 起不来,健康检查必然超时(一直被外部实例的
+            // already_running 短路掩盖);--allowed-hosts 重复传参也去掉。
+            .arg("--headless")
             // Edge 151+ 在 session 0(SYSTEM 服务)下启动即崩(exitCode 1002,
             // 连 --headless --dump-dom 都复现)——改用 Playwright 自带 chromium
             // (setup.ps1 Phase 3 / install-browser 落到 %LOCALAPPDATA%\ms-playwright)。

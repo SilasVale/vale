@@ -188,6 +188,37 @@ fn main() {
         }
     }
 
+    // round-142 unified process model — the Cloudflare tunnel joins the
+    // agent too: spawn-if-absent from the install dir (cloudflared.exe +
+    // tunnel.yml). While the legacy `cloudflared` Windows service is still
+    // installed/running it is detected and left alone ("already running");
+    // once the operator disables the service, THIS path becomes the only
+    // tunnel owner and its lifecycle is the agent's. Zero-downtime handover:
+    // stage the two files, disable the service autostart — the next agent
+    // boot takes over.
+    #[cfg(windows)]
+    {
+        let cf_running = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq cloudflared.exe"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("cloudflared"))
+            .unwrap_or(false);
+        let install_dir = std::env::current_exe().ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
+        let cf = install_dir.join("cloudflared.exe");
+        let cfg = install_dir.join("tunnel.yml");
+        if cf_running {
+            log_line("cloudflared tunnel: already running (external service)");
+        } else if cf.exists() && cfg.exists() {
+            let _ = std::process::Command::new(&cf)
+                .args(["tunnel", "--config"]).arg(&cfg).arg("run")
+                .spawn();
+            log_line("cloudflared tunnel: launched from install dir");
+        } else {
+            log_line("cloudflared tunnel: not staged (cloudflared.exe/tunnel.yml missing) — skipped");
+        }
+    }
+
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(run_server(config_path));
 }
@@ -430,6 +461,22 @@ async fn run_server(config_path: PathBuf) {
     // persists to it (a hardcoded exe_dir/config.yaml silently reverted on
     // restart for dev/custom invocations).
     *state.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(config_path.clone());
+
+    // round-142 unified process model — the agent OWNS its browser stack:
+    // auto-start playwright-mcp at boot. The kill-on-close reaper ties the
+    // child to this process (an update restarts both), so no scheduled task
+    // and no orphaned instance can drift out of sync anymore. Non-fatal:
+    // failure just leaves the Plugins page Start button as manual recovery;
+    // an already-healthy EXTERNAL instance is reused during migration.
+    {
+        let pw = state.playwright.clone();
+        tokio::spawn(async move {
+            match pw.start().await {
+                Ok(v) => tracing::info!("playwright auto-start: {}", v),
+                Err(e) => tracing::warn!("playwright auto-start failed: {e}"),
+            }
+        });
+    }
 
     out!();
     out!("  MCP server running on http://{host}:{port}/mcp");
