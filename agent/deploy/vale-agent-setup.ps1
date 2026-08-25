@@ -20,6 +20,10 @@ param(
     [string]$Base = "https://agent.saisi.online", # download Worker; binaries remain under /vale-agent/
     [string]$AgentDomain = "agent.saisi.online",
     [string]$ConsoleUrl = "https://ai.saisi.online",
+    # Machine API base: the console worker also serves /api on api.saisi.online,
+    # which is NOT behind Cloudflare Access (browser SSO would kill these
+    # non-interactive calls). Keep human console URL separate from this.
+    [string]$ApiBase     = "https://api.saisi.online",
     [switch]$SkipDownload   # set when the NSIS installer bundles the exe
 )
 
@@ -262,7 +266,7 @@ if (-not $apiToken) {
     }
     if ($regKey) {
         try {
-            $resp = Invoke-RestMethod -Uri "$ConsoleUrl/api/install/tunnel-token" `
+            $resp = Invoke-RestMethod -Uri "$ApiBase/api/install/tunnel-token" `
                 -Method Post -ContentType "application/json" `
                 -Body (@{ key = $regKey } | ConvertTo-Json)
             if ($resp.apiToken) {
@@ -573,7 +577,7 @@ if ($env:VALE_REG_KEY) {
     $regName = ($Hostname -split '\.')[0]
     $regBody = @{ key = $env:VALE_REG_KEY; name = $regName; hostname = $Hostname; token = $tokenVal } | ConvertTo-Json
     try {
-        Invoke-RestMethod -Uri "$ConsoleUrl/api/register" -Method Post `
+        Invoke-RestMethod -Uri "$ApiBase/api/register" -Method Post `
             -ContentType "application/json" -Body $regBody | Out-Null
         Write-Host "  registered $regName -> console (hostname/token auto-configured)."
     } catch {
