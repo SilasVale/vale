@@ -22,58 +22,73 @@ import { SettingsModal } from "./components/SettingsModal";
 const LS_HOST = "valeHost";
 const LS_TOKEN = "valeToken";
 
-export function App() {
-  const [host, setHost] = useState(() => localStorage.getItem(LS_HOST) || "");
-  const [token, setToken] = useState(() => localStorage.getItem(LS_TOKEN) || "");
-  // Boot transport (round-83): migrate the vanilla loadConfig bootstrap —
-  // same-origin (/panel) + proxy (/api/devices/<n>/proxy/panel) modes, token
-  // precedence (injected > URL ?token= > stored), and ?token= scrub from the
-  // address bar. The old code read localStorage only, so a reload or a proxy
-  // visit (extension Terminal button) showed a permanently empty panel.
-  const [connError, setConnError] = useState("");
-  const [connected, setConnected] = useState(() => {
-    const sameOrigin = location.pathname.startsWith("/panel") || /\/proxy\/panel/.test(location.pathname);
-    if (sameOrigin) {
-      const isProxy = /\/proxy\/panel/.test(location.pathname);
-      const urlToken = new URLSearchParams(location.search).get("token") || "";
-      const injected = (isProxy ? "" : (window as any).__PANEL_TOKEN__) || "";
-      const stored = localStorage.getItem(LS_TOKEN) || "";
-      const host = location.host;
-      const tok = isProxy ? (urlToken || "") : (injected || urlToken || stored);
-      localStorage.setItem(LS_HOST, host);
-      // round-122/124: in PROXY mode do NOT persist the token to
-      // localStorage — the vale_pt cookie is the real credential there, and
-      // persisting the plugin token made a plaintext 30-day device-control
-      // credential readable by any script on the console origin. Also
-      // DELETE any stale pre-R122 value: the proxy's Bearer would win over
-      // the valid cookie and a rotated leftover token would 401 the SSE
-      // stream into a permanent reconnect loop. Same-origin (LAN) mode
-      // keeps the stored-token flow.
-      if (isProxy) {
-        localStorage.removeItem(LS_TOKEN);
-      } else if (tok) {
-        localStorage.setItem(LS_TOKEN, tok);
-      }
-      // round-86: a same-origin visit with NO token (LAN IP / non-allowlisted
-      // host, empty storage) must show the conn form — the old code booted
-      // connected=true with a placeholder token, silently dead (every call
-      // 401'd into a noop, form unreachable). Proxy-mode cookie boot (no
-      // token) stays connected — the cookie is the credential there.
-      if (!tok && !isProxy) return false;
-      initTransport(host, tok || " ", () => { authFailed.current = true; });
-      if (urlToken) { try { history.replaceState(null, "", location.pathname); } catch {} }
-      return true;
+/** Resolved bootstrap values shared by every App state initializer. */
+interface Boot {
+  host: string;
+  tok: string;
+  connected: boolean;
+}
+
+// round-139 FIX: ONE bootstrap pass feeds host/token/connected alike. The old
+// code resolved token precedence (injected > URL ?token= > stored) inside the
+// `connected` initializer and gave it ONLY to initTransport — React's `token`
+// state stayed "" whenever localStorage was empty at first paint. Terminal/
+// SSE kept working (transport had the real token) but BrowserPane builds its
+// own Bearer from the `token` PROP, so a first visit via ?token= (fresh
+// browser, or console-proxy visits which delete valeToken per round-122/124)
+// 401'd every /api/browser/* call: blank viewport, 0fps, no tabs, red
+// 认证失败 — fixed by one manual reload. Now the same resolved value seeds
+// both the transport and React state.
+function computeBoot(onAuthFail: () => void): Boot {
+  const sameOrigin = location.pathname.startsWith("/panel") || /\/proxy\/panel/.test(location.pathname);
+  if (sameOrigin) {
+    const isProxy = /\/proxy\/panel/.test(location.pathname);
+    const urlToken = new URLSearchParams(location.search).get("token") || "";
+    const injected = (isProxy ? "" : (window as any).__PANEL_TOKEN__) || "";
+    const stored = localStorage.getItem(LS_TOKEN) || "";
+    const host = location.host;
+    const tok = isProxy ? (urlToken || "") : (injected || urlToken || stored);
+    localStorage.setItem(LS_HOST, host);
+    // round-122/124: in PROXY mode do NOT persist the token to
+    // localStorage — the vale_pt cookie is the real credential there, and
+    // persisting the plugin token made a plaintext 30-day device-control
+    // credential readable by any script on the console origin. Also
+    // DELETE any stale pre-R122 value: the proxy's Bearer would win over
+    // the valid cookie and a rotated leftover token would 401 the SSE
+    // stream into a permanent reconnect loop. Same-origin (LAN) mode
+    // keeps the stored-token flow.
+    if (isProxy) {
+      localStorage.removeItem(LS_TOKEN);
+    } else if (tok) {
+      localStorage.setItem(LS_TOKEN, tok);
     }
-    const h = localStorage.getItem(LS_HOST);
-    const t = localStorage.getItem(LS_TOKEN);
-    if (h && t) initTransport(h, t, () => { authFailed.current = true; });
-    return !!(h && t);
-  });
+    // round-86: a same-origin visit with NO token (LAN IP / non-allowlisted
+    // host, empty storage) must show the conn form — the old code booted
+    // connected=true with a placeholder token, silently dead (every call
+    // 401'd into a noop, form unreachable). Proxy-mode cookie boot (no
+    // token) stays connected — the cookie is the credential there.
+    if (!tok && !isProxy) return { host, tok: stored, connected: false };
+    initTransport(host, tok || " ", onAuthFail);
+    if (urlToken) { try { history.replaceState(null, "", location.pathname); } catch {} }
+    return { host, tok, connected: true };
+  }
+  const h = localStorage.getItem(LS_HOST);
+  const t = localStorage.getItem(LS_TOKEN);
+  if (h && t) initTransport(h, t, onAuthFail);
+  return { host: h || "", tok: t || "", connected: !!(h && t) };
+}
+
+export function App() {
+  const authFailed = useRef(false);
+  const boot = useMemo(() => computeBoot(() => { authFailed.current = true; }), []);
+  const [host, setHost] = useState(boot.host);
+  const [token, setToken] = useState(boot.tok);
+  const [connError, setConnError] = useState("");
+  const [connected, setConnected] = useState(boot.connected);
   // round-88: a stored token that expires/rotates 401'd into a noop — the
   // panel stayed 'connected' with everything dead and the conn form
   // unreachable. The 401 callback sets this flag; a render effect drops the
   // session back to the conn form.
-  const authFailed = useRef(false);
   if (authFailed.current) {
     authFailed.current = false;
     setConnected(false);
