@@ -290,18 +290,53 @@ route("PUT", "/api/file", async (req) => {
   return result;
 });
 
+// Atomic rename/move INSIDE one workspace root. Target must not exist.
+route("POST", "/api/rename", async (req) => {
+  assertWritable();
+  const body = await readJson(req);
+  if (typeof body.from !== "string" || typeof body.to !== "string") {
+    throw new ApiError(400, "bad_path", "from/to required");
+  }
+  const from = safeResolve(body.from, ROOTS);
+  const to = safeResolve(body.to, ROOTS, { mustExist: false });
+  const rootOf = (p) =>
+    ROOTS.map((r) => fs.realpathSync(r)).find((r) => p.startsWith(r.endsWith("/") ? r : r + "/"));
+  const root = rootOf(from);
+  if (!root || !to.startsWith(root.endsWith("/") ? root : root + "/")) {
+    throw new ApiError(403, "outside_roots", "rename must stay inside one root");
+  }
+  let exists = false;
+  try {
+    await fsp.stat(to);
+    exists = true;
+  } catch {}
+  if (exists) throw new ApiError(409, "exists", "target already exists");
+  try {
+    await fsp.rename(from, to);
+  } catch (e) {
+    throw new ApiError(500, "rename_failed", `rename failed: ${e.code}`);
+  }
+  watchers.broadcast(from, "delete");
+  watchers.broadcast(to, "create");
+  return { ok: true };
+});
+
 route("POST", "/api/mkdir", async (req) => {
   assertWritable();
   const body = await readJson(req);
   const p = safeResolve(body.p, ROOTS, { mustExist: false });
-  return makeDir(p);
+  const out = await makeDir(p);
+  watchers.broadcast(p, "create");
+  return out;
 });
 
 route("DELETE", "/api/file", async (req, url) => {
   assertWritable();
   const p = safeResolve(url.searchParams.get("p"), ROOTS);
   const root = ROOTS.map((r) => fs.realpathSync(r)).find((r) => p.startsWith(r.endsWith("/") ? r : r + "/"));
-  return trashFile(p, root || ROOTS[0]);
+  const out = await trashFile(p, root || ROOTS[0]);
+  watchers.broadcast(p, "delete");
+  return out;
 });
 
 route("GET", "/api/search", async (req, url) => {

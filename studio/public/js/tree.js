@@ -19,6 +19,81 @@ VS.tree = (() => {
     return FILE_ICONS[name.slice(name.lastIndexOf(".")).toLowerCase()] || "📄";
   }
 
+  // ── mutations (context-menu actions) ───────────────────────────────────────
+  let mutDebounce = null;
+  function afterMutation() {
+    clearTimeout(mutDebounce);
+    mutDebounce = setTimeout(() => { if (VS.git) VS.git.refresh(); }, 500);
+  }
+
+  // Re-render one directory's children in place — keeps scroll position and
+  // the rest of the tree untouched.
+  async function refreshDir(dir) {
+    if (!currentRoot || !dir) return;
+    if (dir === currentRoot) return refresh();
+    const nodes = rowFor(dir);
+    if (!nodes || nodes.kids.hidden) return; // collapsed or not rendered
+    nodes.kids.dataset.loaded = "1";
+    await renderDir(dir, nodes.kids);
+  }
+
+  function parentOf(p) {
+    return p.slice(0, p.replace(/\/$/, "").lastIndexOf("/")) || "/";
+  }
+
+  async function removePath(p) {
+    if (!confirm("把 " + p + " 移入回收站？")) return;
+    try {
+      await VS.api(`/api/file?p=${encodeURIComponent(p)}`, { method: "DELETE" });
+      await refreshDir(parentOf(p));
+      afterMutation();
+    } catch (e) {
+      VS.toast(e.message, "error");
+    }
+  }
+
+  async function renamePath(p) {
+    const oldName = p.replace(/\/$/, "").slice(p.replace(/\/$/, "").lastIndexOf("/") + 1);
+    const newName = prompt("重命名为:", oldName);
+    if (!newName || newName === oldName) return;
+    const base = p.replace(/\/$/, "");
+    const np = base.slice(0, base.lastIndexOf("/") + 1) + newName.replace(/^\/+/, "");
+    try {
+      await VS.api("/api/rename", { method: "POST", body: { from: base, to: np } });
+      await refreshDir(parentOf(base));
+      afterMutation();
+    } catch (e) {
+      VS.toast(e.code === "exists" ? "目标已存在" : e.message, "error");
+    }
+  }
+
+  async function createIn(dir, isDir) {
+    const name = prompt(isDir ? "新目录名（可含相对路径）:" : "新文件名（可含相对路径）:");
+    if (!name) return;
+    const p = dir.replace(/\/$/, "") + "/" + name.replace(/^\/+/, "");
+    try {
+      if (isDir) await VS.api("/api/mkdir", { method: "POST", body: { p } });
+      else await VS.api("/api/file", { method: "PUT", body: { p, content: "", baseSha256: "new" } });
+      await refreshDir(dir);
+      afterMutation();
+      if (!isDir) setTimeout(() => VS.editor.openFile(p), 100);
+    } catch (e) {
+      VS.toast(e.code === "conflict" ? "文件已存在" : e.message, "error");
+    }
+  }
+
+  function copyText(t) {
+    if (!navigator.clipboard) { VS.toast("剪贴板不可用", "error"); return; }
+    navigator.clipboard.writeText(t).then(() => VS.toast("已复制"), () => {});
+  }
+
+  // External filesystem events (from the watch WS): structural events refresh
+  // the affected directory so DSH-side writes appear without manual refresh.
+  function externalEvent(msg) {
+    if (!msg || !msg.path || msg.event === "change") return;
+    refreshDir(parentOf(msg.path));
+  }
+
   async function loadRoot(root) {
     currentRoot = root;
     expanded.clear();
@@ -104,6 +179,18 @@ VS.tree = (() => {
         if (expanded.has(full)) collapseDir(full);
         else expandDir(full);
       });
+      row.addEventListener("contextmenu", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        VS.menu.show(ev.clientX, ev.clientY, [
+          { label: "新建文件", act: () => createIn(full, false) },
+          { label: "新建目录", act: () => createIn(full, true) },
+          { label: "在此目录打开终端", act: () => VS.terminal.newTerminal(full) },
+          { label: "重命名", act: () => renamePath(full) },
+          { label: "复制路径", act: () => copyText(full) },
+          { label: "删除（进回收站）", danger: true, act: () => removePath(full) },
+        ]);
+      });
       container.append(row, kids);
     } else {
       row.addEventListener("click", () => VS.editor.openFile(full));
@@ -113,6 +200,9 @@ VS.tree = (() => {
         VS.menu.show(ev.clientX, ev.clientY, [
           { label: "打开文件", act: () => VS.editor.openFile(full) },
           { label: "在此目录打开终端", act: () => VS.terminal.newTerminal(full.replace(/[^/]+$/, "")) },
+          { label: "重命名", act: () => renamePath(full) },
+          { label: "复制路径", act: () => copyText(full) },
+          { label: "复制相对路径", act: () => copyText(currentRoot ? full.replace(currentRoot.replace(/\/$/, "") + "/", "") : full) },
           { label: "删除（进回收站）", danger: true, act: () => removePath(full) },
         ]);
       });
@@ -205,7 +295,10 @@ VS.tree = (() => {
     if (target) target.scrollIntoView({ block: "nearest" });
   }
 
-  return { loadRoot, refresh, reveal, select, applyBadges, get root() { return currentRoot; } };
+  return {
+    loadRoot, refresh, reveal, select, applyBadges, externalEvent, createIn,
+    get root() { return currentRoot; },
+  };
 })();
 
 // toast helper lives here too

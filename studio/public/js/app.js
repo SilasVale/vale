@@ -384,21 +384,8 @@
 
   // ── tree toolbar ───────────────────────────────────────────────────────────
   $("#btn-refresh").addEventListener("click", () => { VS.tree.refresh(); fileCache = null; });
-  $("#btn-newfile").addEventListener("click", () => createNode(false));
-  $("#btn-newdir").addEventListener("click", () => createNode(true));
-  async function createNode(isDir) {
-    const name = prompt(isDir ? "新目录名（可含相对路径）:" : "新文件名（可含相对路径）:");
-    if (!name) return;
-    const p = currentRoot().replace(/\/$/, "") + "/" + name.replace(/^\/+/, "");
-    try {
-      if (isDir) await VS.api("/api/mkdir", { method: "POST", body: { p } });
-      else await VS.api("/api/file", { method: "PUT", body: { p, content: "", baseSha256: "new" } });
-      VS.tree.refresh();
-      if (!isDir) setTimeout(() => VS.editor.openFile(p), 150);
-    } catch (e) {
-      VS.toast(e.code === "conflict" ? "文件已存在" : e.message, "error");
-    }
-  }
+  $("#btn-newfile").addEventListener("click", () => VS.tree.createIn(currentRoot(), false));
+  $("#btn-newdir").addEventListener("click", () => VS.tree.createIn(currentRoot(), true));
 
   // ── context menu plumbing ──────────────────────────────────────────────────
   const menuEl = $("#ctxmenu");
@@ -546,7 +533,14 @@
     watchWs.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.path && msg.event) VS.editor.externalChange(msg.path);
+        if (msg.path && msg.event) {
+          VS.editor.externalChange(msg.path);
+          VS.tree.externalEvent(msg); // structural events refresh the tree in place
+          if (msg.event !== "change") {
+            clearTimeout(gitDebounce);
+            gitDebounce = setTimeout(() => { VS.git.refresh(); }, 600);
+          }
+        }
       } catch (e) {}
     };
     watchWs.onclose = () => {

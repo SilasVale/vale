@@ -195,6 +195,56 @@ test("delete moves into trash, not unlink", async () => {
   assert.ok(trashed.some((n) => n.includes("doomed.txt")));
 });
 
+test("rename moves files and dirs within the root", async () => {
+  // file rename
+  const from = path.join(rootDir, "hello.txt");
+  const to = path.join(rootDir, "hello-renamed.txt");
+  const res = await api("/api/rename", { method: "POST", body: { from, to } });
+  assert.equal(res.status, 200);
+  await assert.rejects(fsp.stat(from));
+  assert.equal(await fsp.readFile(to, "utf8"), "forced\n");
+
+  // directory rename
+  const dFrom = path.join(rootDir, "sub");
+  const dTo = path.join(rootDir, "sub2");
+  const dres = await api("/api/rename", { method: "POST", body: { from: dFrom, to: dTo } });
+  assert.equal(dres.status, 200);
+  // appeared.txt holds "x": the earlier lock test's second write was refused
+  assert.equal(await fsp.readFile(path.join(dTo, "appeared.txt"), "utf8"), "x");
+
+  // rename back so later tests keep their fixture layout
+  await api("/api/rename", { method: "POST", body: { from: to, to: from } });
+  await api("/api/rename", { method: "POST", body: { from: dTo, to: dFrom } });
+});
+
+test("rename refuses missing source and existing target", async () => {
+  const missing = await api("/api/rename", {
+    method: "POST",
+    body: { from: path.join(rootDir, "nope.txt"), to: path.join(rootDir, "x.txt") },
+  });
+  assert.equal(missing.status, 404);
+
+  const clash = await api("/api/rename", {
+    method: "POST",
+    body: {
+      from: path.join(rootDir, "hello.txt"),
+      to: path.join(rootDir, "sub"), // dir exists
+    },
+  });
+  assert.equal(clash.status, 409);
+});
+
+test("rename cannot escape its root", async () => {
+  const res = await api("/api/rename", {
+    method: "POST",
+    body: {
+      from: path.join(rootDir, "hello.txt"),
+      to: path.join(path.dirname(rootDir), `escapee-${Date.now()}.txt`),
+    },
+  });
+  assert.ok([400, 403].includes(res.status), `expected block, got ${res.status}`);
+});
+
 test("search finds matches via ripgrep engine", async () => {
   const res = await api(
     `/api/search?q=CONST&root=${encodeURIComponent(rootDir)}&case=0`,
