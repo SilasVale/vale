@@ -20,10 +20,36 @@ VS.terminal = (() => {
     const show = force != null ? force : panel.hidden;
     panel.hidden = !show;
     if (show) {
+      applySavedHeight();
       if (!terms.size) newTerminal();
       else refitActive();
     }
   }
+
+  // ── panel height: drag the top edge, persist across sessions ───────────────
+  function applySavedHeight() {
+    const h = Number(localStorage.getItem("vs-term-height"));
+    if (h >= 120) panel.style.height = h + "px";
+  }
+  const resizer = document.getElementById("term-resizer");
+  let drag = null;
+  resizer.addEventListener("pointerdown", (e) => {
+    drag = { startY: e.clientY, startH: panel.getBoundingClientRect().height };
+    resizer.setPointerCapture(e.pointerId);
+  });
+  resizer.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const h = Math.min(window.innerHeight * 0.7, Math.max(120, drag.startH + (drag.startY - e.clientY)));
+    panel.style.height = h + "px";
+    refitActive();
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    drag = null;
+    try { localStorage.setItem("vs-term-height", String(panel.getBoundingClientRect().height)); } catch {}
+  };
+  resizer.addEventListener("pointerup", endDrag);
+  resizer.addEventListener("pointercancel", endDrag);
 
   function refitActive() {
     const t = terms.get(activeId);

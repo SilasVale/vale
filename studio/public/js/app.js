@@ -163,20 +163,45 @@
 
   // ── search view ────────────────────────────────────────────────────────────
   let searchSeq = 0;
-  $("#search-input").addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    runSearch();
-  });
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+  // Escape-then-wrap: matches are wrapped in <mark> on the RAW text so the
+  // output stays injection-safe even for regex queries.
+  function highlightLine(text, q, regex, ignoreCase) {
+    const flags = "g" + (ignoreCase ? "i" : "");
+    let re;
+    try {
+      re = regex
+        ? new RegExp(q, flags)
+        : new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
+    } catch {
+      return escapeHtml(text);
+    }
+    let out = "";
+    let last = 0;
+    for (let m; (m = re.exec(text)); ) {
+      if (!m[0].length) { re.lastIndex++; continue; } // zero-width guard
+      out += escapeHtml(text.slice(last, m.index)) + "<mark>" + escapeHtml(m[0]) + "</mark>";
+      last = m.index + m[0].length;
+      if (out.length > 4000) break;
+    }
+    return out + escapeHtml(text.slice(last));
+  }
+
   async function runSearch() {
     const seq = ++searchSeq;
     const q = $("#search-input").value;
     const box = $("#search-results");
     if (!q) { box.innerHTML = ""; return; }
     box.innerHTML = '<div class="tree-empty">搜索中…</div>';
+    const regexOn = $("#search-regex").checked;
+    const caseOn = $("#search-case").checked;
     try {
       const data = await VS.api(
         `/api/search?q=${encodeURIComponent(q)}&root=${encodeURIComponent(currentRoot())}` +
-        `&regex=${$("#search-regex").checked ? 1 : 0}&case=${$("#search-case").checked ? 1 : 0}`,
+        `&regex=${regexOn ? 1 : 0}&case=${caseOn ? 1 : 0}`,
       );
       if (seq !== searchSeq) return; // stale
       box.innerHTML = "";
@@ -189,16 +214,21 @@
         if (!byFile.has(hit.path)) byFile.set(hit.path, []);
         byFile.get(hit.path).push(hit);
       }
+      const head = document.createElement("div");
+      head.className = "sr-summary";
+      head.textContent =
+        `${data.matches.length} 处 · ${byFile.size} 个文件` +
+        (data.truncated ? "（已达上限，结果被截断）" : "");
+      box.append(head);
       for (const [file, hits] of byFile) {
-        const head = document.createElement("div");
-        head.className = "sr-file";
-        head.textContent = `${file.replace(currentRoot() + "/", "")} (${hits.length})`;
-        box.append(head);
+        const fh = document.createElement("div");
+        fh.className = "sr-file";
+        fh.textContent = `${file.replace(currentRoot() + "/", "")} (${hits.length})`;
+        box.append(fh);
         for (const hit of hits.slice(0, 12)) {
           const b = document.createElement("button");
           b.className = "sr-hit";
-          const esc = hit.text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-          b.innerHTML = `${hit.line}: ${esc}`;
+          b.innerHTML = `${hit.line}: ${highlightLine(hit.text, q, regexOn, !caseOn)}`;
           b.addEventListener("click", () =>
             VS.editor.openFile(hit.path, { line: hit.line }));
           box.append(b);
@@ -216,7 +246,21 @@
     }
   }
 
+  // live search as you type (debounced); Enter still forces an immediate run
+  let searchDebounce = null;
+  $("#search-input").addEventListener("input", () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(runSearch, 350);
+  });
+  $("#search-input").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    clearTimeout(searchDebounce);
+    runSearch();
+  });
+
   // ── quick open ─────────────────────────────────────────────────────────────
+  // Supports "name", "dir/name", "name:42" (jump to line) and shows recently
+  // opened files first when the filter is empty.
   let fileCache = null;
   async function allFiles() {
     if (!fileCache) {
@@ -224,15 +268,24 @@
       fileCache = data.files.map((f) => ({
         path: f,
         base: f.slice(f.lastIndexOf("/") + 1).toLowerCase(),
+        lc: f.toLowerCase(),
       }));
     }
     return fileCache;
   }
+  function recents() {
+    try {
+      const raw = JSON.parse(localStorage.getItem("vs-recents") || "[]");
+      return Array.isArray(raw) ? raw : [];
+    } catch { return []; }
+  }
+
   const qo = $("#quickopen");
   const qoInput = $("#quickopen-input");
   const qoList = $("#quickopen-list");
   let qoItems = [];
   let qoSel = 0;
+  let qoLine = null;
 
   window.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && !e.shiftKey) {
@@ -244,6 +297,12 @@
       $("#search-input").focus();
     } else if ((e.ctrlKey || e.metaKey) && e.key === "`") {
       e.preventDefault();
+      VS.terminal.toggle();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+      e.preventDefault(); // toggle sidebar, VS Code parity
+      $("#sidebar").hidden = !$("#sidebar").hidden;
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+      e.preventDefault(); // toggle terminal panel
       VS.terminal.toggle();
     } else if (e.key === "Escape") {
       qo.hidden = true;
@@ -264,10 +323,32 @@
     qoInput.focus();
   }
 
+  function scoreItem(it, f) {
+    // 0 = basename exact · 1 = basename prefix · 2 = basename contains
+    // 3 = path contains · -1 = no match
+    if (!f) {
+      const r = recents().indexOf(it.path);
+      return r >= 0 ? -(1000 - r) : 50 + Math.min(it.lc.length, 99); // recents first
+    }
+    if (it.base === f) return 0;
+    if (it.base.startsWith(f)) return 1;
+    if (it.base.includes(f)) return 2;
+    if (it.lc.includes(f)) return 3;
+    return -1;
+  }
+
   function renderQO(filter) {
-    const f = filter.toLowerCase();
+    let f = filter.toLowerCase();
+    qoLine = null;
+    const m = filter.match(/^(.+?):(\d+)$/);
+    if (m) { f = m[1].toLowerCase(); qoLine = Number(m[2]); }
     qoItems = fileCache
-      ? fileCache.filter((x) => !f || x.base.includes(f) || x.path.toLowerCase().includes(f)).slice(0, 60)
+      ? fileCache
+          .map((x) => ({ x, s: scoreItem(x, f) }))
+          .filter(({ s }) => s >= 0)
+          .sort((a, b) => a.s - b.s || a.x.lc.length - b.x.lc.length)
+          .slice(0, 60)
+          .map(({ x }) => x)
       : [];
     qoSel = 0;
     qoList.innerHTML = "";
@@ -289,7 +370,7 @@
     const it = qoItems[i];
     if (!it) return;
     qo.hidden = true;
-    VS.editor.openFile(it.path);
+    VS.editor.openFile(it.path, qoLine ? { line: qoLine } : {});
   }
   qoInput.addEventListener("input", () => renderQO(qoInput.value));
   qoInput.addEventListener("keydown", (e) => {

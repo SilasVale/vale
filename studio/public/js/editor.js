@@ -115,6 +115,14 @@ VS.editor = (() => {
   }
 
   // ── tabs ───────────────────────────────────────────────────────────────────
+  function pushRecent(path) {
+    try {
+      const list = JSON.parse(localStorage.getItem("vs-recents") || "[]");
+      const next = [path, ...list.filter((p) => p !== path)].slice(0, 12);
+      localStorage.setItem("vs-recents", JSON.stringify(next));
+    } catch { /* private mode etc — recents are best-effort */ }
+  }
+
   const opening = new Map(); // path -> Promise<tab>, de-dupes concurrent opens
   function openFile(path, opts = {}) {
     if (!monacoReady) {
@@ -164,6 +172,7 @@ VS.editor = (() => {
     }
     tabs.push(tab);
     notifyOpenChanged();
+    if (tab.kind === "text") pushRecent(path);
     welcome.style.display = "none";
     activate(tab);
     VS.tree.select(path);
