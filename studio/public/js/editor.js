@@ -112,7 +112,7 @@ VS.editor = (() => {
     hostWrap.classList.add("active"); // measure BEFORE creating the editor
     const ed = monaco.editor.create(hostInner, {
       model: loaded.model,
-      theme: "vs-dark",
+      theme: curTheme, // NEVER hardcode: passing "vs-dark" flips the global theme service
       automaticLayout: true,
       minimap: { enabled: true },
       fontSize: 13,
@@ -158,8 +158,11 @@ VS.editor = (() => {
     welcome.style.display = "none";
     // re-measure in case the window resized while this tab was hidden
     requestAnimationFrame(() => tab.ed.layout());
+    const pos = tab.ed.getPosition();
+    if (pos) updatePos(pos); // status bar must reflect THIS tab, not the previous one
     tab.ed.focus();
     renderTabs();
+    updateStatusbar(tab);
   }
 
   function closeTab(tab) {
@@ -305,6 +308,13 @@ VS.editor = (() => {
 
   function updatePos(pos) {
     document.getElementById("sb-pos").textContent = `Ln ${pos.lineNumber}, Col ${pos.column}`;
+  }
+
+  // keep the status-bar language slot in sync with the active tab
+  function updateStatusbar(tab) {
+    if (tab !== active) return;
+    const el = document.getElementById("sb-lang");
+    if (el) el.textContent = langOf(tab.path) === "plaintext" ? "" : langOf(tab.path);
   }
 
   // ── external change handling (from watch WS) ───────────────────────────────

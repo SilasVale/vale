@@ -124,7 +124,20 @@
     VS.tree.loadRoot(currentRoot());
     updateGitInfo();
     fileCache = null; // bust quick-open cache
+    $("#sb-root").textContent = currentRoot();
   });
+
+  // Re-pull /api/boot so branch/dirty counts reflect reality; keeps the
+  // user's current root selected.
+  async function refreshRoots() {
+    try {
+      const fresh = await VS.api("/api/boot");
+      boot = fresh;
+      fillRoots();
+      $("#sb-root").textContent = currentRoot();
+    } catch (e) { /* offline blip — keep stale labels */ }
+  }
+
   async function updateGitInfo() {
     const r = boot.roots.find((x) => x.path === currentRoot());
     $("#root-git").textContent = r && r.git ? `⑂ ${r.branch}${r.dirty ? ` · ${r.dirty} changed` : ""}` : "";
@@ -370,6 +383,13 @@
 
   // refresh git info when switching back to the tab (cheap heuristic)
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && boot) updateGitInfo();
+    if (!document.hidden && boot) refreshRoots();
+  });
+
+  // guard against losing unsaved buffers to an accidental reload/close
+  window.addEventListener("beforeunload", (e) => {
+    if (!boot || !VS.editor.tabs.some((t) => t.dirty || t.conflict)) return;
+    e.preventDefault();
+    e.returnValue = "";
   });
 })();

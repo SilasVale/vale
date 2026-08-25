@@ -70,52 +70,57 @@ VS.terminal = (() => {
     hosts.append(hostWrap);
     term.open(inner);
 
-    const ws = new WebSocket(VS.wsUrl(`/api/term/${id}`));
-    ws.binaryType = "arraybuffer";
-    ws.onopen = () => sendResize();
-    ws.onmessage = (ev) => {
-      if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
-      else {
-        try {
-          const ctrl = JSON.parse(ev.data);
-          if (ctrl.exited !== undefined) markDead(id);
-        } catch (e) {}
-      }
-    };
-    ws.onclose = () => {
-      // session lives server-side; retry silently unless it exited
-      const t = terms.get(id);
-      if (t && !t.dead) setTimeout(() => reconnect(t), 1500);
-    };
+    const t = { id, name: id, ws: null, term, fit, hostWrap, dead: false, tabEl: null };
+    terms.set(id, t);
+    connect(t);
     term.onData((d) => {
-      if (ws.readyState === 1) {
+      if (t.ws && t.ws.readyState === 1) {
         // protocol: binary frames = stdin (text frames are JSON control)
-        ws.send(new TextEncoder().encode(d));
+        t.ws.send(new TextEncoder().encode(d));
       }
     });
     term.onResize(({ cols, rows }) => {
-      if (ws.readyState === 1) ws.send(JSON.stringify({ resize: { cols, rows } }));
+      if (t.ws && t.ws.readyState === 1) t.ws.send(JSON.stringify({ resize: { cols, rows } }));
     });
 
-    const t = { id, name: id, ws, term, fit, hostWrap, dead: false, tabEl: null };
-    terms.set(id, t);
     renderTabs();
     activate(id);
     refreshList();
   }
 
-  function reconnect(t) {
-    if (t.dead) return;
+  function connect(t) {
     const ws = new WebSocket(VS.wsUrl(`/api/term/${t.id}`));
     ws.binaryType = "arraybuffer";
+    t.ws = ws;
+    ws.onopen = () => sendResize(t);
     ws.onmessage = (ev) => {
       if (ev.data instanceof ArrayBuffer) t.term.write(new Uint8Array(ev.data));
+      else {
+        try {
+          const ctrl = JSON.parse(ev.data);
+          if (ctrl.exited !== undefined) markDead(t.id);
+        } catch (e) {}
+      }
     };
-    ws.onopen = () => { t.ws = ws; sendResize(t); };
-    ws.onclose = () => {
-      const cur = terms.get(t.id);
-      if (cur && !cur.dead) setTimeout(() => reconnect(cur), 2500);
-    };
+    ws.onclose = () => maybeReconnect(t);
+  }
+
+  // The PTY lives server-side, so a dropped browser socket is retried
+  // transparently. But a session that is gone for good (process exited and was
+  // GC'd, or lost across a no-tmux server restart) closes the socket instantly
+  // — probe /api/terms first so we never spin in an infinite reconnect loop.
+  async function maybeReconnect(t) {
+    if (t.dead || terms.get(t.id) !== t) return;
+    try {
+      const data = await VS.api("/api/terms");
+      if (!data.terms.some((s) => s.id === t.id)) {
+        markDead(t.id);
+        return;
+      }
+    } catch (e) { /* server unreachable — fall through to timed retry */ }
+    setTimeout(() => {
+      if (!t.dead && terms.get(t.id) === t && t.ws && t.ws.readyState === 3) connect(t);
+    }, 2000);
   }
 
   function sendResize(t0) {

@@ -41,6 +41,38 @@ VS.tree = (() => {
     }
   }
 
+  function rowFor(dir) {
+    const row = findRow(el, dir);
+    if (!row) return null;
+    const kids = row.nextElementSibling;
+    if (!kids || !kids.classList.contains("tree-children")) return null;
+    return { row, kids };
+  }
+
+  // Explicit expansion primitive — the single source of truth for opening a
+  // dir. Synthetic clicks proved racy: pre-marking `expanded` then clicking
+  // made the handler immediately COLLAPSE the node.
+  async function expandDir(dir) {
+    if (expanded.has(dir)) return;
+    const nodes = rowFor(dir);
+    if (!nodes) return; // not rendered (parent not expanded yet)
+    expanded.add(dir);
+    nodes.kids.hidden = false;
+    nodes.row.querySelector(".twist").textContent = "▾";
+    if (!nodes.kids.dataset.loaded) {
+      nodes.kids.dataset.loaded = "1";
+      await renderDir(dir, nodes.kids);
+    }
+  }
+
+  function collapseDir(dir) {
+    const nodes = rowFor(dir);
+    expanded.delete(dir);
+    if (!nodes) return;
+    nodes.kids.hidden = true;
+    nodes.row.querySelector(".twist").textContent = "▸";
+  }
+
   function renderEntry(entry, parentDir, container) {
     const full = parentDir.replace(/\/$/, "") + "/" + entry.name;
     const row = document.createElement("div");
@@ -67,20 +99,9 @@ VS.tree = (() => {
       const kids = document.createElement("div");
       kids.className = "tree-children";
       kids.hidden = true;
-      row.addEventListener("click", async () => {
-        if (expanded.has(full)) {
-          expanded.delete(full);
-          kids.hidden = true;
-          twist.textContent = "▸";
-        } else {
-          expanded.add(full);
-          twist.textContent = "▾";
-          kids.hidden = false;
-          if (!kids.dataset.loaded) {
-            kids.dataset.loaded = "1";
-            await renderDir(full, kids);
-          }
-        }
+      row.addEventListener("click", () => {
+        if (expanded.has(full)) collapseDir(full);
+        else expandDir(full);
       });
       container.append(row, kids);
     } else {
@@ -114,15 +135,18 @@ VS.tree = (() => {
       n.classList.toggle("selected", n.dataset.path === path));
   }
 
-  // Re-render the visible tree preserving expansion state.
+  // Re-render the visible tree preserving expansion state. Parents must be
+  // re-expanded before their children exist, so walk in depth order.
   async function refresh() {
     if (!currentRoot) return;
     el.innerHTML = "";
     await renderDir(currentRoot, el);
-    // re-expand previously open dirs (one level deep re-walk)
-    for (const dir of [...expanded]) {
-      const node = findRow(el, dir);
-      if (node) node.click();
+    const dirs = [...expanded].sort(
+      (a, b) => a.split("/").length - b.split("/").length,
+    );
+    for (const dir of dirs) {
+      expanded.delete(dir); // expandDir early-returns otherwise
+      await expandDir(dir);
     }
   }
 
@@ -132,25 +156,29 @@ VS.tree = (() => {
     return null;
   }
 
-  // Reveal a file in the tree: expand ancestors and select it.
+  async function waitForRow(p, tries = 15, delayMs = 60) {
+    for (let i = 0; i < tries; i++) {
+      const row = findRow(el, p);
+      if (row) return row;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    return null;
+  }
+
+  // Reveal a file in the tree: expand ancestors (awaiting each render) and
+  // select it. Bounded polling replaces the old fixed-sleep race.
   async function reveal(filePath) {
     const parts = filePath.split("/").filter(Boolean);
-    // walk from root accumulating
     let acc = "";
     for (let i = 0; i < parts.length - 1; i++) {
       acc += "/" + parts[i];
       if (!expanded.has(acc)) {
-        expanded.add(acc);
-        const row = findRow(el, acc);
-        if (row && row.parentElement instanceof Element) {
-          // click to trigger expansion logic
-          row.click();
-          await new Promise((r) => setTimeout(r, 120));
-        }
+        await waitForRow(acc, 8, 70);
+        await expandDir(acc).catch(() => {});
       }
     }
     select(filePath);
-    const target = findRow(el, filePath);
+    const target = await waitForRow(filePath, 10, 70);
     if (target) target.scrollIntoView({ block: "nearest" });
   }
 
