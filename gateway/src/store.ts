@@ -127,7 +127,7 @@ export function __clearCaches(): void {
 // chains that are no longer in flight: a chain is settled once it resolves,
 // so wrap each stored promise to self-prune on completion.
 const __locks = new Map<string, Promise<any>>();
-function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+export function withKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = __locks.get(key) || Promise.resolve();
   const next = prev.then(fn, fn);
   // Self-prune on settle (round-124: the first attempt compared against
