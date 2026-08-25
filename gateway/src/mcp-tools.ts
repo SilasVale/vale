@@ -306,10 +306,10 @@ const BROWSER_TOOLS: McpTool[] = [
   {
     name: "browser_click",
     description:
-      "Click an element (by ref from a snapshot) in the controlled tab. Returns a snapshot.",
+      "Click an element (by ref from a snapshot, e.g. 6 for e6) in the controlled tab. Returns a snapshot.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, element_ref: { type: "integer" } },
+      properties: { device: { type: "string" }, element_ref: { type: "integer", description: "snapshot ref number (rendered as e<N> target)" } },
       required: ["device", "element_ref"],
     },
   },
