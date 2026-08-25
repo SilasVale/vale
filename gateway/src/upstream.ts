@@ -88,6 +88,20 @@ export function pickRoute(
         upstream: via("https://integrate.api.nvidia.com" + upstreamPath, upstreamPath),
       };
     }
+    case "gmi": {
+      // GMI Cloud Inference Engine (api.gmi-serving.com) — OpenAI-compatible
+      // serverless endpoint; MiniMax Week free tier serves MiniMaxAI/MiniMax-M3
+      // and MiniMaxAI/MiniMax-M2.7 free for 14 days (2026-08-24 → 09-06), then
+      // standard pricing. Anthropic-format clients get pointed at the OpenAI
+      // entry like nv/ does.
+      const upstreamPath = "/v1/chat/completions";
+      return {
+        type: "passthrough",
+        kind: "gmi",
+        stripPrefix: true,
+        upstream: via("https://api.gmi-serving.com" + upstreamPath, upstreamPath),
+      };
+    }
     default:
       // No prefix / unknown prefix → DeepSeek official
       return {

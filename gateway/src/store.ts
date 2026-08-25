@@ -57,6 +57,12 @@ export const USER_KEY_NAMES = [
   "OPENCODE_GO_API_KEY",
   "OPENROUTER_API_KEY",
   "QWEN_API_KEY",
+  // NVIDIA NIM (build.nvidia.com) — translate.ts already read NVAPI_KEY from
+  // the ukeys blob, but it was never listed here so the console couldn't
+  // manage it. Listed now (key management parity).
+  "NVAPI_KEY",
+  // GMI Cloud Inference Engine (api.gmi-serving.com) — MiniMax Week free tier.
+  "GMI_API_KEY",
 ];
 
 /* ---- Per-isolate TTL cache ----

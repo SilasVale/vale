@@ -7,7 +7,17 @@ import { api, ApiError } from "../api/client.ts";
 import { maskToken } from "../lib/format.ts";
 import { Card, PageHeader, Badge, CopyButton, StatusChip } from "../components/ui.tsx";
 
-const KEY_ORDER = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "QWEN_API_KEY", "OPENROUTER_API_KEY"];
+const KEY_ORDER = [
+  "DEEPSEEK_API_KEY",
+  "OPENCODE_GO_API_KEY",
+  "QWEN_API_KEY",
+  "OPENROUTER_API_KEY",
+  "NVAPI_KEY",
+  "GMI_API_KEY",
+];
+
+// "DEEPSEEK_API_KEY" → "DEEPSEEK"; NVAPI_KEY has no "_API_KEY" suffix to strip.
+const keyLabel = (name: string) => (name === "NVAPI_KEY" ? "NV" : name.replace("_API_KEY", ""));
 
 export default function Overview() {
   const { user, refreshUser } = useAuth();
@@ -92,7 +102,7 @@ export default function Overview() {
         <div className="row">
           {keyEntries.map(({ name, info }) => (
             <StatusChip key={name} state={info?.configured ? "ok" : "off"}>
-              {name.replace("_API_KEY", "")}
+              {keyLabel(name)}
             </StatusChip>
           ))}
         </div>

@@ -5,7 +5,10 @@
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => [...document.querySelectorAll(sel)];
 
-  const KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY"];
+  const KEY_NAMES = [
+    "DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "QWEN_API_KEY",
+    "OPENROUTER_API_KEY", "NVAPI_KEY", "GMI_API_KEY",
+  ];
 
   /* ============ i18n ============ */
   const I18N = {
@@ -54,6 +57,9 @@
       "key.ds.backend": "DeepSeek", "key.ds.hint": "api.deepseek.com 申请",
       "key.og.backend": "OpenCode Go", "key.og.hint": "opencode.ai/zen/go 申请",
       "key.or.backend": "OpenRouter", "key.or.hint": "openrouter.ai/keys 申请",
+      "key.qw.backend": "Qwen MaaS", "key.qw.hint": "阿里云百炼 token 套餐",
+      "key.nv.backend": "NVIDIA NIM", "key.nv.hint": "build.nvidia.com 申请",
+      "key.gmi.backend": "GMI Cloud", "key.gmi.hint": "console.gmicloud.ai 申请（MiniMax Week 免费档）",
       "btn.edit": "编辑", "btn.test": "测试连通", "btn.testing": "测试中…", "btn.usage": "查询额度", "btn.usageLoading": "查询中…", "btn.clear": "清除", "btn.save": "保存", "btn.cancel": "取消",
       "key.emptyValue": "值不能为空", "key.saved": "已保存", "key.saveFail": "保存失败",
       "key.usageAccount": "账户", "key.usageUsed": "已用", "key.usageLimit": "额度", "key.usageRemaining": "剩余", "key.usageUnlimited": "不限额", "key.usageUnavailable": "暂无数据", "key.usageRateLimit": "速率限制", "key.usageFail": "查询额度失败",
@@ -64,6 +70,7 @@
       "route.og.backend": "OpenCode Go 套餐", "route.og.desc": "opencode.ai/zen/go，Anthropic↔OpenAI 转译，含工具调用与 thinking 回传",
       "route.ds.backend": "DeepSeek 官方", "route.ds.desc": "api.deepseek.com/anthropic，Bearer 透传",
       "route.or.backend": "OpenRouter", "route.or.desc": "openrouter.ai，透传用户自己的 key（经 openrouter-proxy 代理）",
+      "route.gmi.backend": "GMI Cloud", "route.gmi.desc": "api.gmi-serving.com — MiniMax Week 免费档（M3/M2.7 免费 14 天），透传用户自己的 GMI key，OpenAI 格式",
       "route.none.label": "无前缀", "route.none.backend": "DeepSeek 官方（默认）", "route.none.desc": "兜底路由",
       "users.lede": "管理员密码、邀请码与用户列表。",
       "adminpw.title": "管理员密码", "adminpw.desc": "控制台登录用的密码。密码已加密存储，改完用新密码登录。",
@@ -144,6 +151,9 @@
       "key.ds.backend": "DeepSeek", "key.ds.hint": "from api.deepseek.com",
       "key.og.backend": "OpenCode Go", "key.og.hint": "from opencode.ai/zen/go",
       "key.or.backend": "OpenRouter", "key.or.hint": "from openrouter.ai/keys",
+      "key.qw.backend": "Qwen MaaS", "key.qw.hint": "from Aliyun token plan",
+      "key.nv.backend": "NVIDIA NIM", "key.nv.hint": "from build.nvidia.com",
+      "key.gmi.backend": "GMI Cloud", "key.gmi.hint": "from console.gmicloud.ai (MiniMax Week free tier)",
       "btn.edit": "Edit", "btn.test": "Test", "btn.testing": "Testing…", "btn.usage": "Usage", "btn.usageLoading": "Loading…", "btn.clear": "Clear", "btn.save": "Save", "btn.cancel": "Cancel",
       "key.emptyValue": "Value cannot be empty", "key.saved": "Saved", "key.saveFail": "Save failed",
       "key.usageAccount": "Account", "key.usageUsed": "Used", "key.usageLimit": "Limit", "key.usageRemaining": "Remaining", "key.usageUnlimited": "Unlimited", "key.usageUnavailable": "Unavailable", "key.usageRateLimit": "Rate limit", "key.usageFail": "Usage query failed",
@@ -154,6 +164,7 @@
       "route.og.backend": "OpenCode Go", "route.og.desc": "opencode.ai/zen/go — Anthropic↔OpenAI translation, tool calls & thinking",
       "route.ds.backend": "DeepSeek Official", "route.ds.desc": "api.deepseek.com/anthropic — Bearer passthrough",
       "route.or.backend": "OpenRouter", "route.or.desc": "openrouter.ai — user's own key, proxied via openrouter-proxy",
+      "route.gmi.backend": "GMI Cloud", "route.gmi.desc": "api.gmi-serving.com — MiniMax Week free tier (M3/M2.7 free 14 days), user's own GMI key, OpenAI format",
       "route.none.label": "default", "route.none.backend": "DeepSeek Official (default)", "route.none.desc": "fallback route",
       "users.lede": "Admin password, invite codes and the user list.",
       "adminpw.title": "Admin password", "adminpw.desc": "The console login password. Stored hashed; log in with the new one after changing.",
@@ -377,7 +388,7 @@
     const masked = esc(info?.masked || t("key.notConfigured"));
     const configured = !!(info && info.configured);
     const badge = configured ? `<span class="badge ok">${t("key.configured")}</span>` : `<span class="badge empty">${t("key.notConfigured")}</span>`;
-    const keyName = name.replace("_API_KEY", "").toLowerCase();
+    const keyName = name === "NVAPI_KEY" ? "nv" : name.replace("_API_KEY", "").toLowerCase();
     const backend = t(`key.${keyName}.backend`);
     const hint = t(`key.${keyName}.hint`);
     return `

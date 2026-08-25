@@ -38,9 +38,9 @@ test("health: breaker closed → all channels ok, recommended still qw", async (
   assert.equal(h.recommended.channel, "qw");
 });
 
-test("health: channels cover all four prefixes in priority order", async () => {
+test("health: channels cover all prefixes in priority order", async () => {
   const h = await buildHealth(closedEnv);
-  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv"]);
+  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv", "gmi", "gmi"]);
   assert.deepEqual(h.channels.map((c) => c.model), [
     "ds/deepseek-v4-flash",
     "qw/qwen3.8-max-preview",
@@ -54,10 +54,12 @@ test("health: channels cover all four prefixes in priority order", async () => {
     "or/stealth/ox-alpha",
     "or/deepseek/deepseek-v4-flash-0731",
     "nv/nvidia/nemotron-3-ultra-550b-a55b",
+    "gmi/MiniMaxAI/MiniMax-M3",
+    "gmi/MiniMaxAI/MiniMax-M2.7",
   ]);
   // og and or repeat per model card; the dedup'd set must still cover every
   // priority prefix in order.
-  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or", "nv"]);
+  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or", "nv", "gmi"]);
 });
 
 test("installer round-trip: non-ASCII CLI encodes and decodes losslessly", () => {
@@ -197,6 +199,48 @@ test("valeProbe: or channel ok when upstream 200 (OPENROUTER_API_KEY branch)", a
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.channel, "or");
+});
+
+test("valeProbe: gmi channel ok when upstream 200 (GMI_API_KEY branch)", async () => {
+  // 只留 GMI 密钥：若分支读错 key（如落到 DEEPSEEK_API_KEY），会返回 key not configured
+  let seen;
+  const env = {
+    ...keyedEnv,
+    DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined,
+    OPENCODE_GO_API_KEY: undefined, OPENROUTER_API_KEY: undefined,
+    GMI_API_KEY: "gmi-key",
+  };
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response("{}", { status: 200 });
+  }, () => valeProbe(env, "gmi/MiniMaxAI/MiniMax-M3"));
+  assert.equal(seen.url, "https://api.gmi-serving.com/v1/chat/completions");
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer gmi-key");
+  assert.equal(JSON.parse(seen.init.body).model, "MiniMaxAI/MiniMax-M3");
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.channel, "gmi");
+});
+
+test("valeProbe: nv channel uses NVAPI_KEY (not the DeepSeek key)", async () => {
+  // 回归：nv/ 探测以前落到 DEEPSEEK_API_KEY 分支——只留 NVAPI 时必须仍能探测
+  const env = {
+    ...keyedEnv,
+    DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined,
+    OPENCODE_GO_API_KEY: undefined, OPENROUTER_API_KEY: undefined,
+    NVAPI_KEY: "nv-key",
+  };
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response("{}", { status: 200 });
+  }, () => valeProbe(env, "nv/nvidia/nemotron-3-ultra-550b-a55b"));
+  assert.equal(seen.url, "https://integrate.api.nvidia.com/v1/chat/completions");
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer nv-key");
+  const body = await res.json();
+  assert.equal(body.ok, true);
 });
 
 // ── probeRateLimited (KV-backed, whole-gateway) ──────────────────

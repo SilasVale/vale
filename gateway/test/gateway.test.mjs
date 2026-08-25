@@ -130,8 +130,81 @@ test("og/minimax-m3 also goes to chat/completions (translate path)", async () =>
   assert.equal(res.status, 200);
 });
 
-test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {
+test("gmi/MiniMaxAI/MiniMax-M3 uses GMI BYOK passthrough on chat/completions", async () => {
   __clearCaches();
+  const { env, token } = gwEnv({
+    keys: {
+      OPENCODE_GO_API_KEY: undefined,
+      OPENROUTER_API_KEY: undefined,
+      DEEPSEEK_API_KEY: "sk-ds",
+      GMI_API_KEY: "sk-gmi",
+    },
+  });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "x", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "gmi/MiniMaxAI/MiniMax-M3",
+    max_tokens: 8,
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+  }, "/v1/chat/completions"));
+  assert.equal(seen.url, "https://api.gmi-serving.com/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-gmi");
+  // gmi/ prefix stripped; upstream model id preserved verbatim.
+  assert.equal(JSON.parse(seen.init.body).model, "MiniMaxAI/MiniMax-M3");
+  assert.equal(res.status, 200);
+});
+
+test("gmi without GMI_API_KEY → 502 config error on chat/completions", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({
+    keys: {
+      OPENCODE_GO_API_KEY: undefined,
+      OPENROUTER_API_KEY: undefined,
+      GMI_API_KEY: undefined,
+    },
+  });
+  let calls = 0;
+  const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
+    post(env, token, {
+      model: "gmi/MiniMaxAI/MiniMax-M3",
+      max_tokens: 1,
+      messages: [{ role: "user", content: "hi" }],
+    }, "/v1/chat/completions"),
+  );
+  assert.equal(calls, 0);
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.match(body.error?.message || body.message || "", /GMI_API_KEY not configured/);
+});
+
+test("gmi Anthropic-format request (/v1/messages) → 400 pointing at the OpenAI entry", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { GMI_API_KEY: "sk-gmi" } });
+  let calls = 0;
+  const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
+    post(env, token, {
+      model: "gmi/MiniMaxAI/MiniMax-M3",
+      max_tokens: 1,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(calls, 0);
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(body.error?.message || body.message || "", /OpenAI format only/);
+});
+
+test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {  __clearCaches();
   const { env, token } = gwEnv({
     keys: {
       OPENCODE_GO_API_KEY: undefined,

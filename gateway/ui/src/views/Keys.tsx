@@ -4,7 +4,14 @@ import { useToast } from "../contexts/ToastContext.tsx";
 import { api, ApiError } from "../api/client.ts";
 import { PageHeader, Badge, CopyButton } from "../components/ui.tsx";
 
-const KEY_NAMES = ["DEEPSEEK_API_KEY", "OPENCODE_GO_API_KEY", "OPENROUTER_API_KEY"];
+const KEY_NAMES = [
+  "DEEPSEEK_API_KEY",
+  "OPENCODE_GO_API_KEY",
+  "QWEN_API_KEY",
+  "OPENROUTER_API_KEY",
+  "NVAPI_KEY",
+  "GMI_API_KEY",
+];
 
 interface KeyInfo {
   configured: boolean;
@@ -12,6 +19,8 @@ interface KeyInfo {
 }
 
 function getKeyShortName(name: string) {
+  // NVAPI_KEY has no "_API_KEY" suffix — map it explicitly to the i18n prefix.
+  if (name === "NVAPI_KEY") return "nv";
   return name.replace("_API_KEY", "").toLowerCase();
 }
 

@@ -49,7 +49,13 @@
   "vars": {
     "CONSOLE_HOST": "ai.saisi.online,api.saisi.online",
     // 浏览器工具链路:冷启动 chromium(~20s)+ 设备 SPA 加载,30s 默认值必然超时
-    "UPSTREAM_TIMEOUT_MS": "120000"
+    "UPSTREAM_TIMEOUT_MS": "120000",
+    // Cloudflare Access SSO (option C): zero-password console login. The JWT
+    // aud is the ai.saisi.online Access application's tag; ACCESS_ADMIN_EMAIL
+    // binds the owner's mailbox to the seeded admin account.
+    "ACCESS_TEAM_DOMAIN": "vale-saisi.cloudflareaccess.com",
+    "ACCESS_AUD": "047684f18b6631d17a722235265b68d8ea558a7a5e40cb5f2b6e1ae5c9473a6b",
+    "ACCESS_ADMIN_EMAIL": "13122231591@163.com"
   }
   // Vale Gate — unified AI gateway + device console. Custom domains are added
   // in the dashboard (custom_domains API is OAuth-only).

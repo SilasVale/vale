@@ -330,14 +330,19 @@ export async function valeProbe(env: any, model: string) {
       detail: res.ok ? "" : `upstream ${res.status}`,
     });
   }
-  // Passthrough channels (ds/qw/or): reuse the exact route config of /v1/messages.
+  // Passthrough channels (ds/qw/or/nv/gmi): reuse the exact route config of
+  // /v1/messages.
   const route = pickRoute(prefix, env);
   const key =
     prefix === "or"
       ? env.OPENROUTER_API_KEY || ""
       : prefix === "qw"
         ? env.QWEN_API_KEY || ""
-        : env.DEEPSEEK_API_KEY || "";
+        : prefix === "nv"
+          ? env.NVAPI_KEY || ""
+          : prefix === "gmi"
+            ? env.GMI_API_KEY || ""
+            : env.DEEPSEEK_API_KEY || "";
   if (!key) return jsonOk({ ok: false, channel: prefix, detail: `${prefix}: key not configured` });
   const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
   let res;

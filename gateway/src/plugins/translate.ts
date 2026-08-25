@@ -160,6 +160,9 @@ async function handleGatewayImpl(
   // NVIDIA NIM official API (build.nvidia.com key) — dedicated per-key capacity,
   // no shared free pool. Stored in the same ukeys blob as the other BYOK keys.
   const nvKey = ukeys.NVAPI_KEY || null;
+  // GMI Cloud Inference Engine (api.gmi-serving.com) — MiniMax Week free tier
+  // (MiniMaxAI/MiniMax-M3, MiniMaxAI/MiniMax-M2.7). Same BYOK blob.
+  const gmiKey = ukeys.GMI_API_KEY || null;
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
   // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
@@ -467,9 +470,11 @@ async function handleGatewayImpl(
         ? qwenKey
         : route.kind === "nvidia"
           ? nvKey
-          : route.kind === "opencode"
-            ? opencodeGoKey
-            : deepseekKey;
+          : route.kind === "gmi"
+            ? gmiKey
+            : route.kind === "opencode"
+              ? opencodeGoKey
+              : deepseekKey;
 
   // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
   // Accepts OpenAI-format requests directly and forwards to the upstream
@@ -480,6 +485,13 @@ async function handleGatewayImpl(
       return jsonError(
         502,
         "NVAPI_KEY not configured — add your NVIDIA build.nvidia.com key",
+        "config_error",
+      );
+    }
+    if (route.kind === "gmi" && !gmiKey) {
+      return jsonError(
+        502,
+        "GMI_API_KEY not configured — add your GMI Cloud key in the console",
         "config_error",
       );
     }
@@ -549,9 +561,9 @@ async function handleGatewayImpl(
       // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
       // knocks win slots but paced retries never land (2026-08-24). Other or/
       // models, paid and free alike, keep the standard paced retry.
-      // nv/: NIM sheds bursts with fast 5xx BEFORE processing — retry502
+      // nv//gmi/: NIM sheds bursts with fast 5xx BEFORE processing — retry502
       // absorbs them instead of surfacing "temporarily overloaded".
-      route.kind === "nvidia"
+      route.kind === "nvidia" || route.kind === "gmi"
         ? { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
         : route.kind === "openrouter"
           ? upstreamModel === "z-ai/glm-5.2:free"
@@ -663,13 +675,13 @@ async function handleGatewayImpl(
   // Passthrough routes (or/ds/qw): the upstream already speaks the Anthropic
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
-    // nv/ upstream (NVIDIA NIM) is OpenAI-format only — an Anthropic body
-    // forwarded there would be misparsed garbage. Point the client at the
-    // OpenAI entry instead of failing obscurely at the upstream.
-    if (route.kind === "nvidia") {
+    // nv/ and gmi/ upstreams (NVIDIA NIM, GMI Cloud) are OpenAI-format only —
+    // an Anthropic body forwarded there would be misparsed garbage. Point the
+    // client at the OpenAI entry instead of failing obscurely at the upstream.
+    if (route.kind === "nvidia" || route.kind === "gmi") {
       return jsonError(
         400,
-        "nv/ models speak OpenAI format only — use /v1/chat/completions",
+        `${route.kind}/ models speak OpenAI format only — use /v1/chat/completions`,
         "invalid_request_error",
       );
     }

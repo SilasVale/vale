@@ -520,6 +520,30 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
         detail: ok ? "OpenCode Go auth OK" : "OpenCode Go auth FAILED (no stream data)",
       });
     }
+    if (name === "GMI_API_KEY") {
+      // GMI Cloud Inference Engine — GET /v1/models is a cheap auth check.
+      const res = await fetchWithTimeout("https://api.gmi-serving.com/v1/models", {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      return jsonOk({
+        ok: res.ok,
+        name,
+        status: res.status,
+        detail: res.ok ? "GMI Cloud auth OK" : `Upstream ${res.status}`,
+      });
+    }
+    if (name === "NVAPI_KEY") {
+      // NVIDIA NIM — GET /v1/models is a cheap auth check.
+      const res = await fetchWithTimeout("https://integrate.api.nvidia.com/v1/models", {
+        headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+      });
+      return jsonOk({
+        ok: res.ok,
+        name,
+        status: res.status,
+        detail: res.ok ? "NVIDIA NIM auth OK" : `Upstream ${res.status}`,
+      });
+    }
     if (name === "QWEN_API_KEY") {
       const res = await fetchWithTimeout(
         "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages",

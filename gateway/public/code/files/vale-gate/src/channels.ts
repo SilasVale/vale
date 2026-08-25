@@ -37,6 +37,12 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "nv/nvidia/nemotron-3-ultra-550b-a55b", owned_by: "nvidia" },
   { id: "nv/minimaxai/minimax-m3", owned_by: "nvidia" },
   { id: "nv/moonshotai/kimi-k3", owned_by: "nvidia" },
+  // gmi/ — GMI Cloud Inference Engine (api.gmi-serving.com). MiniMax Week
+  // free tier (2026-08-24 → 09-06): MiniMax-M3 / M2.7 free for 14 days, then
+  // standard pricing. Any model in GMI's catalog is reachable as
+  // gmi/<upstream-id> — these two are the free headline models.
+  { id: "gmi/MiniMaxAI/MiniMax-M3", owned_by: "gmi" },
+  { id: "gmi/MiniMaxAI/MiniMax-M2.7", owned_by: "gmi" },
   { id: "or/stealth/ox-alpha", owned_by: "openrouter" },
   { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
@@ -75,6 +81,12 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     models: ["nvidia/nemotron-3-ultra-550b-a55b", "minimaxai/minimax-m3", "moonshotai/kimi-k3"],
   },
   {
+    prefix: "gmi/",
+    backend: "GMI Cloud",
+    desc: "api.gmi-serving.com — MiniMax Week free tier (MiniMax-M3/M2.7 free 14 days, user's own GMI key), OpenAI format; any catalog model reachable as gmi/<id>",
+    models: ["MiniMaxAI/MiniMax-M3", "MiniMaxAI/MiniMax-M2.7"],
+  },
+  {
     prefix: "qw/",
     backend: "Qwen MaaS (Aliyun)",
     desc: "token-plan.ap-southeast-1.maas.aliyuncs.com — Anthropic passthrough",
@@ -106,5 +118,8 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "or", model: "or/stealth/ox-alpha" },
   { id: "or", model: "or/deepseek/deepseek-v4-flash-0731" },
   { id: "nv", model: "nv/nvidia/nemotron-3-ultra-550b-a55b" },
+  // MiniMax Week free tier on GMI Cloud — one card per free LLM.
+  { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M3" },
+  { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M2.7" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];
