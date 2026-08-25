@@ -87,6 +87,27 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// round-142: 回收上一代残留——被硬杀的 node 留下的 headless chromium 会
+/// 一直锁着 profile 目录,让后续所有 start 都撞 "Browser is already in use"。
+/// 按命令行特征精确匹配(只碰本安装目录的 playwright node 与其 chromium),
+/// 健康实例存在时永远不会走到这里。
+#[cfg(windows)]
+async fn reap_leftovers() {
+    let script = concat!(
+        "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ",
+        "'*\\playwright\\node.exe*' -or $_.CommandLine -like '*ms-playwright-mcp*' } | ",
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    );
+    let _ = tokio::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output()
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+}
+
+#[cfg(not(windows))]
+async fn reap_leftovers() {}
+
 /// round-132: 探测 9229 端口是否有健康的 playwright-mcp 实例在服务——
 /// 不关心它是谁拉起的(计划任务/面板/手动)。生产拓扑由 ValePlaywright
 /// 计划任务在交互会话托管实例,agent 只是客户端;status() 必须把这种
@@ -189,6 +210,12 @@ impl PlaywrightManager {
                 "port": MCP_PORT,
             }));
         }
+
+        // round-142: 无健康实例 = 上一代可能留了孤儿——被硬杀的 node 会把
+        // headless chromium 留在后台,继续锁着 profile 目录("Browser is
+        // already in use"),毒化之后每一次 start(d1 实测,2026-08-25)。先按
+        // 命令行特征回收 playwright node 与其 chromium 树,再拉新实例。
+        reap_leftovers().await;
 
         // round-129: @playwright/mcp 无 --mcp-token flag(实测 0.0.79 及更早
         // 版本都不接受,child 会立即退出)——per-launch secret 方案不可落地。
