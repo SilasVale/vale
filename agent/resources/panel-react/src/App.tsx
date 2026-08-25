@@ -90,7 +90,6 @@ export function App() {
   const [browserActive, setBrowserActive] = useState(false);
   // round-133: 状态轮询改为常开——Sessions 视图的 Browser 会话行依赖它。
   const plugins = usePlugins(connected);
-  const pwRunning = !!plugins.playwright?.running;
   const BROWSER_SID = "__browser__";
 
   const sessions = useSessions(connected);
@@ -131,12 +130,11 @@ export function App() {
   // 点击打开实时预览(BrowserPane)。激活状态由 browserActive 管理,
   // 与终端会话互斥(同一时间主区只显示一个面板)。
   const allSessions = useMemo(() => {
-    if (!pwRunning) return sessions.sessions.filter((s) => !s.closed || true);
     const base = sessions.sessions.map((s) => ({ ...s, active: false }));
     return [...base, { sid: BROWSER_SID, label: "Browser", kind: "browser", closed: false, savedOnly: false, active: browserActive, openedAt: Date.now(), closedAt: null }] as typeof sessions.sessions;
-  }, [sessions.sessions, pwRunning, browserActive]);
+  }, [sessions.sessions, browserActive]);
 
-  const effectiveActiveSid = browserActive && pwRunning ? BROWSER_SID : sessions.activeSid;
+  const effectiveActiveSid = browserActive ? BROWSER_SID : sessions.activeSid;
 
   const activateWrap = (sid: string) => {
     if (sid === BROWSER_SID) {
@@ -273,7 +271,11 @@ export function App() {
               exact terminal state. round-131: the refit effect skips while
               hidden — fire a resize when un-hiding so the grid (local xterm +
               backend cols/rows) refits to the now-visible size. */}
-          <div id="term-container" style={browserActive ? { display: "none" } : (trajOpen ? { display: "none" } : undefined)}>
+          {/* round-138 FIX: browserActive 时绝不能隐藏 #term-container ——
+              BrowserPane 就渲染在里面,旧条件把它 display:none 导致浏览器
+              会话永远不可见(WS/帧全部正常,纯 CSS 事故)。只保留 trajectory
+              的隐藏路径。 */}
+          <div id="term-container" style={!browserActive && trajOpen ? { display: "none" } : undefined}>
             {browserActive ? (
               <BrowserPane key={BROWSER_SID} session={{ sid: BROWSER_SID, url: "", active: true }} apiBase="" token={token} />
             ) : sessions.sessions.length === 0 ? (
