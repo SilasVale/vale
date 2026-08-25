@@ -44,6 +44,8 @@ import {
   recordChannelFailure,
   recordChannelSuccess,
 } from "../reliability.ts";
+import type { RetryInspection } from "../reliability.ts";
+import { peekSseOutcome } from "../sse-guard.ts";
 import {
   rawWithDeepSeekProvider,
   rawWithOxAlphaReasoningDefault,
@@ -65,6 +67,44 @@ import { pickRoute, passthroughHeaders, stripBracket } from "../upstream.ts";
 import type { PluginContext } from "./registry.ts";
 
 const COUNT_PATH = "/v1/messages/count_tokens";
+
+/**
+ * SSE in-band error guard for or/ (OpenRouter) routes.
+ *
+ * OpenRouter can accept a streaming request with HTTP 200 and THEN fail: the
+ * stream's first meaningful frame is `data: {"error":{"message":"Provider
+ * returned error","code":502}}`. Forwarding that verbatim hands the client an
+ * error message with no status digits — DSH classifies it non-retryable and
+ * the session pauses. The inspector peeks the first decisive frame BEFORE any
+ * byte is forwarded: an in-band error (or an empty close) counts as a failed
+ * attempt against fetchWithRetry's normal attempt/backoff budget; only once
+ * attempts are exhausted does it surface as an HTTP failure whose message
+ * carries status digits, so downstream classifiers treat it as transient.
+ */
+function openRouterSseInspector(): (response: any) => Promise<RetryInspection> {
+  return async (response: Response) => {
+    const ctype = response.headers?.get?.("content-type") || "";
+    if (!ctype.includes("text/event-stream") || !response.body) return { accepted: true };
+    const peeked = await peekSseOutcome(response.body);
+    if (peeked.kind === "passthrough") {
+      // Replay buffered prefix + remainder as one seamless body.
+      return {
+        accepted: true,
+        response: new Response(peeked.stream, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        }),
+      };
+    }
+    if (peeked.kind === "in-band-error") {
+      return { accepted: false, status: peeked.status, detail: peeked.message };
+    }
+    // closed-empty — phrased so text-based transport-failure classifiers
+    // ("stream ended before …") recognize it even without status digits.
+    return { accepted: false, detail: "stream ended before any event (empty close)" };
+  };
+}
 
 /* ---------------- /v1/* gateway ---------------- */
 
@@ -499,16 +539,13 @@ async function handleGatewayImpl(
     if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
       forwardBody = rawWithOxAlphaReasoningDefault(forwardBody);
     }
-    const { response: upstream, detail } = await fetchWithRetry(
+    const { response: upstream, detail, inspectFailure } = await fetchWithRetry(
       route.upstream,
       {
         method: "POST",
         headers: passthroughHeaders(bearerKey),
         body: forwardBody,
       },
-      // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
-      // knocks win slots but paced retries never land (2026-08-24). Other or/
-      // models, paid and free alike, keep the standard paced retry.
       // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
       // knocks win slots but paced retries never land (2026-08-24). Other or/
       // models, paid and free alike, keep the standard paced retry.
@@ -525,12 +562,31 @@ async function handleGatewayImpl(
                 retry502: true,
                 ignoreRetryAfter: true,
               }
-            : { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
+            : {
+                timeoutMs: ogTimeoutMs(env),
+                attempts: 4,
+                retry502: true,
+                // Absorb OpenRouter's in-band stream errors (HTTP 200 whose
+                // first SSE frame is {"error":...}) before the client sees them.
+                inspect: openRouterSseInspector(),
+              }
           : { timeoutMs: ogTimeoutMs(env) },
     );
     if (!upstream) {
       if (route.kind === "opencode") await recordChannelFailure(env);
-      return jsonError(502, `upstream ${route.kind}: ${detail}`, "api_error");
+      // In-band failures surface with status digits so downstream classifiers
+      // (DSH/Claude Code) recognize them as transient, not fatal.
+      const failStatus =
+        typeof inspectFailure?.status === "number" &&
+        inspectFailure.status >= 400 &&
+        inspectFailure.status <= 599
+          ? inspectFailure.status
+          : 502;
+      return jsonError(
+        failStatus,
+        `upstream ${failStatus} (${route.kind}): ${detail}`,
+        failStatus === 429 ? "rate_limit_error" : "api_error",
+      );
     }
     if (!upstream.ok) {
       if (
@@ -540,7 +596,11 @@ async function handleGatewayImpl(
         await recordChannelFailure(env);
       }
       let message = `Upstream ${upstream.status}`;
-      let type = "api_error";
+      // Default by status BEFORE body sniffing: OpenRouter's error envelope
+      // carries no Anthropic-style type, and a bare api_error on a 429 told
+      // clients to give up instead of backing off.
+      let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
+      let extra = {};
       try {
         const err: any = await upstream.json();
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
@@ -556,10 +616,14 @@ async function handleGatewayImpl(
           "api_error",
         ];
         if (upType && KNOWN.includes(upType)) type = upType;
+        // Pace the client against the upstream limit (parity with the
+        // /v1/messages passthrough branch).
+        const ra = upstream.headers?.get?.("retry-after");
+        if (ra) extra = { "retry-after": ra };
       } catch {
         /* non-JSON error body */
       }
-      return jsonError(upstream.status, message, type);
+      return jsonError(upstream.status, message, type, extra);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     // Direct passthrough — upstream returns OpenAI format, return it as-is.
@@ -670,7 +734,7 @@ async function handleGatewayImpl(
     if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
       forwardBody = rawWithOxAlphaReasoningDefault(forwardBody);
     }
-    const { response: upstream, detail } = await fetchWithRetry(
+    const { response: upstream, detail, inspectFailure } = await fetchWithRetry(
       route.upstream,
       {
         method: "POST",
@@ -680,7 +744,6 @@ async function handleGatewayImpl(
         body: forwardBody,
       },
       // or/: same free-pool lottery pacing as the chat/completions site above.
-      // or/: same as the chat/completions site above.
       // nv/: NIM 5xx burst-shedding gets retried here too.
       route.kind === "nvidia"
         ? { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
@@ -693,7 +756,15 @@ async function handleGatewayImpl(
                 retry502: true,
                 ignoreRetryAfter: true,
               }
-            : { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
+            : {
+                timeoutMs: passthroughTimeoutMs(env, route.kind),
+                attempts: 4,
+                retry502: true,
+                // Same in-band SSE error guard as the chat/completions site —
+                // Claude Code rides /v1/messages and hits the same OpenRouter
+                // 200-then-{"error":...} failures.
+                inspect: openRouterSseInspector(),
+              }
           : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
     );
     if (!upstream) {
@@ -704,7 +775,19 @@ async function handleGatewayImpl(
       // every request burned the full timeout budget. Count timeouts too:
       // 3 CONSECUTIVE timeouts within the window means the channel is dead.
       if (route.kind === "opencode") await recordChannelFailure(env);
-      return jsonError(502, `upstream ${route.kind}: ${detail}`, "api_error");
+      // In-band failures surface with status digits so downstream classifiers
+      // recognize them as transient.
+      const failStatus =
+        typeof inspectFailure?.status === "number" &&
+        inspectFailure.status >= 400 &&
+        inspectFailure.status <= 599
+          ? inspectFailure.status
+          : 502;
+      return jsonError(
+        failStatus,
+        `upstream ${failStatus} (${route.kind}): ${detail}`,
+        failStatus === 429 ? "rate_limit_error" : "api_error",
+      );
     }
     if (!upstream.ok) {
       let message = `Upstream ${upstream.status}`;
