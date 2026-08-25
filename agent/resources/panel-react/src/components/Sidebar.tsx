@@ -147,19 +147,24 @@ export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, o
             <span className="side-label">{labels.get(s.sid) || s.label}</span>
             <span className="side-time">{relTime(s.openedAt)}</span>
             <span className="side-actions">
+              {/* round-141: icon-only + absolutely positioned (panel.css
+                  .side-actions) — text buttons in-flow shifted the row layout
+                  on hover and stole center-of-row clicks as "Rename". */}
               <button
                 className="side-action"
                 title="Rename (local)"
+                aria-label="Rename session"
                 onClick={(e) => { e.stopPropagation(); rename(s.sid, labels.get(s.sid) || s.label); }}
-              >Rename</button>
+              >✎</button>
               <button
                 className="side-action archive"
                 title="Hide from list"
+                aria-label="Archive session"
                 onClick={(e) => {
                   e.stopPropagation();
                   setArchived((prev) => { const next = new Set(prev); next.add(s.sid); return next; });
                 }}
-              >Archive</button>
+              >✕</button>
             </span>
           </div>
         ))}

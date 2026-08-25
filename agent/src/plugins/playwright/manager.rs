@@ -217,6 +217,12 @@ impl PlaywrightManager {
             // 设备 Web UI 用自签名 HTTPS 证书——忽略证书错误,否则导航
             // 一律 net::ERR_CERT_AUTHORITY_INVALID。
             .arg("--ignore-https-errors")
+            // round-141 治本: coreBundle 的 HTTP 心跳(每 ~3s ping 客户端,
+            // 默认 5s 超时即 server.close()→销毁整个浏览器上下文)对无下行流
+            // 的瘦客户端必然判死——这就是"每次调用后 ~4s Session not found、
+            // 页面被重置"的根因。置 0 = startHeartbeat 直接 return,会话与
+            // 浏览器常驻,snapshot 引用/面板状态跨调用存活。
+            .env("PLAYWRIGHT_MCP_PING_TIMEOUT_MS", "0")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

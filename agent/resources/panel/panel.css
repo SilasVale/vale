@@ -458,6 +458,11 @@ body {
   color: var(--faint);
 }
 .side-row {
+  /* round-141: position:relative anchors the absolute hover actions —
+     the old in-flow swap (time→buttons) shifted the row layout on hover,
+     sliding "Rename" under a center-of-row click so pointer users and
+     playwright-mcp ALWAYS opened the rename prompt instead of activating. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -502,20 +507,27 @@ body {
   color: var(--faint);
   white-space: nowrap;
 }
-/* Hover actions (dsh Rows): time yields to rename/archive while hovering. */
+/* Hover actions (dsh Rows): round-141 the buttons are ICON-ONLY and pinned
+   absolutely at the row's right edge — they never participate in layout, so
+   hover no longer shifts content under the pointer and a center click can
+   only ever land on the label (row activation). */
 .side-actions {
-  flex: none;
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   display: none;
-  gap: 2px;
+  gap: 0;
 }
 .side-row:hover .side-actions { display: flex; }
-.side-row:hover .side-time { display: none; }
+.side-row:hover .side-time { visibility: hidden; }
 .side-action {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1;
   color: var(--faint);
   background: none;
   border: none;
-  padding: 2px 6px;
+  padding: 4px 5px;
   border-radius: 6px;
   cursor: pointer;
   transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out),

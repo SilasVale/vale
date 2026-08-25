@@ -1,14 +1,16 @@
 /**
- * BrowserPane — LIVE interactive remote browser (round-135 M1, round-137 方案 C).
+ * BrowserPane — LIVE interactive remote browser (round-135 M1, round-137 方案 C,
+ * round-141 WebSocket-only).
  *
- * Primary path: one WebSocket to /api/browser/ws (ticket-authenticated).
- * Binary frames = JPEG screenshots pushed by bridge.js (screencast + idle
- * capture); input events and tab queries ride the same socket, queries
- * correlated by an incrementing id echoed in a text frame.
+ * ONE WebSocket to /api/browser/ws (ticket-authenticated). Binary frames =
+ * JPEG screenshots pushed by bridge.js (screencast + idle capture); input
+ * events and tab queries ride the same socket, queries correlated by an
+ * incrementing id echoed in a text frame.
  *
- * Degraded path: after repeated WS failures the pane falls back to legacy
- * HTTP polling (/api/browser/frame + /api/browser/input) so a tunnel that
- * mangles upgrades degrades to "slow" instead of "broken".
+ * round-141: the legacy HTTP-polling fallback (/api/browser/frame +
+ * /api/browser/input) is GONE — user call: 轮询体验差,砍掉。The socket now
+ * reconnects forever with capped backoff while visible; the status line shows
+ * "实时通道重连中…" instead of silently degrading to ~4fps polling.
  *
  * Security: the long-lived device token never appears in a URL. The ticket
  * is fetched via Bearer-authed POST and is single-use/30s; the old
@@ -34,15 +36,9 @@ interface Props {
 const VIEW_W = 1280;
 const VIEW_H = 800;
 const TABS_MS = 1500;
-const POLL_FRAME_MS = 250; // degraded-mode frame rate (~4fps)
-const MAX_WS_ATTEMPTS = 5; // before falling back to HTTP polling
+const MAX_WS_BACKOFF_MS = 8000;
 
 interface TabInfo { i: number; url: string }
-
-function httpInputUrl(apiBase: string, ev: unknown): string {
-  const d = encodeURIComponent(JSON.stringify(ev));
-  return `${apiBase}/api/browser/input?d=${d}`;
-}
 
 export default function BrowserPane({ apiBase, token }: Props) {
   const [url, setUrl] = useState("https://www.wikipedia.org");
@@ -73,37 +69,16 @@ export default function BrowserPane({ apiBase, token }: Props) {
   useEffect(() => {
     aliveRef.current = true;
     let disposed = false;
-    let mode: "ws" | "polling" = "ws";
     let attempts = 0;
     let reconnectTimer: number | undefined;
-    let pollTimer: number | undefined;
     let tabsTimer: number | undefined;
 
-    const httpFetchJson = async (ev: unknown): Promise<any> => {
-      try {
-        return await (await fetch(httpInputUrl(apiBase, ev), { headers: { Authorization: `Bearer ${token}` } })).json();
-      } catch { return {}; }
-    };
-
-    const startPollingFallback = () => {
-      if (mode === "polling" || disposed) return;
-      mode = "polling";
-      try { wsRef.current?.close(); } catch {}
-      wsRef.current = null;
-      const tick = () => {
-        if (!aliveRef.current || !imgRef.current || document.hidden) return;
-        fetch(`${apiBase}/api/browser/frame`, { headers: { Authorization: `Bearer ${token}` } })
-          .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
-          .then((b) => { if (!disposed && !document.hidden) applyFrame(b); })
-          .catch((e) => setError(e.message === "401" ? "认证失败" : e.message));
-      };
-      tick();
-      pollTimer = window.setInterval(tick, POLL_FRAME_MS);
-    };
-
     const connectWs = () => {
-      if (disposed || mode !== "ws") return;
+      if (disposed) return;
       attempts++;
+      // round-141: show reconnect state only from the second failure so the
+      // happy path never flashes a warning.
+      if (attempts > 1) setError("实时通道重连中…");
       fetch(`${apiBase}/api/browser/ws-ticket`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
         .then(({ ticket }) => {
@@ -134,30 +109,25 @@ export default function BrowserPane({ apiBase, token }: Props) {
           };
           ws.onclose = () => {
             wsRef.current = null;
-            if (disposed || mode !== "ws") return;
+            if (disposed) return;
             scheduleReconnect();
           };
           ws.onerror = () => { /* onclose follows */ };
           wsRef.current = ws;
         })
         .catch(() => {
-          if (disposed || mode !== "ws") return;
+          if (disposed) return;
           scheduleReconnect();
         });
     };
 
     const scheduleReconnect = () => {
-      if (attempts > MAX_WS_ATTEMPTS) {
-        setError("实时通道不可用 — 已切换轮询模式");
-        startPollingFallback();
-        return;
-      }
-      const delay = Math.min(500 * 2 ** attempts, 8000);
+      const delay = Math.min(500 * 2 ** attempts, MAX_WS_BACKOFF_MS);
       reconnectTimer = window.setTimeout(connectWs, delay);
     };
 
-    // Request WITH correlated response. Socket first; HTTP GET as fallback
-    // (the bridge answers GET /input with handleInput's return value).
+    // Request WITH correlated response over the socket. No HTTP fallback —
+    // when the socket is down the query simply times out into {}.
     const requestNow = (ev: Record<string, unknown>): Promise<any> => {
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -168,7 +138,7 @@ export default function BrowserPane({ apiBase, token }: Props) {
           window.setTimeout(() => { if (pendingRef.current.delete(id)) resolve({}); }, 2000);
         });
       }
-      return httpFetchJson(ev);
+      return Promise.resolve({});
     };
 
     const refreshTabs = async () => {
@@ -185,7 +155,7 @@ export default function BrowserPane({ apiBase, token }: Props) {
       if (document.hidden) {
         try { wsRef.current?.close(); } catch {}
         wsRef.current = null;
-      } else if (mode === "ws" && !wsRef.current && !disposed) {
+      } else if (!wsRef.current && !disposed) {
         attempts = 0;
         connectWs();
       }
@@ -197,7 +167,6 @@ export default function BrowserPane({ apiBase, token }: Props) {
       aliveRef.current = false;
       document.removeEventListener("visibilitychange", onVisibility);
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
-      if (pollTimer) window.clearInterval(pollTimer);
       if (tabsTimer) window.clearInterval(tabsTimer);
       pendingRef.current.forEach((resolve) => resolve({}));
       pendingRef.current.clear();
@@ -210,8 +179,9 @@ export default function BrowserPane({ apiBase, token }: Props) {
   const send = useCallback((ev: unknown) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) { ws.send(JSON.stringify(ev)); return; }
-    void fetch(httpInputUrl(apiBase, ev), { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
-  }, [apiBase, token]);
+    // Socket down: drop the event (the reconnect loop is already running).
+    // The old HTTP GET fallback is removed per round-141 — no more polling.
+  }, []);
 
   const newTab = async () => { send({ t: "tabnew", url: "about:blank" }); };
   const selTab = async (i: number) => { send({ t: "tabsel", i }); };
