@@ -32,6 +32,14 @@ async function signJwt({ aud = AUD, email = "someone@example.com", expSec = Math
   return `${h}.${p}.${b64url(sig)}`;
 }
 
+/** Sign a JWT with an arbitrary extra-claim set (e.g. aud as array). */
+async function signJwtRaw(payload) {
+  const h = b64url(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-kid" }));
+  const p = b64url(JSON.stringify(payload));
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keys.priv, new TextEncoder().encode(`${h}.${p}`));
+  return `${h}.${p}.${b64url(sig)}`;
+}
+
 function makeEnv({ adminEmail = "", users = {} } = {}) {
   const store = new Map(Object.entries(users));
   for (const [k, v] of Object.entries(users)) store.set(k, typeof v === "string" ? v : JSON.stringify(v));
@@ -114,4 +122,17 @@ test("rejects wrong aud / expired / bad signature", async () => {
   const tampered = (await signJwt()).slice(0, -3) + "abc";
   assert.equal(await verifyAccessJwt(reqWith(tampered), env), null);
   assert.equal(await verifyAccessJwt(reqWith(null), env), null);
+});
+
+test("accepts aud as an array containing the configured AUD (RFC 7519 §4.1.3)", async () => {
+  // Cloudflare currently emits aud as ["<tag>"]; an equals-only check
+  // (string === string) silently rejects every live Access JWT.
+  const env = makeEnv();
+  const now = Math.floor(Date.now() / 1000);
+  const jwt = await signJwtRaw({ aud: [AUD, "another-app"], email: "dave@example.com", exp: now + 600 });
+  const claims = await verifyAccessJwt(reqWith(jwt), env);
+  assert.deepEqual(claims, { email: "dave@example.com" });
+  // wrong aud in the array → reject
+  const wrongArr = await signJwtRaw({ aud: ["other-app", "yet-another"], email: "dave@example.com", exp: now + 600 });
+  assert.equal(await verifyAccessJwt(reqWith(wrongArr), env), null);
 });
