@@ -217,6 +217,31 @@ try {
     );
     if (real.length) throw new Error(real.slice(0, 4).join(" | "));
   });
+
+  // ── 9. one-click token bootstrap link ─────────────────────────────────────
+  const fresh = await ctx.newPage();
+  await step("?token= link logs in and strips token from URL", async () => {
+    await fresh.goto(`${BASE}/?token=${TOKEN}&x=1#/open`, { waitUntil: "domcontentloaded" });
+    await fresh.waitForFunction(
+      () => document.querySelectorAll("#tree .tree-item").length > 0,
+      null,
+      { timeout: 15000 },
+    );
+    const gateHidden = await fresh.$eval("#token-gate", (el) => el.hidden);
+    if (!gateHidden) throw new Error("gate still visible after ?token= bootstrap");
+    const url = fresh.url();
+    if (url.includes(TOKEN)) throw new Error("token not stripped from URL: " + url);
+    if (!url.includes("x=1")) throw new Error("unrelated query params were lost");
+  });
+  await step("subsequent plain visit stays logged in (localStorage)", async () => {
+    await fresh.goto(`${BASE}/`, { waitUntil: "domcontentloaded" });
+    await fresh.waitForFunction(
+      () => document.querySelectorAll("#tree .tree-item").length > 0,
+      null,
+      { timeout: 15000 },
+    );
+  });
+  await fresh.close();
 } finally {
   await fsp.unlink(probeFile).catch(() => {});
   await browser.close();

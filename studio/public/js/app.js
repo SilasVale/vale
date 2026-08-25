@@ -54,6 +54,23 @@
   // ── deep-link routing ──────────────────────────────────────────────────────
   // #/open?p=<abs>&l=596&c=8&sel=l.c-l.c
   let lastHash = null;
+
+  // ── one-click token bootstrap ──────────────────────────────────────────────
+  // /?token=<t> logs the browser in without typing: adopt the token, persist
+  // it, then strip it from the address bar (history entry replaced).
+  function bootstrapTokenFromUrl() {
+    const q = new URLSearchParams(location.search);
+    const t = q.get("token");
+    if (!t) return false;
+    VS.token = t.trim();
+    localStorage.setItem("vale-studio-token", VS.token);
+    q.delete("token");
+    const rest = q.toString();
+    const cleaned = location.pathname + (rest ? "?" + rest : "") + location.hash;
+    history.replaceState(null, "", cleaned);
+    return true;
+  }
+
   function handleHash() {
     if (location.hash === lastHash) return; // native + manual events may double-fire
     lastHash = location.hash;
@@ -326,9 +343,11 @@
     handleHash(); // honor deep link on first paint
   }
 
+  // One-click link: /?token=… adopts the token before the first boot attempt.
+  bootstrapTokenFromUrl();
   if (!(await tryBoot())) showGate();
   else {
-    $("#token-gate").hidden = true; // auto-login via stored token
+    $("#token-gate").hidden = true; // auto-login via stored/bootstrap token
     afterBoot();
   }
 
