@@ -112,11 +112,22 @@ async function callMcpClientBridge(
     browser_close: "browser_close",
   };
   const pmTool = toolMap[name] || name;
+  // round-138: playwright-mcp 新版 click/type 用 {element?, target} 协议
+  // (target = 快照引用 "eN" 或唯一选择器),gateway 旧声明是 element_ref 整数。
+  // 这里翻译成 target,调用方习惯不变;type 的 text 原样透传。
+  const pmArgs: any = { ...args };
+  if ((name === "browser_click" || name === "browser_type") && args?.element_ref != null) {
+    pmArgs.target = /^e?\d+$/.test(String(args.element_ref))
+      ? String(args.element_ref).replace(/^(\d+)$/, "e$1")
+      : String(args.element_ref);
+    if (!pmArgs.element) pmArgs.element = "target element";
+    delete pmArgs.element_ref;
+  }
   const invoke = async (): Promise<any> => {
     const res = await fetch(`${base}/api/tools/mcp_client_call`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ tool: pmTool, arguments: args }),
+      body: JSON.stringify({ tool: pmTool, arguments: pmArgs }),
     });
     // agent 的工具 API 恒返回 200 + {ok:false,error,code}（web.rs api_call_tool），
     // 失败信息在 body 里，不能只看 res.ok。
