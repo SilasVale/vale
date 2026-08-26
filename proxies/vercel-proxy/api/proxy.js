@@ -1,6 +1,7 @@
-// /api/proxy → 直接代理到 OpenRouter
-// BYOK：优先使用请求方传入的 Authorization（ai-gateway 透传各用户自己的 OpenRouter key），
-// 无 Authorization 时回退到 OPENROUTER_API_KEY 环境变量（Vercel env 注入，不硬编码）。
+// /api/proxy → proxies directly to OpenRouter
+// BYOK: prefer the caller-supplied Authorization header (ai-gateway forwards
+// each user's own OpenRouter key); fall back to the OPENROUTER_API_KEY env var
+// when no Authorization is present (injected via Vercel env, never hardcoded).
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/messages";
 const SAFE = ["accept","accept-encoding","accept-language","anthropic-version","content-type","user-agent"];
 
@@ -11,7 +12,8 @@ export default async function handler(request) {
   try {
     const h = new Headers();
     for (const n of SAFE) { const v = request.headers.get(n); if (v) h.set(n, v); }
-    // 透传调用方自己的 OpenRouter key；没有则用内置 env key（未配置时 401）
+    // Forward the caller's own OpenRouter key; otherwise use the built-in env
+    // key (401 when unset)
     const clientAuth = request.headers.get("authorization");
     const fallbackKey = process.env.OPENROUTER_API_KEY || "";
     if (!clientAuth && !fallbackKey) {

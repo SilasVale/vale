@@ -74,7 +74,7 @@ jobs:
         working-directory: agent
 
   agent-windows-target:
-    # Windows MSVC 目标的编译检查（xwin 拉取 SDK，独立 job 便于缓存）
+    # Compile check for the Windows MSVC target (xwin pulls the SDK; separate job for caching)
     name: agent (xwin check windows-msvc)
     runs-on: ubuntu-latest
     steps:

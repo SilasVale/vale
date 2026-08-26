@@ -138,9 +138,9 @@ deploy_worker() {
       # otherwise be hashed and burn all retries); `|| live_sha=""` keeps a
       # TRANSPORT failure (timeout/reset during the post-deploy propagation
       # window) inside the retry loop instead of aborting the whole deploy
-      # under set -e. -L: the GitHub Releases download URL 302-redirects to
-      # objects.githubusercontent.com; without following it the hash came out
-      # as the empty string's.
+      # under set -e. -L keeps following any redirect (the download URL
+      # serves from the Vercel mirror; mirrors may redirect); without it the
+      # hash could come out as the empty string's.
       live_sha="$(curl -fsSL -m 120 "$dl_url" 2>/dev/null | sha256sum | cut -d' ' -f1)" || live_sha=""
       [ "$live_sha" = "$want_sha" ] && break
       sleep 3

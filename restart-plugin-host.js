@@ -1,5 +1,5 @@
 // DSH Restart Plugin - Host Side
-// 重启方式: pm2 restart dsh
+// Restart method: pm2 restart dsh
 return {
   apply: function(ctx) {
     var shell = ctx.get('shell')
@@ -28,7 +28,7 @@ return {
       }
     }
 
-    // 注册动态模型工具
+    // Register the dynamic model tool
     var tool = harness.defineTool({
       name: 'restart_dsh',
       description: 'Restart the DSH process via pm2.',

@@ -1,11 +1,12 @@
-// zen-us-proxy — Cloudflare Worker 美国出口代理 → opencode zen
+// zen-us-proxy — Cloudflare Worker US egress proxy → opencode zen
 //
-// 与 openrouter-proxy 同一机制:绑定 D1(us-proxy-db)强制计算节点移出亚洲,
-// 从美国/欧洲边缘出口访问 opencode.ai/zen/go —— 让 zen 看到美国来源,
-// 路由到不拥堵的实例,从而稳定 og/deepseek-v4-flash 的延迟。
+// Same mechanism as openrouter-proxy: bind D1 (us-proxy-db) to force compute
+// nodes out of Asia, egress from US/Europe edges to opencode.ai/zen/go — so
+// zen sees a US origin, routes to uncongested instances, and stabilizes
+// og/deepseek-v4-flash latency.
 //
-// 原生透传:deepseek-v4-flash 在 zen 上是 Anthropic 原生格式,直接转发
-// /v1/messages,不翻译。密钥用 OPENCODE_GO_API_KEY(x-api-key)。
+// Native passthrough: deepseek-v4-flash speaks Anthropic natively on zen, so
+// /v1/messages is forwarded untranslated. Key: OPENCODE_GO_API_KEY (x-api-key).
 
 const VERIFY_PATH = "/v1/messages";
 
@@ -23,7 +24,7 @@ export default {
 
     const url = new URL(request.url);
 
-    // GET /v1/models — 透传上游模型列表
+    // GET /v1/models — passthrough upstream model list
     if (request.method === "GET" && url.pathname.endsWith("/models")) {
       const up = await fetch("https://opencode.ai/zen/go/v1/models", {
         headers: { "x-api-key": env.OPENCODE_GO_API_KEY },
@@ -38,7 +39,7 @@ export default {
       return jsonError(404, "Not Found", "not_found_error");
     }
 
-    // 原生 Anthropic 透传:转发原始请求 + 透传上游流
+    // Native Anthropic passthrough: forward the raw request + stream the upstream body
     const upstream = await fetch("https://opencode.ai/zen/go" + VERIFY_PATH, {
       method: "POST",
       headers: {

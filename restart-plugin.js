@@ -1,5 +1,5 @@
 // DSH Restart Plugin - Combined (Host + Client)
-// 重启策略：先杀旧进程，再启动新实例（因为没有进程管理器）
+// Restart strategy: kill the old process first, then start a new instance (no process manager)
 
 // ===== Host Side =====
 function hostPlugin() {
@@ -14,7 +14,7 @@ function hostPlugin() {
       function doRestart(reason) {
         console.log('[restart] Initiating restart. Reason:', reason)
 
-        // 后台脚本：等响应返回 → 杀旧进程 → 启动新实例
+        // Background script: wait for the response → kill the old process → start a new instance
         var restartScript = [
           'sleep 1',
           'OLD_PID=$(lsof -ti :7738 2>/dev/null)',

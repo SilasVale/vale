@@ -1,9 +1,13 @@
 /**
  * opencode-go-proxy — Cloudflare Worker
- * 专用于 OpenCode Go：Claude Code 的 Anthropic 协议 ↔ zen/go 的 OpenAI 协议转译。
- * （统一网关的 og/ 转译逻辑已并入 ai-gateway；本 worker 保留为 opencode.saisi.online 专属直连入口）
+ * Dedicated to OpenCode Go: translates Claude Code's Anthropic protocol to
+ * zen/go's OpenAI protocol.
+ * (The unified gateway's og/ translation logic has been folded into
+ * ai-gateway; this worker remains the dedicated direct entry point for
+ * opencode.saisi.online)
  *
- * 密钥：OPENCODE_GO_API_KEY（上游）、CLIENT_KEY（客户端门禁，可选则非空即可）
+ * Keys: OPENCODE_GO_API_KEY (upstream), CLIENT_KEY (client gate, any
+ * non-empty value when set)
  */
 
 const VERIFY_PATH = "/v1/messages";
@@ -29,7 +33,7 @@ export default {
         return jsonError(401, "Missing or invalid x-api-key", "authentication_error");
       }
 
-      // GET /v1/models — 透传上游模型列表
+      // GET /v1/models — passthrough upstream model list
       if (request.method === "GET" && url.pathname.endsWith("/models")) {
         const up = await fetch("https://opencode.ai/zen/go/v1/models", {
           headers: { Authorization: `Bearer ${env.OPENCODE_GO_API_KEY}` },
@@ -40,7 +44,7 @@ export default {
         });
       }
 
-      // POST /v1/messages/count_tokens — 估算
+      // POST /v1/messages/count_tokens — estimate
       if (request.method === "POST" && url.pathname.endsWith(COUNT_PATH)) {
         const body = await request.json();
         return jsonOk({ input_tokens: Math.ceil(JSON.stringify(body.messages || []).length / 4) });
@@ -219,7 +223,7 @@ function toSSE(res) {
   return out;
 }
 
-/* ---------------- 工具函数 ---------------- */
+/* ---------------- Utilities ---------------- */
 
 function jsonOk(data) {
   return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });

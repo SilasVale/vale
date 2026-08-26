@@ -1,5 +1,6 @@
-// /api/zen → 代理到多个上游(美国出口),路径保留转发
-// ?target=og|ds|qw|or 选上游;/v1/messages、/v1/chat/completions 原样转发。
+// /api/zen → proxies to multiple upstreams (US egress), preserving the path
+// ?target=og|ds|qw|or picks the upstream; /v1/messages and /v1/chat/completions
+// are forwarded as-is.
 const TARGETS = {
   og: "https://opencode.ai/zen/go",
   ds: "https://api.deepseek.com",
@@ -18,13 +19,15 @@ export default async function handler(request) {
     const upstream = base + path;
     const h = new Headers();
     for (const n of SAFE) { const v = request.headers.get(n); if (v) h.set(n, v); }
-    // 剥掉可能已有的 "Bearer " 前缀(x-api-key 没有,authorization 有),
-    // 再统一拼 Bearer,避免 "Bearer Bearer sk-..." 双重前缀。
+    // Strip any existing "Bearer " prefix (x-api-key has none, authorization
+    // does), then prepend a single Bearer, avoiding a "Bearer Bearer sk-..."
+    // double prefix.
     let clientAuth = (request.headers.get("x-api-key") || request.headers.get("authorization") || "").trim();
     if (clientAuth.startsWith("Bearer ")) clientAuth = clientAuth.slice(7);
     if (target === "og") {
-      // zen 的两个端点认证不同:/v1/messages 认 x-api-key,chat/completions
-      // 认 Authorization: Bearer —— 两个都带,zen 挑它认的那个。
+      // zen's two endpoints authenticate differently: /v1/messages accepts
+      // x-api-key, chat/completions accepts Authorization: Bearer — send both,
+      // zen picks the one it recognizes.
       h.set("x-api-key", clientAuth);
       h.set("Authorization", `Bearer ${clientAuth}`);
     } else {

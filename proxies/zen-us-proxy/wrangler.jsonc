@@ -3,8 +3,10 @@
   "main": "src/index.js",
   "compatibility_date": "2026-08-01",
   "workers_dev": false,
-  // 2026-08-26: custom_domains 被 wrangler 4 忽略且面板从未绑定，域名实测 000；
-  // 改为显式 zone route（API token 有 Workers Routes 写权限时装此字段随 deploy 生效）。
+  // 2026-08-26: custom_domains is ignored by wrangler 4 and was never bound
+  // in the dashboard; the domain in practice returned 000.
+  // Switched to an explicit zone route (when the API token has Workers Routes
+  // write access, this field takes effect on deploy).
   "routes": [
     { "pattern": "zen-us.saisi.online/*", "zone_id": "79860b60a8681147d0ce38294d404ead" }
   ],
