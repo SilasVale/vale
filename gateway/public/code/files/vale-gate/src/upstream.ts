@@ -92,8 +92,8 @@ export function pickRoute(
       // GMI Cloud Inference Engine (api.gmi-serving.com) — OpenAI-compatible
       // serverless endpoint; MiniMax Week free tier serves MiniMaxAI/MiniMax-M3
       // and MiniMaxAI/MiniMax-M2.7 free for 14 days (2026-08-24 → 09-06), then
-      // standard pricing. Anthropic-format clients get pointed at the OpenAI
-      // entry like nv/ does.
+      // standard pricing. Anthropic-format /v1/messages requests are translated
+      // by the translate plugin (Anthropic → OpenAI → back), same as nv/.
       const upstreamPath = "/v1/chat/completions";
       return {
         type: "passthrough",

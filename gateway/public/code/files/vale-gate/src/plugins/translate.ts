@@ -106,6 +106,82 @@ function openRouterSseInspector(): (response: any) => Promise<RetryInspection> {
   };
 }
 
+/**
+ * Reshape an OpenAI chat/completions upstream response into an Anthropic
+ * Messages response for the client. Shared by the og translate path and the
+ * nv/gmi translation (Anthropic-only clients like Claude Code riding
+ * /v1/messages against OpenAI-format upstreams). Handles all three upstream
+ * behaviors: true SSE streaming (translated chunk-by-chunk to Anthropic
+ * SSE), a stream:true request answered with a plain JSON completion
+ * (wrapped as a one-shot Anthropic SSE), and a one-shot JSON completion.
+ */
+async function openAIUpstreamToAnthropicResponse(
+  upstream: Response,
+  body: any,
+  clientModel: string,
+  upstreamModel: string,
+): Promise<Response> {
+  // True streaming: when the client asked for a stream, forward the upstream's
+  // OpenAI SSE chunks to Anthropic SSE increments as they arrive (instead of
+  // buffering the whole response and flushing it at once — that made thinking
+  // look frozen and could time out long generations).
+  if (body.stream) {
+    const ctype = upstream.headers?.get?.("content-type") || "";
+    if (ctype.includes("application/json") && !ctype.includes("text/event-stream")) {
+      // The upstream ignored stream:true and returned a plain JSON completion
+      // (a proxy/backend quirk, or a 200-wrapped error). Feeding JSON into the
+      // SSE parser produced an EMPTY Anthropic message — the whole answer was
+      // silently dropped. Buffer + translate as a one-shot SSE instead.
+      const json: any = await upstream.json().catch(() => null);
+      if (json) {
+        // A 200-wrapped OpenAI ERROR envelope ({error:{...}}) must NOT become
+        // a silent empty assistant message — surface it.
+        if (json.error || !Array.isArray(json.choices) || json.choices.length === 0) {
+          return jsonError(
+            502,
+            json.error?.message || json.message || "upstream returned an error envelope",
+            "api_error",
+          );
+        }
+        const oneShot = toSSE(toAnthropicResponse(json, upstreamModel));
+        return new Response(oneShot, {
+          headers: {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache",
+            ...CORS_HEADERS,
+          },
+        });
+      }
+      // Parse failed AND the body was consumed — a fall-through to the SSE
+      // translator would read an empty stream and fabricate an empty message.
+      return jsonError(502, "upstream returned invalid JSON", "api_error");
+    }
+    const streamBody = streamOgToAnthropic(
+      upstream.body as ReadableStream,
+      clientModel,
+      upstreamModel,
+    );
+    return new Response(streamBody, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache",
+        ...CORS_HEADERS,
+      },
+    });
+  }
+  const upJson: any = await upstream.json().catch(() => null);
+  // A 200-wrapped OpenAI error envelope must not become an empty assistant
+  // message (silent failure, no retry signal).
+  if (!upJson || upJson.error || !Array.isArray(upJson.choices) || upJson.choices.length === 0) {
+    return jsonError(
+      502,
+      upJson?.error?.message || upJson?.message || "upstream returned an invalid response",
+      "api_error",
+    );
+  }
+  return jsonOk(toAnthropicResponse(upJson, upstreamModel));
+}
+
 /* ---------------- /v1/* gateway ---------------- */
 
 // In-memory per-token rate-limit counters (per isolate). The old KV
@@ -166,50 +242,19 @@ async function handleGatewayImpl(
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
   // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
-  // MEMORY per isolate — the old get-then-put KV counters cost 2 reads + 2
-  // writes per /v1/messages request, which alone burned the Free-plan daily
-  // KV WRITE quota (1000/day) at ~250 requests and tripped the 90% usage
-  // alert. Each window's first request per token still reads KV once
-  // (inherits other isolates' counts); we never write. With 1-3 hot isolates
-  // overshoot is bounded (~48→~144/min worst case) — the thresholds already
-  // budget ~20% headroom, and a KV 429 can no longer 500 a chat request
-  // (all KV reads here are wrapped).
+  // MEMORY per isolate — zero KV reads/writes. The old path read KV on every
+  // request (2 reads) but never wrote the increments back, so the KV reads
+  // always returned stale/zero values and burned the Free-plan daily read
+  // quota. With 1-3 hot isolates overshoot is bounded (~48→~144/min worst
+  // case) — the thresholds already budget ~20% headroom.
   // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
   // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
   // the double-count that halved the effective budget for Claude Code turns.
   if (env.KEYS && method === "POST" && path.endsWith("/messages") && !path.endsWith(COUNT_PATH)) {
-    const minuteKey = `rl-min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
-    const dayKey = `rl-day:${effectiveToken}:${Math.floor(Date.now() / 86400000)}`;
     const mk = `min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
     const dk = `day:${effectiveToken}:${Math.floor(Date.now() / 86400000)}`;
-    const [minute, day] = await Promise.all([
-      (async () => {
-        const hit = __rlMin.get(mk);
-        if (hit !== undefined) return hit;
-        let v = 0;
-        try {
-          v = Number(await env.KEYS.get(minuteKey)) || 0;
-        } catch {
-          /* KV read failed */
-        }
-        __rlMin.set(mk, v);
-        if (__rlMin.size > 4096) __rlMin.delete(__rlMin.keys().next().value);
-        return v;
-      })(),
-      (async () => {
-        const hit = __rlDay.get(dk);
-        if (hit !== undefined) return hit;
-        let v = 0;
-        try {
-          v = Number(await env.KEYS.get(dayKey)) || 0;
-        } catch {
-          /* KV read failed */
-        }
-        __rlDay.set(dk, v);
-        if (__rlDay.size > 4096) __rlDay.delete(__rlDay.keys().next().value);
-        return v;
-      })(),
-    ]);
+    const minute = __rlMin.get(mk) ?? 0;
+    const day = __rlDay.get(dk) ?? 0;
     if (minute >= 48) {
       return jsonError(429, "Rate limit: ~60 requests/minute per token", "rate_limit_error");
     }
@@ -218,6 +263,8 @@ async function handleGatewayImpl(
     }
     __rlMin.set(mk, minute + 1);
     __rlDay.set(dk, day + 1);
+    if (__rlMin.size > 4096) __rlMin.delete(__rlMin.keys().next().value);
+    if (__rlDay.size > 4096) __rlDay.delete(__rlDay.keys().next().value);
   }
 
   const isCount = method === "POST" && path.endsWith(COUNT_PATH);
@@ -300,7 +347,13 @@ async function handleGatewayImpl(
   // text before parsing) still bounds the parse to image/search requests.
   if (
     isMessages &&
-    (route.type === "translate" || route.kind === "opencode" || route.kind === "deepseek")
+    (route.type === "translate" ||
+      route.kind === "opencode" ||
+      route.kind === "deepseek" ||
+      // nv/gmi ride the translation branch below (toOpenAIRequest needs the
+      // parsed body) — always parse, same as the og translate models.
+      route.kind === "gmi" ||
+      route.kind === "nvidia")
   ) {
     // CPU guard: parsing a multi-MB body into an object graph blows the Free
     // plan's 10ms budget (Error 1102) — but web_search detection and image
@@ -672,19 +725,70 @@ async function handleGatewayImpl(
   }
 
   // ---- POST /v1/messages ----
+  // nv/ and gmi/ upstreams (NVIDIA NIM, GMI Cloud) are OpenAI-format only —
+  // translate the Anthropic request to chat/completions (toOpenAIRequest) and
+  // reshape the response back to Anthropic, so Anthropic-only clients (Claude
+  // Code) can ride these channels via /v1/messages. OpenAI-native clients
+  // keep using the /v1/chat/completions direct passthrough above.
+  if (route.kind === "nvidia" || route.kind === "gmi") {
+    if (route.kind === "nvidia" && !nvKey) {
+      return jsonError(
+        502,
+        "NVAPI_KEY not configured — add your NVIDIA build.nvidia.com key",
+        "config_error",
+      );
+    }
+    if (route.kind === "gmi" && !gmiKey) {
+      return jsonError(
+        502,
+        "GMI_API_KEY not configured — add your GMI Cloud key in the console",
+        "config_error",
+      );
+    }
+    const openaiReq = toOpenAIRequest(body, upstreamModel);
+    const { response: upstream, detail } = await fetchWithRetry(
+      route.upstream,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${route.kind === "nvidia" ? nvKey : gmiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(openaiReq),
+      },
+      // Same as the chat/completions site for these upstreams: NIM/GMI shed
+      // bursts with fast 5xx BEFORE processing — retry502 absorbs them.
+      { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true },
+    );
+    if (!upstream || !upstream.ok) {
+      const upStatus = upstream?.status || 502;
+      let message = `${route.kind}: ${detail || `upstream ${upStatus}`}`;
+      const extra: Record<string, string> = {};
+      try {
+        if (upstream && !upstream.ok) {
+          const err: any = await upstream.json();
+          const m = err.error?.message || err.message;
+          if (m) message = m;
+          // Carry Retry-After so the client paces against the upstream limit.
+          const ra = upstream.headers?.get?.("retry-after");
+          if (ra) extra["retry-after"] = ra;
+        }
+      } catch {
+        /* non-JSON error body */
+      }
+      return jsonError(
+        upStatus,
+        message,
+        upStatus === 429 ? "rate_limit_error" : upStatus >= 500 ? "upstream_error" : "api_error",
+        extra,
+      );
+    }
+    return openAIUpstreamToAnthropicResponse(upstream, body, body.model, upstreamModel);
+  }
+
   // Passthrough routes (or/ds/qw): the upstream already speaks the Anthropic
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
-    // nv/ and gmi/ upstreams (NVIDIA NIM, GMI Cloud) are OpenAI-format only —
-    // an Anthropic body forwarded there would be misparsed garbage. Point the
-    // client at the OpenAI entry instead of failing obscurely at the upstream.
-    if (route.kind === "nvidia" || route.kind === "gmi") {
-      return jsonError(
-        400,
-        `${route.kind}/ models speak OpenAI format only — use /v1/chat/completions`,
-        "invalid_request_error",
-      );
-    }
     if (route.kind === "deepseek" && !deepseekKey) {
       return jsonError(
         502,
@@ -907,73 +1011,9 @@ async function handleGatewayImpl(
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure
   // count — otherwise yesterday's blips would combine with today's to trip.
   await recordChannelSuccess(env);
-  // True streaming: when the client asked for a stream, forward zen's OpenAI SSE
-  // chunks to Anthropic SSE increments as they arrive (instead of buffering the
-  // whole response and flushing it at once — that made thinking look frozen and
-  // could time out long generations).
-  if (body.stream) {
-    const ctype = upstream.headers?.get?.("content-type") || "";
-    if (ctype.includes("application/json") && !ctype.includes("text/event-stream")) {
-      // The upstream ignored stream:true and returned a plain JSON completion
-      // (a proxy/backend quirk, or a 200-wrapped error). Feeding JSON into the
-      // SSE parser produced an EMPTY Anthropic message — the whole answer was
-      // silently dropped. Buffer + translate as a one-shot SSE instead.
-      const json: any = await upstream.json().catch(() => null);
-      if (json) {
-        // A 200-wrapped OpenAI ERROR envelope ({error:{...}}) must NOT become
-        // a silent empty assistant message — surface it.
-        if (json.error || !Array.isArray(json.choices) || json.choices.length === 0) {
-          return jsonError(
-            502,
-            json.error?.message || json.message || "upstream returned an error envelope",
-            "api_error",
-          );
-        }
-        const oneShot = toSSE(toAnthropicResponse(json, upstreamModel));
-        return new Response(oneShot, {
-          headers: {
-            "Content-Type": "text/event-stream; charset=utf-8",
-            "Cache-Control": "no-cache",
-            ...CORS_HEADERS,
-          },
-        });
-      }
-      // Parse failed AND the body was consumed — a fall-through to the SSE
-      // translator would read an empty stream and fabricate an empty message.
-      return jsonError(502, "upstream returned invalid JSON", "api_error");
-    }
-    // Extract the scalars the encoder needs, then drop the big body object so
-    // the GC can reclaim it while the (potentially minutes-long) stream runs —
-    // keeping a multi-MB parsed body resident the whole time pushes the Free
-    // plan's 128MB isolate limit.
-    const clientModel = body.model;
-    const streamBody = streamOgToAnthropic(
-      upstream.body as ReadableStream,
-      clientModel,
-      upstreamModel,
-    );
-    // eslint-disable-next-line no-useless-assignment
-    body = null;
-    return new Response(streamBody, {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache",
-        ...CORS_HEADERS,
-      },
-    });
-  }
-  const upJson: any = await upstream.json().catch(() => null);
-  // A 200-wrapped OpenAI error envelope must not become an empty assistant
-  // message (silent failure, no retry signal).
-  if (!upJson || upJson.error || !Array.isArray(upJson.choices) || upJson.choices.length === 0) {
-    return jsonError(
-      502,
-      upJson?.error?.message || upJson?.message || "upstream returned an invalid response",
-      "api_error",
-    );
-  }
-  const anthropicRes = toAnthropicResponse(upJson, upstreamModel);
-  return jsonOk(anthropicRes);
+  // Response reshaping (SSE translation, one-shot JSON fallback, error-envelope
+  // guard) is shared with the nv/gmi translation branch below.
+  return openAIUpstreamToAnthropicResponse(upstream, body, body.model, upstreamModel);
 }
 /**
  * Structured request log for the /v1/* hot path — one line per gateway
@@ -1237,6 +1277,10 @@ export async function isModelUsable(env: any, model: string, uid: string): Promi
   if (prefix === "ds/" && !(userKeys.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY)) return false;
   if (prefix === "qw/" && !(userKeys.QWEN_API_KEY || env.QWEN_API_KEY)) return false;
   if (prefix === "or/" && !(userKeys.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY)) return false;
+  // nv/ and gmi/ are pure BYOK — the /v1 handler reads ONLY the user's key
+  // blob (no env fallback), so a missing user key means every request 502s.
+  if (prefix === "nv/" && !userKeys.NVAPI_KEY) return false;
+  if (prefix === "gmi/" && !userKeys.GMI_API_KEY) return false;
   if (model.startsWith("og/")) return !(await isChannelDegraded(env));
   return true;
 }

@@ -179,6 +179,28 @@ export function streamOgToAnthropic(
   const decoder = new TextDecoder();
   let buffer = "";
 
+  // Consume every COMPLETE event in `buffer` (SSE events end at a blank line;
+  // a trailing partial frame stays buffered for the next read). Shared by the
+  // live path and the closing branches — the done/died branches MUST drain
+  // too: the final read can deliver whole events (a single-segment body), and
+  // anything left unparsed there was silently dropped from the answer's tail.
+  const parseBuffered = (): void => {
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const raw = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
+      if (!dataLine) continue;
+      const payload = dataLine.slice(5).trim();
+      if (payload === "[DONE]") continue;
+      try {
+        encoderStream.push(JSON.parse(payload));
+      } catch {
+        /* malformed JSON frame */
+      }
+    }
+  };
+
   const readStream = new ReadableStream({
     async pull(controller) {
       while (true) {
@@ -204,6 +226,9 @@ export function streamOgToAnthropic(
           // Mid-stream upstream death AFTER content was emitted must NOT be
           // fabricated into a clean completed message — emit an error event
           // so the client retries instead of showing an empty turn.
+          // Same drain as the done branch: complete events buffered before
+          // the stream died still belong in the client's answer.
+          parseBuffered();
           // round-126: skip when finished — an error FRAME already emitted
           // the terminal error; a read-throw after it must not double-report
           // a contradictory "died mid-response".
@@ -221,6 +246,10 @@ export function streamOgToAnthropic(
         }
         const { done, value } = chunk;
         if (done) {
+          // Drain complete events the final read delivered BEFORE closing —
+          // without this they were dropped (finish()'s tail-parse only sees an
+          // unterminated fragment, and the live loop never got another turn).
+          parseBuffered();
           // round-99: a 200 SSE body with ZERO parseable frames (dead
           // backend, wrong content-type) yielded a silent empty assistant
           // message AND recorded a breaker success. Surface it.
@@ -258,34 +287,19 @@ export function streamOgToAnthropic(
         // became "upstream returned an empty/non-SSE stream" (or a merged
         // mid-answer drop on mixed line endings). Normalize CRLF → LF first.
         buffer = buffer.replace(/\r\n/g, "\n");
-        let idx;
-        while ((idx = buffer.indexOf("\n\n")) !== -1) {
-          const raw = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
-          if (!dataLine) continue;
-          const payload = dataLine.slice(5).trim();
-          if (payload === "[DONE]") continue;
-          let chunk;
-          try {
-            chunk = JSON.parse(payload);
-          } catch {
-            continue;
-          }
-          encoderStream.push(chunk);
-          const events = encoderStream.take();
-          if (events.length) {
-            // round-116: real backpressure. The old `await Promise.resolve()`
-            // after each enqueue did NOT pace the consumer — pull() is not
-            // re-entered while an enqueued item is unconsumed at the default
-            // HWM=1, but the loop kept draining the WHOLE upstream buffer
-            // into the stream queue in one pull, so a slow client let one
-            // pull() buffer the entire upstream response in memory. Emit one
-            // event batch per pull() and RETURN — the stream's desiredSize
-            // gates the next pull, pacing the reader.
-            controller.enqueue(encoder.encode(events));
-            return;
-          }
+        parseBuffered();
+        const events = encoderStream.take();
+        if (events.length) {
+          // round-116: real backpressure. The old `await Promise.resolve()`
+          // after each enqueue did NOT pace the consumer — pull() is not
+          // re-entered while an enqueued item is unconsumed at the default
+          // HWM=1, but the loop kept draining the WHOLE upstream buffer
+          // into the stream queue in one pull, so a slow client let one
+          // pull() buffer the entire upstream response in memory. Emit one
+          // event batch per pull() and RETURN — the stream's desiredSize
+          // gates the next pull, pacing the reader.
+          controller.enqueue(encoder.encode(events));
+          return;
         }
       }
     },
@@ -405,9 +419,10 @@ export class AnthropicStreamEncoder {
   /** Close all open blocks and append message_delta + message_stop. Call once on stream end. */
   finish(tailBuffer: string = ""): string | null {
     if (this.finished) return null;
-    this.finished = true;
     if (tailBuffer.trim()) {
       // A trailing partial event (no blank line yet) — best-effort parse.
+      // Must run BEFORE finished=true: push() early-returns once finished, so
+      // the old order made this parse dead code and dropped the tail frame.
       const dataLine = tailBuffer.split("\n").find((l) => l.startsWith("data:"));
       if (dataLine) {
         const payload = dataLine.slice(5).trim();
@@ -420,6 +435,7 @@ export class AnthropicStreamEncoder {
         }
       }
     }
+    this.finished = true;
     // The client expects message_start to be the first event.
     if (!this.started) this.emitStart();
     // round-116: emit any DELAYED content_block_start (the new-tool branch

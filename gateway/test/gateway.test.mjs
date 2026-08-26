@@ -187,9 +187,71 @@ test("gmi without GMI_API_KEY → 502 config error on chat/completions", async (
   assert.match(body.error?.message || body.message || "", /GMI_API_KEY not configured/);
 });
 
-test("gmi Anthropic-format request (/v1/messages) → 400 pointing at the OpenAI entry", async () => {
+test("gmi Anthropic-format request (/v1/messages) is translated to OpenAI chat/completions", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ keys: { GMI_API_KEY: "sk-gmi" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "x", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "gmi/MiniMaxAI/MiniMax-M3",
+      max_tokens: 8,
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(seen.url, "https://api.gmi-serving.com/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-gmi");
+  // Outbound body is OpenAI format (gmi/ prefix stripped, system role intact).
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "MiniMaxAI/MiniMax-M3");
+  assert.equal(sent.stream, false);
+  assert.equal(sent.messages[0].role, "user");
+  // Translated back to Anthropic shape for the client.
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.type, "message");
+  assert.equal(body.content[0].text, "ok");
+});
+
+test("gmi /v1/messages stream:true → OpenAI SSE translated to Anthropic SSE", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { GMI_API_KEY: "sk-gmi" } });
+  const openaiSse =
+    'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}\n\n' +
+    'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}]}\n\n' +
+    "data: [DONE]\n\n";
+  const res = await withFetch(async () =>
+    new Response(openaiSse, { status: 200, headers: { "content-type": "text/event-stream" } }), () =>
+    post(env, token, {
+      model: "gmi/MiniMaxAI/MiniMax-M3",
+      max_tokens: 8,
+      stream: true,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") || "", /text\/event-stream/);
+  const text = await res.text();
+  assert.match(text, /event: message_start/);
+  assert.match(text, /"type":"text_delta","text":"Hel"/);
+  assert.match(text, /"type":"text_delta","text":"lo"/);
+  assert.match(text, /"stop_reason":"end_turn"/);
+  assert.match(text, /event: message_stop/);
+});
+
+test("gmi /v1/messages without GMI_API_KEY → 502 config error", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { GMI_API_KEY: undefined } });
   let calls = 0;
   const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
     post(env, token, {
@@ -199,9 +261,40 @@ test("gmi Anthropic-format request (/v1/messages) → 400 pointing at the OpenAI
     }),
   );
   assert.equal(calls, 0);
-  assert.equal(res.status, 400);
+  assert.equal(res.status, 502);
   const body = await res.json();
-  assert.match(body.error?.message || body.message || "", /OpenAI format only/);
+  assert.match(body.error?.message || body.message || "", /GMI_API_KEY not configured/);
+});
+
+test("nv Anthropic-format request (/v1/messages) is translated with NVAPI_KEY", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { NVAPI_KEY: "sk-nv" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "x", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "nv/minimaxai/minimax-m3",
+      max_tokens: 8,
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(seen.url, "https://integrate.api.nvidia.com/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-nv");
+  assert.equal(JSON.parse(seen.init.body).model, "minimaxai/minimax-m3");
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.type, "message");
+  assert.equal(body.content[0].text, "ok");
 });
 
 test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {  __clearCaches();
@@ -290,17 +383,21 @@ test("nv/nvidia/nemotron via NIM official API (dedicated key, model swap)", asyn
   assert.equal(res.status, 200);
 });
 
-test("nv/ on /v1/messages → 400 (NIM speaks OpenAI only)", async () => {
+test("nv/ on /v1/messages without NVAPI_KEY → 502 config error", async () => {
   __clearCaches();
-  const { env, token } = gwEnv({ keys: { NVAPI_KEY: "nvapi-test-123" } });
-  const res = await post(env, token, {
-    model: "nv/nvidia/nemotron-3-ultra-550b-a55b",
-    max_tokens: 10,
-    messages: [{ role: "user", content: "hi" }],
-  }); // default path = /v1/messages
-  assert.equal(res.status, 400);
+  const { env, token } = gwEnv({ keys: { NVAPI_KEY: undefined } });
+  let calls = 0;
+  const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
+    post(env, token, {
+      model: "nv/nvidia/nemotron-3-ultra-550b-a55b",
+      max_tokens: 10,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  ); // default path = /v1/messages; the translate branch rejects before fetch
+  assert.equal(calls, 0);
+  assert.equal(res.status, 502);
   const body = await res.json();
-  assert.match(body.error?.message || "", /OpenAI format only/);
+  assert.match(body.error?.message || "", /NVAPI_KEY not configured/);
 });
 
 test("or/stealth/ox-alpha uses OpenRouter BYOK passthrough", async () => {
