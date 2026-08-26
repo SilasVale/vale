@@ -2,8 +2,12 @@
   "name": "zen-us-proxy",
   "main": "src/index.js",
   "compatibility_date": "2026-08-01",
-  "workers_dev": true,
-  "custom_domains": ["zen-us.saisi.online"],
+  "workers_dev": false,
+  // 2026-08-26: custom_domains 被 wrangler 4 忽略且面板从未绑定，域名实测 000；
+  // 改为显式 zone route（API token 有 Workers Routes 写权限时装此字段随 deploy 生效）。
+  "routes": [
+    { "pattern": "zen-us.saisi.online/*", "zone_id": "79860b60a8681147d0ce38294d404ead" }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
