@@ -161,43 +161,12 @@ echo "  ok: sha256 $SHA256 → index/src/index.js"
 
 DEST="$ROOT/index/public/vale-agent"
 # The installer embeds the playwright bundle (~36MB) — over the Workers
-# Assets 25MiB per-file cap — so it ships as a GitHub Release asset on the
-# public SilasVale/vale repo instead; the download page + /api/version
-# manifest point at releases/latest/download/. The standalone bundle is
-# published too (the setup.ps1 script-install path downloads it directly).
-# Only the small files stay Workers Assets. Clean any stale oversize copies.
+# Assets 25MiB per-file cap — so it never lives in this worker: it is staged
+# to the Vercel static mirror below (v.saisi.online/dl/*), and the download
+# page + /api/version manifest point there. The standalone bundle is staged
+# too (the setup.ps1 script-install path downloads it directly). Only the
+# small files stay Workers Assets. Clean any stale oversize copies.
 rm -f "$DEST/ValeAgent-Setup.exe" "$DEST/vale-playwright.zip"
-publish_release() {
-  local gh_token
-  gh_token="$(sed -n 's|https://[^:]*:\([^@]*\)@github.com.*|\1|p' "$HOME/.git-credentials" 2>/dev/null | head -1)"
-  [[ -n "$gh_token" ]] || { echo "!! GitHub release upload needs a PAT in ~/.git-credentials"; exit 1; }
-  local api="https://api.github.com/repos/SilasVale/vale" tag="v$VERSION" rel_id
-  rel_id="$(curl -s -m 30 -H "Authorization: token $gh_token" "$api/releases/tags/$tag" \
-    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))')"
-  if [[ -z "$rel_id" ]]; then
-    rel_id="$(curl -s -m 30 -X POST -H "Authorization: token $gh_token" -H "Accept: application/vnd.github+json" \
-      "$api/releases" -d "{\"tag_name\":\"$tag\",\"name\":\"$tag\"}" \
-      | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))')"
-    [[ -n "$rel_id" ]] || { echo "!! failed to create release $tag"; exit 1; }
-    echo "  created release $tag"
-  fi
-  local asset file
-  for asset in "$STAGE/ValeAgent-Setup.exe:ValeAgent-Setup.exe" \
-               "$ROOT/agent/deploy/vale-playwright.zip:vale-playwright.zip"; do
-    file="${asset%%:*}"; name="${asset##*:}"
-    # Replace any same-name asset from an earlier build of this version.
-    local aid
-    aid="$(curl -s -m 30 -H "Authorization: token $gh_token" "$api/releases/$rel_id/assets" \
-      | python3 -c "import sys,json; a=[x for x in json.load(sys.stdin) if x['name']=='$name']; print(a[0]['id'] if a else '')")"
-    [[ -n "$aid" ]] && curl -s -m 30 -X DELETE -H "Authorization: token $gh_token" "$api/releases/assets/$aid" >/dev/null
-    curl -s -m 600 -X POST -H "Authorization: token $gh_token" -H "Content-Type: application/octet-stream" \
-      "https://uploads.github.com/repos/SilasVale/vale/releases/$rel_id/assets?name=$name" \
-      --data-binary "@$file" | grep -q 'uploaded' \
-      || { echo "!! release asset upload failed: $name"; exit 1; }
-    echo "  ok: release $tag asset $name ($(du -h "$file" | cut -f1))"
-  done
-}
-publish_release
 # Primary download path: Vercel static hosting (v.saisi.online/dl/*). The
 # Vercel CDN serves the files from US edge nodes — devices on slow/blocked
 # GitHub paths still get full speed, and the URL stays on our own domain.

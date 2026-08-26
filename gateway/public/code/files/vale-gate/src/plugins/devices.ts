@@ -137,6 +137,56 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
   }
 }
 
+
+// round-158: device self-register — the npm-installed agent registers itself
+// with its OWN device token (the 64-hex credential from config.yaml). No reg
+// key, no admin session: possession of the token IS the device identity.
+// Token matches an existing device → idempotent refresh (hostname/name);
+// same name + different token → refuse (anti-hijack, mirror round-68).
+async function handleSelfRegister(request: Request, env: any): Promise<Response> {
+  const body = await readJson(request);
+  let device: Device;
+  try {
+    device = validateDevice(body);
+  } catch (e) {
+    return jsonError(400, (e as Error).message, "invalid_request");
+  }
+  if (!/^[0-9a-f]{64}$/i.test(device.token)) {
+    return jsonError(403, "Invalid device token", "authorization_error");
+  }
+  const existing = await getDevice(env, device.name);
+  if (existing && existing.token !== device.token) {
+    return jsonError(
+      409,
+      `Device '${device.name}' already registered with a different token — use the console (admin)`,
+      "conflict",
+    );
+  }
+  try {
+    const status = await deviceFetch(env, device, "/api/status");
+    if (status && status.resp) {
+      const j: any = await status.resp.json().catch(() => null);
+      if (j && typeof j.proxy_secret === "string" && j.proxy_secret.length >= 32) {
+        device.proxySecret = j.proxy_secret;
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
+  if (existing && !device.proxySecret && existing.proxySecret) {
+    device.proxySecret = existing.proxySecret;
+  }
+  if (existing) {
+    await upsertDevice(env, device);
+  } else {
+    const inserted = await insertDevice(env, device);
+    if (!inserted) {
+      return jsonError(409, `Device '${device.name}' already registered`, "conflict");
+    }
+  }
+  return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
+}
+
 // Public: the Windows install fetches the Cloudflare tunnel API token with a
 // valid registration key (so tunnel setup needs no browser login and no
 // token pasted on the machine). This returns the ACCOUNT-LEVEL CF API
@@ -733,6 +783,7 @@ export default {
 
     // Public registration flow (index.js order preserved).
     route(ctx, "POST", "/api/register", gate(handleRegister));
+    route(ctx, "POST", "/api/devices/self-register", gate(handleSelfRegister));
     route(ctx, "POST", "/api/install/tunnel-token", gate(handleTunnelToken));
     route(ctx, "POST", `${PLUGIN_BASE}/pair/claim`, gate(handlePairClaim));
     route(ctx, "POST", `${PLUGIN_BASE}/revoke`, handleRevoke);

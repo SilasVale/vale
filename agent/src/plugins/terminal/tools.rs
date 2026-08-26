@@ -85,7 +85,48 @@ pub(super) fn build(
         tool_secret_delete(),
         tool_saved_connections(),
         tool_connect_saved(terminal_mgr, bus, output_buf, logger, buffer_limit),
+        tool_terminal_env(),
     ]
+}
+
+/// round-151: terminal_env — AI-friendly environment info: default shell,
+/// install dir, bundled node, and guidance for using terminal_execute.
+fn tool_terminal_env() -> ToolDef {
+    ToolDef::new(
+        "terminal_env",
+        "Environment info for the AI when driving this device's terminal: default shell, install dir, bundled node.exe (for one-off node scripts run via terminal_execute), and usage guidance. Run BEFORE opening sessions/executing commands.",
+        json!({"type":"object","properties":{}}),
+        move |_params: Value| {
+            async move {
+                let dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_default();
+                let node = dir.join("playwright").join("node.exe");
+                let node_ver = if node.exists() {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(4),
+                        tokio::process::Command::new(&node).arg("--version").output(),
+                    ).await
+                    .ok()
+                    .and_then(|o| o.ok())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default()
+                } else { String::new() };
+                Ok(to_value_or_empty(&json!({
+                    "default_shell": "powershell (Windows)",
+                    "shell_hint": "PowerShell 5.1 — use terminal_execute with full commands; long pastes are chunked automatically",
+                    "install_dir": dir.to_string_lossy(),
+                    "bundled_node": { "path": node.to_string_lossy(), "version": node_ver },
+                    "router_reachable": "ssh stc@192.168.1.1 (user stc)",
+                    "ai_usage": [
+                        "Open a PTY with terminal_open (kind=pty), then terminal_execute commands.",
+                        "For script-driven work (playwright etc.) prefer browser_pw_info / browser_run_script instead of the shell.",
+                    ],
+                })))
+            }
+        },
+    )
 }
 
 /// Max bytes per session buffer before evicting oldest half — now runtime-
@@ -186,14 +227,14 @@ fn tool_open(
                         let cmd = std::path::Path::new(&target)
                             .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
                         if cmd.is_empty() || cmd.eq_ignore_ascii_case("powershell.exe") || cmd.eq_ignore_ascii_case("pwsh.exe") {
-                            // round-132: 曾移除 PSReadLine 换取长行粘贴的自动化
-                        // 可靠性;副作用是 ConPTY 原始回显在长行下碎裂,面板
-                        // 终端显示乱成一团(round-139 用户报告)。恢复
-                        // PSReadLine:行编辑/回显由它原子重绘,显示干净;
-                        // 自动化命令经由 tools 逐条下发且都很短,不再触发
-                        // 当年的粘贴问题。注入后 Clear-Host 清掉启动横幅与
-                        // 注入行,会话从干净画面开始。OSC133 标记不变。
-                        (r#"function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"#.to_string() + "\r\nClear-Host\r\n", true)
+                            // round-156: 实测恢复"卸载 PSReadLine"。512B/8ms 分块
+                        // 下 ConPTY 原始回显不再碎裂(实测 2KB 命令整行干净
+                        // 回显),而 PSReadLine 的增量行重绘才是 round-155 屏
+                        // 幕碎片/`>>` 续行残影的来源。卸载后由 ConsoleHost
+                        // 素回显,输出与提示符干净。注入行的回显被 Clear-Host
+                        // 清掉;OSC133 提示符标记不变。
+                        ("if (Get-Module -Name PSReadLine) { Remove-Module PSReadLine -Force -EA SilentlyContinue }\r\n".to_string()
+                            + r#"function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"# + "\r\nClear-Host\r\n", true)
                         } else { (String::new(), false) }
                     } else {
                         let cmd = std::path::Path::new(&target)

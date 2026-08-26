@@ -61,7 +61,15 @@ export async function verifyAccessJwt(request: Request, env: Env): Promise<{ ema
   } catch {
     return null;
   }
-  if (!header.kid || payload.aud !== env.ACCESS_AUD) return null;
+  if (!header.kid) return null;
+  // Access JWTs carry `aud` as either a string or an array of strings
+  // (RFC 7519 §4.1.3 — Cloudflare currently emits the array form).
+  const audList: string[] = Array.isArray(payload.aud)
+    ? payload.aud
+    : typeof payload.aud === "string"
+      ? [payload.aud]
+      : [];
+  if (!audList.includes(env.ACCESS_AUD)) return null;
   if (typeof payload.exp !== "number" || payload.exp * 1000 < Date.now()) return null;
 
   let keyJwk: any;
@@ -79,8 +87,12 @@ export async function verifyAccessJwt(request: Request, env: Env): Promise<{ ema
     false,
     ["verify"],
   );
+  // base64url → base64 with the right padding (length may be %4 = 2 or 3;
+  // hardcoding "==" mis-decodes signatures whose encoded length is %4 = 3).
+  const sigB64 = parts[2].replace(/-/g, "+").replace(/_/g, "/");
+  const sigPad = sigB64.length % 4 === 0 ? "" : "=".repeat(4 - (sigB64.length % 4));
+  const sig = Uint8Array.from(atob(sigB64 + sigPad), (c) => c.charCodeAt(0));
   const data = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
-  const sig = Uint8Array.from(atob(parts[2].replace(/-/g, "+").replace(/_/g, "/") + "=="), (c) => c.charCodeAt(0));
   const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, sig, data);
   if (!ok) return null;
 

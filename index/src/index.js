@@ -312,18 +312,12 @@ export default {
     // AI-triggerable RCE path). Re-generated automatically by
     // scripts/build-installer.sh — do not edit by hand.
     if (new URL(request.url).pathname === "/api/version") {
-      // Geo-routed download: the installer embeds the playwright bundle
-      // (~36MB — over the Workers Assets 25MiB per-file cap), so it lives
-      // outside this worker. GitHub Releases is the worldwide source; it is
-      // slow/unreliable from China, so CN devices get the Vercel static
-      // mirror (v.saisi.online/dl/) instead. Both serve byte-identical
-      // artifacts (same sha256) and device code consumes `download` as-is.
-      const cn = request.cf && request.cf.country === "CN";
+      // The installer embeds the playwright bundle (~36MB — over the
+      // Workers Assets 25MiB per-file cap), so it lives outside this worker:
+      // the Vercel static hosting mirror (v.saisi.online/dl/), staged by
+      // scripts/build-installer.sh. Device code consumes `download` as-is.
       const mirrorBase = (env && env.MIRROR_BASE) || "https://v.saisi.online/dl";
-      const releaseBase = (env && env.GITHUB_RELEASE_BASE) || "https://github.com/SilasVale/vale/releases/latest/download";
-      const download = cn
-        ? `${mirrorBase}/ValeAgent-Setup.exe`
-        : `${releaseBase}/ValeAgent-Setup.exe`;
+      const download = `${mirrorBase}/ValeAgent-Setup.exe`;
       return new Response(
         JSON.stringify({
           version: "1.0.80",

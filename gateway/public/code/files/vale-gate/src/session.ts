@@ -22,6 +22,7 @@
 import { getAdminPassword, getUser, type User } from "./store.ts";
 import { parseCookie, verifySessionToken, SESSION_COOKIE } from "./auth.ts";
 import { jsonError } from "./http.ts";
+import { requireAccessSession } from "./access.ts";
 
 export function sessionSecret(env: any, adminPassword: string): string {
   return env.SESSION_SECRET || adminPassword;
@@ -34,6 +35,14 @@ export function sessionSecret(env: any, adminPassword: string): string {
 const __notRevoked = new Map<string, { revoked: boolean; exp: number }>();
 
 export async function requireSession(request: Request, env: any): Promise<User | null> {
+  const cookieUser = await requireCookieSession(request, env);
+  if (cookieUser) return cookieUser;
+  // No valid session cookie — fall back to the edge-verified Cloudflare
+  // Access identity (option C). No-op unless ACCESS_AUD/TEAM_DOMAIN are set.
+  return requireAccessSession(request, env);
+}
+
+async function requireCookieSession(request: Request, env: any): Promise<User | null> {
   const ap = await getAdminPassword(env);
   if (!ap) return null;
   const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];

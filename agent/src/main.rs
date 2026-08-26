@@ -457,6 +457,54 @@ async fn run_server(config_path: PathBuf) {
     let port = config.server.port;
     let name = config.server.name.clone();
     let state = Arc::new(AppState::new(config));
+    // round-158: device self-register — the npm-installed agent reports itself
+    // ({name, hostname, token = config.device_token}) to the console so the
+    // Devices list stays automatic. Hostname comes from vale-agent.hostname
+    // next to the exe (written at install); name = first label of the
+    // subdomain. Runs at boot after the server is up, then every 6h; failures
+    // are silent (the console may be offline at boot).
+    {
+        let reg_cfg = state.config.clone();
+        let reg_install = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_default();
+        tokio::spawn(async move {
+            let console = reg_cfg.platform.console_url.clone();
+            let token = reg_cfg.server.device_token.clone().unwrap_or_default();
+            let hostname = std::fs::read_to_string(reg_install.join("vale-agent.hostname"))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            if console.is_empty() || token.is_empty() || hostname.is_empty() {
+                return;
+            }
+            let name = hostname.split('.').next().unwrap_or("device").to_string();
+            let body = format!(
+                r#"{{"name":"{name}","hostname":"{hostname}","token":"{token}"}}"#,
+                name = name, hostname = hostname, token = token
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            loop {
+                let ok = match reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(10))
+                    .build()
+                {
+                    Ok(c) => c
+                        .post(format!("{console}/api/devices/self-register"))
+                        .header("content-type", "application/json")
+                        .body(body.clone())
+                        .send()
+                        .await
+                        .ok()
+                        .map(|r| r.status().is_success())
+                        .unwrap_or(false),
+                    Err(_) => false,
+                };
+                tracing::debug!(ok, "device self-register to {console}");
+                tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+            }
+        });
+    }
     // round-101: remember the ACTUAL loaded config path so PUT /api/settings
     // persists to it (a hardcoded exe_dir/config.yaml silently reverted on
     // restart for dev/custom invocations).
@@ -474,6 +522,47 @@ async fn run_server(config_path: PathBuf) {
             match pw.start().await {
                 Ok(v) => tracing::info!("playwright auto-start: {}", v),
                 Err(e) => tracing::warn!("playwright auto-start failed: {e}"),
+            }
+        });
+    }
+
+    // round-143: bridge watchdog. The boot-time bridge spawn (above) runs
+    // once; if the bridge's IIFE throws (e.g. transient launchPersistentContext
+    // failure, missing browser binary, profile lock) the process exits and
+    // 9224 stays dead until the device reboots — the panel's live view goes
+    // black and "实时通道重连中…" loops forever (observed d1, 2026-08-25).
+    // Every 30 s, TCP-probe 9224; if closed AND bridge.js + node.exe exist,
+    // respawn. The new child joins the reaper job (setup_child_reaper_job
+    // runs before main and applies to every child spawned by this process),
+    // so it dies with the agent on update.
+    #[cfg(windows)]
+    {
+        tokio::spawn(async {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            tick.tick().await; // first tick is immediate — skip it
+            loop {
+                tick.tick().await;
+                let busy = tokio::net::TcpStream::connect("127.0.0.1:9224")
+                    .await
+                    .is_ok();
+                if busy {
+                    continue;
+                }
+                let install_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_default();
+                let node = install_dir.join("playwright").join("node.exe");
+                let bridge = install_dir.join("bridge.js");
+                if !(node.exists() && bridge.exists()) {
+                    continue;
+                }
+                let mut cmd = tokio::process::Command::new(&node);
+                cmd.arg(&bridge).arg("9224");
+                match cmd.spawn() {
+                    Ok(_) => log_line("browser bridge: watchdog respawned (9224 was down)"),
+                    Err(e) => log_line(&format!("browser bridge: watchdog respawn failed: {e}")),
+                }
             }
         });
     }

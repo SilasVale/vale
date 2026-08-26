@@ -6,6 +6,7 @@
 //! (mcp_client_connect at 127.0.0.1:9229/mcp).
 
 pub mod manager;
+pub mod tools;
 
 use vale_agent_core::{Plugin, ToolDef};
 
@@ -33,6 +34,9 @@ impl Plugin for PlaywrightPlugin {
         "playwright-mcp browser automation"
     }
     fn tools(&self) -> Vec<ToolDef> {
-        vec![] // 工具经 /api/plugins/* HTTP 路由,不走 MCP
+        // round-151: browser_pw_info / browser_run_script — bundled-playwright
+        // 发现与执行入口,让 AI 无需自行安装。其余浏览器自动化仍走
+        // mcp_client 插件(127.0.0.1:9229 playwright-mcp)。
+        tools::build()
     }
 }

@@ -296,8 +296,12 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
 
     // Browser bridge proxy (round-135): pull latest JPEG frame / push input
     // events to the device-local bridge on 127.0.0.1:9224. Standard bearer
-    // gate applies (both paths start with /api). GET-only passthrough.
-    if method == Method::GET && (path == "/api/browser/frame" || path == "/api/browser/input") {
+    // gate applies (both paths start with /api). frame = GET only; input
+    // accepts GET (?d=json) and POST (JSON body, round-153: the manual probe
+    // panel navigates via POST /api/browser/input).
+    if (method == Method::GET && (path == "/api/browser/frame" || path == "/api/browser/input"))
+        || (method == Method::POST && path == "/api/browser/input")
+    {
         if let Err(resp) = check_auth(&req, &state) { return *resp; }
         let q = req.uri().query().map(|q| q.to_string());
         let q = q.as_deref().map(|q| format!("?{}", q)).unwrap_or_default();
@@ -308,7 +312,17 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             Ok(c) => c,
             Err(_) => return built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge client")),
         };
-        return match cli.get(format!("http://127.0.0.1:9224{}{}", sub, q)).send().await {
+        let url = format!("http://127.0.0.1:9224{}{}", sub, q);
+        let fut = if method == Method::POST {
+            let body_bytes = match axum::body::to_bytes(req.into_body(), 64 * 1024).await {
+                Ok(b) => b,
+                Err(_) => return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("bad body")),
+            };
+            cli.post(url).header("content-type", "application/json").body(body_bytes.to_vec())
+        } else {
+            cli.get(url)
+        };
+        return match fut.send().await {
             Ok(up) => {
                 let st = StatusCode::from_u16(up.status().as_u16()).unwrap_or(StatusCode::OK);
                 // built_response takes &'static str — bridge only emits these two.
@@ -323,6 +337,57 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             }
             Err(_) => built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge down")),
         };
+    }
+
+    // round-152: AI browser evidence stream — list + fetch screenshots from
+    // the pwout dir (browser_run_script & playwright scripts drop screenshots
+    // here). The panel polls pwshots and shows new PNGs as the AI works,
+    // so a human can see what the AI did without any live frame stream.
+    if method == Method::GET && (path == "/api/browser/pwshots" || path == "/api/browser/pwshot") {
+        if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        let install = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_default();
+        let pwout = install.join("pwout");
+        if path == "/api/browser/pwshots" {
+            let mut shots: Vec<serde_json::Value> = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(&pwout) {
+                for e in rd.filter_map(|e| e.ok()) {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if !name.ends_with(".png") { continue; }
+                    let meta = e.metadata().ok();
+                    let mtime_ms = meta.as_ref().and_then(|m| m.modified().ok()).map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)).unwrap_or(0);
+                    shots.push(serde_json::json!({
+                        "name": name,
+                        "mtime_ms": mtime_ms,
+                        "size": meta.map(|m| m.len()).unwrap_or(0),
+                    }));
+                }
+            }
+            shots.sort_by(|a, b| b["mtime_ms"].as_u64().cmp(&a["mtime_ms"].as_u64()));
+            shots.truncate(40);
+            return built_response(StatusCode::OK, "application/json", Body::from(serde_json::json!({"shots": shots}).to_string()));
+        }
+        // /api/browser/pwshot?name=xxx — serve one screenshot (basename only)
+        let name = req.uri().query().unwrap_or("")
+            .split('&')
+            .find_map(|kv| kv.strip_prefix("name="))
+            .unwrap_or("");
+        if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+            return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("bad name"));
+        }
+        return match std::fs::read(pwout.join(name)) {
+            Ok(bytes) => {
+                let mut resp = built_response(StatusCode::OK, "image/png", Body::from(bytes));
+                resp.headers_mut().insert(
+                    axum::http::HeaderName::from_static("cache-control"),
+                    axum::http::HeaderValue::from_static("no-store"),
+                );
+                resp
+            }
+            Err(_) => built_response(StatusCode::NOT_FOUND, "text/plain", Body::from("no such shot")),
+        }
     }
 
     // round-137 方案 C: interactive-browser WebSocket relay. MUST sit before

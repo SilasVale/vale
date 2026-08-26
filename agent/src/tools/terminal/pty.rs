@@ -230,10 +230,20 @@ impl TermBackend for PtyBackend {
             // 整段 write_all 一次性灌入时,控制台输入记录队列被 PSReadLine
             // 的增量渲染慢慢消费,5s 预算内写不完 → 写被中途放弃 → 命令
             // 无声截断(长 base64 字面量稳定断在 ~300 字节)、残余字节稍后
-            // 落盘造成乱序回显(">>" 续行伪影的另一半成因)。256B 分块 +
-            // 15ms 让渡让队列永不写满;顺序由顺序 await 保证。总预算 30s。
-            const CHUNK: usize = 64;
-            const GAP_MS: u64 = 40;
+            // 落盘造成乱序回显(">>" 续行伪影的另一半成因)。分块+让渡让
+            // 队列永不写满;顺序由顺序 await 保证。总预算 30s。
+            // round-140: 64B/40ms 太保守——每条命令在屏幕上触发
+            // ceil(len/64) 次 PSReadLine 重绘帧(实测 3.6KB base64 传输在
+            // 面板上重复回显数十次、缓冲疯长 2MB+ 的"回声干扰"观感),
+            // 大命令还要 2s+ 才灌完。256B/15ms(≈17KB/s,低于 ConPTY 队列
+            // 消费速率)把重绘帧数降 ~11 倍;短写/阻塞仍由块内 9s deadline
+            // + 退避兜底,不会静默丢字。
+            // round-155: 256B/15ms 仍让 PSReadLine 每块重绘一次编辑行
+            // (面板显示残留 `>>`/`> ` 半截行)。512B/8ms 让整条命令更快进
+            // 入编辑缓冲、重绘次数减半;短写/阻塞仍由块内 9s deadline+退避
+            // 兜底,不会静默丢字。
+            const CHUNK: usize = 512;
+            const GAP_MS: u64 = 8;
             let mut off = 0usize;
             let mut res = Ok(());
             while off < d.len() {

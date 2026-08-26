@@ -7,7 +7,7 @@
 | `zen-go-proxy/` | `opencode-go-proxy` | opencode.saisi.online 专属直连入口(og 转译已并入网关) | `OPENCODE_GO_API_KEY`,可选 `CLIENT_KEY` |
 | `zen-us-proxy/` | `zen-us-proxy` | 美国出口代理(D1 绑定强制美区边缘 → opencode zen) | `OPENCODE_GO_API_KEY` |
 | `my-openrouter-proxy/` | `openrouter-proxy` | OpenRouter BYOK 透传(用户自带 key,无则回退内置) | `OPENROUTER_API_KEY` |
-| `vercel-proxy/` | Vercel 项目 | `v.saisi.online/api/zen` + `/api/proxy` AI 出口，以及受控 `/api/github/{web|raw|api|release}/...` GitHub HTTP 反向代理(Vercel 平台,非 Worker) | `OPENROUTER_API_KEY`(Vercel env) |
+| `vercel-proxy/` | Vercel 项目 | `v.saisi.online/api/zen` + `/api/proxy` AI 出口，受控 `/api/github/{web|raw|api|release}/...` GitHub HTTP 反向代理，以及 `/api/gform/{gle|docs|...}/...` Google Forms 反向代理(正文改写,匿名公开表单)(Vercel 平台,非 Worker) | `OPENROUTER_API_KEY`(Vercel env) |
 
 ## 部署
 

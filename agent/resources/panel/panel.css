@@ -82,16 +82,23 @@ body {
 
    Since the vanilla→React migration (round-79) the app mounts into #root —
    #panel-main is no longer body's direct child. #root must carry the same
-   stretch chain or flex:1 dies there (the half-screen bug came back). */
+   stretch chain or flex:1 dies there (the half-screen bug came back).
+
+   round-142: every link in the chain also needs min-width: 0, otherwise
+   a large intrinsic min-width from the xterm canvas or the toolbar pushes
+   .frame-main wider than its grid track, leaving visible empty space on
+   the right edge ("sessions don't fill the window" regression). */
 #root {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
 #panel-main {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -269,9 +276,14 @@ body {
 #conn-status.error { color: var(--danger); font-size: 12px; margin-top: 6px; }
 
 /* ---------- terminal ---------- */
+/* round-142: min-width: 0 — without it the xterm canvas's intrinsic
+   min-width (≥ 2ch at fontSize 13 ≈ 26px) keeps the row from shrinking
+   below the grid track, so the rightmost ~3–8 cm of the main area renders
+   blank even though the toolbar/status bar already filled their own rows. */
 #term-container {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   overflow: hidden;
 }
@@ -1301,3 +1313,262 @@ body {
   color: var(--ink, #111);
 }
 .side-menu button:hover { background: rgba(0,0,0,.05); }
+
+/* ============================================================
+   round-147: DSH-style app shell (light theme).
+   ONE fixed-height flex row: icon rail | session rail | canvas.
+   The canvas is a flex COLUMN that owns 100% of the remaining space;
+   nothing stacks below the terminal/browser pane anymore (the command
+   stream moved into the right-side drawer overlay). All old component
+   selectors (tabs/modals/cards/plugins/trajectory) keep working; these
+   rules override only the frame/positioning layer.
+   ============================================================ */
+#app-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  background: var(--surface);
+}
+
+/* ---------- icon rail ---------- */
+#icon-rail {
+  flex: 0 0 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0 12px;
+  background: var(--surface-glass);
+  border-right: 1px solid var(--line);
+}
+.rail-brand {
+  width: 30px; height: 30px;
+  margin-bottom: 10px;
+  display: grid; place-items: center;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px; font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.rail-btn {
+  width: 38px; height: 38px;
+  display: grid; place-items: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.rail-btn:hover { background: var(--line-soft); color: var(--ink); }
+.rail-btn.active { background: var(--focus-ring-soft); color: var(--accent-ink); }
+.rail-spacer { flex: 1; }
+.rail-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+  transition: background 0.2s ease;
+}
+.rail-dot.on { background: #2f9e44; }
+
+/* ---------- session rail ---------- */
+#session-rail {
+  flex: 0 0 244px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: #fff;
+}
+/* The Sessions|Plugins section nav lives in the icon rail now. */
+#session-rail .side-nav { display: none; }
+#session-rail .side-header { padding: 14px 14px 6px; }
+#session-rail .side-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px 8px;
+}
+#session-rail #statusbar {
+  flex: none;
+  border-top: 1px solid var(--line);
+  border-bottom: none;
+  padding: 6px 12px;
+}
+#session-rail #status { font-size: 11px; }
+#session-rail #session-count { font-size: 11px; }
+
+/* ---------- canvas ---------- */
+#canvas-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
+}
+#panel-main {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+#panel-main.hidden { display: none; }
+
+/* One compact canvas header row: chips | view switch | export/settings/logs */
+#canvas-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+#canvas-top .tabrow {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+}
+#canvas-top .tab {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+#canvas-top #toolbar {
+  flex: none;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  position: static;
+  z-index: auto;
+}
+#canvas-top #toolbar-actions { gap: 6px; }
+#canvas-top #export-all, #canvas-top #open-settings, #cmd-toggle {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+}
+#canvas-top #export-all:hover, #canvas-top #open-settings:hover, #cmd-toggle:hover,
+#cmd-toggle.active { border-color: var(--accent); color: var(--accent-ink); }
+#cmd-toggle.active { background: var(--focus-ring-soft); }
+
+/* The pane slot owns the rest of the canvas: full bleed (no rounded
+   terminal-inside-canvas leftover, no reserved rows below). */
+#term-container {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  background: #fff;
+}
+.term-session .xterm {
+  border: none;
+  border-radius: 0;
+}
+#traj-view { flex: 1; min-height: 0; min-width: 0; }
+
+/* Plugins page fills the canvas. */
+#plugins-view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+/* ---------- command drawer (right overlay) ---------- */
+#drawer {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 330px;
+  max-width: 70%;
+  display: flex;
+  background: #fff;
+  border-left: 1px solid var(--line);
+  box-shadow: -10px 0 28px rgba(0, 0, 0, 0.07);
+  z-index: 30;
+  animation: drawer-in 0.18s ease;
+}
+@keyframes drawer-in {
+  from { transform: translateX(14px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+#drawer-inner {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#drawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+#drawer-head button {
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+#drawer-head button:hover { color: var(--ink); background: var(--line-soft); }
+#drawer-inner .cmd-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+#drawer-inner .details-header {
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+#drawer-inner .details-body {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+}
+#drawer-inner #cmd-stream {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+#drawer-inner #cmd-stream .cmd-list { flex: 1; min-height: 0; overflow-y: auto; }
+/* ============================================================
+   round-148: 精简 + 防御性高度链。显式 stretch / flex-basis:0
+   覆盖每一层 flex,任何 pane 都不得再塌缩到内容高度;画布头部
+   只保留 chips + 视图切换 + Logs。
+   ============================================================ */
+#app-shell { align-items: stretch; }
+#canvas-host { align-items: stretch; }
+#panel-main { flex: 1 1 0; }
+#canvas-top { flex: 0 0 auto; }
+#term-container { flex: 1 1 0; }
+#term-container > div { flex: 1 1 0; min-height: 0; min-width: 0; }
+#traj-view { flex: 1 1 0; }
+/* BrowserPane fills its wrapper via flex (not the fragile height:100% chain). */
+/* BrowserPane 专有包装层:flex 填充,不再依赖 height:100% 链条 */
+#term-container > .browser-wrap { display: flex; }
+#term-container > .browser-wrap > div { flex: 1 1 0; min-height: 0; min-width: 0; }

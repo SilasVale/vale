@@ -3,6 +3,7 @@
     { "source": "/api/proxy/:path*", "destination": "/api/proxy" },
     { "source": "/api/zen/:path*", "destination": "/api/zen?path=/:path*" },
     { "source": "/api/github/:path*", "destination": "/api/github?path=/:path*" },
-    { "source": "/api/git/:path*", "destination": "/api/git?path=/:path*" }
+    { "source": "/api/git/:path*", "destination": "/api/git?path=/:path*" },
+    { "source": "/api/gform/:path*", "destination": "/api/gform?path=/:path*" }
   ]
 }

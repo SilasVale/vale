@@ -240,8 +240,11 @@ async function callTerminalTool(name: string, env: any, device: any, args: any):
     secret_delete: "/api/tools/secret_delete",
     terminal_saved_connections: "/api/tools/terminal_saved_connections",
     terminal_connect_saved: "/api/tools/terminal_connect_saved",
+    terminal_env: "/api/tools/terminal_env",
+    browser_pw_info: "/api/tools/browser_pw_info",
+    browser_run_script: "/api/tools/browser_run_script",
   }[name];
-  if (!toolPath) throw new Error(`Unknown terminal tool: ${name}`);
+  if (!toolPath) throw new Error(`Unknown device tool: ${name}`);
   const body: any = { ...args };
   delete body.device;
   if (name === "terminal_execute") {

@@ -144,6 +144,11 @@ const I18N = {
     "user.enableToast": "已启用",
     "devices.lede": "注册每台 Windows 设备（vale-agent）的 token，控制台即可代理到设备面板、复制 MCP 配置。",
     "devices.addTitle": "添加 / 更新设备",
+    "devices.npmTitle": "新设备安装（npm）",
+    "devices.npmDesc": "设备为 Windows；安装 vale-agent 后用同一 Bearer token 在下方「添加 / 更新设备」登记。",
+    "devices.npmStep1": "1. 安装（在设备 PowerShell 执行）",
+    "devices.npmStep2": "2. 登记设备：把下面的 mcp 配置里 Authorization 的 Bearer token 填进「添加 / 更新设备」，名称与主机名一致即可。",
+
     "devices.listTitle": "设备列表",
     "devices.namePh": "设备名（如 d1）",
     "devices.hostPh": "d1.agent.saisi.online",
@@ -336,6 +341,11 @@ const I18N = {
     "devices.lede":
       "Register each Windows device (vale-agent) token so the console can proxy to its panel and copy MCP configs.",
     "devices.addTitle": "Add / update device",
+    "devices.npmTitle": "Install a new device (npm)",
+    "devices.npmDesc": "Device is Windows: install vale-agent via npm, then register it below with the same Bearer token.",
+    "devices.npmStep1": "1. Install (run in PowerShell on the device)",
+    "devices.npmStep2": "2. Register: use the Bearer token from the mcp config below in the Add/update card, with a matching name.",
+
     "devices.listTitle": "Devices",
     "devices.namePh": "Device name (e.g. d1)",
     "devices.hostPh": "d1.agent.saisi.online",

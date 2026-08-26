@@ -273,6 +273,37 @@ const TERMINAL_TOOLS: McpTool[] = [
       required: ["device", "id"],
     },
   },
+  {
+    name: "terminal_env",
+    description: "Environment info for driving the device's terminal (default shell, install dir, bundled node, guidance). Run before opening sessions.",
+    inputSchema: {
+      type: "object",
+      properties: { device: { type: "string" } },
+      required: ["device"],
+    },
+  },
+  {
+    name: "browser_pw_info",
+    description: "Info about the device's BUNDLED Playwright runtime (paths, versions, template) — AI should reuse it instead of installing its own.",
+    inputSchema: {
+      type: "object",
+      properties: { device: { type: "string" } },
+      required: ["device"],
+    },
+  },
+  {
+    name: "browser_run_script",
+    description: "Run a Node/Playwright script with the device's bundled runtime. Params: script (JS source), timeout_secs. Returns exit_code/stdout/stderr/screenshots.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        device: { type: "string" },
+        script: { type: "string" },
+        timeout_secs: { type: "integer" },
+      },
+      required: ["device", "script"],
+    },
+  },
 ];
 
 const BROWSER_TOOLS: McpTool[] = [
@@ -306,10 +337,10 @@ const BROWSER_TOOLS: McpTool[] = [
   {
     name: "browser_click",
     description:
-      "Click an element (by ref from a snapshot) in the controlled tab. Returns a snapshot.",
+      "Click an element (by ref from a snapshot, e.g. 6 for e6) in the controlled tab. Returns a snapshot.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, element_ref: { type: "integer" } },
+      properties: { device: { type: "string" }, element_ref: { type: "integer", description: "snapshot ref number (rendered as e<N> target)" } },
       required: ["device", "element_ref"],
     },
   },

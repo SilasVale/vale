@@ -4,6 +4,7 @@ import { useSessions } from "./hooks/useSessions";
 import { useCommandEvents } from "./hooks/useCommandEvents";
 import { useSSE } from "./hooks/useSSE";
 import { AppFrame } from "./components/AppFrame";
+import { IconRail } from "./components/IconRail";
 import { Sidebar } from "./components/Sidebar";
 import { PluginsView } from "./components/PluginsView";
 import { usePlugins } from "./hooks/usePlugins";
@@ -14,7 +15,6 @@ import { TerminalPane } from "./components/TerminalPane";
 import BrowserPane from "./components/BrowserPane";
 import { TabBar } from "./components/TabBar";
 import type { SessionView } from "./components/TabBar";
-import { Toolbar } from "./components/Toolbar";
 import { StatusBar } from "./components/StatusBar";
 import { ConnModal } from "./components/ConnModal";
 import { SettingsModal } from "./components/SettingsModal";
@@ -108,6 +108,16 @@ export function App() {
   const BROWSER_SID = "__browser__";
 
   const sessions = useSessions(connected);
+
+  // round-157: 打开面板时若无激活会话,自动激活第一个 live 会话——否则
+  // 所有 .term-session 停留在 display:none,终端区白板(用户反复反馈
+  // "没覆盖/空白")。browserActive 时跳过(Browser 视图优先)。
+  useEffect(() => {
+    if (browserActive || sessions.activeSid) return;
+    const live = sessions.sessions.find((s) => !s.closed);
+    if (live) sessions.activate(live.sid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions.sessions, sessions.activeSid, browserActive]);
 
   // round-admin-ui Task 5: per-session main-area view (terminal | trajectory).
   // Per-sid so each session keeps its own view; new sessions default to the
@@ -230,33 +240,41 @@ export function App() {
     );
   }
 
-  // round-admin-ui Task 3: three-column AppFrame — session sidebar | main
-  // (the existing terminal pane shell) | details column (placeholder until
-  // Task 4). The toolbar/tabs/terminal/statusbar keep their exact DOM + CSS.
+  // round-147: dsh-style app shell — icon rail | session rail | full canvas.
+  // The command stream moved OUT of the canvas into the right drawer, so the
+  // terminal/browser panes own 100% of the remaining space. The details
+  // column (selected command) rides inside the same drawer. Light theme.
   return (
     <AppFrame
-      sidebar={
-        <Sidebar
-          sessions={allSessions as typeof sessions.sessions}
-          activeSid={effectiveActiveSid}
-          onActivate={activateWrap}
+      iconRail={
+        <IconRail
           view={view}
           onViewChange={switchView}
-          onNewSession={newSessionWrap}
-          plugins={plugins}
+          onShowSettings={() => setShowSettings(true)}
+          connected={connected}
         />
       }
-      main={(
+      sessionRail={
+        <>
+          <Sidebar
+            sessions={allSessions as typeof sessions.sessions}
+            activeSid={effectiveActiveSid}
+            onActivate={activateWrap}
+            view={view}
+            onViewChange={switchView}
+            onNewSession={newSessionWrap}
+            plugins={plugins}
+          />
+          <StatusBar sessions={sessions.sessions} status={sessions.status} sseState={sseState} />
+        </>
+      }
+      canvas={(
         <>
         {/* round-admin-ui Task 6: the session workspace is HIDDEN, not
             unmounted, while the plugins page is up — xterm instances and
             SSE streams keep running, so switching back restores the exact
             terminal state. */}
         <div id="panel-main" className={view === "plugins" ? "hidden" : undefined}>
-          <Toolbar
-            onExportAll={() => sessions.sessions.forEach((s) => sessions.exportSession(s.sid))}
-            onShowSettings={() => setShowSettings(true)}
-          />
           {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
           {modalKind && (
             <ConnModal
@@ -265,21 +283,37 @@ export function App() {
               onConnect={(target, extra) => sessions.openSession(modalKind, target, extra)}
             />
           )}
-          <TabBar
-            sessions={allSessions as typeof sessions.sessions}
-            activeSid={effectiveActiveSid}
-            onActivate={activateWrap}
-            onClose={(sid) => {
-              if (sid === BROWSER_SID) { setBrowserActive(false); return; }
-              sessions.closeSession(sid);
-            }}
-            onExport={sessions.exportSession}
-            view={sessionView}
-            onViewChange={(v) => {
-              const sid = sessions.activeSid;
-              if (sid) setSessionViews((m) => ({ ...m, [sid]: v }));
-            }}
-          />
+          {/* round-147: one compact canvas header row — session chips, view
+              switch, export/settings/commands. Nothing stacks below it. */}
+          <div id="canvas-top">
+            <TabBar
+              sessions={allSessions as typeof sessions.sessions}
+              activeSid={effectiveActiveSid}
+              onActivate={activateWrap}
+              onClose={(sid) => {
+                if (sid === BROWSER_SID) { setBrowserActive(false); return; }
+                sessions.closeSession(sid);
+              }}
+              onExport={sessions.exportSession}
+              view={sessionView}
+              onViewChange={(v) => {
+                const sid = sessions.activeSid;
+                if (sid) setSessionViews((m) => ({ ...m, [sid]: v }));
+              }}
+            />
+            {/* round-148: 精简 —— Export/Settings 从画布头部移除(Settings 在
+                图标栏,单个会话导出在会话 chip 的 ⇩ 上);头部只留会话
+                chips + 视图切换 + Logs。 */}
+            <button
+              id="cmd-toggle"
+              className={detailsOpen ? "active" : ""}
+              title="Command log"
+              onClick={() => {
+                if (detailsOpen) { setDetailsOpen(false); setSelectedCmdId(null); }
+                else setDetailsOpen(true);
+              }}
+            >Logs</button>
+          </div>
           {/* round-admin-ui Task 5: trajectory mode hides the terminal
               CONTAINER (inline display:none), not the panes — xterm instances
               stay mounted and keep streaming, so switching back restores the
@@ -290,51 +324,62 @@ export function App() {
               BrowserPane 就渲染在里面,旧条件把它 display:none 导致浏览器
               会话永远不可见(WS/帧全部正常,纯 CSS 事故)。只保留 trajectory
               的隐藏路径。 */}
-          <div id="term-container" style={!browserActive && trajOpen ? { display: "none" } : undefined}>
-            {browserActive ? (
-              <BrowserPane key={BROWSER_SID} session={{ sid: BROWSER_SID, url: "", active: true }} apiBase="" token={token} />
-            ) : sessions.sessions.length === 0 ? (
-              <div id="empty-state">
-                <div className="empty-card">
-                  <span className="empty-mark">V</span>
-                  <p>No sessions yet</p>
-                </div>
-              </div>
-            ) : (
-              // round-113: closed sessions do NOT render a pane — the R99
-              // unregister fix was dead code because closed panes never
-              // unmounted, leaving their write callbacks in the 5s sync loop's
-              // polling set forever. Unmounting releases the callback.
-              sessions.sessions.filter((s) => !s.closed).map((s) =>
-                s.kind === "browser"
-                  ? <BrowserPane key={s.sid} session={{ sid: s.sid, url: "", active: s.active }} apiBase="" token={token} />
-                  : <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />
-              )
-            )}
-          </div>
-          {/* round-admin-ui Task 4/5: command card stream for the ACTIVE
-              session below the terminal; the trajectory tab replaces both.
-              Clicking a card opens the details column. */}
           {trajOpen && sessions.activeSid ? (
             <TrajectoryView key={sessions.activeSid} events={cmdEvents.events} />
           ) : (
-            <CommandStream
-              cards={cmdEvents.cards}
-              selectedId={selectedCmdId}
-              // Clicking the selected card again closes the details column.
-              onSelect={(id) => {
-                if (id === selectedCmdId) { setSelectedCmdId(null); setDetailsOpen(false); }
-                else { setSelectedCmdId(id); setDetailsOpen(true); }
-              }}
-            />
+            <div id="term-container" style={!browserActive ? undefined : undefined}>
+              {/* round-145: BrowserPane is mounted from PAGE LOAD (always, not
+                  lazily) and hidden via display:none when inactive — its socket
+                  stays open and frames keep arriving, so clicking the Browser
+                  tab is ALWAYS instant with the latest frame already on screen
+                  (no black re-mount window, not even the first click). The
+                  terminal branch renders whenever the browser pane is NOT
+                  active — both panes coexist while hidden. */}
+              <div className="browser-wrap" style={{ display: browserActive ? undefined : "none" }}>
+                <BrowserPane key={BROWSER_SID} session={{ sid: BROWSER_SID, url: "", active: true }} apiBase="" token={token} />
+              </div>
+              {!browserActive && (sessions.sessions.length === 0 ? (
+                <div id="empty-state">
+                  <div className="empty-card">
+                    <span className="empty-mark">V</span>
+                    <p>No sessions yet</p>
+                  </div>
+                </div>
+              ) : (
+                // round-113: closed sessions do NOT render a pane — the R99
+                // unregister fix was dead code because closed panes never
+                // unmounted, leaving their write callbacks in the 5s sync loop's
+                // polling set forever. Unmounting releases the callback.
+                sessions.sessions.filter((s) => !s.closed).map((s) =>
+                  s.kind === "browser"
+                    ? <BrowserPane key={s.sid} session={{ sid: s.sid, url: "", active: s.active }} apiBase="" token={token} />
+                    : <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />
+                )
+              ))}
+            </div>
           )}
-          <StatusBar sessions={sessions.sessions} status={sessions.status} sseState={sseState} />
         </div>
         {view === "plugins" && <PluginsView plugins={plugins} />}
         </>
       )}
-      details={<DetailsPanel card={selectedCard} onClose={() => setDetailsOpen(false)} />}
-      detailsOpen={detailsOpen}
+      drawer={detailsOpen ? (
+        <div id="drawer-inner">
+          <div id="drawer-head">
+            <span>Commands</span>
+            <button title="Close" onClick={() => { setDetailsOpen(false); setSelectedCmdId(null); }}>✕</button>
+          </div>
+          <DetailsPanel card={selectedCard} onClose={() => setSelectedCmdId(null)} />
+          <CommandStream
+            cards={cmdEvents.cards}
+            selectedId={selectedCmdId}
+            // Clicking the selected card again closes the detail view.
+            onSelect={(id) => {
+              if (id === selectedCmdId) { setSelectedCmdId(null); }
+              else { setSelectedCmdId(id); }
+            }}
+          />
+        </div>
+      ) : null}
     />
   );
 }

@@ -15,9 +15,43 @@
  *   <- binary frames: JPEG screencast
  */
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const PW = process.env.BRIDGE_PW_MODULES || 'D:/vale-agent/playwright/node_modules';
 const { chromium } = require(path.join(PW, 'playwright-core'));
 const crypto = require('crypto');
+
+// round-143: this process is spawned by vale-agent.exe in the SYSTEM/session-0
+// service context, which has no console — the agent bridge never had a visible
+// cmd window, BUT any error message from the IIFE catch went nowhere (stderr
+// to a discarded session-0 console). bridge.js would die silently and the
+// agent's spawn-once-at-boot policy would keep 9224 dead until the device
+// reboot — exactly the user-visible "black panel forever" mode. Now we write
+// every error to a durable file in the install dir so the next time the
+// service is up we have evidence of what failed.
+const ERR_LOG = process.env.BRIDGE_ERR_LOG || path.join(
+  // Install dir is two parents up from bridge.js's typical staging location
+  // (resources/browser-bridge/ → ../../vale-agent/) — but the agent may also
+  // be run from a different cwd. Walk up to find the dir that contains
+  // `playwright` (the bundle), default to that parent's parent.
+  (() => {
+    let d = path.dirname(path.resolve(process.argv[1] || __filename));
+    for (let i = 0; i < 4; i++) {
+      if (fs.existsSync(path.join(d, 'playwright'))) return d;
+      const parent = path.dirname(d);
+      if (parent === d) break;
+      d = parent;
+    }
+    return process.env.VALE_AGENT_DIR || 'D:/vale-agent';
+  })(),
+  'bridge-err.log',
+);
+function logErr(tag, err) {
+  const line = `[${new Date().toISOString()}] ${tag}: ${err && err.stack || err}\n`;
+  try { fs.appendFileSync(ERR_LOG, line); } catch (_) { /* best effort */ }
+  // Also surface to stderr in case a parent is watching.
+  try { process.stderr.write(line); } catch (_) {}
+}
 
 const [, , portArg, tokenArg, dirArg] = process.argv;
 const PORT = Number(portArg || 9224);
@@ -62,9 +96,25 @@ function decodeClientFrames(buf, onMessage) {
 }
 
 (async () => {
-  const ctx = await chromium.launchPersistentContext(USER_DATA_DIR, {
-    headless: true, viewport: { width: 1280, height: 800 },
-  });
+  // round-143: launchPersistentContext fails transiently when a previous
+  // bridge's chromium is still releasing the profile (SingletonLock), or
+  // when the Windows swap script's kill-tree races our spawn. Retry a few
+  // times with a short backoff before giving up — each attempt logs to the
+  // durable bridge-err.log so the next agent boot has evidence.
+  const MAX_LAUNCH_ATTEMPTS = 4;
+  let ctx = null;
+  for (let attempt = 1; attempt <= MAX_LAUNCH_ATTEMPTS; attempt++) {
+    try {
+      ctx = await chromium.launchPersistentContext(USER_DATA_DIR, {
+        headless: true, viewport: { width: 1280, height: 800 },
+      });
+      break;
+    } catch (e) {
+      logErr(`launchPersistentContext attempt ${attempt}/${MAX_LAUNCH_ATTEMPTS} failed`, e);
+      if (attempt === MAX_LAUNCH_ATTEMPTS) throw e;
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+    }
+  }
   let page = ctx.pages()[0] || await ctx.newPage();
   if (page.url() === 'about:blank') await page.goto(WELCOME).catch(() => {});
   let cdp = await ctx.newCDPSession(page);
@@ -81,7 +131,26 @@ function decodeClientFrames(buf, onMessage) {
     if (!selPage) return;
     cdp = await ctx.newCDPSession(selPage);
     bindScreencast(cdp);
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 55, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800 }).catch(() => {});
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 45, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 15 }).catch(() => {});
+  }
+
+  // round-150: 输入即时帧 — 鼠标/键盘事件后 300ms 内若无新 screencast
+  // 帧(页面未重绘的点击/滚动),立即截图推一帧,消除"点了没反应"的观感。
+  let fastTimer = null;
+  function scheduleFastFrame() {
+    if (fastTimer || capturing) return;
+    fastTimer = setTimeout(async () => {
+      fastTimer = null;
+      if (Date.now() - lastAck < 120) return;
+      const target = selPage || page;
+      if (!target || capturing) return;
+      capturing = true;
+      try {
+        const jpeg = await target.screenshot({ type: 'jpeg', quality: 60 });
+        if (jpeg.length >= 800) pushFrame(jpeg);
+      } catch (_) {}
+      finally { capturing = false; }
+    }, 300);
   }
 
   // --- Shared input dispatcher (WS + HTTP) ---
@@ -124,15 +193,20 @@ function decodeClientFrames(buf, onMessage) {
         const btn = (m.k === 'down' || m.k === 'up') ? 'left' : 'none';
         await cdp.send('Input.dispatchMouseEvent', { type, x: m.x, y: m.y, button: btn, clickCount: btn !== 'none' ? 1 : undefined });
       } else if (m.t === 'wheel') {
+        scheduleFastFrame();
         await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: m.x, y: m.y, deltaX: m.dx || 0, deltaY: m.dy || 0 });
       } else if (m.t === 'k') {
+        scheduleFastFrame();
         const type = m.down ? (m.text ? 'keyDown' : 'rawKeyDown') : 'keyUp';
         const p = { type, key: m.key, code: m.code, windowsVirtualKeyCode: m.vk || 0 };
         if (m.down && m.text) p.text = m.text;
         await cdp.send('Input.dispatchKeyEvent', p);
-      } else if (m.t === 'resize') {
-        await page.setViewportSize({ width: m.w | 0, height: m.h | 0 });
       }
+      // round-146: the {t:"resize"} branch is GONE. The bridge viewport is
+      // FIXED at 1280x800 — the panel renders that feed with object-fit:cover
+      // per pane, so no client (old or new) may resize the shared viewport.
+      // round-144's resize sync had several live panels fighting over ONE
+      // global viewport; the last sender won and everyone else letterboxed.
     } catch (e) { /* transient races fine */ }
   }
 
@@ -247,11 +321,12 @@ function decodeClientFrames(buf, onMessage) {
   // 7 req/s + ≤2.5 captures/s;活跃页由 screencast 接管,不叠加)。
   setInterval(() => {
     if (sockets.size === 0 || capturing) return;
-    if (Date.now() - lastAck < 700) return; // screencast 仍然活跃
+    if (Date.now() - lastAck < 1500) return; // 动画中由 screencast 接管
     const target = selPage || page;
     if (!target) return;
     capturing = true;
-    target.screenshot({ type: 'jpeg', quality: 55 })
+    // round-150: 静止定稿帧 — 高清 q90,保证静止页面文字清晰
+    target.screenshot({ type: 'jpeg', quality: 90 })
       .then((jpeg) => pushFrame(jpeg))
       .catch(() => {})
       .finally(() => { capturing = false; });
@@ -261,9 +336,9 @@ function decodeClientFrames(buf, onMessage) {
   console.log(`bridge listening on 127.0.0.1:${PORT} profile=${USER_DATA_DIR}`);
 
   // Start streaming + keepalive
-  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 55, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800 });
+  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 45, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 15 });
   setInterval(async () => {
     // Nudge the renderer so idle pages still emit a frame every ~2s.
     try { await page.evaluate(() => void 0); } catch {}
   }, 2000);
-})().catch(e => { console.error('BRIDGE ERR', e.message); process.exit(1); });
+})().catch(e => { logErr('IIFE FATAL', e); process.exit(1); });

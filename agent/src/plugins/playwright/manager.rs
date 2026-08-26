@@ -16,6 +16,25 @@ use tokio::process::Child;
 use tokio::sync::oneshot;
 use vale_agent_core::{recover_guard, DeviceError};
 
+/// round-143: CREATE_NO_WINDOW — node.exe is a console-subsystem binary; when
+/// the agent (or the swap's powershell/taskkill helpers) spawns it without
+/// this flag and the parent has an interactive console, Windows allocates a
+/// visible cmd window. 0x08000000 = CREATE_NO_WINDOW. Harmless when the
+/// parent has no console (session-0 service) and prevents the flash under
+/// `vale run` / dev consoles. We apply it through `std::os::windows::process
+/// ::CommandExt::creation_flags` on the inner std Command (tokio Command
+/// doesn't expose it directly, but its `as_std_mut` gives us the same
+/// underlying handle).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(windows)]
+fn no_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
+    use std::os::windows::process::CommandExt as _;
+    cmd.as_std_mut().creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
 /// 绑定的 playwright-mcp 固定端口 — 与 mcp_client 插件的
 /// DEFAULT_URL (http://127.0.0.1:9229/mcp) 一致。
 const MCP_PORT: u16 = 9229;
@@ -98,10 +117,11 @@ async fn reap_leftovers() {
         "'*\\playwright\\node.exe*' -or $_.CommandLine -like '*ms-playwright-mcp*' } | ",
         "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
     );
-    let _ = tokio::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", script])
-        .output()
-        .await;
+    let mut cmd = tokio::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", script]);
+    #[cfg(windows)]
+    { let _ = no_window(&mut cmd); }
+    let _ = cmd.output().await;
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 }
 
@@ -225,7 +245,12 @@ impl PlaywrightManager {
         let port = MCP_PORT;
         let node = bundled_node()?;
         let entry = bundled_mcp_entry()?;
-        let mut child = tokio::process::Command::new(&node)
+        // Build the Command as a single owned expression so we can apply
+        // CREATE_NO_WINDOW (round-143) before .spawn() — chained builder
+        // methods return &mut Self, so the chain must end on .spawn() (owned
+        // Result) unless we break it into a stmt.
+        let mut child = tokio::process::Command::new(&node);
+        child
             .arg(&entry)
             .arg("--port").arg(port.to_string())
             // round-142: 与可工作的 ValePlaywright 计划任务命令行对齐——
@@ -252,7 +277,11 @@ impl PlaywrightManager {
             // 浏览器常驻,snapshot 引用/面板状态跨调用存活。
             .env("PLAYWRIGHT_MCP_PING_TIMEOUT_MS", "0")
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        // round-143: CREATE_NO_WINDOW so node.exe doesn't flash a console.
+        #[cfg(windows)]
+        { let _ = no_window(&mut child); }
+        let mut child = child
             .spawn()
             .map_err(|e| DeviceError::Internal { message: format!("spawn playwright-mcp: {e}") })?;
         // 健康轮询(最多 10s):POST JSON-RPC initialize 到 /mcp 并验证响应体是
@@ -368,9 +397,10 @@ impl PlaywrightManager {
         if let Some(m) = m {
             #[cfg(windows)]
             {
-                let _ = tokio::process::Command::new("taskkill")
-                    .args(["/T", "/F", "/PID", &m.child.id().unwrap_or(0).to_string()])
-                    .output().await;
+                let mut cmd = tokio::process::Command::new("taskkill");
+                cmd.args(["/T", "/F", "/PID", &m.child.id().unwrap_or(0).to_string()]);
+                let _ = no_window(&mut cmd);
+                let _ = cmd.output().await;
             }
             #[cfg(not(windows))]
             {
