@@ -304,8 +304,8 @@ async function meRegenerateToken(request: Request, env: any): Promise<Response> 
   return jsonOk({ ok: true, token });
 }
 
-// 美国出口开关(全局设置):GET 读当前值;PUT 改(仅管理员)。
-// 网关在每次请求路由时读 KV,开关立即生效,无需重启。
+// US egress switch (global setting): GET reads the current value; PUT changes it (admin only).
+// The gateway reads KV on every request route, so the switch takes effect immediately without a restart.
 async function meGetUsproxy(request: Request, env: any): Promise<Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
@@ -485,8 +485,8 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
     }
     if (name === "OPENCODE_GO_API_KEY") {
       // Do not send the literal "[1m]" suffix — zen rejects it with 401
-      // 尊重 US_PROXY 开关:开启时经美国代理探测(实测 chat/completions
-      // 走代理 1-3s vs 直连 12-13s);关闭时直连。
+      // Honor the US_PROXY switch: when on, probe via the US proxy (measured: chat/completions
+      // via proxy 1-3s vs direct 12-13s); when off, probe directly.
       const usProxy = await getGlobalSetting(env, "US_PROXY");
       const probeUrl = usProxy
         ? `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/chat/completions")}`
@@ -504,8 +504,8 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
       if (!res.ok) {
         return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
       }
-      // 流式探测:收到首个 SSE data 块即判定连通(auth OK + 连接建立),
-      // 不等 thinking 结束(非流式要等完整响应 ~10s)。提前 cancel 释放连接。
+      // Streaming probe: deemed connected as soon as the first SSE data chunk arrives (auth OK + connection
+      // established), without waiting for thinking to finish (non-streaming waits for a full response ~10s). Cancel early to release the connection.
       const firstChunk = await (async () => {
         const reader = res.body!.getReader();
         const { value } = await reader.read();

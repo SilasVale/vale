@@ -402,7 +402,7 @@ async function cmdAuto() {
   }
   const health = await fetchHealth();
   const channels = health && Array.isArray(health.channels) ? health.channels : [];
-  // 按优先级逐个探测：健康渠道里第一个探测通过的即切换；全失败则报错退出。
+  // Probe each in priority order: switch to the first healthy channel whose probe passes; exit with an error if all fail.
   for (const id of PRIORITY) {
     const c = channels.find((x) => x.id === id);
     if (!c || !c.ok) continue;
@@ -422,14 +422,14 @@ async function cmdAuto() {
 }
 
 function cmdRestore() {
-  // findBackup 必须先于 backup：backup 会新增一个当前状态的备份。
+  // findBackup must run before backup: backup creates a new backup of the current state.
   const bak = findBackup();
   if (!bak) {
     console.error("没有可恢复的备份");
     process.exit(1);
   }
-  backup(); // 恢复前先把当前状态备份一份（与 use 一致：每次变更前留底）
-  installFile(bak); // tmp + rename 原子恢复，模式位保留
+  backup(); // back up the current state before restoring (same as use: keep a snapshot before every change)
+  installFile(bak); // tmp + rename atomic restore, permission bits preserved
   console.log(`已恢复 ${bak}`);
   console.log("重启 Claude Code 后生效");
 }

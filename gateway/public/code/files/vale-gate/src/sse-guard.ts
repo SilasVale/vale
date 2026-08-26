@@ -27,7 +27,11 @@ const PEEK_CAP_BYTES = 256 * 1024;
 
 export type SsePeek =
   | { kind: "passthrough"; stream: ReadableStream }
-  | { kind: "in-band-error"; /** Numeric upstream code when the frame carried one (502/429…). */ status?: number; message: string }
+  | {
+      kind: "in-band-error";
+      /** Numeric upstream code when the frame carried one (502/429…). */ status?: number;
+      message: string;
+    }
   | { kind: "closed-empty" };
 
 interface ScanResult {
@@ -39,7 +43,9 @@ interface ScanResult {
 }
 
 /** Classify one SSE payload line. Only complete `data:` lines decide anything. */
-function classifyDataLine(payload: string): { verdict: "passthrough" } | { verdict: "in-band-error"; status?: number; message: string } {
+function classifyDataLine(
+  payload: string,
+): { verdict: "passthrough" } | { verdict: "in-band-error"; status?: number; message: string } {
   if (payload === "[DONE]") return { verdict: "passthrough" };
   let obj: any;
   try {

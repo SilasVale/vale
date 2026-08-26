@@ -31,9 +31,9 @@ export function pickRoute(
   usProxy: string | null = null,
   requestPath: string = VERIFY_PATH,
 ): RouteInfo {
-  // 美国出口开关:US_PROXY=1 时所有模型经 Vercel 代理(v.saisi.online/api/zen)
-  // 从美国边缘出口访问上游,规避区域限制/拥堵。target=og|ds|qw|or 选上游,
-  // path 参数带上游相对路径(代理 base 已含主机级前缀)。usProxy is a local
+  // US egress switch: with US_PROXY=1 all models reach upstreams via the Vercel proxy (v.saisi.online/api/zen)
+  // from US edge nodes, avoiding regional restrictions/congestion. target=og|ds|qw|or selects the upstream,
+  // the path param carries the upstream relative path (the proxy base already includes the host-level prefix). usProxy is a local
   // per-request value — never mutate the shared env object with it.
   const via = (direct: string, path: string): string =>
     usProxy
@@ -41,10 +41,10 @@ export function pickRoute(
       : direct;
   switch (prefix) {
     case "or": {
-      // 开关统一管到 or(2026-08-22):关=直连 openrouter.ai;开=经美国出口。
-      // requestPath 区分双格式:/v1/messages(Claude Code)与
-      // /v1/chat/completions(DSH)。出口实测为纯管道——透传 Authorization,
-      // BYOK 不受影响。openrouter-proxy 不再在链路上(worker 保留但闲置)。
+      // The switch now also covers or (2026-08-22): off = direct to openrouter.ai; on = via the US egress.
+      // requestPath distinguishes the two formats: /v1/messages (Claude Code) and
+      // /v1/chat/completions (DSH). The egress is measured to be a pure pipe — it passes Authorization
+      // through, so BYOK is unaffected. openrouter-proxy is no longer on the path (the worker remains but is idle).
       const upstreamPath = requestPath || VERIFY_PATH;
       return {
         type: "passthrough",

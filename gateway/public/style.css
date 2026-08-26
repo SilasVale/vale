@@ -1,6 +1,6 @@
 /* ============================================================
-   AI Gateway 控制台 — 浅色控制台设计
-   token：暖白底 / 墨色 / 青绿强调 / 三通道色（og ds or）
+   AI Gateway console — light console design
+   token: warm-white base / ink / teal accent / three-channel colors (og ds or)
    ============================================================ */
 
 :root {
@@ -36,7 +36,7 @@
   --warn-line: #fde68a;
   --warn-ink: #92400e;
 
-  --fill: #f1f1ef;        /* 浅灰填充:auth-tabs / nav hover / badges / model-tag */
+  --fill: #f1f1ef;        /* light gray fill: auth-tabs / nav hover / badges / model-tag */
 
   --radius: 14px;
   --radius-sm: 10px;
@@ -61,7 +61,7 @@
 
 * { box-sizing: border-box; }
 
-/* hidden 属性必须优先于任何 display 规则（否则 display:flex 会覆盖它，导致登录页/后台同时显示） */
+/* the hidden attribute must take precedence over any display rule (otherwise display:flex overrides it and shows both the login page and the console) */
 [hidden] { display: none !important; }
 
 html, body { margin: 0; padding: 0; }
@@ -95,7 +95,7 @@ pre code { background: none; color: inherit; padding: 0; }
 
 .mono { font-family: var(--font-mono); }
 
-/* ---------- 品牌 ---------- */
+/* ---------- Branding ---------- */
 .brand-mark {
   display: inline-flex; align-items: center; justify-content: center;
   width: 40px; height: 40px;
@@ -111,7 +111,7 @@ pre code { background: none; color: inherit; padding: 0; }
 .brand-name { font-family: var(--font-display); font-weight: 600; font-size: 16px; letter-spacing: -0.01em; }
 .brand-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
 
-/* ---------- 认证页 ---------- */
+/* ---------- Auth page ---------- */
 .auth-wrap {
   min-height: 100vh;
   display: flex;
@@ -161,7 +161,7 @@ pre code { background: none; color: inherit; padding: 0; }
 .form-msg { font-size: 13px; margin: 0 0 12px; color: var(--danger); }
 .auth-foot { max-width: 380px; text-align: center; color: var(--faint); font-size: 13px; margin-top: 16px; }
 
-/* ---------- 语言切换 ---------- */
+/* ---------- Language toggle ---------- */
 .lang-toggle { display: flex; justify-content: flex-end; }
 .auth-card .lang-toggle { margin-bottom: 6px; }
 .sidebar-foot .lang-toggle { justify-content: flex-start; margin-top: 8px; }
@@ -177,7 +177,7 @@ pre code { background: none; color: inherit; padding: 0; }
 }
 .lang-btn:hover { border-color: var(--ink); color: var(--ink); }
 
-/* ---------- 按钮(两档:默认 38px / mini 30px,高度由 padding 决定) ---------- */
+/* ---------- Buttons (two sizes: default 38px / mini 30px, height determined by padding) ---------- */
 button { font-family: var(--font-body); }
 .btn-primary, .btn-ghost, .btn-danger {
   height: 38px; cursor: pointer;
@@ -212,7 +212,7 @@ button { font-family: var(--font-body); }
   line-height: 1;
 }
 
-/* ---------- 控制台外壳 ---------- */
+/* ---------- Console shell ---------- */
 .app { display: flex; min-height: 100vh; }
 
 .sidebar {
@@ -245,7 +245,7 @@ button { font-family: var(--font-body); }
 .panel h1 { font-family: var(--font-display); font-size: 27px; font-weight: 600; letter-spacing: -0.02em; }
 .lede { color: var(--muted); font-size: 14.5px; margin: 6px 0 26px; }
 
-/* ---------- 卡片 ---------- */
+/* ---------- Cards ---------- */
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -284,7 +284,7 @@ button { font-family: var(--font-body); }
 .badge.offline { background: var(--fill); color: var(--muted); }
 .badge.offline .dot { background: var(--faint); }
 
-/* ---------- 网关 Token ---------- */
+/* ---------- Gateway Token ---------- */
 .token-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .token {
   flex: 1; min-width: 220px;
@@ -296,7 +296,7 @@ button { font-family: var(--font-body); }
 .token-actions { margin-top: 12px; }
 .token-actions .btn-ghost, .token-actions .btn-danger { height: 30px; padding: 0 12px; font-size: 12px; }
 
-/* ---------- 路由交换台 ---------- */
+/* ---------- Route switchboard ---------- */
 .switchboard { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .lane {
   display: flex; align-items: center; gap: 12px;
@@ -327,7 +327,7 @@ button { font-family: var(--font-body); }
   color: var(--muted); padding: 1px 7px; border-radius: 99px;
 }
 
-/* ---------- 密钥卡片 ---------- */
+/* ---------- Key cards ---------- */
 .cards { display: grid; gap: 16px; }
 .key-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; background: var(--surface); }
 .key-card .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -343,7 +343,7 @@ button { font-family: var(--font-body); }
 }
 .key-edit-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring-soft); }
 .test-result { font-size: 13px; margin-top: 8px; }
-/* 路由页内层卡片扁平为列表行,避免卡片套卡片 */
+/* flatten the routes page's inner cards into list rows, avoiding nested cards */
 #panel-routes .key-card {
   border: none; border-radius: 0; background: transparent;
   padding: 14px 2px; border-bottom: 1px solid var(--line);
@@ -352,7 +352,7 @@ button { font-family: var(--font-body); }
 .test-result.ok { color: var(--accent-ink); }
 .test-result.err { color: var(--danger); }
 
-/* ---------- 设备管理 ---------- */
+/* ---------- Device management ---------- */
 .install-flow-btns { display: flex; gap: 8px; }
 .device-form { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .device-form input {
@@ -362,7 +362,7 @@ button { font-family: var(--font-body); }
 }
 .device-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring-soft); }
 
-/* ---------- 用户列表 ---------- */
+/* ---------- User list ---------- */
 .users-list { display: flex; flex-direction: column; margin-top: 8px; }
 .user-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -376,7 +376,7 @@ button { font-family: var(--font-body); }
 .user-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 #invite-box { margin-top: 10px; }
 
-/* ---------- 配对弹窗 ---------- */
+/* ---------- Pairing modal ---------- */
 .modal {
   position: fixed; inset: 0; z-index: 60;
   background: rgba(28, 28, 30, 0.45);
@@ -409,7 +409,7 @@ button { font-family: var(--font-body); }
 }
 .toast.err { background: var(--danger); }
 
-/* ---------- 响应式 ---------- */
+/* ---------- Responsive ---------- */
 @media (max-width: 720px) {
   .app { flex-direction: column; }
   .sidebar {

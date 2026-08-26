@@ -254,7 +254,7 @@ async function handleGatewayImpl(
   // concurrent requests' log attribution correct.
   ctx.model = model;
   if (model === "auto") {
-    // Claude Code 固定模型名 auto：按用户网页选择路由
+    // Claude Code fixed model name auto: route by the user's web selection
     model = await resolveAutoModel(env, user.id);
   }
   // gpt-5.6-luna belongs to OpenCode Go. It is region-blocked when zen is
@@ -264,8 +264,8 @@ async function handleGatewayImpl(
   const lunaModel = model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]";
   let effectiveModel = model;
   const prefix2 = effectiveModel.split("/")[0] || "";
-  // 美国出口开关:控制台 KV 设置优先,回退 Worker secret(env.US_PROXY)。
-  // KV 写透传后立即生效(同 isolate 零延迟)。
+  // US egress switch: the console KV setting takes precedence, falling back to the Worker secret (env.US_PROXY).
+  // Takes effect immediately after the KV write-through (zero delay within the same isolate).
   const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
   // round-94: normalize — an explicit OFF is persisted as "0" (truthy as a
   // string); raw truthiness would treat it as ON.
@@ -278,10 +278,10 @@ async function handleGatewayImpl(
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
   // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
   // already bracket-stripped, so a [1m] marker cannot mask the check.
-  // US_PROXY 开启时:deepseek-v4-flash 也走 translate(chat/completions 经美国
-  // 代理)—— 实测代理 chat/completions 1.6s vs 原生 /v1/messages 11s(5 倍),
-  // 且 translate 完整支持 thinking(reasoning_content)。关闭时保持原生直连
-  // (直连原生 8s 优于直连 chat/completions 7.8s 相当,原生已验证)。
+  // With US_PROXY on: deepseek-v4-flash also goes through translate (chat/completions via the US
+  // proxy) — measured: proxied chat/completions 1.6s vs native /v1/messages 11s (5x faster),
+  // and translate fully supports thinking (reasoning_content). When off, keep the native direct
+  // connection (direct native 8s vs direct chat/completions 7.8s — comparable, native verified).
   const route =
     baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel) && !usProxy
       ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
@@ -544,10 +544,10 @@ async function handleGatewayImpl(
         "config_error",
       );
     }
-    // OpenAI 格式必须打到 OpenRouter 的 chat/completions 端点——messages 流程
-    // 选出的 route.upstream 是 /v1/messages,直接复用会把 OpenAI body 塞进
-    // Anthropic 端点(bugfix 2026-08-22)。按开关重取 chat 路径的上游:
-    // 关=直连 openrouter.ai/api/v1/chat/completions;开=经美国出口(target=or)。
+    // The OpenAI format must hit OpenRouter's chat/completions endpoint — the route.upstream
+    // picked by the messages flow is /v1/messages; reusing it directly would stuff an OpenAI body
+    // into the Anthropic endpoint (bugfix 2026-08-22). Re-fetch the chat-path upstream per the switch:
+    // off = direct openrouter.ai/api/v1/chat/completions; on = via the US egress (target=or).
     if (route.kind === "openrouter") {
       route.upstream = pickRoute("or", env, usProxy, "/v1/chat/completions").upstream;
     }

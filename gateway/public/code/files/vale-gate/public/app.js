@@ -352,7 +352,7 @@
     if (name === "routes") loadRoutesPanel();
     if (name === "users") loadUsers();
     if (name === "devices") loadDevices();
-    else stopDevicesPoll(); // 离开设备面板就停在线轮询
+    else stopDevicesPoll(); // stop the online polling when leaving the devices panel
   }
 
   /* ============ overview ============ */
@@ -521,8 +521,8 @@
   }
 
   /* ============ routes panel ============ */
-  // 渠道切换：/api/health 状态 + /api/me/route 当前选择；点 [使用] → PUT。
-  // 卡片复用 key-card 的样式，视觉与密钥管理页一致。
+  // Channel switching: /api/health status + the current /api/me/route selection; clicking [Use] → PUT.
+  // Cards reuse the key-card styles, so the look matches the keys page.
   function routeCardHTML(ch, current) {
     const status = ch.ok
       ? `<span class="badge ok">${t("route.use")}</span>`
@@ -543,7 +543,7 @@
       </div>`;
   }
 
-  /* 美国出口开关卡片:GET /api/me/usproxy 读状态,PUT 切换(管理员)。 */
+  /* US egress switch card: GET /api/me/usproxy reads the state, PUT toggles it (admin only). */
   async function loadUsProxyCard() {
     const card = $("#usproxy-card");
     if (!card) return;
@@ -589,7 +589,7 @@
       return;
     }
     box.innerHTML = health.data.channels.map((c) => routeCardHTML(c, current)).join("");
-    // [使用] 按钮是动态渲染的，委托到容器；只绑定一次，避免每次重渲染叠加 listener。
+    // The [Use] button is rendered dynamically, so delegate to the container; bind only once to avoid stacking listeners on each re-render.
     if (!box.dataset.bound) {
       box.dataset.bound = "1";
       box.addEventListener("click", async (ev) => {
@@ -601,7 +601,7 @@
         // Optimistic UI: immediately show loading + update badge
         btn.disabled = true;
         btn.textContent = t("route.switching") || "切换中…";
-        // Move "当前" badge from old card to new card (scoped to .key-name —
+        // Move the "Current" badge from old card to new card (scoped to .key-name —
         // the card's status badge is also .badge.ok, which must not be touched)
         const oldCur = box.querySelector(".key-card .key-name .badge.ok");
         if (oldCur && oldCur.textContent === t("route.current")) oldCur.remove();
@@ -630,7 +630,7 @@
     const { apiHost } = await loadRoutes();
     const ex = $("#client-example");
     if (ex) {
-      // 用当前账户的真实值渲染客户端接入示例（base + 网关 token + auto[1m]）
+      // Render the client example with the current account's real values (base + gateway token + auto[1m])
       const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
       const token = me?.token || "<your gateway token>";
       const modelKeys = [
@@ -738,7 +738,7 @@
     if (devicesPollTimer) { clearInterval(devicesPollTimer); devicesPollTimer = null; }
   }
 
-  // 网关 MCP 配置：Claude Code → https://<console>/mcp（Bearer 当前用户 token）
+  // Gateway MCP config: Claude Code → https://<console>/mcp (Bearer of the current user's token)
   function gwMcpSnippet() {
     const snippet = {
       mcpServers: {
@@ -763,7 +763,7 @@
 
   async function loadDevices() {
     loadCfToken();
-    // 刷新一次 /api/me，网关 MCP 配置用当前用户 token
+    // Refresh /api/me once; the gateway MCP config uses the current user's token
     const m = await api("/api/me");
     if (m.res.ok) me = m.data;
     const gwEl = $("#gw-mcp-json");
@@ -793,7 +793,7 @@
           <button class="btn-danger btn-mini" data-del="${esc(d.name)}">${t("btn.clear")}</button>
         </div>
       </div>`).join("");
-    // 在线状态：进面板立即查一次，之后每 30s 轮询（离开面板时 stopDevicesPoll 停掉）
+    // Online status: check once when entering the panel, then poll every 30s (stopDevicesPoll stops it when leaving)
     await loadDeviceStatus();
     stopDevicesPoll();
     devicesPollTimer = setInterval(loadDeviceStatus, 30000);

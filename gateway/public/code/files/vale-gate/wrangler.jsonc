@@ -48,7 +48,7 @@
   },
   "vars": {
     "CONSOLE_HOST": "ai.saisi.online,api.saisi.online",
-    // 浏览器工具链路:冷启动 chromium(~20s)+ 设备 SPA 加载,30s 默认值必然超时
+    // Browser tool chain: cold-start chromium (~20s) + device SPA loading make the 30s default bound to time out
     "UPSTREAM_TIMEOUT_MS": "120000",
     // Cloudflare Access SSO (option C): zero-password console login. The JWT
     // aud is the ai.saisi.online Access application's tag; ACCESS_ADMIN_EMAIL

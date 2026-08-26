@@ -89,19 +89,13 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
   return mcpError(-32601, `Method not found: ${method}`, id);
 }
 
-
-/** Browser tools → agent 的 mcp_client_call → playwright-mcp。
- *  替代旧的 PluginHubDO/extension 路径。playwright-mcp 需在设备上运行。 */
-async function callMcpClientBridge(
-  name: string,
-  _env: any,
-  device: any,
-  args: any,
-): Promise<any> {
+/** Browser tools → agent's mcp_client_call → playwright-mcp.
+ *   Replaces the old PluginHubDO/extension path. playwright-mcp must run on the device. */
+async function callMcpClientBridge(name: string, _env: any, device: any, args: any): Promise<any> {
   const token = device.token || "";
   const base = `https://${device.hostname}`;
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-  // 工具名映射：gateway 名 → playwright-mcp 名
+  // Tool name mapping: gateway name → playwright-mcp name
   const toolMap: Record<string, string> = {
     browser_open: "browser_navigate",
     browser_snapshot: "browser_snapshot",
@@ -112,9 +106,9 @@ async function callMcpClientBridge(
     browser_close: "browser_close",
   };
   const pmTool = toolMap[name] || name;
-  // round-138: playwright-mcp 新版 click/type 用 {element?, target} 协议
-  // (target = 快照引用 "eN" 或唯一选择器),gateway 旧声明是 element_ref 整数。
-  // 这里翻译成 target,调用方习惯不变;type 的 text 原样透传。
+  // round-138: playwright-mcp's new click/type use the {element?, target} protocol
+  // (target = a snapshot reference "eN" or a unique selector); the gateway's old declaration took element_ref integers.
+  // We translate to target here, so callers' habits don't change; type's text passes through as-is.
   const pmArgs: any = { ...args };
   if ((name === "browser_click" || name === "browser_type") && args?.element_ref != null) {
     pmArgs.target = /^e?\d+$/.test(String(args.element_ref))
@@ -129,8 +123,8 @@ async function callMcpClientBridge(
       headers,
       body: JSON.stringify({ tool: pmTool, arguments: pmArgs }),
     });
-    // agent 的工具 API 恒返回 200 + {ok:false,error,code}（web.rs api_call_tool），
-    // 失败信息在 body 里，不能只看 res.ok。
+    // The agent's tool API always returns 200 + {ok:false,error,code} (web.rs api_call_tool);
+    // the failure info is in the body, so res.ok alone can't be trusted.
     try {
       return await res.json();
     } catch {
@@ -140,11 +134,11 @@ async function callMcpClientBridge(
   let out = await invoke();
   if (out && out.ok === false) {
     const msg = String(out.error || "");
-    // round-118 自愈：设备重启后没有任何组件拉起 playwright-mcp、也没有人建
-    // client session — 第一次 browser_* 必然 not connected，只能人工介入。
-    // 这里 start → connect → 重试一次，让浏览器链路开机自愈。
-    // round-132: "Session not found" 也纳入自愈——playwright-mcp 0.0.79
-    // 的会话在闲置 ~15s 后被服务端回收，重发 connect 即可恢复。
+    // round-118 self-healing: after a device reboot nothing relaunches playwright-mcp and nobody
+    // creates a client session — the first browser_* is bound to be "not connected", requiring manual
+    // intervention. Here we do start → connect → retry once, so the browser chain self-heals on boot.
+    // round-132: "Session not found" is also covered by self-healing — playwright-mcp 0.0.79
+    // reclaims sessions server-side after ~15s idle; resending connect restores them.
     if (/not connected|server running|refused|timed out|session not found/i.test(msg)) {
       await fetch(`${base}/api/plugins/playwright/start`, { method: "POST", headers });
       await fetch(`${base}/api/tools/mcp_client_connect`, { method: "POST", headers, body: "{}" });
@@ -319,9 +313,9 @@ function formatResult(result: any) {
       { type: "image", data: result.image.data, mimeType: result.image.mimeType || "image/png" },
     ];
   }
-  // round-118: mcp_client 桥的截图以 data-URL 文本返回（agent 把 image content
-  // 渲染成 "data:image/png;base64,..."），解包回 MCP image block，别让模型
-  // 啃一整屏 base64 文本。
+  // round-118: the mcp_client bridge returns screenshots as data-URL text (the agent renders image
+  // content as "data:image/png;base64,..."); unwrap them back into an MCP image block so the model
+  // doesn't chew on a whole screen of base64 text.
   if (
     result &&
     typeof result === "object" &&

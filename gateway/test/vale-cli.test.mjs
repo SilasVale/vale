@@ -99,7 +99,7 @@ function makeSettings(extra = {}) {
   const file = path.join(dir, "settings.json");
   const data = {
     env: {
-      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic", // 直连配置（CLI 不读它）
+      ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic", // direct config (the CLI does not read it)
       ANTHROPIC_API_KEY: "test-token",
       ANTHROPIC_MODEL: "ds/deepseek-v4-flash",
       ...extra,
@@ -151,19 +151,19 @@ test("use qw: 探测通过 + token 有效 → 改写 env + 备份", async () => 
   const { server, port } = await makeGateway();
   try {
     const { file } = makeSettings();
-    fs.chmodSync(file, 0o600); // settings 含 API key，权限收紧为 0600
+    fs.chmodSync(file, 0o600); // settings contain an API key, so tighten permissions to 0600
     const r = await run(["use", "qw"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
     assert.equal(after.env.ANTHROPIC_MODEL, "qw/qwen3.8-max-preview");
     assert.equal(after.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "qw/qwen3.8-max-preview");
     assert.equal(after.env.ANTHROPIC_BASE_URL, "https://api.saisi.online");
-    assert.equal(after.permissions.allow[0], "Read"); // 非 env 配置保留
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600); // 重写后权限位不变
-    // 备份文件存在
+    assert.equal(after.permissions.allow[0], "Read"); // non-env config preserved
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600); // permission bits unchanged after the rewrite
+    // the backup file exists
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 1);
-    // 备份内容是切换前配置
+    // the backup content is the pre-switch config
     const bak = JSON.parse(fs.readFileSync(path.join(path.dirname(file), backups[0]), "utf8"));
     assert.equal(bak.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
   } finally { server.close(); }
@@ -211,12 +211,12 @@ test("restore: 恢复最近备份（原子写；恢复前先备份当前状态�
   const { server, port } = await makeGateway();
   try {
     const { file } = makeSettings();
-    await run(["use", "qw"], file, gw(port)); // 产生备份 + 切换
+    await run(["use", "qw"], file, gw(port)); // creates a backup + switches
     const r = await run(["restore"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // 回到切换前
-    // use 与 restore 各备份一次 → 2 个备份；最新的是恢复前的（qw）状态
+    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // back to the pre-switch state
+    // use and restore each create one backup → 2 backups; the newest is the pre-restore (qw) state
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 2);
     const newest = backups.sort().reverse()[0];
@@ -232,7 +232,7 @@ test("备份保留: 6 次 use 后只保留最近 5 个 .bak-vale-*", async () =>
     for (let i = 0; i < 6; i++) {
       const r = await run(["use", "qw"], file, gw(port));
       assert.equal(r.status, 0, r.stderr);
-      // 每次切换后 settings 保持有效（后续 use 依赖它能读出 token）
+      // settings stay valid after each switch (later use depends on being able to read the token)
       const after = JSON.parse(fs.readFileSync(file, "utf8"));
       assert.equal(after.env.ANTHROPIC_MODEL, "qw/qwen3.8-max-preview");
     }
@@ -244,7 +244,7 @@ test("备份保留: 6 次 use 后只保留最近 5 个 .bak-vale-*", async () =>
 test("use auto: 推荐渠道 qw 探测失败 → 回退到下一个健康渠道 ds", async () => {
   const { server, port } = await makeGateway({ probeFailModels: ["qw/qwen3.8-max-preview"] });
   try {
-    // 初始是 or：若回退不生效，配置会停留在 or（且命令非 0 退出）
+    // starts as or: if the fallback doesn't take, the config stays on or (and the command exits non-zero)
     const { file } = makeSettings({ ANTHROPIC_MODEL: "or/openai/gpt-5.6-luna:floor[1m]" });
     const r = await run(["use", "auto"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
@@ -386,7 +386,7 @@ test("use <provider>: 探测通过 → 整套 env（base/token/model）替换 + 
     const after = JSON.parse(fs.readFileSync(sf, "utf8"));
     assert.equal(after.env.ANTHROPIC_BASE_URL, gw(port));
     assert.equal(after.env.ANTHROPIC_MODEL, "custom-model");
-    // authMode both → 探测先试 Bearer 成功 → 只写 AUTH_TOKEN，清除 API_KEY
+    // authMode both → probe tries Bearer first and succeeds → only write AUTH_TOKEN, clear API_KEY
     assert.equal(after.env.ANTHROPIC_AUTH_TOKEN, "sk-provider-token");
     assert.equal(after.env.ANTHROPIC_API_KEY, undefined);
     const backups = fs.readdirSync(path.dirname(sf)).filter((f) => f.includes(".bak-vale-"));
@@ -426,7 +426,7 @@ test("use <api-key 型 provider>: 只写 ANTHROPIC_API_KEY，清除 AUTH_TOKEN",
   try {
     fs.rmSync(file, { force: true });
     const { file: sf } = makeSettings();
-    // 预置一个 AUTH_TOKEN 残留，验证切换时被清除
+    // preset a leftover AUTH_TOKEN to verify it gets cleared on switch
     await run(["provider", "add", "gw", "--base", gw(port), "--token", "sk-gw-token", "--model", "m"], sf, gw(port), file);
     const r = await run(["use", "gw"], sf, gw(port), file);
     assert.equal(r.status, 0, r.stderr);
@@ -446,7 +446,7 @@ test("use <provider>: 探测失败(400) → 拒绝切换", async () => {
     const r = await run(["use", "bad"], sf, gw(port), file);
     assert.notEqual(r.status, 0);
     const after = JSON.parse(fs.readFileSync(sf, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // 未切换
+    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // not switched
   } finally { fs.rmSync(file, { force: true }); server.close(); }
 });
 
@@ -460,15 +460,15 @@ test("provider 名优先于渠道名", async () => {
     const r = await run(["use", "qw"], sf, gw(port), file);
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(sf, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "p-model"); // provider 生效而非 qw 渠道默认模型
+    assert.equal(after.env.ANTHROPIC_MODEL, "p-model"); // the provider takes effect rather than the qw channel's default model
   } finally { fs.rmSync(file, { force: true }); server.close(); }
 });
 
 test("check: /api/health 接受连接但不响应 → 超时后非0退出（不挂起）", async () => {
-  // 服务器接受 TCP 连接但对 /api/health 永不响应；fetchHealth 应在
-  // PROBE_TIMEOUT_MS 后 abort 并返回 null，vale check 立即非0退出。
-  const server = http.createServer(() => {}); // 不写 res → 连接一直挂着
-  server.on("connection", (s) => s.on("error", () => {})); // 客户端 abort 后吞掉 socket error
+  // The server accepts TCP connections but never responds to /api/health; fetchHealth should
+  // abort after PROBE_TIMEOUT_MS and return null, so vale check exits non-zero immediately.
+  const server = http.createServer(() => {}); // no res written → the connection hangs forever
+  server.on("connection", (s) => s.on("error", () => {})); // swallow socket errors after the client aborts
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const { file } = makeSettings();

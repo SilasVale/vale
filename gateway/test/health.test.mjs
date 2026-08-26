@@ -180,7 +180,7 @@ test("valeProbe: key missing → ok false, no upstream call", async () => {
 });
 
 test("valeProbe: qw channel ok when upstream 200 (QWEN_API_KEY branch)", async () => {
-  // 只留 QWEN 密钥：若分支读错 key（如 DEEPSEEK_API_KEY），会返回 key not configured
+  // Keep only the QWEN key: if the branch reads the wrong key (e.g. DEEPSEEK_API_KEY), it returns key not configured
   const env = { ...keyedEnv, DEEPSEEK_API_KEY: undefined, OPENROUTER_API_KEY: undefined, OPENCODE_GO_API_KEY: undefined };
   const res = await withFetch(async () => new Response("{}", { status: 200 }), () =>
     valeProbe(env, "qw/qwen3.8-max-preview"),
@@ -191,7 +191,7 @@ test("valeProbe: qw channel ok when upstream 200 (QWEN_API_KEY branch)", async (
 });
 
 test("valeProbe: or channel ok when upstream 200 (OPENROUTER_API_KEY branch)", async () => {
-  // 只留 OPENROUTER 密钥：若分支读错 key，会返回 key not configured
+  // Keep only the OPENROUTER key: if the branch reads the wrong key, it returns key not configured
   const env = { ...keyedEnv, DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined, OPENCODE_GO_API_KEY: undefined };
   const res = await withFetch(async () => new Response("{}", { status: 200 }), () =>
     valeProbe(env, "or/openai/gpt-5.6-luna:floor[1m]"),
@@ -202,7 +202,7 @@ test("valeProbe: or channel ok when upstream 200 (OPENROUTER_API_KEY branch)", a
 });
 
 test("valeProbe: gmi channel ok when upstream 200 (GMI_API_KEY branch)", async () => {
-  // 只留 GMI 密钥：若分支读错 key（如落到 DEEPSEEK_API_KEY），会返回 key not configured
+  // Keep only the GMI key: if the branch reads the wrong key (e.g. falls through to DEEPSEEK_API_KEY), it returns key not configured
   let seen;
   const env = {
     ...keyedEnv,
@@ -224,7 +224,7 @@ test("valeProbe: gmi channel ok when upstream 200 (GMI_API_KEY branch)", async (
 });
 
 test("valeProbe: nv channel uses NVAPI_KEY (not the DeepSeek key)", async () => {
-  // 回归：nv/ 探测以前落到 DEEPSEEK_API_KEY 分支——只留 NVAPI 时必须仍能探测
+  // Regression: nv/ probing used to fall into the DEEPSEEK_API_KEY branch — it must still probe with only NVAPI left
   const env = {
     ...keyedEnv,
     DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined,
@@ -270,8 +270,8 @@ test("probeRateLimited: 前 60 次放行, 第 61 次限流, 换时间桶后放�
     for (let i = 0; i < PROBE_RATE_LIMIT; i++) {
       assert.equal(await probeRateLimited(env), false, `call ${i + 1} should pass`);
     }
-    assert.equal(await probeRateLimited(env), true); // 第 61 次被限流
-    Date.now = () => now + PROBE_WINDOW_MS; // 下一个窗口
+    assert.equal(await probeRateLimited(env), true); // the 61st request is rate-limited
+    Date.now = () => now + PROBE_WINDOW_MS; // next window
     assert.equal(await probeRateLimited(env), false);
   } finally {
     Date.now = realDateNow;

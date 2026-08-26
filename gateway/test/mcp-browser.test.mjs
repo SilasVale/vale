@@ -52,7 +52,7 @@ test("browser tool routes to the device mcp_client_call API with mapped name + b
   );
   assert.equal(calls.length, 1);
   const body = JSON.parse(calls[0].init.body);
-  // gateway 名 browser_open 映射为 playwright 的 browser_navigate
+  // the gateway name browser_open maps to playwright's browser_navigate
   assert.equal(body.tool, "browser_navigate");
   assert.deepEqual(body.arguments, { device: "d1", url: "https://example.com" });
   assert.equal(calls[0].init.headers.Authorization, "Bearer devtok");

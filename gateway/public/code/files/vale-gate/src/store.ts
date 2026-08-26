@@ -533,7 +533,7 @@ export async function setGlobalSetting(env: Env, name: string, value: any): Prom
   // normalization on this isolate (see getGlobalSetting).
   const canonical = s === "1" ? "1" : "0";
   await env.KEYS.put(key, canonical);
-  cset(key, canonical); // write-through：切换立即生效（同 isolate 零延迟）
+  cset(key, canonical); // write-through: the switch takes effect immediately (zero delay within the same isolate)
 }
 
 /* ---- Admin password (stored hashed — never plaintext) ----
