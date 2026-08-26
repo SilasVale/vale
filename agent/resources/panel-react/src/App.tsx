@@ -37,7 +37,7 @@ interface Boot {
 // own Bearer from the `token` PROP, so a first visit via ?token= (fresh
 // browser, or console-proxy visits which delete valeToken per round-122/124)
 // 401'd every /api/browser/* call: blank viewport, 0fps, no tabs, red
-// 认证失败 — fixed by one manual reload. Now the same resolved value seeds
+// auth failed — fixed by one manual reload. Now the same resolved value seeds
 // both the transport and React state.
 function computeBoot(onAuthFail: () => void): Boot {
   const sameOrigin = location.pathname.startsWith("/panel") || /\/proxy\/panel/.test(location.pathname);
@@ -103,15 +103,17 @@ export function App() {
   // between the session workspace and the plugins page.
   const [view, setView] = useState<"sessions" | "plugins">("sessions");
   const [browserActive, setBrowserActive] = useState(false);
-  // round-133: 状态轮询改为常开——Sessions 视图的 Browser 会话行依赖它。
+  // round-133: status polling is now always-on — the Browser session row in
+  // the Sessions view depends on it.
   const plugins = usePlugins(connected);
   const BROWSER_SID = "__browser__";
 
   const sessions = useSessions(connected);
 
-  // round-157: 打开面板时若无激活会话,自动激活第一个 live 会话——否则
-  // 所有 .term-session 停留在 display:none,终端区白板(用户反复反馈
-  // "没覆盖/空白")。browserActive 时跳过(Browser 视图优先)。
+  // round-157: when the panel opens with no active session, auto-activate the
+  // first live session — otherwise every .term-session stays display:none
+  // and the terminal area is blank (users repeatedly reported "not covering
+  // / blank"). Skipped while browserActive (Browser view takes priority).
   useEffect(() => {
     if (browserActive || sessions.activeSid) return;
     const live = sessions.sessions.find((s) => !s.closed);
@@ -151,9 +153,10 @@ export function App() {
     }
   };
 
-  // round-133: playwright-mcp 托管实例运行时注入一个 Browser 会话行——
-  // 点击打开实时预览(BrowserPane)。激活状态由 browserActive 管理,
-  // 与终端会话互斥(同一时间主区只显示一个面板)。
+  // round-133: inject a Browser session row while a playwright-mcp hosted
+  // instance is running — clicking it opens the live preview (BrowserPane).
+  // Activation is managed by browserActive, mutually exclusive with terminal
+  // sessions (the main area shows only one panel at a time).
   const allSessions = useMemo(() => {
     const base = sessions.sessions.map((s) => ({ ...s, active: false }));
     return [...base, { sid: BROWSER_SID, label: "Browser", kind: "browser", closed: false, savedOnly: false, active: browserActive, openedAt: Date.now(), closedAt: null }] as typeof sessions.sessions;
@@ -301,9 +304,10 @@ export function App() {
                 if (sid) setSessionViews((m) => ({ ...m, [sid]: v }));
               }}
             />
-            {/* round-148: 精简 —— Export/Settings 从画布头部移除(Settings 在
-                图标栏,单个会话导出在会话 chip 的 ⇩ 上);头部只留会话
-                chips + 视图切换 + Logs。 */}
+            {/* round-148: slimmed down — Export/Settings removed from the
+                 canvas header (Settings is in the icon rail; per-session
+                 export is on the session chip's ⇩); the header keeps only
+                 session chips + view switch + Logs. */}
             <button
               id="cmd-toggle"
               className={detailsOpen ? "active" : ""}
@@ -320,10 +324,11 @@ export function App() {
               exact terminal state. round-131: the refit effect skips while
               hidden — fire a resize when un-hiding so the grid (local xterm +
               backend cols/rows) refits to the now-visible size. */}
-          {/* round-138 FIX: browserActive 时绝不能隐藏 #term-container ——
-              BrowserPane 就渲染在里面,旧条件把它 display:none 导致浏览器
-              会话永远不可见(WS/帧全部正常,纯 CSS 事故)。只保留 trajectory
-              的隐藏路径。 */}
+          {/* round-138 FIX: never hide #term-container while browserActive —
+              BrowserPane is rendered inside it; the old condition set it to
+              display:none, making the browser session permanently invisible
+              (WS/frames all fine — pure CSS accident). Only the trajectory
+              hiding path remains. */}
           {trajOpen && sessions.activeSid ? (
             <TrajectoryView key={sessions.activeSid} events={cmdEvents.events} />
           ) : (

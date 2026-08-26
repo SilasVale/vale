@@ -1,10 +1,12 @@
 /**
- * BrowserPane — AI 截图证据流 (round-154, pure evidence view).
+ * BrowserPane — AI screenshot evidence stream (round-154, pure evidence view).
  *
- * 无 URL 栏、无 Go、无刷新按钮：AI 通过 browser_run_script / playwright
- * 脚本工作时,把截图存进 D:\vale-agent\pwout,本面板每 3 秒自动同步,
- * 最新截图大图展示 + 缩略图时间线(点击切换)。这就是"看 AI 在浏览器里
- * 做了什么"的全部——与 Claude/Codex 的步骤截图展示一致。
+ * No URL bar, no Go, no refresh button: while the AI works through
+ * browser_run_script / playwright scripts, it saves screenshots into
+ * D:\vale-agent\pwout; this panel auto-syncs every 3 seconds, showing the
+ * latest screenshot large + a thumbnail timeline (click to switch). That is
+ * all there is to "see what the AI did in the browser" — consistent with
+ * Claude/Codex's step-screenshot display.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 

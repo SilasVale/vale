@@ -226,22 +226,29 @@ impl TermBackend for PtyBackend {
         let last_timeout = self.last_write_timeout.clone();
         let d = data.to_vec();
         Box::pin(async move {
-            // round-132: 分块写入 + 块间让渡。根因实测(Windows ConPTY):
-            // 整段 write_all 一次性灌入时,控制台输入记录队列被 PSReadLine
-            // 的增量渲染慢慢消费,5s 预算内写不完 → 写被中途放弃 → 命令
-            // 无声截断(长 base64 字面量稳定断在 ~300 字节)、残余字节稍后
-            // 落盘造成乱序回显(">>" 续行伪影的另一半成因)。分块+让渡让
-            // 队列永不写满;顺序由顺序 await 保证。总预算 30s。
-            // round-140: 64B/40ms 太保守——每条命令在屏幕上触发
-            // ceil(len/64) 次 PSReadLine 重绘帧(实测 3.6KB base64 传输在
-            // 面板上重复回显数十次、缓冲疯长 2MB+ 的"回声干扰"观感),
-            // 大命令还要 2s+ 才灌完。256B/15ms(≈17KB/s,低于 ConPTY 队列
-            // 消费速率)把重绘帧数降 ~11 倍;短写/阻塞仍由块内 9s deadline
-            // + 退避兜底,不会静默丢字。
-            // round-155: 256B/15ms 仍让 PSReadLine 每块重绘一次编辑行
-            // (面板显示残留 `>>`/`> ` 半截行)。512B/8ms 让整条命令更快进
-            // 入编辑缓冲、重绘次数减半;短写/阻塞仍由块内 9s deadline+退避
-            // 兜底,不会静默丢字。
+            // round-132: chunked write + yield between chunks. Measured root cause
+            // (Windows ConPTY): when the whole write_all is dumped at once,
+            // the console input record queue is consumed slowly by
+            // PSReadLine's incremental rendering and can't finish within the
+            // 5s budget → the write is abandoned midway → the command is
+            // silently truncated (long base64 literals reliably broke at
+            // ~300 bytes), and residual bytes later land out of order
+            // causing scrambled echo (the other half of the ">>" ghost).
+            // Chunking + yielding keeps the queue from ever filling; order
+            // comes from sequential awaits. Total budget 30s.
+            // round-140: 64B/40ms was too conservative — every command
+            // triggered ceil(len/64) PSReadLine redraw frames (measured: a
+            // 3.6KB base64 transfer echoed dozens of times on the panel,
+            // buffer ballooning 2MB+ — the "echo interference" look), and
+            // big commands took 2s+ to finish. 256B/15ms (≈17KB/s, below
+            // the ConPTY queue consumption rate) cuts redraw frames ~11x;
+            // short writes/blocks stay covered by the per-chunk 9s deadline
+            // + backoff, no silent char loss.
+            // round-155: 256B/15ms still redraws the edit line once per
+            // chunk (leftover `>>`/`> ` half-lines on the panel). 512B/8ms
+            // gets the whole command into the edit buffer faster, halving
+            // redraws; short writes/blocks stay covered by the per-chunk 9s
+            // deadline + backoff, no silent char loss.
             const CHUNK: usize = 512;
             const GAP_MS: u64 = 8;
             let mut off = 0usize;
@@ -253,10 +260,12 @@ impl TermBackend for PtyBackend {
                 let step = tokio::time::timeout(
                     std::time::Duration::from_secs(10),
                     tokio::task::spawn_blocking(move || {
-                        // round-132: 不能再 `let _ =` 吞错——ConPTY 输入管道
-                        // 写满时 write 返回 WouldBlock/短写,静默忽略=整块
-                        // 丢失(实测长命令中段缺 ~250B)。逐字节推进:短写
-                        // /错误都退避重试,直到本块写完或超时。
+                        // round-132: no more `let _ =` error-swallowing — when the ConPTY
+                        // input pipe is full, write returns WouldBlock or a
+                        // short write; ignoring it silently = whole chunk
+                        // lost (measured ~250B missing mid-command). Advance
+                        // byte by byte: short writes/errors back off and
+                        // retry until the chunk is written or timed out.
                         let mut w = w2.lock().unwrap_or_else(|p| p.into_inner());
                         let mut done = 0usize;
                         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(9);
@@ -289,8 +298,9 @@ impl TermBackend for PtyBackend {
                 );
             }
             in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
-            // round-132: 写入侧诊断——与 term_execute 的 recv_len 对照,
-            // 判断丢字发生在网关隧道还是 PTY 写入。
+            // round-132: write-side diagnostics — cross-checked against
+            // term_execute's recv_len to determine whether lost chars
+            // happen in the gateway tunnel or the PTY write.
             let _ = std::fs::OpenOptions::new().create(true).append(true)
                 .open("D:\\vale-agent\\diag.log")
                 .and_then(|mut f| {

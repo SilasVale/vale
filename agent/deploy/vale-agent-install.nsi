@@ -20,7 +20,7 @@ Var REGKEY_INPUT
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 
-; Registration key page: optional. From ai.saisi.online → 设备管理 → 生成注册码.
+; Registration key page: optional. From ai.saisi.online → Device Management → Generate registration key.
 ; If filled, the setup script auto-registers the device (no token copy-paste).
 ; NOTE: NSIS skips ALL pages — MUI ones and these custom ones — when the
 ; installer runs silently (/S), so the custom pages below need no IfSilent
@@ -110,8 +110,9 @@ Section "Install" SEC01
   ; Phase 3: playwright-mcp runtime (node.exe + dist/cli.js + node_modules) —
   ; the PlaywrightManager spawns $INSTDIR\playwright\ on Start. ~40-50MB.
   ; The installer embeds this zip (NSIS has no per-file size limit); the
-  ; resulting ~36MB installer is hosted on GitHub Releases, NOT Workers
-  ; Assets (25MiB per-file cap) — see scripts/build-installer.sh.
+  ; resulting ~36MB installer is hosted on the Vercel mirror
+  ; (v.saisi.online/dl/), NOT Workers Assets (25MiB per-file cap) — see
+  ; scripts/build-installer.sh.
   File "vale-playwright.zip"
 
   ; 2. NOW stop every vale binary. A running instance locks its exe AND holds
@@ -267,7 +268,7 @@ Section "Install" SEC01
     ; pointing at THIS dir (with the unlimited ExecutionTimeLimit).
     ; 2>NUL on every schtasks call: silent auto-upgrade runs in a visible
     ; console and a missing task (ValeAgentTray on some installs) printed
-    ; "错误: 指定的服务未安装。(1060)" + "系统找不到指定的文件" noise —
+    ; "ERROR: The specified service does not exist as an installed service. (1060)" + "The system cannot find the file specified" noise —
     ; the upgrade output looked like a failure when it was fine.
     nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
     nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgent /F 2>NUL'

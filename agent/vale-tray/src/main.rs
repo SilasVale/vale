@@ -258,7 +258,7 @@ fn restart_task() {
     schtasks(&["/End", "/TN", "ValeAgent"]);
     // round-133: poll the AGENT PORT instead of parsing schtasks /Query
     // output — the Status field is localized (Chinese Windows prints
-    // '正在运行'), and the port probe is exactly the semantic that matters:
+    // 'running'), and the port probe is exactly the semantic that matters:
     // the agent has stopped serving.
     for _ in 0..20 {
         if !server_running(server_port()) { break; }

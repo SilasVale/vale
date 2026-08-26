@@ -4,8 +4,9 @@
 // Toolbar: PTY / SSH / Serial quick-actions + Export + Settings. The SSH and
 // Serial modals are separate components (ConnModal); this renders the buttons
 // and the Settings modal.
-// round-133: PTY/SSH/Serial 新建入口移到侧栏 Sessions 标题旁的 "+" 下拉;
-// 工具栏只保留全局操作(导出/设置)。
+// round-133: the PTY/SSH/Serial new-session entries moved to the "+" dropdown
+// beside the sidebar's Sessions title; the toolbar keeps only global actions
+// (export/settings).
 export function Toolbar({ onExportAll, onShowSettings }: {
   onExportAll: () => void;
   onShowSettings: () => void;

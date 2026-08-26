@@ -6,8 +6,9 @@ import type { usePlugins } from "../hooks/usePlugins";
 // StateDot + label + relative time; hovering swaps the time for
 // rename/archive actions.
 //
-// round-133: "Sessions" 标题旁新增 "+" 下拉菜单(PTY/SSH/Serial)——新建入口
-// 从主区工具栏移到侧栏标题旁(dsh 风格)。Browser 会话行由 App 注入。
+// round-133: a "+" dropdown (PTY/SSH/Serial) beside the "Sessions" title —
+// the new-session entry moved from the main-area toolbar to the sidebar title
+// (dsh style). The Browser session row is injected by App.
 function relTime(ts: number): string {
   const sec = Math.max(0, (Date.now() - ts) / 1000);
   if (sec < 60) return "now";
@@ -38,7 +39,7 @@ export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, o
     const t = window.setInterval(() => setTick((n) => n + 1), 30000);
     return () => clearInterval(t);
   }, []);
-  // 点击面板其它区域关闭新建菜单
+  // clicking anywhere else in the panel closes the new-session menu
   useEffect(() => {
     if (!menuOpen) return;
     const close = (e: MouseEvent) => {
@@ -105,7 +106,7 @@ export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, o
       <div className="side-header">
         <h1 className="side-title">Sessions</h1>
         <span className="side-count">{sessions.length}</span>
-        {/* round-133: 新建会话入口移到标题旁(dsh 风格 "+")。 */}
+        {/* round-133: the new-session entry moved next to the title (dsh-style "+"). */}
         <div className="side-add-wrap" ref={menuRef}>
           <button
             className="side-add"

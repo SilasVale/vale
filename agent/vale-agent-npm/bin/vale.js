@@ -105,8 +105,10 @@ const commands = {
     }
     fs.mkdirSync(DIR, { recursive: true });
     fs.copyFileSync(EXE_SRC, path.join(DIR, "vale-agent.new.exe"));
-    // round-137 方案 C: bridge.js 与 exe 同步分发——否则设备一直跑旧桥,
-    // 新协议(空闲出帧/命令回执)永远到不了真机(exe 换了桥没换,d1 实测踩坑)。
+    // round-137 Plan C: ship bridge.js alongside the exe — otherwise the
+    // device keeps running the old bridge and the new protocol (idle frames /
+    // command receipts) never reaches the device (exe updated but bridge not;
+    // hit on d1).
     const BRIDGE_SRC = path.join(__dirname, "..", "bridge.js");
     if (fs.existsSync(BRIDGE_SRC)) {
       fs.copyFileSync(BRIDGE_SRC, path.join(DIR, "bridge.new.js"));

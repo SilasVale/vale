@@ -1,12 +1,13 @@
-//! playwright-mcp 进程管理 — 按需启停,用设备 Edge(round-admin-ui)。
+//! playwright-mcp process management — start/stop on demand, using the device Edge (round-admin-ui).
 //!
-//! 管理界面(panel 插件页)经 /api/plugins/playwright/start|stop 启停捆绑的
-//! playwright-mcp;127.0.0.1-only 绑定 + allowed-hosts(防端口
-//! squatting:同端口无 token 的服务可被任意客户端直接调用)。
+//! The management UI (panel plugin page) starts/stops the bundled playwright-mcp
+//! via /api/plugins/playwright/start|stop; 127.0.0.1-only binding +
+//! allowed-hosts (prevents port squatting: a tokenless service on the same
+//! port could otherwise be called directly by any client).
 //!
-//! 捆绑路径约定(Phase 3 打包):node.exe 与 playwright-mcp(dist/cli.js)
-//! 都放在 install_dir/playwright/ 下 — 与 update 插件的 install_dir()
-//! 同根;dev 构建没有捆绑,start 必须报明确错误而不是假装启动。
+//! Bundled path convention (Phase 3 packaging): node.exe and playwright-mcp (dist/cli.js)
+//! both live under install_dir/playwright/ — same root as the update plugin's install_dir();
+//! dev builds have no bundle, and start must report a clear error rather than pretend to start.
 
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -35,17 +36,17 @@ fn no_window(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command 
     cmd
 }
 
-/// 绑定的 playwright-mcp 固定端口 — 与 mcp_client 插件的
-/// DEFAULT_URL (http://127.0.0.1:9229/mcp) 一致。
+/// Fixed port for the bundled playwright-mcp — matches the mcp_client
+/// plugin's DEFAULT_URL (http://127.0.0.1:9229/mcp).
 const MCP_PORT: u16 = 9229;
 
-/// playwright-mcp 进程状态机:None = 未运行,Some = 运行中。
-/// 所有操作经 recover_guard 拿锁(poison 恢复,与全库一致)。
+/// playwright-mcp process state machine: None = not running, Some = running.
+/// All operations take the lock via recover_guard (poison recovery, consistent with the codebase).
 pub struct PlaywrightManager {
     inner: Mutex<Option<ManagedPlaywright>>,
 }
 
-/// 一个运行中的 playwright-mcp 实例。
+/// A running playwright-mcp instance.
 struct ManagedPlaywright {
     child: Child,
     /// Kept for a later feature that needs the per-launch token again
@@ -54,7 +55,8 @@ struct ManagedPlaywright {
     #[allow(dead_code)]
     secret: String,
     started_at: u64,
-    /// 保留(round-admin-ui):stop() 之前外部可请求优雅退出;当前只持发送端。
+    /// Reserved (round-admin-ui): before stop() an external party may request a graceful
+    /// exit; currently only the send end is held.
     _kill_tx: oneshot::Sender<()>,
 }
 
@@ -67,8 +69,8 @@ fn install_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("C:\\vale-agent"))
 }
 
-/// 捆绑的 node.exe — 路径不存在时给出明确错误(dev 构建无捆绑,
-/// 测试期望 start 报错而不是静默失败)。
+/// Bundled node.exe — gives a clear error when the path is missing (dev builds
+/// have no bundle; tests expect start to fail rather than silently succeed).
 fn bundled_node() -> Result<PathBuf, DeviceError> {
     let p = install_dir().join("playwright").join("node.exe");
     if !p.exists() {
@@ -83,8 +85,8 @@ fn bundled_node() -> Result<PathBuf, DeviceError> {
     Ok(p)
 }
 
-/// 捆绑的 playwright-mcp 入口脚本 — 0.0.79 的 bin 是包根 cli.js
-/// (无 dist/;cli.js 相对 require 同目录的 package.json)。
+/// Bundled playwright-mcp entry script — 0.0.79's bin is the package-root cli.js
+/// (no dist/; cli.js relatively requires package.json in the same directory).
 fn bundled_mcp_entry() -> Result<PathBuf, DeviceError> {
     let p = install_dir().join("playwright").join("node_modules").join("@playwright").join("mcp").join("cli.js");
     if !p.exists() {
@@ -106,10 +108,12 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// round-142: 回收上一代残留——被硬杀的 node 留下的 headless chromium 会
-/// 一直锁着 profile 目录,让后续所有 start 都撞 "Browser is already in use"。
-/// 按命令行特征精确匹配(只碰本安装目录的 playwright node 与其 chromium),
-/// 健康实例存在时永远不会走到这里。
+/// round-142: reclaim leftovers from the previous generation — a headless
+/// chromium left behind by a hard-killed node keeps locking the profile
+/// directory, so every later start hits "Browser is already in use".
+/// Match precisely on command-line signature (only touches the playwright node
+/// and its chromium in this install dir); never reached while a healthy
+/// instance exists.
 #[cfg(windows)]
 async fn reap_leftovers() {
     let script = concat!(
@@ -128,14 +132,17 @@ async fn reap_leftovers() {
 #[cfg(not(windows))]
 async fn reap_leftovers() {}
 
-/// round-132: 探测 9229 端口是否有健康的 playwright-mcp 实例在服务——
-/// 不关心它是谁拉起的(计划任务/面板/手动)。生产拓扑由 ValePlaywright
-/// 计划任务在交互会话托管实例,agent 只是客户端;status() 必须把这种
-/// "外部托管"形态如实上报为 Running,否则面板永远显示 Stopped。
+/// round-132: probe whether a healthy playwright-mcp instance is serving on
+/// port 9229 — regardless of who started it (scheduled task/panel/manual).
+/// In production the ValePlaywright scheduled task hosts the instance in the
+/// interactive session and the agent is only a client; status() must honestly
+/// report this "externally hosted" form as Running, otherwise the panel always
+/// shows Stopped.
 async fn probe_healthy() -> bool {
-    // round-132 v2: TCP 连接检查替代 HTTP initialize 探测——后者会为每次
-    // 探测在服务器上创建新会话,且分片读取窗口容易误判。端口在监听 =
-    // playwright-mcp 在服务,对状态展示而言足够可靠。
+    // round-132 v2: a TCP connection check replaces the HTTP initialize probe —
+    // the latter creates a new session on the server per probe, and the chunked
+    // read window is easy to misjudge. Port listening = playwright-mcp serving,
+    // reliable enough for status display.
     tokio::time::timeout(
         std::time::Duration::from_secs(2),
         tokio::net::TcpStream::connect(("127.0.0.1", MCP_PORT)),
@@ -155,9 +162,10 @@ impl PlaywrightManager {
     /// running/healthy — try_wait detects exit; the record is dropped so
     /// start() can recover.
     pub async fn status(&self) -> serde_json::Value {
-        // round-132: 锁的作用域用内层块严格限制——std MutexGuard 不能跨
-        // await(否则整个 HTTP service future 变 !Send)。探测外部实例的
-        // 健康检查在锁外进行。
+        // round-132: the lock scope is strictly limited to an inner block — a std
+        // MutexGuard cannot cross an await (otherwise the whole HTTP service
+        // future becomes !Send). The external-instance health probe runs
+        // outside the lock.
         let (has_live_child, child_exited, started_at) = {
             let mut guard = recover_guard(&self.inner);
             match guard.as_mut() {
@@ -175,9 +183,10 @@ impl PlaywrightManager {
             }
         };
         if !has_live_child || child_exited {
-            // round-132: 没有自己拉起的子进程(或已退出)≠ 服务不可用——
-            // 生产拓扑由 ValePlaywright 计划任务在交互会话托管实例。探测
-            // 健康再下结论,否则面板永远显示 Stopped。
+            // round-132: no child spawned by us (or already exited) ≠ service unavailable —
+// in production the ValePlaywright scheduled task hosts the instance in the
+// interactive session. Probe health before concluding; otherwise the panel
+// always shows Stopped.
             if probe_healthy().await {
                 return serde_json::json!({
                     "running": true,
@@ -221,8 +230,9 @@ impl PlaywrightManager {
                 }
             }
         }
-        // round-132: 已有健康实例(计划任务/面板托管)占着 9229——直接复用,
-        // 不再 spawn(spawn 会绑定失败、子进程秒死、面板报错)。
+        // round-132: a healthy instance (scheduled-task/panel-hosted) already owns 9229 —
+// reuse it instead of spawning (spawn would fail to bind, the child dies
+// instantly, and the panel errors).
         if probe_healthy().await {
             return Ok(serde_json::json!({
                 "status": "already_running",
@@ -231,17 +241,18 @@ impl PlaywrightManager {
             }));
         }
 
-        // round-142: 无健康实例 = 上一代可能留了孤儿——被硬杀的 node 会把
-        // headless chromium 留在后台,继续锁着 profile 目录("Browser is
-        // already in use"),毒化之后每一次 start(d1 实测,2026-08-25)。先按
-        // 命令行特征回收 playwright node 与其 chromium 树,再拉新实例。
+        // round-142: no healthy instance = the previous generation may have left orphans —
+// a hard-killed node leaves headless chromium in the background, still locking the
+// profile directory ("Browser is already in use"), poisoning every later start
+// (measured on d1, 2026-08-25). Reclaim the playwright node + chromium tree first.
         reap_leftovers().await;
 
-        // round-129: @playwright/mcp 无 --mcp-token flag(实测 0.0.79 及更早
-        // 版本都不接受,child 会立即退出)——per-launch secret 方案不可落地。
-        // 防 squatting 改为:127.0.0.1-only 绑定(playwright-mcp 默认)+
-        // --allowed-hosts 127.0.0.1(禁 DNS rebinding 的远程访问)。secret
-        // 仅作连接信息展示,不再是安全边界。
+        // round-129: @playwright/mcp has no --mcp-token flag (tested: 0.0.79 and
+// earlier don't accept it either; the child exits immediately) — the
+// per-launch secret plan is a no-go. Anti-squatting changed to:
+// 127.0.0.1-only binding (playwright-mcp default) + --allowed-hosts
+// 127.0.0.1 (blocks DNS-rebinding remote access). The secret is now only
+// displayed as connection info, no longer a security boundary.
         let port = MCP_PORT;
         let node = bundled_node()?;
         let entry = bundled_mcp_entry()?;
@@ -253,28 +264,34 @@ impl PlaywrightManager {
         child
             .arg(&entry)
             .arg("--port").arg(port.to_string())
-            // round-142: 与可工作的 ValePlaywright 计划任务命令行对齐——
-            // 此前 agent 托管路径少了 --headless,SYSTEM 会话 0 里 headed
-            // chromium 起不来,健康检查必然超时(一直被外部实例的
-            // already_running 短路掩盖);--allowed-hosts 重复传参也去掉。
+            // round-142: align with the working ValePlaywright scheduled-task command line —
+// the agent-hosted path previously lacked --headless; in SYSTEM session 0 a
+// headed chromium can't start and the health check inevitably times out
+// (always masked by the external instance's already_running short-circuit);
+// the duplicate --allowed-hosts arg is gone too.
             .arg("--headless")
-            // Edge 151+ 在 session 0(SYSTEM 服务)下启动即崩(exitCode 1002,
-            // 连 --headless --dump-dom 都复现)——改用 Playwright 自带 chromium
-            // (setup.ps1 Phase 3 / install-browser 落到 %LOCALAPPDATA%\ms-playwright)。
+            // Edge 151+ crashes on startup under session 0 (SYSTEM service) (exitCode 1002,
+// reproducible even with --headless --dump-dom) — switch to Playwright's
+// bundled chromium (setup.ps1 Phase 3 / install-browser lands in
+// %LOCALAPPDATA%\ms-playwright).
             .arg("--browser").arg("chromium")
             .arg("--host").arg("127.0.0.1")
-            // round-131: playwright-mcp 的 Host 比较是 RAW 串含端口 —
-            // 非默认端口 9229 上必须写 "127.0.0.1:9229"(写 "127.0.0.1"
-            // 永不匹配,所有请求 403,start 永远失败)。含 localhost 同义。
+            // round-131: playwright-mcp's Host comparison is a RAW string including the
+// port — on non-default port 9229 you must write "127.0.0.1:9229" (writing
+// "127.0.0.1" never matches, all requests 403, start always fails).
+// localhost synonym included.
             .arg("--allowed-hosts").arg("127.0.0.1:9229,localhost:9229")
-            // 设备 Web UI 用自签名 HTTPS 证书——忽略证书错误,否则导航
-            // 一律 net::ERR_CERT_AUTHORITY_INVALID。
+            // The device Web UI uses a self-signed HTTPS certificate — ignore cert
+// errors, otherwise navigation always fails with
+// net::ERR_CERT_AUTHORITY_INVALID.
             .arg("--ignore-https-errors")
-            // round-141 治本: coreBundle 的 HTTP 心跳(每 ~3s ping 客户端,
-            // 默认 5s 超时即 server.close()→销毁整个浏览器上下文)对无下行流
-            // 的瘦客户端必然判死——这就是"每次调用后 ~4s Session not found、
-            // 页面被重置"的根因。置 0 = startHeartbeat 直接 return,会话与
-            // 浏览器常驻,snapshot 引用/面板状态跨调用存活。
+            // round-141 real fix: coreBundle's HTTP heartbeat (pings the client every
+// ~3s; at the default 5s timeout it server.close()s → destroys the whole
+// browser context) inevitably kills thin clients with no downlink stream —
+// that is the root cause of "Session not found ~4s after every call, page
+// reset". Setting 0 makes startHeartbeat return immediately; session and
+// browser stay resident, snapshot references / panel state survive across
+// calls.
             .env("PLAYWRIGHT_MCP_PING_TIMEOUT_MS", "0")
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -284,11 +301,13 @@ impl PlaywrightManager {
         let mut child = child
             .spawn()
             .map_err(|e| DeviceError::Internal { message: format!("spawn playwright-mcp: {e}") })?;
-        // 健康轮询(最多 10s):POST JSON-RPC initialize 到 /mcp 并验证响应体是
-        // 合法的 JSON-RPC 结果。round-129: 旧的 probe.is_ok() 任何 HTTP 状态
-        // 都过(GET /mcp 设计上就返回 4xx)——只有真正完成 MCP 握手的实例才算
-        // 健康;squatter 无法回合法的 JSON-RPC initialize 响应。同时轮询中检查
-        // child 是否已退出(端口被占 → 绑定失败 → 立即死亡)。探测有 2s 超时。
+        // Health poll (up to 10s): POST a JSON-RPC initialize to /mcp and verify the
+// body is a valid JSON-RPC result. round-129: the old probe.is_ok() passed on
+// any HTTP status (GET /mcp is designed to return 4xx) — only an instance
+// that truly completes the MCP handshake counts as healthy; a squatter cannot
+// answer with a valid JSON-RPC initialize response. The poll also checks
+// whether the child exited (port taken → bind failure → instant death). Each
+// probe has a 2s timeout.
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
@@ -301,12 +320,14 @@ impl PlaywrightManager {
                 break;
             }
             let probe = client
-                // round-118: 127.0.0.1 而非 localhost — 子进程 --host 127.0.0.1
-                // 只绑 IPv4,localhost 解析到 [::1] 会让健康轮询永远失败。
+                // round-118: 127.0.0.1 rather than localhost — the child's --host 127.0.0.1
+                // binds IPv4 only; localhost resolving to [::1] would make the
+                // health poll fail forever.
                 .post(format!("http://127.0.0.1:{port}/mcp"))
                 .header("content-type", "application/json")
-                // round-131: MCP 传输要求 Accept: application/json,
-                // text/event-stream — 缺了返回 406,探测永远失败。
+                // round-131: MCP transport requires Accept: application/json,
+                // text/event-stream — missing it returns 406 and the probe
+                // always fails.
                 .header("accept", "application/json, text/event-stream")
                 .body(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"vale-agent","version":"1"}}}"#)
                 .send()

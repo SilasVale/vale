@@ -18,11 +18,12 @@
   --lane-ds: #4f6bed;   /* SSH tab dot (console --lane-ds) */
   --lane-or: #d97706;   /* serial tab dot (console --lane-or) */
   --danger: #dc2626;
-  /* round-128: warn 系列统一 token — 旧的 8 处硬编码混用 #d97706(round-117
-     已因 AA 退役)与 #b45309,且无 token 可改。取 console 的 AA 值。 */
-  --warn: #b45309;            /* 状态点/胶囊主色(round-117 --lane-or 值,AA) */
-  --warn-ink: #92400e;        /* 胶囊文字(console --warn-ink,6.8:1) */
-  --warn-soft: rgba(217, 119, 6, 0.12); /* 胶囊底色 */
+  /* round-128: unified warn-series tokens — old 8 hardcoded spots mixed
+     #d97706(round-117, retired for AA) with #b45309, no token to change.
+     Take console's AA values. */
+  --warn: #b45309;            /* status-dot/capsule primary color (round-117 --lane-or value, AA) */
+  --warn-ink: #92400e;        /* capsule text (console --warn-ink, 6.8:1) */
+  --warn-soft: rgba(217, 119, 6, 0.12); /* capsule background */
   --radius: 14px;
   --radius-sm: 10px;
   --radius-lg: 20px;
@@ -32,7 +33,7 @@
           "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
-/* dsh 视觉语言 (round-admin-ui Task 3): motion tokens + neutral scale from
+/* dsh visual language (round-admin-ui Task 3): motion tokens + neutral scale from
    the design spec (docs/superpowers/specs/2026-08-15-agent-admin-ui-design.md).
    Vale brand tokens (--accent #d9480f, --faint #6e6e73) stay the source of
    truth for brand colors — the neutral scale only serves dsh gray surfaces. */
@@ -1292,7 +1293,7 @@ body {
   .traj-ev-dot { transition: none; animation: none; }
 }
 
-/* round-133: Sessions 标题旁的 "+ 新建会话" 下拉(dsh 风格)。 */
+/* round-133: the "+ New Session" dropdown next to the Sessions title (dsh style). */
 .side-header { position: relative; }
 .side-add-wrap { margin-left: auto; position: relative; }
 .side-add {
@@ -1557,9 +1558,9 @@ body {
 }
 #drawer-inner #cmd-stream .cmd-list { flex: 1; min-height: 0; overflow-y: auto; }
 /* ============================================================
-   round-148: 精简 + 防御性高度链。显式 stretch / flex-basis:0
-   覆盖每一层 flex,任何 pane 都不得再塌缩到内容高度;画布头部
-   只保留 chips + 视图切换 + Logs。
+   round-148: slimmed down + defensive height chain. Explicit stretch /
+   flex-basis:0 at every flex level so no pane collapses to content height;
+   the canvas header keeps only chips + view switch + Logs.
    ============================================================ */
 #app-shell { align-items: stretch; }
 #canvas-host { align-items: stretch; }
@@ -1569,6 +1570,6 @@ body {
 #term-container > div { flex: 1 1 0; min-height: 0; min-width: 0; }
 #traj-view { flex: 1 1 0; }
 /* BrowserPane fills its wrapper via flex (not the fragile height:100% chain). */
-/* BrowserPane 专有包装层:flex 填充,不再依赖 height:100% 链条 */
+/* BrowserPane-specific wrapper: flex fill, no longer relying on the height:100% chain */
 #term-container > .browser-wrap { display: flex; }
 #term-container > .browser-wrap > div { flex: 1 1 0; min-height: 0; min-width: 0; }

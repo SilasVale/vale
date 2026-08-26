@@ -1,4 +1,4 @@
-//! WebSocket relay for the interactive remote browser (round-137, 方案 C).
+//! WebSocket relay for the interactive remote browser (round-137, Plan C).
 //!
 //! The panel's BrowserPane previously polled JPEG frames over HTTP
 //! (/api/browser/frame at ~7fps). This module adds the streaming path:
@@ -169,8 +169,8 @@ pub async fn relay_to_bridge(
     tokio::spawn(async move {
         match on_upgrade.await {
             Ok(io) => {
-                // hyper 1.x 的 Upgraded 只实现 hyper::rt::{Read, Write};
-                // TokioIo 把它适配成 tokio::io 风格(axum ws 同款做法)。
+                // hyper 1.x's Upgraded only implements hyper::rt::{Read, Write};
+                // TokioIo adapts it to tokio::io style (same approach as axum ws).
                 let mut io = hyper_util::rt::TokioIo::new(io);
                 if let Err(e) = tokio::io::copy_bidirectional(&mut io, &mut up).await {
                     tracing::debug!(target: "ws_relay", "pipe ended: {e}");

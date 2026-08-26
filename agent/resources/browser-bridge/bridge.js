@@ -134,8 +134,10 @@ function decodeClientFrames(buf, onMessage) {
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 45, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 15 }).catch(() => {});
   }
 
-  // round-150: 输入即时帧 — 鼠标/键盘事件后 300ms 内若无新 screencast
-  // 帧(页面未重绘的点击/滚动),立即截图推一帧,消除"点了没反应"的观感。
+  // round-150: immediate frame on input — if no new screencast frame
+  // arrives within 300ms after a mouse/keyboard event (a click/scroll
+  // that didn't repaint the page), screenshot and push one frame now to
+  // kill the "clicked but nothing happened" feel.
   let fastTimer = null;
   function scheduleFastFrame() {
     if (fastTimer || capturing) return;
@@ -220,7 +222,8 @@ function decodeClientFrames(buf, onMessage) {
     const u = new URL(req.url, 'http://x');
     if (!authed(u, req)) { res.writeHead(403); res.end(); return; }
     if (u.pathname === '/diag') {
-      // round-138 调试: 观察观众数/最后帧时间/页面状态,定位"有观众无帧"。
+      // round-138 debugging: watch viewer count/last-frame time/page state
+      // to locate "viewers but no frames".
       res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({
         sockets: sockets.size,
@@ -275,16 +278,19 @@ function decodeClientFrames(buf, onMessage) {
       rem = Buffer.concat([rem, d]);
       rem = decodeClientFrames(rem, async (msg) => {
         let m; try { m = JSON.parse(msg); } catch { return; }
-        // round-138: 单一分发——旧代码 handleInput 之后又手动重复一遍
-        // nav/m/k 的 CDP 注入(点击等于按两次);现在统一走 handleInput。
+        // round-138: single dispatch — the old code manually re-injected
+        // nav/m/k CDP commands after handleInput (a click equaled pressing
+        // twice); now everything goes through handleInput.
         lastCmd = JSON.stringify(m).slice(0, 120);
         let out;
         try { out = await handleInput(m); } catch (e) { lastErr = String(e && e.message || e).slice(0, 120); }
-        // round-137 方案 C: 带 id 的请求回执(tabs/diag 等查询的关联键),
-        // 面板不再需要旁路轮询就能拿到结构化应答。
-        // round-138: payload 必须是 Buffer——直接传字符串会让 encodeFrame 的
-        // Buffer.concat 抛 ERR_INVALID_ARG_TYPE,被 try/catch 静默吞掉,
-        // 回执永远发不出(d1 直连实测踩坑)。
+        // round-137 Plan C: request receipts carrying an id (the correlation
+        // key for queries like tabs/diag), so the panel gets structured
+        // answers without side-channel polling.
+        // round-138: payload must be a Buffer — passing a raw string makes
+        // encodeFrame's Buffer.concat throw ERR_INVALID_ARG_TYPE, silently
+        // swallowed by try/catch, and the receipt never goes out (hit on d1
+        // direct-connect testing).
         if (typeof m.id !== 'undefined' && sock.writable) {
           try { sock.write(encodeFrame(1, Buffer.from(JSON.stringify(Object.assign({ id: m.id }, out || {}))))); } catch {}
         }
@@ -315,17 +321,20 @@ function decodeClientFrames(buf, onMessage) {
     });
   }
 
-  // round-137 方案 C: 空闲出帧保证。screencast 是变化驱动——headless 页面
-  // 视觉静止时合成器不出帧,WS 观众会盯着最后一张旧图。有观众且静默超过
-  // 700ms 时兜底一张真实截图(静止页 ≤1 capture/s,对比旧轮询路径
-  // 7 req/s + ≤2.5 captures/s;活跃页由 screencast 接管,不叠加)。
+  // round-137 Plan C: idle-frame guarantee. Screencast is change-driven —
+  // when a headless page is visually idle the compositor emits no frames,
+  // and WS viewers stare at the last stale image. With viewers present and
+  // >700ms of silence, fall back to one real screenshot (static page ≤1
+  // capture/s vs the old polling path's 7 req/s + ≤2.5 captures/s; active
+  // pages are handled by screencast, no stacking).
   setInterval(() => {
     if (sockets.size === 0 || capturing) return;
-    if (Date.now() - lastAck < 1500) return; // 动画中由 screencast 接管
+    if (Date.now() - lastAck < 1500) return; // animation is handled by screencast
     const target = selPage || page;
     if (!target) return;
     capturing = true;
-    // round-150: 静止定稿帧 — 高清 q90,保证静止页面文字清晰
+    // round-150: final frame for static pages — high-quality q90 so text on
+    // idle pages stays sharp
     target.screenshot({ type: 'jpeg', quality: 90 })
       .then((jpeg) => pushFrame(jpeg))
       .catch(() => {})

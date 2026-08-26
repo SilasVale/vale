@@ -530,7 +530,7 @@ async fn run_server(config_path: PathBuf) {
     // once; if the bridge's IIFE throws (e.g. transient launchPersistentContext
     // failure, missing browser binary, profile lock) the process exits and
     // 9224 stays dead until the device reboots — the panel's live view goes
-    // black and "实时通道重连中…" loops forever (observed d1, 2026-08-25).
+    // black and "live channel reconnecting…" loops forever (observed d1, 2026-08-25).
     // Every 30 s, TCP-probe 9224; if closed AND bridge.js + node.exe exist,
     // respawn. The new child joins the reaper job (setup_child_reaper_job
     // runs before main and applies to every child spawned by this process),

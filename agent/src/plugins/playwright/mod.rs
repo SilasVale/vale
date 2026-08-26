@@ -35,8 +35,9 @@ impl Plugin for PlaywrightPlugin {
     }
     fn tools(&self) -> Vec<ToolDef> {
         // round-151: browser_pw_info / browser_run_script — bundled-playwright
-        // 发现与执行入口,让 AI 无需自行安装。其余浏览器自动化仍走
-        // mcp_client 插件(127.0.0.1:9229 playwright-mcp)。
+        // discovery & execution entry point, so the AI doesn't install it
+        // itself. Other browser automation still goes through the mcp_client
+        // plugin (127.0.0.1:9229 playwright-mcp).
         tools::build()
     }
 }

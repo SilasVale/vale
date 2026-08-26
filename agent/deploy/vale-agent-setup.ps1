@@ -69,7 +69,7 @@ $ConsoleUrl = $ConsoleUrl.Trim().TrimEnd('/')
 $versionEndpoint = "$Base/api/version"
 # round-116: ensure the install dir EXISTS before any Set-Content — a
 # re-install targeting a directory that was never created (or was cleaned
-# up) aborted at the very first write with "未能找到路径 ... 的一部分".
+# up) aborted at the very first write with "Could not find a part of the path ...".
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 if (-not $Hostname) {
     # 1. The existing working setup's subdomain (cloudflared config ingress).
@@ -106,7 +106,7 @@ if ($Hostname -match '\.command\.[^.]+(?:\.[^.]+)+$') {
     $Hostname = $Hostname -replace '\.command\.[^.]+(?:\.[^.]+)+$', ".$AgentDomain"
     Set-Content -Path $hostFile -Value $Hostname
 }
-# Console URL for the tray app ("打开控制台") — the console hostname is a
+# Console URL for the tray app ("Open Console") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
 Set-Content -Path (Join-Path $InstallDir "vale-agent.console") -Value "$ConsoleUrl/"
 Set-Content -Path (Join-Path $InstallDir "vale-agent.version") -Value $versionEndpoint
@@ -176,10 +176,10 @@ if (Test-Path $extZip) {
 # script path downloads it on updates. PlaywrightManager spawns
 # $InstallDir\playwright\ on the Plugins page Start. The bundle is ~30MB —
 # over the download site's 25MiB Workers-Assets cap — so it sits NEXT TO the
-# installer: /api/version geo-routes the installer URL (GitHub Releases
-# worldwide, v.saisi.online for CN), and the bundle lives in the same
-# directory. Derive the bundle URL from the manifest so this path follows
-# the same routing; fall back to the mirror if the manifest is unreachable.
+# installer on the Vercel mirror (v.saisi.online/dl/), which /api/version
+# points all devices at, and the bundle lives in the same directory. Derive
+# the bundle URL from the manifest so this path follows the same routing;
+# fall back to the mirror if the manifest is unreachable.
 $pwUrl = "$Base/dl/vale-playwright.zip"
 try {
     $manifest = Invoke-RestMethod $versionEndpoint
@@ -312,7 +312,7 @@ if ($ns.Count -gt 0) {
     $Hostname = "d$lowest.$AgentDomain"
     Set-Content -Path $hostFile -Value $Hostname
 }
-# Console URL for the tray app ("打开控制台") — the console hostname is a
+# Console URL for the tray app ("Open Console") — the console hostname is a
 # worker var set at deploy time, so it is written here, not hardcoded in the exe.
 Set-Content -Path (Join-Path $InstallDir "vale-agent.console") -Value "$ConsoleUrl/"
 Set-Content -Path (Join-Path $InstallDir "vale-agent.version") -Value $versionEndpoint
@@ -501,7 +501,7 @@ try {
     # stderr under PS 5.1 — every benign-failure command here must use 2>$null
     # (errors land on stderr and are then checked via $LASTEXITCODE).
     # NEVER use `2>NUL` here: in PS 5.1 that makes Out-File write a FILE named
-    # NUL ("要求 FileStream 打开一个不是文件的设备") and aborts the script —
+    # NUL ("FileStream was asked to open a device that was not a file") and aborts the script —
     # the round-38 interactive-install failure. 2>$null is the only safe form.
     & $cloudflared service uninstall 2>$null
     for ($i = 0; $i -lt 10; $i++) {

@@ -390,7 +390,7 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         }
     }
 
-    // round-137 方案 C: interactive-browser WebSocket relay. MUST sit before
+    // round-137 Plan C: interactive-browser WebSocket relay. MUST sit before
     // the standard auth gate — browsers cannot attach an Authorization header
     // to a WebSocket handshake, so auth is the one-time ?ticket= minted by
     // POST /api/browser/ws-ticket (Bearer-gated below). Raw byte pipe both
@@ -409,8 +409,9 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         else {
             return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("not a websocket handshake"));
         };
-        // hyper 把待完成的升级句柄放进请求扩展;拿走它(axum ws 同款),
-        // 返回 101 后由 spawned task 接管裸 IO。
+        // hyper places the pending upgrade handle in the request extensions;
+        // take it out (same move as axum ws), and after returning 101 the
+        // spawned task takes over the raw IO.
         let Some(on_upgrade) = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>() else {
             return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("upgrade unsupported"));
         };
@@ -584,7 +585,7 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let result: serde_json::Value = match (method.as_str(), path.as_str()) {
         ("GET", "/api/spec") => api_spec(&state),
         ("GET", "/api/status") => api_status(&state).await,
-        // round-137 方案 C: mint a one-time WS relay ticket. Bearer-gated
+        // round-137 Plan C: mint a one-time WS relay ticket. Bearer-gated
         // like every other /api route; the ticket itself is what the browser
         // WebSocket handshake presents (?ticket=), keeping the long-lived
         // device token out of URLs entirely.
