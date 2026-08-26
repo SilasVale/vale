@@ -1,35 +1,35 @@
 # Vale Satellite Proxies
 
-独立部署的小型代理 Worker / Vercel 项目,由 Vale 网关在 `US_PROXY` 开启时调用(美国出口),或作为专有入口使用。源码从 `~/cloudflare` 与 `~/vercel-proxy` 迁入,统一纳入 `scripts/build.sh` 部署。
+Independently deployed small proxy Workers / Vercel projects, invoked by the Vale gateway when `US_PROXY` is enabled (US egress), or used as dedicated entry points. The source was migrated in from `~/cloudflare` and `~/vercel-proxy` and unified under the `scripts/build.sh` deployment.
 
-| 目录 | Worker 名 | 用途 | 密钥 |
+| Directory | Worker name | Purpose | Secrets |
 |---|---|---|---|
-| `zen-go-proxy/` | `opencode-go-proxy` | opencode.saisi.online 专属直连入口(og 转译已并入网关) | `OPENCODE_GO_API_KEY`,可选 `CLIENT_KEY` |
-| `zen-us-proxy/` | `zen-us-proxy` | 美国出口代理(D1 绑定强制美区边缘 → opencode zen) | `OPENCODE_GO_API_KEY` |
-| `my-openrouter-proxy/` | `openrouter-proxy` | OpenRouter BYOK 透传(用户自带 key,无则回退内置) | `OPENROUTER_API_KEY` |
-| `vercel-proxy/` | Vercel 项目 | `v.saisi.online/api/zen` + `/api/proxy` AI 出口，受控 `/api/github/{web|raw|api|release}/...` GitHub HTTP 反向代理，以及 `/api/gform/{gle|docs|...}/...` Google Forms 反向代理(正文改写,匿名公开表单)(Vercel 平台,非 Worker) | `OPENROUTER_API_KEY`(Vercel env) |
+| `zen-go-proxy/` | `opencode-go-proxy` | Dedicated direct entry for opencode.saisi.online (og transcoding merged into the gateway) | `OPENCODE_GO_API_KEY`, optional `CLIENT_KEY` |
+| `zen-us-proxy/` | `zen-us-proxy` | US egress proxy (D1 binding forces US-region edge → opencode zen) | `OPENCODE_GO_API_KEY` |
+| `my-openrouter-proxy/` | `openrouter-proxy` | OpenRouter BYOK passthrough (user brings their own key, falls back to the built-in one if absent) | `OPENROUTER_API_KEY` |
+| `vercel-proxy/` | Vercel project | `v.saisi.online/api/zen` + `/api/proxy` AI egress, controlled `/api/github/{web|raw|api|release}/...` GitHub HTTP reverse proxy, plus `/api/gform/{gle|docs|...}/...` Google Forms reverse proxy (body rewriting, anonymous public forms) (Vercel platform, not a Worker) | `OPENROUTER_API_KEY` (Vercel env) |
 
-## 部署
+## Deployment
 
 ```bash
-# 全部 Cloudflare 代理 Worker(zen-go / zen-us / openrouter)
+# All Cloudflare proxy Workers (zen-go / zen-us / openrouter)
 ./scripts/build.sh proxies
 
-# Vercel 出口代理(需要 vercel CLI + 登录)
+# Vercel egress proxy (requires vercel CLI + login)
 ./scripts/build.sh vercel-proxy
 ```
 
-`./scripts/build.sh deploy` 也会一并部署三个 Cloudflare 代理。
+`./scripts/build.sh deploy` also deploys the three Cloudflare proxies.
 
-## Git 自动 URL 改写
+## Git automatic URL rewriting
 
-`vercel-proxy` 提供 GitHub Smart HTTP 反向代理 `/api/git/...`。配置一次后，仓库中的 GitHub URL 不需要修改：
+`vercel-proxy` provides a GitHub Smart HTTP reverse proxy at `/api/git/...`. Once configured, GitHub URLs in the repo do not need to change:
 
 ```bash
 git config --global url."https://v.saisi.online/api/git/".insteadOf "https://github.com/"
 ```
 
-之后照常执行：
+Then run as usual:
 
 ```bash
 git clone https://github.com/OWNER/REPO.git
@@ -37,16 +37,16 @@ git pull
 git push
 ```
 
-该入口仅代理到 `github.com`，支持 Git 的 GET/HEAD/POST 请求；SSH 地址 `git@github.com:...` 和 `HTTP_PROXY`/`HTTPS_PROXY` 的 CONNECT 代理不在此入口范围内。
+This entry only proxies to `github.com` and supports Git GET/HEAD/POST requests; SSH addresses `git@github.com:...` and CONNECT proxying for `HTTP_PROXY`/`HTTPS_PROXY` are out of scope for this entry.
 
-## 密钥配置
+## Secret configuration
 
-Worker 密钥通过 `wrangler secret put <NAME>` 或 Cloudflare 面板设置,**部署不会清除已设置的 secret**:
+Worker secrets are set via `wrangler secret put <NAME>` or the Cloudflare dashboard, **deploys do not clear already-set secrets**:
 
 ```bash
 cd proxies/zen-go-proxy && CLOUDFLARE_API_TOKEN=$CF_TOKEN wrangler secret put OPENCODE_GO_API_KEY
 ```
 
-Vercel 项目在 `proxies/vercel-proxy/` 下 `vercel env add OPENROUTER_API_KEY production`。
+For the Vercel project, run `vercel env add OPENROUTER_API_KEY production` under `proxies/vercel-proxy/`.
 
-> ⚠️ 敏感文件(`.client-key`、`.dev.vars`、`.wrangler/`、`.vercel/`)不纳入版本库——迁入时已排除,请勿提交。
+> ⚠️ Sensitive files (`.client-key`, `.dev.vars`, `.wrangler/`, `.vercel/`) are not part of the repository — already excluded when migrated in; please do not commit them.

@@ -1,38 +1,38 @@
-# Vale 命令：网关渠道一键切换 — 实施计划
+# Vale command: one-click gateway channel switching — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 提供跨平台 `vale` 命令 + 网关公开端点（health/vale-cli/安装器）+ console 面板，实现网关渠道一键切换（探测验证、自动备份、可回滚）。
+**Goal:** Provide a cross-platform `vale` command + public gateway endpoints (health/vale-cli/installer) + a console panel, enabling one-click gateway channel switching (probe verification, automatic backup, rollback support).
 
-**Architecture:** vale CLI 作为静态资源放在 `gateway/public/vale`（单一事实源，esbuild 不碰它，Worker 通过 Assets 读取并动态生成安装器）；网关新增 4 个公开端点；console 模型路由面板加安装说明。CLI 零依赖 node 脚本，运行时从本机 `~/.claude/settings.json` 自读 token。
+**Architecture:** The vale CLI lives as a static asset at `gateway/public/vale` (single source of truth — esbuild doesn't touch it; the Worker reads it via Assets and dynamically generates the installers); the gateway gains 4 public endpoints; the console model-routing panel gains install instructions. The CLI is a zero-dependency node script that reads the token from the local `~/.claude/settings.json` at runtime.
 
-**Tech Stack:** Node.js（CLI，`fetch`/`fs` 内置）、Cloudflare Worker（端点）、vanilla JS（console 面板）、`node --test`（测试）。
+**Tech Stack:** Node.js (CLI, built-in `fetch`/`fs`), Cloudflare Worker (endpoints), vanilla JS (console panel), `node --test` (tests).
 
 ## Global Constraints
 
-- CLI 零依赖：只用 node 内置 API（`fs`/`os`/`path`/`fetch`），不 import 任何 npm 包
-- CLI 源码单一事实源：`gateway/public/vale`，Worker 端点和安装器都从这里读取
-- CLI 不显示/不存储 token；只读 settings.json 里的 token 用于探测
-- 端点公开无鉴权，响应不含任何密钥
-- 渠道映射常量：`ds→ds/deepseek-v4-flash`、`qw→qw/qwen3.8-max-preview`、`og→og/deepseek-v4-flash`、`or→or/openai/gpt-5.6-luna:floor[1m]`；优先级 `qw > ds > og > or`
-- 测试用 `VALE_SETTINGS` 环境变量覆盖 settings.json 路径（CLI 支持）
-- 每个 commit 树保持绿色（`npm test` 全过）
+- CLI zero dependencies: only node built-in APIs (`fs`/`os`/`path`/`fetch`), no npm packages imported
+- The CLI source is the single source of truth: `gateway/public/vale`; both the Worker endpoint and the installers read from it
+- The CLI never displays or stores the token; it only reads the token in settings.json for probing
+- Endpoints are public and unauthenticated; responses contain no secrets
+- Channel mapping constants: `ds→ds/deepseek-v4-flash`, `qw→qw/qwen3.8-max-preview`, `og→og/deepseek-v4-flash`, `or→or/openai/gpt-5.6-luna:floor[1m]`; priority `qw > ds > og > or`
+- Tests override the settings.json path via the `VALE_SETTINGS` environment variable (supported by the CLI)
+- Every commit keeps the tree green (`npm test` fully passing)
 
 ---
 
-### Task 1: vale CLI 脚本（gateway/public/vale）+ 子进程测试
+### Task 1: vale CLI script (gateway/public/vale) + subprocess tests
 
 **Files:**
 - Create: `gateway/public/vale`
 - Test: `gateway/test/vale-cli.test.mjs`
 
 **Interfaces:**
-- Produces: `gateway/public/vale` —— 可执行 node CLI（shebang `#!/usr/bin/env node`），支持 `check` / `use <ds|qw|og|or>` / `use auto` / `restore`；读 `VALE_SETTINGS`（默认 `~/.claude/settings.json`）和其中的 `ANTHROPIC_BASE_URL`（默认 `https://api.saisi.online`）。
-- Later tasks consume: Task 2 的 Worker 端点从该文件读内容；Task 4 部署后验证。
+- Produces: `gateway/public/vale` — an executable node CLI (shebang `#!/usr/bin/env node`) supporting `check` / `use <ds|qw|og|or>` / `use auto` / `restore`; reads `VALE_SETTINGS` (default `~/.claude/settings.json`) and the `ANTHROPIC_BASE_URL` in it (default `https://api.saisi.online`).
+- Later tasks consume: Task 2's Worker endpoint reads the file's contents; Task 4 verifies after deployment.
 
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1: Write a failing test**
 
-创建 `gateway/test/vale-cli.test.mjs`：
+Create `gateway/test/vale-cli.test.mjs`:
 
 ```js
 // vale CLI subprocess tests — spawn the real gateway/public/vale against a
@@ -125,11 +125,11 @@ test("use qw: 探测通过 → 改写 env + 备份", async () => {
     assert.equal(after.env.ANTHROPIC_MODEL, "qw/qwen3.8-max-preview");
     assert.equal(after.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "qw/qwen3.8-max-preview");
     assert.equal(after.env.ANTHROPIC_BASE_URL, "https://api.saisi.online");
-    assert.equal(after.permissions.allow[0], "Read"); // 非 env 配置保留
-    // 备份文件存在
+    assert.equal(after.permissions.allow[0], "Read"); // non-env config preserved
+    // Backup file exists
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 1);
-    // 备份内容是切换前配置
+    // Backup contains the pre-switch config
     const bak = JSON.parse(fs.readFileSync(path.join(path.dirname(file), backups[0]), "utf8"));
     assert.equal(bak.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
   } finally { server.close(); }
@@ -163,11 +163,11 @@ test("restore: 恢复最近备份", async () => {
   const { server, port } = await makeGateway({ status: 200 });
   try {
     const { file } = makeSettings(`http://127.0.0.1:${port}`);
-    run(["use", "qw"], file); // 产生备份 + 切换
+    run(["use", "qw"], file); // creates a backup + switches
     const r = run(["restore"], file);
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // 回到切换前
+    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // back to the pre-switch value
   } finally { server.close(); }
 });
 
@@ -179,14 +179,14 @@ test("未知渠道 → 报错退出", async () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [ ] **Step 2: Run the test to confirm it fails**
 
 Run: `cd ~/vale/gateway && node --test test/vale-cli.test.mjs`
 Expected: FAIL — `ENOENT: no such file or directory ... public/vale`
 
-- [ ] **Step 3: 实现 `gateway/public/vale`**
+- [ ] **Step 3: Implement `gateway/public/vale`**
 
-创建 `gateway/public/vale`（完整代码）：
+Create `gateway/public/vale` (complete code):
 
 ```js
 #!/usr/bin/env node
@@ -412,14 +412,14 @@ async function main() {
 main().catch((e) => { console.error(e.message); process.exit(1); });
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [ ] **Step 4: Run the test to confirm it passes**
 
 Run: `cd ~/vale/gateway && node --test test/vale-cli.test.mjs`
-Expected: PASS（6 个用例）
+Expected: PASS (6 test cases)
 
-- [ ] **Step 5: 完整测试 + commit**
+- [ ] **Step 5: Full test suite + commit**
 
-Run: `cd ~/vale/gateway && npm test` — 全绿
+Run: `cd ~/vale/gateway && npm test` — all green
 ```bash
 cd ~/vale && git add gateway/public/vale gateway/test/vale-cli.test.mjs
 git commit -m "feat(stage-gateway): vale CLI — gateway channel switching with probe, backup, rollback"
@@ -427,19 +427,19 @@ git commit -m "feat(stage-gateway): vale CLI — gateway channel switching with 
 
 ---
 
-### Task 2: 网关公开端点（health / vale-cli / 安装器）
+### Task 2: Public gateway endpoints (health / vale-cli / installers)
 
 **Files:**
 - Modify: `gateway/src/index.js`
 - Test: `gateway/test/health.test.mjs`
 
 **Interfaces:**
-- Consumes: Task 1 的 `gateway/public/vale`（通过 `env.ASSETS.fetch("/vale")` 读取）；已有 `isChannelDegraded(env)`（`index.js`，DO breaker）。
-- Produces: 公开端点 `GET /api/health`（所有域名可用，含 console 与 API 域名）、`GET /api/vale-cli`（text/plain）、`GET /api/vale-install`（POSIX sh）、`GET /api/vale-install.ps1`（PowerShell）；导出 `buildHealth(env)` 供测试。
+- Consumes: Task 1's `gateway/public/vale` (read via `env.ASSETS.fetch("/vale")`); the existing `isChannelDegraded(env)` (`index.js`, DO breaker).
+- Produces: public endpoints `GET /api/health` (available on all domains, including console and API domains), `GET /api/vale-cli` (text/plain), `GET /api/vale-install` (POSIX sh), `GET /api/vale-install.ps1` (PowerShell); exports `buildHealth(env)` for testing.
 
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1: Write a failing test**
 
-创建 `gateway/test/health.test.mjs`：
+Create `gateway/test/health.test.mjs`:
 
 ```js
 // /api/health channel-status logic — pure function test with a mocked breaker.
@@ -481,14 +481,14 @@ test("health: channels cover all four prefixes in priority order", async () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [ ] **Step 2: Run the test to confirm it fails**
 
 Run: `cd ~/vale/gateway && node --test test/health.test.mjs`
 Expected: FAIL — `buildHealth is not exported`
 
-- [ ] **Step 3: 实现端点**
+- [ ] **Step 3: Implement the endpoints**
 
-在 `gateway/src/index.js` 添加（位置：`MODELS`/`ROUTE_INFO` 常量附近加健康常量；主 fetch 的 hostname 分流之前加路由；文件底部加函数）：
+Add to `gateway/src/index.js` (placement: health constants near the `MODELS`/`ROUTE_INFO` constants; routes before the main fetch's hostname dispatch; functions at the bottom of the file):
 
 ```js
 // ---- Channel health (public /api/health) ----
@@ -560,7 +560,7 @@ async function serveAssetText(env, assetPath) {
 }
 ```
 
-主 fetch（`index.js` 中 `const path = url.pathname;` 之后、console hostname 分流之前）添加：
+In the main fetch (in `index.js`, after `const path = url.pathname;` and before the console hostname dispatch), add:
 
 ```js
       // ---- Public tooling endpoints (any host) ----
@@ -579,16 +579,16 @@ async function serveAssetText(env, assetPath) {
       }
 ```
 
-注意：`btoa` 在 Workers 运行时内置可用，但它只接受 Latin1 — CLI 含中文和 emoji（码点 > U+00FF）时直接 `btoa(cli)` 会抛 `InvalidCharacterError`。因此用 `encodeBase64Utf8` 先把文本按 UTF-8 编码成字节再 base64（见下方 helper）。
+Note: `btoa` is available built-in in the Workers runtime, but it only accepts Latin1 — when the CLI contains Chinese and emoji (code points > U+00FF), calling `btoa(cli)` directly throws `InvalidCharacterError`. So `encodeBase64Utf8` first encodes the text to UTF-8 bytes and then base64s them (see the helper below).
 
-- [ ] **Step 4: 运行测试确认通过**
+- [ ] **Step 4: Run the test to confirm it passes**
 
 Run: `cd ~/vale/gateway && node --test test/health.test.mjs`
-Expected: PASS（3 个用例）
+Expected: PASS (3 test cases)
 
-- [ ] **Step 5: 完整测试 + commit**
+- [ ] **Step 5: Full test suite + commit**
 
-Run: `cd ~/vale/gateway && npm test` — 全绿
+Run: `cd ~/vale/gateway && npm test` — all green
 ```bash
 cd ~/vale && git add gateway/src/index.js gateway/test/health.test.mjs
 git commit -m "feat(stage-gateway): public endpoints — /api/health, /api/vale-cli, one-line installers"
@@ -596,19 +596,19 @@ git commit -m "feat(stage-gateway): public endpoints — /api/health, /api/vale-
 
 ---
 
-### Task 3: console 模型路由面板 — Vale 命令安装区
+### Task 3: console model-routing panel — Vale command install section
 
 **Files:**
-- Modify: `gateway/public/index.html`（panel-routes section）
-- Modify: `gateway/public/app.js`（渲染安装命令 + i18n）
+- Modify: `gateway/public/index.html` (panel-routes section)
+- Modify: `gateway/public/app.js` (render the install commands + i18n)
 
 **Interfaces:**
-- Consumes: `loadRoutes()` 返回的 `{ routes, apiHost }`（已有，`app.js:239` 附近）；Task 2 的端点路径。
-- Produces: 模型路由面板显示两个平台的安装命令与用法。
+- Consumes: `{ routes, apiHost }` returned by `loadRoutes()` (existing, around `app.js:239`); Task 2's endpoint paths.
+- Produces: the model-routing panel displays the install commands and usage for both platforms.
 
-- [ ] **Step 1: 修改 `public/index.html`**
+- [ ] **Step 1: Modify `public/index.html`**
 
-在 panel-routes 的 switchboard 之后（`<div class="switchboard" id="routes-switchboard"></div>` 后面）添加：
+After the panel-routes switchboard (following `<div class="switchboard" id="routes-switchboard"></div>`), add:
 
 ```html
           <div class="card">
@@ -617,9 +617,9 @@ git commit -m "feat(stage-gateway): public endpoints — /api/health, /api/vale-
           </div>
 ```
 
-- [ ] **Step 2: 修改 `public/app.js`**
+- [ ] **Step 2: Modify `public/app.js`**
 
-a) i18n 表加 key（zh 区块 `routes.lede` 后面，en 区块对应位置）：
+a) Add keys to the i18n table (after `routes.lede` in the zh block, at the corresponding position in the en block):
 ```js
       "routes.valeTitle": "Vale 命令",
       "routes.valeDesc": "跨平台一键切换网关渠道（探测验证 + 自动备份 + 可回滚）。",
@@ -629,7 +629,7 @@ a) i18n 表加 key（zh 区块 `routes.lede` 后面，en 区块对应位置）�
       "routes.valeDesc": "Cross-platform one-command channel switching (probe + backup + rollback).",
 ```
 
-b) 渲染函数（放在 `switchboardHTML` 函数后面）：
+b) Render function (place it after the `switchboardHTML` function):
 ```js
   function valeInstallHTML(apiHost) {
     const base = apiHost || "https://api.saisi.online";
@@ -645,19 +645,19 @@ b) 渲染函数（放在 `switchboardHTML` 函数后面）：
   }
 ```
 
-c) `loadRoutesPanel`（`app.js:276` 附近 `if (name === "routes") loadRoutesPanel();`）—— 找到 `loadRoutesPanel` 函数定义，在其渲染 switchboard 之后追加：
+c) `loadRoutesPanel` (near `app.js:276`, `if (name === "routes") loadRoutesPanel();`) — find the `loadRoutesPanel` function definition and append after it renders the switchboard:
 
 ```js
     const box = document.getElementById("vale-install-box");
     if (box) box.innerHTML = valeInstallHTML(apiHost);
 ```
 
-（`loadRoutesPanel` 内部已有 `apiHost` 变量 —— 从 `loadRoutes()` 的返回值拿；若该函数尚未解构 `apiHost`，在调用处补上。）
+(`loadRoutesPanel` already has an `apiHost` variable internally — taken from `loadRoutes()`'s return value; if the function doesn't destructure `apiHost` yet, add it at the call site.)
 
-- [ ] **Step 3: 验证前端无语法错误**
+- [ ] **Step 3: Verify the frontend has no syntax errors**
 
 Run: `cd ~/vale/gateway && node --check public/app.js`
-Expected: 无输出（OK）
+Expected: no output (OK)
 
 - [ ] **Step 4: commit**
 
@@ -668,50 +668,50 @@ git commit -m "feat(stage-gateway): console routing panel — Vale CLI install b
 
 ---
 
-### Task 4: 部署 + 端到端验证
+### Task 4: Deploy + end-to-end verification
 
-**Files:** 无代码改动（部署与验证）。
+**Files:** No code changes (deploy and verify).
 
-- [ ] **Step 1: 部署**
+- [ ] **Step 1: Deploy**
 
 Run: `cd ~/vale && ./scripts/build.sh gateway`
 Expected: `Uploaded vale-gate` + `Current Version ID: ...`
 
-- [ ] **Step 2: 验证公开端点**
+- [ ] **Step 2: Verify the public endpoints**
 
 ```bash
 # health
 curl -s https://api.saisi.online/api/health
-# 期望: channels 数组 (ds/qw/og/or) + recommended (qw)，og 的 ok=false reason="circuit open"
+# expected: channels array (ds/qw/og/or) + recommended (qw), og has ok=false reason="circuit open"
 # vale-cli
 curl -s https://api.saisi.online/api/vale-cli | head -3
-# 期望: #!/usr/bin/env node ...
-# install 脚本
+# expected: #!/usr/bin/env node ...
+# install script
 curl -s https://api.saisi.online/api/vale-install | head -5
 curl -s https://api.saisi.online/api/vale-install.ps1 | head -5
 ```
 
-- [ ] **Step 3: 本机安装并实测 vale 命令**
+- [ ] **Step 3: Install locally and exercise the vale command for real**
 
 ```bash
 curl -fsSL https://api.saisi.online/api/vale-install | sh
-vale check        # 期望: 渠道状态表 + 当前渠道 ds
-vale use qw       # 期望: 探测通过 → 已切换到 qw/qwen3.8-max-preview + 备份
-vale check        # 期望: 当前配置 qw
-vale restore      # 期望: 恢复备份（ds）
-vale check        # 期望: 当前配置 ds
+vale check        # expected: channel status table + current channel ds
+vale use qw       # expected: probe passes → switched to qw/qwen3.8-max-preview + backup
+vale check        # expected: current config qw
+vale restore      # expected: backup restored (ds)
+vale check        # expected: current config ds
 ```
 
-- [ ] **Step 4: 验证 console 面板**
+- [ ] **Step 4: Verify the console panel**
 
-浏览器打开 console 域名 → 模型路由面板 → 确认 "Vale 命令" 卡片显示安装命令（Linux/Windows 两行）。若无法浏览器访问，用 `curl <console-host>/ | grep vale-install` 确认 HTML 含安装区，并确认 `/api/admin/public` 正常。
+Open the console domain in a browser → model-routing panel → confirm the "Vale command" card shows the install commands (Linux/Windows rows). If browser access isn't possible, use `curl <console-host>/ | grep vale-install` to confirm the HTML contains the install section, and confirm `/api/admin/public` works.
 
-- [ ] **Step 5: 回归 + commit（如验证中修了代码）**
+- [ ] **Step 5: Regression + commit (if verification led to code fixes)**
 
-`cd ~/vale/gateway && npm test` 全绿；如有代码修复则 commit；最终确认 `git status` 干净。
+`cd ~/vale/gateway && npm test` all green; commit any code fixes; finally confirm `git status` is clean.
 
-## Self-Review 备注
+## Self-Review Notes
 
-- Spec 覆盖：health 端点 ✅(Task2)、vale-cli ✅(Task2)、双安装器 ✅(Task2)、console 面板 ✅(Task3)、vale 命令 4 个子命令 ✅(Task1)、探测/备份/原子写/保留 5 份 ✅(Task1)、优先级 ✅(Task1/2)、E2E ✅(Task4)。
-- 类型一致性：`buildHealth(env)` 签名 Task2 定义并测试；CLI 子命令与 Task1 测试一致；`isChannelDegraded(env)` 复用既有 DO breaker。
-- 无占位符：所有代码块完整。
+- Spec coverage: health endpoint ✅(Task2), vale-cli ✅(Task2), both installers ✅(Task2), console panel ✅(Task3), the 4 vale subcommands ✅(Task1), probe/backup/atomic write/keep 5 copies ✅(Task1), priority ✅(Task1/2), E2E ✅(Task4).
+- Type consistency: the `buildHealth(env)` signature is defined and tested in Task2; CLI subcommands match the Task1 tests; `isChannelDegraded(env)` reuses the existing DO breaker.
+- No placeholders: all code blocks are complete.

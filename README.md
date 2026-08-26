@@ -64,28 +64,27 @@ npx wrangler deploy
 
 The post-deploy E2E script (pair → browser_open → screenshot → click → terminal) is in `gateway/DEVICE-INTEGRATION.md`.
 
-## Ecosystem（三个仓库，各司其职）
+## Ecosystem (three repos, one platform)
 
-| 仓库 | 角色 | 说明 |
+| Repo | Role | Description |
 |---|---|---|
-| **vale**（本仓库） | 平台运行时 | gateway / agent / index / extension / proxies |
-| `SilasVale/vale-forge` | 开发者工具链 MCP | OpenWrt 编译控制、板子 SSH、TAPD —— 与设备 MCP 并行注册于 Claude Code |
-| `SilasVale/vale-deploy` | 运维凭证与重建手册 | CF/GitHub/Vercel 凭证、worker 清单、bootstrap 一键重建（私密） |
+| **vale** (this repo) | Platform runtime | gateway / agent / index / extension / proxies |
+| `SilasVale/vale-forge` | Developer toolchain MCP | OpenWrt build control, board SSH, TAPD — registered in Claude Code alongside the device MCP |
+| `SilasVale/vale-deploy` | Ops credentials & rebuild manual | CF/GitHub/Vercel credentials, worker inventory, one-click bootstrap rebuild (private) |
 
-合并评估详见 `docs/adr/0003-repo-topology-and-brand.md`（结论：保持分离，
-按受众分工；整合发生在客户端层——两路 MCP 同时注册）。
+See `docs/adr/0003-repo-topology-and-brand.md` for the merge evaluation (conclusion: keep them separate, split by audience; integration happens at the client layer — both MCPs register side by side).
 
-## 设备安装 / 升级（npm 一键流）
+## Device install / update (npm one-command flow)
 
 ```powershell
-npm.cmd i -g https://agent.saisi.online/vale-agent/vale-agent-npm.tgz
+npm.cmd i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.85.tgz   # latest tgz under index/public/vale-agent/
 $env:VALE_AGENT_DIR='D:\vale-agent'
-vale.cmd setup --reg-key <注册码>    # 全新设备
-vale.cmd update                      # 已装设备：停止→换 exe→重启任务
+vale.cmd setup --reg-key <reg-key>    # fresh device
+vale.cmd update                       # installed device: stop → swap exe → restart task
 ```
 
-NSIS 安装器（ValeAgent-Setup.exe）保留为无 Node 设备的备用通道。
-详见 `SilasVale/vale-deploy` README §0.5。
+The NSIS installer (`ValeAgent-Setup.exe`), staged by `./scripts/build-installer.sh` and hosted on the Vercel mirror (`v.saisi.online/dl/`), remains the fallback channel for devices without Node.
+See `SilasVale/vale-deploy` README §0.5.
 
 ## Core design
 

@@ -1,40 +1,40 @@
-# 设备操作 v2：浏览器扩展 + AI-first MCP — 实现计划
+# Device operations v2: browser extension + AI-first MCP — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把设备浏览器的操作从 Windows 远程 CDP（坏的）迁移到 Windows 本地 Chrome/Edge 扩展（chrome.debugger 内部 CDP），并把 MCP 工具面重做为 AI-first（视觉 + 语义），终端增加屏幕缓冲工具，vale-command 瘦身为纯服务 + 独立托盘。
+**Goal:** Move device-browser control from Windows remote CDP (broken) to a Windows-local Chrome/Edge extension (chrome.debugger internal CDP), rework the MCP tool surface to be AI-first (visual + semantic), add a screen-buffer tool for terminals, and slim vale-command down to a pure service + standalone tray.
 
-**Architecture:** Claude Code（开发机）→ 网关 /mcp（JSON-RPC）→ 网关按设备路由：浏览器工具经 PluginHubDO（WS 长连）到扩展（chrome.debugger 操作真实标签页）；终端工具经 deviceFetch 直接反代设备现有 /api/tools。扩展装 Windows 设备 Chrome/Edge，开发机只管 HTTPS 到网关。
+**Architecture:** Claude Code (dev machine) → gateway /mcp (JSON-RPC) → the gateway routes per device: browser tools go through PluginHubDO (long-lived WS) to the extension (chrome.debugger driving real tabs); terminal tools go through deviceFetch, proxying the device's existing /api/tools directly. The extension installs in the Windows device's Chrome/Edge; the dev machine only talks HTTPS to the gateway.
 
-**Tech Stack:** Cloudflare Worker（JS，零依赖）、MV3 Chrome 扩展、chrome.debugger CDP、Rust（rmcp MCP server）、xterm.js。
+**Tech Stack:** Cloudflare Worker (JS, zero dependencies), MV3 Chrome extension, chrome.debugger CDP, Rust (rmcp MCP server), xterm.js.
 
 ## Global Constraints
 
-- **ESM JS，零新增依赖**：gateway 手写 JSON-RPC（不用 @modelcontextprotocol/sdk）；扩展原生 JS（无构建步骤）
-- **MCP 工具全带 `device` 参数**，validate against KV
-- **网关工具超时 < 90s**（Worker 子请求 100s 上限）；终端 quiet 默认 400ms
-- **扩展无 content script**：一切页面内操作走 CDP Runtime.evaluate，页面零侵入
-- **MV3 权限**：`["tabs","debugger","storage","alarms"]`；host_permissions 覆盖 console 域名 + 设备子域
-- **每设备一个受控标签页**（`tabs.create`），WS 断连绝不 detach
-- **扩展装 Windows 设备 Chrome/Edge**（开发机无界面）；标签页形态=面板内嵌（反代 URL）
-- **vale-command 瘦身**：退役 Web 面板/Tauri/浏览器自动化；保留 MCP server + 终端后端 + SSE 端点；托盘独立
-- **提交风格**：conventional commits + stage 标签（`feat(stage-x)` 等），每个提交保持绿
-- **command 验证基准**：`cargo test` → `cargo clippy --all-targets` → `cargo xwin check -p vale-command --target x86_64-pc-windows-msvc`；gateway：`node --test` + `wrangler deploy`
+- **ESM JS, zero new dependencies**: the gateway hand-rolls JSON-RPC (no @modelcontextprotocol/sdk); the extension is plain JS (no build step)
+- **All MCP tools take a `device` parameter**, validated against KV
+- **Gateway tool timeouts < 90s** (Worker subrequest cap is 100s); terminal quiet defaults to 400ms
+- **No content script in the extension**: all in-page operations go through CDP Runtime.evaluate, zero page intrusion
+- **MV3 permissions**: `["tabs","debugger","storage","alarms"]`; host_permissions covers the console domain + device subdomains
+- **One controlled tab per device** (`tabs.create`); never detach on WS disconnect
+- **The extension installs in Windows-device Chrome/Edge** (the dev machine has no UI); the tab shape = panel embed (proxied URL)
+- **vale-command slimming**: retire the web panel/Tauri/browser automation; keep the MCP server + terminal backend + SSE endpoint; standalone tray
+- **Commit style**: conventional commits + stage tags (`feat(stage-x)`, etc.); every commit keeps the tree green
+- **command verification baseline**: `cargo test` → `cargo clippy --all-targets` → `cargo xwin check -p vale-command --target x86_64-pc-windows-msvc`; gateway: `node --test` + `wrangler deploy`
 
 ---
 
-### Task 1: 修复网关 WS 反代 101 分支（根因修复）
+### Task 1: Fix the gateway WS proxy 101 branch (root-cause fix)
 
 **Files:**
 - Modify: `/home/zhengsaisi/vale/gateway/src/index.js:720-725`
 
 **Interfaces:**
-- Consumes: 现有 `proxyDevice(request, env, device, restPath)`（index.js:691）
-- Produces: 修复后的 `proxyDevice` 101 分支——WS 升级经代理可正确回传 `resp.webSocket`
+- Consumes: existing `proxyDevice(request, env, device, restPath)` (index.js:691)
+- Produces: a fixed `proxyDevice` 101 branch — WS upgrades through the proxy correctly carry back `resp.webSocket`
 
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1: Write a failing test**
 
-创建 `/home/zhengsaisi/vale/gateway/test/proxy-ws.test.mjs`：
+Create `/home/zhengsaisi/vale/gateway/test/proxy-ws.test.mjs`:
 
 ```js
 import test from "node:test";
@@ -55,16 +55,16 @@ test("proxyDevice passes 101 + webSocket through without throwing", async () => 
 });
 ```
 
-（说明：Node 无法构造 `status:101` 的 Response——101 在 Node 是非法状态。因此测试改为直接调用一个**从 `proxyDevice` 提取的纯函数** `build101Response(resp)`，mock 一个 `{status:101, webSocket:fake}` 对象，断言返回的 Response 携带 webSocket 且不抛 RangeError。见 Step 3 的实现。）
+(Note: Node cannot construct a `status:101` Response — 101 is an illegal status in Node. So the test instead calls a **pure function extracted from `proxyDevice`**, `build101Response(resp)`, mocking a `{status:101, webSocket:fake}` object and asserting the returned Response carries the webSocket and doesn't throw a RangeError. See Step 3's implementation.)
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run the test to confirm it fails**
 
 Run: `cd /home/zhengsaisi/vale/gateway && node --test test/proxy-ws.test.mjs`
-Expected: FAIL（`build101Response` 未定义）
+Expected: FAIL (`build101Response` undefined)
 
-- [ ] **Step 3: 实现**
+- [ ] **Step 3: Implement**
 
-在 `index.js` `proxyDevice` 内（720-725），把 101 分支拆出并调用新函数；在文件顶部附近（`CORS_HEADERS` 之后）加：
+Inside `proxyDevice` in `index.js` (720-725), extract the 101 branch and call the new function; near the top of the file (after `CORS_HEADERS`), add:
 
 ```js
 /**
@@ -86,7 +86,7 @@ export function build101Response(resp) {
 }
 ```
 
-`proxyDevice` 内（720-725）改为：
+Inside `proxyDevice` (720-725), change to:
 
 ```js
   if (resp.status === 101) {
@@ -98,7 +98,7 @@ export function build101Response(resp) {
   }
 ```
 
-- [ ] **Step 4: 更新测试为对 `build101Response` 的单元测试**
+- [ ] **Step 4: Update the test to unit-test `build101Response`**
 
 ```js
 import test from "node:test";
@@ -118,39 +118,39 @@ test("build101Response passes through non-101", () => {
 });
 ```
 
-- [ ] **Step 5: 运行测试验证通过**
+- [ ] **Step 5: Run the test to confirm it passes**
 
 Run: `cd /home/zhengsaisi/vale/gateway && node --test test/proxy-ws.test.mjs`
-Expected: PASS（2 tests）
+Expected: PASS (2 tests)
 
-- [ ] **Step 6: 回归 + 提交**
+- [ ] **Step 6: Regression + commit**
 
 Run: `cd /home/zhengsaisi/vale/gateway && node --test`
-Expected: 全绿（现有测试 + 新测试）
+Expected: all green (existing tests + new tests)
 Run: `cd /home/zhengsaisi/vale/gateway && npx wrangler deploy`
-Expected: 部署成功
+Expected: deploy succeeds
 Run: `git add gateway/src/index.js gateway/test/proxy-ws.test.mjs && git commit -m "fix(stage-gateway): WS 101 rewrap — carry resp.webSocket (was RangeError 500)"`
 
 ---
 
-### Task 2: 网关 MCP 端点 + 终端工具（deviceFetch 提取）
+### Task 2: Gateway MCP endpoint + terminal tools (deviceFetch extraction)
 
 **Files:**
 - Create: `/home/zhengsaisi/vale/gateway/src/mcp.js`
 - Create: `/home/zhengsaisi/vale/gateway/src/mcp-tools.js`
-- Modify: `/home/zhengsaisi/vale/gateway/src/index.js`（deviceFetch 提取 + /mcp 路由）
+- Modify: `/home/zhengsaisi/vale/gateway/src/index.js` (deviceFetch extraction + /mcp route)
 - Test: `/home/zhengsaisi/vale/gateway/test/mcp.test.mjs`
 
 **Interfaces:**
-- Consumes: `getDevice(env, name)`（store.js）、`findUserByToken`（store.js:178）
+- Consumes: `getDevice(env, name)` (store.js), `findUserByToken` (store.js:178)
 - Produces:
   - `deviceFetch(env, device, path, body)` → `Promise<{status, ok, data}>`
-  - `handleMcp(request, env)` → `Promise<Response>`（GET=永活 SSE 流，POST=JSON-RPC）
-  - MCP 工具：`terminal_open(device,kind,target,rows?,cols?)`、`terminal_screen(device,session_id,lines?)`、`terminal_send(device,session_id,input,quiet_ms?)`、`terminal_list(device)`、`terminal_close(device,session_id)`
+  - `handleMcp(request, env)` → `Promise<Response>` (GET = keep-alive SSE stream, POST = JSON-RPC)
+  - MCP tools: `terminal_open(device,kind,target,rows?,cols?)`, `terminal_screen(device,session_id,lines?)`, `terminal_send(device,session_id,input,quiet_ms?)`, `terminal_list(device)`, `terminal_close(device,session_id)`
 
-- [ ] **Step 1: 提取 `deviceFetch`**
+- [ ] **Step 1: Extract `deviceFetch`**
 
-在 `index.js` `proxyDevice` 前加共享函数：
+Add the shared function before `proxyDevice` in `index.js`:
 
 ```js
 /**
@@ -174,7 +174,7 @@ export async function deviceFetch(env, device, restPath, init = {}) {
 }
 ```
 
-`proxyDevice`（691-712）改为调用 `deviceFetch` 并沿用其 `resp`：
+Change `proxyDevice` (691-712) to call `deviceFetch` and use its `resp`:
 
 ```js
 async function proxyDevice(request, env, device, restPath) {
@@ -187,13 +187,13 @@ async function proxyDevice(request, env, device, restPath) {
   const outHeaders = new Headers(resp.headers);
   outHeaders.set("Access-Control-Allow-Origin", "*");
   const ct = String(outHeaders.get("content-type") || "").toLowerCase();
-  // ... (保持原有 101/SSE/rewrite/JSON 分支不变)
+  // ... (keep the existing 101/SSE/rewrite/JSON branches unchanged)
 }
 ```
 
-- [ ] **Step 2: 写 MCP 工具注册表**
+- [ ] **Step 2: Write the MCP tool registry**
 
-创建 `/home/zhengsaisi/vale/gateway/src/mcp-tools.js`：
+Create `/home/zhengsaisi/vale/gateway/src/mcp-tools.js`:
 
 ```js
 /**
@@ -278,9 +278,9 @@ export function allMcpTools() {
 }
 ```
 
-- [ ] **Step 3: 实现 `handleMcp`**
+- [ ] **Step 3: Implement `handleMcp`**
 
-创建 `/home/zhengsaisi/vale/gateway/src/mcp.js`：
+Create `/home/zhengsaisi/vale/gateway/src/mcp.js`:
 
 ```js
 /**
@@ -405,9 +405,9 @@ function mcpSseStream() {
 }
 ```
 
-- [ ] **Step 4: 挂 /mcp 路由**
+- [ ] **Step 4: Wire the /mcp route**
 
-在 `index.js` fetch 主流程，console API 检查之后、静态页检查之前（158-164 之间）：
+In `index.js`'s main fetch flow, after the console API checks and before the static-page checks (between 158-164):
 
 ```js
       // ---- MCP endpoint (Claude Code) — admin token, page host only ----
@@ -416,17 +416,17 @@ function mcpSseStream() {
       }
 ```
 
-并在 `index.js` 顶部 import：
+And import at the top of `index.js`:
 
 ```js
 import { handleMcp } from "./mcp.js";
 ```
 
-（注意：`mcp.js` 也 import 了 `deviceFetch`，二者互相 import。为避免循环依赖，把 `deviceFetch` 与 `build101Response` 提取到新文件 `/home/zhengsaisi/vale/gateway/src/device-fetch.js`，`index.js` 与 `mcp.js` 都从那里 import。本任务里把 `deviceFetch` 放 `device-fetch.js`，`index.js` 的 `proxyDevice` 改 import 它。）
+(Note: `mcp.js` also imports `deviceFetch`, so the two import each other. To avoid a circular dependency, extract `deviceFetch` and `build101Response` into a new file `/home/zhengsaisi/vale/gateway/src/device-fetch.js`, and have both `index.js` and `mcp.js` import from there. In this task, put `deviceFetch` in `device-fetch.js` and change `index.js`'s `proxyDevice` to import it.)
 
-- [ ] **Step 5: 写 MCP 单测**
+- [ ] **Step 5: Write the MCP unit tests**
 
-创建 `/home/zhengsaisi/vale/gateway/test/mcp.test.mjs`：
+Create `/home/zhengsaisi/vale/gateway/test/mcp.test.mjs`:
 
 ```js
 import test from "node:test";
@@ -450,37 +450,37 @@ test("mcp tools: browser + terminal sets", () => {
 });
 ```
 
-- [ ] **Step 6: 运行测试**
+- [ ] **Step 6: Run the tests**
 
 Run: `cd /home/zhengsaisi/vale/gateway && node --test`
-Expected: 全绿
+Expected: all green
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 7: Commit**
 
 Run: `git add gateway/src/ && git commit -m "feat(stage-gateway): /mcp endpoint + AI-first terminal tools (deviceFetch shared)"`
 
 ---
 
-### Task 3: PluginHubDO + 插件配对/票据/状态
+### Task 3: PluginHubDO + plugin pairing/ticket/status
 
 **Files:**
 - Create: `/home/zhengsaisi/vale/gateway/src/plugin-hub.js`
-- Modify: `/home/zhengsaisi/vale/gateway/src/store.js`（plugins:v1 + 票据/配对码 helper）
-- Modify: `/home/zhengsaisi/vale/gateway/src/index.js`（/api/plugins/* 路由 + PluginHubDO import）
-- Modify: `/home/zhengsaisi/vale/gateway/wrangler.jsonc`（PLUGIN_HUB DO 绑定 + v2 迁移）
+- Modify: `/home/zhengsaisi/vale/gateway/src/store.js` (plugins:v1 + ticket/pairing-code helpers)
+- Modify: `/home/zhengsaisi/vale/gateway/src/index.js` (/api/plugins/* routes + PluginHubDO import)
+- Modify: `/home/zhengsaisi/vale/gateway/wrangler.jsonc` (PLUGIN_HUB DO binding + v2 migration)
 - Test: `/home/zhengsaisi/vale/gateway/test/plugins.test.mjs`
 
 **Interfaces:**
-- Consumes: `randomHex`（store.js:135）、`getDevice`
+- Consumes: `randomHex` (store.js:135), `getDevice`
 - Produces:
   - `addPluginLink(env, token, device)` / `getPluginByToken(env, token)` / `removePluginLink(env, token)`
-  - `createPairCode(env, device)` → code、`consumePairCode(env, code)` → device | null
-  - `createWsTicket(env, device)` → ticket、`consumeWsTicket(env, ticket)` → device | null
-  - `PluginHubDO`（每设备实例，WS Hibernation）：`/ws`、`/call`、`/status`
+  - `createPairCode(env, device)` → code, `consumePairCode(env, code)` → device | null
+  - `createWsTicket(env, device)` → ticket, `consumeWsTicket(env, ticket)` → device | null
+  - `PluginHubDO` (one instance per device, WS Hibernation): `/ws`, `/call`, `/status`
 
-- [ ] **Step 1: store.js 插件 KV helper**
+- [ ] **Step 1: store.js plugin KV helpers**
 
-在 `store.js` devices:v1 区块（326-405）后追加：
+Append after the devices:v1 section of `store.js` (326-405):
 
 ```js
 /* ---------------- Plugin (extension) registry ---------------- */
@@ -538,7 +538,7 @@ export async function consumeWsTicket(env, ticket) {
 
 - [ ] **Step 2: PluginHubDO**
 
-创建 `/home/zhengsaisi/vale/gateway/src/plugin-hub.js`：
+Create `/home/zhengsaisi/vale/gateway/src/plugin-hub.js`:
 
 ```js
 /**
@@ -628,9 +628,9 @@ export class PluginHubDO {
 }
 ```
 
-- [ ] **Step 3: index.js 插件路由**
+- [ ] **Step 3: index.js plugin routes**
 
-在 `index.js` 顶部 import：
+At the top of `index.js`, import:
 
 ```js
 import { addPluginLink, getPluginByToken, removePluginLink, createPairCode, consumePairCode, createWsTicket, consumeWsTicket } from "./store.js";
@@ -638,7 +638,7 @@ import { PluginHubDO } from "./plugin-hub.js";
 export { PluginHubDO };
 ```
 
-在 `handleConsole` admin 区（设备模块之后，~330 后）加：
+In `handleConsole`'s admin section (after the device module, ~330), add:
 
 ```js
   // ---- Plugin (extension) pairing & status ----
@@ -687,11 +687,11 @@ export { PluginHubDO };
   }
 ```
 
-并在顶部定义 `const PLUGIN_BASE = "/api/plugins";`、import `listPluginLinks`、`randomHex`（若 store.js 未导出 randomHex 则导出之）。
+Also define `const PLUGIN_BASE = "/api/plugins";` at the top and import `listPluginLinks`, `randomHex` (if store.js doesn't export randomHex, export it).
 
-- [ ] **Step 4: wrangler.jsonc DO 绑定**
+- [ ] **Step 4: wrangler.jsonc DO binding**
 
-在 `wrangler.jsonc` 加（照 BreakerDO 先例）：
+Add to `wrangler.jsonc` (following the BreakerDO precedent):
 
 ```jsonc
 "durable_objects": {
@@ -705,11 +705,11 @@ export { PluginHubDO };
 ]
 ```
 
-（若 migrations 现无 v1-breaker 标记，则新增。）
+(If migrations currently lack the v1-breaker tag, add it.)
 
-- [ ] **Step 5: 写 plugins 单测**
+- [ ] **Step 5: Write the plugins unit tests**
 
-创建 `/home/zhengsaisi/vale/gateway/test/plugins.test.mjs`（KV stub 测 store helper）：
+Create `/home/zhengsaisi/vale/gateway/test/plugins.test.mjs` (KV stub testing the store helpers):
 
 ```js
 import test from "node:test";
@@ -749,18 +749,18 @@ test("ws ticket: one-time", async () => {
 });
 ```
 
-- [ ] **Step 6: 运行测试**
+- [ ] **Step 6: Run the tests**
 
 Run: `cd /home/zhengsaisi/vale/gateway && node --test`
-Expected: 全绿
+Expected: all green
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 7: Commit**
 
 Run: `git add gateway/src gateway/wrangler.jsonc gateway/test && git commit -m "feat(stage-gateway): PluginHubDO + plugin pairing/ticket/status"`
 
 ---
 
-### Task 4: 扩展最小可用（骨架 + popup 配对 + cdp 控制器 + ws.js）
+### Task 4: Minimal viable extension (skeleton + popup pairing + cdp controller + ws.js)
 
 **Files:**
 - Create: `/home/zhengsaisi/vale/extension/manifest.json`
@@ -776,8 +776,8 @@ Run: `git add gateway/src gateway/wrangler.jsonc gateway/test && git commit -m "
 - Create: `/home/zhengsaisi/vale/extension/README.md`
 
 **Interfaces:**
-- Consumes: 网关 `/api/plugins/*`、`chrome.debugger`
-- Produces: 扩展 SW 处理 WS `request` 帧（`{id, tool, params}`）→ 调用 tools.js 工具 → `{id, ok, result/error}`；受控标签页（`/api/devices/<d>/proxy/`）
+- Consumes: gateway `/api/plugins/*`, `chrome.debugger`
+- Produces: the extension SW handles WS `request` frames (`{id, tool, params}`) → calls tools.js tools → `{id, ok, result/error}`; controlled tab (`/api/devices/<d>/proxy/`)
 
 - [ ] **Step 1: manifest.json**
 
@@ -796,7 +796,7 @@ Run: `git add gateway/src gateway/wrangler.jsonc gateway/test && git commit -m "
 }
 ```
 
-（`host_permissions: ["https://*/*"]` 便于设备子域/console 域随时变化；options 可收紧。）
+(`host_permissions: ["https://*/*"]` so device subdomains/console domains can change anytime; options can tighten it.)
 
 - [ ] **Step 2: lib/state.js**
 
@@ -1172,36 +1172,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 - [ ] **Step 8: popup + options**
 
-`popup/popup.html`（最小 UI，连接状态/设备/按钮）+ `popup.js`（发 `status`/`pair`/`openTab`/`unpair` 消息渲染）+ `options/options.html|js`（consoleOrigin 设置）。UI 结构与 command/src/ui 现有风格一致（简洁卡片）。icons 用最小占位 PNG（16/48/128，纯色）。
+`popup/popup.html` (minimal UI: connection status/device/buttons) + `popup.js` (sends `status`/`pair`/`openTab`/`unpair` messages and renders) + `options/options.html|js` (consoleOrigin setting). The UI structure follows the existing style in command/src/ui (simple cards). icons use minimal placeholder PNGs (16/48/128, solid color).
 
-- [ ] **Step 9: 手动验证**
+- [ ] **Step 9: Manual verification**
 
-- Chrome → `chrome://extensions` → 开发者模式 → 加载已解压 → 选 `extension/`
-- options 设 consoleOrigin
-- console Devices 面板生成配对码 → popup 输入 → claim
-- popup 开受控标签页 → 应打开 `https://console/api/devices/d1/proxy/`
-- （WS 通道在 Task 5 与网关联调；本任务先用 popup 手动验证配对 + 开标签页 + attach 不报错）
+- Chrome → `chrome://extensions` → developer mode → load unpacked → pick `extension/`
+- options: set consoleOrigin
+- console Devices panel generates a pairing code → enter it in the popup → claim
+- popup opens a controlled tab → should open `https://console/api/devices/d1/proxy/`
+- (The WS channel is integrated with the gateway in Task 5; in this task, first manually verify pairing + opening the tab + attach without errors via the popup)
 
-- [ ] **Step 10: 提交**
+- [ ] **Step 10: Commit**
 
 Run: `git add extension/ && git commit -m "feat(stage-ext): extension skeleton — pairing, popup, cdp controller, ws client"`
 
 ---
 
-### Task 5: 扩展 WS 通道联调（网关 PluginHubDO ↔ 扩展）
+### Task 5: Extension WS channel integration (gateway PluginHubDO ↔ extension)
 
 **Files:**
-- Modify: `/home/zhengsaisi/vale/gateway/src/mcp.js`（浏览器工具接 PluginHubDO）
-- Modify: `/home/zhengsaisi/vale/gateway/src/mcp-tools.js`（浏览器工具 handler 定义）
+- Modify: `/home/zhengsaisi/vale/gateway/src/mcp.js` (wire browser tools to PluginHubDO)
+- Modify: `/home/zhengsaisi/vale/gateway/src/mcp-tools.js` (browser tool handler definitions)
 - Test: `/home/zhengsaisi/vale/gateway/test/mcp-browser.test.mjs`
 
 **Interfaces:**
-- Consumes: PluginHubDO（Task 3）、扩展 runTool（Task 4）
-- Produces: 完整浏览器工具链路（Claude Code → /mcp → DO /call → WS → 扩展 → CDP → 结果回传）
+- Consumes: PluginHubDO (Task 3), the extension's runTool (Task 4)
+- Produces: the full browser tool path (Claude Code → /mcp → DO /call → WS → extension → CDP → results returned)
 
-- [ ] **Step 1: mcp.js 浏览器工具接 DO**
+- [ ] **Step 1: Wire mcp.js browser tools to the DO**
 
-`mcp.js` 的 `callTool` 改为：
+Change `callTool` in `mcp.js` to:
 
 ```js
 async function callTool(tool, env, device, args) {
@@ -1222,9 +1222,9 @@ async function callTool(tool, env, device, args) {
 }
 ```
 
-- [ ] **Step 2: 写联调测试（DO 逻辑 stub）**
+- [ ] **Step 2: Write the integration test (stubbed DO logic)**
 
-创建 `/home/zhengsaisi/vale/gateway/test/mcp-browser.test.mjs`：用 stub 的 `PLUGIN_HUB` env（`idFromName` 返回同名，`get` 返回一个 fetch stub），断言 `callTool` 把浏览器工具转发到 DO /call、离线时返回 extension_offline。核心断言：
+Create `/home/zhengsaisi/vale/gateway/test/mcp-browser.test.mjs`: with a stubbed `PLUGIN_HUB` env (`idFromName` returns the same name, `get` returns a fetch stub), assert that `callTool` forwards browser tools to the DO /call and returns extension_offline when offline. Core assertions:
 
 ```js
 test("browser tool routes through PluginHubDO; offline → extension_offline", async () => {
@@ -1234,39 +1234,39 @@ test("browser tool routes through PluginHubDO; offline → extension_offline", a
 });
 ```
 
-- [ ] **Step 3: 运行测试**
+- [ ] **Step 3: Run the tests**
 
 Run: `cd /home/zhengsaisi/vale/gateway && node --test`
-Expected: 全绿
+Expected: all green
 
-- [ ] **Step 4: 端到端联调（wrangler dev + Chrome）**
+- [ ] **Step 4: End-to-end integration (wrangler dev + Chrome)**
 
-- `wrangler dev`（.dev.vars 配 CONSOLE_HOST=localhost）
-- Chrome 加载扩展（Task 4 已装）；options 设 consoleOrigin=`http://localhost:8787`
-- console 生成配对码 → popup claim → 扩展连上 WS（popup 显示 connected）
-- 用 node 脚本直连 `ws://localhost:8787/api/plugins/ws?device=d1&ticket=...` 模拟插件 → 收到 hello → 发 ping → 收 pong（验证 DO hibernation 基本行为）
-- 然后真实扩展：网关 `/mcp` 用 curl 调 `tools/call browser_snapshot`（Bearer admin token）→ 返回元素树 JSON
+- `wrangler dev` (.dev.vars sets CONSOLE_HOST=localhost)
+- Chrome loads the extension (installed in Task 4); options sets consoleOrigin=`http://localhost:8787`
+- console generates a pairing code → popup claims → the extension connects to WS (popup shows connected)
+- Use a node script to connect directly to `ws://localhost:8787/api/plugins/ws?device=d1&ticket=...` simulating the plugin → receive hello → send ping → receive pong (verifies basic DO hibernation behavior)
+- Then the real extension: call `tools/call browser_snapshot` via curl on the gateway `/mcp` (Bearer admin token) → returns the element-tree JSON
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit**
 
 Run: `git add gateway/src gateway/test && git commit -m "feat(stage-gateway): browser tools wired to PluginHubDO + offline handling"`
 
 ---
 
-### Task 6: 终端 AI 工具（设备 terminal_screen）
+### Task 6: Terminal AI tool (device terminal_screen)
 
 **Files:**
-- Modify: `/home/zhengsaisi/vale/command/src/plugins/terminal/tools.rs`（新增 `tool_screen` + `build()` 注册）
-- Modify: `/home/zhengsaisi/vale/command/src/plugins/terminal/mod.rs`（工具数量测试 12→13）
-- Modify: `/home/zhengsaisi/vale/command/CLAUDE.md`（工具计数说明）
+- Modify: `/home/zhengsaisi/vale/command/src/plugins/terminal/tools.rs` (add `tool_screen` + register in `build()`)
+- Modify: `/home/zhengsaisi/vale/command/src/plugins/terminal/mod.rs` (tool count test 12→13)
+- Modify: `/home/zhengsaisi/vale/command/CLAUDE.md` (tool count documentation)
 
 **Interfaces:**
-- Consumes: `OutputBuf`、`SessionBuf`（mod.rs:23-48）、`clean_terminal_output`（mod.rs:51-95）
-- Produces: 新工具 `terminal_screen(session_id, lines?)` → `{screen, dropped}`——尾部 N 行屏幕文本
+- Consumes: `OutputBuf`, `SessionBuf` (mod.rs:23-48), `clean_terminal_output` (mod.rs:51-95)
+- Produces: new tool `terminal_screen(session_id, lines?)` → `{screen, dropped}` — the tail N lines of screen text
 
-- [ ] **Step 1: 写失败测试（工具数量 + 存在性）**
+- [ ] **Step 1: Write a failing test (tool count + existence)**
 
-`mod.rs` tests 中 `tool_count_and_names` 改为：
+Change `tool_count_and_names` in `mod.rs`'s tests to:
 
 ```rust
         assert_eq!(tools.len(), 13);
@@ -1278,14 +1278,14 @@ Run: `git add gateway/src gateway/test && git commit -m "feat(stage-gateway): br
         ] {
 ```
 
-- [ ] **Step 2: 运行测试验证失败**
+- [ ] **Step 2: Run the test to confirm it fails**
 
 Run: `cd /home/zhengsaisi/vale/command && cargo test --lib plugins::terminal`
-Expected: FAIL（terminal_screen 缺失 / count 12≠13）
+Expected: FAIL (terminal_screen missing / count 12≠13)
 
-- [ ] **Step 3: 实现 `tool_screen`**
+- [ ] **Step 3: Implement `tool_screen`**
 
-`tools.rs` `build()` 的 Vec 里加 `tool_screen(&output_buf)`，并实现：
+Add `tool_screen(&output_buf)` to the Vec in `tools.rs`'s `build()`, and implement:
 
 ```rust
 fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
@@ -1333,30 +1333,30 @@ fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
 }
 ```
 
-- [ ] **Step 4: 运行测试验证通过**
+- [ ] **Step 4: Run the test to confirm it passes**
 
 Run: `cd /home/zhengsaisi/vale/command && cargo test --lib plugins::terminal`
-Expected: PASS（13 tools）
+Expected: PASS (13 tools)
 
-- [ ] **Step 5: 全量验证 + 提交**
+- [ ] **Step 5: Full verification + commit**
 
 Run: `cd /home/zhengsaisi/vale/command && cargo test && cargo clippy --all-targets`
-Expected: 全绿、零警告
+Expected: all green, zero warnings
 Run: `git add command/src/plugins/terminal/ && git commit -m "feat(stage-command): terminal_screen — tail-N-lines screen buffer for AI"`
 
 ---
 
-### Task 7: 终端显示进扩展（terminal 页 xterm）
+### Task 7: Terminal display in the extension (terminal page xterm)
 
 **Files:**
 - Create: `/home/zhengsaisi/vale/extension/terminal/terminal.html` + `terminal.css` + `terminal.js`
-- Copy: `/home/zhengsaisi/vale/command/src/ui/vendor/xterm.min.js`、`xterm.css`、`xterm-addon-fit.min.js` → `/home/zhengsaisi/vale/extension/terminal/vendor/`
+- Copy: `/home/zhengsaisi/vale/command/src/ui/vendor/xterm.min.js`, `xterm.css`, `xterm-addon-fit.min.js` → `/home/zhengsaisi/vale/extension/terminal/vendor/`
 
 **Interfaces:**
-- Consumes: 设备 `/api/events/term`（SSE 经网关反代）+ `/api/tools/terminal_write`（POST 经反代）
-- Produces: 扩展内全屏 xterm 终端页 + 多会话 tab
+- Consumes: device `/api/events/term` (SSE via the gateway proxy) + `/api/tools/terminal_write` (POST via the proxy)
+- Produces: a full-screen xterm terminal page inside the extension + multi-session tabs
 
-- [ ] **Step 1: 复制 xterm vendor**
+- [ ] **Step 1: Copy the xterm vendor files**
 
 Run: `mkdir -p /home/zhengsaisi/vale/extension/terminal/vendor && cp /home/zhengsaisi/vale/command/src/ui/vendor/{xterm.min.js,xterm.css,xterm-addon-fit.min.js} /home/zhengsaisi/vale/extension/terminal/vendor/`
 
@@ -1430,133 +1430,133 @@ term.onData((d) => {
 window.addEventListener("resize", () => fit.fit());
 ```
 
-（完整版含 session 选择/多 tab/断线重连，逻辑仿 `command/src/ui/term.js`。）
+(The full version includes session selection/multi-tab/reconnect logic, modeled on `command/src/ui/term.js`.)
 
-- [ ] **Step 4: 手动验证**
+- [ ] **Step 4: Manual verification**
 
-- 扩展 terminal 页：打开 → 自动开 PTY → xterm 显示 PowerShell 提示符
-- 在 xterm 输入 `dir` → 设备响应回显
-- 关掉 terminal 页再开 → 会话仍在（terminal_list 列出）→ 可重新 attach
-- 断网/重连：EventSource 自动重连，输出继续
+- Extension terminal page: open → PTY auto-opens → xterm shows the PowerShell prompt
+- Type `dir` in xterm → the device echoes the response
+- Close and reopen the terminal page → the session is still there (listed by terminal_list) → can re-attach
+- Network drop/reconnect: EventSource reconnects automatically and output continues
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: Commit**
 
 Run: `git add extension/terminal/ && git commit -m "feat(stage-ext): terminal page — xterm + SSE/POST via gateway proxy"`
 
 ---
 
-### Task 8: vale-command 瘦身（退役面板/Tauri/浏览器自动化 + 托盘）
+### Task 8: Slim vale-command (retire the panel/Tauri/browser automation + tray)
 
 **Files:**
 - Delete: `/home/zhengsaisi/vale/command/src/ui/`
 - Delete: `/home/zhengsaisi/vale/command/src-tauri/`
 - Delete: `/home/zhengsaisi/vale/command/src/plugins/browser/`
-- Delete: `/home/zhengsaisi/vale/command/src/tools/browser.rs`、`browser_headless.rs`、`cdp.rs`
+- Delete: `/home/zhengsaisi/vale/command/src/tools/browser.rs`, `browser_headless.rs`, `cdp.rs`
 - Delete: `/home/zhengsaisi/vale/command/src/desktop_api.rs`
-- Modify: `/home/zhengsaisi/vale/command/Cargo.toml`（清理 feature/deps/member）
-- Modify: `/home/zhengsaisi/vale/command/src/main.rs`、`lib.rs`、`state.rs`、`web.rs`、`mcp/server.rs`（去 UI/browser 引用）
-- Create: `/home/zhengsaisi/vale/command/vale-tray-slim/`（或复用 vale-tray，新托盘小应用）
+- Modify: `/home/zhengsaisi/vale/command/Cargo.toml` (clean up features/deps/members)
+- Modify: `/home/zhengsaisi/vale/command/src/main.rs`, `lib.rs`, `state.rs`, `web.rs`, `mcp/server.rs` (remove UI/browser references)
+- Create: `/home/zhengsaisi/vale/command/vale-tray-slim/` (or reuse vale-tray, a new slim tray app)
 
 **Interfaces:**
-- Consumes: 保留 `/mcp`（TokenGate + rmcp）、`/api/tools/{name}`、SSE 端点、terminal 后端
-- Produces: 纯服务 vale-command（无 UI）+ 独立托盘
+- Consumes: keep `/mcp` (TokenGate + rmcp), `/api/tools/{name}`, SSE endpoints, the terminal backend
+- Produces: pure-service vale-command (no UI) + standalone tray
 
-- [ ] **Step 1: 删除退役文件**
+- [ ] **Step 1: Delete the retired files**
 
 Run: `git rm -r command/src/ui command/src-tauri command/src/plugins/browser command/src/tools/browser.rs command/src/tools/browser_headless.rs command/src/tools/cdp.rs command/src/desktop_api.rs`
 
-- [ ] **Step 2: Cargo.toml 清理**
+- [ ] **Step 2: Clean up Cargo.toml**
 
-- `[workspace] members` 去掉 `"src-tauri"`（保留 `vale-command-core`）
-- 删 optional deps：`tauri`、`tokio-tungstenite`、`reqwest`、`url`（若无其他用途）
-- `[features]`：删 `browser`、`tauri`、`desktop`；保留 `terminal`、`keyring`、`windows-service`
-- 若 `vale-command-desktop` bin 在 `[[bin]]`，删除
+- Remove `"src-tauri"` from `[workspace] members` (keep `vale-command-core`)
+- Delete optional deps: `tauri`, `tokio-tungstenite`, `reqwest`, `url` (unless used elsewhere)
+- `[features]`: delete `browser`, `tauri`, `desktop`; keep `terminal`, `keyring`, `windows-service`
+- If a `vale-command-desktop` bin exists under `[[bin]]`, remove it
 
-- [ ] **Step 3: 去除代码引用**
+- [ ] **Step 3: Remove code references**
 
-- `main.rs`：删 Tauri/desktop 分支，headless 二进制为唯一形态
-- `lib.rs`：删 `tauri` feature 引用
-- `state.rs`：删 `browser_mgr` 字段
-- `web.rs`：删 `/api/browser/*` 端点、`browser.js` asset、ASSETS 中 UI 引用；保留 `/api/tools/{name}`、SSE term 流、TokenGate、静态资源删到只剩必要（或全删——面板不再需要）
-- `mcp/server.rs`：去 browser tools 注册（保留 terminal）
-- 删除 `plugins/browser/` 的 `mod.rs` 注册
+- `main.rs`: delete the Tauri/desktop branch; the headless binary is the only form
+- `lib.rs`: remove `tauri` feature references
+- `state.rs`: remove the `browser_mgr` field
+- `web.rs`: remove the `/api/browser/*` endpoints, the `browser.js` asset, and UI references in ASSETS; keep `/api/tools/{name}`, the SSE term stream, TokenGate; trim static assets to only what's necessary (or delete them all — the panel is no longer needed)
+- `mcp/server.rs`: drop browser tool registration (keep terminal)
+- Remove the `plugins/browser/` registration from `mod.rs`
 
-- [ ] **Step 4: 托盘小应用**
+- [ ] **Step 4: Tray app**
 
-新建 `/home/zhengsaisi/vale/command/vale-tray-slim/`（Windows 原生托盘，无窗口）：
-- 开关/重启 vale-command 服务（调 Windows service API）
-- 显示运行状态/子域名/token 掩码（读 config.yaml + 服务状态）
-- 复制 MCP 配置、打开控制台设备页（浏览器打开 URL）
-- 本地终端入口（打开本地 cmd/PowerShell 窗口）
-- 实现：Rust + `tray-icon` crate（Windows-only），无 tauri 依赖
+Create `/home/zhengsaisi/vale/command/vale-tray-slim/` (native Windows tray, no window):
+- Start/stop/restart the vale-command service (via the Windows service API)
+- Show running status/subdomain/masked token (reads config.yaml + service status)
+- Copy MCP config, open the console device page (open the URL in a browser)
+- Local terminal entry (opens a local cmd/PowerShell window)
+- Implementation: Rust + the `tray-icon` crate (Windows-only), no tauri dependency
 
-- [ ] **Step 5: 验证**
+- [ ] **Step 5: Verification**
 
 Run: `cd /home/zhengsaisi/vale/command && cargo test && cargo clippy --all-targets`
-Expected: 全绿、零警告（无 webkit2gtk 依赖，Linux 可编译）
+Expected: all green, zero warnings (no webkit2gtk dependency, compiles on Linux)
 Run: `cargo xwin check -p vale-command --target x86_64-pc-windows-msvc`
-Expected: 通过
+Expected: passes
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: Commit**
 
 Run: `git add -A command/ && git commit -m "refactor(stage-command): slim vale-command — retire web panel/tauri/browser automation; add tray app"`
 
 ---
 
-### Task 9: console SPA 在线列/配对 UI + 安装指引
+### Task 9: console SPA online column/pairing UI + install guide
 
 **Files:**
-- Modify: `/home/zhengsaisi/vale/gateway/public/app.js`（Devices 区：在线列、配对按钮、MCP 配置复制）
-- Modify: `/home/zhengsaisi/vale/gateway/public/index.html`（Devices 区 DOM）
-- Modify: `/home/zhengsaisi/vale/gateway/public/style.css`（样式）
-- Create: `/home/zhengsaisi/vale/extension/README.md`（安装指引）+ `/home/zhengsaisi/vale/command/deploy/vale-command-setup.ps1`（扩展安装段）
+- Modify: `/home/zhengsaisi/vale/gateway/public/app.js` (Devices section: online column, pairing button, MCP config copy)
+- Modify: `/home/zhengsaisi/vale/gateway/public/index.html` (Devices section DOM)
+- Modify: `/home/zhengsaisi/vale/gateway/public/style.css` (styles)
+- Create: `/home/zhengsaisi/vale/extension/README.md` (install guide) + `/home/zhengsaisi/vale/command/deploy/vale-command-setup.ps1` (extension install section)
 
 **Interfaces:**
-- Consumes: `/api/plugins/status`、`/api/plugins/pair`、`/api/me`（token）
-- Produces: 控制台设备页：每设备"在线"徽章、配对码弹窗、网关 MCP 配置复制、安装扩展指引
+- Consumes: `/api/plugins/status`, `/api/plugins/pair`, `/api/me` (token)
+- Produces: console Devices page: per-device "online" badge, pairing-code modal, gateway MCP config copy, extension install guide
 
-- [ ] **Step 1: app.js Devices 区**
+- [ ] **Step 1: app.js Devices section**
 
-`loadDevices()` 里每设备行加：
-- "在线"列：轮询 `/api/plugins/status` → 绿点/灰点
-- 「配对扩展」按钮 → `POST /api/plugins/pair {device}` → 弹窗显示码 + 指引（在 popup 输入）
-- 「网关 MCP 配置」按钮 → 用 `/api/me` 的 token 生成 `mcpServers.vale-gate = {type:"http", url:"https://<console>/mcp", headers:{Authorization:"Bearer <token>"}}` 复制
-- 「安装扩展」按钮 → 打开 `/extension/README.md` 指引（或弹出模态：下载 zip → 解压 → chrome://extensions 加载）
+In `loadDevices()`, add to each device row:
+- "Online" column: poll `/api/plugins/status` → green/gray dot
+- "Pair extension" button → `POST /api/plugins/pair {device}` → a modal shows the code + instructions (enter it in the popup)
+- "Gateway MCP config" button → use `/api/me`'s token to generate `mcpServers.vale-gate = {type:"http", url:"https://<console>/mcp", headers:{Authorization:"Bearer <token>"}}` and copy it
+- "Install extension" button → open the `/extension/README.md` guide (or show a modal: download zip → extract → load at chrome://extensions)
 
-（i18n 字典 65-83 处加对应字符串。）
+(Add the corresponding strings to the i18n dictionaries around lines 65-83.)
 
-- [ ] **Step 2: 验证**
+- [ ] **Step 2: Verification**
 
-- `wrangler dev` → console Devices 页：在线列显示（有扩展连上为绿）、配对码弹窗可用、MCP 配置复制后粘贴到 Claude Code 配置可用
+- `wrangler dev` → console Devices page: the online column displays (green when an extension is connected), the pairing-code modal works, the copied MCP config works when pasted into Claude Code's config
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 3: Commit**
 
 Run: `git add gateway/public extension/README.md && git commit -m "feat(stage-console): devices online column + extension pairing + gateway MCP config"`
 
 ---
 
-### Task 10: 收尾（README + 生产部署 + 端到端回归）
+### Task 10: Wrap-up (README + production deploy + end-to-end regression)
 
 **Files:**
-- Modify: `/home/zhengsaisi/vale/README.md`（架构/安装）
-- Modify: `/home/zhengsaisi/vale/gateway/DEVICE-INTEGRATION.md`（更新架构：扩展取代远程 CDP）
+- Modify: `/home/zhengsaisi/vale/README.md` (architecture/installation)
+- Modify: `/home/zhengsaisi/vale/gateway/DEVICE-INTEGRATION.md` (update architecture: the extension replaces remote CDP)
 
-- [ ] **Step 1: 文档**
+- [ ] **Step 1: Documentation**
 
-README + DEVICE-INTEGRATION.md 更新为新架构（扩展 + 网关 /mcp + 终端工具）。
+Update README + DEVICE-INTEGRATION.md to the new architecture (extension + gateway /mcp + terminal tools).
 
-- [ ] **Step 2: 生产部署**
+- [ ] **Step 2: Production deploy**
 
 Run: `cd /home/zhengsaisi/vale/gateway && npx wrangler deploy`
-Expected: 成功（新 DO 迁移 v2-plugin-hub 自动应用）
+Expected: success (the new v2-plugin-hub DO migration applies automatically)
 
-- [ ] **Step 3: 端到端回归**
+- [ ] **Step 3: End-to-end regression**
 
-- 生产环境：Claude Code `claude mcp add vale-gate --transport http --url https://<console>/mcp --header "Authorization: Bearer <token>"`
-- 剧本：`browser_open`（设备面板）→ `browser_screenshot`（看图）→ `browser_click`（点面板元素）→ `terminal_open` → `terminal_send('ping')` → `terminal_screen`（看输出）
-- 全程验证：扩展连接稳定（WS 心跳）、截图渲染、点击生效、终端屏幕文本正确
+- Production: Claude Code `claude mcp add vale-gate --transport http --url https://<console>/mcp --header "Authorization: Bearer <token>"`
+- Script: `browser_open` (device panel) → `browser_screenshot` (view the picture) → `browser_click` (click a panel element) → `terminal_open` → `terminal_send('ping')` → `terminal_screen` (view the output)
+- Verify throughout: the extension stays connected (WS heartbeat), screenshots render, clicks take effect, terminal screen text is correct
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 4: Commit**
 
 Run: `git add -A && git commit -m "docs(device): v2 architecture + install guide (extension + gateway MCP)"`
 
@@ -1564,35 +1564,35 @@ Run: `git add -A && git commit -m "docs(device): v2 architecture + install guide
 
 ## Self-Review
 
-**Spec coverage**（对照 spec 各节）：
-- ✅ 扩展（manifest/SW/cdp/元素树/ws/popup/options/terminal）→ Tasks 4, 7
-- ✅ 网关 WS 反代修复 → Task 1
-- ✅ PluginHubDO + 配对/票据/状态 → Task 3
-- ✅ MCP 端点 + 12 工具 → Tasks 2, 5
-- ✅ 终端 terminal_screen → Task 6
-- ✅ vale-command 瘦身 + 托盘 → Task 8
-- ✅ console SPA 在线列/配对/安装指引 → Task 9
-- ✅ 验证/回归 → Tasks 1-10 各步 + Task 10
+**Spec coverage** (mapped against the spec's sections):
+- ✅ Extension (manifest/SW/cdp/element tree/ws/popup/options/terminal) → Tasks 4, 7
+- ✅ Gateway WS proxy fix → Task 1
+- ✅ PluginHubDO + pairing/ticket/status → Task 3
+- ✅ MCP endpoint + 12 tools → Tasks 2, 5
+- ✅ Terminal terminal_screen → Task 6
+- ✅ vale-command slimming + tray → Task 8
+- ✅ console SPA online column/pairing/install guide → Task 9
+- ✅ Verification/regression → each step of Tasks 1-10 + Task 10
 
-**Placeholder scan**：无 TBD/TODO；安装指引在 Task 9 明确（README + ps1 段）；托盘功能在 Task 8 明确（tray-icon + 4 功能）。
+**Placeholder scan**: no TBD/TODO; the install guide is explicit in Task 9 (README + the ps1 section); tray features are explicit in Task 8 (tray-icon + 4 features).
 
-**Type consistency**：
-- `deviceFetch(env, device, path, body)` → Task 2 定义，Task 2 内部调用（proxyDevice + mcp terminal）
-- `build101Response(resp)` → Task 1 定义
-- `createPairCode/consumePairCode/createWsTicket/consumeWsTicket/addPluginLink/getPluginByToken/removePluginLink` → Task 3 store 定义，Task 3 index 路由消费
-- `handleMcp(request, env)` → Task 2 定义，Task 2 index 路由消费
-- `runTool(tool, params)` → Task 4 扩展定义，Task 4 ws.js handler 消费
-- `terminal_screen` 设备工具 → Task 6 定义，Task 2 网关 mcp-tools 引用（名一致）
-- PluginHubDO `/call` 协议 `{tool, params, requestId}` → Task 3 定义，Task 5 mcp.js 消费
-- `{image:{type:"image",data,mimeType}}` content block → Task 4 扩展返回，Task 2 mcp.js 未特殊处理（透传 text）——**注意**：截图结果是 image block，Task 2 的 `callTool` 返回 `mcpJson({content:[{type:"text",...}]})` 会把对象序列化成字符串。需要在 Task 5 修：当 result 含 `image` 字段时，`content` 用 `[{type:"image", data, mimeType}]`。在 Task 5 Step 1 一并改 `callTool` 返回结构（已隐含；实现时在 mcp.js 加一个 `formatResult(result)`：若 `result.image` 存在 → image content block，否则 text）。
+**Type consistency**:
+- `deviceFetch(env, device, path, body)` → defined in Task 2, called within Task 2 (proxyDevice + mcp terminal)
+- `build101Response(resp)` → defined in Task 1
+- `createPairCode/consumePairCode/createWsTicket/consumeWsTicket/addPluginLink/getPluginByToken/removePluginLink` → defined in Task 3's store, consumed by Task 3's index routes
+- `handleMcp(request, env)` → defined in Task 2, consumed by Task 2's index routes
+- `runTool(tool, params)` → defined in the Task 4 extension, consumed by Task 4's ws.js handler
+- the `terminal_screen` device tool → defined in Task 6, referenced by Task 2's gateway mcp-tools (same name)
+- PluginHubDO `/call` protocol `{tool, params, requestId}` → defined in Task 3, consumed by Task 5's mcp.js
+- `{image:{type:"image",data,mimeType}}` content block → returned by the Task 4 extension, not specially handled by Task 2's mcp.js (passes through as text) — **note**: the screenshot result is an image block; Task 2's `callTool` returns `mcpJson({content:[{type:"text",...}]})`, which would serialize the object into a string. Fix needed in Task 5: when the result has an `image` field, use `[{type:"image", data, mimeType}]` for `content`. Also change `callTool`'s return structure in Task 5 Step 1 (already implied; when implementing, add a `formatResult(result)` helper in mcp.js: if `result.image` exists → image content block, otherwise text).
 
-**发现并修正**：Task 2 的 mcp.js `callTool` 对 image 的处理在 Task 5 补（浏览器工具返回 image 时才需要）；Task 5 明确 `formatResult`。已在上文 Task 5 Step 1 并入。
+**Found and fixed**: Task 2's mcp.js `callTool` image handling is addressed in Task 5 (needed only when a browser tool returns an image); Task 5 specifies `formatResult`. This is incorporated into Task 5 Step 1 above.
 
 ## Execution Handoff
 
-计划已完成并保存到 `docs/superpowers/plans/2026-08-06-device-ops-v2.md`。两种执行方式：
+The plan is complete and saved to `docs/superpowers/plans/2026-08-06-device-ops-v2.md`. Two ways to execute:
 
-1. **Subagent-Driven（推荐）**：每个任务派一个全新子代理，任务间审查，迭代快
-2. **Inline Execution**：本会话内用 executing-plans 批量执行，检查点审查
+1. **Subagent-Driven (recommended)**: dispatch a fresh subagent per task with reviews between tasks; fast iteration
+2. **Inline Execution**: run tasks in batch in this session with executing-plans, reviewing at checkpoints
 
-选哪种？
+Which one do you choose?

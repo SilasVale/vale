@@ -1,217 +1,218 @@
-# 设备操作重设计 v2：浏览器扩展 + AI-first MCP
+# Device Operations Redesign v2: Browser Extension + AI-First MCP
 
-日期：2026-08-06
-状态：已批准（用户确认扩展方案 + 环境约束调整后批准计划）
+Date: 2026-08-06
+Status: Approved (plan approved after the user confirmed the extension approach + environment-constraint adjustments)
 
 ## Context
 
-现有设备管理的 terminal/browser 方法不好用，且 Windows 上远程 CDP（headless Chrome 端口 19623）连不上、功能坏掉。经多轮澄清，根因：
+The current device management terminal/browser approaches don't work well, and remote CDP (headless Chrome port 19623) on Windows is unreachable and broken. After several rounds of clarification, the root causes:
 
-1. **browser**：Windows headless Chrome 截图 → 2s 一帧 PNG SSE → `<img>` 观察窗，不可交互；远程 CDP 端口跨网络连不上
-2. **terminal**：xterm.js + SSE 下行 + 每击键一次 HTTP POST 上行（浏览器→网关→cloudflared→Windows），WAN 延迟明显
-3. **MCP 工具面**：坐标式 `browser_click`、字节流终端，AI（Claude Code）不好用
-4. **vale-command**：Web 面板、Tauri 桌面、浏览器自动化体验差
+1. **browser**: Windows headless Chrome screenshots → 2s-per-frame PNG SSE → an `<img>` observation window, not interactive; the remote CDP port is unreachable across networks
+2. **terminal**: xterm.js + SSE downlink + one HTTP POST per keystroke uplink (browser → gateway → cloudflared → Windows), with noticeable WAN latency
+3. **MCP tool surface**: coordinate-based `browser_click` and a byte-stream terminal are awkward for AI (Claude Code)
+4. **vale-command**: poor experience with the web panel, Tauri desktop, and browser automation
 
-**核心转变**：Claude Code 是"大脑"（知道改了什么、该测什么），**浏览器扩展是"手和眼"**。MCP 工具面从坐标/字节流改为 **AI-first：视觉 + 语义**。
+**Core shift**: Claude Code is the "brain" (knows what changed and what to test), **the browser extension is the "hands and eyes"**. The MCP tool surface changes from coordinates/byte-streams to **AI-first: vision + semantics**.
 
-**环境约束（关键）**：开发机（跑 Claude Code）= 无界面服务器，无浏览器；日常用浏览器的机器 = Windows 设备本身。因此扩展装 **Windows 设备的 Chrome/Edge**，开发机只管 HTTPS 到网关。
+**Environment constraint (key)**: the dev machine (running Claude Code) is a headless server with no browser; the machine that daily uses a browser is the Windows device itself. So the extension is installed in the **Windows device's Chrome/Edge**, and the dev machine only needs HTTPS to the gateway.
 
-## 架构
+## Architecture
 
 ```
-Claude Code（开发机，无界面）
-  → MCP (HTTPS) → https://<console>/mcp   （Bearer 用户 token，admin）
-  → 网关 Worker vale-gate
-      ├─ 终端工具 → deviceFetch → https://dN.command.saisi.online（Bearer 注入）
-      └─ 浏览器工具 → PluginHubDO(idFromName(device)) → WebSocket
-  → 浏览器扩展（Windows 设备 Chrome/Edge）
-      ├─ chrome.debugger（进程内部，无端口）→ 受控真实标签页
-      │    URL = https://<console>/api/devices/<d>/proxy/（面板内嵌，零额外组件）
-      └─ 终端页：xterm ← EventSource 代理 SSE；击键 POST
+Claude Code (dev machine, headless)
+  → MCP (HTTPS) → https://<console>/mcp   (Bearer user token, admin)
+  → gateway Worker vale-gate
+      ├─ terminal tools → deviceFetch → https://dN.command.saisi.online (Bearer injected)
+      └─ browser tools → PluginHubDO(idFromName(device)) → WebSocket
+  → browser extension (Windows device Chrome/Edge)
+      ├─ chrome.debugger (in-process, no ports) → a controlled real tab
+      │    URL = https://<console>/api/devices/<d>/proxy/ (panel embedded, zero extra components)
+      └─ terminal page: xterm ← EventSource proxied SSE; keystrokes POST
 ```
 
-**关键机制**：
-- 扩展主动出站连网关 WS（复用 443，无新端口），和 cloudflared 隧道同模式；网关按设备路由命令
-- `chrome.debugger` 是 Chrome 内部机制，控制本机标签页，**不走网络端口**——根治"远程 CDP 连不上"
-- 标签页形态 = **面板内嵌**（反代后的设备面板，设备网页嵌在里面看）
-- 会话持久：普通 cookie，首次需在受控标签页登录一次 console
+**Key mechanisms**:
+- The extension makes outbound connections to the gateway WS (reuses 443, no new ports), same pattern as the cloudflared tunnel; the gateway routes commands per device
+- `chrome.debugger` is an internal Chrome mechanism that controls local tabs — **no network ports** — permanently fixing "remote CDP unreachable"
+- Tab form = **panel-embedded** (the reverse-proxied device panel, embedding the device web page for viewing)
+- Session persistence: ordinary cookies; the console needs to be logged in once in the controlled tab first
 
-**工具链路**（以 `browser_click` 为例）：
-Claude Code → /mcp → mcp.js 鉴权(admin) → PluginHubDO `/call` 登记 pending(60s) → ws.send → 扩展 SW → cdp 控制器（Runtime.evaluate 解析 CSS 路径 → Input.dispatchMouseEvent）→ 快照 → 原路返回。截图时返回 MCP image content block（PNG base64，Claude Code 直接看图）。
+**Tool pipeline** (using `browser_click` as an example):
+Claude Code → /mcp → mcp.js auth (admin) → PluginHubDO `/call` registers a pending (60s) → ws.send → extension SW → CDP controller (Runtime.evaluate resolves the CSS path → Input.dispatchMouseEvent) → snapshot → back the same way. Screenshots return an MCP image content block (PNG base64; Claude Code views the image directly).
 
-**终端工具链路**（`terminal_send`）：Claude Code → /mcp → deviceFetch 透传 `/api/tools/terminal_execute`（写命令→quiet 检测→返回累计文本）。**不经过扩展 WS**（终端物理依赖设备，少一跳）。
+**Terminal tool pipeline** (`terminal_send`): Claude Code → /mcp → deviceFetch passes through to `/api/tools/terminal_execute` (write command → quiet detection → return accumulated text). **Does not go through the extension WS** (the terminal physically depends on the device; one fewer hop).
 
-## 扩展（新目录 `extension/`）
+## Extension (new directory `extension/`)
 
-- **manifest**：MV3，permissions `["tabs","debugger","storage","alarms"]`，host_permissions 覆盖 console 域名 + 设备子域通配；**无 content script**（一切页面内操作走 CDP Runtime.evaluate，零侵入）
-- **SW 生命周期**：WS 20s 双向 ping（Chrome 116+ 消息重置空闲计时器）+ `chrome.alarms` 4 分钟兜底；状态存 `chrome.storage.session` 可重水合；Chrome 118+ 活跃 debugger 会话保活 SW
-- **attach 策略**：每设备一条受控标签页（`tabs.create`），按需 attach、保持；attach 失败返回可操作错误（DevTools 冲突/不可 attach 页面）；WS 断连**绝不 detach**
-- **CDP 域**：Page（navigate/captureScreenshot/loadEventFired）、Runtime（元素树/focus/scrollIntoView）、Input（dispatchMouseEvent 点击、insertText 输入——真实事件）
-- **元素树**：注入 JS 穿透 open shadow root，收集可交互元素（a/button/input/select/textarea/[role=button] 等），过滤不可见，上限 120；每元素 `{ref, tag, role, text, name, type, value(密码打码), href, rect, visible}` + 页面 `{url, title, readyState}`；ref 绑定**唯一 CSS 选择器路径**，click/type 时重解析，DOM 变了→自动重拍快照提示
-- **WS 客户端**：先 `POST /api/plugins/ws-ticket`（Bearer 插件 token）拿一次性短票 → `wss://<console>/api/plugins/ws?device=<d>&ticket=<t>`；帧协议 `{id, type:"request|response|ping|pong|hello", tool, params, ok, result, error}`；指数退避重连 1s→30s+抖动
-- **终端页**：xterm 全屏 + 多会话 tab；下行 EventSource 代理 SSE（网关注入 Bearer），上行 fetch 代理 POST
-- **popup**：连接状态/设备/受控标签页/按钮（开面板/开终端/配对/选项）
-- **安装方式（已定）**：A. 控制台 Devices 面板「安装扩展」按钮 + 指引（下载 zip + 解压 + chrome://extensions 加载已解压扩展）；B. Windows 端安装脚本（PowerShell 下载/解压/打印指引，并入 vale-command-setup.ps1 或独立脚本）。不做 Chrome Web Store 上架（审核成本高，暂缓）
+- **manifest**: MV3, permissions `["tabs","debugger","storage","alarms"]`, host_permissions covering the console domain + a device subdomain wildcard; **no content script** (all in-page operations go through CDP Runtime.evaluate, zero intrusion)
+- **SW lifecycle**: WS 20s bidirectional ping (Chrome 116+ messages reset the idle timer) + a `chrome.alarms` 4-minute fallback; state in `chrome.storage.session` for rehydration; Chrome 118+ keeps the SW alive with an active debugger session
+- **attach strategy**: one controlled tab per device (`tabs.create`), attached on demand and kept; attach failures return actionable errors (DevTools conflict / non-attachable page); a WS disconnect **never detaches**
+- **CDP domains**: Page (navigate/captureScreenshot/loadEventFired), Runtime (element tree/focus/scrollIntoView), Input (dispatchMouseEvent clicks, insertText input — real events)
+- **element tree**: injected JS pierces open shadow roots, collects interactive elements (a/button/input/select/textarea/[role=button], etc.), filters out invisible ones, capped at 120; each element `{ref, tag, role, text, name, type, value (masked for passwords), href, rect, visible}` + page `{url, title, readyState}`; refs bind to a **unique CSS selector path**, re-resolved on click/type; if the DOM changed, re-shoot the snapshot automatically and notify
+- **WS client**: first `POST /api/plugins/ws-ticket` (Bearer plugin token) for a one-time short-lived ticket → `wss://<console>/api/plugins/ws?device=<d>&ticket=<t>`; frame protocol `{id, type:"request|response|ping|pong|hello", tool, params, ok, result, error}`; exponential backoff reconnect 1s→30s with jitter
+- **terminal page**: full-screen xterm + multi-session tabs; downlink EventSource proxies the SSE (gateway injects the Bearer), uplink fetch proxies the POSTs
+- **popup**: connection status / device / controlled tab / buttons (open panel / open terminal / pair / options)
+- **Install method (decided)**: A. an "Install extension" button + instructions in the console's Devices panel (download zip + unzip + load unpacked extension at chrome://extensions); B. a Windows-side install script (PowerShell downloads/unzips/prints instructions, merged into vale-command-setup.ps1 or standalone). No Chrome Web Store listing (high review cost, deferred).
 
-## 网关改造（`gateway/`）
+## Gateway changes (`gateway/`)
 
-### 1. 修复 WS 反代（第一阶段，根因修复）
+### 1. Fix the WS reverse proxy (phase 1, root-cause fix)
 
-`index.js:720-725` 现在构造 `status:101` 无 `webSocket` 属性的 Response → **必抛 RangeError → 500**（WS 经代理必坏的根因）。改为：
+`index.js:720-725` currently constructs a `status:101` Response without a `webSocket` property → **always throws RangeError → 500** (the root cause of WS always breaking through the proxy). Change to:
 
 ```js
 if (resp.status === 101) {
   if (resp.webSocket) {
     try { return new Response(null, { status: 101, webSocket: resp.webSocket }); }
-    catch { return resp; }          // workerd #3047 兜底: 重包异常直接透传
+    catch { return resp; }          // workerd #3047 fallback: if re-wrapping throws, pass through directly
   }
   return new Response(resp.body || null, { status: 101, headers: outHeaders });
 }
 ```
-SSE/octet-stream 分支保持，101 拆出。
 
-### 2. PluginHubDO（新 `src/plugin-hub.js`）
+The SSE/octet-stream branches stay; the 101 branch is split out.
 
-- 每设备一个 DO 实例（`idFromName(deviceName)`），**必须用 DO + WebSocket Hibernation**（裸 Worker WS 随 isolate 驱逐）
-- `/ws`：`state.acceptWebSocket`（hibernation），记录 device；同设备第二条连接关旧（单实例）
-- `/call`：无 WS → `503 {error:"extension_offline"}`；否则登记 pending（60s 超时）→ ws.send → webSocketMessage 按 id resolve
-- `/status`：`getWebSockets().length>0` 或 storage lastSeen
-- **探活**（hibernation 定时器不跑）：webSocketMessage 时 `setAlarm(+65s)`；alarm 触发无存活 WS → 关连接。扩展 20s ping 自然重置 alarm
+### 2. PluginHubDO (new `src/plugin-hub.js`)
 
-### 3. 插件配对与票据（`src/store.js` + `index.js` 路由）
+- One DO instance per device (`idFromName(deviceName)`); **DO + WebSocket Hibernation is required** (bare Worker WS dies with isolate eviction)
+- `/ws`: `state.acceptWebSocket` (hibernation), records the device; a second connection for the same device closes the old one (single instance)
+- `/call`: no WS → `503 {error:"extension_offline"}`; otherwise register as pending (60s timeout) → ws.send → webSocketMessage resolves by id
+- `/status`: `getWebSockets().length>0` or storage lastSeen
+- **liveness** (hibernation timers don't run): `setAlarm(+65s)` on webSocketMessage; when the alarm fires with no live WS → close the connection. The extension's 20s ping naturally resets the alarm
 
-KV 新增：
-- `plugins:v1`：`pluginToken → {device, createdAt}`，helper `addPluginLink/removePluginLink/getPluginByToken`
-- 一次性票据 `plg-ticket:<rand> → device`（TTL 60s）、配对码 `pair:<code> → device`（TTL 600s），复用 `randomHex`
+### 3. Plugin pairing and tickets (`src/store.js` + `index.js` routes)
 
-路由（admin 区）：
-- `POST /api/plugins/pair`（admin 会话）`{device}` → 配对码
-- `POST /api/plugins/pair/claim`（公开、码即凭证，仿 `/api/register`）→ 校验/消费/签发 pluginToken
-- `POST /api/plugins/ws-ticket`（Bearer pluginToken）→ 一次性 WS 票据
-- `POST /api/plugins/unpair`（admin）`{device}`
-- `GET /api/plugins/status`（admin）→ 每设备 `{online}`
+New KV entries:
+- `plugins:v1`: `pluginToken → {device, createdAt}`, helpers `addPluginLink/removePluginLink/getPluginByToken`
+- One-time ticket `plg-ticket:<rand> → device` (TTL 60s), pairing code `pair:<code> → device` (TTL 600s), reusing `randomHex`
 
-`wrangler.jsonc`：DO 绑定 `PLUGIN_HUB → PluginHubDO` + 迁移 `v2-plugin-hub`（`new_sqlite_classes`，照 BreakerDO 先例）。
+Routes (admin section):
+- `POST /api/plugins/pair` (admin session) `{device}` → pairing code
+- `POST /api/plugins/pair/claim` (public, the code is the credential, modeled on `/api/register`) → validate/consume/issue pluginToken
+- `POST /api/plugins/ws-ticket` (Bearer pluginToken) → one-time WS ticket
+- `POST /api/plugins/unpair` (admin) `{device}`
+- `GET /api/plugins/status` (admin) → per-device `{online}`
 
-### 4. MCP server 端点（新 `src/mcp.js` + `src/mcp-tools.js`）
+In `wrangler.jsonc`: DO binding `PLUGIN_HUB → PluginHubDO` + migration `v2-plugin-hub` (`new_sqlite_classes`, following the BreakerDO precedent).
 
-- **手写 JSON-RPC 2.0**（不用 @modelcontextprotocol/sdk：gateway 零依赖，sdk streamable-http 上 Worker 需 fetch-to-node 桥，代价大于收益；协议子集约 200 行，风险由 stage 1 接真实 Claude Code 对冲）
-- 路由：`isPageHost && path === "/mcp"`（console API 检查之后、静态页之前）
-- 鉴权：`Authorization: Bearer <token>` → `findUserByToken` → `role.admin`
-- **GET /mcp 必须返回保持打开的 SSE 流**（Claude Code v2.1.84+ 先 GET 后 POST；405 判失败）+ 每 15s keepalive 注释；POST 返回 application/json；stateless
-- `initialize`：回显 protocolVersion、`capabilities:{tools:{listChanged:false}}`、`serverInfo:{name:"vale-gate"}`
+### 4. MCP server endpoint (new `src/mcp.js` + `src/mcp-tools.js`)
 
-工具注册表（全带 `device` 参数，validate against KV）：
+- **Hand-rolled JSON-RPC 2.0** (not @modelcontextprotocol/sdk: the gateway is zero-dependency; the sdk's streamable HTTP on Workers needs a fetch-to-node bridge, cost outweighs benefit; the protocol subset is ~200 lines, with the risk hedged by wiring up real Claude Code in stage 1)
+- Routing: `isPageHost && path === "/mcp"` (after console API checks, before static pages)
+- Auth: `Authorization: Bearer <token>` → `findUserByToken` → `role.admin`
+- **GET /mcp must return a keep-open SSE stream** (Claude Code v2.1.84+ does GET before POST; a 405 means failure) + a keepalive comment every 15s; POST returns application/json; stateless
+- `initialize`: echo protocolVersion, `capabilities:{tools:{listChanged:false}}`, `serverInfo:{name:"vale-gate"}`
 
-| 工具 | 路由 | 说明 |
+Tool registry (all tools take a `device` parameter, validated against KV):
+
+| Tool | Route | Description |
 |---|---|---|
-| `browser_open(device,url)` | DO→扩展 | 开/导航受控标签页，等 load(30s)，返回快照 |
-| `browser_snapshot(device)` | DO→扩展 | 可交互元素树 JSON |
-| `browser_screenshot(device,full_page?)` | DO→扩展 | **image content block**（PNG base64） |
-| `browser_click(device,element_ref)` | DO→扩展 | 点击后返回快照 |
-| `browser_type(device,element_ref,text)` | DO→扩展 | 聚焦+insertText，返回快照 |
-| `browser_wait(device,condition,timeout_s?)` | DO→扩展 | 轮询条件(选择器/文本)，返回快照 |
-| `browser_close(device)` | DO→扩展 | 关受控标签页 |
-| `terminal_open(device,kind,target,rows?,cols?)` | deviceFetch | 透传 `/api/tools/terminal_open` |
-| `terminal_screen(device,session_id,lines?)` | deviceFetch | **新设备工具**，尾部 N 行屏幕文本 |
-| `terminal_send(device,session_id,input,quiet_ms?)` | deviceFetch | 透传 `terminal_execute` 会话模式（quiet 检测在设备端） |
-| `terminal_list(device)` | deviceFetch | 透传 |
-| `terminal_close(device,session_id)` | deviceFetch | 透传 |
+| `browser_open(device,url)` | DO→extension | open/navigate the controlled tab, wait for load (30s), return snapshot |
+| `browser_snapshot(device)` | DO→extension | interactive element tree JSON |
+| `browser_screenshot(device,full_page?)` | DO→extension | **image content block** (PNG base64) |
+| `browser_click(device,element_ref)` | DO→extension | click, then return snapshot |
+| `browser_type(device,element_ref,text)` | DO→extension | focus + insertText, return snapshot |
+| `browser_wait(device,condition,timeout_s?)` | DO→extension | poll the condition (selector/text), return snapshot |
+| `browser_close(device)` | DO→extension | close the controlled tab |
+| `terminal_open(device,kind,target,rows?,cols?)` | deviceFetch | pass through to `/api/tools/terminal_open` |
+| `terminal_screen(device,session_id,lines?)` | deviceFetch | **new device tool**, last N lines of screen text |
+| `terminal_send(device,session_id,input,quiet_ms?)` | deviceFetch | pass through `terminal_execute` session mode (quiet detection on the device side) |
+| `terminal_list(device)` | deviceFetch | pass through |
+| `terminal_close(device,session_id)` | deviceFetch | pass through |
 
-- **`deviceFetch(env, device, path, body)` 提取**：从 `proxyDevice` 抽共享函数（Bearer 注入、host/cookie 清洗、502 包装），行为零变化
-- 超时纪律：工具内 timeout < 90s（Worker 子请求 100s 上限）；终端 quiet 默认 400ms
+- **Extract `deviceFetch(env, device, path, body)`**: pull a shared function out of `proxyDevice` (Bearer injection, host/cookie sanitization, 502 wrapping) with zero behavior change
+- Timeout discipline: in-tool timeout < 90s (Worker subrequest 100s cap); terminal quiet defaults to 400ms
 
-### 5. console SPA 小改
+### 5. Small console SPA changes
 
-Devices 区加：每设备"在线"列（轮询 /api/plugins/status）、「生成扩展配对码」按钮、「网关 MCP 配置」复制按钮（`https://<console>/mcp` + 当前用户 token）。
+In the Devices section, add: a per-device "online" column (polling /api/plugins/status), a "Generate extension pairing code" button, and a "Gateway MCP config" copy button (`https://<console>/mcp` + the current user's token).
 
-## 设备端改动（`command/`）
+## Device-side changes (`command/`)
 
-### A. 新增 `terminal_screen`（AI 屏幕缓冲）
+### A. New `terminal_screen` (AI screen buffer)
 
-1. **新增 `terminal_screen`**（`src/plugins/terminal/tools.rs`，仿 `tool_read` 结构）：
-   - schema `{session_id: string, lines?: integer 默认60}`
-   - 实现：OutputBuf 取 SessionBuf → 从尾部倒扫 N 个 `\n` 起点 → `clean_terminal_output` → `{screen, dropped, total_bytes}`。屏幕缓冲已在 OutputBuf（1MB 环剪），不需要新后端
-   - `build()` 注册；更新工具数量测试 12→13 与 CLAUDE.md 计数
-2. **"等输出稳定"不动**：已在设备端 `tool_execute` 会话模式
-3. **终端显示保持 SSE+POST**：设备端新 WS 端点与 Windows 交叉编译约束冲突（web.rs:1-19），收益（人看为主）不划算；WS 反代修好后随时可加
+1. **Add `terminal_screen`** (in `src/plugins/terminal/tools.rs`, modeled on the `tool_read` structure):
+   - schema `{session_id: string, lines?: integer, default 60}`
+   - Implementation: get the SessionBuf from OutputBuf → scan back from the tail for N `\n` start points → `clean_terminal_output` → `{screen, dropped, total_bytes}`. The screen buffer already lives in OutputBuf (1MB ring clipping), so no new backend is needed
+   - Register via `build()`; update the tool-count tests 12→13 and the CLAUDE.md count
+2. **"Wait for output to stabilize" unchanged**: already in the device-side `tool_execute` session mode
+3. **Terminal display stays SSE+POST**: a new device-side WS endpoint conflicts with the Windows cross-compilation constraints (web.rs:1-19), and the benefit (mostly human viewing) isn't worth it; it can be added anytime once the WS reverse proxy is fixed
 
-### B. 瘦身（退役 Web 面板 / Tauri / 浏览器自动化）
+### B. Slimming down (retiring the web panel / Tauri / browser automation)
 
-- **删**：`src/ui/`、`src-tauri/`、`plugins/browser/`、`src/tools/browser.rs`（desktop_impl 部分）、`browser_headless.rs`、`cdp.rs`、`desktop_api.rs`、`browser` feature、`tauri` feature、`vale-command-desktop` member
-- **留**：`/mcp`（TokenGate + rmcp）、`/api/tools/{name}`、SSE 端点、terminal 后端、`web.rs` 鉴权逻辑
-- **新**：托盘小应用（Windows 原生，无窗口；复用 `vale-tray` crate 或新 crate，功能见上文）
-- **Cargo.toml**：清理 `tauri`/`browser` feature、相关 optional deps（tokio-tungstenite、reqwest、url、tauri）；保留 `terminal`、`keyring`、`windows-service`
-- **验证**：`cargo test` + `cargo clippy --all-targets` + `cargo xwin check -p vale-command --target x86_64-pc-windows-msvc`（去 desktop 后无需 webkit2gtk）；Windows 冒烟（MCP 直连、/api/tools、托盘）
+- **Delete**: `src/ui/`, `src-tauri/`, `plugins/browser/`, `src/tools/browser.rs` (the desktop_impl part), `browser_headless.rs`, `cdp.rs`, `desktop_api.rs`, the `browser` feature, the `tauri` feature, the `vale-command-desktop` member
+- **Keep**: `/mcp` (TokenGate + rmcp), `/api/tools/{name}`, the SSE endpoints, the terminal backend, `web.rs` auth logic
+- **New**: a small tray app (native Windows, no window; reuse the `vale-tray` crate or a new crate; functions as described above)
+- **Cargo.toml**: clean up the `tauri`/`browser` features and related optional deps (tokio-tungstenite, reqwest, url, tauri); keep `terminal`, `keyring`, `windows-service`
+- **Verify**: `cargo test` + `cargo clippy --all-targets` + `cargo xwin check -p vale-command --target x86_64-pc-windows-msvc` (no webkit2gtk needed once desktop is gone); Windows smoke tests (direct MCP, /api/tools, tray)
 
-## vale-command 瘦身（本次纳入，用户已确认退役桌面应用）
+## vale-command slimming (included this round; user confirmed retiring the desktop app)
 
-用户已确认：退役 Web 面板、Tauri 桌面窗口/WebView、浏览器自动化；保留强化终端后端 + MCP server；托盘独立保留。
+User confirmed: retire the web panel, the Tauri desktop window/WebView, and browser automation; keep the hardened terminal backend + MCP server; keep the tray separately.
 
-**退役**：
-- `src/ui/` SPA 静态页（面板 UI——被扩展终端页/受控标签页取代）
-- `src-tauri/`（Tauri 桌面窗口 + WebView + `tauri` feature + `desktop_api.rs` + `src-tauri/src/`）
-- `src/tools/browser.rs` desktop_impl、`browser_headless.rs`、`cdp.rs`、`tools/browser.rs` 的 `browser` feature 及 plugins/browser/（浏览器自动化——被扩展 chrome.debugger 取代）
+**Retired**:
+- `src/ui/` SPA static pages (panel UI — replaced by the extension's terminal page/controlled tabs)
+- `src-tauri/` (Tauri desktop window + WebView + `tauri` feature + `desktop_api.rs` + `src-tauri/src/`)
+- `src/tools/browser.rs` desktop_impl, `browser_headless.rs`, `cdp.rs`, the `browser` feature of `tools/browser.rs`, and plugins/browser/ (browser automation — replaced by the extension's chrome.debugger)
 - `vale-command-desktop` workspace member
 
-**保留（vale-command 变纯服务，无 UI）**：
-- `src/mcp/server.rs`（rmcp MCP server，`/mcp` + TokenGate）——Claude Code 直连设备 MCP 向后兼容
-- `src/tools/terminal/`（PTY/SSH/serial 后端）——物理能力必须留
-- `src/web.rs` 的 **`/api/tools/{name}` 工具派发 + SSE 流端点**（扩展终端页经反代复用；网关终端工具也走它）
-- cloudflared tunnel、设备注册、`bootstrap.rs`/`config.yaml`
-- Windows 服务（vale-command + cloudflared）
+**Kept (vale-command becomes a pure service, no UI)**:
+- `src/mcp/server.rs` (rmcp MCP server, `/mcp` + TokenGate) — backward compatible with Claude Code connecting directly to the device MCP
+- `src/tools/terminal/` (PTY/SSH/serial backends) — physical capabilities must stay
+- **`/api/tools/{name}` tool dispatch + SSE stream endpoints** in `src/web.rs` (reused by the extension's terminal page through the reverse proxy; the gateway's terminal tools also go through it)
+- cloudflared tunnel, device registration, `bootstrap.rs`/`config.yaml`
+- Windows services (vale-command + cloudflared)
 
-**托盘独立成小应用**（新，Windows 原生托盘，无窗口）：
-- 开关/重启 vale-command 服务、显示运行状态/子域名/token 掩码
-- 复制 MCP 配置、打开控制台设备页
-- 本地终端入口（打开本地终端窗口看日志/测试，不依赖扩展）
+**The tray becomes a standalone small app** (new, native Windows tray, no window):
+- Start/stop/restart the vale-command service, show running status/subdomain/token mask
+- Copy MCP config, open the console device page
+- Local terminal entry (opens a local terminal window for logs/tests, no extension needed)
 
-**保留/降级（其余）**：
-- 设备注册/列表/token、反代路径重写、登录/管理员：**全部不动**
-- Claude Code 直连设备 MCP（`https://dN.../mcp`）：**向后兼容保留**
-- 旧 headless 浏览器工具（plugins/browser/）：随浏览器自动化一并退役（Claude Code 直连的设备 MCP 不再有浏览器工具——浏览器能力全部走网关 MCP + 扩展）
+**Kept/demoted (everything else)**:
+- Device registration/list/token, reverse-proxy path rewriting, login/admin: **all untouched**
+- Claude Code connecting directly to the device MCP (`https://dN.../mcp`): **kept for backward compatibility**
+- Old headless browser tools (plugins/browser/): retired together with browser automation (the device MCP for direct Claude Code connections no longer has browser tools — all browser capability goes through the gateway MCP + extension)
 
-## 风险与缓解
+## Risks and mitigations
 
-1. **chrome.debugger MV3**：attach 对 chrome:// 等失败、DevTools 冲突、canceled_by_user、SW 重启丢在途请求 → 自开标签页、明确错误、target_closed 重试、storage.session 重水合、debugger 保活+心跳+alarms 三重保活
-2. **Worker WS 生命周期**：非 DO WS 不可靠 → 用 DO；hibernation 定时器不跑 → alarm 探活；101 重包 RangeError → 分支最小化+透传兜底
-3. **MCP streamable HTTP**：GET 流必须实现（v2.1.84+）；协议边缘 → stage 1 用真实 Claude Code 验证；子请求 100s → 工具超时 <90s
-4. **console 会话依赖**：受控标签页走反代需 console 登录 → browser_open 后快照检测登录页并提示
-5. **多调用并发**：DO 按 requestId 并发关联；扩展侧每标签页串行化（SW 内 mutex）
-6. **配对安全**：插件 token 授予设备浏览器控制权 → 仅 admin 签发/可吊销/按设备隔离；claim 仿注册码一次性消费
+1. **chrome.debugger MV3**: attach fails for chrome:// etc., DevTools conflicts, canceled_by_user, in-flight requests lost on SW restart → self-opened tabs, explicit errors, retry on target_closed, storage.session rehydration, triple keepalive (debugger keepalive + heartbeat + alarms)
+2. **Worker WS lifecycle**: non-DO WS is unreliable → use the DO; hibernation timers don't run → alarm-based liveness; the 101 re-wrap RangeError → minimal branch + pass-through fallback
+3. **MCP streamable HTTP**: the GET stream must be implemented (v2.1.84+); protocol edge cases → validated with real Claude Code in stage 1; the 100s subrequest cap → tool timeouts <90s
+4. **console session dependency**: the controlled tab needs to be logged into the console to use the reverse proxy → after browser_open, the snapshot detects a login page and prompts
+5. **Concurrent calls**: the DO correlates by requestId concurrently; the extension serializes per tab (mutex inside the SW)
+6. **Pairing security**: the plugin token grants control of the device's browser → issued only by admin/revocable/isolated per device; the claim consumes once like the registration code
 
-## 验证
+## Verification
 
-分 6 阶段（详见计划文件实现顺序表），每阶段收尾基准：
-- gateway：`node --test` + `wrangler deploy`
-- command：`cargo test` → `cargo clippy --all-targets` → `cargo xwin check -p vale-command-desktop`
+Split into 6 phases (see the implementation order table in the plan file), each phase ending with a baseline:
+- gateway: `node --test` + `wrangler deploy`
+- command: `cargo test` → `cargo clippy --all-targets` → `cargo xwin check -p vale-command-desktop`
 
-端到端剧本：Claude Code 直连网关 MCP 跑"改代码→开面板→截图→点击→终端跑测试"。
+End-to-end script: Claude Code connects to the gateway MCP and runs "edit code → open panel → screenshot → click → run tests in the terminal".
 
-## 实施文件
+## Implementation files
 
-- `extension/`（新）：manifest.json、background.js、lib/{ws,cdp,elements,tools,state}.js、popup/、options/、terminal/、vendor/、icons/
-- `gateway/src/plugin-hub.js`（新）、`src/mcp.js`（新）、`src/mcp-tools.js`（新）
-- `gateway/src/index.js`：101 分支修复、deviceFetch 提取、/mcp + /api/plugins/* 路由
-- `gateway/src/store.js`：plugins:v1、配对码/票据 helper
-- `gateway/wrangler.jsonc`：PLUGIN_HUB DO 绑定 + v2 迁移
-- `gateway/public/app.js|index.html|style.css`：在线列/配对 UI/MCP 配置复制
-- `command/src/plugins/terminal/tools.rs`：terminal_screen
-- `command/`：退役 src/ui、src-tauri、plugins/browser、browser feature；新增托盘小应用
-- `command/Cargo.toml`：清理 tauri/browser feature 与相关 deps
-- 计划文件：/home/zhengsaisi/.claude/plans/terminal-browser-rustling-hopcroft.md
+- `extension/` (new): manifest.json, background.js, lib/{ws,cdp,elements,tools,state}.js, popup/, options/, terminal/, vendor/, icons/
+- `gateway/src/plugin-hub.js` (new), `src/mcp.js` (new), `src/mcp-tools.js` (new)
+- `gateway/src/index.js`: the 101 branch fix, deviceFetch extraction, /mcp + /api/plugins/* routes
+- `gateway/src/store.js`: plugins:v1, pairing-code/ticket helpers
+- `gateway/wrangler.jsonc`: PLUGIN_HUB DO binding + the v2 migration
+- `gateway/public/app.js|index.html|style.css`: online column / pairing UI / MCP config copy
+- `command/src/plugins/terminal/tools.rs`: terminal_screen
+- `command/`: retire src/ui, src-tauri, plugins/browser, the browser feature; add the small tray app
+- `command/Cargo.toml`: clean up the tauri/browser features and related deps
+- Plan file: /home/zhengsaisi/.claude/plans/terminal-browser-rustling-hopcroft.md
 
-## 实施顺序（调整，含瘦身）
+## Implementation order (adjusted, includes slimming)
 
-核心链路先行，瘦身放后段（功能优先，避免一次改动过大出错）：
+Core paths first, slimming later (functionality first, to avoid one giant change):
 
-| 阶段 | 内容 |
+| Phase | Contents |
 |---|---|
-| 0 | 修网关 WS 反代 101 分支（根因修复，最小改动） |
-| 1 | 网关 MCP 端点 + 终端工具（deviceFetch 提取；terminal_open/screen/send/list/close） |
-| 2 | 扩展最小可用（骨架 + popup 配对 + cdp 控制器 + ws.js；browser_open/snapshot/screenshot/click） |
-| 3 | 扩展 WS 通道完善（PluginHubDO + ticket/status + 心跳/alarm） |
-| 4 | 终端 AI 工具（设备 terminal_screen + 网关 5 个终端工具） |
-| 5 | 终端显示进扩展（terminal 页 xterm + SSE/POST 走代理） |
-| 6 | vale-command 瘦身（退役面板/Tauri/浏览器自动化 + 托盘小应用） |
-| 7 | 收尾：console SPA 在线列/配对 UI；安装指引；README；wrangler deploy |
+| 0 | Fix the gateway WS reverse-proxy 101 branch (root-cause fix, minimal change) |
+| 1 | Gateway MCP endpoint + terminal tools (deviceFetch extraction; terminal_open/screen/send/list/close) |
+| 2 | Minimal viable extension (skeleton + popup pairing + CDP controller + ws.js; browser_open/snapshot/screenshot/click) |
+| 3 | Complete the extension WS channel (PluginHubDO + ticket/status + heartbeat/alarm) |
+| 4 | Terminal AI tools (device terminal_screen + the gateway's 5 terminal tools) |
+| 5 | Terminal display in the extension (terminal page xterm + SSE/POST via the proxy) |
+| 6 | vale-command slimming (retire panel/Tauri/browser automation + small tray app) |
+| 7 | Wrap-up: console SPA online column/pairing UI; install guide; README; wrangler deploy |

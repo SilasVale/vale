@@ -1,44 +1,44 @@
-# Vale 命令：网关渠道一键切换（设计）
+# Vale Command: One-Click Gateway Channel Switching (Design)
 
-日期：2026-08-04
-状态：已批准（用户确认 node 实现）
+Date: 2026-08-04
+Status: Approved (user confirmed node implementation)
 
 ## Context
 
-用户通过 `~/.claude/settings.json` 使用 vale-gate 网关（api.saisi.online）的多个渠道（ds/qw/og/or）。现状：
-- 渠道故障（如 og/ 上游 zen/go 挂了 45s 才失败）时，配置停在坏渠道，用户需手动 `cp` profile 文件切换，无健康信息、无验证、无回滚。
-- 新增渠道（qw/）也要手工维护 profile 模板。
+Users access the multiple channels (ds/qw/og/or) of the vale-gate gateway (api.saisi.online) through `~/.claude/settings.json`. Current state:
+- When a channel fails (e.g. the og/ upstream zen/go only fails after 45s), the config stays on the broken channel; the user must manually `cp` profile files to switch — no health info, no verification, no rollback.
+- Adding a new channel (qw/) also requires manually maintaining profile templates.
 
-目标：一个跨平台的 `vale` 命令 + 网关公开端点 + 网页安装入口，实现"一键切换、自动验证、可回滚、健康可见"。
+Goal: a cross-platform `vale` command + public gateway endpoints + a web installation entry, delivering "one-click switching, automatic verification, rollback, and visible health".
 
-范围外的决策（明确不做）：
-- 启动自动 hook / 定时轮询（用户否决，命令式为主）
-- 网关服务端降级（用户否决，账单不透明）
-- 渠道优先级做成可配置 JSON（YAGNI，内置常量即可）
+Out-of-scope decisions (explicitly not doing):
+- Startup auto-hooks / scheduled polling (user vetoed; imperative mode preferred)
+- Server-side degradation on the gateway (user vetoed; billing is opaque)
+- Making channel priority a configurable JSON (YAGNI; built-in constants suffice)
 
-## 架构
+## Architecture
 
 ```
-网页 console 模型路由区 → "Vale 命令"面板（安装命令 + 用法）
+Web console model routing section → "Vale Command" panel (install command + usage)
 
-网关 vale-gate（新增公开端点，无鉴权，无敏感信息）
-  ├─ GET /api/health          → 渠道状态 + 推荐
-  ├─ GET /api/vale-cli        → vale 脚本本体（text/plain）
-  ├─ GET /api/vale-install    → POSIX 一键安装器（内嵌 base64 脚本）
-  └─ GET /api/vale-install.ps1→ Windows PowerShell 一键安装器
+Gateway vale-gate (new public endpoints, no auth, no sensitive info)
+  ├─ GET /api/health          → channel status + recommendation
+  ├─ GET /api/vale-cli        → the vale script itself (text/plain)
+  ├─ GET /api/vale-install    → POSIX one-click installer (embeds the script as base64)
+  └─ GET /api/vale-install.ps1→ Windows PowerShell one-click installer
 
-本地 vale 命令（~/.local/bin/vale，node 无依赖，跨平台）
-  ├─ vale check               → 拉健康 + 显示当前配置渠道
-  ├─ vale use <ds|qw|og|or>   → 探测 → 备份 → 改写 env → 原子写 → 提示重启
-  ├─ vale use auto            → 按优先级 qw > ds > og > or 选健康渠道
-  └─ vale restore             → 回滚最近的备份
+Local vale command (~/.local/bin/vale, dependency-free node, cross-platform)
+  ├─ vale check               → fetch health + show currently configured channel
+  ├─ vale use <ds|qw|og|or>   → probe → backup → rewrite env → atomic write → prompt restart
+  ├─ vale use auto            → pick a healthy channel by priority qw > ds > og > or
+  └─ vale restore             → roll back the most recent backup
 ```
 
-## 网关端点
+## Gateway endpoints
 
-### GET /api/health（公开，所有域名可用）
+### GET /api/health (public, available on all domains)
 
-响应：
+Response:
 ```json
 {
   "channels": [
@@ -51,30 +51,30 @@
 }
 ```
 
-- 健康判定：`og` 用 breaker 状态（`isChannelDegraded`）；其他渠道无 breaker，标记 `ok: true`（真实可用性由 vale 命令切换前的探测兜底）。
-- `recommended`：按优先级常量 `qw > ds > og > or` 取第一个 `ok` 渠道。
-- 放置：主 fetch 里在 hostname 分流之前处理（`path === "/api/health"`），保证 ai/api 域名也可访问。
+- Health determination: `og` uses the breaker state (`isChannelDegraded`); other channels have no breaker and are marked `ok: true` (real availability is backed by the probe the vale command runs before switching).
+- `recommended`: the first `ok` channel by the priority constant `qw > ds > og > or`.
+- Placement: handled in the main fetch before hostname-based routing (`path === "/api/health"`), so it is also reachable on the ai/api domains.
 
 ### GET /api/vale-cli
 
-返回 vale 脚本本体（`Content-Type: text/plain`）。脚本内容由网关以字符串常量内嵌（生成时从 `scripts/vale-cli.js` 读取打包，或作为独立模块导入 —— 采用独立文件 `gateway/src/vale-cli.js` 导出字符串，index.js 引用）。
+Returns the vale script itself (`Content-Type: text/plain`). The script content is embedded in the gateway as a string constant (packed by reading `scripts/vale-cli.js` at build time, or imported as a standalone module — the approach taken: a standalone file `gateway/src/vale-cli.js` exports the string, and index.js references it).
 
-### GET /api/vale-install（POSIX）
+### GET /api/vale-install (POSIX)
 
-返回 sh 安装器：
+Returns a sh installer:
 ```sh
 #!/bin/sh
 set -e
 command -v node >/dev/null 2>&1 || { echo "error: Node.js required"; exit 1; }
 DEST="${VALE_BIN:-$HOME/.local/bin}"
 mkdir -p "$DEST"
-echo "<base64 的 vale 脚本>" | base64 -d > "$DEST/vale"
+echo "<vale script base64>" | base64 -d > "$DEST/vale"
 chmod +x "$DEST/vale"
 echo "installed: $DEST/vale"
 echo "usage: vale check | vale use <ds|qw|og|or> | vale use auto | vale restore"
 ```
 
-### GET /api/vale-install.ps1（Windows）
+### GET /api/vale-install.ps1 (Windows)
 
 ```powershell
 $ErrorActionPreference = "Stop"
@@ -87,15 +87,15 @@ Set-Content -Path (Join-Path $dest "vale.cmd") -Value '@echo off\r\nnode "%~dp0v
 Write-Host "installed: $dest\vale  (command: vale)"
 ```
 
-### console 面板
+### Console panel
 
-`gateway/public/` 的模型路由 section 增加"Vale 命令"块：两个平台的安装命令 + 用法（`vale check` / `vale use` / `vale restore`）。实现取决于 public/ 前端结构（见实施计划）。
+Add a "Vale Command" block to the model routing section of `gateway/public/`: install commands for both platforms + usage (`vale check` / `vale use` / `vale restore`). The implementation depends on the public/ frontend structure (see the implementation plan).
 
-## vale 命令（scripts/vale-cli.js → 打包为字符串）
+## The vale command (scripts/vale-cli.js → packed as a string)
 
-node 实现，零依赖，跨平台（`os.homedir()` 定位配置）。
+A node implementation, zero dependencies, cross-platform (locates config via `os.homedir()`).
 
-**模型映射（内置常量）**：
+**Model mapping (built-in constants)**:
 ```js
 const CHANNELS = {
   ds: { model: "ds/deepseek-v4-flash" },
@@ -106,52 +106,52 @@ const CHANNELS = {
 const PRIORITY = ["qw", "ds", "og", "or"];
 ```
 
-**命令流程：**
+**Command flows:**
 
-`vale check`：
-1. 读 `~/.claude/settings.json` 的 env 提取当前模型/渠道
-2. `GET https://api.saisi.online/api/health`（base URL 从 settings.json 的 ANTHROPIC_BASE_URL 读取，无则默认）
-3. 打印渠道状态表 + 当前配置 + 推荐
+`vale check`:
+1. Read the env in `~/.claude/settings.json` to extract the current model/channel
+2. `GET https://api.saisi.online/api/health` (base URL read from ANTHROPIC_BASE_URL in settings.json, with a default if absent)
+3. Print the channel status table + current config + recommendation
 
-`vale use <channel>`：
-1. 校验 channel 在映射表
-2. 探测：POST `<base>/v1/messages`（max_tokens=1，用 settings.json 里的 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN）→ 非 200 拒绝切换
-3. 备份：`settings.json` → `settings.json.bak-vale-<timestamp>`
-4. 改写 env：`ANTHROPIC_BASE_URL`（保持，若缺失则设为 api.saisi.online）、模型字段（ANTHROPIC_MODEL + DEFAULT_* + SUBAGENT + SMALL_FAST 全部设为渠道模型名）、保留 token 字段
-5. 原子写（临时文件 + rename）
-6. 打印"已切换 qw/qwen3.8-max-preview，重启 Claude Code 生效"
+`vale use <channel>`:
+1. Validate the channel is in the mapping
+2. Probe: POST `<base>/v1/messages` (max_tokens=1, using ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN from settings.json) → refuse to switch on non-200
+3. Backup: `settings.json` → `settings.json.bak-vale-<timestamp>`
+4. Rewrite env: `ANTHROPIC_BASE_URL` (kept, or set to api.saisi.online if missing), model fields (ANTHROPIC_MODEL + DEFAULT_* + SUBAGENT + SMALL_FAST all set to the channel's model name), keep the token fields
+5. Atomic write (temp file + rename)
+6. Print "Switched to qw/qwen3.8-max-preview; restart Claude Code for it to take effect"
 
-`vale use auto`：拉 health → 按 PRIORITY 取第一个 ok → 走 use 流程；全挂则报错并建议检查网络。
+`vale use auto`: fetch health → take the first ok by PRIORITY → run the use flow; if all are down, error out and suggest checking the network.
 
-`vale restore`：找最近的 `settings.json.bak-vale-*` → 原子恢复 → 提示重启。
+`vale restore`: find the most recent `settings.json.bak-vale-*` → restore atomically → prompt restart.
 
-**安全**：
-- 脚本不显示/不存储 token（只读使用）
-- 每次 use/restore 前自动备份（保留最近 5 份，旧删）
-- 原子写防中断半文件
-- 探测失败不切换
+**Security**:
+- The script never displays or stores tokens (read-only use)
+- Auto-backup before every use/restore (keeps the most recent 5, deletes older)
+- Atomic writes prevent half-written files on interruption
+- No switch if the probe fails
 
-## 测试
+## Testing
 
-- `gateway/test/vale-cli.test.mjs`：vale 脚本核心逻辑抽为可测模块 —— 模型映射、配置改写（读 mock settings.json → 断言 env 字段）、备份命名/清理、优先级选择。网络调用 mock。
-- 网关端点测试：health 生成函数（channels/recommended 逻辑，breaker mock）。
+- `gateway/test/vale-cli.test.mjs`: the vale script's core logic is extracted into a testable module — model mapping, config rewriting (read a mock settings.json → assert env fields), backup naming/cleanup, priority selection. Network calls are mocked.
+- Gateway endpoint tests: the health generation function (channels/recommended logic, breaker mocked).
 
-## 验证
+## Verification
 
-1. `npm test` 全绿（新增 vale 测试）
-2. `wrangler dev` / 部署后：
-   - `curl https://api.saisi.online/api/health` → 渠道状态 + 推荐
-   - `curl https://api.saisi.online/api/vale-install | sh` → 安装 vale（本地 ~/.local/bin）
-   - `vale check` → 显示状态
-   - `vale use qw` → 备份 + 切换 + 提示
-   - `vale use og` → 探测失败拒绝（zen 挂了，行为验证）
-   - `vale restore` → 回滚
-3. 网页 console 模型路由区显示安装面板
+1. `npm test` all green (new vale tests)
+2. After `wrangler dev` / deploy:
+   - `curl https://api.saisi.online/api/health` → channel status + recommendation
+   - `curl https://api.saisi.online/api/vale-install | sh` → installs vale (local ~/.local/bin)
+   - `vale check` → shows status
+   - `vale use qw` → backup + switch + prompt
+   - `vale use og` → probe fails, switch refused (zen is down; behavior verification)
+   - `vale restore` → rollback
+3. The web console model routing section shows the install panel
 
-## 实施文件
+## Implementation files
 
-- `gateway/src/index.js`：4 个公开端点 + health 生成函数 + console 面板数据
-- `gateway/src/vale-cli.js`：vale 脚本源文件（导出字符串 + 可测核心函数）
-- `gateway/scripts/` 或 inline：安装器模板（sh/ps1）
-- `gateway/public/`：模型路由区面板
-- `gateway/test/vale-cli.test.mjs`：测试
+- `gateway/src/index.js`: the 4 public endpoints + the health generation function + console panel data
+- `gateway/src/vale-cli.js`: the vale script source file (exports the string + testable core functions)
+- `gateway/scripts/` or inline: installer templates (sh/ps1)
+- `gateway/public/`: the model routing section panel
+- `gateway/test/vale-cli.test.mjs`: tests

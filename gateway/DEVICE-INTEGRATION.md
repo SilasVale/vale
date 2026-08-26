@@ -65,7 +65,7 @@ One DO per device (`idFromName`), WebSocket Hibernation. Extension pings every 2
 - Web panel retired → minimal status page (`GET /`); still serves `/mcp` (rmcp streamable HTTP, token-gated), `/api/events` SSE, `/api/status`, `POST /api/tools/{name}`
 - **terminal_screen** (`src/plugins/terminal/tools.rs`) — tail-N-lines of a session's output buffer, ANSI-stripped, for AI readability (default 60 lines, reports dropped bytes if the buffer wrapped)
 - **terminal_execute** (MCP `terminal_send`) — sends input and waits for a quiet period before returning accumulated screen text
-- **vale-tray** — Windows tray: 4 functions — copy MCP config, open console, local terminal, start/stop/restart/quit; status lines (状态/域名/Token)
+- **vale-tray** — Windows tray: 4 functions — copy MCP config, open console, local terminal, start/stop/restart/quit; status lines (status/domain/token)
 
 ## Console — Devices UI (`gateway/public/app.js`)
 

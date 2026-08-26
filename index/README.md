@@ -23,7 +23,7 @@ binaries, and browser extension) are served first via the `ASSETS` binding;
 the installer `.exe` is served from the Vercel mirror at
 `https://v.saisi.online/dl/ValeAgent-Setup.exe` because it exceeds the Workers
 Assets per-file limit. Run `./scripts/build-installer.sh` before deploying so
-the release and mirror artifacts are refreshed. The legacy installer path
+the installer and mirror artifacts are refreshed. The legacy installer path
 `/vale-agent/ValeAgent-Setup.exe` redirects to the mirror.
 
 ## Installing Vale Command on a machine

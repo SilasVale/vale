@@ -24,7 +24,7 @@ Output binaries:
 
 `scripts/build.sh agent` builds vale-agent + the vale-tray app in one go.
 
-## Device update — npm 一键更新 (THE ONLY sanctioned rollout path)
+## Device update — npm one-click update (THE ONLY sanctioned rollout path)
 
 **Always ship device updates through the npm flow. Never hand-roll
 kill/copy/restart scripts over a terminal PTY** — the PTY is hosted by the

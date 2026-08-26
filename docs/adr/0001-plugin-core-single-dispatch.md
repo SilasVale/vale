@@ -1,45 +1,45 @@
-# ADR 0001: Gateway 采用单一插件核心，index.ts 只做前端门
+# ADR 0001: Gateway uses a single plugin core; index.ts is only a front door
 
-状态: 已采纳 ｜ 日期: 2026-08-21 ｜ 影响范围: `gateway/src`
+Status: Adopted ｜ Date: 2026-08-21 ｜ Scope: `gateway/src`
 
-## 背景
+## Background
 
-vale-gate 参照 DSH/Cordis 的插件模型演进。round-73 引入了 `plugins/registry.ts`
-（`{ name, deps, setup(ctx) }` + 路由表 + ctx.api 能力面），但迁移是渐进式的：
+vale-gate has been evolving toward the DSH/Cordis plugin model. round-73 introduced `plugins/registry.ts`
+(`{ name, deps, setup(ctx) }` + a route table + the ctx.api capability surface), but the migration was incremental:
 
-1. `index.ts`（原 index.js）保留了完整的内联 console 处理链，插件路由先匹配、
-   未命中落到内联实现——**同一职责两份代码**。
-2. 双份代码已经造成过实际回归：round-99（插件的 /v1 实现从未被走到，800 行
-   死代码持续漂移）、round-120（内联 handleGatewayImpl 是过期副本）、
-   round-88（mcp 插件手写的会话门漏了 sess-revoked 黑名单）。
-3. 会话校验 `requireSession/sessionSecret` 复制了 **4 份**；上游路由表
-   `pickRoute/passthroughHeaders` 复制了 **2 份**且行为已分叉（or/ 渠道在
-   US_PROXY 开启时，探测与实际转发走不同上游）。
-4. 存在第二套从未接线的"生命周期容器"（container.ts/types.ts），其 dispatch
-   是返回 null 的占位符，与 registry 并存造成两个 PluginContext 契约。
+1. `index.ts` (formerly index.js) kept the full inline console handling chain: plugin routes match first,
+   and a miss falls through to the inline implementation — **two copies of code for the same responsibility**.
+2. The duplicated code has already caused real regressions: round-99 (the plugin's /v1 implementation was never reached; 800 lines
+   of dead code kept drifting), round-120 (the inline handleGatewayImpl was a stale copy),
+   round-88 (the mcp plugin's hand-written session gate missed the sess-revoked blacklist).
+3. Session validation `requireSession/sessionSecret` is duplicated **4 times**; the upstream route table
+   `pickRoute/passthroughHeaders` is duplicated **2 times** and the behavior has diverged (for the or/ channel,
+   probing and actual forwarding take different upstreams when US_PROXY is enabled).
+4. A second, never-wired "lifecycle container" exists (container.ts/types.ts): its dispatch
+   is a placeholder that returns null, and coexisting with the registry it creates two PluginContext contracts.
 
-## 决策
+## Decision
 
-1. **完成迁移，删除双轨**：所有 `/api/*`、`/mcp`、`/v1/*` 路由只存在于插件中；
-   `index.ts` 收缩为纯前端门（host 分流、HTTPS 重定向、静态资产、公共工具端点、
-   插件上下文装配）。1569 行 → ~400 行。
-2. **横切关注点单例化**：新建 `src/session.ts`（会话校验唯一实现）与
-   `src/upstream.ts`（渠道路由表唯一实现），插件与 index 共同导入。
-3. **删除未使用的第二套插件系统**（container.ts/types.ts/built-in），registry
-   自包含唯一定义契约；同时删除全部 `.js` 再导出 shim，wrangler main 直接指向
-   `src/index.ts`，测试直接导入真实模块而非桶文件。
-4. **控制台 UI 统一设计系统**：全部视图收敛到一套类词汇表 + 共享组件
-   （PageHeader/Card/Badge/Modal 等），深色模式与哈希路由。
+1. **Complete the migration, remove the dual track**: all `/api/*`, `/mcp`, `/v1/*` routes exist only in plugins;
+   `index.ts` shrinks to a pure front door (host routing, HTTPS redirect, static assets, public tooling endpoints,
+   plugin-context assembly). 1569 lines → ~400 lines.
+2. **Singleton cross-cutting concerns**: create `src/session.ts` (the single session-validation implementation) and
+   `src/upstream.ts` (the single channel route-table implementation), imported by both plugins and index.
+3. **Delete the unused second plugin system** (container.ts/types.ts/built-in); the registry
+   is self-contained and the single definition of the contract; also delete all `.js` re-export shims, point wrangler main
+   straight at `src/index.ts`, and have tests import the real modules instead of barrel files.
+4. **Unified design system for the console UI**: all views converge on one class vocabulary + shared components
+   (PageHeader/Card/Badge/Modal, etc.), dark mode and hash routing.
 
-## 后果
+## Consequences
 
-- 正向：新增能力 = 新增/修改一个插件文件；会话与路由语义只有一处真相；
-  测试直接针对模块；净删 ~1500 行。
-- 负向/代价：插件注册顺序即依赖顺序（auth 依赖 translate 的 api 能力），
-  需要在注册列表处维护顺序注释；前缀匹配的 `route()` 辅助函数对子路径敏感，
-  动态路由一律使用精确 match（devices 插件已有先例）。
+- Positive: a new capability = adding or modifying one plugin file; session and routing semantics have a single source of truth;
+  tests target modules directly; net deletion of ~1500 lines.
+- Negative/cost: plugin registration order is dependency order (auth depends on translate's api capability),
+  so order comments must be maintained at the registration list; the prefix-matching `route()` helper is sensitive
+  to subpaths, and dynamic routes always use exact match (the devices plugin already sets the precedent).
 
-## 验证
+## Verification
 
-- `node --test`：173 通过 / 0 失败（覆盖 console API、代理鉴权、MCP、plugin-hub）。
-- `npx wrangler deploy --dry-run`：打包与 DO 导出校验通过。
+- `node --test`: 173 passed / 0 failed (covers console API, proxy auth, MCP, plugin-hub).
+- `npx wrangler deploy --dry-run`: bundling and DO export checks pass.

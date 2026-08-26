@@ -1,21 +1,21 @@
-# 网页即控制台（auto 路由）— 实施计划
+# The web page is the console (auto routing) — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Claude Code 模型名固定 `auto`，网关按用户网页选择（KV 存储）动态路由；密钥管理面板新增"渠道切换"卡片区（key-card 风格）。
+**Goal:** Claude Code's model name is fixed to `auto`; the gateway routes dynamically by the user's web selection (KV storage); the key-management panel gains a "channel switch" card section (key-card style).
 
-**Architecture:** 后端：`store.js` 加 `getUserRoute/setUserRoute`（复用 cget/cset 缓存模式，KV `route:<uid>` 存完整模型名）；`index.js` 在 handleGateway 解析 `model === "auto"` 为 `resolveAutoModel(env, uid)`（所选渠道不可用回退推荐），handleConsole 加 `GET/PUT /api/me/route`（session 鉴权 + MODELS 白名单校验）。前端：密钥管理面板 key-card 风格渠道卡片（/api/health + /api/me/route），移除概览页 Vale 卡。
+**Architecture:** Backend: `store.js` gains `getUserRoute/setUserRoute` (reusing the cget/cset cache pattern; KV `route:<uid>` stores the full model name); `index.js` resolves `model === "auto"` in handleGateway via `resolveAutoModel(env, uid)` (falls back to the recommended channel when the chosen one is unusable); handleConsole gains `GET/PUT /api/me/route` (session auth + MODELS whitelist validation). Frontend: key-card-style channel cards in the key-management panel (/api/health + /api/me/route), and removal of the overview-page Vale card.
 
-**Tech Stack:** Cloudflare Worker（store.js/index.js）、vanilla JS 前端、`node --test`。
+**Tech Stack:** Cloudflare Worker (store.js/index.js), vanilla JS frontend, `node --test`.
 
 ## Global Constraints
 
-- route 值 = 完整模型名（如 `qw/qwen3.8-max-preview`）；`model === "auto"` 字面量精确匹配才触发用户路由（无前缀模型名保持 default→ds 现状）
-- `resolveAutoModel`：所选渠道需在 MODELS 白名单且（og）breaker 未开，否则回退 `buildHealth().recommended`，再无则 `ds/deepseek-v4-flash`
-- `PUT /api/me/route`：body `{ model }`，`model` 必须精确匹配 MODELS 白名单（400 否则）；`model: null` 清除选择
-- 缓存语义：内存为主，KV 每 isolate 24h 读一次；setUserRoute write-through
-- 前端：渠道卡片复用 `key-card` CSS class；概览 Vale 卡整体移除（HTML/JS/i18n）
-- 测试：62 现有全绿 + 新增；commit conventional + Co-Authored-By
+- route value = full model name (e.g. `qw/qwen3.8-max-preview`); user routing triggers only on an exact literal match of `model === "auto"` (models without the prefix keep the current default→ds behavior)
+- `resolveAutoModel`: the chosen channel must be in the MODELS whitelist and (for og) the breaker must not be open; otherwise fall back to `buildHealth().recommended`, and if none, `ds/deepseek-v4-flash`
+- `PUT /api/me/route`: body `{ model }`; `model` must exactly match the MODELS whitelist (otherwise 400); `model: null` clears the selection
+- Cache semantics: memory-first, KV read once per isolate per 24h; setUserRoute is write-through
+- Frontend: channel cards reuse the `key-card` CSS class; the overview Vale card is removed entirely (HTML/JS/i18n)
+- Tests: all 62 existing green + new ones; conventional commits + Co-Authored-By
 
 ---
 
@@ -23,12 +23,12 @@
 
 **Files:**
 - Modify: `gateway/src/store.js`
-- Test: `gateway/test/store.cache.test.mjs`（追加）
+- Test: `gateway/test/store.cache.test.mjs` (append)
 
 **Interfaces:**
-- Produces: `getUserRoute(env, id)` → `string | null`；`setUserRoute(env, id, model)` → void。Task 2 消费。
+- Produces: `getUserRoute(env, id)` → `string | null`; `setUserRoute(env, id, model)` → void. Consumed by Task 2.
 
-- [ ] **Step 1: 写失败测试**（`store.cache.test.mjs` 追加）
+- [ ] **Step 1: Write a failing test** (append to `store.cache.test.mjs`)
 
 ```js
 test("getUserRoute / setUserRoute: cached read, write-through refresh", async () => {
@@ -36,19 +36,19 @@ test("getUserRoute / setUserRoute: cached read, write-through refresh", async ()
   assert.equal(await store.getUserRoute(kv, "admin"), null); // miss → 1 get
   await store.setUserRoute(kv, "admin", "qw/qwen3.8-max-preview"); // put + cache
   assert.equal(await store.getUserRoute(kv, "admin"), "qw/qwen3.8-max-preview"); // cache hit
-  assert.equal(kv.counters.get, 1); // 只有首次读 KV
+  assert.equal(kv.counters.get, 1); // only the first read hits KV
   await store.setUserRoute(kv, "admin", "ds/deepseek-v4-flash"); // write-through
   assert.equal(await store.getUserRoute(kv, "admin"), "ds/deepseek-v4-flash");
-  assert.equal(kv.counters.get, 1); // 仍无新 KV 读
+  assert.equal(kv.counters.get, 1); // still no new KV read
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [ ] **Step 2: Run the test to confirm it fails**
 
 Run: `cd ~/vale/gateway && node --test test/store.cache.test.mjs`
 Expected: FAIL — `store.getUserRoute is not a function`
 
-- [ ] **Step 3: 实现**（`store.js`，放在 `getUserKeys` 附近）
+- [ ] **Step 3: Implement** (`store.js`, near `getUserKeys`)
 
 ```js
 /* ---- Per-user route selection (model=auto) ---- */
@@ -70,18 +70,18 @@ export async function setUserRoute(env, id, model) {
     return;
   }
   await env.KEYS.put(key, String(model));
-  cset(key, String(model)); // write-through：切换立即生效（同 isolate 零延迟）
+  cset(key, String(model)); // write-through: the switch takes effect immediately (zero latency within the same isolate)
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [ ] **Step 4: Run the test to confirm it passes**
 
 Run: `cd ~/vale/gateway && node --test test/store.cache.test.mjs`
 Expected: PASS
 
-- [ ] **Step 5: 完整测试 + commit**
+- [ ] **Step 5: Full test suite + commit**
 
-Run: `cd ~/vale/gateway && npm test` — 全绿
+Run: `cd ~/vale/gateway && npm test` — all green
 ```bash
 cd ~/vale && git add gateway/src/store.js gateway/test/store.cache.test.mjs
 git commit -m "feat(stage-gateway): store — per-user route selection (get/set, write-through cache)" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
@@ -89,17 +89,17 @@ git commit -m "feat(stage-gateway): store — per-user route selection (get/set,
 
 ---
 
-### Task 2: index.js — resolveAutoModel + auto 分支 + /api/me/route 端点
+### Task 2: index.js — resolveAutoModel + the auto branch + /api/me/route endpoints
 
 **Files:**
 - Modify: `gateway/src/index.js`
-- Test: `gateway/test/health.test.mjs`（追加 resolveAutoModel 用例）
+- Test: `gateway/test/health.test.mjs` (append resolveAutoModel cases)
 
 **Interfaces:**
-- Consumes: Task 1 的 `getUserRoute/setUserRoute`；现有 `buildHealth(env)`、`isChannelDegraded(env)`、`MODELS`。
-- Produces: `resolveAutoModel(env, uid)` 导出；handleGateway 的 `model === "auto"` 分支；console `GET/PUT /api/me/route`。Task 3 消费 `/api/me/route`。
+- Consumes: Task 1's `getUserRoute/setUserRoute`; existing `buildHealth(env)`, `isChannelDegraded(env)`, `MODELS`.
+- Produces: exported `resolveAutoModel(env, uid)`; the `model === "auto"` branch in handleGateway; console `GET/PUT /api/me/route`. Consumed by Task 3.
 
-- [ ] **Step 1: 写失败测试**（`health.test.mjs` 追加）
+- [ ] **Step 1: Write a failing test** (append to `health.test.mjs`)
 
 ```js
 // ── auto route resolution ────────────────────────────
@@ -143,16 +143,16 @@ test("resolveAutoModel: chosen model not in whitelist → falls back", async () 
 });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [ ] **Step 2: Run the test to confirm it fails**
 
 Run: `cd ~/vale/gateway && node --test test/health.test.mjs`
 Expected: FAIL — `resolveAutoModel is not exported`
 
-- [ ] **Step 3: 实现**
+- [ ] **Step 3: Implement**
 
-a) 导入 store 新函数（`index.js` 顶部 import 行追加 `getUserRoute, setUserRoute`）。
+a) Import the new store functions (append `getUserRoute, setUserRoute` to the import line at the top of `index.js`).
 
-b) 在 `buildHealth` 之后加：
+b) After `buildHealth`, add:
 
 ```js
 /** Model usable for routing? In the whitelist and (og) breaker not open. */
@@ -176,20 +176,20 @@ export async function resolveAutoModel(env, uid) {
 }
 ```
 
-c) handleGateway 的 model 解析（`const model = body.model || "";` 之后、`const prefix = ...` 之前）：
+c) The model resolution in handleGateway (after `const model = body.model || "";`, before `const prefix = ...`):
 
 ```js
   let model = body.model || "";
   if (model === "auto") {
-    // Claude Code 固定模型名 auto：按用户网页选择路由
+    // Claude Code's fixed model name "auto": route by the user's web selection
     model = await resolveAutoModel(env, user.id);
   }
   const prefix = model.split("/")[0];
 ```
 
-注意：`model` 从 `const` 改为 `let`。
+Note: `model` changes from `const` to `let`.
 
-d) console 端点（handleConsole 的 session 区，`/api/me` 处理之后）：
+d) console endpoints (in handleConsole's session section, after the `/api/me` handling):
 
 ```js
   // Per-user route selection (Claude Code model=auto)
@@ -208,10 +208,10 @@ d) console 端点（handleConsole 的 session 区，`/api/me` 处理之后）：
   }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [ ] **Step 4: Run the test to confirm it passes**
 
 Run: `cd ~/vale/gateway && node --test test/health.test.mjs && npm test`
-Expected: PASS（全部）
+Expected: PASS (all)
 
 - [ ] **Step 5: commit**
 
@@ -222,19 +222,19 @@ git commit -m "feat(stage-gateway): model=auto routes per-user choice; /api/me/r
 
 ---
 
-### Task 3: 前端 — 模型路由面板 key-card 风格渠道切换卡 + 移除概览 Vale 卡
+### Task 3: Frontend — key-card-style channel switch cards in the model-routing panel + removing the overview Vale card
 
 **Files:**
 - Modify: `gateway/public/index.html`
 - Modify: `gateway/public/app.js`
 
 **Interfaces:**
-- Consumes: Task 2 的 `GET/PUT /api/me/route`；现有 `api()`、`t()`、`esc()`、`/api/health`。
-- Produces: 模型路由面板 `#route-cards`（渠道卡片网格，key-card 风格，替换 switchboard）、`#btn-route-auto`；移除 `#vale-card` 及 `loadValeCard`/`valeSetupCommand`。
+- Consumes: Task 2's `GET/PUT /api/me/route`; existing `api()`, `t()`, `esc()`, `/api/health`.
+- Produces: `#route-cards` in the model-routing panel (channel card grid, key-card style, replacing the switchboard), `#btn-route-auto`; removes `#vale-card` and `loadValeCard`/`valeSetupCommand`.
 
-- [ ] **Step 1: index.html — 模型路由面板改造、移除概览 Vale 卡**
+- [ ] **Step 1: index.html — rework the model-routing panel, remove the overview Vale card**
 
-a) `#panel-routes` 中，把 switchboard 卡片替换为：
+a) In `#panel-routes`, replace the switchboard card with:
 
 ```html
         <div class="card">
@@ -247,13 +247,13 @@ a) `#panel-routes` 中，把 switchboard 卡片替换为：
         </div>
 ```
 
-（`#routes-switchboard` 及其 wrapper card 删除；客户端接入示例卡保留。密钥管理面板不动。）
+(Delete `#routes-switchboard` and its wrapper card; keep the client connection example card. The key-management panel stays untouched.)
 
-b) 删除概览页整个 `#vale-card`（`<div class="card" id="vale-card">...</div>`）。
+b) Delete the entire overview-page `#vale-card` (`<div class="card" id="vale-card">...</div>`).
 
-- [ ] **Step 2: app.js — i18n（zh/en）**
+- [ ] **Step 2: app.js — i18n (zh/en)**
 
-zh 新增/替换：
+zh additions/replacements:
 ```js
       "route.title": "渠道切换",
       "route.desc": "Claude Code 模型名配 <code>auto</code> 后，在这里点一下即可切换，无需重启。",
@@ -264,16 +264,16 @@ zh 新增/替换：
       "route.fail": "切换失败",
       "route.loadFail": "渠道状态加载失败",
 ```
-en 对应英文。删除 `vale.*` keys（`vale.cardTitle`、`vale.desc`、`vale.defaultModel`、`vale.setupBtn`、`vale.setupNote`、`vale.cheat`、`vale.healthLoading`、`vale.healthFail`、`vale.recommend`、`vale.copyFail`）。
+en: corresponding English. Delete the `vale.*` keys (`vale.cardTitle`, `vale.desc`, `vale.defaultModel`, `vale.setupBtn`, `vale.setupNote`, `vale.cheat`, `vale.healthLoading`, `vale.healthFail`, `vale.recommend`, `vale.copyFail`).
 
-- [ ] **Step 3: app.js — 渲染与交互**
+- [ ] **Step 3: app.js — rendering and interaction**
 
-删除 `VALE_FALLBACK_MODELS`、`valeSetupCommand`、`loadValeCard` 及 `loadOverview` 里的 `await loadValeCard();` 调用；替换为：
+Delete `VALE_FALLBACK_MODELS`, `valeSetupCommand`, `loadValeCard`, and the `await loadValeCard();` call in `loadOverview`; replace with:
 
 ```js
   /* ============ route switch (routing panel) ============ */
-  // 渠道切换：/api/health 状态 + /api/me/route 当前选择；点 [使用] → PUT。
-  // 卡片复用 key-card 的样式，视觉与密钥管理页一致。
+  // Channel switch: /api/health status + /api/me/route current selection; click [use] → PUT.
+  // Cards reuse the key-card styles for a consistent look with the key-management page.
   function routeCardHTML(ch, current) {
     const status = ch.ok ? `<span class="badge ok">${t("route.use")}</span>` : `<span class="badge bad">${ch.reason || "异常"}</span>`;
     const isCur = current === ch.model;
@@ -324,9 +324,9 @@ en 对应英文。删除 `vale.*` keys（`vale.cardTitle`、`vale.desc`、`vale.
   }
 ```
 
-`loadRoutesPanel()` 末尾追加 `await loadRouteCards();`（模型路由面板加载器；switchboard 渲染移除）。
+Append `await loadRouteCards();` at the end of `loadRoutesPanel()` (the model-routing panel loader; switchboard rendering removed).
 
-注意：`btn-route-auto` 的 addEventListener 在每次 loadRouteCards 里绑定会重复 —— 把 auto 按钮绑定移到 init（一次性），loadRouteCards 只负责渲染 + use 按钮（use 按钮是动态 innerHTML 里的，绑定在 box 上 ✅ 每次渲染新 listener 替换旧的，无重复问题）。调整：auto 按钮在 init 里绑定，点击时调一个共享的 `clearRoute()` 函数：
+Note: binding `btn-route-auto`'s addEventListener inside loadRouteCards would duplicate listeners each render — move the auto-button binding to init (once); loadRouteCards only renders and binds the use buttons (use buttons live in the dynamic innerHTML, bound on the box ✅ each render's new listener replaces the old one, no duplication). Adjustment: bind the auto button in init; on click, call a shared `clearRoute()` function:
 
 ```js
   async function clearRoute() {
@@ -335,13 +335,13 @@ en 对应英文。删除 `vale.*` keys（`vale.cardTitle`、`vale.desc`、`vale.
     else toast(t("route.fail"), true);
   }
 ```
-init 里：`$("#btn-route-auto")?.addEventListener("click", clearRoute);`
-`loadRouteCards` 里删除 auto 按钮绑定。
+In init: `$("#btn-route-auto")?.addEventListener("click", clearRoute);`
+Remove the auto-button binding inside `loadRouteCards`.
 
-- [ ] **Step 4: 验证**
+- [ ] **Step 4: Verification**
 
 Run: `cd /home/zhengsaisi/vale/gateway && node --check public/app.js && npm test`
-Expected: 语法 OK；62 全绿
+Expected: syntax OK; all 62 green
 
 - [ ] **Step 5: commit**
 
@@ -352,45 +352,45 @@ git commit -m "feat(stage-gateway): console — channel switch cards in keys pan
 
 ---
 
-### Task 4: 部署 + E2E 验证（含用户配置迁移）
+### Task 4: Deploy + E2E verification (including user config migration)
 
-**Files:** 无代码改动（部署与验证）。
+**Files:** No code changes (deploy and verify).
 
-- [ ] **Step 1: 部署**
+- [ ] **Step 1: Deploy**
 
-Run: `cd ~/vale && ./scripts/build.sh gateway`；等 45s 传播
+Run: `cd ~/vale && ./scripts/build.sh gateway`; wait 45s for propagation
 
-- [ ] **Step 2: API 验证（curl）**
+- [ ] **Step 2: API verification (curl)**
 
 ```bash
-# 登录拿 session cookie（admin 密码从 KV 读，同之前验证流程）
+# Log in to get the session cookie (admin password read from KV, same as the previous verification flow)
 # GET /api/me/route → {"model":null}
 # PUT /api/me/route {"model":"qw/qwen3.8-max-preview"} → {"ok":true,"model":"..."}
 # PUT /api/me/route {"model":"xx/nope"} → 400
-# 请求验证 auto 路由：
+# Request to verify auto routing:
 curl -s https://api.saisi.online/v1/messages -H "x-api-key: 5e7874ea..." -d '{"model":"auto","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}'
-# → 200，响应 model 字段 = qw/qwen3.8-max-preview（所选渠道）
-# count_tokens auto 同样正常
+# → 200, response model field = qw/qwen3.8-max-preview (the chosen channel)
+# count_tokens auto works the same
 ```
 
-- [ ] **Step 3: 前端验证（curl HTML + 浏览器）**
+- [ ] **Step 3: Frontend verification (curl HTML + browser)**
 
 ```bash
 curl -s https://ai.saisi.online/ | grep -c 'id="route-cards"'   # ≥1
-curl -s https://ai.saisi.online/ | grep -c 'id="vale-card"'     # 0（已移除）
+curl -s https://ai.saisi.online/ | grep -c 'id="vale-card"'     # 0 (removed)
 ```
-浏览器：密钥管理页渠道卡片（当前高亮、[使用] 点击切换、自动按钮）；概览页无 Vale 卡残留。
+Browser: channel cards on the key-management page (current one highlighted, click [use] to switch, auto button); no Vale card remnant on the overview page.
 
-- [ ] **Step 4: 用户配置迁移（settings.json 模型 → auto）**
+- [ ] **Step 4: User config migration (settings.json model → auto)**
 
-把 `~/.claude/settings.json` 的 7 个模型字段改为 `auto`（备份后改，保持 base/token）—— 询问用户确认后执行；改完提示"以后在网页密钥管理页点渠道即可切换，无需重启"。
+Change the 7 model fields in `~/.claude/settings.json` to `auto` (back up first, keep base/token) — do it only after asking the user to confirm; afterwards tell them "from now on, click a channel on the web key-management page to switch, no restart needed".
 
-- [ ] **Step 5: 回归**
+- [ ] **Step 5: Regression**
 
-`cd ~/vale/gateway && npm test` 全绿；`git status` 干净。
+`cd ~/vale/gateway && npm test` all green; `git status` clean.
 
-## Self-Review 备注
+## Self-Review Notes
 
-- Spec 覆盖：getUserRoute/setUserRoute ✅(T1)、resolveAutoModel + auto 分支 ✅(T2)、/api/me/route ✅(T2)、模型路由面板 key-card 渠道卡 ✅(T3)、移除概览 Vale 卡 ✅(T3)、验证+迁移 ✅(T4)。
-- 类型一致：`getUserRoute(env, id)`/`setUserRoute(env, id, model)`/`resolveAutoModel(env, uid)`/`isModelUsable(env, model)` 跨任务一致；前端 `model: null` 清除语义与 setUserRoute 的 null 分支一致。
-- 无占位符。
+- Spec coverage: getUserRoute/setUserRoute ✅(T1), resolveAutoModel + auto branch ✅(T2), /api/me/route ✅(T2), key-card channel cards in the model-routing panel ✅(T3), overview Vale card removal ✅(T3), verification + migration ✅(T4).
+- Type consistency: `getUserRoute(env, id)`/`setUserRoute(env, id, model)`/`resolveAutoModel(env, uid)`/`isModelUsable(env, model)` are consistent across tasks; the frontend's `model: null` clear semantics match setUserRoute's null branch.
+- No placeholders.

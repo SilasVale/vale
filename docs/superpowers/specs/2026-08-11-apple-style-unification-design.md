@@ -1,46 +1,46 @@
-# Vale 全站统一 — 苹果浅色风格
+# Vale Site-wide Unification — Apple Light Style
 
-日期:2026-08-11
-状态:已确认(用户指定苹果风格 + 浅色)
+Date: 2026-08-11
+Status: Confirmed (user specified the Apple style + light theme)
 
-## 背景
+## Background
 
-Vale 全家桶的 6 处页面各有各的样式语言,品牌色不统一:
-- **网关控制台**(gateway/public):暖白底 + 青绿(现 #0b7a6e,AA 修订后)+ Space Grotesk —— 最完整的一套
-- **vale-agent 面板**(agent/resources/panel):浅蓝 #5b6cf0,无毛玻璃
-- **index 下载站**(index/src/index.js 内嵌):蓝紫渐变 #5b6cf0→#8a6ff0
-- **扩展 popup / options / terminal**(extension/):灰蓝,简陋
-- **code viewer**(gateway/public/code/):与 console 同源,但独立文件
+The 6 pages of the Vale family each have their own style language; the brand color isn't unified:
+- **Gateway console** (gateway/public): warm-white background + teal green (currently #0b7a6e, after the AA revision) + Space Grotesk — the most complete set
+- **vale-agent panel** (agent/resources/panel): light blue #5b6cf0, no frosted glass
+- **index download site** (embedded in index/src/index.js): blue-purple gradient #5b6cf0→#8a6ff0
+- **extension popup / options / terminal** (extension/): gray-blue, crude
+- **code viewer** (gateway/public/code/): same source as the console, but as a standalone file
 
-用户要求:**所有页面统一到苹果浅色风格**,包括 vale-agent 应用程序(tray 图标、面板、安装器)。
+User requirement: **unify all pages to the Apple light style**, including the vale-agent application (tray icon, panel, installer).
 
-## 设计 token(统一基准)
+## Design tokens (unified baseline)
 
 ```css
 :root {
-  /* 苹果浅色 */
-  --bg: #f5f5f7;            /* 苹果系统灰底 */
-  --surface: #ffffff;       /* 卡片/毛玻璃表面 */
-  --surface-glass: rgba(255,255,255,0.72);  /* 毛玻璃 */
-  --ink: #1d1d1f;           /* 苹果墨黑 */
-  --muted: #6e6e73;         /* 次级文字 */
-  --faint: #6e6e73;         /* AA 修订(2026-08-12):#86868b → #6e6e73,白底文字 3.62→5.07:1 */
-  --line: rgba(0,0,0,0.08); /* 细分隔线 */
+  /* Apple light */
+  --bg: #f5f5f7;            /* Apple system gray background */
+  --surface: #ffffff;       /* card / frosted-glass surface */
+  --surface-glass: rgba(255,255,255,0.72);  /* frosted glass */
+  --ink: #1d1d1f;           /* Apple ink black */
+  --muted: #6e6e73;         /* secondary text */
+  --faint: #6e6e73;         /* AA revision (2026-08-12): #86868b → #6e6e73, text on white 3.62→5.07:1 */
+  --line: rgba(0,0,0,0.08); /* fine divider line */
   --line-strong: rgba(0,0,0,0.14);
 
-  --accent: #0b7a6e;        /* AA 修订(2026-08-12):#0e9384 → #0b7a6e,白字 3.80→5.22:1;品牌青绿保留为 --accent-ink 的旧值注释 */
+  --accent: #0b7a6e;        /* AA revision (2026-08-12): #0e9384 → #0b7a6e, white text 3.80→5.22:1; the brand teal is kept as the old-value comment on --accent-ink */
   --accent-ink: #0b7a6e;
   --accent-soft: #e7f5f2;
   --danger: #dc2626;
 
-  /* 苹果圆角 + 阴影 */
+  /* Apple radii + shadows */
   --radius: 14px;
   --radius-sm: 10px;
   --radius-lg: 20px;
   --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
   --shadow-lg: 0 12px 32px rgba(0,0,0,0.12);
 
-  /* 苹果字体栈(系统 SF,回退 PingFang) */
+  /* Apple font stack (system SF, falling back to PingFang) */
   --font: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
           "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
   --font-display: -apple-system, "SF Pro Display", "PingFang SC", sans-serif;
@@ -48,7 +48,7 @@ Vale 全家桶的 6 处页面各有各的样式语言,品牌色不统一:
 }
 ```
 
-毛玻璃通用卡片:
+Generic frosted-glass card:
 
 ```css
 .glass {
@@ -60,47 +60,47 @@ Vale 全家桶的 6 处页面各有各的样式语言,品牌色不统一:
 }
 ```
 
-品牌 mark:墨黑圆角方块 + 白色 V,圆角 10px,可选毛玻璃底。
+Brand mark: ink-black rounded square + white V, 10px radius, optional frosted-glass background.
 
-## 改动清单
+## Change list
 
-### 1. agent/resources/panel/(vale-agent 面板,web.rs include_str 内嵌)
+### 1. agent/resources/panel/ (vale-agent panel, embedded via include_str in web.rs)
 - `index.html` / `panel.css` / `panel.js`:
-  - CSS 换为统一 token;工具栏毛玻璃;xterm 白底墨字保留
-  - **修复布局**:加 `window resize` + `visibilitychange` 监听,统一 `refitAll()` 对所有 session `fit.fit()`
-  - favicon:内嵌 SVG 品牌 mark(web.rs 需加一行 serve)
-- 构建:`cargo xwin check` + 重编译发布
+  - Swap the CSS to the unified tokens; frosted-glass toolbar; keep xterm's white background with ink text
+  - **Layout fix**: add `window resize` + `visibilitychange` listeners, and a single `refitAll()` that calls `fit.fit()` on all sessions
+  - favicon: inline SVG brand mark (web.rs needs one extra serve line)
+- Build: `cargo xwin check` + recompile for release
 
-### 2. extension/(popup / options / terminal)
-- 三个页面的 HTML/CSS 换统一 token + 毛玻璃
-- 图标:icons/ 换成统一品牌 mark(16/48/128)
-- 重新 zip 打包 → index/public/vale-agent/vale-browser-control.zip
+### 2. extension/ (popup / options / terminal)
+- Swap the three pages' HTML/CSS to the unified tokens + frosted glass
+- Icons: replace icons/ with the unified brand mark (16/48/128)
+- Re-zip the package → index/public/vale-agent/vale-browser-control.zip
 
-### 3. index/src/index.js(下载站)
-- 内嵌 PAGE 的 CSS 换统一 token;「Vale Command」文案 → 「Vale Agent」
-- favicon:内嵌 SVG
-- 部署 index worker
+### 3. index/src/index.js (download site)
+- Swap the embedded PAGE CSS to the unified tokens; "Vale Command" copy → "Vale Agent"
+- favicon: inline SVG
+- Deploy the index worker
 
-### 4. gateway/public/(控制台)
-- 保持浅色基准,但向苹果风格收拢:毛玻璃侧边栏、阴影/圆角微调
-- favicon + 品牌 SVG
-- 镜像 code/files/vale-gate/ 同步
+### 4. gateway/public/ (console)
+- Keep the light baseline but pull it toward the Apple style: frosted-glass sidebar, shadow/radius fine-tuning
+- favicon + brand SVG
+- Sync the mirrored code/files/vale-gate/
 
-### 5. code viewer(gateway/public/code/)
-- 同 console 风格,跟随统一 token
+### 5. code viewer (gateway/public/code/)
+- Same style as the console, following the unified tokens
 
-### 6. vale-agent 应用本身
-- tray 图标(tray-icon.png 32x32):换成统一品牌 mark
-- 安装器(vale-agent-install.nsi)图标 + 面板 title/favicon
-- 重编译 vale-agent + vale-tray
+### 6. The vale-agent application itself
+- Tray icon (tray-icon.png 32x32): replace with the unified brand mark
+- Installer (vale-agent-install.nsi) icon + panel title/favicon
+- Recompile vale-agent + vale-tray
 
-### 7. 目录重命名(顺手)
-- `command/` → `agent/`(git mv 已完成)
-- build.sh / build-installer.sh / README / CLAUDE.md / index.js 注释 / DEVICE-INTEGRATION.md 路径更新
+### 7. Directory rename (while at it)
+- `command/` → `agent/` (git mv already done)
+- Path updates in build.sh / build-installer.sh / README / CLAUDE.md / index.js comments / DEVICE-INTEGRATION.md
 
-## 验证
+## Verification
 
-- `./scripts/build.sh` 全绿(cargo xwin check + build)
-- 每个页面截图对比(浅色 + 毛玻璃 + 圆角)
-- 扩展 zip 重打包,控制台下载链接可用
-- 部署 gateway/index,线上检查
+- `./scripts/build.sh` all green (cargo xwin check + build)
+- Screenshot comparison for each page (light + frosted glass + rounded corners)
+- The extension zip is re-packed; the console download link works
+- Deploy gateway/index; check live
