@@ -152,6 +152,7 @@ test("contract: every agent terminal tool is registered in the gateway list", as
     "terminal_history", "terminal_diag_write", "terminal_diag_read",
     "secret_set", "secret_get", "secret_delete",
     "terminal_saved_connections", "terminal_connect_saved",
+    "terminal_env", "browser_pw_info", "browser_run_script",
   ];
   for (const t of AGENT_SPEC_TOOLS) {
     assert.ok(names.includes(t), `gateway MCP list missing agent tool: ${t}`);

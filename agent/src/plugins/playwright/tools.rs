@@ -69,7 +69,7 @@ let has_core = md.map(|m| m.is_dir()).unwrap_or(false);
                     "  await browser.close();",
                     "})().catch(e => { console.error('FATAL', e); process.exit(1); });",
                 ].join("\n");
-                Ok(to_value_or_empty(&json!({
+                Ok(to_value_or_empty(json!({
                     "pw_dir": pw.to_string_lossy(),
                     "node_exe": node_exe_path(&pw).to_string_lossy(),
                     "playwright_core_version": core_ver,
@@ -89,7 +89,7 @@ let has_core = md.map(|m| m.is_dir()).unwrap_or(false);
 }
 
 /// 2) browser_run_script — execute a playwright script with the bundled
-/// runtime. Scripts should require the bundled core (see browser_pw_info).
+///    runtime. Scripts should require the bundled core (see browser_pw_info).
 fn tool_browser_run_script() -> ToolDef {
     ToolDef::new(
         "browser_run_script",
@@ -108,7 +108,7 @@ fn tool_browser_run_script() -> ToolDef {
                 let pw = dir.join("playwright");
                 let node = node_exe_path(&pw);
                 if !node.exists() {
-                    return Ok(to_value_or_empty(&json!({"error": format!("bundled node not found at {}", node.to_string_lossy())})));
+                    return Ok(to_value_or_empty(json!({"error": format!("bundled node not found at {}", node.to_string_lossy())})));
                 }
                 let out_dir = dir.join("pwout");
                 let _ = std::fs::create_dir_all(&out_dir);
@@ -117,13 +117,13 @@ fn tool_browser_run_script() -> ToolDef {
                     .unwrap_or_default();
                 let script_src = params.get("script").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if script_src.trim().is_empty() {
-                    return Ok(to_value_or_empty(&json!({"error": "script is required"})));
+                    return Ok(to_value_or_empty(json!({"error": "script is required"})));
                 }
                 let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(120).min(600);
                 let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
                 let script_path = out_dir.join(format!("pwai_{ts}.js"));
                 if let Err(e) = std::fs::write(&script_path, &script_src) {
-                    return Ok(to_value_or_empty(&json!({"error": format!("write script failed: {e}")})));
+                    return Ok(to_value_or_empty(json!({"error": format!("write script failed: {e}")})));
                 }
                 let result = tokio::time::timeout(
                     std::time::Duration::from_secs(timeout_secs),
@@ -158,7 +158,7 @@ fn tool_browser_run_script() -> ToolDef {
                 let after: Vec<String> = std::fs::read_dir(&out_dir)
                     .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".png") && !before.contains(&e.file_name().to_string_lossy().to_string())).map(|e| e.file_name().to_string_lossy().to_string()).collect())
                     .unwrap_or_default();
-                Ok(to_value_or_empty(&json!({
+                Ok(to_value_or_empty(json!({
                     "exit_code": exit_code,
                     "timed_out": timed_out,
                     "stdout": trunc(stdout),

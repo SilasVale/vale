@@ -116,7 +116,9 @@ export async function fetchWithRetry(
         }
         if (!insp.accepted) {
           detail = `in-band upstream error${insp.status ? ` ${insp.status}` : ""}: ${insp.detail || "rejected by inspection"}`;
-          console.error(`[gateway] upstream 200 rejected on attempt ${attempt}/${attempts} — ${detail}`);
+          console.error(
+            `[gateway] upstream 200 rejected on attempt ${attempt}/${attempts} — ${detail}`,
+          );
           inspectFailure = { status: insp.status };
           if (attempt < attempts) {
             await new Promise((r) => setTimeout(r, retryWaitMs()));
@@ -135,7 +137,9 @@ export async function fetchWithRetry(
     // processed) is always safe to retry.
     if (last.status === 429 || (last.status >= 500 && mayRetry5xx(last.status))) {
       detail = `upstream ${last.status} (retried ${attempt}/${attempts})`;
-      console.error(`[gateway] upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`);
+      console.error(
+        `[gateway] upstream ${last.status} on attempt ${attempt}/${attempts} — retrying`,
+      );
       if (attempt < attempts) {
         await new Promise((r) => setTimeout(r, retryWaitMs()));
         continue;

@@ -137,7 +137,6 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
   }
 }
 
-
 // round-158: device self-register — the npm-installed agent registers itself
 // with its OWN device token (the 64-hex credential from config.yaml). No reg
 // key, no admin session: possession of the token IS the device identity.
@@ -660,7 +659,7 @@ async function proxyDevice(
     // SecurityError at mount (white screen) and cookies are never sent (all
     // /proxy/* API calls 401). The sandbox is fundamentally incompatible
     // with the panel's same-origin architecture.
-    // ACTUAL INVARIANT (round-133/134): the ADMIN 打开面板 flow opens the
+    // ACTUAL INVARIANT (round-133/134): the ADMIN opens-panel flow opens the
     // panel at the DEVICE origin (https://<hostname>/panel/) where no console
     // cookie is reachable — that surface is closed. The console-origin proxy
     // path (/api/devices/<n>/proxy/panel/) remains reachable by BOTH the

@@ -113,7 +113,7 @@ fn tool_terminal_env() -> ToolDef {
                     .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                     .unwrap_or_default()
                 } else { String::new() };
-                Ok(to_value_or_empty(&json!({
+                Ok(to_value_or_empty(json!({
                     "default_shell": "powershell (Windows)",
                     "shell_hint": "PowerShell 5.1 — use terminal_execute with full commands; long pastes are chunked automatically",
                     "install_dir": dir.to_string_lossy(),
@@ -227,12 +227,16 @@ fn tool_open(
                         let cmd = std::path::Path::new(&target)
                             .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
                         if cmd.is_empty() || cmd.eq_ignore_ascii_case("powershell.exe") || cmd.eq_ignore_ascii_case("pwsh.exe") {
-                            // round-156: 实测恢复"卸载 PSReadLine"。512B/8ms 分块
-                        // 下 ConPTY 原始回显不再碎裂(实测 2KB 命令整行干净
-                        // 回显),而 PSReadLine 的增量行重绘才是 round-155 屏
-                        // 幕碎片/`>>` 续行残影的来源。卸载后由 ConsoleHost
-                        // 素回显,输出与提示符干净。注入行的回显被 Clear-Host
-                        // 清掉;OSC133 提示符标记不变。
+                            // round-156: measurements revert to "unload PSReadLine". With 512B/8ms
+                        // chunks, raw ConPTY echo no longer fragments (a
+                        // measured 2KB command echoes back cleanly as one
+                        // line), while PSReadLine's incremental line redraw
+                        // is the true source of the round-155 screen
+                        // fragments / `>>` continuation ghosts. After unload,
+                        // ConsoleHost echoes plainly; output and prompt are
+                        // clean. The injected line's echo is cleared by
+                        // Clear-Host; the OSC133 prompt marker stays
+                        // unchanged.
                         ("if (Get-Module -Name PSReadLine) { Remove-Module PSReadLine -Force -EA SilentlyContinue }\r\n".to_string()
                             + r#"function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"# + "\r\nClear-Host\r\n", true)
                         } else { (String::new(), false) }
@@ -970,9 +974,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // release the lock — the command never ran, nothing to
                     // audit, and the next execute must not bounce off a stale
                     // busy flag.
-                    // round-132: 接收侧诊断——长命令经网关链路偶发中段缺字,
-                    // 记录 agent 实际收到的长度与首尾片段,定位丢失发生在
-                    // 哪一层(网关隧道 vs PTY 写入)。
+                    // round-132: receive-side diagnostics — long commands occasionally
+                    // lose mid chars over the gateway link; log the length
+                    // the agent actually received plus head/tail fragments
+                    // to locate where the loss happened (gateway tunnel vs
+                    // PTY write).
                     let _ = std::fs::OpenOptions::new().create(true).append(true)
                         .open("D:\\vale-agent\\diag.log")
                         .and_then(|mut f| {

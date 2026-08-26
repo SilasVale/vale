@@ -41,13 +41,16 @@ async function fetchJwks(env: Env): Promise<any[]> {
     cf: { cacheTtl: 3600 },
   } as any);
   if (!res.ok) throw new Error(`certs ${res.status}`);
-  const body = await res.json();
+  const body: any = await res.json();
   jwksCache = { keys: body.keys, exp: Date.now() + CERTS_TTL_MS };
   return body.keys;
 }
 
 /** Verify the Cf-Access JWT; returns the verified email, or null. */
-export async function verifyAccessJwt(request: Request, env: Env): Promise<{ email: string } | null> {
+export async function verifyAccessJwt(
+  request: Request,
+  env: Env,
+): Promise<{ email: string } | null> {
   const token = request.headers.get("cf-access-jwt-assertion");
   if (!token || !env.ACCESS_AUD || !env.ACCESS_TEAM_DOMAIN) return null;
   const parts = token.split(".");
@@ -56,8 +59,8 @@ export async function verifyAccessJwt(request: Request, env: Env): Promise<{ ema
   let header: any;
   let payload: any;
   try {
-    header = b64urlToJson(parts[0]);
-    payload = b64urlToJson(parts[1]);
+    header = b64urlToJson(parts[0]!);
+    payload = b64urlToJson(parts[1]!);
   } catch {
     return null;
   }
@@ -89,19 +92,24 @@ export async function verifyAccessJwt(request: Request, env: Env): Promise<{ ema
   );
   // base64url → base64 with the right padding (length may be %4 = 2 or 3;
   // hardcoding "==" mis-decodes signatures whose encoded length is %4 = 3).
-  const sigB64 = parts[2].replace(/-/g, "+").replace(/_/g, "/");
+  const sigB64 = parts[2]!.replace(/-/g, "+").replace(/_/g, "/");
   const sigPad = sigB64.length % 4 === 0 ? "" : "=".repeat(4 - (sigB64.length % 4));
   const sig = Uint8Array.from(atob(sigB64 + sigPad), (c) => c.charCodeAt(0));
   const data = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
   const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, sig, data);
   if (!ok) return null;
 
-  const email = String(payload.email || "").toLowerCase().trim();
+  const email = String(payload.email || "")
+    .toLowerCase()
+    .trim();
   return email.includes("@") ? { email } : null;
 }
 
 function usernameFromEmail(email: string): string {
-  let base = email.split("@")[0].replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 28);
+  let base = email
+    .split("@")[0]!
+    .replace(/[^A-Za-z0-9_.-]/g, "")
+    .slice(0, 28);
   if (!/^[A-Za-z0-9_.-]{2,32}$/.test(base)) base = "user";
   return base;
 }
@@ -112,7 +120,9 @@ function usernameFromEmail(email: string): string {
  */
 export async function ensureUserByEmail(env: Env, email: string): Promise<User | null> {
   if (!env.KEYS) return null;
-  email = String(email || "").toLowerCase().trim();
+  email = String(email || "")
+    .toLowerCase()
+    .trim();
 
   // Owner shortcut: the configured admin email drives the seeded admin account.
   const adminEmail = String(env.ACCESS_ADMIN_EMAIL || "").toLowerCase();
