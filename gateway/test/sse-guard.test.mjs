@@ -1,13 +1,10 @@
-// SSE in-band error guard — or/ (OpenRouter) passthrough resilience.
+// SSE guard tests — passthrough semantics + peekSseOutcome unit coverage.
 //
-// OpenRouter sometimes accepts the request (HTTP 200, SSE headers) and THEN
-// fails: the stream's first meaningful frame is `data: {"error":{...}}`
-// ("Provider returned error"). Today that frame is forwarded verbatim, the
-// client sees an error message with no status digits (DSH classifies it
-// PI_AI_ERROR — non-retryable) and the session pauses. The guard peeks the
-// first decisive frame BEFORE forwarding: an error frame before any content
-// counts as a failed attempt (retried by fetchWithRetry), and only leaks out
-// as a proper HTTP failure carrying status digits once retries are exhausted.
+// The gateway relays upstream SSE byte-for-byte (pure passthrough on every
+// channel: og/ds/qw/or/nv/gmi). No in-band stream inspection happens at the
+// gateway; an upstream 200-then-{"error":...} frame is forwarded verbatim and
+// retry classification belongs to the client (DSH/Claude Code). peekSseOutcome
+// remains as the stream-peeking primitive (used by tests and tooling).
 //
 // store.js keeps a module-level 24h cache, so every test uses a distinct token/user.
 import test from "node:test";
@@ -157,25 +154,12 @@ test("peek: huge comment preamble past the cap → passthrough (defensive)", asy
   assert.equal(peeked.kind, "passthrough");
 });
 
-// ── integration: or/ /v1/chat/completions absorbs the in-band failure ────────
+// ── integration: or/ /v1/chat/completions — pure passthrough (no inspector) ──
+// The gateway is a byte-level relay: an in-band error frame after a 200 is
+// forwarded verbatim (single upstream call), matching every channel's
+// passthrough semantics. Retry classification is the client's job.
 
-test("or/ chat/completions: first attempt errors in-band, second succeeds → client sees 200 SSE", async () => {
-  __clearCaches();
-  const { env, token } = gwEnv({});
-  const calls = [];
-  const good = sseResponse([DELTA, OK_TAIL]);
-  const res = await withFetch(async (url, init) => {
-    calls.push(String(url));
-    return calls.length === 1 ? sseResponse([ERROR_FRAME]) : good;
-  }, () => postChat(env, token, OX_BODY));
-  assert.ok(calls.length >= 2, `expected the in-band failure to be retried, got ${calls.length} upstream call(s)`);
-  assert.equal(res.status, 200);
-  const text = await res.text();
-  assert.match(text, /"hello"/);
-  assert.doesNotMatch(text, /Provider returned error/);
-});
-
-test("or/ chat/completions: persistent in-band errors → HTTP 502 whose message carries the status digits", async () => {
+test("or/ chat/completions: in-band error frame forwarded verbatim, single upstream call", async () => {
   __clearCaches();
   const { env, token } = gwEnv({});
   let calls = 0;
@@ -183,34 +167,28 @@ test("or/ chat/completions: persistent in-band errors → HTTP 502 whose message
     calls++;
     return sseResponse([ERROR_FRAME]);
   }, () => postChat(env, token, OX_BODY));
-  assert.equal(res.status, 502);
-  const out = await res.json();
-  const message = out.error?.message || "";
-  assert.match(message, /\b502\b/, `surfaced message must carry status digits, got: ${message}`);
-  assert.match(message, /Provider returned error/);
-  assert.ok(calls >= 2, `expected retries before giving up, got ${calls}`);
+  assert.equal(calls, 1, "pure passthrough must not retry on an in-band error frame");
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.match(text, /Provider returned error/); // forwarded verbatim
 });
 
-// ── integration: or/ /v1/messages (Anthropic entry, Claude Code) same guard ──
-
-test("or/ /v1/messages: in-band error absorbed across attempts → 200 SSE", async () => {
+test("or/ /v1/messages: in-band error frame forwarded verbatim, single upstream call", async () => {
   __clearCaches();
   const { env, token } = gwEnv({});
-  const calls = [];
-  const anthropicOk = new Response(
-    'event: message_start\ndata: {"type":"message_start","message":{}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
-    { status: 200, headers: { "content-type": "text/event-stream" } },
-  );
-  const res = await withFetch(async (url, init) => {
-    calls.push(String(url));
-    return calls.length === 1 ? sseResponse([ERROR_FRAME]) : anthropicOk;
+  let calls = 0;
+  const res = await withFetch(async () => {
+    calls++;
+    return sseResponse([ERROR_FRAME]);
   }, () => postMessages(env, token, {
     model: "or/stealth/ox-alpha",
     max_tokens: 1,
     messages: [{ role: "user", content: "hi" }],
   }));
-  assert.ok(calls.length >= 2, `messages path must retry in-band failures too, got ${calls.length}`);
+  assert.equal(calls, 1, "messages passthrough is byte-relay too — no inspector retry");
   assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.match(text, /Provider returned error/); // forwarded verbatim
 });
 
 // ── regression guards: untouched paths stay untouched ─────────────────────────

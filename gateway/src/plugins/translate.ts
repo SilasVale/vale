@@ -44,8 +44,6 @@ import {
   recordChannelFailure,
   recordChannelSuccess,
 } from "../reliability.ts";
-import type { RetryInspection } from "../reliability.ts";
-import { peekSseOutcome } from "../sse-guard.ts";
 import {
   rawWithDeepSeekProvider,
   rawWithOxAlphaReasoningDefault,
@@ -69,44 +67,7 @@ import type { PluginContext } from "./registry.ts";
 const COUNT_PATH = "/v1/messages/count_tokens";
 
 /**
- * SSE in-band error guard for or/ (OpenRouter) routes.
- *
- * OpenRouter can accept a streaming request with HTTP 200 and THEN fail: the
- * stream's first meaningful frame is `data: {"error":{"message":"Provider
- * returned error","code":502}}`. Forwarding that verbatim hands the client an
- * error message with no status digits — DSH classifies it non-retryable and
- * the session pauses. The inspector peeks the first decisive frame BEFORE any
- * byte is forwarded: an in-band error (or an empty close) counts as a failed
- * attempt against fetchWithRetry's normal attempt/backoff budget; only once
- * attempts are exhausted does it surface as an HTTP failure whose message
- * carries status digits, so downstream classifiers treat it as transient.
- */
-function openRouterSseInspector(): (response: any) => Promise<RetryInspection> {
-  return async (response: Response) => {
-    const ctype = response.headers?.get?.("content-type") || "";
-    if (!ctype.includes("text/event-stream") || !response.body) return { accepted: true };
-    const peeked = await peekSseOutcome(response.body);
-    if (peeked.kind === "passthrough") {
-      // Replay buffered prefix + remainder as one seamless body.
-      return {
-        accepted: true,
-        response: new Response(peeked.stream, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        }),
-      };
-    }
-    if (peeked.kind === "in-band-error") {
-      return { accepted: false, status: peeked.status, detail: peeked.message };
-    }
-    // closed-empty — phrased so text-based transport-failure classifiers
-    // ("stream ended before …") recognize it even without status digits.
-    return { accepted: false, detail: "stream ended before any event (empty close)" };
-  };
-}
-
-/**
+ /**
  * Reshape an OpenAI chat/completions upstream response into an Anthropic
  * Messages response for the client. Shared by the og translate path and the
  * nv/gmi translation (Anthropic-only clients like Claude Code riding
@@ -604,7 +565,11 @@ async function handleGatewayImpl(
     if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
       forwardBody = rawWithOxAlphaReasoningDefault(forwardBody);
     }
-    const { response: upstream, detail, inspectFailure } = await fetchWithRetry(
+    const {
+      response: upstream,
+      detail,
+      inspectFailure,
+    } = await fetchWithRetry(
       route.upstream,
       {
         method: "POST",
@@ -631,9 +596,6 @@ async function handleGatewayImpl(
                 timeoutMs: ogTimeoutMs(env),
                 attempts: 4,
                 retry502: true,
-                // Absorb OpenRouter's in-band stream errors (HTTP 200 whose
-                // first SSE frame is {"error":...}) before the client sees them.
-                inspect: openRouterSseInspector(),
               }
           : { timeoutMs: ogTimeoutMs(env) },
     );
@@ -850,7 +812,11 @@ async function handleGatewayImpl(
     if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
       forwardBody = rawWithOxAlphaReasoningDefault(forwardBody);
     }
-    const { response: upstream, detail, inspectFailure } = await fetchWithRetry(
+    const {
+      response: upstream,
+      detail,
+      inspectFailure,
+    } = await fetchWithRetry(
       route.upstream,
       {
         method: "POST",
@@ -876,10 +842,6 @@ async function handleGatewayImpl(
                 timeoutMs: passthroughTimeoutMs(env, route.kind),
                 attempts: 4,
                 retry502: true,
-                // Same in-band SSE error guard as the chat/completions site —
-                // Claude Code rides /v1/messages and hits the same OpenRouter
-                // 200-then-{"error":...} failures.
-                inspect: openRouterSseInspector(),
               }
           : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
     );
