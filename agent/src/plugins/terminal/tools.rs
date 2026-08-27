@@ -55,6 +55,43 @@ fn persist_pre_restart(map: &HashMap<String, serde_json::Value>) {
     }
 }
 
+/// Build the session-mode execute result JSON (round-157): a partial (idle)
+/// return means the command is STILL RUNNING — the wait loop gave up on
+/// output, not on the command. Models misread a bare partial as "commands
+/// queuing up" and answered with retries and new sessions (d1: 321
+/// idle-partials → 167 terminal_open). Surface the continuation contract
+/// EXPLICITLY inside the text the model reads, plus a structured
+/// `still_running` flag for future clients. Pure so the shape is unit-tested
+/// without a real shell.
+fn execute_result_json(
+    state: &str,
+    result: String,
+    truncated: bool,
+    timed_out: bool,
+    wait_reason: &str,
+    marker_code: Option<i32>,
+    read_abs: usize,
+) -> serde_json::Value {
+    let mut final_text = result;
+    let still_running = state == "partial";
+    if still_running {
+        final_text.push_str(
+            "\n[note: the command is still running (wait_reason=idle; the shell produced no output for the quiet window). Read the rest with terminal_read(session_id, offset=read_from). Do NOT re-run the command and do NOT open a new session — its output will arrive in this session's buffer.]",
+        );
+    }
+    json!({
+        "kind": "session",
+        "state": state,
+        "text": final_text,
+        "truncated": truncated,
+        "timed_out": timed_out,
+        "wait_reason": wait_reason,
+        "exit_code": marker_code,
+        "read_from": read_abs,
+        "still_running": still_running,
+    })
+}
+
 pub(super) fn build(
     terminal_mgr: &Arc<TerminalManager>,
     serial_pool: &Arc<SerialPool>,
@@ -438,6 +475,16 @@ fn tool_open(
                     // event is harmless on an already-closed session).
                     bus2.emit(&close_event(&kind, &sid_buf));
                 });
+                // round-157: log how many sessions are already open on this
+                // device — models that see "commands queuing" symptoms
+                // answered by opening MORE sessions (167 opens in one d1
+                // session), which interleaves buffers and worsens the
+                // illusion. Log-only; the return value stays the bare
+                // session id STRING — the panel (useSessions.ts) requires
+                // typeof sid === "string"; never objectify this without a
+                // panel-side migration.
+                let open_count = terminal_mgr.term_list().await.len();
+                tracing::debug!("[vale-agent] terminal_open: {id} open_sessions={open_count}");
                 Ok(json!(id))
             }
         },
@@ -853,7 +900,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
     let jobs = jobs.clone();
     ToolDef::new(
         "terminal_execute",
-        "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Session mode returns {kind, state, text, read_from, wait_reason, exit_code, truncated}: state=done means text is COMPLETE; partial/timeout means text is a PREFIX — continue with terminal_read(offset=read_from). Long silent SSH commands: prefer run_in_background:true or bigger timeout_secs (idle window scales: ssh 1.2s, serial 1.5s). Local mode returns {kind, text, truncated}. `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
+        "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Session mode returns {kind, state, text, read_from, wait_reason, exit_code, truncated, still_running}: state=done means text is COMPLETE; partial/timeout means text is a PREFIX and `still_running=true` — the command is STILL RUNNING, continue with terminal_read(offset=read_from) until you see the prompt/exit. NEVER re-run a command or open a new session just because a partial was returned: the output arrives in the SAME session's buffer; opening new sessions (terminal_open) while old commands run is what causes output to look interleaved/queued. Long silent SSH commands: prefer run_in_background:true or bigger timeout_secs (idle window scales: ssh 3s, serial 4s, pty 1s). Local mode returns {kind, text, truncated}. `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
         json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."}},"required":["command"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
@@ -916,10 +963,24 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let gate_needed = recover_guard(&buf)
                         .live.get(&sid).map(|e| !e.first_prompt_seen).unwrap_or(false);
                     if gate_marker && gate_needed {
-                        let gate_deadline = Instant::now() + std::time::Duration::from_secs(3);
+                        // round-157: the gate deadline was 3s — a cold
+                        // PowerShell (PSReadLine + profile init on a slow
+                        // device) regularly exceeded it, so the session got
+                        // DEMOTED to marker-less, and every later execute fell
+                        // into the 1.4s idle path: long commands (Start-Sleep,
+                        // plink ssh tunnels) returned `state:"partial"` while
+                        // still running, and models misread that as "commands
+                        // queuing up" and spawned endless new sessions. The
+                        // gate now waits up to 12s, and demotion requires the
+                        // shell to have produced NO output at all — a shell
+                        // that echoed anything is alive and its marker will
+                        // come; only a completely silent session (injection
+                        // truly lost) is demoted.
+                        let gate_deadline = Instant::now() + std::time::Duration::from_secs(12);
                         let mut scan_from = recover_guard(&buf)
                             .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
                         let mut pend: Vec<u8> = Vec::new();
+                        let mut saw_any_output = false;
                         loop {
                             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                             if terminal_mgr.term_info(&sid).await.is_none() { break; }
@@ -933,6 +994,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 .unwrap_or_default();
                             if n > 0 {
                                 scan_from += n;
+                                saw_any_output = true;
                                 pend.extend_from_slice(&chunk);
                             }
                             let cut = pend.len().saturating_sub(64);
@@ -945,12 +1007,17 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                             if Instant::now() >= gate_deadline { break; }
                         }
-                        // Gate expired WITHOUT a first marker: the injection
-                        // line was eaten by shell init (observed on sessions
-                        // opened right after boot). Demote this session to
-                        // non-injected so the idle path returns promptly
-                        // instead of blocking to the full deadline.
-                        terminal_mgr.term_set_marker_injected(&sid, false).await;
+                        // Gate expired WITHOUT a first marker. Only demote
+                        // when the shell produced NOTHING (injection line
+                        // never even echoed — shell init swallowed it or the
+                        // session is dead). A shell that echoed output is
+                        // alive; its marker just has not arrived yet (slow
+                        // PS1 / long profile), so KEEP the marker contract —
+                        // execute's wait loop then ends on marker or deadline
+                        // instead of the 1.4s idle path.
+                        if !saw_any_output {
+                            terminal_mgr.term_set_marker_injected(&sid, false).await;
+                        }
                     }
                     // Settle-drain: consume whatever still streams in from the
                     // PREVIOUS command before sampling the start offset —
@@ -1114,10 +1181,17 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let marker_confirm = std::time::Duration::from_millis(300);
                     // Idle confirm scales with session kind — SSH commands run
                     // remotely; their silent stretches must not read as done.
+                    // round-157: doubled — plink/ssh tunnels and long silent
+                    // commands (Start-Sleep, remote uci) have multi-second
+                    // output gaps; the old 300ms/1.2s windows returned
+                    // `state:"partial"` while the command was still running,
+                    // which models misread as "commands queuing" and answered
+                    // by spawning new sessions (observed: 321 idle-partials,
+                    // 167 opens on d1 in one session).
                     let idle_confirm = match sess_kind.as_str() {
-                        "ssh" => std::time::Duration::from_millis(1200),
-                        "serial" => std::time::Duration::from_millis(1500),
-                        _ => std::time::Duration::from_millis(300),
+                        "ssh" => std::time::Duration::from_millis(3000),
+                        "serial" => std::time::Duration::from_millis(4000),
+                        _ => std::time::Duration::from_millis(1000),
                     };
                     let mut quiet_since: Option<Instant> = None;
                     // round-105: the quiet path extends ONCE (marker-injected
@@ -1369,33 +1443,14 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // stripped during the wait); the panel keeps raw bytes
                     // via its own SSE stream (round-54, dsh sanitize.ts).
                     let result = clean_terminal_output(result.as_bytes());
-                    // Surface truncation honestly: a >1MB burst evicted output
-                    // the model would otherwise treat as complete. timed_out
-                    // distinguishes "command finished" from "deadline hit and
-                    // command aborted" (round-54); wait_reason says WHY the
-                    // wait ended (marker = command really finished, idle =
-                    // quiet period elapsed, timeout = deadline) and exit_code
-                    // is the shell's own exit status when a marker was seen.
-                    // `kind` unifies the two execute modes for the model
-                    // (round-60); old clients keep parsing `text`.
-                    // Contract: state=done -> text is complete output;
-                    // partial/timeout -> text is only a PREFIX, resume with
-                    // terminal_read(offset=read_from).
                     let state = match wait_reason {
                         "marker" => "done",
                         "timeout" => "timeout",
                         _ => "partial",
                     };
-                    Ok(json!({
-                        "kind": "session",
-                        "state": state,
-                        "text": result,
-                        "truncated": truncated,
-                        "timed_out": timed_out,
-                        "wait_reason": wait_reason,
-                        "exit_code": marker_code,
-                        "read_from": read_abs,
-                    }))
+                    Ok(execute_result_json(
+                        state, result, truncated, timed_out, wait_reason, marker_code, read_abs,
+                    ))
                 } else {
                     // ── Local shell mode with enforced timeout (tokio::process) ──
                     let (shell, flag) = if cfg!(target_os = "windows") {
@@ -2467,5 +2522,43 @@ mod tests {
         let (start, end, code) = super::find_prompt_marker(data).unwrap();
         assert_eq!(code, 3);
         assert_eq!(&data[start..end], b"\x1b]133;D;3\x07");
+    }
+
+    // ── round-157: partial-return contract (still_running + note) ──
+    // The shape is a pure function; tests below exercise both paths without
+    // a real shell (CI-safe, no feature gate needed).
+
+    #[test]
+    fn execute_result_done_has_no_note() {
+        let out = execute_result_json("done", "ok\n".into(), false, false, "marker", Some(0), 4);
+        assert_eq!(out["state"], "done");
+        assert_eq!(out["still_running"], false);
+        let text = out["text"].as_str().unwrap_or_default();
+        assert_eq!(text, "ok\n", "done must keep text verbatim: {text}");
+        assert!(!text.contains("[note:"), "done must not carry the partial note");
+        assert_eq!(out["exit_code"], 0);
+    }
+
+    #[test]
+    fn execute_result_partial_carries_note_and_flag() {
+        let out = execute_result_json("partial", "half".into(), false, false, "idle", None, 4);
+        assert_eq!(out["state"], "partial");
+        assert_eq!(out["still_running"], true);
+        let text = out["text"].as_str().unwrap_or_default();
+        assert!(text.starts_with("half"), "partial must keep the prefix: {text}");
+        assert!(text.contains("[note:"), "partial must carry the continuation note: {text}");
+        assert!(text.contains("terminal_read"), "note must name terminal_read: {text}");
+        assert!(text.contains("Do NOT re-run"), "note must forbid re-runs: {text}");
+        assert!(text.contains("do NOT open a new session"), "note must forbid new sessions: {text}");
+    }
+
+    #[test]
+    fn execute_result_timeout_has_no_note() {
+        let out = execute_result_json("timeout", "part".into(), true, true, "timeout", None, 9);
+        assert_eq!(out["state"], "timeout");
+        assert_eq!(out["still_running"], false, "timeout aborted the command");
+        assert_eq!(out["timed_out"], true);
+        let text = out["text"].as_str().unwrap_or_default();
+        assert!(!text.contains("[note:"), "timeout must not carry the partial note: {text}");
     }
 }
