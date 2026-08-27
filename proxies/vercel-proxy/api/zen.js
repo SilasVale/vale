@@ -1,11 +1,12 @@
 // /api/zen → proxies to multiple upstreams (US egress), preserving the path
-// ?target=og|ds|qw|or picks the upstream; /v1/messages and /v1/chat/completions
+// ?target=og|ds|qw|or|cm picks the upstream; /v1/messages and /v1/chat/completions
 // are forwarded as-is.
 const TARGETS = {
   og: "https://opencode.ai/zen/go",
   ds: "https://api.deepseek.com",
   qw: "https://token-plan.ap-southeast-1.maas.aliyuncs.com",
   or: "https://openrouter.ai/api",
+  cm: "https://api.commandcode.ai/provider",
 };
 const SAFE = ["accept","accept-encoding","accept-language","anthropic-version","content-type","user-agent"];
 export const config = { runtime: "edge" };

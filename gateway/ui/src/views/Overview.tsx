@@ -14,6 +14,7 @@ const KEY_ORDER = [
   "OPENROUTER_API_KEY",
   "NVAPI_KEY",
   "GMI_API_KEY",
+  "CMD_API_KEY",
 ];
 
 // "DEEPSEEK_API_KEY" → "DEEPSEEK"; NVAPI_KEY has no "_API_KEY" suffix to strip.

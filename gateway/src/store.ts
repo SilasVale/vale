@@ -63,6 +63,9 @@ export const USER_KEY_NAMES = [
   "NVAPI_KEY",
   // GMI Cloud Inference Engine (api.gmi-serving.com) — MiniMax Week free tier.
   "GMI_API_KEY",
+  // Command Code (api.commandcode.ai/provider) — GOAT plan & up. Same key
+  // works for the CLI and the Provider API (Go plan has no API access).
+  "CMD_API_KEY",
 ];
 
 /* ---- Per-isolate TTL cache ----

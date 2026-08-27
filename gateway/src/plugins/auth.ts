@@ -520,6 +520,29 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
         detail: ok ? "OpenCode Go auth OK" : "OpenCode Go auth FAILED (no stream data)",
       });
     }
+    if (name === "CMD_API_KEY") {
+      // Command Code Provider API — the Anthropic /v1/messages endpoint
+      // serves claude-* only, so probe the OpenAI chat/completions endpoint
+      // (meters a micro-request against the plan credits).
+      const res = await fetchWithTimeout("https://api.commandcode.ai/provider/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "deepseek/deepseek-v4-flash",
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+        }),
+      });
+      return jsonOk({
+        ok: res.ok,
+        name,
+        status: res.status,
+        detail: res.ok ? "Command Code auth OK" : `Upstream ${res.status}`,
+      });
+    }
     if (name === "GMI_API_KEY") {
       // GMI Cloud Inference Engine — GET /v1/models is a cheap auth check.
       const res = await fetchWithTimeout("https://api.gmi-serving.com/v1/models", {

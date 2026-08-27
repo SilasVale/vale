@@ -11,6 +11,12 @@
 export const VERIFY_PATH: string = "/v1/messages";
 export const OG_ZEN_ANTHROPIC: string = "https://opencode.ai/zen/go" + VERIFY_PATH;
 export const OG_ZEN_CHAT: string = "https://opencode.ai/zen/go/v1/chat/completions";
+// Command Code Provider API (api.commandcode.ai/provider). The Anthropic
+// /v1/messages endpoint serves claude-* models ONLY ("Use
+// /provider/v1/chat/completions for OpenAI and OSS models" — verified against
+// the live API); cm/ models therefore ride the OpenAI endpoint, and
+// /v1/messages is Anthropic→OpenAI translated (the og pattern).
+export const CMD_CHAT: string = "https://api.commandcode.ai/provider/v1/chat/completions";
 // Reserved for future use — currently empty. Models listed here would bypass
 // the OpenAI translate path and use native Anthropic /v1/messages passthrough.
 export const OG_NATIVE_ANTHROPIC: Set<string> = new Set();
@@ -46,6 +52,13 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "or/stealth/ox-alpha", owned_by: "openrouter" },
   { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
+  // cm/ — Command Code (api.commandcode.ai/provider). GOAT plan and above have
+  // Provider API access (the Go plan doesn't); one CMD_API_KEY works for both
+  // the CLI and the API, usage meters against the plan credits. The Anthropic
+  // /v1/messages endpoint serves claude-* only — cm/ rides chat/completions
+  // (translated for /v1/messages, direct for /v1/chat/completions). Model id
+  // is the provider-catalog slug verbatim (any catalog model works as cm/<id>).
+  { id: "cm/deepseek/deepseek-v4-flash", owned_by: "command-code" },
 ];
 
 // Route info shown in the console ("model routing" section). Public, no keys.
@@ -93,6 +106,12 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     models: ["qwen3.8-max-preview"],
   },
   {
+    prefix: "cm/",
+    backend: "Command Code (GOAT)",
+    desc: "api.commandcode.ai/provider — GOAT plan & up get Provider API access (Go plan excluded); Anthropic /v1/messages translated to chat/completions (the Anthropic endpoint only serves claude-*), OpenAI format passes through; any catalog model reachable as cm/<id>",
+    models: ["deepseek/deepseek-v4-flash"],
+  },
+  {
     prefix: "none",
     backend: "DeepSeek Official (default)",
     desc: "fallback route",
@@ -121,5 +140,6 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   // MiniMax Week free tier on GMI Cloud — one card per free LLM.
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M3" },
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M2.7" },
+  { id: "cm", model: "cm/deepseek/deepseek-v4-flash" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];

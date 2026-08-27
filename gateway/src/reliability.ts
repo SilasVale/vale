@@ -204,10 +204,14 @@ export function ogTimeoutMs(env: any): number {
  * Timeout for passthrough routes. og-native (e.g. deepseek-v4-flash) must use
  * the 120s og budget — zen's latency intermittently spikes past 30s and real
  * max-thinking runs 40-54s to first byte — while every other passthrough
- * channel (ds/qw/or) keeps the generic 30s upstream budget.
+ * channel (ds/qw/or) keeps the generic 30s upstream budget. cm/ (Command Code)
+ * is a third-party gateway like zen with the same long-thinking profile, so it
+ * shares the og budget.
  */
 export function passthroughTimeoutMs(env: any, kind: string): number {
-  return kind === "opencode" ? ogTimeoutMs(env) : upstreamTimeoutMs(env);
+  return kind === "opencode" || kind === "commandgoat"
+    ? ogTimeoutMs(env)
+    : upstreamTimeoutMs(env);
 }
 
 // Circuit breaker for the og channel, backed by a Durable Object so every

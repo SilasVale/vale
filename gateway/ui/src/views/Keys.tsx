@@ -11,6 +11,7 @@ const KEY_NAMES = [
   "OPENROUTER_API_KEY",
   "NVAPI_KEY",
   "GMI_API_KEY",
+  "CMD_API_KEY",
 ];
 
 interface KeyInfo {

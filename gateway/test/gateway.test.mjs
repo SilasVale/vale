@@ -266,6 +266,123 @@ test("gmi /v1/messages without GMI_API_KEY → 502 config error", async () => {
   assert.match(body.error?.message || body.message || "", /GMI_API_KEY not configured/);
 });
 
+// ── cm/ (Command Code GOAT) — Anthropic /v1/messages is translated to the
+// OpenAI chat/completions endpoint (the Command Code Anthropic endpoint only
+// serves claude-* models); /v1/chat/completions passes through directly.
+
+test("cm/deepseek/deepseek-v4-flash /v1/messages → translated to Command Code chat/completions with reasoning", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { CMD_API_KEY: "sk-cm" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "gen_cm1", object: "chat.completion",
+      choices: [{
+        index: 0,
+        message: { role: "assistant", reasoning: "思考中", content: "ok", reasoning_details: [{ type: "reasoning.text", text: "思考中", format: "unknown", index: 0 }] },
+        finish_reason: "stop",
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "cm/deepseek/deepseek-v4-flash",
+    max_tokens: 8,
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+  }));
+  assert.equal(seen.url, "https://api.commandcode.ai/provider/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-cm");
+  // Outbound body is OpenAI format, cm/ prefix stripped.
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "deepseek/deepseek-v4-flash");
+  assert.equal(sent.stream, false);
+  assert.equal(sent.messages[0].role, "user");
+  // Translated back to Anthropic shape; Command Code's `reasoning` field
+  // becomes a thinking block.
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.type, "message");
+  assert.equal(body.content[0].type, "thinking");
+  assert.equal(body.content[0].thinking, "思考中");
+  assert.equal(body.content[1].type, "text");
+  assert.equal(body.content[1].text, "ok");
+});
+
+test("cm /v1/chat/completions is a direct OpenAI passthrough with CMD_API_KEY", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { CMD_API_KEY: "sk-cm" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "gen_cm2", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "cm/deepseek/deepseek-v4-flash",
+    max_tokens: 8,
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+  }, "/v1/chat/completions"));
+  assert.equal(seen.url, "https://api.commandcode.ai/provider/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-cm");
+  assert.equal(JSON.parse(seen.init.body).model, "deepseek/deepseek-v4-flash");
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.object, "chat.completion");
+  assert.equal(body.choices[0].message.content, "ok");
+});
+
+test("cm /v1/messages without CMD_API_KEY → 502 config error", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { CMD_API_KEY: undefined } });
+  let calls = 0;
+  const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
+    post(env, token, {
+      model: "cm/deepseek/deepseek-v4-flash",
+      max_tokens: 1,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(calls, 0);
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.match(body.error?.message || body.message || "", /CMD_API_KEY not configured/);
+});
+
+test("cm /v1/messages stream:true → Command Code reasoning delta becomes thinking_delta", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { CMD_API_KEY: "sk-cm" } });
+  const openaiSse =
+    'data: {"id":"chatcmpl-cm","choices":[{"index":0,"delta":{"reasoning":"思考"},"finish_reason":null}]}\n\n' +
+    'data: {"id":"chatcmpl-cm","choices":[{"index":0,"delta":{"content":"好"},"finish_reason":"stop"}]}\n\n' +
+    "data: [DONE]\n\n";
+  const res = await withFetch(async () =>
+    new Response(openaiSse, { status: 200, headers: { "content-type": "text/event-stream" } }), () =>
+    post(env, token, {
+      model: "cm/deepseek/deepseek-v4-flash",
+      max_tokens: 8,
+      stream: true,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") || "", /text\/event-stream/);
+  const text = await res.text();
+  assert.match(text, /event: message_start/);
+  assert.match(text, /"type":"thinking_delta","thinking":"思考"/);
+  assert.match(text, /"type":"text_delta","text":"好"/);
+  assert.match(text, /event: message_stop/);
+});
+
 test("nv Anthropic-format request (/v1/messages) is translated with NVAPI_KEY", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ keys: { NVAPI_KEY: "sk-nv" } });

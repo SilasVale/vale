@@ -40,7 +40,7 @@ test("health: breaker closed → all channels ok, recommended still qw", async (
 
 test("health: channels cover all prefixes in priority order", async () => {
   const h = await buildHealth(closedEnv);
-  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv", "gmi", "gmi"]);
+  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv", "gmi", "gmi", "cm"]);
   assert.deepEqual(h.channels.map((c) => c.model), [
     "ds/deepseek-v4-flash",
     "qw/qwen3.8-max-preview",
@@ -56,10 +56,11 @@ test("health: channels cover all prefixes in priority order", async () => {
     "nv/nvidia/nemotron-3-ultra-550b-a55b",
     "gmi/MiniMaxAI/MiniMax-M3",
     "gmi/MiniMaxAI/MiniMax-M2.7",
+    "cm/deepseek/deepseek-v4-flash",
   ]);
   // og and or repeat per model card; the dedup'd set must still cover every
   // priority prefix in order.
-  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or", "nv", "gmi"]);
+  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or", "nv", "gmi", "cm"]);
 });
 
 test("installer round-trip: non-ASCII CLI encodes and decodes losslessly", () => {
