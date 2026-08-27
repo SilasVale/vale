@@ -97,7 +97,10 @@ Section "Install" SEC01
   ;    interrupted upgrade leaves the device online, not offline. A running
   ;    exe cannot be overwritten, hence the temp name + swap below.
   File "/oname=vale-agent.exe.new" "vale-agent.exe"
-  File "/oname=vale-tray.exe.new" "vale-tray.exe"
+  File "/oname=vale-desktop.exe.new" "vale-desktop.exe"
+  ; cloudflared is BUNDLED (no winget/external dependency) — one package
+  ; contains every piece; the tunnel service uses $INSTDIR\cloudflared.exe.
+  File "cloudflared.exe"
   ; Support files — safe to write directly (never locked by a process).
   File "vale-agent-setup.ps1"
   File "run-setup.bat"
@@ -124,7 +127,6 @@ Section "Install" SEC01
   ;    tray is relaunched below once the copy is done.
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
-  nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
   ; round-138/139/140: kill ONLY the bundled playwright node. NSIS has NO
   ; quote-doubling escape — '' inside a ' string splits it (the R139 version
   ; compiled into 5 tokens and the kill never ran). Backtick-delimit the
@@ -177,21 +179,29 @@ Section "Install" SEC01
     ; Swap succeeded — the .bak is a stale copy now.
     Delete "$INSTDIR\vale-agent.exe.bak"
   agentSwapDone:
-  Delete "$INSTDIR\vale-tray.exe.bak"
-  IfFileExists "$INSTDIR\vale-tray.exe" 0 +3
-    Rename "$INSTDIR\vale-tray.exe" "$INSTDIR\vale-tray.exe.bak"
+  ; vale-desktop shell — same safe-swap semantics (portable exe, no process
+  ; to stop; swap is immediate).
+  Delete "$INSTDIR\vale-desktop.exe.bak"
+  IfFileExists "$INSTDIR\vale-desktop.exe" 0 +3
+    Rename "$INSTDIR\vale-desktop.exe" "$INSTDIR\vale-desktop.exe.bak"
     IfErrors 0 +2
     SetErrorLevel 3
-  Rename "$INSTDIR\vale-tray.exe.new" "$INSTDIR\vale-tray.exe"
-  IfErrors 0 traySwapOk
-    ; Same safe-swap semantics as vale-agent.exe above.
-    Rename "$INSTDIR\vale-tray.exe.bak" "$INSTDIR\vale-tray.exe"
-    IfErrors 0 traySwapDone
+  Rename "$INSTDIR\vale-desktop.exe.new" "$INSTDIR\vale-desktop.exe"
+  IfErrors 0 desktopSwapOk
+    Rename "$INSTDIR\vale-desktop.exe.bak" "$INSTDIR\vale-desktop.exe"
+    IfErrors 0 desktopSwapDone
     SetErrorLevel 3
-    Goto traySwapDone
-  traySwapOk:
-    Delete "$INSTDIR\vale-tray.exe.bak"
-  traySwapDone:
+    Goto desktopSwapDone
+  desktopSwapOk:
+    Delete "$INSTDIR\vale-desktop.exe.bak"
+  desktopSwapDone:
+
+  ; Desktop shortcut + Start Menu entry for the desktop shell (the app-like
+  ; entry users launch; the agent itself is a headless service).
+  CreateDirectory "$SMPROGRAMS\Vale"
+  CreateShortCut "$DESKTOP\Vale.lnk" "$INSTDIR\vale-desktop.exe" "" "$INSTDIR\vale-desktop.exe" 0
+  CreateShortCut "$SMPROGRAMS\Vale\Vale.lnk" "$INSTDIR\vale-desktop.exe" "" "$INSTDIR\vale-desktop.exe" 0
+  CreateShortCut "$SMPROGRAMS\Vale\Uninstall Vale.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
 
   ; Persist the registration key so run-setup.bat can pass it to the setup
   ; script ($env:VALE_REG_KEY). Empty when the user left the field blank.
@@ -283,17 +293,10 @@ Section "Install" SEC01
     ; principal; a missing task OR a failing /Run falls back to starting the
     ; exe directly — a disabled/stale-principal task must not leave the tray
     ; dead after an upgrade).
-    nsExec::ExecToLog 'cmd /c schtasks /Query /TN ValeAgentTray 2>NUL'
-    Pop $0
-    ${If} $0 != 0
-      nsExec::ExecToLog 'cmd /c start "" /b "$INSTDIR\vale-tray.exe"'
-    ${Else}
-      nsExec::ExecToLog 'cmd /c schtasks /Run /TN ValeAgentTray 2>NUL'
-      Pop $0
-      ${If} $0 != 0
-        nsExec::ExecToLog 'cmd /c start "" /b "$INSTDIR\vale-tray.exe"'
-      ${EndIf}
-    ${EndIf}
+    ; The retired ValeAgentTray scheduled task is gone — vale-desktop is the
+    ; tray entry now. Launch it fresh on every interactive install (its
+    ; window/tray connects to the local agent's /desktop/).
+    nsExec::ExecToLog 'cmd /c start "" /b "$INSTDIR\vale-desktop.exe"'
   ${EndIf}
   ; round-115: the update-busy marker is released HERE, at install completion
   ; — the agent used to delete it right after spawning this installer, which
@@ -311,7 +314,6 @@ Section "Uninstall"
   ; dir (and its token) behind until reboot. Mirror the install section's
   ; taskkill + task removal, then the Deletes below actually succeed.
   nsExec::ExecToLog 'taskkill /F /IM vale-agent.exe'
-  nsExec::ExecToLog 'taskkill /F /IM vale-tray.exe'
   nsExec::ExecToLog 'taskkill /F /IM vale-command.exe'
   ; round-138/139/140: kill ONLY the bundled playwright node (backtick
   ; delimited — NSIS '' is not an escape; anchored on \playwright\node.exe).

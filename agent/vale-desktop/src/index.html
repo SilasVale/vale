@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; url=http://127.0.0.1:18080/desktop/">
+  <title>Vale Desktop</title>
+</head>
+<body style="background:#1d1d1f;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+  <div>Loading Vale…</div>
+  <script>
+    // Redirect to the local agent's desktop UI; the Tauri window itself is
+    // the shell (tray + independent window) over the agent's /desktop/ page.
+    window.location.replace("http://127.0.0.1:18080/desktop/");
+  </script>
+</body>
+</html>

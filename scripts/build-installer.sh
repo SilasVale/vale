@@ -27,6 +27,23 @@ repack_extension() {
 }
 repack_extension
 
+# Bundle cloudflared (Windows amd64) INTO the installer — one package contains
+# every piece; the tunnel service uses $INSTDIR\cloudflared.exe and the setup
+# script no longer needs winget/external downloads (the "分散" fix).
+CLOUDFLARED="$ROOT/agent/deploy/cloudflared.exe"
+fetch_cloudflared() {
+  if [ -f "$CLOUDFLARED" ] && [ "$(stat -c%s "$CLOUDFLARED" 2>/dev/null || echo 0)" -gt 1000000 ]; then
+    echo "  cloudflared already staged ($(du -h "$CLOUDFLARED" | cut -f1))"
+    return 0
+  fi
+  echo "  downloading cloudflared (Windows amd64)..."
+  curl -fsSL --retry 3 -o "$CLOUDFLARED" \
+    "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" \
+    || { echo "!! cloudflared download failed"; exit 1; }
+  echo "  staged cloudflared ($(du -h "$CLOUDFLARED" | cut -f1))"
+}
+fetch_cloudflared
+
 # Phase 3: bundle the playwright-mcp runtime (node.exe + the full flat
 # node_modules tree) into vale-playwright.zip, staged next to the installer
 # for the NSIS script (File "vale-playwright.zip"). The PlaywrightManager
@@ -73,16 +90,18 @@ prepare_playwright
 
 VALEEXE="$ROOT/agent/target/$TARGET/release/vale-agent.exe"
 TRAYEXE="$ROOT/agent/vale-tray/target/$TARGET/release/vale-tray.exe"
-for f in "$VALEEXE" "$TRAYEXE"; do
+DESKTOPEXE="$ROOT/agent/vale-desktop/src-tauri/target/$TARGET/release/vale-desktop.exe"
+for f in "$VALEEXE" "$TRAYEXE" "$DESKTOPEXE"; do
   [ -f "$f" ] || { echo "!! missing $f — run ./scripts/build.sh agent first"; exit 1; }
 done
 # Freshness preflight: a release binary built before the newest source change
 # (e.g. after `./scripts/build.sh agent debug`) would silently ship stale
-# code. Guard BOTH exes against every input: agent + core + tray sources, the
-# workspace version manifest (where the version bump lives), tray build.rs +
-# Cargo.toml, deploy/* (ps1/bat/nsi/ico) and the extension zip. A stale tray
-# (LOCAL_VERSION drift) caused an hourly reinstall loop; a stale bundled
-# fix-tunnel.ps1 caused a tunnel misconfig. Fail loudly instead of packaging.
+# code. Guard ALL exes against every input: agent + core + tray + desktop
+# sources, the workspace version manifest (where the version bump lives),
+# tray build.rs + Cargo.toml, deploy/* (ps1/bat/nsi/ico) and the extension
+# zip. A stale tray (LOCAL_VERSION drift) caused an hourly reinstall loop; a
+# stale bundled fix-tunnel.ps1 caused a tunnel misconfig. Fail loudly instead
+# of packaging.
 # NOTE: the extension zip is intentionally EXCLUDED from the agent freshness
 # guard — it is repacked independently (no dependency on the exes) and would
 # otherwise always be newer than a freshly-built exe, blocking every build.
@@ -109,6 +128,15 @@ if [ -n "$NEWEST_TRAY" ]; then
   echo "!! $NEWEST_TRAY is newer than the release vale-tray.exe — rebuild the tray (cd agent/vale-tray && cargo xwin build --release)"
   exit 1
 fi
+# Desktop guard: vale-desktop has its own workspace target dir.
+NEWEST_DESKTOP="$(find "$ROOT/agent/vale-desktop" "$ROOT/agent/Cargo.toml" \
+  -path '*/target' -prune -o \
+  \( -name '*.rs' -o -name '*.toml' -o -name '*.json' \) \
+  -newer "$DESKTOPEXE" -print | head -1)"
+if [ -n "$NEWEST_DESKTOP" ]; then
+  echo "!! $NEWEST_DESKTOP is newer than the release vale-desktop.exe — rebuild (cd agent/vale-desktop/src-tauri && cargo xwin build --release)"
+  exit 1
+fi
 [ -x "$MAKENSIS" ] || { echo "!! makensis not found at $MAKENSIS"; exit 1; }
 
 # Version consistency: the index worker's /api/version constant must match
@@ -128,7 +156,7 @@ fi
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp "$VALEEXE" "$TRAYEXE" \
+cp "$VALEEXE" "$TRAYEXE" "$DESKTOPEXE" \
    "$ROOT/agent/deploy/vale-agent-setup.ps1" \
    "$ROOT/agent/deploy/run-setup.bat" \
    "$ROOT/agent/deploy/fix-tunnel.ps1" \
@@ -180,6 +208,7 @@ cp "$ROOT/agent/deploy/vale-playwright.zip" "$VERCEL_DL/vale-playwright.zip"
 echo "  staged $(du -sh "$VERCEL_DL" | cut -f1) for v.saisi.online/dl/"
 cp "$VALEEXE" "$DEST/vale-agent.exe"
 cp "$TRAYEXE" "$DEST/vale-tray.exe"
+cp "$DESKTOPEXE" "$DEST/vale-desktop.exe"
 # Refresh the gateway's code-viewer mirror of the worker source — the public
 # /code/ viewer was drifting 1000+ lines behind live src with no pipeline step.
 # Sync ALL viewer files (round-63): the original list missed

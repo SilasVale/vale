@@ -223,33 +223,20 @@ if (-not (Test-Path $cfg)) {
 # bound to 0.0.0.0 after install (round-53).
 (Get-Content $cfg) -replace '^host: "?0\.0\.0\.0"?$','host: "127.0.0.2"' | Set-Content $cfg
 
-# 2. cloudflared
+# 2. cloudflared — BUNDLED with the installer (one package contains every
+# piece; nothing is fetched from winget or scattered across the system).
+# The installer places cloudflared.exe at $INSTDIR\cloudflared.exe; the
+# tunnel service and config both use that single copy.
 Write-Host "`n[2/7] cloudflared"
-if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
-    Write-Host "  installing via winget..."
-    # Same PS 5.1 stderr trap as the legacy cleanup: winget writes to stderr
-    # on failure, which would abort under EAP=Stop — scope to Continue and
-    # check the exit code.
-    $oldEAP3 = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    winget install --id Cloudflare.cloudflared --accept-source-agreements --accept-package-agreements 2>$null
-    $ErrorActionPreference = $oldEAP3
-    if ($LASTEXITCODE -ne 0) { throw "winget install cloudflared failed (exit $LASTEXITCODE)" }
-    # winget registers cloudflared in the registry PATH, but THIS session's
-    # $env:PATH is a snapshot from process start. Rebuild it from the registry
-    # so Get-Command works without requiring a new shell.
-    $env:PATH = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+$cloudflared = Join-Path $InstallDir "cloudflared.exe"
+if (-not (Test-Path $cloudflared)) {
+    # Fallback for legacy installs that used winget: prefer the bundled copy
+    # but keep the old system copy working so an in-place upgrade of an old
+    # device does not break the tunnel.
+    $oldCloudflared = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
+    if ($oldCloudflared) { $cloudflared = $oldCloudflared }
+    else { throw "cloudflared.exe not found in installer dir ($InstallDir) — the installer must bundle it." }
 }
-$cloudflared = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
-if (-not $cloudflared) {
-    # Fallbacks if the PATH refresh did not surface it (winget links shim / Program Files).
-    foreach ($c in @("$env:LOCALAPPDATA\Microsoft\WinGet\Links\cloudflared.exe",
-                     "$env:ProgramFiles\cloudflared\cloudflared.exe",
-                     "$env:ProgramFiles(x86)\cloudflared\cloudflared.exe")) {
-        if (Test-Path $c) { $cloudflared = $c; break }
-    }
-}
-if (-not $cloudflared) { throw "cloudflared was installed but is not on PATH - open a new PowerShell and re-run this installer." }
 Write-Host "  cloudflared at: $cloudflared"
 
 # 3. Cloudflare auth - API token (no browser) or interactive login.
