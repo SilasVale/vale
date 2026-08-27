@@ -13,6 +13,7 @@ import { CommandStream } from "./components/CommandCard";
 import { TrajectoryView } from "./components/TrajectoryView";
 import { TerminalPane } from "./components/TerminalPane";
 import BrowserPane from "./components/BrowserPane";
+import { DesktopShell } from "./components/DesktopShell";
 import { TabBar } from "./components/TabBar";
 import type { SessionView } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
@@ -40,7 +41,7 @@ interface Boot {
 // auth failed — fixed by one manual reload. Now the same resolved value seeds
 // both the transport and React state.
 function computeBoot(onAuthFail: () => void): Boot {
-  const sameOrigin = location.pathname.startsWith("/panel") || /\/proxy\/panel/.test(location.pathname);
+  const sameOrigin = location.pathname.startsWith("/panel") || location.pathname.startsWith("/desktop") || /\/proxy\/panel/.test(location.pathname);
   if (sameOrigin) {
     const isProxy = /\/proxy\/panel/.test(location.pathname);
     const urlToken = new URLSearchParams(location.search).get("token") || "";
@@ -247,6 +248,33 @@ export function App() {
   // The command stream moved OUT of the canvas into the right drawer, so the
   // terminal/browser panes own 100% of the remaining space. The details
   // column (selected command) rides inside the same drawer. Light theme.
+  // Desktop mode (/desktop/ — vale-desktop Tauri shell): a full-screen
+  // multi-tab terminal + memory + settings, no icon rail / sidebar chrome.
+  if (location.pathname.startsWith("/desktop")) {
+    return (
+      <DesktopShell
+        sessions={allSessions as typeof sessions.sessions}
+        activeSid={effectiveActiveSid}
+        onActivate={activateWrap}
+        onClose={(sid) => {
+          if (sid === BROWSER_SID) { setBrowserActive(false); return; }
+          sessions.closeSession(sid);
+        }}
+        onExport={sessions.exportSession}
+        view={sessionView}
+        onViewChange={(v) => {
+          const sid = sessions.activeSid;
+          if (sid) setSessionViews((m) => ({ ...m, [sid]: v }));
+        }}
+        registerWrite={registerWrite}
+        browserActive={browserActive}
+        onNewSession={(kind, target, extra) => sessions.openSession(kind, target ?? "", extra)}
+        sseState={sseState}
+        token={token}
+      />
+    );
+  }
+
   return (
     <AppFrame
       iconRail={

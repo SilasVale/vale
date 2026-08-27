@@ -3,3 +3,4 @@
 
 # worktree pointer from the original repo - not part of the monorepo
 /.claude/worktrees
+/vale-desktop/src-tauri/target
