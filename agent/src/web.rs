@@ -421,16 +421,20 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         };
     }
 
-    // Terminal panel (static page, public like the status page — it shows no
-    // data until the user enters the device token in the browser). Assets are
-    // embedded at compile time from resources/panel/.
+    // Terminal panel + desktop shell (static SPA, public like the status page
+    // — it shows no data until the user enters the device token). Assets are
+    // embedded at compile time from resources/panel/. /desktop/ is the
+    // vale-desktop (Tauri/WebView2) full-screen shell; the SPA switches on
+    // the path.
     //
     // SECURITY (2026-08-12): the panel previously embedded the device token as
     // window.__PANEL_TOKEN__ for zero-config access. With CORS * on every
     // response, any third-party page could fetch /panel/ and read the token.
     // The token is no longer injected — the user enters it once in the panel
     // (saved to localStorage) instead.
-    if method == Method::GET && (path == "/panel" || path == "/panel/") {
+    if method == Method::GET
+        && (path == "/panel" || path == "/panel/" || path == "/desktop" || path == "/desktop/")
+    {
         let mut resp = serve_panel_file("index.html", "text/html; charset=utf-8");
         resp.headers_mut().insert(
             axum::http::HeaderName::from_static("cache-control"),
@@ -518,9 +522,10 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         }
         return resp;
     }
-    if method == Method::GET && path.starts_with("/panel/") {
+    if method == Method::GET && (path.starts_with("/panel/") || path.starts_with("/desktop/")) {
         // Strip any ?v=… cache-buster before whitelist matching.
-        let file = path["/panel/".len()..].split('?').next().unwrap_or("");
+        let prefix_len = if path.starts_with("/desktop/") { "/desktop/".len() } else { "/panel/".len() };
+        let file = path[prefix_len..].split('?').next().unwrap_or("");
         return serve_panel_file(file, panel_content_type(file));
     }
 
@@ -1110,6 +1115,24 @@ mod tests {
         assert!(html.contains("\\u003c/script\\u003e"), "must escape </script>: {html}");
     }
 
+    #[tokio::test]
+    async fn desktop_route_serves_spa_and_injects_token() {
+        // /desktop/ (vale-desktop shell) serves the same SPA and gets the
+        // loopback token injection exactly like /panel/.
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some("test-token-123".into());
+        let st = Arc::new(AppState::new(cfg));
+        let r = handle_request(req_with_host("/desktop/", "127.0.0.1:18080"), st.clone()).await;
+        assert_eq!(r.status(), StatusCode::OK, "desktop route must serve the SPA");
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let html = String::from_utf8_lossy(&b);
+        assert!(html.contains("id=\"root\""), "desktop SPA html: {html}");
+        assert!(html.contains("__PANEL_TOKEN__"), "loopback token injection on /desktop/: {html}");
+        // Static asset route: /desktop/panel.js serves the bundle.
+        let r = handle_request(req_with_host("/desktop/panel.js", "127.0.0.1:18080"), st).await;
+        assert_eq!(r.status(), StatusCode::OK, "desktop panel.js must serve");
+    }
+
     async fn json_body(resp: Response) -> serde_json::Value {
         let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
         serde_json::from_slice(&body).unwrap()
@@ -1120,8 +1143,8 @@ mod tests {
         let resp = handle_request(req("GET", "/api/spec"), state()).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        // terminal + update + mcp-client + design + playwright plugins
-        assert_eq!(v["plugins"].as_array().unwrap().len(), 5);
+        // terminal + update + mcp-client + design + playwright + memory plugins
+        assert_eq!(v["plugins"].as_array().unwrap().len(), 6);
     }
 
     #[tokio::test]

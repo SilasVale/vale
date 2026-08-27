@@ -4,6 +4,7 @@
 
 pub mod design;
 pub mod mcp_client;
+pub mod memory;
 pub mod playwright;
 pub mod terminal;
 pub mod update;

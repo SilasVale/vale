@@ -6,6 +6,8 @@ use vale_agent_core::Config;
 use crate::plugins::PluginRegistry;
 use crate::plugins::design::DesignPlugin;
 use crate::plugins::mcp_client::McpClientPlugin;
+use crate::plugins::memory::MemoryPlugin;
+use crate::plugins::memory::store::{MemoryLimits, MemoryStore};
 use crate::plugins::playwright::manager::PlaywrightManager;
 use crate::plugins::playwright::PlaywrightPlugin;
 use crate::plugins::terminal::TerminalPlugin;
@@ -34,28 +36,38 @@ pub struct AppState {
     /// PlaywrightPlugin so /api/plugins/* routes and the registry see one
     /// state machine.
     pub playwright: std::sync::Arc<PlaywrightManager>,
+    /// Device-local memory store (shared across AI clients) — the MemoryPlugin
+    /// and the /api/tools/memory_* dispatch share this Arc.
+    pub memory: std::sync::Arc<MemoryStore>,
 }
 
-fn build_registry(
-    terminal_mgr: &Arc<TerminalManager>,
-    serial_pool: &Arc<SerialPool>,
-    event_bus: &Arc<AppEventBus>,
-    buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
-    playwright: &Arc<PlaywrightManager>,
-    download_url: String,
-    config_console_url: String,
-) -> PluginRegistry {
+/// Registry construction dependencies — one context instead of an 8-arg
+/// function (clippy too_many_arguments); keeps build_registry call sites
+/// stable as plugins are added.
+struct RegistryDeps {
+    terminal_mgr: Arc<TerminalManager>,
+    serial_pool: Arc<SerialPool>,
+    event_bus: Arc<AppEventBus>,
+    buffer_limit: Arc<std::sync::atomic::AtomicUsize>,
+    playwright: Arc<PlaywrightManager>,
+    download_url: Option<String>,
+    console_url: Option<String>,
+    memory: Arc<MemoryStore>,
+}
+
+fn build_registry(deps: &RegistryDeps) -> PluginRegistry {
     let mut registry = PluginRegistry::new();
     registry.register(Box::new(TerminalPlugin::new(
-        terminal_mgr.clone(),
-        serial_pool.clone(),
-        event_bus.clone() as Arc<dyn EventBus>,
-        buffer_limit.clone(),
+        deps.terminal_mgr.clone(),
+        deps.serial_pool.clone(),
+        deps.event_bus.clone() as Arc<dyn EventBus>,
+        deps.buffer_limit.clone(),
     )));
-    registry.register(Box::new(UpdatePlugin::new(download_url.clone())));
+    registry.register(Box::new(UpdatePlugin::new(deps.download_url.clone())));
     registry.register(Box::new(McpClientPlugin::new()));
-    registry.register(Box::new(DesignPlugin::new(config_console_url, download_url.clone())));
-    registry.register(Box::new(PlaywrightPlugin::new(playwright.clone())));
+    registry.register(Box::new(DesignPlugin::new(deps.console_url.clone(), deps.download_url.clone())));
+    registry.register(Box::new(PlaywrightPlugin::new(deps.playwright.clone())));
+    registry.register(Box::new(MemoryPlugin::new(deps.memory.clone())));
     registry
 }
 
@@ -72,17 +84,25 @@ impl AppState {
             (config.terminal.buffer_mb.clamp(1, 64) as usize) * 1024 * 1024,
         ));
         let playwright = PlaywrightManager::new();
-        let plugin_registry = build_registry(
-            &terminal_mgr,
-            &serial_pool,
-            &event_bus,
-            &terminal_buf_bytes,
-            &playwright,
-            config.platform.download_url.clone(),
-            config.platform.console_url.clone(),
-        );
+        // Device-local memory store — lives under the install dir (same
+        // heuristic as the update plugin). Capacity from config `memory:`
+        // (defaults when absent). Shared Arc with the MemoryPlugin.
+        let memory = Arc::new(MemoryStore::new(
+            crate::plugins::memory::default_memory_dir(),
+            MemoryLimits::default(),
+        ));
+        let plugin_registry = build_registry(&RegistryDeps {
+            terminal_mgr: terminal_mgr.clone(),
+            serial_pool: serial_pool.clone(),
+            event_bus: event_bus.clone(),
+            buffer_limit: terminal_buf_bytes.clone(),
+            playwright: playwright.clone(),
+            download_url: config.platform.download_url.clone(),
+            console_url: config.platform.console_url.clone(),
+            memory: memory.clone(),
+        });
 
-        Self { serial_pool, terminal_mgr, event_bus, plugin_registry, config, config_path: std::sync::Arc::new(std::sync::Mutex::new(None)), terminal_buf_bytes, playwright }
+        Self { serial_pool, terminal_mgr, event_bus, plugin_registry, config, config_path: std::sync::Arc::new(std::sync::Mutex::new(None)), terminal_buf_bytes, playwright, memory }
     }
 }
 

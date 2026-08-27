@@ -470,12 +470,16 @@ async fn run_server(config_path: PathBuf) {
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
             .unwrap_or_default();
         tokio::spawn(async move {
-            let console = reg_cfg.platform.console_url.clone();
+            // saisi decouple: self-register only when a console is configured.
+            let console = match reg_cfg.platform.console_url.clone() {
+                Some(c) if !c.trim().is_empty() => c,
+                _ => return,
+            };
             let token = reg_cfg.server.device_token.clone().unwrap_or_default();
             let hostname = std::fs::read_to_string(reg_install.join("vale-agent.hostname"))
                 .map(|s| s.trim().to_string())
                 .unwrap_or_default();
-            if console.is_empty() || token.is_empty() || hostname.is_empty() {
+            if token.is_empty() || hostname.is_empty() {
                 return;
             }
             let name = hostname.split('.').next().unwrap_or("device").to_string();

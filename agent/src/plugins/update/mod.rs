@@ -12,18 +12,21 @@ use vale_agent_core::ToolDef;
 
 /// Plugin struct — stateless; every tool closes over what it needs.
 pub struct UpdatePlugin {
-    download_url: String,
+    /// Download-site apex; `None` = no update channel configured (saisi
+    /// decouple) — `agent_update` then returns an explicit error instead of
+    /// hitting a hardcoded host.
+    download_url: Option<String>,
 }
 
 impl UpdatePlugin {
-    pub fn new(download_url: String) -> Self {
+    pub fn new(download_url: Option<String>) -> Self {
         Self { download_url }
     }
 }
 
 impl Default for UpdatePlugin {
     fn default() -> Self {
-        Self::new("https://agent.saisi.online".into())
+        Self::new(None)
     }
 }
 

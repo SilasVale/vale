@@ -87,13 +87,14 @@ fn install_dir() -> PathBuf {
 /// tool answers "upgrading" before the process dies and the MCP session
 /// reconnects on the new build. `force: true` reinstalls the current version
 /// (repairs a broken install).
-pub fn agent_update(download_url: String) -> ToolDef {
+pub fn agent_update(download_url: Option<String>) -> ToolDef {
     ToolDef::new(
         "agent_update",
         "Check the release server for a newer vale-agent and install it on this device. \
          On a newer version (or force:true) the installer runs silently and the agent \
          restarts — MCP disconnects briefly and reconnects ~1 minute later on the new \
-         build. Returns up_to_date when already current.",
+         build. Returns up_to_date when already current. Fails explicitly when no \
+         update channel is configured (platform.download_url unset).",
         json!({
             "type": "object",
             "properties": {
@@ -104,10 +105,21 @@ pub fn agent_update(download_url: String) -> ToolDef {
             }
         }),
         move |params: Value| {
-            let version_url = version_url(&download_url);
+            let version_url = download_url
+                .as_deref()
+                .map(version_url);
             async move {
             let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
             let local = env!("CARGO_PKG_VERSION").to_string();
+
+            // saisi decouple: no download_url configured → explicit error
+            // instead of a hardcoded host.
+            let version_url = match version_url {
+                Some(u) => u,
+                None => {
+                    return Ok(json!({"ok": false, "error": "no update channel configured (platform.download_url unset) — this is a purely local install"}));
+                }
+            };
 
             // 1. What does the release server say? Timeout so a hung release
             //    server can't pin the handler forever (MCP client may have

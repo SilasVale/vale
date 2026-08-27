@@ -134,7 +134,30 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   threads); keystrokes try_send drop-on-full.
 - **MCP tool additions**: define the tool in `src/plugins/<plugin>/tools.rs`;
   the registry caches it at register time — no other registration site.
-  Update the tool-count tests (16: 13 terminal_* + 3 secret_*) if adding/removing.
+  Update the tool-count tests (34 total: 20 terminal_* + agent_update +
+  page_view + 4 mcp_client_* + browser_pw_info + browser_run_script +
+  6 memory_*) if adding/removing.
+
+## Device memory + desktop shell
+
+- **memory plugin** (`src/plugins/memory/`): device-local knowledge base shared
+  across AI clients — 6 MCP tools (`memory_save/search/list/update/delete/
+  export`). JSONL + in-memory index at `<install>/memory/memory.jsonl`, soft
+  delete, LRU capacity from config `memory: { max_entries, max_bytes,
+  retention_days }`, credential sanitizer (`sanitize.rs`).
+- **stdio transport (no port)**: `mcp_client_connect` defaults to
+  `transport=stdio` — the bundled playwright-mcp is spawned over stdin/stdout
+  (newline-JSON frames, rmcp `TokioChildProcess`), NO listening port.
+  `transport=http` (9229) remains for external servers. Test override:
+  `VALE_TEST_STDIO_NODE` / `VALE_TEST_STDIO_ENTRY` (see
+  `tests/mcp_stdio_integration.rs`).
+- **saisi decouple**: `config.yaml platform.console_url/download_url` are
+  OPTIONAL — unset means a purely local install; `agent_update` and
+  `page_view` remote pages error explicitly, device self-register skips.
+- **desktop shell**: `vale-desktop/` (Tauri 2, Windows) loads
+  `http://127.0.0.1:18080/desktop/` — the same SPA in desktop mode
+  (multi-tab terminal + memory + settings). The `/desktop/` route reuses the
+  `/panel/` static assets + loopback token injection (web.rs).
 
 ## vale-tray (Windows)
 

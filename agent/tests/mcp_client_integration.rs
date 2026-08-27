@@ -48,7 +48,7 @@ async fn mcp_client_bridge_roundtrip() {
     assert!(err.contains("not connected"), "call before connect: {err}");
 
     // Connect to the fake browser server and verify the tool list came back.
-    let r: Value = connect.handler.call(json!({ "url": url })).await.expect("connect");
+    let r: Value = connect.handler.call(json!({ "transport": "http", "url": url })).await.expect("connect");
     assert_eq!(r["status"], "connected");
     let count = r["tool_count"].as_u64().expect("tool_count");
     assert!(count >= 20, "expected the agent's full tool surface, got {count}");
@@ -71,7 +71,7 @@ async fn mcp_client_bridge_roundtrip() {
     assert!(r.is_err(), "unknown tool must error, got {r:?}");
 
     // Reconnect while connected is a no-op (single session).
-    let r: Value = connect.handler.call(json!({ "url": url })).await.expect("reconnect");
+    let r: Value = connect.handler.call(json!({ "transport": "http", "url": url })).await.expect("reconnect");
     assert_eq!(r["status"], "already_connected");
 
     // Disconnect, then the bridge is dead again.
@@ -98,7 +98,7 @@ async fn connect_to_dead_server_fails_fast() {
     let state = AppState::new(Config::default());
     let connect = plugin_tool(&state, "mcp_client_connect");
     let started = std::time::Instant::now();
-    let r = connect.handler.call(json!({ "url": dead })).await;
+    let r = connect.handler.call(json!({ "transport": "http", "url": dead })).await;
     let elapsed = started.elapsed();
     assert!(r.is_err(), "connect to a dead server must error, got {r:?}");
     let msg = r.unwrap_err().to_string();

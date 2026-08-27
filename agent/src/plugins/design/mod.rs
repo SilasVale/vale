@@ -13,19 +13,21 @@ use vale_agent_core::ToolDef;
 
 /// Plugin struct — stateless; every tool closes over what it needs.
 pub struct DesignPlugin {
-    console_url: String,
-    download_url: String,
+    /// Console base; `None` = no console configured (saisi decouple) —
+    /// `page_view` then errors explicitly instead of a hardcoded host.
+    console_url: Option<String>,
+    download_url: Option<String>,
 }
 
 impl DesignPlugin {
-    pub fn new(console_url: String, download_url: String) -> Self {
+    pub fn new(console_url: Option<String>, download_url: Option<String>) -> Self {
         Self { console_url, download_url }
     }
 }
 
 impl Default for DesignPlugin {
     fn default() -> Self {
-        Self::new("https://api.saisi.online".into(), "https://agent.saisi.online".into())
+        Self::new(None, None)
     }
 }
 

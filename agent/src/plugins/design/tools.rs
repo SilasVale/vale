@@ -93,7 +93,7 @@ fn redact_tokens(s: &str) -> String {
 /// /panel/panel.css. Remote pages: the console (gateway) and download site
 /// (index worker) so production design is inspectable. Embedded: the browser
 /// extension's popup/options CSS, which is not served by any HTTP surface.
-pub fn page_view(console_url: String, download_url: String) -> ToolDef {
+pub fn page_view(console_url: Option<String>, download_url: Option<String>) -> ToolDef {
     ToolDef::new(
         "page_view",
         "View a Vale page's design by fetching its HTML/CSS. \
@@ -103,7 +103,8 @@ pub fn page_view(console_url: String, download_url: String) -> ToolDef {
          options-html, terminal-css, terminal-html, terminal-js, popup-js, options-js \
          Returns up to 64KB of source — read the CSS tokens (--accent, --bg, \
          radii, glass) and HTML structure to evaluate the design. Use target \
-         '127.0.0.1:18080' (default) or a remote host.",
+         '127.0.0.1:18080' (default) or a remote host. Remote pages fail \
+         explicitly when the console/download URL is not configured.",
         json!({
             "type": "object",
             "properties": {
@@ -131,11 +132,33 @@ pub fn page_view(console_url: String, download_url: String) -> ToolDef {
             let (host, port) = parse_target(target)?;
             let source = PAGES.iter().find(|(n, _)| *n == page).map(|(_, s)| s)
                 .ok_or_else(|| DeviceError::Internal { message: format!("unknown page: {page}") })?;
+            // saisi decouple: remote pages need the configured base; when
+            // unset, fail explicitly (never fall back to a hardcoded host).
             let remote_url = match page {
-                "console-js" => Some(format!("{}/app.js", console_url.trim_end_matches('/'))),
-                "console" => Some(console_url.trim_end_matches('/').to_string()),
-                "console-css" => Some(format!("{}/style.css", console_url.trim_end_matches('/'))),
-                "download" => Some(download_url.trim_end_matches('/').to_string()),
+                "console-js" => {
+                    let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
+                        message: "console page requires platform.console_url (not configured — purely local install)".into(),
+                    })?;
+                    Some(format!("{}/app.js", base.trim_end_matches('/')))
+                }
+                "console" => {
+                    let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
+                        message: "console page requires platform.console_url (not configured — purely local install)".into(),
+                    })?;
+                    Some(base.trim_end_matches('/').to_string())
+                }
+                "console-css" => {
+                    let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
+                        message: "console page requires platform.console_url (not configured — purely local install)".into(),
+                    })?;
+                    Some(format!("{}/style.css", base.trim_end_matches('/')))
+                }
+                "download" => {
+                    let base = download_url.as_deref().ok_or_else(|| DeviceError::Internal {
+                        message: "download page requires platform.download_url (not configured — purely local install)".into(),
+                    })?;
+                    Some(base.trim_end_matches('/').to_string())
+                }
                 _ => None,
             };
 
