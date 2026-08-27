@@ -190,7 +190,7 @@ if [ -d "$CODE_DIR" ]; then
   # 2026-08: gateway src migrated to TypeScript (shims deleted) — mirror .ts
   mkdir -p "$CODE_DIR/src"
   cp "$ROOT"/gateway/src/*.ts "$CODE_DIR/src/"
-  cp -r "$ROOT"/gateway/src/plugins "$CODE_DIR/src/plugins"
+  cp -r "$ROOT"/gateway/src/plugins/. "$CODE_DIR/src/plugins/"
   cp "$ROOT/gateway/public/index.html" "$CODE_DIR/public/index.html"
   cp "$ROOT/gateway/public/app.js" "$CODE_DIR/public/app.js"
   cp "$ROOT/gateway/public/style.css" "$CODE_DIR/public/style.css"

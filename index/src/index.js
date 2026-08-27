@@ -320,9 +320,9 @@ export default {
       const download = `${mirrorBase}/ValeAgent-Setup.exe`;
       return new Response(
         JSON.stringify({
-          version: "1.0.80",
+          version: "1.0.105",
           download,
-          sha256: "b324e352edbb6794c82aec93504f6ccf15532b3ba89c87a09810d4fdcb5f3601",
+          sha256: "04509cb096b3c47fac4d886c58e290b6b39462deb5c0ef719584ba56b44caaaf",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
