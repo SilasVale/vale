@@ -1576,52 +1576,96 @@ body {
 
 /* ============================================================
    vale-desktop shell (/desktop/ — Tauri/WebView2 full-screen):
-   top nav (Terminal | Memory | Settings) + full-canvas multi-tab
-   terminal. Reuses .tabrow/.term-session from the panel.
+   DSH-style LEFT ICON RAIL (brand on top, page icons, status at
+   bottom) + one full-canvas main area. No top nav.
    ============================================================ */
 .desktop-shell {
   position: fixed;
   inset: 0;
   display: flex;
-  flex-direction: column;
   background: var(--bg, #f5f5f7);
 }
-.desktop-topbar {
+/* Left icon rail — 56px dark rail, DSH style */
+.desktop-rail {
+  width: 56px;
+  flex: 0 0 56px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 16px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--line, #e5e5e7);
-  background: #fff;
-  flex: 0 0 auto;
-}
-.desktop-brand {
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: .02em;
-}
-.desktop-nav { display: flex; gap: 4px; flex: 1; }
-.desktop-nav-btn {
-  border: none;
-  background: transparent;
-  padding: 6px 14px;
-  border-radius: 999px;
-  font-size: 13px;
-  cursor: pointer;
-  color: var(--muted, #6e6e73);
-}
-.desktop-nav-btn:hover { background: rgba(0,0,0,.05); }
-.desktop-nav-btn.active {
+  padding: 10px 0;
+  gap: 6px;
   background: #1d1d1f;
+  color: #9a9aa0;
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+.desktop-rail-brand {
+  display: grid;
+  place-items: center;
+  margin-bottom: 8px;
+  padding: 4px;
+  border-radius: 10px;
+}
+.desktop-rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+.desktop-rail-btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #9a9aa0;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.desktop-rail-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+.desktop-rail-btn.active {
+  background: rgba(217,72,15,.85); /* --accent #d9480f (vale amber) */
   color: #fff;
-  font-weight: 600;
 }
-.desktop-status {
-  font-size: 12px;
-  color: #b45309;
+.desktop-rail-status {
+  width: 34px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
 }
-.desktop-status.ok { color: #0b7a6e; }
+.desktop-rail-status .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #b45309; /* amber = connecting/reconnecting */
+  box-shadow: 0 0 6px rgba(180,83,9,.7);
+}
+.desktop-rail-status.ok .dot {
+  background: #2fbf71; /* green = connected */
+  box-shadow: 0 0 6px rgba(47,191,113,.7);
+}
+/* Main content area */
+.desktop-main {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
 .desktop-terminal {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desktop-browser {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desktop-browser .browser-pane {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
@@ -1644,6 +1688,17 @@ body {
   flex-direction: column;
 }
 #desktop-term-container > .term-session { flex: 1 1 0; min-height: 0; }
+/* Browser pane: Live/Evidence view switch bar (floats over the content) */
+.browser-view-switch {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--line, #e5e5e7);
+}
+.browser-view-switch .view-switch-btn { padding: 5px 14px; }
 /* Memory pane */
 .mem-pane {
   flex: 1 1 0;

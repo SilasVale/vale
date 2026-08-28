@@ -162,6 +162,7 @@ cp "$VALEEXE" "$TRAYEXE" "$DESKTOPEXE" \
    "$ROOT/agent/deploy/fix-tunnel.ps1" \
    "$ROOT/agent/deploy/vale-agent-install.nsi" \
    "$ROOT/agent/deploy/vale-agent.ico" \
+   "$ROOT/agent/deploy/cloudflared.exe" \
    "$ROOT/index/public/vale-agent/vale-browser-control.zip" \
    "$ROOT/agent/deploy/vale-playwright.zip" "$STAGE/"
 
