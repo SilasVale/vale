@@ -40,6 +40,26 @@ const commands = {
     }
     fs.mkdirSync(DIR, { recursive: true });
     fs.copyFileSync(EXE_SRC, EXE_DST);
+    // round-desktop: ship the vale-desktop shell (Tauri 2) alongside the
+    // agent — a portable exe, no installer needed (WebView2 ships with
+    // Win10/11). setup copies it and creates a desktop shortcut so the user
+    // gets an app-like entry (tray + independent window over /desktop/).
+    const DESKTOP_SRC = path.join(__dirname, "..", "vale-desktop.exe");
+    if (fs.existsSync(DESKTOP_SRC)) {
+      fs.copyFileSync(DESKTOP_SRC, path.join(DIR, "vale-desktop.exe"));
+      const q = DIR.replace(/'/g, "''");
+      ps(
+        [
+          "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\\Vale.lnk')",
+          `$s.TargetPath='${q}\\vale-desktop.exe'`,
+          `$s.WorkingDirectory='${q}'`,
+          "$s.Save()",
+        ].join("; ")
+      );
+      console.log("setup: vale-desktop installed + desktop shortcut created");
+    } else {
+      console.log("setup: vale-desktop not in package (skipped)");
+    }
     // Register boot-start task (SYSTEM) and kick it once; the agent's own
     // first-run flow registers the device with the console using the key.
     //
@@ -105,6 +125,12 @@ const commands = {
     }
     fs.mkdirSync(DIR, { recursive: true });
     fs.copyFileSync(EXE_SRC, path.join(DIR, "vale-agent.new.exe"));
+    // round-desktop: keep the desktop shell in sync on update too (portable
+    // exe; harmless when absent).
+    const DESKTOP_SRC = path.join(__dirname, "..", "vale-desktop.exe");
+    if (fs.existsSync(DESKTOP_SRC)) {
+      fs.copyFileSync(DESKTOP_SRC, path.join(DIR, "vale-desktop.new.exe"));
+    }
     // round-137 Plan C: ship bridge.js alongside the exe — otherwise the
     // device keeps running the old bridge and the new protocol (idle frames /
     // command receipts) never reaches the device (exe updated but bridge not;

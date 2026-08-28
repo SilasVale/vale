@@ -9,7 +9,8 @@
     "README.md",
     "bin/",
     "bridge.js",
-    "vale-agent.exe"
+    "vale-agent.exe",
+    "vale-desktop.exe"
   ],
   "os": [
     "win32"
