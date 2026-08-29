@@ -47,6 +47,10 @@ pub struct TermOpenRequest {
     /// SSH password or serial config
     #[serde(default)]
     pub password: String,
+    /// SSH private key path (optional). When set, public-key auth is used
+    /// and `password` doubles as the key's passphrase.
+    #[serde(default)]
+    pub key_path: String,
     #[serde(default)]
     pub rows: u16,
     #[serde(default)]
@@ -304,7 +308,7 @@ mod desktop_impl {
             let (backend, label) = match kind.as_str() {
                 "ssh" => {
                     let be = ssh::SshBackend::connect(
-                        &req.target, &req.password, req.rows, req.cols, tx, id.clone(),
+                        &req.target, &req.password, &req.key_path, req.rows, req.cols, tx, id.clone(),
                     ).await?;
                     let (user, host, _port) = parse_ssh_target(&req.target);
                     let label = format!("{user}@{host}");
@@ -681,6 +685,7 @@ mod tests {
                 kind: "pty".into(),
                 target: String::new(),
                 password: String::new(),
+                key_path: String::new(),
                 rows: 24,
                 cols: 80,
                 inject_marker: true,

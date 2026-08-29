@@ -17,6 +17,7 @@ export function ConnModal({ kind, onClose, onConnect }: {
   const [port, setPort] = useState("22");
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
+  const [keyPath, setKeyPath] = useState("");
   // serial fields
   const [sport, setSport] = useState("");
   const [baud, setBaud] = useState("115200");
@@ -44,6 +45,10 @@ export function ConnModal({ kind, onClose, onConnect }: {
       // port-required regex and the pick failed silently. Port defaults to 22.
       const m = /^(.*)@(.*?)(?::(\d+))?$/.exec(c.target);
       if (m) { setHost(m[2]); setPort(m[3] || "22"); setUser(m[1]); }
+      // key_path rides in the saved params (a path, not a secret — the
+      // password is stripped server-side before persisting).
+      const kp = savedParams.current.key_path;
+      setKeyPath(typeof kp === "string" ? kp : "");
     } else {
       setSport(c.target.split("?")[0]);
       const b = /baud=(\d+)/.exec(c.target || "");
@@ -58,7 +63,11 @@ export function ConnModal({ kind, onClose, onConnect }: {
       if (kind === "ssh") {
         if (!host || !user) { setStatus("host + username required"); setBusy(false); return; }
         const target = `${user}@${host}:${port}`;
-        await onConnect(target, { password: pass });
+        // key_path set → public-key auth server-side; the password field
+        // doubles as the key passphrase.
+        const extra: Record<string, unknown> = { password: pass };
+        if (keyPath.trim()) extra.key_path = keyPath.trim();
+        await onConnect(target, extra);
       } else {
         if (!sport) { setStatus("port required"); setBusy(false); return; }
         // round-102: replay the saved framing params (parity/data/stop) so a
@@ -102,7 +111,8 @@ export function ConnModal({ kind, onClose, onConnect }: {
             {mkField("Host", host, setHost, "host.example.com")}
             {mkField("Port", port, setPort, "22")}
             {mkField("Username", user, setUser, "user")}
-            {mkField("Password (optional)", pass, setPass, "leave empty for keychain", "password")}
+            {mkField("Private key path (optional)", keyPath, setKeyPath, "C:\\Users\\me\\.ssh\\id_ed25519")}
+            {mkField(keyPath.trim() ? "Key passphrase (optional)" : "Password (optional)", pass, setPass, keyPath.trim() ? "leave empty for unencrypted key" : "leave empty for keychain", "password")}
           </>
         ) : (
           <>

@@ -3,8 +3,6 @@
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-#[cfg(windows)]
-use std::process::Command;
 
 use vale_agent_core::{DeviceError, ToolDef};
 
@@ -43,32 +41,9 @@ fn newer(remote: &str, local: &str) -> bool {
     rp > lp
 }
 
-/// Convert a path to its Windows 8.3 short form (for NSIS /D= which must be
-/// unquoted). No-op on non-Windows / non-spaced paths.
-#[cfg(windows)]
-fn short_path(p: &std::path::Path) -> Option<String> {
-    use std::os::windows::ffi::OsStrExt;
-    use std::os::windows::ffi::OsStringExt;
-    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
-    let wide: Vec<u16> = p.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-    // First call returns the required buffer size.
-    let needed = unsafe { GetShortPathNameW(wide.as_ptr(), std::ptr::null_mut(), 0) };
-    if needed == 0 { return None; }
-    let mut buf = vec![0u16; needed as usize];
-    let n = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), needed) };
-    if n == 0 { return None; }
-    buf.truncate(n as usize);
-    let s = std::ffi::OsString::from_wide(&buf).to_string_lossy().into_owned();
-    // round-119: on volumes with 8.3 short-name generation DISABLED (the
-    // default for non-system volumes since Windows 8), GetShortPathNameW
-    // SUCCEEDS but returns the LONG path unchanged — a spaced path then
-    // flows into NSIS /D= with Rust's quotes and the installer writes to a
-    // path containing literal quote characters (device left offline after a
-    // 'successful' upgrade). Signal failure so the caller refuses instead
-    // of installing to a mangled path.
-    if s.contains(' ') { return None; }
-    Some(s)
-}
+// short_path (Windows 8.3 names for the retired NSIS /D= flag) was removed
+// with the NSIS installer — the npm tgz channel never needed it.
+
 /// Install dir — registry-first (HKLM\SOFTWARE\Vale\Agent\InstallDir), then
 /// the exe dir (crate::paths::install_dir). One source of truth (C1).
 fn install_dir() -> PathBuf {

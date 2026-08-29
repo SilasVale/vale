@@ -1423,6 +1423,27 @@ code {
   .traj-ev-dot { transition: none; animation: none; }
 }
 
+/* ── Settings page (semantic rows; replaces the old inline styles) ── */
+.settings-gw-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 8px;
+}
+.settings-check { display: flex; align-items: center; gap: 6px; }
+.settings-actions { display: flex; gap: 8px; }
+.settings-row { margin-top: 8px; }
+.settings-status { margin-top: 8px; }
+
+/* ── Browser evidence empty state (token color; no inline styles) ── */
+.browser-live-evidence { min-height: 0; }
+.browser-ev-empty-mini { font-size: 11px; color: var(--muted); padding: 4px 0; }
+
+/* Browser wrap visibility is driven by the browserActive state class —
+   the ID-scoped display:flex rule above would beat a bare .hidden. */
+#term-container > .browser-wrap.hidden { display: none; }
+
 
 /* ============ layout.css ============ */
 /* ============================================================
@@ -1639,8 +1660,17 @@ code {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 24px;
+  /* Floating brand card — the first screen every visitor sees. */
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  max-width: 440px;
+  height: fit-content;
+  margin: auto;
+  padding: 32px 40px 28px;
 }
+#conn-form .conn-brand { margin-bottom: 6px; }
 #conn-form h1 { font-size: 22px; margin: 0 0 12px; font-weight: 650; letter-spacing: -0.01em; }
 #conn-form label { font-size: 12px; color: var(--muted); margin-top: 10px; }
 #conn-form input {

@@ -124,12 +124,15 @@ pub struct SshSession {
 }
 
 impl SshSession {
-    /// Create a new SSH connection with password authentication.
+    /// Create a new SSH connection. Auth order: public key (`key_path`,
+    /// with `password` doubling as the key passphrase) then password with
+    /// keyboard-interactive fallback.
     pub async fn connect(
         host: &str,
         port: u16,
         username: &str,
         password: Option<&str>,
+        key_path: Option<&str>,
     ) -> Result<Self, DeviceError> {
         // A dead host (firewall DROP, blackholed) used to hang connect()
         // forever — the terminal_open caller never got a timeout. The
@@ -165,8 +168,33 @@ impl SshSession {
                 Err(_) => return Err(DeviceError::SshTimeout { host: host.to_string() }),
             };
 
-        // Authenticate
-        if let Some(pass) = password {
+        // Authenticate: public key when a key path is given (the password
+        // field doubles as the key passphrase — None works for unencrypted
+        // keys), else the password path below.
+        if let Some(kp) = key_path {
+            let key = russh::keys::load_secret_key(kp, password).map_err(|e| {
+                DeviceError::SshConnectFailed {
+                    host: host.to_string(),
+                    reason: format!("load private key failed: {e}"),
+                }
+            })?;
+            let auth = handle
+                .authenticate_publickey(
+                    username,
+                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None),
+                )
+                .await
+                .map_err(|e| DeviceError::SshConnectFailed {
+                    host: host.to_string(),
+                    reason: format!("public key auth failed: {e}"),
+                })?;
+            if !auth.success() {
+                return Err(DeviceError::SshConnectFailed {
+                    host: host.to_string(),
+                    reason: "public key authentication rejected".into(),
+                });
+            }
+        } else if let Some(pass) = password {
             let auth = handle
                 .authenticate_password(username, pass)
                 .await
@@ -241,7 +269,7 @@ impl SshSession {
         } else {
             return Err(DeviceError::SshConnectFailed {
                 host: host.to_string(),
-                reason: "no authentication method provided (password required)".into(),
+                reason: "no authentication method provided (password or key_path required)".into(),
             });
         }
 

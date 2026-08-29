@@ -122,7 +122,7 @@ export function TerminalWorkspace({
             <TrajectoryView key={activeSid} events={cmdEvents.events} />
           ) : (
             <div id="term-container">
-              <div className="browser-wrap" style={{ display: browserActive ? undefined : "none" }}>
+              <div className={"browser-wrap" + (browserActive ? "" : " hidden")}>
                 <BrowserPane key="browser" session={{ sid: "browser", url: "", active: true }} apiBase="" token={token} />
               </div>
               {!browserActive && (sessions.length === 0 ? (

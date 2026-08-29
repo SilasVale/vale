@@ -16,7 +16,7 @@ pub struct SshBackend {
 
 impl SshBackend {
     pub async fn connect(
-        target: &str, password: &str,
+        target: &str, password: &str, key_path: &str,
         rows: u16, cols: u16,
         tx: mpsc::Sender<TermOutput>, sid: String,
     ) -> Result<Self, DeviceError> {
@@ -25,8 +25,10 @@ impl SshBackend {
         // for a previously saved credential (secret_set under the same target
         // key). Without this, terminal_open {kind:"ssh", target} failed with
         // "no authentication method provided" even when a password was stored.
+        // Skipped when a key path is given — the stored secret is a password,
+        // not the key's passphrase, and would only poison the key load.
         let mut pass = password.to_string();
-        if pass.is_empty() {
+        if pass.is_empty() && key_path.is_empty() {
             if let Ok(Some(stored)) = super::secret_get(target) {
                 pass = stored;
             }
@@ -42,6 +44,7 @@ impl SshBackend {
                 let session = SshSession::connect(
                     &host, port, &user,
                     if pass.is_empty() { None } else { Some(&pass) },
+                    if key_path.is_empty() { None } else { Some(key_path) },
                 ).await?;
                 let (output_rx, write_tx, resize_tx) = session.open_shell(rows, cols).await?;
                 Ok::<_, DeviceError>((session, output_rx, write_tx, resize_tx))

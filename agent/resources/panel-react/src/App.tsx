@@ -7,6 +7,7 @@ import { useSSE } from "./hooks/useSSE";
 import { usePlugins } from "./hooks/usePlugins";
 import { PanelApp } from "./components/PanelApp";
 import { DesktopShell } from "./components/DesktopShell";
+import { BrandMark } from "./ui/Icon";
 import type { SessionView } from "./components/TabBar";
 
 // App — the slim root: connection bootstrap + shell selection (panel vs
@@ -145,6 +146,7 @@ export function App() {
   if (!connected) {
     return (
       <div id="conn-form">
+        <div className="conn-brand"><BrandMark size={44} /></div>
         <h1>Vale Agent</h1>
         <label>Device hostname</label>
         <input id="host" value={host} onChange={(e) => setHost(e.target.value)} placeholder="d1.agent.saisi.online" autoComplete="off" />

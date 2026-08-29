@@ -212,8 +212,17 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 24px;
+  /* Floating brand card — the first screen every visitor sees. */
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  max-width: 440px;
+  height: fit-content;
+  margin: auto;
+  padding: 32px 40px 28px;
 }
+#conn-form .conn-brand { margin-bottom: 6px; }
 #conn-form h1 { font-size: 22px; margin: 0 0 12px; font-weight: 650; letter-spacing: -0.01em; }
 #conn-form label { font-size: 12px; color: var(--muted); margin-top: 10px; }
 #conn-form input {

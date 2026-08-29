@@ -184,7 +184,7 @@ fn tool_open(
     ToolDef::new(
         "terminal_open",
         "Open a terminal connection. Kind: 'pty' (local shell; target optional — blank = default shell), 'ssh' (target=user@host:port), or 'serial' (target=port_name, optional ?baud=N&parity=E&data=8&stop=1 e.g. /dev/ttyUSB0?baud=9600&parity=even&data=8&stop=1, default 115200 8N1). Returns session ID.",
-        json!({"type":"object","properties":{"kind":{"type":"string","enum":["pty","ssh","serial"]},"target":{"type":"string","description":"pty: optional (blank = default shell); ssh: user@host:port; serial: port_name (optional ?baud=N&parity=E&data=8&stop=1)"},"password":{"type":"string"},"rows":{"type":"integer","description":"Initial terminal rows. Default 0 (backend default)."},"cols":{"type":"integer","description":"Initial terminal columns. Default 0 (backend default)."},"data_bits":{"type":"integer","description":"(serial) Data bits 5-8. Overrides the target string."},"parity":{"type":"string","description":"(serial) Parity: none|odd|even. Overrides the target string."},"stop_bits":{"type":"integer","description":"(serial) Stop bits 1 or 2. Overrides the target string."}},"required":["kind"]}),
+        json!({"type":"object","properties":{"kind":{"type":"string","enum":["pty","ssh","serial"]},"target":{"type":"string","description":"pty: optional (blank = default shell); ssh: user@host:port; serial: port_name (optional ?baud=N&parity=E&data=8&stop=1)"},"password":{"type":"string"},"key_path":{"type":"string","description":"(ssh) Path to a private key file. When set, public-key auth is used; password (if any) is the key passphrase."},"rows":{"type":"integer","description":"Initial terminal rows. Default 0 (backend default)."},"cols":{"type":"integer","description":"Initial terminal columns. Default 0 (backend default)."},"data_bits":{"type":"integer","description":"(serial) Data bits 5-8. Overrides the target string."},"parity":{"type":"string","description":"(serial) Parity: none|odd|even. Overrides the target string."},"stop_bits":{"type":"integer","description":"(serial) Stop bits 1 or 2. Overrides the target string."}},"required":["kind"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let bus = bus.clone();
@@ -198,6 +198,7 @@ fn tool_open(
                 // breaking MCP clients that omit it for pty.
                 let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let password = params.get("password").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                let key_path = params.get("key_path").and_then(|v| v.as_str()).unwrap_or_default().to_string();
                 let rows = params.get("rows").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
                 let cols = params.get("cols").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
                 let inject_marker = params.get("inject_marker").and_then(|v| v.as_bool()).unwrap_or(true);
@@ -208,6 +209,7 @@ fn tool_open(
                     kind: kind.clone(),
                     target: target.clone(),
                     password,
+                    key_path,
                     rows,
                     cols,
                     inject_marker,

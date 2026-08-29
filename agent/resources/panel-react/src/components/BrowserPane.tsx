@@ -82,7 +82,6 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
                 e.preventDefault();
                 b.send({ t: "k", down: false, key: e.key, code: e.code, vk: e.keyCode });
               }}
-              onError={() => b.setView === undefined && undefined}
               onLoad={() => { b.imgRef.current?.focus(); }}
             />
           </div>
@@ -90,7 +89,7 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
           {b.error && <div className="browser-error">{b.error}</div>}
         </div>
       ) : (
-        <div className="browser-live" style={{ minHeight: 0 }}>
+        <div className="browser-live browser-live-evidence">
           <div className="browser-ev-stage">
             {b.selected && b.shotUrls[b.selected] ? (
               <img src={b.shotUrls[b.selected]} className="browser-ev-img" alt="AI browser evidence" />
@@ -107,7 +106,7 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
               AI screenshots ({b.shots.length}) — pwout directory auto-syncs every 3s
             </div>
             {b.shots.length === 0 ? (
-              <div style={{ fontSize: 11, color: "#98a2b3", padding: "4px 0" }}>No screenshots</div>
+              <div className="browser-ev-empty-mini">No screenshots</div>
             ) : (
               <div className="browser-ev-strip">
                 {b.shots.map((s) => (

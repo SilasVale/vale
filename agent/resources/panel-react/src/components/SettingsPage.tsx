@@ -82,7 +82,7 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
           Optional — connect this device to a Vale gateway console so remote clients can use its
           terminal / browser / memory. Pure local mode needs none of this.
         </p>
-        <div className="mem-toolbar" style={{ marginTop: 8, flexDirection: "column", alignItems: "stretch", gap: 8 }}>
+        <div className="settings-gw-form">
           <input
             className="mem-input"
             placeholder="Gateway URL (e.g. https://api.saisi.online)"
@@ -97,17 +97,17 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
             onChange={(e) => setGwKey(e.target.value)}
             aria-label="Registration key"
           />
-          <label className="row" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <label className="settings-check">
             <input type="checkbox" checked={gwTunnel} onChange={(e) => setGwTunnel(e.target.checked)} />
             <span>Public access (free cloudflared tunnel)</span>
           </label>
-          <div className="row" style={{ display: "flex", gap: 8 }}>
+          <div className="settings-actions">
             <button className="btn btn-ghost btn-mini" onClick={connectGateway} disabled={gwBusy}>
               {gwBusy ? "Connecting…" : "Save & connect"}
             </button>
           </div>
         </div>
-        {gwStatus && <p className="hint" style={{ marginTop: 8 }}>{gwStatus}</p>}
+        {gwStatus && <p className="hint settings-status">{gwStatus}</p>}
       </div>
 
       <div className="settings-section">
@@ -116,7 +116,7 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
           Output recall per terminal session (memory + spill file, ~2x this). 1-64.
           Applies to new output; persisted across restarts.
         </p>
-        <div className="mem-toolbar" style={{ marginTop: 8 }}>
+        <div className="mem-toolbar settings-row">
           <input
             className="mem-input mem-narrow"
             type="number"
