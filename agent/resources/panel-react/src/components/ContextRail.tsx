@@ -2,10 +2,13 @@
 // the session list (+ new-session menu), for the Plugins page the plugin
 // inventory. Other pages hide it entirely (the Shell only renders it when the
 // page has a context).
+// round-161: unicode glyphs → Icon set; session rename is INLINE (was
+// window.prompt, which Tauri blocks and feels alien).
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "../hooks/useSessions";
 import type { usePlugins } from "../hooks/usePlugins";
 import type { Page } from "./Shell";
+import { Icon } from "../ui/Icon";
 
 function relTime(ts: number): string {
   const sec = Math.max(0, (Date.now() - ts) / 1000);
@@ -29,6 +32,8 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
   const [labels, setLabels] = useState<Map<string, string>>(new Map());
   const [archived, setArchived] = useState<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -44,15 +49,16 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
     return () => document.removeEventListener("mousedown", close);
   }, [menuOpen]);
 
-  const rename = (sid: string, current: string) => {
-    const name = window.prompt("Rename session", current);
-    if (name && name.trim()) {
+  const commitRename = (sid: string) => {
+    const name = renameDraft.trim();
+    if (name) {
       setLabels((prev) => {
         const next = new Map(prev);
-        next.set(sid, name.trim());
+        next.set(sid, name);
         return next;
       });
     }
+    setRenaming(null);
   };
 
   const rows = [...sessions]
@@ -94,7 +100,9 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
             title="New session"
             aria-label="New session"
             onClick={() => setMenuOpen((m) => !m)}
-          >+</button>
+          >
+            <Icon name="plus" size={14} />
+          </button>
           {menuOpen && (
             <div className="side-menu" role="menu">
               <button role="menuitem" onClick={() => { onNewSession("pty"); setMenuOpen(false); }}>Local shell</button>
@@ -122,15 +130,37 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
             }}
           >
             <span className="side-dot" data-kind={s.kind} />
-            <span className="side-label">{labels.get(s.sid) || s.label}</span>
+            {renaming === s.sid ? (
+              <input
+                className="side-rename"
+                autoFocus
+                value={renameDraft}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onBlur={() => commitRename(s.sid)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename(s.sid);
+                  if (e.key === "Escape") setRenaming(null);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                aria-label="Rename session"
+              />
+            ) : (
+              <span className="side-label">{labels.get(s.sid) || s.label}</span>
+            )}
             <span className="side-time">{relTime(s.openedAt)}</span>
             <span className="side-actions">
               <button
                 className="side-action"
                 title="Rename (local)"
                 aria-label="Rename session"
-                onClick={(e) => { e.stopPropagation(); rename(s.sid, labels.get(s.sid) || s.label); }}
-              >✎</button>
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRenameDraft(labels.get(s.sid) || s.label);
+                  setRenaming(s.sid);
+                }}
+              >
+                <Icon name="edit" size={12} />
+              </button>
               <button
                 className="side-action archive"
                 title="Hide from list"
@@ -139,7 +169,9 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
                   e.stopPropagation();
                   setArchived((prev) => { const next = new Set(prev); next.add(s.sid); return next; });
                 }}
-              >✕</button>
+              >
+                <Icon name="close" size={12} />
+              </button>
             </span>
           </div>
         ))}

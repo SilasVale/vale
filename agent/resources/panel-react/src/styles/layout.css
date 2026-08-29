@@ -8,6 +8,8 @@
 
 /* ---------- panel shell (three columns) ---------- */
 #app-shell {
+  flex-direction: column;
+  /* legacy row rules below are overridden by #shell-main */
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -22,7 +24,7 @@
   align-items: center;
   gap: 4px;
   padding: 10px 0 12px;
-  background: var(--surface);
+  background: var(--ds-neutral-100);
   border-right: 1px solid var(--line);
 }
 #context-rail {
@@ -31,7 +33,7 @@
   flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
 }
 #canvas-host {
   flex: 1;
@@ -57,7 +59,7 @@
   gap: 8px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
 }
 #canvas-top .tabrow {
   flex: 1;
@@ -71,7 +73,7 @@
   font-size: 12px;
   border: 1px solid var(--line-strong);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface);
   color: var(--muted);
   cursor: pointer;
 }
@@ -83,7 +85,7 @@
   min-width: 0;
   display: flex;
   overflow: hidden;
-  background: #fff;
+  background: var(--surface);
 }
 #term-container > div { flex: 1 1 0; min-height: 0; min-width: 0; }
 #term-container > .browser-wrap { display: flex; }
@@ -96,7 +98,7 @@
   width: 330px;
   max-width: 70%;
   display: flex;
-  background: #fff;
+  background: var(--surface);
   border-left: 1px solid var(--line);
   box-shadow: -10px 0 28px rgba(0, 0, 0, 0.07);
   z-index: 30;

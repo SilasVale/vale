@@ -73,7 +73,7 @@
   padding: 10px 0;
   gap: 6px;
   background: var(--ds-neutral-900);
-  color: #9a9aa0;
+  color: var(--rail-ink);
   border-right: 1px solid rgba(255, 255, 255, 0.06);
 }
 .desktop-rail-brand {
@@ -95,7 +95,7 @@
   border: none;
   border-radius: 10px;
   background: transparent;
-  color: #9a9aa0;
+  color: var(--rail-ink);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
@@ -116,37 +116,11 @@
   box-shadow: 0 0 6px rgba(180, 83, 9, 0.7);
 }
 .desktop-rail-status.ok .dot {
-  background: #2fbf71;
+  background: var(--success);
   box-shadow: 0 0 6px rgba(47, 191, 113, 0.7);
 }
 
 /* ---------- sidebar / context rail ---------- */
-.side-nav {
-  flex: none;
-  display: flex;
-  gap: 4px;
-  margin: 10px 10px 0;
-  padding: 3px;
-  background: var(--ds-neutral-100);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-}
-.side-nav-btn {
-  flex: 1;
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--faint);
-  background: transparent;
-  border: none;
-  border-radius: 999px;
-  padding: 4px 0;
-  cursor: pointer;
-  transition: color var(--ds-transition-duration) var(--ds-ease-in-out),
-              background var(--ds-transition-duration) var(--ds-ease-in-out);
-}
-.side-nav-btn:hover { color: var(--ink); }
-.side-nav-btn.active { color: var(--accent-ink); background: var(--surface); box-shadow: var(--shadow); }
-
 .side-header {
   flex: none;
   display: flex;
@@ -1079,7 +1053,7 @@
 .mem-tag {
   font-size: 11px;
   background: var(--focus-ring-soft);
-  color: #0b7a6e;
+  color: var(--tag-ink);
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -1199,7 +1173,7 @@
 .browser-viewport {
   flex: 1;
   overflow: auto;
-  background: #1a1b1e;
+  background: var(--terminal-bg);
   position: relative;
   min-height: 0;
 }
@@ -1218,7 +1192,7 @@
 .browser-ev-stage {
   flex: 1;
   min-height: 0;
-  background: #1a1b1e;
+  background: var(--terminal-bg);
   position: relative;
   overflow: hidden;
 }
@@ -1232,7 +1206,7 @@
   display: grid;
   place-items: center;
   height: 100%;
-  color: #98a2b3;
+  color: var(--faint);
   font-size: 12px;
   padding: 20px;
   text-align: center;
@@ -1462,3 +1436,73 @@
 .app-crash-card h1 { font-size: 20px; margin: 0 0 4px; font-weight: 650; }
 .app-crash-card .btn { margin-top: 10px; background: var(--accent); color: #fff; border: none; padding: 8px 22px; border-radius: var(--radius-sm); font: 600 13px var(--font); cursor: pointer; }
 .app-crash-card .btn:hover { background: var(--accent-ink); }
+
+/* ── round-161 shell layout: status bar is a BOTTOM bar ── */
+#app-shell { flex-direction: column; }
+#shell-main { flex: 1 1 0; display: flex; min-width: 0; min-height: 0; }
+#icon-rail { flex-shrink: 0; }
+#statusbar {
+  width: auto;
+  height: 26px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* inline session rename (replaces window.prompt) */
+.side-rename {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font: 12px var(--font);
+  color: var(--ink);
+  background: var(--surface);
+  outline: none;
+}
+
+/* plugins: muted dot + mono log */
+.plug-dot[data-state="muted"] { background: var(--faint); }
+.plug-log-line { font-family: var(--font-mono); font-size: 11.5px; }
+
+/* memory: busy marker + confirm hint + export actions */
+.mem-busy { color: var(--accent); font-size: 13px; animation: mem-busy-spin 1s linear infinite; display: inline-block; }
+@keyframes mem-busy-spin { to { transform: rotate(360deg); } }
+.mem-confirm-hint { font-size: 11px; color: var(--danger); font-weight: 600; }
+.mem-export-actions { margin-left: auto; display: flex; gap: 6px; }
+.mem-export-head { display: flex; align-items: center; justify-content: space-between; }
+
+/* browser: empty-stream placeholder */
+.browser-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--faint);
+  z-index: 1;
+  pointer-events: none;
+}
+.browser-placeholder p { margin: 0; font-size: 13px; }
+.browser-placeholder-sub { font-size: 11px !important; color: var(--faint); opacity: 0.7; }
+
+/* terminal font bar: discoverable (was opacity .35 invisible-on-white) */
+.term-fontbar { opacity: 0.8; }
+.term-fontbar:hover { opacity: 1; }
+
+/* command toggle chevron rotation */
+.cmd-btn.cmd-toggle svg { transition: transform var(--ds-transition-duration-fast) var(--ds-ease-in-out); }
+.cmd-btn.cmd-toggle.open svg { transform: rotate(90deg); }
+
+/* closed tab honesty */
+.tab.closed { opacity: 0.45; }
+.tab.closed .tab-name { text-decoration: line-through; }
+.tab.closed { cursor: default; }

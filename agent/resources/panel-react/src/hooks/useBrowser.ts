@@ -37,6 +37,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const [url, setUrl] = useState("https://www.wikipedia.org");
   const [error, setError] = useState("");
   const [fps, setFps] = useState(0);
+  const [hasFrame, setHasFrame] = useState(false);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [sel, setSel] = useState(0);
   // Browserless-style controls: viewport zoom (% of frame width) and the
@@ -60,6 +61,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const pendingRef = useRef(new Map<number, (v: any) => void>());
   const nextIdRef = useRef(1);
   const counters = useRef({ n: 0, t: 0 });
+  const hasFrameRef = useRef(false);
   const viewRef = useRef<BrowserView>("live");
   viewRef.current = view;
   const seenLoaded = useRef<Set<string>>(new Set());
@@ -77,6 +79,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     img.src = URL.createObjectURL(part);
     if (old.startsWith("blob:")) URL.revokeObjectURL(old);
     setError("");
+    if (!hasFrameRef.current) { hasFrameRef.current = true; setHasFrame(true); }
     const c = counters.current; c.n++;
     const now = Date.now();
     if (now - c.t >= 1000) { setFps(Math.round((c.n * 1000) / (now - c.t))); c.n = 0; c.t = now; }
@@ -275,6 +278,6 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     newTab, selTab, closeTab,
     imgRef, mapXY, send,
     shots, selected, setSelected, shotUrls,
-    aiActive,
+    aiActive, hasFrame,
   };
 }

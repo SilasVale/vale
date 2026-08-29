@@ -5,6 +5,7 @@
 import { useState } from "react";
 import type { Session } from "../hooks/useSessions";
 import { TabBar, type SessionView } from "./TabBar";
+import { Icon } from "../ui/Icon";
 import { TerminalPane } from "./TerminalPane";
 import BrowserPane from "./BrowserPane";
 import { TrajectoryView } from "./TrajectoryView";
@@ -150,7 +151,7 @@ export function TerminalWorkspace({
               <div id="drawer-inner">
                 <div id="drawer-head">
                   <span>Commands</span>
-                  <button title="Close" onClick={() => { setDetailsOpen(false); setSelectedCmdId(null); }}>✕</button>
+                  <button title="Close" onClick={() => { setDetailsOpen(false); setSelectedCmdId(null); }}><Icon name="close" size={13} /></button>
                 </div>
                 <DetailsPanel card={selectedCard} onClose={() => setSelectedCmdId(null)} />
                 <CommandStream

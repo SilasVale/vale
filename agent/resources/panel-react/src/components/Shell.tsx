@@ -31,11 +31,16 @@ export function Shell({ density, iconRail, contextRail, canvas, statusBar }: {
       </div>
     );
   }
+  // round-161: the status bar is a BOTTOM BAR — it used to be the last flex
+  // child of the row-direction #app-shell and rendered as a stray column on
+  // the right edge.
   return (
     <div id="app-shell">
-      <div id="icon-rail">{iconRail}</div>
-      {contextRail && <div id="context-rail">{contextRail}</div>}
-      <div id="canvas-host">{canvas}</div>
+      <div id="shell-main">
+        <div id="icon-rail">{iconRail}</div>
+        {contextRail && <div id="context-rail">{contextRail}</div>}
+        <div id="canvas-host">{canvas}</div>
+      </div>
       {statusBar}
     </div>
   );

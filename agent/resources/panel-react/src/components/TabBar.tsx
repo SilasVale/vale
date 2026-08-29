@@ -1,5 +1,6 @@
 // react-jsx: no React import needed
 import type { Session } from "../hooks/useSessions";
+import { Icon } from "../ui/Icon";
 
 /** Per-session main-area view (round-admin-ui Task 5): the terminal pane +
  *  command card stream, or the raw trajectory timeline. */
@@ -21,26 +22,30 @@ export function TabBar({ sessions, activeSid, onActivate, onClose, onExport, vie
           <div
             key={s.sid}
             className={`tab ${s.closed ? "closed" : ""} ${s.sid === activeSid ? "active" : ""}`}
-            title={s.sid}
-            // round-86: closed tabs stay clickable — the vanilla panel allowed
-            // reviewing a closed session's retained history (the old guard
-            // made them dead, so a closed session's log was unreachable).
-            onClick={() => onActivate(s.sid)}
+            // round-161: closed tabs are visually dead AND honestly labelled —
+            // activation rejects closed sessions (round-113 unmounted their
+            // panes), so a click was a silent no-op before.
+            title={s.closed ? `${s.label} — closed (history stays in Trajectory/Logs)` : s.sid}
+            aria-selected={s.sid === activeSid}
+            onClick={() => { if (!s.closed) onActivate(s.sid); }}
           >
             <span className={`tab-dot ${s.kind === "ssh" ? "ssh" : s.kind === "serial" ? "serial" : ""}`} data-kind={s.kind} />
             <span className="tab-name">{s.label}</span>
-            {/* round-86: per-tab export restored (vanilla .tab-export) — the
-                bulk Export-all couldn't get a single session's log. */}
             <span
               className="tab-export"
               title="Export this session log"
               onClick={(e) => { e.stopPropagation(); onExport(s.sid); }}
-            >⇩</span>
+            >
+              <Icon name="export" size={12} />
+            </span>
             {!s.savedOnly && !s.closed && (
               <span
                 className="tab-close"
+                title="Close session"
                 onClick={(e) => { e.stopPropagation(); onClose(s.sid); }}
-              >✕</span>
+              >
+                <Icon name="close" size={12} />
+              </span>
             )}
           </div>
         ))}

@@ -14,7 +14,12 @@ export type IconName =
   | "plus"
   | "close"
   | "export"
-  | "chevron";
+  | "chevron"
+  | "edit"
+  | "fullscreen"
+  | "search"
+  | "arrow-up"
+  | "arrow-down";
 
 const PATHS: Record<IconName, ReactNode> = {
   terminal: (
@@ -77,6 +82,37 @@ const PATHS: Record<IconName, ReactNode> = {
   chevron: (
     <>
       <polyline points="9 6 15 12 9 18" />
+    </>
+  ),
+  edit: (
+    <>
+      <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+    </>
+  ),
+  fullscreen: (
+    <>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+      <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+      <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.5" y2="16.5" />
+    </>
+  ),
+  "arrow-up": (
+    <>
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
+    </>
+  ),
+  "arrow-down": (
+    <>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <polyline points="19 12 12 19 5 12" />
     </>
   ),
 };

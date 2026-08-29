@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { callTool } from "../lib/api";
+import { Icon } from "../ui/Icon";
 import type { Session } from "../hooks/useSessions";
 
 // TerminalPane owns one xterm instance per session (imperative — xterm is
@@ -267,6 +268,9 @@ export function TerminalPane({ session, registerWrite }: {
       )}
       {session.active && (
         <div className="term-fontbar">
+          <button title="Search scrollback (Ctrl+F)" onClick={() => setSearchOpen(true)}>
+            <Icon name="search" size={12} />
+          </button>
           <button title="Smaller font" onClick={() => applyFont(fontSize - 1)}>A−</button>
           <button title="Reset font size" onClick={() => applyFont(FONT_DEFAULT)}>A</button>
           <button title="Larger font" onClick={() => applyFont(fontSize + 1)}>A+</button>

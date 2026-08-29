@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { CommandCard as CardData } from "../hooks/useCommandEvents";
 import { CopyButton, cardState, fmtDuration } from "./CommandCard";
+import { Icon } from "../ui/Icon";
 
 // Details column (round-admin-ui Task 4): the dsh single-call inspector —
 // selected command card's parameters (the command/start payload, JsonTree
@@ -11,7 +12,7 @@ export function DetailsPanel({ card, onClose }: { card: CardData | null; onClose
     <>
       <div className="details-header">
         <h2 className="details-title">Details</h2>
-        <button className="details-close" title="Close details" onClick={onClose}>✕</button>
+        <button className="details-close" title="Close details" onClick={onClose}><Icon name="close" size={13} /></button>
       </div>
       <div className="details-body">
         {card ? <CardDetails card={card} /> : (

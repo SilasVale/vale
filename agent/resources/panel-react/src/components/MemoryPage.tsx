@@ -2,8 +2,14 @@
 // over the agent's /api/tools/memory_* surface (the same 6 MCP tools the AI
 // clients use). Text-only rendering (no innerHTML), consistent with the rest
 // of the panel.
+//
+// round-161 redesign: one merged filter bar (Enter or button triggers; tag is
+// passed to SEARCH too — it used to be silently ignored), busy state, inline
+// delete confirmation (was window.confirm), export copy button, Icon glyphs,
+// and the toast timer is cleaned up on unmount.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { callTool } from "../lib/api";
+import { Icon } from "../ui/Icon";
 
 interface MemEntry {
   id: string;
@@ -28,12 +34,17 @@ export function MemoryPage() {
   const [busy, setBusy] = useState(false);
   const [exportText, setExportText] = useState("");
   const [toast, setToast] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   const loaded = useRef(false);
+  const toastTimer = useRef<number | undefined>(undefined);
 
   const toastMsg = useCallback((m: string) => {
     setToast(m);
-    setTimeout(() => setToast(""), 2000);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(""), 2000);
   }, []);
+
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -61,24 +72,34 @@ export function MemoryPage() {
   }, [load]);
 
   const search = useCallback(async () => {
-    if (!query.trim()) return load();
     setBusy(true);
     setError("");
     try {
-      const r = await callTool("memory_search", { query, limit: PAGE, ...(namespace ? { namespace } : {}) });
-      setEntries((r?.results || []) as MemEntry[]);
+      if (query.trim()) {
+        // round-161 bug fix: the tag filter is now passed to SEARCH too (it
+        // used to be silently ignored unless you switched to List).
+        const r = await callTool("memory_search", {
+          query,
+          limit: PAGE,
+          ...(namespace ? { namespace } : {}),
+          ...(tag ? { tag } : {}),
+        });
+        setEntries((r?.results || []) as MemEntry[]);
+      } else {
+        await load();
+      }
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
       setBusy(false);
     }
-  }, [query, namespace, load]);
+  }, [query, namespace, tag, load]);
 
   const del = useCallback(async (id: string) => {
-    if (!confirm(`Delete memory entry ${id}? (soft delete — recoverable)`)) return;
     try {
       await callTool("memory_delete", { id });
       toastMsg("deleted");
+      setConfirmId(null);
       load();
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -94,6 +115,13 @@ export function MemoryPage() {
     }
   }, [namespace]);
 
+  const copyExport = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(exportText);
+      toastMsg("export copied");
+    } catch { toastMsg("clipboard unavailable"); }
+  }, [exportText, toastMsg]);
+
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleString();
 
   return (
@@ -101,7 +129,7 @@ export function MemoryPage() {
       <div className="mem-toolbar">
         <input
           className="mem-input"
-          placeholder="Search title/content/tags…"
+          placeholder="Search title/content/tags… (Enter)"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") search(); }}
@@ -111,16 +139,19 @@ export function MemoryPage() {
           placeholder="namespace"
           value={namespace}
           onChange={(e) => setNamespace(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
         />
         <input
           className="mem-input mem-narrow"
           placeholder="tag"
           value={tag}
           onChange={(e) => setTag(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
         />
         <button className="btn btn-ghost btn-mini" onClick={search} disabled={busy}>Search</button>
         <button className="btn btn-ghost btn-mini" onClick={load} disabled={busy}>List</button>
         <button className="btn btn-ghost btn-mini" onClick={doExport} disabled={busy}>Export</button>
+        {busy && <span className="mem-busy" title="loading">◌</span>}
       </div>
       {error && <div className="error">{error}</div>}
       {toast && <div className="hint">{toast}</div>}
@@ -132,7 +163,17 @@ export function MemoryPage() {
               <span className="mem-title">{e.title}</span>
               <span className="mem-meta">{e.namespace} · {e.source} · {fmt(e.updated_at)}</span>
               <span className="mem-actions">
-                <button className="btn btn-danger btn-mini" onClick={() => del(e.id)}>✕</button>
+                {confirmId === e.id ? (
+                  <>
+                    <span className="mem-confirm-hint">delete?</span>
+                    <button className="btn btn-danger btn-mini" onClick={() => del(e.id)}>Delete</button>
+                    <button className="btn btn-ghost btn-mini" onClick={() => setConfirmId(null)}>Cancel</button>
+                  </>
+                ) : (
+                  <button className="btn btn-danger btn-mini" title="Delete entry" onClick={() => setConfirmId(e.id)}>
+                    <Icon name="close" size={11} />
+                  </button>
+                )}
               </span>
             </div>
             {e.tags.length > 0 && (
@@ -146,7 +187,10 @@ export function MemoryPage() {
         <div className="mem-export">
           <div className="mem-export-head">
             <span>Export ({exportText.split("\n").length} lines)</span>
-            <button className="btn btn-ghost btn-mini" onClick={() => setExportText("")}>Close</button>
+            <span className="mem-export-actions">
+              <button className="btn btn-ghost btn-mini" onClick={copyExport}>Copy</button>
+              <button className="btn btn-ghost btn-mini" onClick={() => setExportText("")}>Close</button>
+            </span>
           </div>
           <pre>{exportText}</pre>
         </div>

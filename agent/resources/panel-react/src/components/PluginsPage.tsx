@@ -56,7 +56,9 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
           aria-label="Search plugins"
           autoComplete="off"
         />
-        <span className="plug-count">{plugins.rows.length}</span>
+        {/* round-161: the pill counts the FILTERED rows (it ignored the search
+            before, showing the full count while the list shrank). */}
+        <span className="plug-count">{rows.length}</span>
       </div>
       <div className="plug-inventory">
         {!plugins.specLoaded ? (
@@ -106,7 +108,7 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
           </span>
         </header>
         <p className="plug-card-desc">
-          {pw?.description || "playwright-mcp browser automation"} — listens on 127.0.0.1:9229 with a per-launch token.
+          {pw?.description || "playwright-mcp browser automation"} — loopback-only listener (port {pw?.playwright?.port ?? 9229}) with a per-launch token.
         </p>
         <div className="plug-log" ref={logRef} aria-label="Playwright start/stop log">
           {plugins.log.length === 0 ? (

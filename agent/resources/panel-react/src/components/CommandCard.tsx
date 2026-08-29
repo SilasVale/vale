@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CommandCard as CardData } from "../hooks/useCommandEvents";
+import { Icon } from "../ui/Icon";
 
 // dsh ToolCallTree-style command card (round-admin-ui Task 4): StateDot +
 // command + live output (TEXT-ONLY — never innerHTML; React text nodes are
@@ -83,11 +84,17 @@ export function CommandCard({ card, selected, onSelect }: {
   const st = cardState(card);
   // Auto-expand while running (dsh streams the live call); once seen, the
   // expansion STICKS so a finishing command doesn't snap closed. A manual
-  // toggle overrides.
-  const autoExpandedRef = useRef<Set<string>>(new Set());
-  if (!card.ended) autoExpandedRef.current.add(card.id);
+  // toggle overrides. round-161: the "seen" set is updated in an EFFECT —
+  // the old code mutated a ref DURING RENDER (React anti-pattern, breaks
+  // under concurrent rendering).
+  const [autoSeen, setAutoSeen] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!card.ended && !autoSeen.has(card.id)) {
+      setAutoSeen((prev) => { const next = new Set(prev); next.add(card.id); return next; });
+    }
+  }, [card.ended, card.id, autoSeen]);
   const [override, setOverride] = useState<Record<string, boolean>>({});
-  const expanded = override[card.id] !== undefined ? override[card.id] : autoExpandedRef.current.has(card.id);
+  const expanded = override[card.id] !== undefined ? override[card.id] : autoSeen.has(card.id);
   const outRef = useRef<HTMLPreElement>(null);
   const prevLen = useRef(card.output.length);
 
@@ -122,13 +129,15 @@ export function CommandCard({ card, selected, onSelect }: {
         {duration && <span className="cmd-duration">{duration}</span>}
         <span className="cmd-badge" data-state={st.state}>{st.compact}</span>
         <button
-          className="cmd-btn cmd-toggle"
+          className={`cmd-btn cmd-toggle${expanded ? " open" : ""}`}
           title={expanded ? "Collapse" : "Expand"}
           onClick={(e) => {
             e.stopPropagation();
             setOverride((o) => ({ ...o, [card.id]: !expanded }));
           }}
-        >{expanded ? "▾" : "▸"}</button>
+        >
+          <Icon name="chevron" size={12} />
+        </button>
         <CopyButton text={card.output} />
       </div>
       {expanded && (

@@ -80,7 +80,9 @@ export function App() {
   // Activation is managed by browserActive, mutually exclusive with terminal
   // sessions (the main area shows only one panel at a time).
   const allSessions = useMemo(() => {
-    const base = sessions.sessions.map((s) => ({ ...s, active: false }));
+    // round-161: PRESERVE each session's active flag — the old map wiped it
+    // to false, so every TerminalPane stayed display:none (blank pane).
+    const base = sessions.sessions.map((s) => ({ ...s }));
     return [...base, { sid: BROWSER_SID, label: "Browser", kind: "browser", closed: false, savedOnly: false, active: browserActive, openedAt: Date.now(), closedAt: null }] as typeof sessions.sessions;
   }, [sessions.sessions, browserActive]);
 

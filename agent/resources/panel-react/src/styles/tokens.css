@@ -47,6 +47,12 @@
   --lane-ds: #4f6bed;   /* SSH tab dot */
   --lane-or: #d97706;   /* serial tab dot */
 
+  /* ---- round-161 semantic additions (previously hardcoded in css) ---- */
+  --tag-ink: #0b7a6e;        /* memory tag chips (teal ink, light theme) */
+  --terminal-bg: #1a1b1e;    /* browser viewport / evidence stage (always dark) */
+  --rail-ink: #9a9aa0;       /* desktop rail idle label (rail is always dark) */
+  --rail-ink-strong: #ffffff;
+
   /* ---- geometry ---- */
   --radius: 14px;
   --radius-sm: 10px;

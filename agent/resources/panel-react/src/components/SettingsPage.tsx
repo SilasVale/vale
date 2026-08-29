@@ -84,14 +84,14 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
         </p>
         <div className="settings-gw-form">
           <input
-            className="mem-input"
+            className="settings-input"
             placeholder="Gateway URL (e.g. https://api.saisi.online)"
             value={gwUrl}
             onChange={(e) => setGwUrl(e.target.value)}
             aria-label="Gateway URL"
           />
           <input
-            className="mem-input"
+            className="settings-input"
             placeholder="Registration key (optional — generate at the console)"
             value={gwKey}
             onChange={(e) => setGwKey(e.target.value)}
@@ -116,9 +116,9 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
           Output recall per terminal session (memory + spill file, ~2x this). 1-64.
           Applies to new output; persisted across restarts.
         </p>
-        <div className="mem-toolbar settings-row">
+        <div className="settings-row-bar">
           <input
-            className="mem-input mem-narrow"
+            className="settings-input settings-input-narrow"
             type="number"
             min={1}
             max={64}

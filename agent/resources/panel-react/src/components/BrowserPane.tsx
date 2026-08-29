@@ -9,6 +9,7 @@
  * dropdown, and a fullscreen toggle for the live viewport.
  */
 import { useRef } from "react";
+import { Icon } from "../ui/Icon";
 import { useBrowser, type BrowserSessionData } from "../hooks/useBrowser";
 
 export interface BrowserPaneProps {
@@ -88,19 +89,28 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
             >
               {[75, 100, 125, 150].map((z) => <option key={z} value={z}>{z}%</option>)}
             </select>
-            <button className="btn btn-mini browser-fullscreen" onClick={toggleFullscreen} title="Fullscreen">⛶</button>
+            <button className="btn btn-mini browser-fullscreen" onClick={toggleFullscreen} title="Fullscreen"><Icon name="fullscreen" size={13} /></button>
             <span className="browser-fps" title="frames per second">{b.fps}fps</span>
           </div>
 
-          {/* Live viewport */}
+          {/* Live viewport — placeholder while no frame has arrived (the
+              stream is offline or the page is dark); kills the "black void"
+              first impression. */}
           <div className="browser-viewport" ref={viewportRef}>
+            {!b.hasFrame && (
+              <div className="browser-placeholder">
+                <Icon name="browser" size={30} />
+                <p>No browser stream yet — enter a URL and press Go.</p>
+                <p className="browser-placeholder-sub">AI screenshots land in Evidence automatically.</p>
+              </div>
+            )}
             {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
             <img
               ref={b.imgRef}
               className="browser-frame"
               alt="Remote browser"
               tabIndex={0}
-              style={{ width: `${b.zoom}%` }}
+              style={{ width: `${b.zoom}%`, display: b.hasFrame ? undefined : "none" }}
               onMouseMove={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "move" }); }}
               onMouseDown={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "down" }); }}
               onMouseUp={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "up" }); }}
