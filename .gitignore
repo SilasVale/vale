@@ -15,3 +15,13 @@ studio/node_modules/
 studio/test/artifacts/
 .vale-tmp-*
 studio/vendor/
+
+# build artifacts — never commit
+agent/deploy/cloudflared.exe
+agent/deploy/vale-playwright*.zip
+agent/vale-agent-npm/vale-playwright.zip
+agent/vale-agent-npm/cloudflared.exe
+agent/vale-agent-npm/vale-desktop.exe
+agent/vale-agent-npm/vale-tray.exe
+agent/vale-agent-npm/bridge.js
+agent/vale-desktop/src-tauri/target/
