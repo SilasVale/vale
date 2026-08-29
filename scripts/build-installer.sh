@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# Build the ValeAgent-Setup.exe NSIS installer and stage the download files
-# for the index worker (index/public/vale-agent/).
+# Stage the npm distribution package (vale-agent-npm/) — the SINGLE install
+# and update channel (NSIS installer retired 2026-08-28). Builds the boxed
+# artifacts (playwright bundle + cloudflared), packs the npm tgz, and stages
+# the download files for the index worker (index/public/vale-agent/).
 #
-#   ./scripts/build.sh agent            # first: build the two Windows exes
-#   ./scripts/build-installer.sh          # then: bundle + stage
+#   ./scripts/build.sh agent            # first: build the Windows exes
+#   ./scripts/build-installer.sh          # then: pack + stage the npm tgz
 #   ./scripts/build.sh index              # then: deploy the download site
 #
-# Requires the extracted makensis + NSIS data (NSISDIR). Override with
-# MAKENSIS / NSISDIR env if your install lives elsewhere.
+# No makensis/NSIS required anymore.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MAKENSIS="${MAKENSIS:-$HOME/tools/nsis/extracted/usr/bin/makensis}"
-NSISDIR="${NSISDIR:-$HOME/tools/nsis/extracted/usr/share/nsis}"
 TARGET="x86_64-pc-windows-msvc"
 
 # Repack the browser extension into its zip — the extension previously had NO
@@ -28,8 +27,9 @@ repack_extension() {
 repack_extension
 
 # Bundle cloudflared (Windows amd64) INTO the installer — one package contains
-# every piece; the tunnel service uses $INSTDIR\cloudflared.exe and the setup
-# script no longer needs winget/external downloads (the "分散" fix).
+# every piece. C2: the binary is BOXED under $INSTDIR\tools\ (the NSIS
+# script stages it there) and supervised by the agent; the setup script no
+# longer needs winget/external downloads (the "分散" fix).
 CLOUDFLARED="$ROOT/agent/deploy/cloudflared.exe"
 fetch_cloudflared() {
   if [ -f "$CLOUDFLARED" ] && [ "$(stat -c%s "$CLOUDFLARED" 2>/dev/null || echo 0)" -gt 1000000 ]; then
@@ -105,12 +105,8 @@ done
 # NOTE: the extension zip is intentionally EXCLUDED from the agent freshness
 # guard — it is repacked independently (no dependency on the exes) and would
 # otherwise always be newer than a freshly-built exe, blocking every build.
-# NOTE: *.nsi is intentionally excluded — the NSIS script is independent of
-# the exe build (editing it must not require a rebuild).
-# round-131: deploy/*.ps1|*.bat are re-staged fresh into the installer by
-# THIS script at makensis time — their mtime vs the exe is meaningless, and
-# gating on them wedges the pipeline (editing a ps1 demands an exe rebuild
-# that nothing changes). Only rs/toml sources that actually feed the exe.
+# round-131: deploy/*.ps1|*.bat are no longer staged (npm-only packaging);
+# only rs/toml sources that actually feed the exe are gated.
 NEWEST_IN="$(find "$ROOT/agent/src" "$ROOT/agent/vale-command-core" \
   "$ROOT/agent/vale-tray" "$ROOT/agent/Cargo.toml" \
   -path '*/target' -prune -o \
@@ -137,8 +133,6 @@ if [ -n "$NEWEST_DESKTOP" ]; then
   echo "!! $NEWEST_DESKTOP is newer than the release vale-desktop.exe — rebuild (cd agent/vale-desktop/src-tauri && cargo xwin build --release)"
   exit 1
 fi
-[ -x "$MAKENSIS" ] || { echo "!! makensis not found at $MAKENSIS"; exit 1; }
-
 # Version consistency: the index worker's /api/version constant must match
 # the workspace manifest, or devices see a stale version and never update
 # (or reinstall-loop).
@@ -154,28 +148,22 @@ if ! grep -q 'sha256: "' "$ROOT/index/src/index.js"; then
   exit 1
 fi
 
-STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
-cp "$VALEEXE" "$TRAYEXE" "$DESKTOPEXE" \
-   "$ROOT/agent/deploy/vale-agent-setup.ps1" \
-   "$ROOT/agent/deploy/run-setup.bat" \
-   "$ROOT/agent/deploy/fix-tunnel.ps1" \
-   "$ROOT/agent/deploy/vale-agent-install.nsi" \
-   "$ROOT/agent/deploy/vale-agent.ico" \
-   "$ROOT/agent/deploy/cloudflared.exe" \
-   "$ROOT/index/public/vale-agent/vale-browser-control.zip" \
-   "$ROOT/agent/deploy/vale-playwright.zip" "$STAGE/"
+NPM_DIR="$ROOT/agent/vale-agent-npm"
+# Stage the boxed artifacts into the npm package (files: list in package.json).
+cp "$VALEEXE" "$NPM_DIR/vale-agent.exe"
+cp "$DESKTOPEXE" "$NPM_DIR/vale-desktop.exe"
+cp "$ROOT/agent/deploy/cloudflared.exe" "$NPM_DIR/cloudflared.exe"
+cp "$ROOT/agent/deploy/vale-playwright.zip" "$NPM_DIR/vale-playwright.zip"
+echo "=== packing npm tgz (single install/update channel) ==="
+TGZ="$(cd "$NPM_DIR" && npm pack --silent)"
+TGZ_PATH="$NPM_DIR/$TGZ"
+echo "  ok: $TGZ_PATH"
 
-echo "=== building ValeAgent-Setup.exe (makensis) ==="
-(cd "$STAGE" && NSISDIR="$NSISDIR" "$MAKENSIS" vale-agent-install.nsi >/dev/null 2>&1) \
-  || { echo "!! makensis failed"; exit 1; }
-echo "  ok: $STAGE/ValeAgent-Setup.exe"
-
-# Publish the installer's SHA-256 into the index worker's /api/version — the
+# Publish the package's SHA-256 into the index worker's /api/version — the
 # agent's agent_update verifies the download against it before spawning.
-# (Deploy order in build.sh deploy: installer → index, so the hash is in the
+# (Deploy order in build.sh deploy: npm tgz → index, so the hash is in the
 # worker before it ships.)
-SHA256="$(sha256sum "$STAGE/ValeAgent-Setup.exe" | cut -d' ' -f1)"
+SHA256="$(sha256sum "$TGZ_PATH" | cut -d' ' -f1)"
 sed -i "s/sha256: \"[0-9a-f]*\"/sha256: \"$SHA256\"/" "$ROOT/index/src/index.js"
 # Fail-loud guard (round-55): the old sed pattern [0-9a-f]* could not match
 # the letter-containing placeholder "sha256-placeholder" — sed exited 0, the
@@ -189,23 +177,20 @@ fi
 echo "  ok: sha256 $SHA256 → index/src/index.js"
 
 DEST="$ROOT/index/public/vale-agent"
-# The installer embeds the playwright bundle (~36MB) — over the Workers
-# Assets 25MiB per-file cap — so it never lives in this worker: it is staged
-# to the Vercel static mirror below (v.saisi.online/dl/*), and the download
-# page + /api/version manifest point there. The standalone bundle is staged
-# too (the setup.ps1 script-install path downloads it directly). Only the
-# small files stay Workers Assets. Clean any stale oversize copies.
-rm -f "$DEST/ValeAgent-Setup.exe" "$DEST/vale-playwright.zip"
+# The npm tgz (~40MB, embeds the playwright bundle) is over the Workers
+# Assets 25MiB per-file cap — stage it to the Vercel static mirror below
+# (v.saisi.online/dl/*), and the download page + /api/version manifest point
+# there. Only the small files stay Workers Assets.
+rm -f "$DEST/ValeAgent-Setup.exe"
 # Primary download path: Vercel static hosting (v.saisi.online/dl/*). The
 # Vercel CDN serves the files from US edge nodes — devices on slow/blocked
 # GitHub paths still get full speed, and the URL stays on our own domain.
 # Static files (100MB cap) instead of a proxy FUNCTION: Hobby-plan functions
-# cap at 4.5MB responses / 10s, which a 37MB installer can't pass through.
+# cap at 4.5MB responses / 10s, which a 40MB tgz can't pass through.
 # Staged here; `build.sh deploy` pushes them with the vercel-proxy deploy.
 VERCEL_DL="$ROOT/proxies/vercel-proxy/dl"
 mkdir -p "$VERCEL_DL"
-cp "$STAGE/ValeAgent-Setup.exe" "$VERCEL_DL/ValeAgent-Setup.exe"
-cp "$ROOT/agent/deploy/vale-playwright.zip" "$VERCEL_DL/vale-playwright.zip"
+cp "$TGZ_PATH" "$VERCEL_DL/$TGZ"
 echo "  staged $(du -sh "$VERCEL_DL" | cut -f1) for v.saisi.online/dl/"
 cp "$VALEEXE" "$DEST/vale-agent.exe"
 cp "$TRAYEXE" "$DEST/vale-tray.exe"
@@ -226,12 +211,8 @@ if [ -d "$CODE_DIR" ]; then
   cp "$ROOT/gateway/public/style.css" "$CODE_DIR/public/style.css"
   echo "  synced code viewer mirror ($CODE_DIR)"
 fi
-# Keep the whole deploy set in sync — the site serves all of these, not just
-# the binaries. (fix-tunnel.ps1 was previously bundled into the installer but
-# never refreshed on the site, serving a stale copy to irm users.)
-cp "$ROOT/agent/deploy/vale-agent-setup.ps1" "$DEST/vale-agent-setup.ps1"
-cp "$ROOT/agent/deploy/fix-tunnel.ps1" "$DEST/fix-tunnel.ps1"
-cp "$ROOT/agent/deploy/run-setup.bat" "$DEST/run-setup.bat"
+# The npm tgz is the single distribution artifact — nothing else is staged
+# to the download site (NSIS/setup.ps1 retired).
 cp "$ROOT/agent/deploy/vale-agent.ico" "$DEST/vale-agent.ico"
 echo "  staged to $DEST/"
 echo "  next: ./scripts/build.sh index   (deploy the download site)"

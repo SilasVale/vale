@@ -2,9 +2,10 @@
 //
 // This Worker is the download site for vale-agent. Device management
 // (registry + MCP config + panel proxy) lives in the Vale console
-// (admin-only). This page only distributes the installer + setup scripts and
-// points users to the console. The console URL is set per-deployment via the
-// CONSOLE_URL var (no production domain is hardcoded here).
+// (admin-only). This page distributes the npm tgz (the SINGLE install/update
+// channel — NSIS installer retired 2026-08-28) and points users to the
+// console. The console URL is set per-deployment via the CONSOLE_URL var
+// (no production domain is hardcoded here).
 //
 // Design aligned with DeepSeek Harness (DSH) web GUI: dark-first design
 // system, --dsw-alias-* tokens, 12px radius cards, layered shadows.
@@ -256,25 +257,22 @@ const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
       <p class="desc">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel and managed from the <a href="${consoleUrl}">Vale console</a>.</p>
 
       <div class="actions">
-        <a class="btn-primary" href="${installerUrl}" download>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7.5 8 11l3.5-3.5M2 13h12"/></svg>
-          Download installer
-        </a>
-        <span class="hint">Run on the Windows machine connected to the device. Requires admin rights.</span>
+        <code class="cmd">npm i -g ${installerUrl}</code>
+        <span class="hint">Run on the Windows machine connected to the device. Requires Node.js + admin rights.</span>
       </div>
 
       <div class="steps">
         <div class="step">
           <div class="step-num">1</div>
-          <div class="step-body">Download and run the installer on Windows. It automates Cloudflare auth, creates a tunnel, and registers auto-start.</div>
+          <div class="step-body">Install the package: <code>npm i -g ${installerUrl}</code> — then run <code>vale setup --reg-key &lt;key&gt;</code> (get a key from the <a href="${consoleUrl}">Vale console</a> → Devices).</div>
         </div>
         <div class="step">
           <div class="step-num">2</div>
-          <div class="step-body">The installer finishes by showing the panel URL and token. Copy these for the next step.</div>
+          <div class="step-body">The setup installs the agent service, auto-registers the device, and prints the panel URL + token. Copy them for the next step.</div>
         </div>
         <div class="step">
           <div class="step-num">3</div>
-          <div class="step-body">Log in to the <a href="${consoleUrl}">Vale console</a> → Devices, add this device (name / host / token) — or use a registration key to auto-register.</div>
+          <div class="step-body">Updates are the same channel: <code>npm i -g ${installerUrl} && vale update</code>.</div>
         </div>
       </div>
     </div>
@@ -312,27 +310,58 @@ export default {
     // AI-triggerable RCE path). Re-generated automatically by
     // scripts/build-installer.sh — do not edit by hand.
     if (new URL(request.url).pathname === "/api/version") {
-      // The installer embeds the playwright bundle (~36MB — over the
-      // Workers Assets 25MiB per-file cap), so it lives outside this worker:
-      // the Vercel static hosting mirror (v.saisi.online/dl/), staged by
-      // scripts/build-installer.sh. Device code consumes `download` as-is.
-      const mirrorBase = (env && env.MIRROR_BASE) || "https://v.saisi.online/dl";
-      const download = `${mirrorBase}/ValeAgent-Setup.exe`;
+      // The npm tgz (~40MB — embeds the playwright bundle, over the Workers
+      // Assets 25MiB per-file cap), so it lives outside this worker: the
+      // Vercel static hosting mirror (v.saisi.online/dl/), staged by
+      // scripts/build-installer.sh. Device code consumes `download` as-is
+      // (npm i -g <download>, vale update).
+      // The npm tgz (~12MB — agent + desktop + playwright node_modules, no
+      // bundled node/cloudflared) fits the Workers Assets 25MiB cap and is
+      // served fast from this worker; the Vercel mirror stays as fallback.
+      const download = `https://agent.saisi.online/vale-agent/vale-agent-1.2.101.tgz`;
       return new Response(
         JSON.stringify({
           version: "1.0.105",
           download,
-          sha256: "0215a0371d80d7e27d2e06a6fc468a221a7f04b912326aac77d90c2a6e089000",
+          sha256: "92e3a3be188754d96b2e1d86c876f7d79b73815e325a62371fe0ce1c81ee107f",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
     }
     const pathname = new URL(request.url).pathname;
-    // Keep the old installer URL usable for links/bookmarks. The installer is
-    // too large for Workers Assets and is now served by the Vercel mirror.
+    // Keep the old installer URL usable for links/bookmarks — the NSIS
+    // installer is retired (npm is the single channel); redirect to the
+    // download page so stale links land somewhere useful.
     if (pathname === "/vale-agent/ValeAgent-Setup.exe") {
-      const mirrorBase = (env && env.MIRROR_BASE) || "https://v.saisi.online/dl";
-      return Response.redirect(`${mirrorBase}/ValeAgent-Setup.exe`, 302);
+      return Response.redirect(`https://agent.saisi.online/`, 302);
+    }
+    // npm tgz download path (the documented `npm i -g
+    // https://agent.saisi.online/vale-agent/vale-agent-<v>.tgz` command).
+    const tgzMatch = /^\/vale-agent\/vale-agent-[0-9]+\.[0-9]+\.[0-9]+\.tgz$/.exec(pathname);
+    if (tgzMatch) {
+      // The tgz (~12MB) fits Workers Assets and is served fast from here.
+      return env.ASSETS.fetch(request);
+    }
+    // cloudflared.exe proxy: the boxed tunnel binary (~54MB) is NOT bundled
+    // in the npm package (kept small); devices download it on demand from
+    // the official GitHub release. GitHub is often unreachable from devices
+    // (GFW etc.), so proxy it through this worker — Cloudflare's network
+    // reaches GitHub fast, and the device only talks to agent.saisi.online.
+    if (pathname === "/vale-agent/cloudflared.exe") {
+      const upstream = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe";
+      const resp = await fetch(upstream, { redirect: "follow" });
+      if (!resp.ok) {
+        return new Response("cloudflared upstream fetch failed: " + resp.status, { status: 502 });
+      }
+      // Stream the body through (no buffering — 54MB fits the response path).
+      return new Response(resp.body, {
+        status: 200,
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-disposition": 'attachment; filename="cloudflared.exe"',
+          "cache-control": "public, max-age=3600",
+        },
+      });
     }
     // A missing binary must 404, not return the download PAGE as 200 HTML —
     // devices silently downloaded HTML as ValeAgent-Setup.exe and the agent
@@ -341,7 +370,8 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
     const consoleUrl = (env && env.CONSOLE_URL) || "https://api.saisi.online";
-    const installerUrl = `${(env && env.MIRROR_BASE) || "https://v.saisi.online/dl"}/ValeAgent-Setup.exe`;
+    const installerUrl = `https://agent.saisi.online/vale-agent/vale-agent-1.2.101.tgz`;
+
     return new Response(PAGE(consoleUrl, installerUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
