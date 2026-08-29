@@ -90,11 +90,22 @@ export interface Device {
   name: string;
   hostname: string;
   token: string;
+  registeredAt?: number;
+  lastSeenAt?: number;
+  lastVersion?: string;
 }
 
 export interface DeviceStatus {
   agent_up?: boolean;
   online?: boolean;
+  tunnel_up?: boolean;
+  version?: string;
+  checked_at?: number;
+}
+
+export interface RegKeyInfo {
+  code: string;
+  expiresAt: number;
 }
 
 // ── API endpoints ──────────────────────────────────────────────
@@ -209,6 +220,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name, hostname, token }),
     }),
+  renameDevice: (oldName: string, newName: string, hostname?: string) =>
+    request<unknown>(`/api/devices/${encodeURIComponent(oldName)}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ name: newName, ...(hostname ? { hostname } : {}) }),
+    }),
   deleteDevice: (name: string) =>
     request<unknown>(`/api/devices/${encodeURIComponent(name)}`, { method: "DELETE" }),
   getDeviceMcp: (name: string) =>
@@ -216,6 +232,18 @@ export const api = {
 
   // Devices: registration key
   generateRegKey: () => request<{ key: string }>("/api/devices/register-key", { method: "POST" }),
+  listRegKeys: () =>
+    request<{ keys: RegKeyInfo[] }>("/api/devices/register-keys"),
+  revokeRegKey: (code: string) =>
+    request<unknown>(`/api/devices/register-keys/${encodeURIComponent(code)}`, {
+      method: "DELETE",
+    }),
+
+  // Devices: current install version (null → UI falls back to its constant)
+  getInstallCmd: () =>
+    request<{ ok: boolean; version: string | null; download: string | null }>(
+      "/api/devices/install-cmd",
+    ),
 
   // Plugins: pair
   pairDevice: (device: string) =>
@@ -224,6 +252,9 @@ export const api = {
       body: JSON.stringify({ device }),
     }),
 
-  // Plugins: status
-  getPluginStatus: () => request<{ devices: Record<string, DeviceStatus> }>("/api/plugins/status"),
+  // Plugins: status (fresh=1 bypasses the gateway's 30s probe cache)
+  getPluginStatus: (fresh?: boolean) =>
+    request<{ devices: Record<string, DeviceStatus> }>(
+      fresh ? "/api/plugins/status?fresh=1" : "/api/plugins/status",
+    ),
 };

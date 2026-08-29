@@ -1304,6 +1304,95 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* ================================================================
+   Devices page
+   ================================================================ */
+
+/* Per-device signal chips: agent / tunnel / extension as independent
+   states (agent_up alone no longer hides tunnel or extension problems). */
+.dev-status-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.dev-ver {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--ds-font-family-code);
+  font-variant-numeric: tabular-nums;
+}
+
+.muted-small { font-size: 12px; color: var(--text-muted); }
+
+/* Load-failure banner (the list errors used to be swallowed silently). */
+.banner-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--error);
+  background: var(--error-bg);
+  color: var(--error);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.banner-error .btn { margin-left: auto; }
+
+/* Initial-load skeletons for the device list. */
+.dev-skeletons { display: flex; flex-direction: column; gap: 8px; }
+.skeleton-row {
+  height: 58px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-secondary) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: dev-shimmer 1.2s infinite;
+}
+@keyframes dev-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Unused registration keys block inside the install card. */
+.regkeys { border-top: 1px dashed var(--border); padding-top: 12px; }
+.regkeys-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.regkeys-title { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+
+/* Collapsed advanced block (account-level gateway MCP config). */
+.adv-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+.adv-block > summary {
+  cursor: pointer;
+  padding: 14px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+.adv-block > summary::-webkit-details-marker { display: none; }
+.adv-block > summary::before {
+  content: "▸";
+  font-size: 11px;
+  color: var(--text-faint);
+  transition: transform var(--ds-dur) var(--ds-ease);
+}
+.adv-block[open] > summary::before { transform: rotate(90deg); }
+.adv-block > .adv-body { padding: 0 18px 16px; }
+
+.form-hint { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+.modal-strong { font-weight: 600; margin: 0 0 6px; }
+
+/* ================================================================
    Responsive
    ================================================================ */
 
