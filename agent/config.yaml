@@ -1,8 +1,8 @@
 server:
   # Loopback bind (security, 1.0.63+): the server is reached ONLY via the
-  # cloudflared tunnel (ingress 127.0.0.2:18080) or locally. 0.0.0.0 exposed
+  # cloudflared tunnel (ingress 127.0.0.1:18080) or locally. 0.0.0.0 exposed
   # the API to the LAN and the /panel/ Host gate is spoofable — LAN RCE.
-  host: "127.0.0.2"
+  host: "127.0.0.1"
   port: 18080
   name: "vale-agent"
 

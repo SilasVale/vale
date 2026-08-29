@@ -9,11 +9,17 @@ UninstallIcon "vale-agent.ico"
 Name "Vale Agent"
 OutFile "ValeAgent-Setup.exe"
 RequestExecutionLevel admin
-InstallDir "C:\vale-agent"
+; C1 (2026-08-28): registry is the single source of truth for the install
+; location. Default to Program Files (per-machine); an existing legacy dir
+; (C:\vale-agent / D:\vale-agent) is detected and adopted by setup.ps1 +
+; vale.js so upgrades never silently move data.
+InstallDir "$PROGRAMFILES\Vale"
 
 Var RESULT_TEXT
 Var REGKEY
 Var REGKEY_INPUT
+
+!define VALE_REG_KEY "HKLM\SOFTWARE\Vale\Agent"
 
 !define MUI_ABORTWARNING
 
@@ -98,9 +104,13 @@ Section "Install" SEC01
   ;    exe cannot be overwritten, hence the temp name + swap below.
   File "/oname=vale-agent.exe.new" "vale-agent.exe"
   File "/oname=vale-desktop.exe.new" "vale-desktop.exe"
-  ; cloudflared is BUNDLED (no winget/external dependency) — one package
-  ; contains every piece; the tunnel service uses $INSTDIR\cloudflared.exe.
+  ; C2: cloudflared is BUNDLED + BOXED under $INSTDIR\tools\ (no winget /
+  ; external dependency) — version-locked by the Vale release flow and
+  ; supervised by the agent (spawn-if-absent). Single location — no legacy
+  ; fallbacks anywhere.
+  SetOutPath "$INSTDIR\tools"
   File "cloudflared.exe"
+  SetOutPath "$INSTDIR"
   ; Support files — safe to write directly (never locked by a process).
   File "vale-agent-setup.ps1"
   File "run-setup.bat"
@@ -231,6 +241,13 @@ Section "Install" SEC01
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
+  ; C1: record the single source of truth — InstallDir + DataDir in
+  ; HKLM\SOFTWARE\Vale\Agent. Every entry point (NSIS / setup.ps1 / npm CLI)
+  ; and the agent runtime read these keys; nobody guesses paths anymore.
+  ; DataDir defaults to %ProgramData%\Vale (data survives uninstall).
+  WriteRegStr HKLM "SOFTWARE\Vale\Agent" "InstallDir" "$INSTDIR"
+  WriteRegStr HKLM "SOFTWARE\Vale\Agent" "DataDir" "$PROGRAMDATA\Vale"
+
   ; Silent mode = auto-upgrade from the tray: the launching tray has already
   ; exited, so bring a fresh tray back. schtasks /Run triggers the at-logon
   ; ValeAgentTray task, restoring the exact previous environment (interactive
@@ -245,20 +262,15 @@ Section "Install" SEC01
     ; bundle would make the Plugins page Start fail against the old code).
     nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -Recurse -Force \"$INSTDIR\playwright\" -ErrorAction SilentlyContinue; Expand-Archive -Force -Path \"$INSTDIR\vale-playwright.zip\" -DestinationPath \"$INSTDIR\""'
     ; Domain migration (0.8.6): rewrite a *.command.saisi.online tunnel ingress
-    ; to *.agent.saisi.online in both cloudflared configs (user + systemprofile),
-    ; update the hostname file, restart the cloudflared service. Idempotent —
-    ; a config already on agent is untouched.
+    ; to *.agent.saisi.online in the agent-owned tunnel.yml, update the
+    ; hostname file, restart cloudflared. Idempotent — a config already on
+    ; agent is untouched.
     ; Repair the cloudflared tunnel config after the domain migration — the
     ; bundled fix-tunnel.ps1 rewrites a legacy vale-command-dN tunnel +
     ; *.command.saisi.online ingress to vale-agent-dN + *.agent.saisi.online
     ; (user + systemprofile configs), fixes config.yaml name, restarts
     ; cloudflared. Idempotent; safe on fresh installs.
     nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\fix-tunnel.ps1"'
-    ; round-116: failure auto-restart (idempotent) — a crashed cloudflared
-    ; used to leave the device offline until a human restarted it. Re-assert
-    ; the SCM recovery action on every upgrade (the service survives
-    ; upgrades, so the setup-script path never runs again).
-    nsExec::ExecToLog 'cmd /c sc failure Cloudflared reset= 86400 actions= restart/5000/restart/10000/restart/30000 2>NUL'
     ; Loopback bind on upgrade (security, 1.0.63+): an OLD config.yaml still
     ; says host: 0.0.0.0 (the embedded default before 1.0.63) and setup.ps1
     ; only rewrites it on fresh installs — without this, an upgrade keeps
@@ -318,7 +330,9 @@ Section "Uninstall"
   ; round-138/139/140: kill ONLY the bundled playwright node (backtick
   ; delimited — NSIS '' is not an escape; anchored on \playwright\node.exe).
   nsExec::ExecToLog `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*\playwright\node.exe*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`
-  ; Stop and remove the scheduled tasks + cloudflared service (best effort)
+  ; Stop and remove the scheduled tasks + any LEGACY cloudflared service
+  ; (best effort; the agent-supervised model installs no service, but older
+  ; installs may leave one — clean it so no stale owner survives)
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgentTray 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /Delete /TN ValeAgentTray /F 2>NUL'
   nsExec::ExecToLog 'cmd /c schtasks /End /TN ValeAgent 2>NUL'
@@ -348,5 +362,11 @@ Section "Uninstall"
   Delete "$INSTDIR\vale-tray.exe.bak"
   RMDir /r "$INSTDIR\extension"
   RMDir /r "$INSTDIR\playwright"
+  ; C1: tools\ (cloudflared box) lives under the install dir — clean it too.
+  RMDir /r "$INSTDIR\tools"
+  ; C1: drop the registry single source of truth. The DATA dir is intentionally
+  ; NOT deleted (sessions/memory survive uninstall; the user is prompted to
+  ; remove them manually if wanted).
+  DeleteRegKey HKLM "SOFTWARE\Vale\Agent"
   RMDir "$INSTDIR"
 SectionEnd

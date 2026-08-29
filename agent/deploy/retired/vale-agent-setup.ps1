@@ -16,7 +16,7 @@
 #
 param(
     [string]$Hostname = "",   # empty = auto-assign the next free dN subdomain
-    [string]$InstallDir = "C:\vale-agent",
+    [string]$InstallDir = "", # C1: empty = read HKLM\SOFTWARE\Vale\Agent\InstallDir, else default
     [string]$Base = "https://agent.saisi.online", # download Worker; binaries remain under /vale-agent/
     [string]$AgentDomain = "agent.saisi.online",
     [string]$ConsoleUrl = "https://ai.saisi.online",
@@ -56,7 +56,47 @@ function Get-TunnelId($cloudflared, $Name) {
     return $null
 }
 
+# C1: the registry (HKLM\SOFTWARE\Vale\Agent) is the single source of truth
+# for install + data dirs. Resolution order: explicit -InstallDir param ->
+# registry -> default. No legacy directory probing — a fresh install always
+# writes the registry, and run-setup.bat passes the NSIS $INSTDIR explicitly.
+function Resolve-InstallDir {
+    if ($InstallDir) { return $InstallDir }
+    $reg = "HKLM:\SOFTWARE\Vale\Agent"
+    if (Test-Path $reg) {
+        $v = (Get-ItemProperty -Path $reg -Name InstallDir -ErrorAction SilentlyContinue).InstallDir
+        if ($v) { return $v }
+    }
+    return "C:\Program Files\Vale"
+}
+
+function Resolve-DataDir {
+    $reg = "HKLM:\SOFTWARE\Vale\Agent"
+    if (Test-Path $reg) {
+        $v = (Get-ItemProperty -Path $reg -Name DataDir -ErrorAction SilentlyContinue).DataDir
+        if ($v) { return $v }
+    }
+    return "$env:ProgramData\Vale"
+}
+
+function Write-InstallKeys($dir, $data) {
+    New-Item -Path "HKLM:\SOFTWARE\Vale\Agent" -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Vale\Agent" -Name InstallDir -Value $dir -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path "HKLM:\SOFTWARE\Vale\Agent" -Name DataDir -Value $data -PropertyType String -Force | Out-Null
+}
+
 Require-Admin
+
+# C1: resolve + persist the install/data dirs BEFORE any file write so the
+# whole setup works from one source of truth.
+$InstallDir = Resolve-InstallDir
+$DataDir = Resolve-DataDir
+Write-Host "  install dir: $InstallDir"
+Write-Host "  data dir:    $DataDir"
+Write-InstallKeys $InstallDir $DataDir
+New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "sessions") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "memory") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "logs") | Out-Null
 
 # Auto-assign the subdomain when not given. Reuse the existing install's
 # hostname if there is one, else pick the next free dN by DNS probe. The
@@ -72,13 +112,14 @@ $versionEndpoint = "$Base/api/version"
 # up) aborted at the very first write with "Could not find a part of the path ...".
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 if (-not $Hostname) {
-    # 1. The existing working setup's subdomain (cloudflared config ingress).
-    $cfCfg = Join-Path $env:USERPROFILE ".cloudflared\config.yml"
+    # 1. The existing install's subdomain (agent-owned tunnel.yml ingress —
+    #    the single config the agent actually reads).
+    $cfCfg = Join-Path $InstallDir "tunnel.yml"
     if (Test-Path $cfCfg) {
         $m = Select-String -Path $cfCfg -Pattern "hostname:\s*([^\s]+)" | Select-Object -First 1
         if ($m) { $Hostname = $m.Matches[0].Groups[1].Value }
     }
-    # 2. Previously saved hostname (newer installs).
+    # 2. Previously saved hostname (vale-agent.hostname).
     if (-not $Hostname -and (Test-Path $hostFile)) {
         $Hostname = (Get-Content $hostFile -Raw).Trim()
     }
@@ -223,19 +264,13 @@ if (-not (Test-Path $cfg)) {
 # bound to 0.0.0.0 after install (round-53).
 (Get-Content $cfg) -replace '^host: "?0\.0\.0\.0"?$','host: "127.0.0.2"' | Set-Content $cfg
 
-# 2. cloudflared — BUNDLED with the installer (one package contains every
-# piece; nothing is fetched from winget or scattered across the system).
-# The installer places cloudflared.exe at $INSTDIR\cloudflared.exe; the
-# tunnel service and config both use that single copy.
+# 2. cloudflared — BUNDLED + BOXED under $INSTDIR\tools\ (C2: one package,
+# version-locked by the Vale release flow; nothing is fetched from winget or
+# scattered across the system). Single location — no legacy fallbacks.
 Write-Host "`n[2/7] cloudflared"
-$cloudflared = Join-Path $InstallDir "cloudflared.exe"
+$cloudflared = Join-Path $InstallDir "tools\cloudflared.exe"
 if (-not (Test-Path $cloudflared)) {
-    # Fallback for legacy installs that used winget: prefer the bundled copy
-    # but keep the old system copy working so an in-place upgrade of an old
-    # device does not break the tunnel.
-    $oldCloudflared = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
-    if ($oldCloudflared) { $cloudflared = $oldCloudflared }
-    else { throw "cloudflared.exe not found in installer dir ($InstallDir) — the installer must bundle it." }
+    throw "cloudflared.exe not found in installer dir ($InstallDir\tools) — the installer must bundle it."
 }
 Write-Host "  cloudflared at: $cloudflared"
 
@@ -336,27 +371,31 @@ if ($rc -ne 0) {
     throw "tunnel route dns failed (exit $rc)"
 }
 
-# 5. Tunnel config
+# 5. Tunnel config — ONE location: $InstallDir\tunnel.yml + credentials next
+# to it. This is the exact file the agent spawns cloudflared with
+# (main.rs: `cloudflared tunnel --config tunnel.yml run`, C2 supervised
+# model). No copies in user/systemprofile — the agent owns the tunnel.
 Write-Host "`n[5/7] tunnel config"
-$cfDir = Join-Path $env:USERPROFILE ".cloudflared"
-New-Item -ItemType Directory -Force -Path $cfDir | Out-Null
-$cfCfg = Join-Path $cfDir "config.yml"
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+$cfCfg = Join-Path $InstallDir "tunnel.yml"
+$cfCred = Join-Path $InstallDir "$tunnelId.json"
 @"
 tunnel: $tunnelId
-credentials-file: $cfDir\$tunnelId.json
+credentials-file: $cfCred
 ingress:
   - hostname: $Hostname
     service: http://127.0.0.2:18080
   - service: http_status:404
 "@ | Set-Content -Path $cfCfg -Encoding ascii
+# cloudflared writes the tunnel credentials to %USERPROFILE%\.cloudflared\
+# when the tunnel is created; stage them next to tunnel.yml (single location).
+$cfSrcCred = Join-Path $env:USERPROFILE ".cloudflared\$tunnelId.json"
+if (Test-Path $cfSrcCred) {
+    Copy-Item $cfSrcCred $cfCred -Force
+} else {
+    throw "cloudflared credentials not found at $cfSrcCred — cannot stage tunnel config"
+}
 Write-Host "  wrote $cfCfg"
-# The cloudflared service runs as SYSTEM, which looks for ~/.cloudflared/config.yml
-# in systemprofile and would never see the file above. Copy config + credentials
-# there so the service uses the right tunnel and ingress.
-$sysCfDir = Join-Path $env:SystemRoot "System32\config\systemprofile\.cloudflared"
-New-Item -ItemType Directory -Force -Path $sysCfDir | Out-Null
-Copy-Item $cfCfg (Join-Path $sysCfDir "config.yml") -Force
-Copy-Item (Join-Path $cfDir "$tunnelId.json") (Join-Path $sysCfDir "$tunnelId.json") -Force -ErrorAction SilentlyContinue
 
 # 6. vale-agent as an auto-start scheduled task.
 # A Windows service requires the process to speak the SCM protocol; vale-agent
@@ -389,6 +428,98 @@ if (-not (Get-ScheduledTask -TaskName "ValeAgent" -ErrorAction SilentlyContinue)
     throw "failed to register scheduled task ValeAgent"
 }
 Start-ScheduledTask -TaskName "ValeAgent" | Out-Null
+Start-Sleep -Seconds 2
+
+# Verify the agent actually listens on 18080 (a raw TCP probe is faster and
+# cannot hang like PS 5.1's Invoke-WebRequest; the tunnel can lag behind, so
+# probe locally). The boot task's agent also writes startup.log next to its
+# exe — on failure print it here so the install output carries the diagnosis.
+$agentOk = $false
+for ($i = 0; $i -lt 10; $i++) {
+    $c = New-Object System.Net.Sockets.TcpClient
+    try {
+        $iar = $c.BeginConnect("127.0.0.1", 18080, $null, $null)
+        if ($iar.AsyncWaitHandle.WaitOne(2000) -and $c.Connected) { $agentOk = $true }
+    } catch { }
+    $c.Close()
+    if ($agentOk) { break }
+    Write-Host "  (probe $($i+1)/10: agent not up yet...)"
+    Start-Sleep -Seconds 2
+}
+if ($agentOk) {
+    Write-Host "  OK: vale-agent serving on 127.0.0.1:18080"
+} else {
+    Write-Warning "  NOT serving on 18080 yet — vale-agent startup log:"
+    $sl = Join-Path $InstallDir "startup.log"
+    if (Test-Path $sl) { Get-Content $sl } else { Write-Warning "  (no startup.log at $sl)" }
+}
+
+# [6b] ValePlaywright — playwright-mcp hosted in the INTERACTIVE user session.
+# Edge cannot run under the agent's SYSTEM/session-0 token (exitCode=1002:
+# no desktop heap for the browser), but the same binary works fine launched
+# from a logged-in user. The task binds 127.0.0.1:9229 only (--allowed-hosts
+# blocks DNS-rebinding; the Host check compares RAW host:port) and the same
+# 5-min repetition sweep as the boot task restarts it if it dies. The agent's
+# mcp_client connects to http://127.0.0.1:9229/mcp — never "localhost", which
+# resolves to [::1] first and can hit a stale session-0 instance instead.
+Write-Host "`n[6b/7] playwright-mcp interactive task"
+$pwNode = Join-Path $InstallDir "playwright\node.exe"
+$pwCli = Join-Path $InstallDir "playwright\node_modules\@playwright\mcp\cli.js"
+if (Test-Path $pwNode) {
+    Unregister-ScheduledTask -TaskName "ValePlaywright" -Confirm:$false -ErrorAction SilentlyContinue
+    $pwAction = New-ScheduledTaskAction -Execute $pwNode `
+        -Argument "`"$pwCli`" --port 9229 --browser chromium --host 127.0.0.1 --headless --ignore-https-errors --allowed-hosts `"127.0.0.1:9229,localhost:9229`""
+    $pwBoot = New-ScheduledTaskTrigger -AtLogOn
+    $pwWatch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)
+    $pwSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    Register-ScheduledTask -TaskName "ValePlaywright" -Action $pwAction -Trigger @($pwBoot, $pwWatch) -Principal (New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited) -Settings $pwSettings -Force | Out-Null
+    Start-ScheduledTask -TaskName "ValePlaywright" | Out-Null
+    Write-Host "  OK: ValePlaywright registered (session-1 browser server on 127.0.0.1:9229)"
+} else {
+    Write-Warning "  playwright runtime missing at $pwNode — browser tools disabled"
+}
+
+
+# Desktop shortcut "Vale Panel" -> local panel URL (DSH-style browser-first
+# management; the native tray retired 2026-08-22 after recurring icon loss).
+Write-Host "`n[6.5/7] desktop shortcut"
+try {
+    $ws = New-Object -ComObject WScript.Shell
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $sc = $ws.CreateShortcut((Join-Path $desktop 'Vale Panel.lnk'))
+    $sc.TargetPath = 'http://127.0.0.1:18080/panel/'
+    $sc.IconLocation = (Join-Path $InstallDir 'vale-agent.ico') + ',0'
+    $sc.Description = 'Vale Agent panel'
+    $sc.Save()
+    Write-Host '  ok: desktop shortcut created'
+} catch { Write-Warning "shortcut failed: $_" }
+
+# 7. cloudflared — C2 supervised model: the AGENT owns the tunnel lifecycle
+# (main.rs spawn-if-absent with --config tunnel.yml, restarted on boot).
+# No Windows service is installed (a service + agent spawn = two owners and
+# the systemprofile-config confusion this script used to paper over). We only
+# ensure the boxed binary is staged and that no LEGACY Cloudflared service
+# from older installs is left running — a leftover service would grab the
+# tunnel and fight the agent's spawn (cf_running check).
+Write-Host "`n[7/7] cloudflared supervision"
+$oldEAPk = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+# Remove any legacy Cloudflared service + its EventLog source (round-38/66
+# discipline: 2>$null, never 2>NUL).
+& $cloudflared service uninstall 2>$null
+for ($i = 0; $i -lt 10; $i++) {
+    sc.exe query Cloudflared 2>$null
+    if ($LASTEXITCODE -ne 0) { break }   # already gone
+    taskkill /F /IM cloudflared.exe 2>$null
+    sc.exe delete Cloudflared 2>$null
+    Start-Sleep -Seconds 1
+}
+sc.exe query Cloudflared 2>$null
+if ($LASTEXITCODE -eq 0) { throw "Cloudflared service still exists - remove it manually (taskkill /F /IM cloudflared.exe; sc delete Cloudflared) then re-run." }
+reg delete "HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\Cloudflared" /f 2>$null
+$ErrorActionPreference = $oldEAPk
+Write-Host "  legacy Cloudflared service removed; tunnel is agent-supervised (spawn-if-absent on agent start)."
+
 Start-Sleep -Seconds 2
 
 # Verify the agent actually listens on 18080 (a raw TCP probe is faster and
