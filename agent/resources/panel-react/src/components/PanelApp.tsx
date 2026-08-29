@@ -92,6 +92,7 @@ export function PanelApp(props: Props) {
                 browserActive={props.browserActive}
                 token={props.token}
                 density="panel"
+                sseState={props.sseState as "connected" | "down" | "connecting"}
               />
             )}
             {page === "browser" && (

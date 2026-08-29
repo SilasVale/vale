@@ -24,7 +24,7 @@ interface Props {
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   browserActive: boolean;
   onNewSession: (kind: "pty" | "ssh" | "serial", target?: string, extra?: Record<string, unknown>) => void;
-  sseState: string;
+  sseState: "connected" | "down" | "connecting";
   token: string;
   plugins: ReturnType<typeof usePlugins>;
   cmdEvents: CommandEvents;
@@ -83,6 +83,7 @@ export function DesktopShell({
               browserActive={browserActive}
               token={token}
               density="desktop"
+              sseState={sseState}
             />
           )}
           {page === "browser" && (

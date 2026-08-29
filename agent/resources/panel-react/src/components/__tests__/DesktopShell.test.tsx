@@ -29,7 +29,7 @@ const baseProps = {
   registerWrite: vi.fn(() => vi.fn()),
   browserActive: false,
   onNewSession: vi.fn(),
-  sseState: "connected",
+  sseState: "connected" as "connected" | "down" | "connecting",
   token: "t",
   plugins: { rows: [], specLoaded: false, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any,
   cmdEvents: { cards: [], events: [] } as any,

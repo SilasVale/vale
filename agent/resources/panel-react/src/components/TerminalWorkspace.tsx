@@ -34,11 +34,12 @@ interface Props {
   browserActive: boolean;
   token: string;
   density: "panel" | "desktop";
+  sseState: "connected" | "down" | "connecting";
 }
 
 export function TerminalWorkspace({
   sessions, activeSid, onActivate, onClose, onExport, onViewChange,
-  registerWrite, cmdEvents, browserActive, token, density,
+  registerWrite, cmdEvents, browserActive, token, density, sseState,
 }: Props) {
   const [selectedCmdId, setSelectedCmdId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -54,8 +55,16 @@ export function TerminalWorkspace({
     }
   };
 
+  // Browserless-style connection banner: the SSE stream dropped — say so in
+  // place instead of leaving the user typing into a frozen terminal.
+  const reconnectBanner = sseState === "down" ? (
+    <div className="term-reconnect">Connection lost — reconnecting…</div>
+  ) : null;
+
   return (
     <>
+      {/* Terminal page banner (both densities) */}
+      {reconnectBanner}
       {density === "desktop" ? (
         <div className="desktop-terminal">
           <div className="desktop-tabs-row">

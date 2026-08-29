@@ -39,6 +39,15 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const [fps, setFps] = useState(0);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [sel, setSel] = useState(0);
+  // Browserless-style controls: viewport zoom (% of frame width) and the
+  // locally-remembered URL history (native datalist dropdown).
+  const [zoom, setZoom] = useState(100);
+  const [urlHistory, setUrlHistory] = useState<string[]>(() => {
+    try {
+      const h = JSON.parse(localStorage.getItem("valeUrlHistory") || "[]");
+      return Array.isArray(h) ? h : [];
+    } catch { return []; }
+  });
 
   // Evidence state
   const [shots, setShots] = useState<Shot[]>([]);
@@ -54,6 +63,11 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const viewRef = useRef<BrowserView>("live");
   viewRef.current = view;
   const seenLoaded = useRef<Set<string>>(new Set());
+
+  // AI-activity signal (Browserless "watching sessions" pattern): the AI's
+  // browser_run_script drops screenshots into pwout — a fresh mtime means
+  // the AI drove (or is driving) the browser. Derived at render time.
+  const aiActive = shots.some((s) => Date.now() - s.mtime_ms < 90000);
 
   const applyFrame = useCallback((blob: Blob | ArrayBuffer) => {
     const img = imgRef.current;
@@ -201,13 +215,20 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     const u = url.startsWith("http") ? url : `https://${url}`;
     setUrl(u);
     send({ t: "nav", url: u });
+    // Remember the URL locally (dedup, newest first, cap 20).
+    setUrlHistory((prev) => {
+      const next = [u, ...prev.filter((x) => x !== u)].slice(0, 20);
+      try { localStorage.setItem("valeUrlHistory", JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
   }, [url, send]);
 
   const auth = useCallback(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  // ---- Evidence view (AI screenshot stream, round-154) ----
+  // ---- Evidence + AI-activity polling (round-154, extended round-160) ----
+  // Runs in BOTH views: the evidence timeline needs the shots, and the live
+  // view derives the "AI is operating" indicator from the newest mtime.
   useEffect(() => {
-    if (view !== "evidence") return;
     let alive = true;
     const tick = async () => {
       try {
@@ -217,7 +238,9 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
         if (!alive || !Array.isArray(data.shots)) return;
         const list: Shot[] = data.shots;
         setShots(list);
-        setSelected((cur) => cur && list.some((s) => s.name === cur) ? cur : (list[0]?.name ?? null));
+        if (viewRef.current === "evidence") {
+          setSelected((cur) => cur && list.some((s) => s.name === cur) ? cur : (list[0]?.name ?? null));
+        }
         const missing = list.filter((s) => !seenLoaded.current.has(s.name));
         for (const shot of missing) {
           fetch(`${apiBase}/api/browser/pwshot?name=${encodeURIComponent(shot.name)}`, { headers: auth() })
@@ -242,14 +265,16 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     void tick();
     const t = window.setInterval(tick, POLL_MS);
     return () => { alive = false; window.clearInterval(t); };
-  }, [apiBase, auth, view]);
+  }, [apiBase, auth]);
 
   return {
     view, setView,
-    url, setUrl, navigate,
+    url, setUrl, navigate, urlHistory,
+    zoom, setZoom,
     error, fps, tabs, sel,
     newTab, selTab, closeTab,
     imgRef, mapXY, send,
     shots, selected, setSelected, shotUrls,
+    aiActive,
   };
 }

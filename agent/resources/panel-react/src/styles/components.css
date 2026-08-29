@@ -1324,3 +1324,91 @@
 /* Browser wrap visibility is driven by the browserActive state class —
    the ID-scoped display:flex rule above would beat a bare .hidden. */
 #term-container > .browser-wrap.hidden { display: none; }
+
+/* ── Terminal UX (round-160: scrollback search / font bar / reconnect banner) ── */
+.term-session { position: relative; }
+.term-searchbar {
+  position: absolute;
+  top: 6px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.term-searchbar input {
+  width: 160px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: 12px var(--font-mono);
+}
+.term-searchbar button,
+.term-fontbar button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.term-searchbar button:hover,
+.term-fontbar button:hover { background: var(--ds-neutral-100); color: var(--ink); }
+.term-fontbar {
+  position: absolute;
+  bottom: 8px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  opacity: 0.35;
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+.term-fontbar:hover { opacity: 1; }
+.term-reconnect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+  border-bottom: 1px solid var(--line);
+}
+
+/* ── Browser UX (round-160: AI activity / zoom / fullscreen) ── */
+.browser-ai-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.browser-ai-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  animation: browser-ai-pulse 1.2s infinite;
+}
+@keyframes browser-ai-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.browser-urlbar .browser-zoom {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  padding: 4px;
+}

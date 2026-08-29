@@ -3,7 +3,12 @@
  * remote-browser protocol). All protocol/WS/evidence logic lives in
  * hooks/useBrowser.ts; this component only renders state and forwards input
  * events. Styling is CSS classes (styles/components.css), English UI copy.
+ *
+ * round-160 (Browserless/Browserbase borrowings): AI-activity indicator
+ * (fresh pwout screenshots = the AI is driving), viewport zoom, URL history
+ * dropdown, and a fullscreen toggle for the live viewport.
  */
+import { useRef } from "react";
 import { useBrowser, type BrowserSessionData } from "../hooks/useBrowser";
 
 export interface BrowserPaneProps {
@@ -14,6 +19,21 @@ export interface BrowserPaneProps {
 
 export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
   const b = useBrowser({ apiBase, token });
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+
+  const toggleFullscreen = () => {
+    const el = viewportRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    else void el.requestFullscreen().catch(() => {});
+  };
+
+  const aiBanner = b.aiActive ? (
+    <div className="browser-ai-indicator">
+      <span className="browser-ai-dot" />
+      AI is operating this browser — recent screenshots detected. Click the page to take over.
+    </div>
+  ) : null;
 
   return (
     <div className="browser-pane">
@@ -33,6 +53,7 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
 
       {b.view === "live" ? (
         <div className="browser-live">
+          {aiBanner}
           {/* Tab strip */}
           <div className="browser-tabstrip">
             {b.tabs.map((tb) => (
@@ -44,7 +65,7 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
             <span className="browser-tab-new" onClick={() => void b.newTab()} title="New tab">+</span>
           </div>
 
-          {/* URL bar */}
+          {/* URL bar + viewport controls */}
           <div className="browser-urlbar">
             <input
               className="browser-url"
@@ -52,19 +73,34 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
               onChange={(e) => b.setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && b.navigate()}
               placeholder="Enter URL and press Enter — the page below is live and clickable"
+              list="vale-url-history"
             />
+            <datalist id="vale-url-history">
+              {b.urlHistory.map((u) => <option key={u} value={u} />)}
+            </datalist>
             <button className="btn btn-mini browser-go" onClick={b.navigate}>Go</button>
+            <select
+              className="browser-zoom"
+              value={b.zoom}
+              onChange={(e) => b.setZoom(Number(e.target.value))}
+              title="Viewport zoom"
+              aria-label="Viewport zoom"
+            >
+              {[75, 100, 125, 150].map((z) => <option key={z} value={z}>{z}%</option>)}
+            </select>
+            <button className="btn btn-mini browser-fullscreen" onClick={toggleFullscreen} title="Fullscreen">⛶</button>
             <span className="browser-fps" title="frames per second">{b.fps}fps</span>
           </div>
 
           {/* Live viewport */}
-          <div className="browser-viewport">
+          <div className="browser-viewport" ref={viewportRef}>
             {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
             <img
               ref={b.imgRef}
               className="browser-frame"
               alt="Remote browser"
               tabIndex={0}
+              style={{ width: `${b.zoom}%` }}
               onMouseMove={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "move" }); }}
               onMouseDown={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "down" }); }}
               onMouseUp={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "up" }); }}
@@ -90,6 +126,7 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
         </div>
       ) : (
         <div className="browser-live browser-live-evidence">
+          {aiBanner}
           <div className="browser-ev-stage">
             {b.selected && b.shotUrls[b.selected] ? (
               <img src={b.shotUrls[b.selected]} className="browser-ev-img" alt="AI browser evidence" />

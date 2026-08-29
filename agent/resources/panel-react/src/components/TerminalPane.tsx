@@ -1,6 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { callTool } from "../lib/api";
 import type { Session } from "../hooks/useSessions";
 
@@ -10,13 +12,36 @@ import type { Session } from "../hooks/useSessions";
 // terminal directly; the frame.start dedup (round-68) is handled here via
 // renderedBytes — while a sync read is in flight (syncInFlight) frames are
 // skipped so the read's text doesn't double-render.
+//
+// ShellHub/Teleport-style terminal UX (round-160): scrollback search
+// (Ctrl+F), WebGL rendering with canvas fallback, selection-to-copy +
+// right-click paste, and a per-pane font-size control persisted to
+// localStorage.
+
+const FONT_LS = "valeFontSize";
+const FONT_DEFAULT = 13;
+const FONT_MIN = 9;
+const FONT_MAX = 22;
+
+function loadFontSize(): number {
+  try {
+    const n = Number(localStorage.getItem(FONT_LS));
+    if (Number.isFinite(n) && n >= FONT_MIN && n <= FONT_MAX) return n;
+  } catch { /* private mode */ }
+  return FONT_DEFAULT;
+}
+
 export function TerminalPane({ session, registerWrite }: {
   session: Session;
-  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => () => void;
+  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const searchRef = useRef<SearchAddon | null>(null);
   const renderedRef = useRef(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [fontSize, setFontSize] = useState(loadFontSize);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -26,7 +51,7 @@ export function TerminalPane({ session, registerWrite }: {
       convertEol: true,
       cursorBlink: true,
       scrollback: 20000,
-      fontSize: 13,
+      fontSize,
       // round-83 (R82 review): reflowOnResize re-wraps the buffer on a grid
       // change — without it, a session adopted while display:none (inactive)
       // stayed at the 80x24 grid with blank space (the 'half screen' bug).
@@ -49,8 +74,19 @@ export function TerminalPane({ session, registerWrite }: {
       },
     } as any);
     const fit = new FitAddon();
+    const search = new SearchAddon();
     term.loadAddon(fit);
+    term.loadAddon(search);
+    searchRef.current = search;
     term.open(containerRef.current);
+    // WebGL renderer (GPU-composited, keeps heavy output smooth). Falls back
+    // silently to the DOM/canvas renderer when unavailable (RDP sessions,
+    // disabled accel, context loss).
+    try {
+      const gl = new WebglAddon();
+      gl.onContextLoss(() => { try { gl.dispose(); } catch { /* already gone */ } });
+      term.loadAddon(gl);
+    } catch { /* no webgl — default renderer is fine */ }
     // rAF ×2: wait for the browser to paint the container at its final
     // size before fitting — an immediate fit() reads pre-layout dimensions
     // and produces a partial grid (the "not filling the screen" bug).
@@ -60,6 +96,27 @@ export function TerminalPane({ session, registerWrite }: {
     const sub = term.onData((data) => {
       callTool("terminal_write", { session_id: session.sid, data }).catch(() => {});
     });
+
+    // Ctrl+F opens the scrollback search (Shift+F / browser find untouched).
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        setSearchOpen(true);
+        e.preventDefault();
+        return false;
+      }
+      return true;
+    });
+
+    // Selection-to-copy (the web-terminal norm) + right-click paste.
+    term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+    });
+    const onContext = (e: Event) => {
+      e.preventDefault();
+      navigator.clipboard.readText().then((t) => { if (t) term.paste(t); }).catch(() => {});
+    };
+    containerRef.current.addEventListener("contextmenu", onContext);
 
     // Register the SSE write callback: dedup via the frame's absolute start
     // offset, and skip while a sync read is in flight (round-68).
@@ -105,8 +162,10 @@ export function TerminalPane({ session, registerWrite }: {
 
     return () => {
       sub.dispose();
+      searchRef.current = null;
       term.dispose();
       termRef.current = null;
+      containerRef.current?.removeEventListener("contextmenu", onContext);
       unregister();
     };
   }, [session.sid, registerWrite]);
@@ -152,11 +211,62 @@ export function TerminalPane({ session, registerWrite }: {
     }
   }, [session.active]);
 
+  // Font-size control: applies live, pushes the new grid to the backend
+  // (refit → terminal_resize), persists for the next session.
+  const applyFont = (n: number) => {
+    const clamped = Math.min(FONT_MAX, Math.max(FONT_MIN, n));
+    setFontSize(clamped);
+    try { localStorage.setItem(FONT_LS, String(clamped)); } catch { /* private mode */ }
+    const term: any = termRef.current;
+    if (!term) return;
+    term.options.fontSize = clamped;
+    setTimeout(() => {
+      try {
+        term.fit?.();
+        callTool("terminal_resize", { session_id: session.sid, cols: term.cols, rows: term.rows }).catch(() => {});
+      } catch { /* hidden pane */ }
+    }, 30);
+  };
+
+  // findNext/findPrevious REQUIRE the search term in this addon version —
+  // the input's onChange keeps `searchTerm` authoritative for ↑/↓ repeats.
+  const searchNext = () => { if (searchTerm) try { searchRef.current?.findNext(searchTerm); } catch {} };
+  const searchPrev = () => { if (searchTerm) try { searchRef.current?.findPrevious(searchTerm); } catch {} };
+  const searchClose = () => {
+    try { searchRef.current?.clearDecorations(); } catch {}
+    setSearchOpen(false);
+    try { termRef.current?.focus?.(); } catch {}
+  };
+
   return (
     <div
       ref={containerRef}
       className={`term-session ${session.active ? "active" : ""}`}
       style={session.active ? undefined : { display: "none" }}
-    />
+    >
+      {session.active && searchOpen && (
+        <div className="term-searchbar">
+          <input
+            autoFocus
+            placeholder="Search…"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? searchPrev() : searchNext(); }
+              if (e.key === "Escape") { e.preventDefault(); searchClose(); }
+            }}
+            onChange={(e) => { setSearchTerm(e.target.value); try { searchRef.current?.findNext(e.target.value); } catch {} }}
+          />
+          <button title="Previous match (Shift+Enter)" onClick={searchPrev}>↑</button>
+          <button title="Next match (Enter)" onClick={searchNext}>↓</button>
+          <button title="Close (Esc)" onClick={searchClose}>✕</button>
+        </div>
+      )}
+      {session.active && (
+        <div className="term-fontbar">
+          <button title="Smaller font" onClick={() => applyFont(fontSize - 1)}>A−</button>
+          <button title="Reset font size" onClick={() => applyFont(FONT_DEFAULT)}>A</button>
+          <button title="Larger font" onClick={() => applyFont(fontSize + 1)}>A+</button>
+        </div>
+      )}
+    </div>
   );
 }
