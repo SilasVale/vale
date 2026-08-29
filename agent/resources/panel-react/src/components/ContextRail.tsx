@@ -1,14 +1,12 @@
+// ContextRail — panel-density context rail: for the Terminal page it shows
+// the session list (+ new-session menu), for the Plugins page the plugin
+// inventory. Other pages hide it entirely (the Shell only renders it when the
+// page has a context).
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "../hooks/useSessions";
 import type { usePlugins } from "../hooks/usePlugins";
+import type { Page } from "./Shell";
 
-// dsh Rows-style session list (round-admin-ui Task 3): each row is a kind
-// StateDot + label + relative time; hovering swaps the time for
-// rename/archive actions.
-//
-// round-133: a "+" dropdown (PTY/SSH/Serial) beside the "Sessions" title —
-// the new-session entry moved from the main-area toolbar to the sidebar title
-// (dsh style). The Browser session row is injected by App.
 function relTime(ts: number): string {
   const sec = Math.max(0, (Date.now() - ts) / 1000);
   if (sec < 60) return "now";
@@ -20,12 +18,11 @@ function relTime(ts: number): string {
   return day < 7 ? `${day}d` : new Date(ts).toLocaleDateString();
 }
 
-export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, onNewSession, plugins }: {
+export function ContextRail({ page, sessions, activeSid, onActivate, onNewSession, plugins }: {
+  page: Page;
   sessions: Session[];
   activeSid: string | null;
-  view: "sessions" | "plugins";
   onActivate: (sid: string) => void;
-  onViewChange: (v: "sessions" | "plugins") => void;
   onNewSession: (kind: "pty" | "ssh" | "serial") => void;
   plugins: ReturnType<typeof usePlugins>;
 }) {
@@ -33,13 +30,11 @@ export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, o
   const [archived, setArchived] = useState<Set<string>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  // Re-render so relative times stay fresh (dsh shows "3m"-style labels).
   const [, setTick] = useState(0);
   useEffect(() => {
     const t = window.setInterval(() => setTick((n) => n + 1), 30000);
     return () => clearInterval(t);
   }, []);
-  // clicking anywhere else in the panel closes the new-session menu
   useEffect(() => {
     if (!menuOpen) return;
     const close = (e: MouseEvent) => {
@@ -60,53 +55,39 @@ export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, o
     }
   };
 
-  // Live sessions first, newest-opened first; closed (tombstone) after.
   const rows = [...sessions]
     .filter((s) => !archived.has(s.sid))
     .sort((a, b) => (a.closed === b.closed ? b.openedAt - a.openedAt : a.closed ? 1 : -1));
 
+  if (page === "plugins") {
+    return (
+      <>
+        <div className="side-header">
+          <h1 className="side-title">Plugins</h1>
+          <span className="side-count">{plugins.rows.length}</span>
+        </div>
+        <div className="side-list">
+          {!plugins.specLoaded && <p className="side-empty">Inventory loading…</p>}
+          {plugins.specLoaded && plugins.rows.length === 0 && <p className="side-empty">No plugins</p>}
+          {plugins.rows.map((r) => (
+            <div key={r.name} className="side-plug-row" title={r.description}>
+              <span className="plug-dot" data-state={r.state} />
+              <span className="side-label">{r.displayName}</span>
+              <span className="side-time">{r.stateLabel}</span>
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  }
+
+  if (page !== "terminal") return null;
+
   return (
     <>
-      {/* round-admin-ui Task 6: section nav — Sessions | Plugins. The plugin
-          rows below share the live status hook, so the dots stay current. */}
-      <div className="side-nav" role="tablist" aria-label="Panel sections">
-        <button
-          className={`side-nav-btn${view === "sessions" ? " active" : ""}`}
-          role="tab"
-          aria-selected={view === "sessions"}
-          onClick={() => onViewChange("sessions")}
-        >Sessions</button>
-        <button
-          className={`side-nav-btn${view === "plugins" ? " active" : ""}`}
-          role="tab"
-          aria-selected={view === "plugins"}
-          onClick={() => onViewChange("plugins")}
-        >Plugins</button>
-      </div>
-      {view === "plugins" ? (
-        <>
-          <div className="side-header">
-            <h1 className="side-title">Plugins</h1>
-            <span className="side-count">{plugins.rows.length}</span>
-          </div>
-          <div className="side-list">
-            {!plugins.specLoaded && <p className="side-empty">Inventory loading…</p>}
-            {plugins.specLoaded && plugins.rows.length === 0 && <p className="side-empty">No plugins</p>}
-            {plugins.rows.map((r) => (
-              <div key={r.name} className="side-plug-row" title={r.description}>
-                <span className="plug-dot" data-state={r.state} />
-                <span className="side-label">{r.displayName}</span>
-                <span className="side-time">{r.stateLabel}</span>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
-      <>
       <div className="side-header">
         <h1 className="side-title">Sessions</h1>
         <span className="side-count">{sessions.length}</span>
-        {/* round-133: the new-session entry moved next to the title (dsh-style "+"). */}
         <div className="side-add-wrap" ref={menuRef}>
           <button
             className="side-add"
@@ -132,10 +113,6 @@ export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, o
             tabIndex={0}
             title={s.sid}
             className={`side-row ${s.closed ? "closed" : ""} ${s.sid === activeSid ? "active" : ""}`}
-            // round-117: a closed (tombstone) row must NOT become active —
-            // round-113 unmounted closed panes, so activating one blanks the
-            // terminal area. useSessions.activate guards too; the sidebar
-            // doesn't even ask.
             onClick={() => { if (!s.closed) onActivate(s.sid); }}
             onKeyDown={(e) => {
               if ((e.key === "Enter" || e.key === " ") && !s.closed) {
@@ -148,9 +125,6 @@ export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, o
             <span className="side-label">{labels.get(s.sid) || s.label}</span>
             <span className="side-time">{relTime(s.openedAt)}</span>
             <span className="side-actions">
-              {/* round-141: icon-only + absolutely positioned (panel.css
-                  .side-actions) — text buttons in-flow shifted the row layout
-                  on hover and stole center-of-row clicks as "Rename". */}
               <button
                 className="side-action"
                 title="Rename (local)"
@@ -170,8 +144,6 @@ export function Sidebar({ sessions, activeSid, view, onActivate, onViewChange, o
           </div>
         ))}
       </div>
-      </>
-      )}
     </>
   );
 }

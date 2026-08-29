@@ -1,0 +1,52 @@
+/* ============================================================
+   Desktop-only styles — in-app navigation bar, desktop page
+   layout specifics. The desktop density renders the same pages
+   as the panel density; these styles only tune the shell.
+   ============================================================ */
+
+/* In-app nav bar (desktop density): Back/Forward/Reload + page label.
+   Hidden when Tauri is unavailable (plain browser on /desktop/). */
+.desktop-nav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.desktop-nav-btn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+.desktop-nav-btn:hover:not(:disabled) { background: var(--line-soft); color: var(--ink); }
+.desktop-nav-btn:disabled { opacity: 0.35; cursor: default; }
+.desktop-nav-label {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+/* Desktop open-in-app hint (shown when /desktop/ is opened in a browser). */
+.desktop-hint {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.desktop-hint .btn-mini { margin-left: auto; }

@@ -19,7 +19,7 @@ interface MemEntry {
 
 const PAGE = 50;
 
-export function MemoryPane() {
+export function MemoryPage() {
   const [entries, setEntries] = useState<MemEntry[]>([]);
   const [query, setQuery] = useState("");
   const [namespace, setNamespace] = useState("");

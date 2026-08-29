@@ -1,0 +1,241 @@
+/* ============================================================
+   Layout — the two shells:
+     #app-shell      panel density (icon rail | context rail | canvas)
+     .desktop-shell  desktop density (icon rail | full canvas)
+   Density difference is PURELY visibility of the context rail
+   and status bar.
+   ============================================================ */
+
+/* ---------- panel shell (three columns) ---------- */
+#app-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  background: var(--surface);
+}
+#icon-rail {
+  flex: 0 0 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 0 12px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+#context-rail {
+  flex: 0 0 244px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: #fff;
+}
+#canvas-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+#canvas-host > #panel-main {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+#panel-main.hidden { display: none; }
+#desktop-term-container.hidden { display: none; }
+#canvas-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+#canvas-top .tabrow {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+}
+#canvas-top .tab { padding: 4px 8px; font-size: 12px; }
+#cmd-toggle {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+}
+#cmd-toggle:hover, #cmd-toggle.active { border-color: var(--accent); color: var(--accent-ink); }
+#cmd-toggle.active { background: var(--focus-ring-soft); }
+#term-container {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  background: #fff;
+}
+#term-container > div { flex: 1 1 0; min-height: 0; min-width: 0; }
+#term-container > .browser-wrap { display: flex; }
+#traj-view { flex: 1 1 0; }
+
+/* ---------- command drawer (right overlay) ---------- */
+#drawer {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 330px;
+  max-width: 70%;
+  display: flex;
+  background: #fff;
+  border-left: 1px solid var(--line);
+  box-shadow: -10px 0 28px rgba(0, 0, 0, 0.07);
+  z-index: 30;
+  animation: drawer-in 0.18s ease;
+}
+@keyframes drawer-in {
+  from { transform: translateX(14px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+#drawer-inner {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#drawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+#drawer-head button {
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+#drawer-head button:hover { color: var(--ink); background: var(--line-soft); }
+#drawer-inner .cmd-list { flex: 1; min-height: 0; overflow-y: auto; }
+#drawer-inner .details-header {
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+#drawer-inner .details-body {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+}
+#drawer-inner #cmd-stream {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+#drawer-inner #cmd-stream .cmd-list { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* ---------- desktop shell (single column) ---------- */
+.desktop-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  background: var(--bg);
+}
+.desktop-main {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desktop-terminal {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desktop-browser {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desktop-browser .browser-pane {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.desktop-tabs-row {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 0;
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
+}
+.desktop-tabs-row .tabrow { flex: 1; border: none; padding: 0; }
+.desktop-tabs-row .tabrow #tabs { overflow-x: auto; }
+.desktop-new { display: flex; gap: 4px; padding: 0 8px 4px; }
+#desktop-term-container {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#desktop-term-container > .term-session { flex: 1 1 0; min-height: 0; }
+
+/* ---------- connection form ---------- */
+#conn-form {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+}
+#conn-form h1 { font-size: 22px; margin: 0 0 12px; font-weight: 650; letter-spacing: -0.01em; }
+#conn-form label { font-size: 12px; color: var(--muted); margin-top: 10px; }
+#conn-form input {
+  width: 320px;
+  max-width: 90%;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: 13px var(--font-mono);
+  box-sizing: border-box;
+  background: var(--surface);
+  outline: none;
+}
+#conn-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring-soft); }
+#conn-form button {
+  margin-top: 14px;
+  padding: 8px 28px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font: 600 13px var(--font);
+  cursor: pointer;
+}
+#conn-form button:hover { background: var(--accent-ink); }

@@ -1,0 +1,43 @@
+/* ============================================================
+   Base — reset, scrollbars, focus ring, typography.
+   ============================================================ */
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.16); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.28); }
+*::-webkit-scrollbar-track { background: transparent; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.5 var(--font);
+}
+
+#root {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+code {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.muted { color: var(--muted); }
+.hint { font-size: 12px; color: var(--faint); }
+.error { color: var(--danger); font-size: 12px; }

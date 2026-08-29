@@ -1,0 +1,69 @@
+/* ============================================================
+   Vale Desktop — design tokens (SINGLE source of truth).
+   dsh visual baseline (light), Vale brand amber #d9480f.
+   Consumed by base.css / components.css / layout.css / desktop.css
+   via the build-css.mjs concatenation pipeline.
+   ============================================================ */
+:root {
+  /* ---- brand (Vale sunrise amber) ---- */
+  --accent: #d9480f;
+  --accent-ink: #d9480f;
+  --accent-soft: #ffefe5;
+  --focus-ring: rgba(11, 122, 110, 0.65);
+  --focus-ring-soft: rgba(11, 122, 110, 0.14);
+  --brand-grad-a: #f59f00;
+  --brand-grad-b: #e8590c;
+
+  /* ---- dsh neutral scale ---- */
+  --ds-neutral-50: #fafafa;
+  --ds-neutral-100: #f4f4f5;
+  --ds-neutral-200: #e4e4e7;
+  --ds-neutral-300: #d4d4d8;
+  --ds-neutral-400: #a1a1aa;
+  --ds-neutral-500: #71717a;
+  --ds-neutral-600: #52525b;
+  --ds-neutral-700: #3f3f46;
+  --ds-neutral-800: #27272a;
+  --ds-neutral-900: #18181b;
+
+  /* ---- aliases (legacy names converge to the neutral scale) ---- */
+  --bg: var(--ds-neutral-50);
+  --surface: #ffffff;
+  --ink: var(--ds-neutral-900);
+  --muted: var(--ds-neutral-500);
+  --faint: var(--ds-neutral-400);
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.14);
+  --line-soft: rgba(0, 0, 0, 0.05);
+
+  /* ---- status ---- */
+  --success: #2f9e44;
+  --success-soft: rgba(47, 158, 68, 0.12);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.08);
+  --warn: #b45309;
+  --warn-ink: #92400e;
+  --warn-soft: rgba(217, 119, 6, 0.12);
+  --lane-ds: #4f6bed;   /* SSH tab dot */
+  --lane-or: #d97706;   /* serial tab dot */
+
+  /* ---- geometry ---- */
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-lg: 20px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+  /* ---- motion (dsh) ---- */
+  --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ds-transition-duration: 0.2s;
+  --ds-transition-duration-fast: 0.1s;
+  --ds-transition-duration-slow: 0.3s;
+
+  /* ---- typography ---- */
+  --font: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+          "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas,
+               "PingFang SC", "Microsoft YaHei", sans-serif;
+}

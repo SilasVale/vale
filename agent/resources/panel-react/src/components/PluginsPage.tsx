@@ -16,7 +16,7 @@ function fmtUptime(startedAtMs: number): string {
   return `${Math.floor(min / 60)}h ${min % 60}m`;
 }
 
-export function PluginsView({ plugins }: { plugins: ReturnType<typeof usePlugins> }) {
+export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins> }) {
   const [q, setQ] = useState("");
   const query = q.trim().toLowerCase();
   const rows = useMemo(() => {
