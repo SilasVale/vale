@@ -209,9 +209,7 @@ export function ogTimeoutMs(env: any): number {
  * shares the og budget.
  */
 export function passthroughTimeoutMs(env: any, kind: string): number {
-  return kind === "opencode" || kind === "commandgoat"
-    ? ogTimeoutMs(env)
-    : upstreamTimeoutMs(env);
+  return kind === "opencode" || kind === "commandgoat" ? ogTimeoutMs(env) : upstreamTimeoutMs(env);
 }
 
 // Circuit breaker for the og channel, backed by a Durable Object so every

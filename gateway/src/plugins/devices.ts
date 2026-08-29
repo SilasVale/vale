@@ -556,7 +556,11 @@ async function handleDeviceRename(request: Request, env: any, url: URL): Promise
   if (!/^[A-Za-z0-9_-]{1,32}$/.test(newName))
     return jsonError(400, "Device name must be 1-32 chars: letters/digits/_ -", "invalid_request");
   if (hostname && !/^([a-z0-9-]+\.)+[a-z0-9-]+$/i.test(hostname))
-    return jsonError(400, "hostname must be a domain like d1.agent.saisi.online", "invalid_request");
+    return jsonError(
+      400,
+      "hostname must be a domain like d1.agent.saisi.online",
+      "invalid_request",
+    );
   const updated = await renameDevice(env, oldName, newName, hostname || undefined);
   if (updated === "not_found") return jsonError(404, "Device not found", "not_found_error");
   if (updated === "name_taken")

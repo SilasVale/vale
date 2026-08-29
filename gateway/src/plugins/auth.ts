@@ -524,18 +524,21 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
       // Command Code Provider API — the Anthropic /v1/messages endpoint
       // serves claude-* only, so probe the OpenAI chat/completions endpoint
       // (meters a micro-request against the plan credits).
-      const res = await fetchWithTimeout("https://api.commandcode.ai/provider/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "Content-Type": "application/json",
+      const res = await fetchWithTimeout(
+        "https://api.commandcode.ai/provider/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "deepseek/deepseek-v4-flash",
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+          }),
         },
-        body: JSON.stringify({
-          model: "deepseek/deepseek-v4-flash",
-          messages: [{ role: "user", content: "ping" }],
-          max_tokens: 1,
-        }),
-      });
+      );
       return jsonOk({
         ok: res.ok,
         name,

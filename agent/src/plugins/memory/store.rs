@@ -243,7 +243,7 @@ impl MemoryStore {
             let mut guard = recover_guard(&self.inner);
             guard.by_id.insert(id.to_string(), rec.clone());
             // Rebuild the tag index for this record.
-            for (_, set) in guard.tag_index.iter_mut() {
+            for set in guard.tag_index.values_mut() {
                 set.remove(id);
             }
             for t in &rec.tags {
