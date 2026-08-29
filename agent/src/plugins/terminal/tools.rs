@@ -951,7 +951,10 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // input queue and executed anyway, and the audit trail
                     // held a dangling start with no end (misreported as
                     // interrupted on the next boot).
-                    if !terminal_mgr.term_try_execute(&sid).await? {
+                    // round-160: bounded WAIT instead of hard refusal — AI
+                    // clients fire executes back-to-back; 21 "Session busy"
+                    // failures in one week of real usage.
+                    if !terminal_mgr.term_acquire_execute(&sid, 30_000).await? {
                         return Err(DeviceError::SessionBusy { id: sid.clone() });
                     }
                     // First-prompt gate: marker-injected PTY whose first prompt

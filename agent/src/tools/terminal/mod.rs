@@ -519,6 +519,28 @@ mod desktop_impl {
             }
         }
 
+        /// Acquire the per-session execute lock, WAITING when busy (round-160):
+        /// AI clients fire executes back-to-back and the hard refusal turned
+        /// every overlap into a "Session busy" error the model couldn't act on
+        /// (21 failures in one week of real usage). Poll every 250 ms up to
+        /// `max_wait_ms`; Ok(false) after the deadline keeps the old
+        /// session_busy mapping for the caller.
+        pub async fn term_acquire_execute(&self, sid: &str, max_wait_ms: u64) -> Result<bool, DeviceError> {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
+            loop {
+                match self.term_try_execute(sid).await {
+                    Ok(true) => return Ok(true),
+                    Ok(false) => {
+                        if tokio::time::Instant::now() >= deadline {
+                            return Ok(false);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
         /// The backend's natural exit code (PTY only; None for SSH/serial or
         /// a session that is still running) (round-60).
         pub async fn term_exit_code(&self, sid: &str) -> Option<i32> {
@@ -672,6 +694,55 @@ mod tests {
         let cfg = parse_serial_config("COM7?baud=57600&flow=hardware");
         assert_eq!(cfg.baud, 57600);
         assert!(cfg.data_bits.is_none());
+    }
+
+    /// round-160: the execute lock WAITS when busy instead of refusing —
+    /// a second acquirer gets the lock after release, and the deadline
+    /// path still returns false (mapped to session_busy upstream).
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn execute_lock_wait_queue() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        let pool = Arc::new(crate::tools::serial::SerialPool::new(115200, 1000));
+        let mgr = Arc::new(TerminalManager::new(pool));
+        let (sid, _rx) = mgr
+            .term_open(&TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+            })
+            .await
+            .unwrap();
+        // Simulated in-flight execute holds the lock.
+        assert!(mgr.term_try_execute(&sid).await.unwrap());
+        let waiter = {
+            let mgr = mgr.clone();
+            let sid = sid.clone();
+            tokio::spawn(async move { mgr.term_acquire_execute(&sid, 5000).await })
+        };
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(!waiter.is_finished(), "acquirer must still be waiting while the lock is held");
+        mgr.term_release_execute(&sid).await;
+        let got = tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(got, "acquirer must get the lock once released");
+        mgr.term_release_execute(&sid).await; // waiter done — free it again
+        // Deadline path: held again → the bounded acquire gives up with false.
+        assert!(mgr.term_try_execute(&sid).await.unwrap());
+        assert!(!mgr.term_acquire_execute(&sid, 500).await.unwrap());
+        mgr.term_release_execute(&sid).await;
+        mgr.term_close(&sid).await.ok();
     }
 
     /// Real PTY round-trip (needs a local shell, so Linux/macOS only).
