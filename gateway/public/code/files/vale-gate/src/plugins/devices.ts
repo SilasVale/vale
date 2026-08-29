@@ -22,6 +22,12 @@
  *   GET  /api/devices/<name>/mcp            (admin session)
  *   DELETE /api/devices/<name>              (admin session)
  *
+ * round-159 additions (device management UX):
+ *   POST   /api/devices/<name>/rename       (admin — rename WITHOUT rotating the token)
+ *   GET    /api/devices/register-keys       (admin — list unused one-time keys)
+ *   DELETE /api/devices/register-keys/<code> (admin — revoke an unused key)
+ *   GET    /api/devices/install-cmd         (admin — current npm install version/download)
+ *
  * Handler convention: dispatch(ctx, method, path, request, env, url) →
  * handler(request, env, url).
  */
@@ -32,10 +38,12 @@ import {
   upsertDevice,
   insertDevice,
   deleteDevice,
+  renameDevice,
   deleteRegKey,
   deleteRegGrant,
   consumeRegKey,
   createRegKey,
+  listRegKeys,
   createPairCode,
   getCfToken,
   maskKey,
@@ -44,6 +52,7 @@ import {
   getPluginByToken,
   removePluginLink,
   listPluginLinks,
+  savePluginLinks,
   consumePairCode,
   createWsTicket,
   consumeWsTicket,
@@ -51,6 +60,7 @@ import {
 } from "../store.ts";
 import { parseCookie, randomHex } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
+import { fetchWithTimeout } from "../reliability.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import { requireSession } from "../session.ts";
 import { route, type Plugin, type PluginContext } from "./registry.ts";
@@ -121,6 +131,7 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
     // round-122: insertDevice does the existence check INSIDE the lock —
     // the old getDevice→409 check-then-act let two concurrent same-name
     // registrations both pass and the second upsert took over the name.
+    device.registeredAt = Date.now();
     const inserted = await insertDevice(env, device);
     if (!inserted) {
       return jsonError(
@@ -154,31 +165,41 @@ async function handleSelfRegister(request: Request, env: any): Promise<Response>
     return jsonError(403, "Invalid device token", "authorization_error");
   }
   const existing = await getDevice(env, device.name);
-  if (existing && existing.token !== device.token) {
-    return jsonError(
-      409,
-      `Device '${device.name}' already registered with a different token — use the console (admin)`,
-      "conflict",
-    );
-  }
+  // Anti-hijack: a DIFFERENT token for the same name is normally refused.
+  // BUT the device itself can prove identity by reaching its own /api/status
+  // through the tunnel (returns proxy_secret) — a reinstall/new config that
+  // rotated the token must be allowed to update its record, otherwise the
+  // device stays "offline" forever after a reinstall (round-2026-08-29).
+  let tokenChanged = existing && existing.token !== device.token;
   try {
     const status = await deviceFetch(env, device, "/api/status");
     if (status && status.resp) {
       const j: any = await status.resp.json().catch(() => null);
       if (j && typeof j.proxy_secret === "string" && j.proxy_secret.length >= 32) {
         device.proxySecret = j.proxy_secret;
+        // Device proved it owns the hostname (its own /api/status answered
+        // with a fresh proxy_secret through the tunnel) — token update OK.
+        tokenChanged = false;
       }
     }
   } catch {
     /* best-effort */
   }
+  if (tokenChanged) {
+    return jsonError(
+      409,
+      `Device '${device.name}' already registered with a different token — use the console (admin)`,
+      "conflict",
+    );
+  }
   if (existing && !device.proxySecret && existing.proxySecret) {
     device.proxySecret = existing.proxySecret;
   }
   if (existing) {
-    await upsertDevice(env, device);
+    // Idempotent refresh: keep the original registration date.
+    await upsertDevice(env, { ...device, registeredAt: existing.registeredAt ?? Date.now() });
   } else {
-    const inserted = await insertDevice(env, device);
+    const inserted = await insertDevice(env, { ...device, registeredAt: Date.now() });
     if (!inserted) {
       return jsonError(409, `Device '${device.name}' already registered`, "conflict");
     }
@@ -440,6 +461,9 @@ async function handleDevicesList(request: Request, env: any): Promise<Response> 
       hostname: d.hostname,
       token: maskKey(d.token),
       mcp: mcpConfig(d),
+      registeredAt: d.registeredAt,
+      lastSeenAt: d.lastSeenAt,
+      lastVersion: d.lastVersion,
     })),
   });
 }
@@ -456,6 +480,10 @@ async function handleDevicesAdd(request: Request, env: any): Promise<Response> {
   } catch (e) {
     return jsonError(400, (e as Error).message, "invalid_request");
   }
+  // New record gets a registration date; an admin update of an existing
+  // device keeps the original one (same contract as self-register).
+  const existing = await getDevice(env, device.name);
+  device = { ...device, registeredAt: existing?.registeredAt ?? Date.now() };
   await upsertDevice(env, device);
   return jsonOk({
     ok: true,
@@ -506,6 +534,121 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
   }
   await deleteDevice(env, delName);
   return jsonOk({ ok: true });
+}
+
+// POST /api/devices/<name>/rename — rename (and optionally re-hostname) a
+// device WITHOUT rotating the token. The old flow forced delete + re-add,
+// which invalidated the device's own config.yaml and every stored MCP
+// snippet. Preserves token/proxySecret/metadata; migrates the device's
+// plugin links to the new name and closes the OLD name's hub socket (the
+// DO is keyed by device name — round-84/92 revocation contract).
+async function handleDeviceRename(request: Request, env: any, url: URL): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const renMatch = url.pathname.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/rename$`))!;
+  const oldName = decodeDeviceName(renMatch[1]!);
+  if (oldName === null) return jsonError(400, "Invalid device name", "invalid_request");
+  const body = await readJson(request);
+  const newName = String(body?.name || "").trim();
+  const hostname = String(body?.hostname || "").trim();
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(newName))
+    return jsonError(400, "Device name must be 1-32 chars: letters/digits/_ -", "invalid_request");
+  if (hostname && !/^([a-z0-9-]+\.)+[a-z0-9-]+$/i.test(hostname))
+    return jsonError(400, "hostname must be a domain like d1.agent.saisi.online", "invalid_request");
+  const updated = await renameDevice(env, oldName, newName, hostname || undefined);
+  if (updated === "not_found") return jsonError(404, "Device not found", "not_found_error");
+  if (updated === "name_taken")
+    return jsonError(409, `Device '${newName}' already registered`, "conflict");
+  const links = await listPluginLinks(env);
+  let migrated = false;
+  for (const l of Object.values(links)) {
+    if (l.device === oldName) {
+      l.device = newName;
+      migrated = true;
+    }
+  }
+  if (migrated) await savePluginLinks(env, links);
+  if (env.PLUGIN_HUB) {
+    try {
+      const id = env.PLUGIN_HUB.idFromName(oldName);
+      const hub = env.PLUGIN_HUB.get(id);
+      const req = new Request("https://hub/close-all", { method: "POST" });
+      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
+      await hub.fetch(req).catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+  }
+  return jsonOk({
+    ok: true,
+    device: { name: updated.name, hostname: updated.hostname, token: maskKey(updated.token) },
+  });
+}
+
+// GET /api/devices/register-keys — list outstanding (unused) one-time
+// install keys with their KV expiry. They used to be invisible: generate,
+// close the tab, and the key lingered until TTL with no way to see or kill it.
+async function handleRegKeysList(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  return jsonOk({ keys: await listRegKeys(env) });
+}
+
+// DELETE /api/devices/register-keys/<code> — revoke an unused key before
+// its 1h TTL (a key pasted into the wrong chat can be killed immediately).
+async function handleRegKeyRevoke(request: Request, env: any, url: URL): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const m = url.pathname.match(new RegExp(`^${DEVICE_BASE}/register-keys/([^/]+)$`))!;
+  const code = decodeDeviceName(m[1]!);
+  if (!code) return jsonError(400, "Invalid key", "invalid_request");
+  await deleteRegKey(env, code);
+  return jsonOk({ ok: true });
+}
+
+// GET /api/devices/install-cmd — the CURRENT npm install version for the
+// devices page. The page hardcoded the tgz URL and drifted (it showed
+// 1.2.91 while 1.2.101 was live); the version source of truth is the index
+// worker's /api/version on agent.saisi.online. Fetched server-side (no CORS
+// concerns), cached 5 min in-isolate; a null version tells the UI to fall
+// back to its built-in constant.
+const INSTALL_SOURCE = "https://agent.saisi.online/api/version";
+const INSTALL_CMD_TTL_MS = 5 * 60 * 1000;
+let installCmdCache: { at: number; version: string | null; download: string | null } | null = null;
+
+async function handleInstallCmd(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  if (!installCmdCache || Date.now() - installCmdCache.at > INSTALL_CMD_TTL_MS) {
+    let version: string | null = null;
+    let download: string | null = null;
+    try {
+      const res = await fetchWithTimeout(INSTALL_SOURCE, {}, 8000);
+      if (res && res.ok) {
+        const j: any = await res.json().catch(() => null);
+        if (j && typeof j.version === "string") {
+          version = j.version;
+          download = typeof j.download === "string" ? j.download : null;
+        }
+      }
+    } catch {
+      /* upstream unreachable — UI falls back to its built-in version */
+    }
+    installCmdCache = { at: Date.now(), version, download };
+  }
+  return jsonOk({
+    ok: true,
+    version: installCmdCache.version,
+    download: installCmdCache.download,
+  });
 }
 
 // POST /api/devices/register-key — generate a one-time install key.
@@ -805,6 +948,25 @@ export default {
     // Admin-gated device module. Exact matches: index.js compared these
     // paths with === and regexes, so prefix matching would capture subpaths
     // that index.js let fall through to 404.
+    // round-159: the specific two-segment routes register BEFORE the generic
+    // single-segment delete (ordering is not load-bearing today — the regexes
+    // do not overlap — but explicit-first keeps it that way).
+    ctx.routes.push({
+      match: (m, p) => m === "GET" && p === `${DEVICE_BASE}/register-keys`,
+      handler: handleRegKeysList,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "DELETE" && new RegExp(`^${DEVICE_BASE}/register-keys/[^/]+$`).test(p),
+      handler: handleRegKeyRevoke,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "GET" && p === `${DEVICE_BASE}/install-cmd`,
+      handler: handleInstallCmd,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && new RegExp(`^${DEVICE_BASE}/[^/]+/rename$`).test(p),
+      handler: handleDeviceRename,
+    });
     ctx.routes.push({
       match: (m, p) => m === "GET" && p === DEVICE_BASE,
       handler: handleDevicesList,

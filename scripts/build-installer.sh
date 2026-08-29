@@ -177,6 +177,29 @@ fi
 echo "  ok: sha256 $SHA256 → index/src/index.js"
 
 DEST="$ROOT/index/public/vale-agent"
+
+# Keep the manifest's download URL in sync with the packed artifact: a tgz
+# over the Workers Assets 25MiB per-file cap must live on the Vercel mirror
+# (v.saisi.online/dl/); a smaller one is staged into the worker assets and
+# served from agent.saisi.online directly. Both /api/version and the
+# download page must point at wherever the file actually is — a stale URL
+# 404s every device's vale update (surfacing as a failed download, not a
+# corruption, in the post-deploy sha smoke).
+TGZ_NAME="$(basename "$TGZ_PATH")"
+TGZ_MB=$(( $(stat -c%s "$TGZ_PATH") / 1024 / 1024 ))
+if [ "$TGZ_MB" -ge 25 ]; then
+  DL_HOST="https://v.saisi.online/dl"
+else
+  DL_HOST="https://agent.saisi.online/vale-agent"
+  cp "$TGZ_PATH" "$DEST/$TGZ_NAME"
+fi
+sed -i "s|https://[^\"\\\`]*/${TGZ_NAME}|${DL_HOST}/${TGZ_NAME}|g" "$ROOT/index/src/index.js"
+if ! grep -q "${DL_HOST}/${TGZ_NAME}" "$ROOT/index/src/index.js"; then
+  echo "!! download URL sync failed in index/src/index.js — expected ${DL_HOST}/${TGZ_NAME}"
+  exit 1
+fi
+echo "  ok: download URLs → ${DL_HOST}/${TGZ_NAME} (${TGZ_MB} MiB)"
+
 # The npm tgz (~40MB, embeds the playwright bundle) is over the Workers
 # Assets 25MiB per-file cap — stage it to the Vercel static mirror below
 # (v.saisi.online/dl/*), and the download page + /api/version manifest point
