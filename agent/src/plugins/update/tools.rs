@@ -69,24 +69,138 @@ fn short_path(p: &std::path::Path) -> Option<String> {
     if s.contains(' ') { return None; }
     Some(s)
 }
-/// The directory this exe lives in — where the installer lands and where the
-/// NSIS /D= install root points.
+/// Install dir — registry-first (HKLM\SOFTWARE\Vale\Agent\InstallDir), then
+/// the exe dir (crate::paths::install_dir). One source of truth (C1).
 fn install_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("C:\\vale-agent"))
+    crate::paths::install_dir()
+}
+
+/// Install from the downloaded npm tgz (the single update artifact).
+/// Extracts the package (vale-agent.exe + vale-desktop.exe + bridge.js +
+/// boxed playwright + cloudflared) into a temp dir, then swaps the exe in
+/// place via the same WMI-survives-the-kill pattern vale.js uses: a small
+/// PowerShell swap script is handed to Win32_Process.Create (parented by
+/// WmiPrvSE) so it survives THIS process dying — a plain child spawn dies
+/// with the agent mid-copy and leaves the device half-updated.
+/// Returns false on failure (busy marker + temp files are cleaned by the
+/// caller).
+async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8]) -> bool {
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        use tokio::process::Command;
+
+        // 1. Write the tgz + extract with tar (Windows 10+ ships bsdtar).
+        if std::fs::write(installer, bytes).is_err() {
+            tracing::error!("[vale-agent] agent_update: tgz write failed");
+            return false;
+        }
+        let dir = install_dir();
+        let extract = dir.join(".vale-update");
+        let _ = std::fs::remove_dir_all(&extract);
+        if std::fs::create_dir_all(&extract).is_err() {
+            return false;
+        }
+        let out = Command::new("tar")
+            .args(["-xzf"]).arg(installer).arg("-C").arg(&extract)
+            .output().await;
+        match out {
+            Ok(o) if o.status.success() => {}
+            _ => {
+                tracing::error!("[vale-agent] agent_update: tgz extract failed");
+                return false;
+            }
+        }
+        // The npm tgz contains package/... — find the exe inside.
+        let pkg_exe = extract.join("package").join("vale-agent.exe");
+        if !pkg_exe.exists() {
+            tracing::error!("[vale-agent] agent_update: tgz has no package/vale-agent.exe");
+            return false;
+        }
+
+        // 2. Stage the new exe as .new and hand a swap script to WMI.
+        let new_exe = dir.join("vale-agent.new.exe");
+        if std::fs::copy(&pkg_exe, &new_exe).is_err() {
+            return false;
+        }
+        // Also stage the desktop shell + bridge if present (keep in sync).
+        let pkg_desktop = extract.join("package").join("vale-desktop.exe");
+        if pkg_desktop.exists() {
+            let _ = std::fs::copy(&pkg_desktop, dir.join("vale-desktop.new.exe"));
+        }
+        let pkg_bridge = extract.join("package").join("bridge.js");
+        if pkg_bridge.exists() {
+            let _ = std::fs::copy(&pkg_bridge, dir.join("bridge.new.js"));
+        }
+        // Boxed playwright + cloudflared refresh.
+        let pkg_pw = extract.join("package").join("vale-playwright.zip");
+        if pkg_pw.exists() {
+            let _ = std::fs::copy(&pkg_pw, dir.join("vale-playwright.zip"));
+        }
+        let pkg_cf = extract.join("package").join("cloudflared.exe");
+        if pkg_cf.exists() {
+            let _ = std::fs::create_dir_all(dir.join("tools"));
+            let _ = std::fs::copy(&pkg_cf, dir.join("tools").join("cloudflared.exe"));
+        }
+
+        let q = dir.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            r#""[$(Get-Date -Format o)] update start" | Out-File '{q}\vale-update.log' -Append;
+try {{ Stop-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{}};
+Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
+Get-Process node -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '*vale-agent*' }} | Stop-Process -Force -ErrorAction SilentlyContinue;
+Start-Sleep -Milliseconds 1500;
+$ok=$false;
+foreach($i in 1..12){{ try {{ Copy-Item -Force -ErrorAction Stop '{q}\vale-agent.new.exe' '{q}\vale-agent.exe'; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 800 }} }};
+"[$(Get-Date -Format o)] copy ok=$ok" | Out-File '{q}\vale-update.log' -Append;
+Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe';
+if (Test-Path '{q}\bridge.new.js') {{ Copy-Item -Force '{q}\bridge.new.js' '{q}\bridge.js'; Remove-Item -Force '{q}\bridge.new.js' }};
+if (Test-Path '{q}\vale-desktop.new.exe') {{ Copy-Item -Force '{q}\vale-desktop.new.exe' '{q}\vale-desktop.exe'; Remove-Item -Force '{q}\vale-desktop.new.exe' }};
+try {{ Start-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{ schtasks /Run /TN ValeAgent }};
+Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '{q}\.vale-update';
+Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-update.ps1';
+Remove-Item -Force -ErrorAction SilentlyContinue "$env:ProgramData\ValeAgent\update-busy""#,
+        );
+        let ps1 = dir.join("vale-update.ps1");
+        let mut f = match std::fs::File::create(&ps1) {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        if f.write_all(script.as_bytes()).is_err() {
+            return false;
+        }
+        // WMI handoff — survives this process dying (see vale.js).
+        let inner = format!("powershell -NoProfile -File \"{}\"", ps1.to_string_lossy());
+        let wmi = format!(
+            "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine='{}'}} | Select-Object ProcessId,ReturnValue",
+            inner.replace('\'', "''"),
+        );
+        let r = Command::new("powershell")
+            .args(["-NoProfile", "-Command", &wmi])
+            .output().await;
+        match r {
+            Ok(o) if o.status.success() => true,
+            _ => {
+                tracing::error!("[vale-agent] agent_update: WMI handoff failed");
+                false
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (installer, bytes);
+        false
+    }
 }
 
 /// `agent_update` — check for a newer vale-agent and install it.
 ///
 /// This is the AI-push path: an AI holding this device's MCP connection asks
-/// for an update; the agent downloads ValeAgent-Setup.exe and spawns it
-/// silently. The installer `taskkill`s vale-agent.exe, copies the new
-/// binaries, re-runs fix-tunnel.ps1 and restarts the ValeAgent task, so the
-/// tool answers "upgrading" before the process dies and the MCP session
-/// reconnects on the new build. `force: true` reinstalls the current version
-/// (repairs a broken install).
+/// for an update; the agent downloads the npm tgz (the single update
+/// artifact) and swaps the exe via a WMI-survives-the-kill script. The tool
+/// answers "upgrading" before the process dies and the MCP session reconnects
+/// on the new build. `force: true` reinstalls the current version (repairs a
+/// broken install).
 pub fn agent_update(download_url: Option<String>) -> ToolDef {
     ToolDef::new(
         "agent_update",
@@ -138,7 +252,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 .map_err(|e| DeviceError::Internal { message: format!("bad version response: {e}") })?;
             let remote = j.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let download = j.get("download").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            // Integrity anchor: the sha256 of ValeAgent-Setup.exe, published
+            // Integrity anchor: the sha256 of the npm tgz, published
             // by the release server and verified against the downloaded bytes
             // BEFORE spawn (round-54 — the installer is AI-triggerable code
             // execution at SYSTEM; trust cannot rest on the transport alone).
@@ -169,7 +283,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
 
             // 2. Guard against a concurrent update BEFORE the download — the
             //    tray's auto-update and this MCP path both download to the
-            //    same ValeAgent-Setup.exe and spawn the same silent installer;
+            //    same npm tgz and run the same swap;
             //    two installers racing would both taskkill vale-agent.exe and
             //    copy into $INSTDIR (file-lock conflicts, half-updated
             //    install). The marker lives in %ProgramData% (NOT %APPDATA%):
@@ -228,7 +342,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
             //    new build. The busy marker is held by the background task
             //    (concurrent updates still rejected).
             let dir = install_dir();
-            let installer = dir.join("ValeAgent-Setup.exe");
+            let installer = dir.join("vale-agent-update.tgz");
             let dl_url = download.clone();
             let busy_bg = busy.clone();
             tokio::spawn(async move {
@@ -258,7 +372,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 // Integrity check BEFORE it touches disk or spawns: the
                 // download must match the hash the release server published.
                 // HTML-polluted 404 pages and truncated transfers both landed
-                // on devices as ValeAgent-Setup.exe before; a poisoned/corrupt
+                // on devices as vale-agent-update.tgz before; a poisoned/corrupt
                 // file is deleted and the install is skipped (round-54).
                 // round-119: sha256 is now REQUIRED (checked above) and a
                 // mismatch must LOG — the old silent return left a stale hash
@@ -285,80 +399,28 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                     return;
                 }
 
-                // 4. Spawn the silent installer. This process runs elevated
-                //    (SYSTEM task or admin console), so no UAC prompt is
-                //    needed. The installer kills us mid-flight. If the spawn
-                //    fails, drop the bad file so the next attempt
-                //    re-downloads.
-                // round-87: on non-Windows (dev/test) there is no installer to
-                // run — the old cfg(windows) block skipped the spawn AND the
-                // busy-marker cleanup, leaving a stale marker + a 5MB exe in
-                // the dir and locking updates out for an hour.
-                #[cfg(windows)]
-                {
-                    // NSIS's /D= must be the LAST, UNQUOTED argument — Rust's
-                    // Command quotes any arg containing a space, which mangles
-                    // $INSTDIR for a spaced install dir (device left offline
-                    // after a 'successful' upgrade). Convert to a short (8.3)
-                    // path when the dir contains a space.
-                    #[cfg(windows)]
-                    let install_arg = if dir.to_string_lossy().contains(' ') {
-                        match short_path(&dir) {
-                            // round-119: short_path returns None when 8.3
-                            // names are disabled AND the path still has
-                            // spaces — the old fallback used the long spaced
-                            // path, which Rust quotes and NSIS mangles into a
-                            // literal-quote $INSTDIR (device left offline).
-                            // Refuse instead of installing to a wrong path.
-                            Some(s) => s,
-                            None => {
-                                tracing::error!(
-                                    "[vale-agent] agent_update: install dir has spaces and 8.3 short names are disabled — cannot build an unquoted /D=; install aborted"
-                                );
-                                let _ = std::fs::remove_file(&busy_bg);
-                                let _ = std::fs::remove_file(&installer);
-                                return;
-                            }
-                        }
-                    } else {
-                        dir.display().to_string()
-                    };
-                    #[cfg(not(windows))]
-                    let install_arg = dir.display().to_string();
-                    match Command::new(&installer)
-                        .args(["/S", &format!("/D={install_arg}")])
-                        .spawn()
-                    {
-                        Ok(_) => {}
-                        Err(_) => {
-                            // Clear the busy marker on failure — a leftover marker
-                            // blocked retries for up to an hour.
-                            let _ = std::fs::remove_file(&busy_bg);
-                            let _ = std::fs::remove_file(&installer);
-                            return;
-                        }
-                    }
-
-                    // round-115: the busy marker is NOT cleared here — the
-                    // installer is still running (taskkill, binary copy,
-                    // fix-tunnel, restart take seconds). Removing it right
-                    // after spawn re-opened the check-then-act window
-                    // round-54's marker exists to close: a second
-                    // agent_update/tray check would pass create_new and spawn
-                    // a SECOND silent installer while this one was mid-install
-                    // (two taskkills + two copies racing → half-updated
-                    // install). The NSIS installer deletes the marker when the
-                    // install provably completes; a crashed install falls back
-                    // to the 60-min stale reclaim above.
-                }
-                // round-87: non-Windows — no installer to spawn; clean up so
-                // the marker does not lock updates for an hour and the stale
-                // exe does not sit in the dir.
-                #[cfg(not(windows))]
-                {
+                // 4. Install: the npm tgz IS the update artifact (npm is the
+                //    single install/update channel — NSIS retired). Extract
+                //    the package, swap the exe in place. This process runs
+                //    elevated (SYSTEM task or admin console). The agent is
+                //    killed mid-flight by the swap; on failure the busy
+                //    marker is dropped so the next attempt re-downloads.
+                //    round-87: non-Windows (dev/test) has no exe to swap —
+                //    clean up so the marker does not lock updates.
+                let ok = update_from_tgz(&installer, &bytes).await;
+                if !ok {
                     let _ = std::fs::remove_file(&busy_bg);
                     let _ = std::fs::remove_file(&installer);
                 }
+                // round-115: the busy marker is NOT cleared here — the swap
+                // is still running (taskkill, binary copy, restart take
+                // seconds). Removing it right after spawn re-opened the
+                // check-then-act window round-54's marker exists to close: a
+                // second agent_update/tray check would pass create_new and
+                // race the swap (two taskkills + two copies → half-updated
+                // install). The swap script deletes the marker when the
+                // install provably completes; a crashed install falls back
+                // to the 60-min stale reclaim above.
             });
             // Handler returns immediately — the download+install run in the
             // background task; the MCP worker is NOT held (round-84: the old

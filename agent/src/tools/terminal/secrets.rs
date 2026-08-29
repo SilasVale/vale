@@ -16,11 +16,7 @@ pub(crate) mod file_impl {
     use super::*;
 
     fn store_path() -> PathBuf {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_default()
-            .join("vale-secrets.json")
+        crate::paths::data_dir().join("vale-secrets.json")
     }
 
     fn read_all() -> serde_json::Map<String, serde_json::Value> {

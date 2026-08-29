@@ -13,11 +13,7 @@ use std::path::PathBuf;
 use vale_agent_core::{recover_guard, DeviceError};
 
 fn store_path() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_default()
-        .join("vale-connections.json")
+    crate::paths::data_dir().join("vale-connections.json")
 }
 
 fn read_all() -> serde_json::Map<String, serde_json::Value> {

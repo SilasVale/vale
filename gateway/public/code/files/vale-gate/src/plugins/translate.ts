@@ -200,6 +200,10 @@ async function handleGatewayImpl(
   // GMI Cloud Inference Engine (api.gmi-serving.com) — MiniMax Week free tier
   // (MiniMaxAI/MiniMax-M3, MiniMaxAI/MiniMax-M2.7). Same BYOK blob.
   const gmiKey = ukeys.GMI_API_KEY || null;
+  // Command Code Provider API (api.commandcode.ai/provider) — GOAT plan & up
+  // (the Go plan has no API access). One key for CLI and API; usage meters
+  // against the plan credits.
+  const cmdKey = ukeys.CMD_API_KEY || null;
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
   // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
@@ -424,7 +428,7 @@ async function handleGatewayImpl(
         (body.tool_choice.type === "any" &&
           Array.isArray(body.tool_choice.tools) &&
           body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
-    if (webSearchToolChoice && body) {
+    if (webSearchToolChoice && body && route.kind !== "commandgoat") {
       const searchModel = "og/deepseek-v4-flash";
       // Swap when the route is NOT already the native search-capable
       // passthrough (covers the translate path AND US_PROXY=1 where the
@@ -475,20 +479,31 @@ async function handleGatewayImpl(
       "config_error",
     );
   }
+  // cm/ is pure BYOK like or/ — both the messages and chat/completions flows
+  // need the user's own Command Code key.
+  if (route.kind === "commandgoat" && !cmdKey) {
+    return jsonError(
+      502,
+      "CMD_API_KEY not configured — add your Command Code key in the console",
+      "config_error",
+    );
+  }
   // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
   // og/ (translate or native) uses their OpenCode Go key — never the DeepSeek key.
   const bearerKey =
     route.kind === "openrouter"
       ? openRouterKey
-      : route.kind === "qwen"
-        ? qwenKey
-        : route.kind === "nvidia"
-          ? nvKey
-          : route.kind === "gmi"
-            ? gmiKey
-            : route.kind === "opencode"
-              ? opencodeGoKey
-              : deepseekKey;
+      : route.kind === "commandgoat"
+        ? cmdKey
+        : route.kind === "qwen"
+          ? qwenKey
+          : route.kind === "nvidia"
+            ? nvKey
+            : route.kind === "gmi"
+              ? gmiKey
+              : route.kind === "opencode"
+                ? opencodeGoKey
+                : deepseekKey;
 
   // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
   // Accepts OpenAI-format requests directly and forwards to the upstream
@@ -548,8 +563,13 @@ async function handleGatewayImpl(
     // picked by the messages flow is /v1/messages; reusing it directly would stuff an OpenAI body
     // into the Anthropic endpoint (bugfix 2026-08-22). Re-fetch the chat-path upstream per the switch:
     // off = direct openrouter.ai/api/v1/chat/completions; on = via the US egress (target=or).
-    if (route.kind === "openrouter") {
-      route.upstream = pickRoute("or", env, usProxy, "/v1/chat/completions").upstream;
+    if (route.kind === "openrouter" || route.kind === "commandgoat") {
+      route.upstream = pickRoute(
+        route.kind === "openrouter" ? "or" : "cm",
+        env,
+        usProxy,
+        "/v1/chat/completions",
+      ).upstream;
     }
     // Body is already OpenAI format — forward as-is with model field swapped.
     let forwardBody = rawWithModel(rawText, upstreamModel, scanned);
@@ -912,9 +932,18 @@ async function handleGatewayImpl(
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 
-  // Translation route (og, non-native models only): Anthropic → OpenAI → zen/go,
-  // then reshape back to Anthropic SSE. deepseek-v4-flash / minimax-m3 never get
-  // here — they were switched to passthrough above.
+  // Translation route (og non-native models, cm): Anthropic → OpenAI →
+  // chat/completions, then reshape back to Anthropic SSE. deepseek-v4-flash /
+  // minimax-m3 on og never get here — they were switched to passthrough above.
+  // cm/ always gets here on /v1/messages: the Command Code Anthropic endpoint
+  // serves claude-* only, deepseek & co. live on chat/completions.
+  if (route.kind === "commandgoat" && !cmdKey) {
+    return jsonError(
+      502,
+      "CMD_API_KEY not configured — add your Command Code key in the console",
+      "config_error",
+    );
+  }
   if (!opencodeGoKey) {
     return jsonError(
       502,
@@ -922,7 +951,7 @@ async function handleGatewayImpl(
       "config_error",
     );
   }
-  if (await isChannelDegraded(env)) {
+  if (route.kind === "opencode" && (await isChannelDegraded(env))) {
     // Circuit open: repeated hard failures — fail fast instead of waiting on zen again.
     return jsonError(
       502,
@@ -938,12 +967,14 @@ async function handleGatewayImpl(
   if (upstreamModel === "ox-alpha-free" && openaiReq.reasoning === undefined) {
     openaiReq.reasoning = { effort: "max" };
   }
+  const translateKey = route.kind === "commandgoat" ? cmdKey : opencodeGoKey;
+  const translateLabel = route.kind === "commandgoat" ? "cm" : "og";
   const { response: upstream, detail } = await fetchWithRetry(
     route.upstream,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${opencodeGoKey}`,
+        Authorization: `Bearer ${translateKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(openaiReq),
@@ -951,12 +982,16 @@ async function handleGatewayImpl(
     { timeoutMs: ogTimeoutMs(env) },
   );
   if (!upstream || !upstream.ok) {
-    // Count toward the breaker ONLY channel-death signals: a hard network
-    // error OR a timeout (a blackholed channel hangs instead of erroring).
-    // A fast 5xx/429 (retries exhausted) is zen being flaky, not dead — it
-    // must NOT trip. The BreakerDO's 10-min window means a live-but-slow
-    // channel's occasional hang won't accumulate to a trip either.
-    if (detail?.startsWith("network error") || detail?.startsWith("timeout")) {
+    // Count toward the og breaker ONLY channel-death signals (og-specific — cm
+    // has no breaker): a hard network error OR a timeout (a blackholed channel
+    // hangs instead of erroring). A fast 5xx/429 (retries exhausted) is the
+    // upstream being flaky, not dead — it must NOT trip. The BreakerDO's
+    // 10-min window means a live-but-slow channel's occasional hang won't
+    // accumulate to a trip either.
+    if (
+      route.kind === "opencode" &&
+      (detail?.startsWith("network error") || detail?.startsWith("timeout"))
+    ) {
       await recordChannelFailure(env);
     }
     // round-116: preserve the upstream status/type — the old code collapsed
@@ -966,13 +1001,13 @@ async function handleGatewayImpl(
     const upStatus = upstream?.status || 502;
     return jsonError(
       upStatus,
-      `og: ${detail || `upstream ${upStatus}`}`,
+      `${translateLabel}: ${detail || `upstream ${upStatus}`}`,
       upStatus === 429 ? "rate_limit_error" : upStatus >= 500 ? "upstream_error" : "api_error",
     );
   }
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure
   // count — otherwise yesterday's blips would combine with today's to trip.
-  await recordChannelSuccess(env);
+  if (route.kind === "opencode") await recordChannelSuccess(env);
   // Response reshaping (SSE translation, one-shot JSON fallback, error-envelope
   // guard) is shared with the nv/gmi translation branch below.
   return openAIUpstreamToAnthropicResponse(upstream, body, body.model, upstreamModel);
@@ -1243,6 +1278,8 @@ export async function isModelUsable(env: any, model: string, uid: string): Promi
   // blob (no env fallback), so a missing user key means every request 502s.
   if (prefix === "nv/" && !userKeys.NVAPI_KEY) return false;
   if (prefix === "gmi/" && !userKeys.GMI_API_KEY) return false;
+  // cm/ — Command Code is pure BYOK too; without a user key every request 502s.
+  if (prefix === "cm/" && !(userKeys.CMD_API_KEY || env.CMD_API_KEY)) return false;
   if (model.startsWith("og/")) return !(await isChannelDegraded(env));
   return true;
 }

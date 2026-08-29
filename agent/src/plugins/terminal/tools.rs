@@ -135,10 +135,7 @@ fn tool_terminal_env() -> ToolDef {
         json!({"type":"object","properties":{}}),
         move |_params: Value| {
             async move {
-                let dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                    .unwrap_or_default();
+                let dir = crate::paths::install_dir();
                 let node = dir.join("playwright").join("node.exe");
                 let node_ver = if node.exists() {
                     tokio::time::timeout(

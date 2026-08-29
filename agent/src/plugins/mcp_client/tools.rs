@@ -87,16 +87,10 @@ fn diag_log(line: &str) {
         });
 }
 
-/// Diagnostic log path — next to the exe (same heuristic as the update
-/// plugin) so it works on Windows (D:\vale-agent\mcp_diag.log) AND in tests
-/// on other platforms (a hardcoded D:\ path silently wrote junk into the
-/// process cwd).
+/// Diagnostic log path — under the DATA dir (C1: registry DataDir, else exe
+/// dir). Works on Windows AND in tests on other platforms.
 fn diag_path() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("mcp_diag.log")
+    crate::paths::data_dir().join("mcp_diag.log")
 }
 
 /// Single entry point for a JSON-RPC call, dispatched by transport.
@@ -354,16 +348,12 @@ async fn connect_http(url: String) -> Result<serde_json::Value, DeviceError> {
     }))
 }
 
-/// Locate the bundled playwright-mcp entry (`<install>/playwright/node.exe` +
-/// `node_modules/@playwright/mcp/cli.js`) — same heuristic as the playwright
-/// plugin's manager.
+/// Locate the playwright-mcp entry (`<install>/playwright/node_modules/
+/// @playwright/mcp/cli.js`) + the node runtime (registry NodePath / system
+/// node — the agent no longer bundles node.exe).
 fn bundled_playwright() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    let dir = std::env::current_exe()
-        .ok()?
-        .parent()
-        .map(|d| d.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("D:\\vale-agent"));
-    let node = dir.join("playwright").join("node.exe");
+    let dir = crate::paths::install_dir();
+    let node = crate::paths::node_path().or_else(|| dir.join("playwright").join("node.exe").exists().then(|| dir.join("playwright").join("node.exe")))?;
     let entry = dir
         .join("playwright")
         .join("node_modules")

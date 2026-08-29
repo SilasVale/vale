@@ -28,11 +28,7 @@ fn fingerprint_of(key: &russh::keys::ssh_key::PublicKey) -> String {
 }
 
 fn known_hosts_path() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_default()
-        .join("vale-known-hosts.json")
+    crate::paths::data_dir().join("vale-known-hosts.json")
 }
 
 /// Parse failure is an Err — the caller (check_server_key) fails the

@@ -15,13 +15,9 @@ use serde_json::{json, Value};
 use vale_agent_core::ToolDef;
 use crate::plugins::to_value_or_empty;
 
-/// Install dir = directory of the running vale-agent.exe (same heuristic as
-/// the bridge watchdog in main.rs).
+/// Install dir — registry-first, then exe dir (crate::paths::install_dir).
 fn install_dir() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("D:\\vale-agent"))
+    crate::paths::install_dir()
 }
 
 /// Read playwright-core's version from the bundled package.json.

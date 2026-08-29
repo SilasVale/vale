@@ -291,15 +291,10 @@ pub struct TerminalPlugin {
     buffer_limit: Arc<std::sync::atomic::AtomicUsize>,
 }
 
-/// Install dir of the audit log — next to the exe, same place as
-/// vale-known-hosts.json (the only location guaranteed writable and stable
-/// across upgrades).
+/// Audit log dir — under the DATA dir (C1: registry DataDir, else exe dir),
+/// same root as vale-known-hosts.json (writable and stable across upgrades).
 pub(super) fn log_dir() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_default()
-        .join("sessions")
+    crate::paths::data_dir().join("sessions")
 }
 
 impl TerminalPlugin {

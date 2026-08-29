@@ -55,13 +55,18 @@
     // binds the owner's mailbox to the seeded admin account.
     "ACCESS_TEAM_DOMAIN": "vale-saisi.cloudflareaccess.com",
     "ACCESS_AUD": "047684f18b6631d17a722235265b68d8ea558a7a5e40cb5f2b6e1ae5c9473a6b",
-    "ACCESS_ADMIN_EMAIL": "13122231591@163.com"
+    "ACCESS_ADMIN_EMAIL": "13122231591@163.com",
+    // Gateway-side image describing for text-only models: Command Code
+    // vision-exp (GOAT plan). Descriptions are KV-cached per image.
+    "VISION_MODEL": "cm/deepseek/deepseek-v4-flash-vision-exp"
   }
   // Vale Gate — unified AI gateway + device console. Custom domains are added
   // in the dashboard (custom_domains API is OAuth-only).
   // Vars (set via `wrangler var put`, NOT committed): CONSOLE_HOST, API_HOST, OPENROUTER_PROXY_URL, US_PROXY
   // Secrets (set via `wrangler secret put`): CLIENT_KEY, DEEPSEEK_API_KEY, OPENCODE_GO_API_KEY,
-  // OPENROUTER_API_KEY, QWEN_API_KEY, ADMIN_PASSWORD,
+  // OPENROUTER_API_KEY, QWEN_API_KEY, CMD_API_KEY (worker-level Command Code
+  // key, e.g. for the vale-probe health check; per-user keys are BYOK via the console),
+  // ADMIN_PASSWORD,
   // SESSION_SECRET (high-entropy; decouples session signing from the admin password — set it!),
   // DO_AUTH (shared secret the main worker passes to PluginHubDO to gate its /call and /ws)
 }

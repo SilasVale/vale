@@ -112,12 +112,27 @@ export function toOpenAIRequest(req: any, model: string): any {
   return out;
 }
 
+/** Extract the reasoning text from an OpenAI-format assistant message.
+ *  DeepSeek-style backends: `reasoning_content`. Command Code (GOAT Provider
+ *  API): `reasoning` (string) or a `reasoning_details` segment list. */
+function reasonTextOf(msg: any): string {
+  if (typeof msg.reasoning === "string") return msg.reasoning;
+  if (typeof msg.reasoning_content === "string") return msg.reasoning_content;
+  if (Array.isArray(msg.reasoning_details))
+    return msg.reasoning_details
+      .map((r: any) => (typeof r === "string" ? r : r?.text || ""))
+      .join("");
+  return "";
+}
+
 export function toAnthropicResponse(up: any, model: string): any {
   const choice = up.choices?.[0];
   const msg = choice?.message || {};
   const blocks = [];
-  if (msg.reasoning_content)
-    blocks.push({ type: "thinking", thinking: msg.reasoning_content, signature: "" });
+  // Reasoning text: DeepSeek-style backends send `reasoning_content`;
+  // Command Code sends `reasoning` (+ a `reasoning_details` segment list).
+  const reasonText = reasonTextOf(msg);
+  if (reasonText) blocks.push({ type: "thinking", thinking: reasonText, signature: "" });
   if (msg.content) blocks.push({ type: "text", text: msg.content });
   for (const tc of msg.tool_calls || []) {
     let input = {};
@@ -405,6 +420,14 @@ export class AnthropicStreamEncoder {
 
     if (delta.reasoning_content) {
       this.ensureBlock("thinking", { thinking: delta.reasoning_content, signature: "" });
+    }
+    // Command Code streams reasoning in `delta.reasoning` (OpenAI-format
+    // backend), sometimes as a reasoner-chunk list in `reasoning_details`.
+    if (delta.reasoning) {
+      this.ensureBlock("thinking", {
+        thinking: Array.isArray(delta.reasoning) ? delta.reasoning.join("") : delta.reasoning,
+        signature: "",
+      });
     }
     if (delta.content) {
       this.ensureBlock("text", { text: delta.content });

@@ -60,29 +60,46 @@ struct ManagedPlaywright {
     _kill_tx: oneshot::Sender<()>,
 }
 
-/// The directory this exe lives in — where the installer lands and where the
-/// NSIS /D= install root points. (Same pattern as update/tools.rs.)
+/// Install dir — registry-first, then exe dir (crate::paths::install_dir).
 fn install_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("C:\\vale-agent"))
+    crate::paths::install_dir()
 }
 
-/// Bundled node.exe — gives a clear error when the path is missing (dev builds
-/// have no bundle; tests expect start to fail rather than silently succeed).
-fn bundled_node() -> Result<PathBuf, DeviceError> {
-    let p = install_dir().join("playwright").join("node.exe");
-    if !p.exists() {
-        return Err(DeviceError::Internal {
-            message: format!(
-                "playwright bundle not found: {} (node.exe missing — the agent installer \
-                 bundles playwright-mcp under install_dir/playwright/)",
-                p.display()
-            ),
-        });
+/// Resolve the node runtime: the agent no longer bundles node.exe (the npm
+/// channel guarantees the device has node). Resolution order:
+///   1. registry NodePath (written by `vale setup` — the SYSTEM agent may
+///      not see the user PATH)
+///   2. bundled install_dir/playwright/node.exe (legacy bundles)
+///   3. system PATH (`where node`)
+///
+/// Gives a clear error when none is found.
+fn resolve_node() -> Result<PathBuf, DeviceError> {
+    // 1. registry NodePath (recorded by `vale setup`)
+    if let Some(p) = crate::paths::node_path() {
+        return Ok(p);
     }
-    Ok(p)
+    // 2. legacy bundled node.exe
+    let bundled = install_dir().join("playwright").join("node.exe");
+    if bundled.exists() {
+        return Ok(bundled);
+    }
+    // 3. system PATH (`where node`)
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        if let Ok(out) = Command::new("where").arg("node").output() {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                if let Some(first) = text.lines().next() {
+                    let p = PathBuf::from(first.trim());
+                    if p.exists() { return Ok(p); }
+                }
+            }
+        }
+    }
+    Err(DeviceError::Internal {
+        message: "node.exe not found (playwright browser tools need it) — install Node.js (https://nodejs.org) or run `vale setup` to record its path".into(),
+    })
 }
 
 /// Bundled playwright-mcp entry script — 0.0.79's bin is the package-root cli.js
@@ -254,7 +271,7 @@ impl PlaywrightManager {
 // 127.0.0.1 (blocks DNS-rebinding remote access). The secret is now only
 // displayed as connection info, no longer a security boundary.
         let port = MCP_PORT;
-        let node = bundled_node()?;
+        let node = resolve_node()?;
         let entry = bundled_mcp_entry()?;
         // Build the Command as a single owned expression so we can apply
         // CREATE_NO_WINDOW (round-143) before .spawn() — chained builder

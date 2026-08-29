@@ -61,12 +61,13 @@ export function Badge({ tone = "muted", dot, children }: { tone?: BadgeTone; dot
 
 /* ── Copy button (with transient ✓ feedback + toast hook) ── */
 
-export function CopyButton({ text, label, onCopied, tone = "ghost", small }: {
+export function CopyButton({ text, label, onCopied, tone = "ghost", small, disabled }: {
   text: string;
   label?: string;
   onCopied?: () => void;
   tone?: "primary" | "ghost" | "secondary";
   small?: boolean;
+  disabled?: boolean;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -84,7 +85,8 @@ export function CopyButton({ text, label, onCopied, tone = "ghost", small }: {
     <button
       className={`btn btn-${tone}${small ? " btn-mini" : ""}`}
       onClick={handle}
-      title={text ? undefined : t("token.copyFail")}
+      disabled={disabled}
+      title={disabled ? undefined : text ? undefined : t("token.copyFail")}
     >
       {copied ? "✓" : label ?? t("btn.copy")}
     </button>

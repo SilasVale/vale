@@ -10,7 +10,7 @@
  * battle-tested copy).
  */
 
-import { VERIFY_PATH, usProxyBase } from "./channels.ts";
+import { VERIFY_PATH, usProxyBase, CMD_CHAT } from "./channels.ts";
 
 export interface RouteInfo {
   type: string;
@@ -102,6 +102,21 @@ export function pickRoute(
         upstream: via("https://api.gmi-serving.com" + upstreamPath, upstreamPath),
       };
     }
+    case "cm":
+      // Command Code Provider API (api.commandcode.ai/provider) — Command
+      // Code GOAT plan and above have API access (every plan except Go). The
+      // Anthropic /v1/messages endpoint serves claude-* models ONLY (verified
+      // against the live API: deepseek → 400 "Use /provider/v1/chat/completions
+      // for OpenAI and OSS models"), so cm/ rides the OpenAI endpoint: the
+      // translate plugin reshapes Anthropic /v1/messages → chat/completions
+      // (the og pattern), while OpenAI-format /v1/chat/completions passes
+      // through directly. Auth: the user's own CMD_API_KEY as Bearer.
+      return {
+        type: "translate",
+        kind: "commandgoat",
+        stripPrefix: true,
+        upstream: via(CMD_CHAT, "/v1/chat/completions"),
+      };
     default:
       // No prefix / unknown prefix → DeepSeek official
       return {

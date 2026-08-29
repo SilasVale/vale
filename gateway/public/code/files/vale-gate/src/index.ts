@@ -342,7 +342,9 @@ export async function valeProbe(env: any, model: string) {
           ? env.NVAPI_KEY || ""
           : prefix === "gmi"
             ? env.GMI_API_KEY || ""
-            : env.DEEPSEEK_API_KEY || "";
+            : prefix === "cm"
+              ? env.CMD_API_KEY || ""
+              : env.DEEPSEEK_API_KEY || "";
   if (!key) return jsonOk({ ok: false, channel: prefix, detail: `${prefix}: key not configured` });
   const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
   let res;

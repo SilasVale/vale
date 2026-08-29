@@ -12,6 +12,7 @@ export default function DevicesPanel() {
   const { toast } = useToast();
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceStatuses, setDeviceStatuses] = useState<Record<string, DeviceStatus>>({});
+  const [regKey, setRegKey] = useState("");
 
   const loadDevices = useCallback(async () => {
     try {
@@ -78,6 +79,23 @@ export default function DevicesPanel() {
     }
   };
 
+  // Generate a one-time registration key (1h TTL) — fills the setup command
+  // so the user copies a COMPLETE, runnable command (no placeholders).
+  const handleGenRegKey = async () => {
+    try {
+      const data = await api.generateRegKey();
+      if (data.key) {
+        setRegKey(data.key);
+        toast(t("devices.keyGenerated", { code: data.key }));
+      }
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : t("devices.genKeyFail"), true);
+    }
+  };
+
+  // Full, copy-ready commands (no placeholders left).
+  const npmCmd = "npm i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.91.tgz";
+
   const openPanel = async (name: string) => {
     try {
       const data = await api.getDeviceMcp(name);
@@ -113,16 +131,32 @@ export default function DevicesPanel() {
         </pre>
       </Card>
 
-      {/* Install new device (npm route) */}
-      <Card title={t("devices.npmTitle")} description={t("devices.npmDesc")}>
-        <p className="muted mt-12">{t("devices.npmStep1")}</p>
-        <pre className="mt-8">
-          <code>{`npm i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.84.tgz`}</code>
-        </pre>
+      {/* Install new device — pure local first, gateway optional */}
+      <Card title={t("devices.installTitle")} description={t("devices.installDesc")}>
+        <p className="muted mt-12">{t("devices.installStep1")}</p>
+        <pre className="mt-8"><code>{npmCmd}</code></pre>
         <div className="row mt-8">
-          <CopyButton text={`npm i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.84.tgz`} small onCopied={() => toast(t("devices.mcpCopied"))} />
+          <CopyButton text={npmCmd} small onCopied={() => toast(t("devices.mcpCopied"))} />
         </div>
-        <p className="muted mt-12">{t("devices.npmStep2")}</p>
+        <pre className="mt-8"><code>{`vale setup`}</code></pre>
+        <div className="row mt-8">
+          <CopyButton text="vale setup" small onCopied={() => toast(t("devices.mcpCopied"))} />
+        </div>
+
+        <p className="muted mt-12">{t("devices.installStep2")}</p>
+        <div className="row mt-8">
+          <button className="btn btn-ghost btn-mini" onClick={handleGenRegKey}>
+            {t("devices.genKey")}
+          </button>
+          {regKey && (
+            <>
+              <span className="muted mono">{regKey}</span>
+              <CopyButton text={regKey} small onCopied={() => toast(t("devices.keyCopied"))} />
+            </>
+          )}
+        </div>
+
+        <p className="muted mt-12">{t("devices.installNote")}</p>
       </Card>
 
       {/* Device list */}

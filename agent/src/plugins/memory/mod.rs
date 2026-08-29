@@ -51,14 +51,10 @@ impl Plugin for MemoryPlugin {
     }
 }
 
-/// Default memory store root (under the install dir). The install dir is the
-/// directory of the running exe — same heuristic as the update plugin.
+/// Default memory store root — under the DATA dir (C1: registry DataDir,
+/// falling back to the exe dir). One source of truth via crate::paths.
 pub fn default_memory_dir() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::path::PathBuf::from("D:\\vale-agent"))
-        .join("memory")
+    crate::paths::data_dir().join("memory")
 }
 
 #[cfg(test)]
