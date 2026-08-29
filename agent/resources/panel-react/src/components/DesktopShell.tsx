@@ -7,7 +7,7 @@ import type { Session } from "../hooks/useSessions";
 import { IconRail } from "./IconRail";
 import { Shell, type Page } from "./Shell";
 import { TerminalWorkspace, type CommandEvents } from "./TerminalWorkspace";
-import BrowserPane from "./BrowserPane";
+import { BrowserPage } from "./BrowserPage";
 import { MemoryPage } from "./MemoryPage";
 import { PluginsPage } from "./PluginsPage";
 import { SettingsPage } from "./SettingsPage";
@@ -22,7 +22,6 @@ interface Props {
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
-  browserActive: boolean;
   onNewSession: (kind: "pty" | "ssh" | "serial", target?: string, extra?: Record<string, unknown>) => void;
   sseState: "connected" | "down" | "connecting";
   token: string;
@@ -40,7 +39,7 @@ const PAGE_TITLES: Record<Page, string> = {
 
 export function DesktopShell({
   sessions, activeSid, onActivate, onClose, onExport, onViewChange,
-  registerWrite, browserActive, onNewSession, sseState, token, plugins, cmdEvents,
+  registerWrite, onNewSession, sseState, token, plugins, cmdEvents,
 }: Props) {
   const [page, setPage] = useState<Page>("terminal");
   const connected = sseState === "connected";
@@ -80,22 +79,12 @@ export function DesktopShell({
               onViewChange={onViewChange}
               registerWrite={registerWrite}
               cmdEvents={cmdEvents}
-              browserActive={browserActive}
               token={token}
               density="desktop"
               sseState={sseState}
             />
           )}
-          {page === "browser" && (
-            <div className="desktop-browser">
-              <BrowserPane
-                key="desktop-browser"
-                session={{ sid: "browser", url: "", active: true }}
-                apiBase=""
-                token={token}
-              />
-            </div>
-          )}
+          {page === "browser" && <BrowserPage plugins={plugins} token={token} />}
           {page === "memory" && <MemoryPage />}
           {page === "plugins" && <PluginsPage plugins={plugins} />}
           {page === "settings" && <SettingsPage onOpenMemory={() => setPage("memory")} />}

@@ -1,13 +1,12 @@
 // TerminalWorkspace — the ONE implementation of the terminal page for both
 // densities. Owns per-session view (terminal|trajectory), the Logs command
 // drawer, and the active session's command stream. The old App-level
-// browserActive/detailsOpen/selectedCmdId state lives HERE now (design doc §5).
+// detailsOpen/selectedCmdId state lives HERE now (design doc §5).
 import { useState } from "react";
 import type { Session } from "../hooks/useSessions";
 import { TabBar, type SessionView } from "./TabBar";
 import { Icon } from "../ui/Icon";
 import { TerminalPane } from "./TerminalPane";
-import BrowserPane from "./BrowserPane";
 import { TrajectoryView } from "./TrajectoryView";
 import { DetailsPanel } from "./DetailsPanel";
 import { CommandStream } from "./CommandCard";
@@ -32,7 +31,6 @@ interface Props {
   onViewChange: (sid: string, v: SessionView) => void;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   cmdEvents: CommandEvents;
-  browserActive: boolean;
   token: string;
   density: "panel" | "desktop";
   sseState: "connected" | "down" | "connecting";
@@ -40,7 +38,7 @@ interface Props {
 
 export function TerminalWorkspace({
   sessions, activeSid, onActivate, onClose, onExport, onViewChange,
-  registerWrite, cmdEvents, browserActive, token, density, sseState,
+  registerWrite, cmdEvents, token, density, sseState,
 }: Props) {
   const [selectedCmdId, setSelectedCmdId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -88,18 +86,10 @@ export function TerminalWorkspace({
               <TrajectoryView key={activeSid} events={cmdEvents.events} />
             ) : (
               <>
-                {browserActive && (
-                  <BrowserPane
-                    key="browser"
-                    session={{ sid: "browser", url: "", active: true }}
-                    apiBase=""
-                    token={token}
-                  />
-                )}
-                {!browserActive && sessions.filter((s) => !s.closed).map((s) => (
+                {sessions.filter((s) => !s.closed).map((s) => (
                   <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />
                 ))}
-                {!browserActive && sessions.length === 0 && (
+                {sessions.length === 0 && (
                   <div id="empty-state"><div className="empty-card"><span className="empty-mark">V</span><p>No sessions yet</p></div></div>
                 )}
               </>
@@ -132,10 +122,7 @@ export function TerminalWorkspace({
             <TrajectoryView key={activeSid} events={cmdEvents.events} />
           ) : (
             <div id="term-container">
-              <div className={"browser-wrap" + (browserActive ? "" : " hidden")}>
-                <BrowserPane key="browser" session={{ sid: "browser", url: "", active: true }} apiBase="" token={token} />
-              </div>
-              {!browserActive && (sessions.length === 0 ? (
+              {sessions.length === 0 ? (
                 <div id="empty-state">
                   <div className="empty-card"><span className="empty-mark">V</span><p>No sessions yet</p></div>
                 </div>
@@ -143,7 +130,7 @@ export function TerminalWorkspace({
                 sessions.filter((s) => !s.closed).map((s) => (
                   <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />
                 ))
-              ))}
+              )}
             </div>
           )}
           {detailsOpen && (

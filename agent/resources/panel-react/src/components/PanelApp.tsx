@@ -9,7 +9,7 @@ import { Shell, type Page } from "./Shell";
 import { ContextRail } from "./ContextRail";
 import { StatusBar } from "./StatusBar";
 import { TerminalWorkspace, type CommandEvents } from "./TerminalWorkspace";
-import BrowserPane from "./BrowserPane";
+import { BrowserPage } from "./BrowserPage";
 import { MemoryPage } from "./MemoryPage";
 import { PluginsPage } from "./PluginsPage";
 import { SettingsPage } from "./SettingsPage";
@@ -25,9 +25,7 @@ interface Props {
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
-  browserActive: boolean;
   onNewSession: (kind: "pty" | "ssh" | "serial") => void;
-  onOpenConn: (kind: "ssh" | "serial") => void;
   status: string;
   sseState: string;
   token: string;
@@ -89,22 +87,12 @@ export function PanelApp(props: Props) {
                 onViewChange={props.onViewChange}
                 registerWrite={props.registerWrite}
                 cmdEvents={props.cmdEvents}
-                browserActive={props.browserActive}
                 token={props.token}
                 density="panel"
                 sseState={props.sseState as "connected" | "down" | "connecting"}
               />
             )}
-            {page === "browser" && (
-              <div className="desktop-browser">
-                <BrowserPane
-                  key="panel-browser"
-                  session={{ sid: "browser", url: "", active: true }}
-                  apiBase=""
-                  token={props.token}
-                />
-              </div>
-            )}
+            {page === "browser" && <BrowserPage plugins={props.plugins} token={props.token} />}
             {page === "memory" && <MemoryPage />}
             {page === "plugins" && <PluginsPage plugins={props.plugins} />}
             {page === "settings" && <SettingsPage onOpenMemory={() => setPage("memory")} />}

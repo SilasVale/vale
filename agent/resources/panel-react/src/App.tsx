@@ -14,6 +14,11 @@ import type { SessionView } from "./components/TabBar";
 // desktop density) + shared domain hooks. All page-local state lives in the
 // page components (TerminalWorkspace etc.), per the core design doc
 // (docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md).
+//
+// round-162: the injected "Browser" session row is GONE — the browser was
+// simultaneously a tab-strip session and a side-rail page, which read as a
+// duplicate. The Browser page is now the single entry (state-aware, see
+// BrowserPage.tsx); sessions here are terminals only.
 
 const LS_HOST = "valeHost";
 const LS_TOKEN = "valeToken";
@@ -39,21 +44,19 @@ export function App() {
     setConnError("session expired — re-enter token");
   }
   const [modalKind, setModalKind] = useState<"ssh" | "serial" | null>(null);
-  const [browserActive, setBrowserActive] = useState(false);
-  const BROWSER_SID = "__browser__";
   const plugins = usePlugins(connected);
   const sessions = useSessions(connected);
 
   // round-157: when the panel opens with no active session, auto-activate the
   // first live session — otherwise every .term-session stays display:none
   // and the terminal area is blank (users repeatedly reported "not covering
-  // / blank"). Skipped while browserActive (Browser view takes priority).
+  // / blank").
   useEffect(() => {
-    if (browserActive || sessions.activeSid) return;
+    if (sessions.activeSid) return;
     const live = sessions.sessions.find((s) => !s.closed);
     if (live) sessions.activate(live.sid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.sessions, sessions.activeSid, browserActive]);
+  }, [sessions.sessions, sessions.activeSid]);
 
   // Per-session main-area view (terminal | trajectory) — keyed per sid.
   // State lives here (App) so both shells share the same view per session.
@@ -66,7 +69,7 @@ export function App() {
   // effect skips while display:none, so a window resize while in another
   // view leaves a stale grid on switch-back. The dispatch must run
   // POST-commit (the R131 render-body version fired while still hidden).
-  const termVisible = !browserActive && !(sessions.activeSid && sessionViews[sessions.activeSid] === "trajectory");
+  const termVisible = !(sessions.activeSid && sessionViews[sessions.activeSid] === "trajectory");
   const prevTermVisible = useRef(termVisible);
   useEffect(() => {
     if (!prevTermVisible.current && termVisible) {
@@ -74,34 +77,6 @@ export function App() {
     }
     prevTermVisible.current = termVisible;
   }, [termVisible]);
-
-  // round-133: inject a Browser session row while a playwright-mcp hosted
-  // instance is running — clicking it opens the live preview (BrowserPane).
-  // Activation is managed by browserActive, mutually exclusive with terminal
-  // sessions (the main area shows only one panel at a time).
-  const allSessions = useMemo(() => {
-    // round-161: PRESERVE each session's active flag — the old map wiped it
-    // to false, so every TerminalPane stayed display:none (blank pane).
-    const base = sessions.sessions.map((s) => ({ ...s }));
-    return [...base, { sid: BROWSER_SID, label: "Browser", kind: "browser", closed: false, savedOnly: false, active: browserActive, openedAt: Date.now(), closedAt: null }] as typeof sessions.sessions;
-  }, [sessions.sessions, browserActive]);
-
-  const effectiveActiveSid = browserActive ? BROWSER_SID : sessions.activeSid;
-
-  const activateWrap = (sid: string) => {
-    if (sid === BROWSER_SID) {
-      setBrowserActive(true);
-      return;
-    }
-    setBrowserActive(false);
-    sessions.activate(sid);
-  };
-
-  const newSessionWrap = (kind: "pty" | "ssh" | "serial") => {
-    setBrowserActive(false);
-    if (kind === "pty") { sessions.openSession("pty", "").catch(() => {}); }
-    else setModalKind(kind);
-  };
 
   // Command card stream (round-admin-ui Task 4): poll the ACTIVE session's
   // audit log; the cards/events are shared by the Logs drawer + trajectory.
@@ -162,18 +137,15 @@ export function App() {
   }
 
   const shared = {
-    sessions: allSessions as typeof sessions.sessions,
-    activeSid: effectiveActiveSid,
-    onActivate: activateWrap,
-    onClose: (sid: string) => {
-      if (sid === BROWSER_SID) { setBrowserActive(false); return; }
-      sessions.closeSession(sid);
-    },
+    sessions: sessions.sessions,
+    activeSid: sessions.activeSid,
+    onActivate: sessions.activate,
+    onClose: sessions.closeSession,
     onExport: sessions.exportSession,
     onViewChange: changeView,
     registerWrite,
-    browserActive,
     token,
+    plugins,
     cmdEvents: { cards: cmdEvents.cards, events: cmdEvents.events },
   };
 
@@ -181,9 +153,8 @@ export function App() {
     return (
       <DesktopShell
         {...shared}
-        onNewSession={(kind, target, extra) => { setBrowserActive(false); if (kind === "pty") sessions.openSession("pty", target ?? "").catch(() => {}); else setModalKind(kind); }}
+        onNewSession={(kind, target, extra) => { if (kind === "pty") sessions.openSession("pty", target ?? "").catch(() => {}); else setModalKind(kind); }}
         sseState={sseState}
-        plugins={plugins}
       />
     );
   }
@@ -191,11 +162,9 @@ export function App() {
   return (
     <PanelApp
       {...shared}
-      onNewSession={(kind) => newSessionWrap(kind)}
-      onOpenConn={(kind) => setModalKind(kind)}
+      onNewSession={(kind) => { if (kind === "pty") sessions.openSession("pty", "").catch(() => {}); else setModalKind(kind); }}
       status={sessions.status}
       sseState={sseState}
-      plugins={plugins}
       connModal={modalKind}
       onConnClose={() => setModalKind(null)}
       onConnConnect={(kind, target, extra) => sessions.openSession(kind, target, extra)}
