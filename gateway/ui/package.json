@@ -8,7 +8,8 @@
     "build": "tsc -b && NODE_ENV=production vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "smoke": "node render-smoke.mjs ../public/assets/$(grep -o 'index-[^\"]*\\.js' ../public/index.html | head -1)"
+    "smoke": "node render-smoke.mjs ../public/assets/$(grep -o 'index-[^\"]*\\.js' ../public/index.html | head -1)",
+    "smoke:devices": "node devices-render-smoke.mjs ../public/assets/$(grep -o 'index-[^\"]*\\.js' ../public/index.html | head -1)"
   },
   "dependencies": {
     "react": "^19.2.8",

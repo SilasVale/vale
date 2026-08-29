@@ -1304,25 +1304,85 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* ================================================================
-   Devices page
+   Devices page — dashboard cards
    ================================================================ */
 
-/* Per-device signal chips: agent / tunnel / extension as independent
-   states (agent_up alone no longer hides tunnel or extension problems). */
-.dev-status-chips {
+/* Fleet stats strip (N devices · M online · K tunnels · R unused keys). */
+.dev-stats {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  gap: 22px;
   flex-wrap: wrap;
-  margin-top: 6px;
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  margin-bottom: 14px;
+}
+.dev-stat { display: flex; align-items: baseline; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.dev-stat b { font-size: 17px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Device card grid — 1/2/3 columns as space allows. */
+.dev-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 12px;
+}
+.dev-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  transition: border-color var(--ds-dur) var(--ds-ease), box-shadow var(--ds-dur) var(--ds-ease);
+}
+.dev-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); }
+.dev-card-head { display: flex; align-items: center; gap: 10px; }
+.dev-led { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.dev-led.on { background: var(--success); box-shadow: 0 0 0 3px var(--success-bg); }
+.dev-led.off { background: var(--text-faint); }
+.dev-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.dev-card-ver {
+  margin-left: auto;
+  font: 11px var(--ds-font-family-code);
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-pill);
+  padding: 2px 9px;
 }
 
-.dev-ver {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-family: var(--ds-font-family-code);
-  font-variant-numeric: tabular-nums;
+/* Three-signal block (Agent / Tunnel / Extension) — one row each. */
+.dev-signals {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
 }
+.dev-sig { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.dev-sig-label { color: var(--text-muted); min-width: 56px; }
+.sig-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.sig-dot.ok { background: var(--success); }
+.sig-dot.err { background: var(--error); }
+.sig-dot.off { background: var(--text-faint); }
+.dev-sig-state { margin-left: auto; font-weight: 600; }
+.dev-sig-state.ok { color: var(--success); }
+.dev-sig-state.err { color: var(--error); }
+.dev-sig-state.off { color: var(--text-faint); }
+
+.dev-host {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 12px var(--ds-font-family-code);
+  color: var(--text-secondary);
+}
+.dev-host-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-meta { font-size: 11px; color: var(--text-muted); }
+.dev-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 
 .muted-small { font-size: 12px; color: var(--text-muted); }
 
@@ -1341,12 +1401,11 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 }
 .banner-error .btn { margin-left: auto; }
 
-/* Initial-load skeletons for the device list. */
-.dev-skeletons { display: flex; flex-direction: column; gap: 8px; }
-.skeleton-row {
-  height: 58px;
+/* Initial-load skeleton cards for the device grid. */
+.skeleton-card {
+  height: 190px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-secondary) 50%, var(--bg-tertiary) 75%);
   background-size: 200% 100%;
   animation: dev-shimmer 1.2s infinite;

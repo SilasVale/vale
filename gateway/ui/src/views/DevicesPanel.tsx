@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext.tsx";
-import { useTranslation } from "../i18n.ts";
+import { useTranslation, type TranslationKey } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import {
   api,
@@ -17,7 +17,6 @@ import {
   CopyButton,
   Empty,
   Modal,
-  StatusChip,
 } from "../components/ui.tsx";
 
 // Fallback npm install URL when /api/devices/install-cmd cannot reach the
@@ -38,6 +37,17 @@ const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString(undefined, { hour12: false });
 const fmtDateTime = (ts: number) =>
   new Date(ts).toLocaleString(undefined, { hour12: false });
+// Relative time for card metadata ("2 分钟前") — buckets: now/min/hours/days.
+const fmtRel = (ts: number | undefined, t: (k: TranslationKey, v?: Record<string, string>) => string): string => {
+  if (!ts) return "—";
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return t("devices.relNow");
+  const m = Math.floor(s / 60);
+  if (m < 60) return t("devices.relMinutes", { n: String(m) });
+  const h = Math.floor(m / 60);
+  if (h < 24) return t("devices.relHours", { n: String(h) });
+  return t("devices.relDays", { n: String(Math.floor(h / 24)) });
+};
 
 export default function DevicesPanel() {
   const { user, refreshUser } = useAuth();
@@ -266,7 +276,19 @@ export default function DevicesPanel() {
         </div>
       )}
 
-      {/* Device list — the page's primary block */}
+      {/* Fleet stats strip — the at-a-glance summary above the cards */}
+      {devices !== null && devices.length > 0 && (
+        <div className="dev-stats">
+          <span className="dev-stat"><b>{devices.length}</b>{t("devices.statTotal")}</span>
+          <span className="dev-stat"><b>{devices.filter((d) => deviceStatuses[d.name]?.agent_up).length}</b>{t("devices.statOnline")}</span>
+          <span className="dev-stat"><b>{devices.filter((d) => deviceStatuses[d.name]?.tunnel_up).length}</b>{t("devices.statTunnels")}</span>
+          {regKeys && regKeys.length > 0 && (
+            <span className="dev-stat"><b>{regKeys.length}</b>{t("devices.statKeys")}</span>
+          )}
+        </div>
+      )}
+
+      {/* Device cards — the page's primary block */}
       <Card
         title={t("devices.listTitle")}
         headerExtra={
@@ -287,49 +309,60 @@ export default function DevicesPanel() {
         }
       >
         {devices === null ? (
-          <div className="dev-skeletons">
-            <div className="skeleton-row" />
-            <div className="skeleton-row" />
+          <div className="dev-grid">
+            <div className="skeleton-card" />
+            <div className="skeleton-card" />
           </div>
         ) : devices.length === 0 ? (
           <Empty>{t("devices.empty")}</Empty>
         ) : (
-          <div className="list">
+          <div className="dev-grid">
             {devices.map((d) => {
               const st = deviceStatuses[d.name];
               const agentUp = !!st?.agent_up;
               const tunnelUp = !!st?.tunnel_up;
               const extUp = !!st?.online;
               const outdated = !!d.lastVersion && !!install?.version && d.lastVersion !== install.version;
+              const signals = [
+                { label: t("devices.statusAgent"), ok: agentUp, err: !agentUp, state: agentUp ? t("devices.online") : t("devices.offline") },
+                { label: t("devices.statusTunnel"), ok: tunnelUp, err: !tunnelUp, state: tunnelUp ? t("devices.tunnelUp") : t("devices.tunnelDown") },
+                { label: t("devices.statusExt"), ok: extUp, off: !extUp, state: extUp ? t("devices.extUp") : t("devices.extDown") },
+              ];
 
               return (
-                <div className="list-row" key={d.name}>
-                  <div className="list-main">
-                    <div className="list-line">
-                      <span className={`dot ${agentUp ? "online" : "offline"}`} />
-                      <span className="list-title">{d.name}</span>
-                      <Badge tone={agentUp ? "success" : "muted"} dot>
-                        {agentUp ? t("devices.agentUp") : t("devices.agentDown")}
-                      </Badge>
-                      {outdated && (
-                        <Badge tone="warning">{t("devices.versionOutdated", { ver: install!.version! })}</Badge>
-                      )}
-                    </div>
-                    <div className="dev-status-chips">
-                      <StatusChip state={agentUp ? "ok" : "err"}>{t("devices.statusAgent")}</StatusChip>
-                      <StatusChip state={tunnelUp ? "ok" : "err"}>{t("devices.statusTunnel")}</StatusChip>
-                      <StatusChip state={extUp ? "ok" : "off"}>{t("devices.statusExt")}</StatusChip>
-                      <span className="dev-ver">
+                <div className="dev-card" key={d.name}>
+                  <div className="dev-card-head">
+                    <span className={`dev-led ${agentUp ? "on" : "off"}`} />
+                    <span className="dev-name">{d.name}</span>
+                    {outdated ? (
+                      <Badge tone="warning">{t("devices.versionOutdated", { ver: install!.version! })}</Badge>
+                    ) : (
+                      <span className="dev-card-ver">
                         {d.lastVersion ? `v${d.lastVersion}` : t("devices.versionUnknown")}
                       </span>
-                    </div>
-                    <div className="list-sub">
-                      {d.hostname} · {maskToken(d.token)}
-                      {d.registeredAt ? ` · ${t("devices.registeredAt", { date: fmtDateTime(d.registeredAt) })}` : ""}
-                      {d.lastSeenAt ? ` · ${t("devices.lastSeen", { date: fmtDateTime(d.lastSeenAt) })}` : ""}
-                    </div>
+                    )}
                   </div>
-                  <div className="list-actions">
+                  <div className="dev-signals">
+                    {signals.map((s) => (
+                      <div className="dev-sig" key={s.label}>
+                        <span className={`sig-dot ${s.ok ? "ok" : s.err ? "err" : "off"}`} />
+                        <span className="dev-sig-label">{s.label}</span>
+                        <span className={`dev-sig-state ${s.ok ? "ok" : s.err ? "err" : "off"}`}>{s.state}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="dev-host">
+                    <span className="dev-host-name">{d.hostname}</span>
+                    {/* ShellHub-style dual path: the console cannot SSH, but the
+                        LAN/direct command is one copy away. */}
+                    <CopyButton text={`ssh ${d.hostname}`} small label="ssh" onCopied={() => toast(t("devices.copySsh"))} />
+                  </div>
+                  <div className="dev-meta">
+                    {d.lastSeenAt ? t("devices.lastSeen", { date: fmtRel(d.lastSeenAt, t) }) : ""}
+                    {d.registeredAt ? ` · ${t("devices.registeredAt", { date: fmtDateTime(d.registeredAt) })}` : ""}
+                    {" · "}{maskToken(d.token)}
+                  </div>
+                  <div className="dev-actions">
                     <button className="btn btn-ghost btn-mini" onClick={() => openPanel(d.name)}>
                       {t("devices.open")}
                     </button>

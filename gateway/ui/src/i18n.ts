@@ -183,6 +183,15 @@ const I18N = {
     "devices.statusAgent": "Agent",
     "devices.statusTunnel": "隧道",
     "devices.statusExt": "扩展",
+    "devices.statTotal": "台设备",
+    "devices.statOnline": "在线",
+    "devices.statTunnels": "条隧道",
+    "devices.statKeys": "待用注册码",
+    "devices.relNow": "刚刚",
+    "devices.relMinutes": "{n} 分钟前",
+    "devices.relHours": "{n} 小时前",
+    "devices.relDays": "{n} 天前",
+    "devices.copySsh": "复制 SSH 命令",
     "devices.agentUp": "Agent 在线",
     "devices.agentDown": "Agent 离线",
     "devices.tunnelUp": "隧道正常",
@@ -422,6 +431,15 @@ const I18N = {
     "devices.statusAgent": "Agent",
     "devices.statusTunnel": "Tunnel",
     "devices.statusExt": "Extension",
+    "devices.statTotal": "devices",
+    "devices.statOnline": "online",
+    "devices.statTunnels": "tunnels",
+    "devices.statKeys": "unused keys",
+    "devices.relNow": "just now",
+    "devices.relMinutes": "{n}m ago",
+    "devices.relHours": "{n}h ago",
+    "devices.relDays": "{n}d ago",
+    "devices.copySsh": "Copy SSH command",
     "devices.agentUp": "Agent online",
     "devices.agentDown": "Agent offline",
     "devices.tunnelUp": "Tunnel up",
@@ -477,7 +495,7 @@ const I18N = {
 } as const;
 
 type Lang = "zh" | "en";
-type TranslationKey = keyof (typeof I18N)["zh"];
+export type TranslationKey = keyof (typeof I18N)["zh"];
 
 let lang: Lang = "zh";
 try {

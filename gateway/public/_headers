@@ -1,0 +1,10 @@
+# Workers Static Assets header rules.
+# index.html must never be cached by browsers — a cached shell keeps
+# referencing the previous hashed bundle and a deploy "doesn't show up"
+# until a hard refresh (the exact report that prompted this file).
+/index.html
+  Cache-Control: no-cache, must-revalidate
+
+# Hashed build output is content-addressed — cache aggressively.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
