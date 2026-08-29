@@ -1446,6 +1446,18 @@ code {
 
 /* ── Terminal UX (round-160: scrollback search / font bar / reconnect banner) ── */
 .term-session { position: relative; }
+/* round-161: xterm's EXCLUSIVE host subtree — the React overlays (search/
+   font bars) live OUTSIDE it as .term-session children, so React
+   reconciliation and xterm's own DOM mutations can no longer conflict. */
+.term-host {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.term-host .xterm { flex: 1; min-height: 0; width: 100%; }
 .term-searchbar {
   position: absolute;
   top: 6px;
@@ -1531,6 +1543,44 @@ code {
   font-size: 12px;
   padding: 4px;
 }
+
+/* ── App-level crash card (round-161 ErrorBoundary) ── */
+.app-crash {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.app-crash-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 420px;
+  padding: 32px 40px 24px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+.app-crash-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, var(--brand-grad-a), var(--brand-grad-b));
+  color: #fff;
+  font-weight: 700;
+  font-size: 22px;
+  margin-bottom: 6px;
+}
+.app-crash-card h1 { font-size: 20px; margin: 0 0 4px; font-weight: 650; }
+.app-crash-card .btn { margin-top: 10px; background: var(--accent); color: #fff; border: none; padding: 8px 22px; border-radius: var(--radius-sm); font: 600 13px var(--font); cursor: pointer; }
+.app-crash-card .btn:hover { background: var(--accent-ink); }
 
 
 /* ============ layout.css ============ */

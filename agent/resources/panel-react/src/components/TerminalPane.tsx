@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { callTool } from "../lib/api";
 import type { Session } from "../hooks/useSessions";
 
@@ -14,9 +13,17 @@ import type { Session } from "../hooks/useSessions";
 // skipped so the read's text doesn't double-render.
 //
 // ShellHub/Teleport-style terminal UX (round-160): scrollback search
-// (Ctrl+F), WebGL rendering with canvas fallback, selection-to-copy +
-// right-click paste, and a per-pane font-size control persisted to
-// localStorage.
+// (Ctrl+F), selection-to-copy + right-click paste, and a per-pane font-size
+// control persisted to localStorage.
+//
+// round-161 REGRESSION FIX (the "one click and the pane goes blank" report):
+// 1. The search/font overlays were React children of the SAME div that
+//    term.open() owns — React reconciliation and xterm's own DOM mutations
+//    fought over that subtree and the pane blanked on interaction. The
+//    overlays now live OUTSIDE the xterm host (.term-host).
+// 2. The WebGL renderer is gone: on some GPUs/WebView2 the context creates
+//    fine but paints nothing (a silent blank terminal, not catchable). The
+//    default renderer never blanks; nothing here needed WebGL.
 
 const FONT_LS = "valeFontSize";
 const FONT_DEFAULT = 13;
@@ -79,14 +86,9 @@ export function TerminalPane({ session, registerWrite }: {
     term.loadAddon(search);
     searchRef.current = search;
     term.open(containerRef.current);
-    // WebGL renderer (GPU-composited, keeps heavy output smooth). Falls back
-    // silently to the DOM/canvas renderer when unavailable (RDP sessions,
-    // disabled accel, context loss).
-    try {
-      const gl = new WebglAddon();
-      gl.onContextLoss(() => { try { gl.dispose(); } catch { /* already gone */ } });
-      term.loadAddon(gl);
-    } catch { /* no webgl — default renderer is fine */ }
+    // round-161: WebGL renderer REMOVED — on some GPUs/WebView2 the context
+    // creates successfully but paints nothing (silent blank terminal). The
+    // default DOM/canvas renderer never blanks and is fast enough here.
     // rAF ×2: wait for the browser to paint the container at its final
     // size before fitting — an immediate fit() reads pre-layout dimensions
     // and produces a partial grid (the "not filling the screen" bug).
@@ -240,10 +242,13 @@ export function TerminalPane({ session, registerWrite }: {
 
   return (
     <div
-      ref={containerRef}
       className={`term-session ${session.active ? "active" : ""}`}
       style={session.active ? undefined : { display: "none" }}
     >
+      {/* .term-host is xterm's EXCLUSIVE subtree — React never renders into
+          it, so the overlays (React) and xterm's own DOM can no longer
+          fight over the same nodes (round-161 blank-pane fix). */}
+      <div ref={containerRef} className="term-host" />
       {session.active && searchOpen && (
         <div className="term-searchbar">
           <input
