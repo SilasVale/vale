@@ -153,10 +153,7 @@ fn main() {
     // user and could not always reach that file.
     #[cfg(windows)]
     {
-        let install_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_default();
+        let install_dir = vale_agent::paths::install_dir();
         let fix_script = install_dir.join("fix-tunnel.ps1");
         if fix_script.exists() && !init_mode {
             let _ = std::process::Command::new("powershell")
@@ -174,8 +171,7 @@ fn main() {
     {
         use std::net::TcpStream;
         let busy = TcpStream::connect("127.0.0.1:9224").is_ok();
-        let install_dir = std::env::current_exe().ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
+        let install_dir = vale_agent::paths::install_dir();
         let bridge = install_dir.join("bridge.js");
         let node = install_dir.join("playwright").join("node.exe");
         if !busy && bridge.exists() && node.exists() {
@@ -188,28 +184,20 @@ fn main() {
         }
     }
 
-    // round-142 unified process model — the Cloudflare tunnel joins the
-    // agent too: spawn-if-absent from the install dir (cloudflared.exe +
-    // tunnel.yml). While the legacy `cloudflared` Windows service is still
-    // installed/running it is detected and left alone ("already running");
-    // once the operator disables the service, THIS path becomes the only
-    // tunnel owner and its lifecycle is the agent's. Zero-downtime handover:
-    // stage the two files, disable the service autostart — the next agent
-    // boot takes over.
+    // C2 unified process model — the AGENT owns the cloudflared tunnel:
+    // spawn-if-absent from the boxed install dir tools\cloudflared.exe with
+    // --config tunnel.yml. No Windows service, no external owner, single
+    // supervision path (setup no longer installs the legacy service; an
+    // upgrade removes it).
     #[cfg(windows)]
     {
-        let cf_running = std::process::Command::new("tasklist")
-            .args(["/FI", "IMAGENAME eq cloudflared.exe"])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("cloudflared"))
-            .unwrap_or(false);
-        let install_dir = std::env::current_exe().ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
-        let cf = install_dir.join("cloudflared.exe");
+        let install_dir = vale_agent::paths::install_dir();
+        // C2: cloudflared is BOXED under install_dir\tools\ and the AGENT owns
+        // the tunnel lifecycle (spawn-if-absent on boot). No Windows service,
+        // no external owner — this is the single supervision path.
+        let cf = install_dir.join("tools").join("cloudflared.exe");
         let cfg = install_dir.join("tunnel.yml");
-        if cf_running {
-            log_line("cloudflared tunnel: already running (external service)");
-        } else if cf.exists() && cfg.exists() {
+        if cf.exists() && cfg.exists() {
             let _ = std::process::Command::new(&cf)
                 .args(["tunnel", "--config"]).arg(&cfg).arg("run")
                 .spawn();
@@ -465,21 +453,24 @@ async fn run_server(config_path: PathBuf) {
     // are silent (the console may be offline at boot).
     {
         let reg_cfg = state.config.clone();
-        let reg_install = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_default();
+        let reg_install = vale_agent::paths::install_dir();
         tokio::spawn(async move {
             // saisi decouple: self-register only when a console is configured.
+            // Fall back to the default gateway so a device that connected via
+            // the Settings card (or never set console_url) still registers.
             let console = match reg_cfg.platform.console_url.clone() {
                 Some(c) if !c.trim().is_empty() => c,
-                _ => return,
+                _ => "https://api.saisi.online".to_string(),
             };
             let token = reg_cfg.server.device_token.clone().unwrap_or_default();
+            // hostname file may be missing on fresh installs — fall back to
+            // the default d1.agent.saisi.online so the device still registers.
             let hostname = std::fs::read_to_string(reg_install.join("vale-agent.hostname"))
                 .map(|s| s.trim().to_string())
-                .unwrap_or_default();
-            if token.is_empty() || hostname.is_empty() {
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "d1.agent.saisi.online".to_string());
+            if token.is_empty() {
                 return;
             }
             let name = hostname.split('.').next().unwrap_or("device").to_string();
@@ -552,10 +543,7 @@ async fn run_server(config_path: PathBuf) {
                 if busy {
                     continue;
                 }
-                let install_dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                    .unwrap_or_default();
+                let install_dir = vale_agent::paths::install_dir();
                 let node = install_dir.join("playwright").join("node.exe");
                 let bridge = install_dir.join("bridge.js");
                 if !(node.exists() && bridge.exists()) {
