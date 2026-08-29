@@ -11,6 +11,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleMcp } from "../src/mcp.ts";
+import { __clearCaches } from "../src/store.ts";
 
 const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 
@@ -116,11 +117,26 @@ test("mcp: tools/call terminal_execute → device /api/tools/terminal_execute wi
   }
 });
 
-test("mcp: tools/call unknown device → -32602", async () => {
-  const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: { device: "nope" } }, id: 4 }), makeEnv());
+test("mcp: tools/call unknown device → -32602 listing registered devices (round-160)", async () => {
+  // round-160: a SINGLE registered device absorbs any missing/misguessed
+  // name (the dominant real-world failure — 43 "Unknown device" calls/week);
+  // the listing error only fires when several devices exist.
+  __clearCaches();
+  const kv = new Map([
+    ["token:admintoken", "admin"],
+    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" })],
+    ["devices:v1", JSON.stringify([
+      { name: "d1", hostname: "d1.agent.saisi.online", token: "t1" },
+      { name: "d2", hostname: "d2.agent.saisi.online", token: "t2" },
+    ])],
+  ]);
+  const env = { CONSOLE_HOST: "x", KEYS: { async get(k) { return kv.get(k) ?? null; }, async put() {}, async delete() {}, async list() { return { keys: [] }; } } };
+  const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: { device: "nope" } }, id: 4 }), env);
   assert.equal(res.status, 200);
   const data = await res.json();
   assert.equal(data.error.code, -32602);
+  assert.match(data.error.message, /Unknown device: nope/);
+  assert.match(data.error.message, /Registered devices: d1, d2/);
 });
 
 // ── SSE GET ────────────────────────────────────────────────────
@@ -171,7 +187,8 @@ test("contract: terminal_execute schema/quiet default match the agent", async ()
   // The gateway exposes `input` (mapped to the agent's `command` in mcp.js);
   // quiet_ms default must be the agent's 200ms, not a gateway invention.
   assert.equal(t.inputSchema.properties.quiet_ms.description.includes("200"), true);
-  assert.equal(t.inputSchema.required.join(","), "device,session_id,input");
+  // round-160: device is OPTIONAL (single-device default resolution).
+  assert.equal(t.inputSchema.required.join(","), "session_id,input");
 });
 
 // round-58: agent tool errors are HTTP 200 + {"ok":false,"error":...} — the
