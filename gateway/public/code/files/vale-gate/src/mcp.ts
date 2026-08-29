@@ -6,7 +6,7 @@
  * GET returns a keep-alive SSE stream (Claude Code v2.1.84+ probes GET first;
  * 405 is treated as server failure). Stateless.
  */
-import { getDevice, findUserByToken } from "./store.ts";
+import { getDevice, findUserByToken, listDevices } from "./store.ts";
 import { allMcpTools } from "./mcp-tools.ts";
 import { deviceFetch } from "./device-fetch.ts";
 
@@ -71,9 +71,28 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
     const { name, arguments: args } = params || {};
     const tool = allMcpTools().find((t) => t.name === name);
     if (!tool) return mcpError(-32602, `Unknown tool: ${name}`, id);
+    // round-160: models guess device names ("local", "og", "undefined" — 43
+    // wasted calls/week). A missing or unmatched name resolves to the device
+    // when exactly ONE is registered; with several, the error lists them so
+    // the caller can pick instead of guessing again.
     const deviceName = args?.device;
-    const device = deviceName ? await getDevice(env, deviceName) : null;
-    if (!device) return mcpError(-32602, `Unknown device: ${deviceName}`, id);
+    let device = deviceName ? await getDevice(env, deviceName) : null;
+    if (!device) {
+      const all = await listDevices(env);
+      if (all.length === 1) device = all[0]!;
+      else if (!deviceName)
+        return mcpError(
+          -32602,
+          "No devices registered — register one on the console Devices page first",
+          id,
+        );
+      else
+        return mcpError(
+          -32602,
+          `Unknown device: ${deviceName}. Registered devices: ${all.map((d) => d.name).join(", ")}`,
+          id,
+        );
+    }
 
     try {
       const result = await callTool(tool, env, device, args);
@@ -152,7 +171,12 @@ async function callMcpClientBridge(name: string, _env: any, device: any, args: a
 }
 
 export async function callTool(tool: any, env: any, device: any, args: any): Promise<any> {
-  if (tool.name.startsWith("terminal_")) {
+  // round-160: secret_* lives on the DEVICE agent (keyring/file via
+  // /api/tools/secret_*), not in the browser extension — the extension route
+  // failed 9/9 calls in a week of real usage whenever Chrome wasn't running
+  // with the Vale extension. The toolPath map below already had the routes;
+  // the dispatcher just never sent secret_* here.
+  if (tool.name.startsWith("terminal_") || tool.name.startsWith("secret_")) {
     return callTerminalTool(tool.name, env, device, args);
   }
   // Browser tools route through Playwright (mcp_client) on the device.
@@ -210,7 +234,52 @@ function ToolErr(code: string, message: string): Error {
   return Object.assign(new Error(message), { code });
 }
 
+/**
+ * Terminal tools with stale-session self-healing (round-160). Agent restarts
+ * wipe the PTY registry while MCP clients keep holding old session_ids —
+ * 153 wasted calls/week bounced "Session not found" back to the model with
+ * no recovery path (the browser bridge already had this self-heal; terminal
+ * didn't). On SESSION_NOT_FOUND for a session-taking tool: list the device's
+ * live sessions and retarget ONCE when exactly one exists; with several,
+ * return the list; with none, point at terminal_open. terminal_close on a
+ * dead session is a success (the intent was already satisfied).
+ */
 async function callTerminalTool(name: string, env: any, device: any, args: any): Promise<any> {
+  try {
+    return await callTerminalToolOnce(name, env, device, args);
+  } catch (e: any) {
+    if (e.code !== SESSION_NOT_FOUND || !args?.session_id) throw e;
+    if (name === "terminal_close") {
+      return {
+        ok: true,
+        note: `session ${args.session_id} was already gone (agent restart?) — nothing to close`,
+      };
+    }
+    const list = await callTerminalToolOnce("terminal_list", env, device, {});
+    const live: string[] = (list?.result || list?.sessions || [])
+      .map((s: any) => s?.id)
+      .filter(Boolean);
+    if (live.length === 1 && live[0] !== args.session_id) {
+      const data = await callTerminalToolOnce(name, env, device, { ...args, session_id: live[0] });
+      return {
+        ...data,
+        note: `session_id ${args.session_id} was stale (agent restart?) — call retargeted to the live session ${live[0]}`,
+      };
+    }
+    if (live.length === 0) {
+      throw ToolErr(
+        SESSION_NOT_FOUND,
+        `session ${args.session_id} not found and the device has no live sessions — open one with terminal_open first`,
+      );
+    }
+    throw ToolErr(
+      SESSION_NOT_FOUND,
+      `session ${args.session_id} not found. Live sessions on ${device.name}: ${live.join(", ")} — pass one of these as session_id`,
+    );
+  }
+}
+
+async function callTerminalToolOnce(name: string, env: any, device: any, args: any): Promise<any> {
   // Every terminal tool on the device is reachable here (round-54: only 5 of
   // 16 were mapped — write/read/resize/select/history/list_ports/diag/secret
   // were invisible to MCP clients through the console). Keep in sync with

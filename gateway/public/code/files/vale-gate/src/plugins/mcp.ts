@@ -45,7 +45,11 @@ interface DeviceProbeState {
 const DEVICE_PROBE_CACHE = new Map<string, any>(); // name -> { at, ok }
 const DEVICE_PROBE_TTL_MS = 30000;
 
-async function cachedDeviceProbe(env: any, device: Device, fresh = false): Promise<DeviceProbeState> {
+async function cachedDeviceProbe(
+  env: any,
+  device: Device,
+  fresh = false,
+): Promise<DeviceProbeState> {
   const hit = DEVICE_PROBE_CACHE.get(device.name);
   // round-98: the TTL check read hit.at but the cache stores ts — the 30s
   // cache NEVER hit, so every /api/plugins/status poll live-probed every
@@ -58,7 +62,12 @@ async function cachedDeviceProbe(env: any, device: Device, fresh = false): Promi
   // old try/catch left tunnel=true always (the catch was unreachable) and a
   // down device showed tunnel_up:true. Classify from the returned shape:
   // the 502-with-unreachable error string is the tunnel-level case.
-  const state: DeviceProbeState = { tunnel: false, agent: false, ts: Date.now(), checkedAt: Date.now() };
+  const state: DeviceProbeState = {
+    tunnel: false,
+    agent: false,
+    ts: Date.now(),
+    checkedAt: Date.now(),
+  };
   const res = await deviceFetch(env, device, "/api/status");
   if (res && res.status !== undefined) {
     const tunnelLevel =

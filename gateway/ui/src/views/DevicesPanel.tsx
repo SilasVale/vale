@@ -24,7 +24,7 @@ import {
 // NOT fallback — it is only compared against live data from /api/version
 // (agent/Cargo scheme, same as the device's /api/status version). Keep the
 // URL in sync with /api/version in index/src/index.js.
-const FALLBACK_DOWNLOAD = `https://agent.saisi.online/vale-agent/vale-agent-1.2.103.tgz`;
+const FALLBACK_DOWNLOAD = `https://agent.saisi.online/vale-agent/vale-agent-1.2.104.tgz`;
 
 type ModalState =
   | null

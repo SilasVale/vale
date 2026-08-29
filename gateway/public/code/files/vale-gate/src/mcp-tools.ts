@@ -29,7 +29,11 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string", description: "Device name from the console Devices list" },
+        device: {
+          type: "string",
+          description:
+            "Device name from the console Devices list. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         kind: { type: "string", enum: ["pty", "ssh", "serial"] },
         target: {
           type: "string",
@@ -61,7 +65,7 @@ const TERMINAL_TOOLS: McpTool[] = [
           description: "(serial) Stop bits 1 or 2. Overrides the target string.",
         },
       },
-      required: ["device", "kind"],
+      required: ["kind"],
     },
   },
   {
@@ -71,11 +75,15 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         session_id: { type: "string" },
         lines: { type: "integer", description: "Number of lines from the tail. Default 60." },
       },
-      required: ["device", "session_id"],
+      required: ["session_id"],
     },
   },
   {
@@ -85,7 +93,11 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         session_id: { type: "string" },
         input: { type: "string", description: "The command to run in the session" },
         timeout_secs: { type: "integer", description: "Max wait time in seconds. Default 30." },
@@ -95,7 +107,7 @@ const TERMINAL_TOOLS: McpTool[] = [
             "(fallback) Quiet period in ms before considering output complete. Default 200.",
         },
       },
-      required: ["device", "session_id", "input"],
+      required: ["session_id", "input"],
     },
   },
   {
@@ -105,7 +117,11 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         session_id: { type: "string" },
         data: {
           type: "string",
@@ -117,7 +133,7 @@ const TERMINAL_TOOLS: McpTool[] = [
             "Base64-encoded bytes to write (for binary frames). Takes precedence over data.",
         },
       },
-      required: ["device", "session_id"],
+      required: ["session_id"],
     },
   },
   {
@@ -127,7 +143,11 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         session_id: { type: "string" },
         offset: {
           type: "integer",
@@ -139,7 +159,7 @@ const TERMINAL_TOOLS: McpTool[] = [
           description: "Strip ANSI escapes and normalize \\r\\n → \\n. Default true.",
         },
       },
-      required: ["device", "session_id"],
+      required: ["session_id"],
     },
   },
   {
@@ -148,12 +168,16 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         session_id: { type: "string" },
         rows: { type: "integer" },
         cols: { type: "integer" },
       },
-      required: ["device", "session_id"],
+      required: ["session_id"],
     },
   },
   {
@@ -162,8 +186,15 @@ const TERMINAL_TOOLS: McpTool[] = [
       "Mark a session as actively watched (client-liveness heartbeat — keeps the idle sweeper from reaping a quiet-but-watched session).",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, session_id: { type: "string" } },
-      required: ["device", "session_id"],
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
+        session_id: { type: "string" },
+      },
+      required: ["session_id"],
     },
   },
   {
@@ -173,7 +204,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
   {
@@ -182,7 +213,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
   {
@@ -191,7 +222,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
   {
@@ -199,8 +230,15 @@ const TERMINAL_TOOLS: McpTool[] = [
     description: "Close a terminal session on a device.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, session_id: { type: "string" } },
-      required: ["device", "session_id"],
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
+        session_id: { type: "string" },
+      },
+      required: ["session_id"],
     },
   },
   {
@@ -209,8 +247,15 @@ const TERMINAL_TOOLS: McpTool[] = [
       "POST a diagnostic line from the calling client (poll results, SSE status, errors). Stored in a process-lifetime ring buffer.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, line: { type: "string" } },
-      required: ["device", "line"],
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
+        line: { type: "string" },
+      },
+      required: ["line"],
     },
   },
   {
@@ -219,38 +264,59 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
   {
     name: "secret_set",
-    description: "Store a secret (SSH password) in the OS keychain for a target host.",
+    description:
+      "Store a secret (e.g. SSH password) in the DEVICE agent's secret store (OS keychain / file fallback). Lives on the device agent — the browser extension is not involved.",
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         target: { type: "string", description: "SSH target (user@host:port)" },
         password: { type: "string" },
       },
-      required: ["device", "target", "password"],
+      required: ["target", "password"],
     },
   },
   {
     name: "secret_get",
-    description: "Retrieve a stored secret for a target host. Returns the password or null.",
+    description:
+      "Retrieve a stored secret from the DEVICE agent's secret store (OS keychain / file). Returns the password or null.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, target: { type: "string" } },
-      required: ["device", "target"],
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
+        target: { type: "string" },
+      },
+      required: ["target"],
     },
   },
   {
     name: "secret_delete",
-    description: "Delete a stored secret for a target host.",
+    description:
+      "Delete a stored secret from the DEVICE agent's secret store (OS keychain / file).",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, target: { type: "string" } },
-      required: ["device", "target"],
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
+        target: { type: "string" },
+      },
+      required: ["target"],
     },
   },
   {
@@ -260,7 +326,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
   {
@@ -269,8 +335,15 @@ const TERMINAL_TOOLS: McpTool[] = [
       "Reconnect to a saved terminal connection by id (from terminal_saved_connections). Replays the saved params; returns the new session id.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, id: { type: "string" } },
-      required: ["device", "id"],
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
+        id: { type: "string" },
+      },
+      required: ["id"],
     },
   },
   {
@@ -280,7 +353,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
   {
@@ -290,7 +363,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
   {
@@ -300,11 +373,15 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         script: { type: "string" },
         timeout_secs: { type: "integer" },
       },
-      required: ["device", "script"],
+      required: ["script"],
     },
   },
 ];
@@ -315,8 +392,15 @@ const BROWSER_TOOLS: McpTool[] = [
     description: "Open/navigate the controlled tab for a device to a URL. Returns a snapshot.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, url: { type: "string" } },
-      required: ["device", "url"],
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
+        url: { type: "string" },
+      },
+      required: ["url"],
     },
   },
   {
@@ -325,7 +409,7 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
   {
@@ -333,8 +417,15 @@ const BROWSER_TOOLS: McpTool[] = [
     description: "Capture a PNG screenshot of the controlled tab (image).",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" }, full_page: { type: "boolean" } },
-      required: ["device"],
+      properties: {
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
+        full_page: { type: "boolean" },
+      },
+      required: [],
     },
   },
   {
@@ -344,13 +435,17 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         element_ref: {
           type: "integer",
           description: "snapshot ref number (rendered as e<N> target)",
         },
       },
-      required: ["device", "element_ref"],
+      required: ["element_ref"],
     },
   },
   {
@@ -359,11 +454,15 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         element_ref: { type: "integer" },
         text: { type: "string" },
       },
-      required: ["device", "element_ref", "text"],
+      required: ["element_ref", "text"],
     },
   },
   {
@@ -372,11 +471,15 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: { type: "string" },
+        device: {
+          type: "string",
+          description:
+            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+        },
         condition: { type: "string" },
         timeout_s: { type: "integer" },
       },
-      required: ["device", "condition"],
+      required: ["condition"],
     },
   },
   {
@@ -385,7 +488,7 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: { device: { type: "string" } },
-      required: ["device"],
+      required: [],
     },
   },
 ];
