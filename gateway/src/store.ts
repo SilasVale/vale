@@ -42,6 +42,12 @@ export interface Device {
   /// agent will inject the panel token ONLY for gateway-authenticated
   /// requests (the R102 marker header was client-spoofable).
   proxySecret?: string;
+  /// Console-visible metadata. All optional so pre-existing records keep
+  /// loading; they are filled opportunistically (registration / status
+  /// probes) under the KV write budget — see touchDeviceSeen.
+  registeredAt?: number;
+  lastSeenAt?: number;
+  lastVersion?: string;
 }
 
 export interface PluginLink {
@@ -688,6 +694,58 @@ export async function deleteDevice(env: Env, name: string): Promise<boolean> {
   });
 }
 
+/** Rename a device (and optionally re-hostname it) PRESERVING the token,
+ *  proxySecret and metadata — the old flow forced delete + re-add, which
+ *  rotated the token and invalidated the device's own config.yaml. Callers
+ *  still own the plugin-link migration + hub socket close (see devices.ts
+ *  handleDeviceRename). Returns the updated device, or an error string:
+ *  "not_found" | "name_taken". */
+export async function renameDevice(
+  env: Env,
+  oldName: string,
+  newName: string,
+  hostname?: string,
+): Promise<Device | "not_found" | "name_taken"> {
+  return withKeyLock(DEVICES_KEY, async () => {
+    const devs = await readDevicesRaw(env);
+    const i = devs.findIndex((d) => d.name === oldName);
+    if (i < 0) return "not_found";
+    if (devs.some((d, j) => j !== i && d.name === newName)) return "name_taken";
+    const updated: Device = {
+      ...devs[i]!,
+      name: newName,
+      ...(hostname ? { hostname } : {}),
+    };
+    devs[i] = updated;
+    await saveDevices(env, devs);
+    return updated;
+  });
+}
+
+/** Bounded-write "last seen" touch from the status probe loop. The probe
+ *  runs every 30s per device — writing KV per poll would burn the daily
+ *  write quota (round-102 discipline), so the record is written ONLY when
+ *  the agent version changed or the last write is over an hour old. The
+ *  cheap cached-list check short-circuits before any lock or raw KV read. */
+const SEEN_WRITE_INTERVAL_MS = 60 * 60 * 1000;
+
+export async function touchDeviceSeen(env: Env, name: string, version?: string): Promise<void> {
+  const devs = await listDevices(env); // cached read — no KV cost when warm
+  const d = devs.find((x) => x.name === name);
+  if (!d) return;
+  const now = Date.now();
+  const versionChanged = !!version && version !== d.lastVersion;
+  const staleSeen = !d.lastSeenAt || now - d.lastSeenAt > SEEN_WRITE_INTERVAL_MS;
+  if (!versionChanged && !staleSeen) return;
+  await withKeyLock(DEVICES_KEY, async () => {
+    const raw = await readDevicesRaw(env);
+    const i = raw.findIndex((x) => x.name === name);
+    if (i < 0) return;
+    raw[i] = { ...raw[i]!, lastSeenAt: now, ...(version ? { lastVersion: version } : {}) };
+    await saveDevices(env, raw);
+  });
+}
+
 /* ---- Device registration keys ----
  *
  * One-time keys the admin generates in the console and pastes into the Windows
@@ -738,6 +796,19 @@ export async function consumeRegKey(env: Env, code: string): Promise<void> {
   if (!env.KEYS || !k) return;
   await env.KEYS.delete(`regkey:${k}`);
   await env.KEYS.put(`reggrant:${k}`, "1", { expirationTtl: REGGRANT_TTL });
+}
+
+/// List outstanding (unused) registration keys with their remaining TTL.
+/// Admin-triggered and rare, so the KV list operation is acceptable; the
+/// alternative (mirroring keys into a second KV record) doubles the write
+/// cost of every key generation for no real gain.
+export async function listRegKeys(env: Env): Promise<{ code: string; expiresAt: number }[]> {
+  if (!env.KEYS) return [];
+  const res = await env.KEYS.list({ prefix: "regkey:" });
+  return (res.keys as { name: string; expiration?: number }[]).map((k) => ({
+    code: k.name.slice("regkey:".length),
+    expiresAt: (k.expiration || 0) * 1000,
+  }));
 }
 
 /* ---------------- Plugin (extension) registry ----------------
