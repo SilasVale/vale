@@ -179,6 +179,13 @@ export async function callTool(tool: any, env: any, device: any, args: any): Pro
   if (tool.name.startsWith("terminal_") || tool.name.startsWith("secret_")) {
     return callTerminalTool(tool.name, env, device, args);
   }
+  // round-161: browser_pw_info / browser_run_script are DEVICE tools (the
+  // bundled playwright runner, toolPath map below) — the playwright-mcp
+  // bridge rejects them ("Tool browser_pw_info not found", 50% of real DSH
+  // calls). Everything else browser_* goes through the bridge.
+  if (tool.name === "browser_pw_info" || tool.name === "browser_run_script") {
+    return callTerminalTool(tool.name, env, device, args);
+  }
   // Browser tools route through Playwright (mcp_client) on the device.
   if (tool.name.startsWith("browser_")) {
     return callMcpClientBridge(tool.name, env, device, args);

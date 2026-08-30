@@ -50,9 +50,22 @@
 
   /* ---- round-161 semantic additions (previously hardcoded in css) ---- */
   --tag-ink: #0b7a6e;        /* memory tag chips (teal ink, light theme) */
-  --terminal-bg: #1a1b1e;    /* browser viewport / evidence stage (always dark) */
+  --terminal-bg: #131418;    /* xterm + browser viewport (always dark) */
   --rail-ink: #9a9aa0;       /* desktop rail idle label (rail is always dark) */
   --rail-ink-strong: #ffffff;
+
+  /* ---- round-162 "midnight cockpit" chrome ----
+     The app frame (icon rail, tab strips, status bar) is a continuous dark
+     surface; the work surfaces (context rail, cards, pages) stay light and
+     the viewports (xterm, browser) go deeper still. Three depths + inks. */
+  --chrome-bg: #17181d;
+  --chrome-bg-2: #1f2026;
+  --chrome-bg-3: #2a2b33;
+  --chrome-ink: #ecedef;
+  --chrome-ink-dim: #a2a3ac;
+  --chrome-ink-faint: #6f707a;
+  --chrome-line: rgba(255, 255, 255, 0.07);
+  --amber-bright: #ffa94d;   /* accent readable on dark chrome */
 
   /* ---- geometry ---- */
   --radius: 14px;
@@ -157,27 +170,27 @@ code {
 .btn-mini { padding: 4px 10px; font-size: 12px; border-radius: 7px; }
 .btn:disabled { opacity: 0.45; cursor: default; }
 
-/* ---------- icon rail ---------- */
+/* ---------- icon rail (dark chrome, shared visual language with desktop) ---------- */
 .rail-btn {
   width: 38px; height: 38px;
   display: grid; place-items: center;
   border: none;
   border-radius: 10px;
   background: transparent;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.rail-btn:hover { background: var(--line-soft); color: var(--ink); }
-.rail-btn.active { background: var(--focus-ring-soft); color: var(--accent-ink); }
+.rail-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
+.rail-btn.active { background: rgba(217, 72, 15, 0.9); color: #fff; }
 .rail-spacer { flex: 1; }
 .rail-dot {
   width: 8px; height: 8px;
   border-radius: 50%;
-  background: var(--faint);
+  background: var(--chrome-ink-faint);
   transition: background 0.2s ease;
 }
-.rail-dot.on { background: var(--success); }
+.rail-dot.on { background: var(--success); box-shadow: 0 0 6px rgba(47, 191, 113, 0.7); }
 .rail-brand {
   width: 30px; height: 30px;
   margin-bottom: 10px;
@@ -392,9 +405,9 @@ code {
   overflow-x: auto;
 }
 .tab {
-  background: var(--surface);
-  color: var(--muted);
-  border: 1px solid var(--line-strong);
+  background: var(--chrome-bg-2);
+  color: var(--chrome-ink-dim);
+  border: 1px solid var(--chrome-line);
   border-radius: var(--radius-sm);
   padding: 5px 12px;
   cursor: pointer;
@@ -402,13 +415,13 @@ code {
   font: inherit;
   transition: all 0.15s ease;
 }
-.tab:hover { color: var(--ink); border-color: var(--faint); }
-.tab.closed { color: var(--faint); text-decoration: line-through; }
-.tab.closed:hover { color: var(--faint); }
+.tab:hover { color: var(--chrome-ink); border-color: var(--chrome-ink-faint); }
+.tab.closed { color: var(--chrome-ink-faint); text-decoration: line-through; }
+.tab.closed:hover { color: var(--chrome-ink-faint); }
 .tab.active {
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-  border-color: var(--accent);
+  background: var(--chrome-bg-3);
+  color: var(--amber-bright);
+  border-color: rgba(255, 169, 77, 0.55);
 }
 .tab-dot {
   display: inline-block;
@@ -424,13 +437,13 @@ code {
 .tab-export, .tab-close {
   margin-left: 5px;
   font-size: 11px;
-  color: var(--faint);
+  color: var(--chrome-ink-faint);
   visibility: hidden;
   cursor: pointer;
 }
 .tab:hover .tab-export, .tab:hover .tab-close,
 .tab.active .tab-export, .tab.active .tab-close { visibility: visible; }
-.tab-export:hover { color: var(--accent); }
+.tab-export:hover { color: var(--amber-bright); }
 .tab-close:hover { color: var(--danger); }
 .view-switch {
   flex: none;
@@ -463,28 +476,28 @@ code {
   display: flex;
   align-items: center;
   padding: 6px 16px;
-  background: var(--surface);
-  border-top: 1px solid var(--line);
+  background: var(--chrome-bg);
+  border-top: 1px solid var(--chrome-line);
 }
 #status {
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   font-size: 12px;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#status.error { color: var(--danger); }
+#status.error { color: #ff8787; }
 #session-count {
   margin-left: auto;
-  color: var(--faint);
+  color: var(--chrome-ink-faint);
   font-size: 12px;
   white-space: nowrap;
 }
 #session-count.hidden { display: none; }
 #sse-status {
   margin-left: auto;
-  color: var(--danger);
+  color: #ff8787;
   font-size: 12px;
   white-space: nowrap;
 }
@@ -521,8 +534,8 @@ code {
 .empty-card {
   text-align: center;
   padding: 40px 56px;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--chrome-bg-2);
+  border: 1px solid var(--chrome-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
 }
@@ -530,12 +543,12 @@ code {
   display: inline-flex; align-items: center; justify-content: center;
   width: 56px; height: 56px;
   border-radius: var(--radius-sm);
-  background: var(--ink);
+  background: linear-gradient(135deg, var(--brand-grad-a), var(--brand-grad-b));
   color: #fff;
   font-weight: 700; font-size: 26px;
   margin-bottom: 12px;
 }
-.empty-card p { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+.empty-card p { color: var(--chrome-ink-dim); margin: 0 0 16px; font-size: 14px; }
 .empty-actions { display: flex; gap: 8px; justify-content: center; }
 .empty-actions button {
   padding: 8px 16px;
@@ -1208,6 +1221,72 @@ code {
   word-break: break-word;
 }
 
+/* ---------- browser page (round-162 state-aware wrapper) ---------- */
+.browser-page {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.browser-page .browser-pane { flex: 1 1 0; min-height: 0; }
+.browser-page-status {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: var(--chrome-bg);
+  border-bottom: 1px solid var(--chrome-line);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--chrome-ink-dim);
+}
+.browser-page-status .btn { margin-left: auto; }
+.bp-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--chrome-ink-faint);
+}
+.bp-dot.ok {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(47, 191, 113, 0.7);
+}
+.browser-boot-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px;
+}
+.browser-boot-icon {
+  width: 68px; height: 68px;
+  display: grid; place-items: center;
+  border-radius: 18px;
+  background: linear-gradient(135deg, var(--brand-grad-a), var(--brand-grad-b));
+  color: #fff;
+  margin-bottom: 18px;
+  box-shadow: var(--shadow-lg);
+}
+.browser-boot-card h2 { font-size: 19px; font-weight: 650; margin: 0 0 8px; letter-spacing: -0.01em; }
+.browser-boot-sub {
+  max-width: 420px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0 0 18px;
+}
+.browser-boot-start { min-width: 150px; }
+.browser-boot-err {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
 /* ---------- browser ---------- */
 .browser-pane {
   flex: 1 1 0;
@@ -1436,6 +1515,7 @@ code {
   display: flex;
   flex-direction: column;
   position: relative;
+  padding: 8px 10px;
 }
 .term-host .xterm { flex: 1; min-height: 0; width: 100%; }
 .term-searchbar {
@@ -1447,8 +1527,8 @@ code {
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
+  background: rgba(31, 32, 38, 0.94);
+  border: 1px solid var(--chrome-line);
   border-radius: 8px;
   box-shadow: var(--shadow);
 }
@@ -1457,7 +1537,7 @@ code {
   border: none;
   outline: none;
   background: transparent;
-  color: var(--ink);
+  color: var(--chrome-ink);
   font: 12px var(--font-mono);
 }
 .term-searchbar button,
@@ -1465,13 +1545,13 @@ code {
   border: none;
   background: transparent;
   cursor: pointer;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   font-size: 12px;
   padding: 2px 6px;
   border-radius: 5px;
 }
 .term-searchbar button:hover,
-.term-fontbar button:hover { background: var(--ds-neutral-100); color: var(--ink); }
+.term-fontbar button:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
 .term-fontbar {
   position: absolute;
   bottom: 8px;
@@ -1573,10 +1653,10 @@ code {
   align-items: center;
   gap: 10px;
   padding: 0 14px;
-  border-top: 1px solid var(--line);
-  background: var(--surface);
+  border-top: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
   font-size: 11px;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
 }
 
 /* inline session rename (replaces window.prompt) */
@@ -1660,8 +1740,9 @@ code {
   align-items: center;
   gap: 4px;
   padding: 10px 0 12px;
-  background: var(--ds-neutral-100);
-  border-right: 1px solid var(--line);
+  /* midnight cockpit: the rail is the same dark chrome as the desktop rail */
+  background: var(--chrome-bg);
+  border-right: 1px solid var(--chrome-line);
 }
 #context-rail {
   flex: 0 0 244px;
@@ -1694,8 +1775,8 @@ code {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
 }
 #canvas-top .tabrow {
   flex: 1;
@@ -1707,21 +1788,21 @@ code {
 #cmd-toggle {
   padding: 4px 10px;
   font-size: 12px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--chrome-line);
   border-radius: 7px;
-  background: var(--surface);
-  color: var(--muted);
+  background: var(--chrome-bg-2);
+  color: var(--chrome-ink-dim);
   cursor: pointer;
 }
-#cmd-toggle:hover, #cmd-toggle.active { border-color: var(--accent); color: var(--accent-ink); }
-#cmd-toggle.active { background: var(--focus-ring-soft); }
+#cmd-toggle:hover { border-color: var(--amber-bright); color: var(--amber-bright); }
+#cmd-toggle.active { border-color: var(--amber-bright); color: var(--amber-bright); background: rgba(217, 72, 15, 0.18); }
 #term-container {
   flex: 1 1 0;
   min-height: 0;
   min-width: 0;
   display: flex;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--terminal-bg);
 }
 #term-container > div { flex: 1 1 0; min-height: 0; min-width: 0; }
 #term-container > .browser-wrap { display: flex; }
@@ -1828,7 +1909,8 @@ code {
   display: flex;
   align-items: center;
   padding: 4px 8px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
   flex: 0 0 auto;
 }
 .desktop-tabs-row .tabrow { flex: 1; border: none; padding: 0; }
@@ -1839,6 +1921,7 @@ code {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--terminal-bg);
 }
 #desktop-term-container > .term-session { flex: 1 1 0; min-height: 0; }
 
@@ -1903,8 +1986,8 @@ code {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
 }
 .desktop-nav-btn {
   width: 26px;
@@ -1914,19 +1997,23 @@ code {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   cursor: pointer;
   font-size: 13px;
   line-height: 1;
 }
-.desktop-nav-btn:hover:not(:disabled) { background: var(--line-soft); color: var(--ink); }
+.desktop-nav-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
 .desktop-nav-btn:disabled { opacity: 0.35; cursor: default; }
 .desktop-nav-label {
   margin-left: auto;
   font-size: 12px;
   font-weight: 600;
-  color: var(--faint);
+  color: var(--chrome-ink-faint);
 }
+
+/* round-162: ghost buttons on the dark nav strip */
+.desktop-nav .btn-ghost { color: var(--chrome-ink-dim); }
+.desktop-nav .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
 
 /* Desktop open-in-app hint (shown when /desktop/ is opened in a browser). */
 .desktop-hint {
