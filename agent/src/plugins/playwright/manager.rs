@@ -327,7 +327,10 @@ impl PlaywrightManager {
 // calls.
             .env("PLAYWRIGHT_MCP_PING_TIMEOUT_MS", "0")
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            // round-163: stderr PIPED, not nulled — the health-failure path
+            // reads the last 500 chars into the error message. Nulled stderr
+            // made every "did not become healthy" undiagnosable.
+            .stderr(Stdio::piped());
         // round-143: CREATE_NO_WINDOW so node.exe doesn't flash a console.
         #[cfg(windows)]
         { let _ = no_window(&mut child); }

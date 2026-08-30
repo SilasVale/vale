@@ -17,7 +17,12 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const PW = process.env.BRIDGE_PW_MODULES || 'D:/vale-agent/playwright/node_modules';
+// round-163: resolve the bundle NEXT TO bridge.js (InstallDir\playwright) —
+// the old default hardcoded the RETIRED D:/vale-agent path, so every device
+// installed elsewhere (d1 = D:\Vale) failed with MODULE_NOT_FOUND and the
+// live browser view never came up. Env override kept for manual runs.
+const PW = process.env.BRIDGE_PW_MODULES
+  || path.join(__dirname, 'playwright', 'node_modules');
 const { chromium } = require(path.join(PW, 'playwright-core'));
 const crypto = require('crypto');
 
