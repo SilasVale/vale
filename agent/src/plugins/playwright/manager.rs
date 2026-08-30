@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Mutex;
 
-use tokio::process::Child;
+use tokio::process::{Child, ChildStdin};
 use tokio::sync::oneshot;
 use vale_agent_core::{recover_guard, DeviceError};
 
@@ -52,6 +52,12 @@ pub struct PlaywrightManager {
 /// A running playwright-mcp instance.
 struct ManagedPlaywright {
     child: Child,
+    /// round-163: HELD OPEN for the child's lifetime. Under a session-0
+    /// service the spawned child's inherited stdin is already at EOF, and
+    /// playwright-mcp exits right after printing its banner when stdin
+    /// closes ("Listening" then instant death — d1). Manual runs always
+    /// had a console stdin, which is why they worked. Never written to.
+    _stdin: Option<ChildStdin>,
     /// Kept for a later feature that needs the per-launch token again
     /// (e.g. auto-configuring mcp_client_connect) — start() returns it to
     /// the caller, nothing reads the field yet (round-admin-ui).
@@ -326,6 +332,10 @@ impl PlaywrightManager {
 // browser stay resident, snapshot references / panel state survive across
 // calls.
             .env("PLAYWRIGHT_MCP_PING_TIMEOUT_MS", "0")
+            // stdin PIPED and the handle held in ManagedPlaywright — see
+            // the struct comment. Without it the runner cannot survive the
+            // service context.
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             // round-163: stderr PIPED, not nulled — the health-failure path
             // reads the last 500 chars into the error message. Nulled stderr
@@ -438,7 +448,7 @@ impl PlaywrightManager {
                 // A concurrent start landed while we polled — lose cleanly.
                 loser = Some(child);
             } else {
-                *guard = Some(ManagedPlaywright { child, secret: String::new(), started_at: now_ms(), _kill_tx: kill_tx });
+                *guard = Some(ManagedPlaywright { _stdin: child.stdin.take(), child, secret: String::new(), started_at: now_ms(), _kill_tx: kill_tx });
             }
         }
         if let Some(mut child) = loser {
