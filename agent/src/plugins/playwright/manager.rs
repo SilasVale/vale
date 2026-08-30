@@ -349,7 +349,12 @@ impl PlaywrightManager {
             .build()
             .map_err(|e| DeviceError::Internal { message: format!("http client: {e}") })?;
         let mut ok = false;
-        for _ in 0..20 {
+        // round-163: 30s of patience, not 10s — right after an update the
+        // freshly-extracted node.exe + node_modules get a full Defender pass
+        // and the first cold start legitimately exceeds 10s; the old budget
+        // made the manager KILL a runner that was about to become healthy
+        // (observed d1: stderr said "Listening" while the probe gave up).
+        for _ in 0..60 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             // Child died (bind failure on an occupied port) — fail fast.
             if child.try_wait().map_err(|e| DeviceError::Internal { message: format!("child wait: {e}") })?.is_some() {
