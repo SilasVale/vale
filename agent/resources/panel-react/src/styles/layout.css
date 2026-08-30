@@ -24,8 +24,9 @@
   align-items: center;
   gap: 4px;
   padding: 10px 0 12px;
-  background: var(--ds-neutral-100);
-  border-right: 1px solid var(--line);
+  /* midnight cockpit: the rail is the same dark chrome as the desktop rail */
+  background: var(--chrome-bg);
+  border-right: 1px solid var(--chrome-line);
 }
 #context-rail {
   flex: 0 0 244px;
@@ -58,8 +59,8 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
 }
 #canvas-top .tabrow {
   flex: 1;
@@ -71,21 +72,21 @@
 #cmd-toggle {
   padding: 4px 10px;
   font-size: 12px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--chrome-line);
   border-radius: 7px;
-  background: var(--surface);
-  color: var(--muted);
+  background: var(--chrome-bg-2);
+  color: var(--chrome-ink-dim);
   cursor: pointer;
 }
-#cmd-toggle:hover, #cmd-toggle.active { border-color: var(--accent); color: var(--accent-ink); }
-#cmd-toggle.active { background: var(--focus-ring-soft); }
+#cmd-toggle:hover { border-color: var(--amber-bright); color: var(--amber-bright); }
+#cmd-toggle.active { border-color: var(--amber-bright); color: var(--amber-bright); background: rgba(217, 72, 15, 0.18); }
 #term-container {
   flex: 1 1 0;
   min-height: 0;
   min-width: 0;
   display: flex;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--terminal-bg);
 }
 #term-container > div { flex: 1 1 0; min-height: 0; min-width: 0; }
 #term-container > .browser-wrap { display: flex; }
@@ -192,7 +193,8 @@
   display: flex;
   align-items: center;
   padding: 4px 8px 0;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
   flex: 0 0 auto;
 }
 .desktop-tabs-row .tabrow { flex: 1; border: none; padding: 0; }
@@ -203,6 +205,7 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--terminal-bg);
 }
 #desktop-term-container > .term-session { flex: 1 1 0; min-height: 0; }
 

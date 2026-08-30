@@ -49,9 +49,22 @@
 
   /* ---- round-161 semantic additions (previously hardcoded in css) ---- */
   --tag-ink: #0b7a6e;        /* memory tag chips (teal ink, light theme) */
-  --terminal-bg: #1a1b1e;    /* browser viewport / evidence stage (always dark) */
+  --terminal-bg: #131418;    /* xterm + browser viewport (always dark) */
   --rail-ink: #9a9aa0;       /* desktop rail idle label (rail is always dark) */
   --rail-ink-strong: #ffffff;
+
+  /* ---- round-162 "midnight cockpit" chrome ----
+     The app frame (icon rail, tab strips, status bar) is a continuous dark
+     surface; the work surfaces (context rail, cards, pages) stay light and
+     the viewports (xterm, browser) go deeper still. Three depths + inks. */
+  --chrome-bg: #17181d;
+  --chrome-bg-2: #1f2026;
+  --chrome-bg-3: #2a2b33;
+  --chrome-ink: #ecedef;
+  --chrome-ink-dim: #a2a3ac;
+  --chrome-ink-faint: #6f707a;
+  --chrome-line: rgba(255, 255, 255, 0.07);
+  --amber-bright: #ffa94d;   /* accent readable on dark chrome */
 
   /* ---- geometry ---- */
   --radius: 14px;

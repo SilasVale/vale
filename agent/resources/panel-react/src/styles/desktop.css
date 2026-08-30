@@ -12,8 +12,8 @@
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  border-bottom: 1px solid var(--chrome-line);
+  background: var(--chrome-bg);
 }
 .desktop-nav-btn {
   width: 26px;
@@ -23,19 +23,23 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   cursor: pointer;
   font-size: 13px;
   line-height: 1;
 }
-.desktop-nav-btn:hover:not(:disabled) { background: var(--line-soft); color: var(--ink); }
+.desktop-nav-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
 .desktop-nav-btn:disabled { opacity: 0.35; cursor: default; }
 .desktop-nav-label {
   margin-left: auto;
   font-size: 12px;
   font-weight: 600;
-  color: var(--faint);
+  color: var(--chrome-ink-faint);
 }
+
+/* round-162: ghost buttons on the dark nav strip */
+.desktop-nav .btn-ghost { color: var(--chrome-ink-dim); }
+.desktop-nav .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
 
 /* Desktop open-in-app hint (shown when /desktop/ is opened in a browser). */
 .desktop-hint {

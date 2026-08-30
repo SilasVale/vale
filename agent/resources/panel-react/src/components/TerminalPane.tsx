@@ -68,17 +68,20 @@ export function TerminalPane({ session, registerWrite }: {
       // round-83: full 16-color palette (vanilla TERM_THEME) — xterm draws
       // bold text with index<8 at index+8 and falls back to the dark Tango
       // brights when unset, which are nearly invisible on white (1.2-1.6:1).
+      // round-162: DARK terminal (midnight cockpit) — the terminal is a
+      // viewport, not a document; dark matches the chrome frame and every
+      // mainstream terminal. Palette tuned for the #131418 background.
       theme: {
-        background: "#ffffff",
-        foreground: "#1d1d1f",
-        cursor: "#d9480f",
-        cursorAccent: "#ffffff",
-        selectionBackground: "rgba(217,72,15,.2)", // --accent #d9480f (vale amber)
-        black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",
-        blue: "#1d4ed8", magenta: "#7c3aed", cyan: "#0f766e", white: "#44403c",
-        brightBlack: "#4b5563", brightRed: "#dc2626", brightGreen: "#15803d",
-        brightYellow: "#a16207", brightBlue: "#2563eb", brightMagenta: "#9333ea",
-        brightCyan: "#0f766e", brightWhite: "#6e6e73",
+        background: "#131418",
+        foreground: "#d8dae0",
+        cursor: "#ffa94d",
+        cursorAccent: "#131418",
+        selectionBackground: "rgba(255, 169, 77, 0.28)", // amber-bright on dark
+        black: "#2a2c33", red: "#ff6b6b", green: "#69db7c", yellow: "#ffd43b",
+        blue: "#74c0fc", magenta: "#da77f2", cyan: "#66d9e8", white: "#e8e9ec",
+        brightBlack: "#7c7e8a", brightRed: "#ff8787", brightGreen: "#8ce99a",
+        brightYellow: "#ffe066", brightBlue: "#91caff", brightMagenta: "#eebefa",
+        brightCyan: "#99e9f2", brightWhite: "#ffffff",
       },
     } as any);
     const fit = new FitAddon();
