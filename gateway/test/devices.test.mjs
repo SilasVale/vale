@@ -44,6 +44,9 @@ function makeEnv(devices, links = {}) {
         return { keys };
       },
     },
+    // Test hook: real KV list() keeps returning expired-but-unreaped key
+    // names; tests backdate entries here to reproduce that state.
+    _expiry: expiry,
   };
 }
 
@@ -161,6 +164,19 @@ test("register-keys: generate → list with TTL → revoke → empty; 401 unauth
 
   const unauth = await worker.fetch(req("GET", "/api/devices/register-keys"), env);
   assert.equal(unauth.status, 401);
+});
+
+test("register-keys: expired-but-unreaped KV entries are filtered from the list", async () => {
+  const env = makeEnv([D1]);
+  const gen = await worker.fetch(req("POST", "/api/devices/register-key", { cookie: await adminCookie() }), env);
+  const { key } = await gen.json();
+
+  // Simulate real KV: the name lingers in list() after the TTL passed.
+  env._expiry.set(`regkey:${key}`, Math.floor(Date.now() / 1000) - 5);
+
+  const listRes = await worker.fetch(req("GET", "/api/devices/register-keys", { cookie: await adminCookie() }), env);
+  const listed = (await listRes.json()).keys;
+  assert.equal(listed.length, 0, "expired keys must not surface as unused reg keys");
 });
 
 /* ---------------- install-cmd ---------------- */

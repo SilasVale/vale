@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { api, ApiError, type Device, type DeviceStatus, type HealthChannel } from "../api/client.ts";
 import { maskToken } from "../lib/format.ts";
-import { Card, PageHeader, Badge, CopyButton, StatusChip } from "../components/ui.tsx";
+import { Card, PageHeader, CopyButton } from "../components/ui.tsx";
 
 const KEY_ORDER = [
   "DEEPSEEK_API_KEY",
@@ -32,11 +32,14 @@ function rel(ts?: number): string {
 }
 
 /*
- * Overview — a real dashboard (round-162), not two cards in a void: four
- * stat tiles (devices online / channel health / keys ready / users), the
- * device mini-strip with live LEDs, and the channel health table. The
- * gateway token + key chips stay below the fold of the story: credentials
- * first, status above.
+ * Overview v2 — the control deck. Asymmetric dashboard grid: a hero stat
+ * band (four live numbers) + the gateway-token side card, the fleet strip,
+ * then channel health beside the key matrix.
+ *
+ * Data semantics (user-reported bug fix): "online" here means the AGENT is
+ * reachable (`agent_up`) — the same field the devices page counts. The old
+ * overview read `online`, which is the browser-extension flag, so a healthy
+ * device with no paired extension showed "offline".
  */
 export default function Overview() {
   const { user, refreshUser } = useAuth();
@@ -45,23 +48,31 @@ export default function Overview() {
   const [tokenRevealed, setTokenRevealed] = useState(false);
   const [tokenNote, setTokenNote] = useState("");
 
-  // Dashboard data — one mount fetch + manual refresh (the devices page has
-  // the live-polling duty; the overview stays a snapshot).
   const [devices, setDevices] = useState<Device[]>([]);
   const [status, setStatus] = useState<Record<string, DeviceStatus>>({});
   const [channels, setChannels] = useState<HealthChannel[]>([]);
   const [users, setUsers] = useState<number | null>(null);
 
-  const loadDashboard = () => {
+  const loadDashboard = useCallback(async () => {
     api.getDevices().then((d) => setDevices(d.devices || [])).catch(() => {});
-    api.getPluginStatus().then((s) => setStatus(s.devices || {})).catch(() => {});
     api.getHealth().then((h) => setChannels(h.channels || [])).catch(() => {});
     if (user?.role === "admin") {
       api.getUsers().then((u) => setUsers(u.users?.length ?? null)).catch(() => {});
     }
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(loadDashboard, []);
+    try {
+      const s = await api.getPluginStatus(true);
+      setStatus(s.devices || {});
+    } catch {
+      /* probe is best-effort — tiles keep their last value */
+    }
+  }, [user?.role]);
+
+  useEffect(() => {
+    loadDashboard();
+    // Same 60s cadence as the devices page — the two pages can never drift.
+    const poll = setInterval(loadDashboard, 60000);
+    return () => clearInterval(poll);
+  }, [loadDashboard]);
 
   const handleRegenerate = async () => {
     const warn =
@@ -84,22 +95,17 @@ export default function Overview() {
 
   const tokenDisplay = tokenRevealed ? user?.token || "" : maskToken(user?.token);
 
-  // Backend key status strip — a compact "is each channel usable" readout.
-  const keyEntries = KEY_ORDER.map((name) => ({
-    name,
-    info: user?.keys?.[name],
-  }));
+  const keyEntries = KEY_ORDER.map((name) => ({ name, info: user?.keys?.[name] }));
   const configuredCount = keyEntries.filter((k) => k.info?.configured).length;
 
-  const onlineCount = devices.filter((d) => status[d.name]?.online).length;
+  const onlineCount = devices.filter((d) => status[d.name]?.agent_up).length;
   const channelsOk = channels.filter((c) => c.ok).length;
-  const admins = user?.role === "admin" ? users : null;
 
   const stats = [
     { label: t("stat.devices"), value: `${onlineCount}/${devices.length}`, tone: onlineCount > 0 ? "ok" : "off", to: "/devices" },
     { label: t("stat.channels"), value: channels.length ? `${channelsOk}/${channels.length}` : "—", tone: channels.length && channelsOk === channels.length ? "ok" : channels.length ? "warn" : "off", to: "/keys" },
     { label: t("stat.keys"), value: `${configuredCount}/${keyEntries.length}`, tone: configuredCount > 0 ? "ok" : "off", to: "/keys" },
-    { label: t("stat.users"), value: admins === null ? "—" : String(admins), tone: "info", to: admins === null ? "/" : "/users" },
+    { label: t("stat.users"), value: users === null ? "—" : String(users), tone: "info", to: users === null ? "/" : "/users" },
   ];
 
   return (
@@ -114,17 +120,51 @@ export default function Overview() {
         }
       />
 
-      {/* ── stat tiles ── */}
-      <div className="stat-grid">
-        {stats.map((s) => (
-          <Link key={s.label} to={s.to} className={`stat-card stat-${s.tone}`}>
-            <span className="stat-value">{s.value}</span>
-            <span className="stat-label">{s.label}</span>
-          </Link>
-        ))}
+      {/* ── hero: stat band + token side card ── */}
+      <div className="ov-hero">
+        <div className="stat-band">
+          {stats.map((s) => (
+            <Link key={s.label} to={s.to} className={`stat-card stat-${s.tone}`}>
+              <span className="stat-value">{s.value}</span>
+              <span className="stat-label">{s.label}</span>
+            </Link>
+          ))}
+        </div>
+
+        <Card
+          className="ov-token"
+          title={t("token.title")}
+          description={<span dangerouslySetInnerHTML={{ __html: t("token.desc") }} />}
+        >
+          <div className="token-row">
+            <code className="token">{tokenDisplay}</code>
+            <CopyButton
+              text={user?.token || ""}
+              tone="primary"
+              onCopied={() => toast(t("token.copied"))}
+            />
+            <button className="btn btn-ghost" onClick={() => setTokenRevealed(!tokenRevealed)}>
+              {tokenRevealed ? t("btn.hide") : t("btn.show")}
+            </button>
+          </div>
+          <div className="token-actions">
+            <button className="btn btn-danger btn-sm" onClick={handleRegenerate}>
+              {t("btn.regenerate")}
+            </button>
+          </div>
+          {tokenNote && <p className="form-message form-message-success">{tokenNote}</p>}
+          <div className="ov-keychips">
+            {keyEntries.map(({ name, info }) => (
+              <span key={name} className={`kchip${info?.configured ? " on" : ""}`} title={name}>
+                <span className="kchip-dot" />
+                {keyLabel(name)}
+              </span>
+            ))}
+          </div>
+        </Card>
       </div>
 
-      {/* ── device mini-strip ── */}
+      {/* ── fleet strip ── */}
       <Card
         title={t("overview.devicesTitle")}
         headerExtra={<Link className="card-link" to="/devices">{t("overview.viewAll")} →</Link>}
@@ -135,13 +175,13 @@ export default function Overview() {
           <div className="dev-strip">
             {devices.map((d) => {
               const st = status[d.name] || {};
-              const online = !!st.online;
+              const up = !!st.agent_up;
               return (
-                <Link key={d.name} to="/devices" className={`dev-mini${online ? " online" : ""}`}>
-                  <span className={`dev-mini-led${online ? " on" : ""}`} />
+                <Link key={d.name} to="/devices" className={`dev-mini${up ? " online" : ""}`}>
+                  <span className={`dev-mini-led${up ? " on" : ""}`} />
                   <span className="dev-mini-name">{d.name}</span>
                   <span className="dev-mini-meta">
-                    {online ? `v${st.version || d.lastVersion || "?"} · ${rel(st.checked_at)}` : t("overview.offline")}
+                    {up ? `v${st.version || d.lastVersion || "?"} · ${rel(st.checked_at)}` : t("overview.offline")}
                   </span>
                 </Link>
               );
@@ -150,67 +190,45 @@ export default function Overview() {
         )}
       </Card>
 
-      {/* ── channel health ── */}
-      <Card title={t("overview.healthTitle")}>
-        {channels.length === 0 ? (
-          <p className="muted">—</p>
-        ) : (
-          <div className="health-list">
-            {channels.map((c) => (
-              <div key={c.id} className="health-row">
-                <span className={`dot ${c.ok ? "ok" : "err"}`} />
-                <span className="health-id">{c.id}</span>
-                <span className="health-model">{c.model}</span>
-                <span className={`health-state ${c.ok ? "ok" : "err"}`}>
-                  {c.ok ? t("overview.healthOk") : c.reason || t("overview.healthDown")}
+      {/* ── health + keys ── */}
+      <div className="ov-cols">
+        <Card title={t("overview.healthTitle")}>
+          {channels.length === 0 ? (
+            <p className="muted">—</p>
+          ) : (
+            <div className="health-list">
+              {channels.map((c) => (
+                <div key={c.id} className="health-row">
+                  <span className={`dot ${c.ok ? "ok" : "err"}`} />
+                  <span className="health-id">{c.id}</span>
+                  <span className="health-model">{c.model}</span>
+                  <span className={`health-state ${c.ok ? "ok" : "err"}`}>
+                    {c.ok ? t("overview.healthOk") : c.reason || t("overview.healthDown")}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card
+          title={t("keys.title")}
+          description={t("overview.keysHint")}
+          headerExtra={<Link className="card-link" to="/keys">{t("nav.keys")} →</Link>}
+        >
+          <div className="ov-keylist">
+            {keyEntries.map(({ name, info }) => (
+              <div key={name} className="ov-keyrow">
+                <span className={`ov-keyled${info?.configured ? " on" : ""}`} />
+                <span className="ov-keyname">{keyLabel(name)}</span>
+                <span className="ov-keystate">
+                  {info?.configured ? t("key.configured") : t("key.notConfigured")}
                 </span>
               </div>
             ))}
           </div>
-        )}
-      </Card>
-
-      <Card
-        title={t("token.title")}
-        description={<span dangerouslySetInnerHTML={{ __html: t("token.desc") }} />}
-        headerExtra={
-          <Badge tone={configuredCount > 0 ? "muted" : "warning"}>
-            {configuredCount}/{keyEntries.length}
-          </Badge>
-        }
-      >
-        <div className="token-row">
-          <code className="token">{tokenDisplay}</code>
-          <CopyButton
-            text={user?.token || ""}
-            tone="primary"
-            onCopied={() => toast(t("token.copied"))}
-          />
-          <button className="btn btn-ghost" onClick={() => setTokenRevealed(!tokenRevealed)}>
-            {tokenRevealed ? t("btn.hide") : t("btn.show")}
-          </button>
-        </div>
-        <div className="token-actions">
-          <button className="btn btn-danger btn-sm" onClick={handleRegenerate}>
-            {t("btn.regenerate")}
-          </button>
-        </div>
-        {tokenNote && <p className="form-message form-message-success">{tokenNote}</p>}
-      </Card>
-
-      <Card title={t("keys.title")}>
-        <p className="muted" style={{ marginBottom: 12 }}>
-          {t("overview.keysHint")}{" "}
-          <Link to="/keys">{t("nav.keys")} →</Link>
-        </p>
-        <div className="row">
-          {keyEntries.map(({ name, info }) => (
-            <StatusChip key={name} state={info?.configured ? "ok" : "off"}>
-              {keyLabel(name)}
-            </StatusChip>
-          ))}
-        </div>
-      </Card>
+        </Card>
+      </div>
     </div>
   );
 }

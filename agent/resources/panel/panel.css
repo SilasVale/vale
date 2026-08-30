@@ -54,18 +54,26 @@
   --rail-ink: #9a9aa0;       /* desktop rail idle label (rail is always dark) */
   --rail-ink-strong: #ffffff;
 
-  /* ---- round-162 "midnight cockpit" chrome ----
-     The app frame (icon rail, tab strips, status bar) is a continuous dark
-     surface; the work surfaces (context rail, cards, pages) stay light and
-     the viewports (xterm, browser) go deeper still. Three depths + inks. */
-  --chrome-bg: #17181d;
-  --chrome-bg-2: #1f2026;
-  --chrome-bg-3: #2a2b33;
-  --chrome-ink: #ecedef;
-  --chrome-ink-dim: #a2a3ac;
-  --chrome-ink-faint: #6f707a;
-  --chrome-line: rgba(255, 255, 255, 0.07);
-  --amber-bright: #ffa94d;   /* accent readable on dark chrome */
+  /* ---- round-162 frame chrome — LIGHT by default (user preference) ----
+     The frame (icon rail, tab strips, status bar) is one continuous surface;
+     body[data-theme="dark"] (see below) flips the whole set to the midnight
+     cockpit. All frame rules consume ONLY these vars. */
+  --chrome-bg: #f4f4f5;
+  --chrome-bg-2: #ffffff;
+  --chrome-bg-3: #ececef;
+  --chrome-ink: #1d1d1f;
+  --chrome-ink-dim: #52525b;
+  --chrome-ink-faint: #a1a1aa;
+  --chrome-line: rgba(0, 0, 0, 0.08);
+  --chrome-hover: rgba(0, 0, 0, 0.05);
+  --chrome-active-bg: var(--accent-soft);
+  --chrome-active-ink: var(--accent-ink);
+  --chrome-glass: rgba(255, 255, 255, 0.96);
+  --amber-bright: #ffa94d;          /* accent readable on DARK chrome */
+  --term-canvas-bg: #ffffff;        /* xterm container (theme-following) */
+  --browser-stage-bg: #131418;      /* browser viewport / evidence (always dark) */
+  --rail-ink: var(--chrome-ink-dim);
+  --rail-ink-strong: var(--chrome-ink);
 
   /* ---- geometry ---- */
   --radius: 14px;
@@ -86,6 +94,44 @@
           "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas,
                "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* ============================================================
+   Dark theme (optional) — body[data-theme="dark"], toggled from
+   the icon rail, persisted in localStorage (lib/theme.ts). The
+   midnight-cockpit values live here; light is the default.
+   ============================================================ */
+body[data-theme="dark"] {
+  /* core surfaces */
+  --bg: #131418;
+  --surface: #1c1d22;
+  --ink: #ecedef;
+  --muted: #a2a3ac;
+  --faint: #6f707a;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --line-soft: rgba(255, 255, 255, 0.05);
+  --accent-soft: #3d2817;
+  --tag-ink: #7fd4c8;
+  --focus-ring-soft: rgba(255, 169, 77, 0.14);
+
+  /* frame chrome — midnight */
+  --chrome-bg: #17181d;
+  --chrome-bg-2: #1f2026;
+  --chrome-bg-3: #2a2b33;
+  --chrome-ink: #ecedef;
+  --chrome-ink-dim: #a2a3ac;
+  --chrome-ink-faint: #6f707a;
+  --chrome-line: rgba(255, 255, 255, 0.07);
+  --chrome-hover: rgba(255, 255, 255, 0.08);
+  --chrome-active-bg: rgba(217, 72, 15, 0.9);
+  --chrome-active-ink: #ffffff;
+  --chrome-glass: rgba(31, 32, 38, 0.94);
+  --term-canvas-bg: #131418;
+
+  /* desktop rail inks (dark rail keeps its original vocabulary) */
+  --rail-ink: #9a9aa0;
+  --rail-ink-strong: #ffffff;
 }
 
 
@@ -181,8 +227,8 @@ code {
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.rail-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
-.rail-btn.active { background: rgba(217, 72, 15, 0.9); color: #fff; }
+.rail-btn:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
+.rail-btn.active { background: var(--chrome-active-bg); color: var(--chrome-active-ink); }
 .rail-spacer { flex: 1; }
 .rail-dot {
   width: 8px; height: 8px;
@@ -210,9 +256,9 @@ code {
   align-items: center;
   padding: 10px 0;
   gap: 6px;
-  background: var(--ds-neutral-900);
-  color: var(--rail-ink);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--chrome-bg);
+  color: var(--chrome-ink-dim);
+  border-right: 1px solid var(--chrome-line);
 }
 .desktop-rail-brand {
   display: grid;
@@ -233,14 +279,14 @@ code {
   border: none;
   border-radius: 10px;
   background: transparent;
-  color: var(--rail-ink);
+  color: var(--chrome-ink-dim);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.desktop-rail-btn:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.desktop-rail-btn:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
 .desktop-rail-btn.active {
-  background: rgba(217, 72, 15, 0.85);
-  color: #fff;
+  background: var(--chrome-active-bg);
+  color: var(--chrome-active-ink);
 }
 .desktop-rail-status {
   width: 34px; height: 30px;
@@ -419,9 +465,9 @@ code {
 .tab.closed { color: var(--chrome-ink-faint); text-decoration: line-through; }
 .tab.closed:hover { color: var(--chrome-ink-faint); }
 .tab.active {
-  background: var(--chrome-bg-3);
-  color: var(--amber-bright);
-  border-color: rgba(255, 169, 77, 0.55);
+  background: var(--chrome-active-bg);
+  color: var(--chrome-active-ink);
+  border-color: var(--chrome-active-ink);
 }
 .tab-dot {
   display: inline-block;
@@ -443,7 +489,7 @@ code {
 }
 .tab:hover .tab-export, .tab:hover .tab-close,
 .tab.active .tab-export, .tab.active .tab-close { visibility: visible; }
-.tab-export:hover { color: var(--amber-bright); }
+.tab-export:hover { color: var(--chrome-active-ink); }
 .tab-close:hover { color: var(--danger); }
 .view-switch {
   flex: none;
@@ -1527,7 +1573,7 @@ code {
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
-  background: rgba(31, 32, 38, 0.94);
+  background: var(--chrome-glass);
   border: 1px solid var(--chrome-line);
   border-radius: 8px;
   box-shadow: var(--shadow);
@@ -1551,7 +1597,7 @@ code {
   border-radius: 5px;
 }
 .term-searchbar button:hover,
-.term-fontbar button:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
+.term-fontbar button:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
 .term-fontbar {
   position: absolute;
   bottom: 8px;
@@ -1802,7 +1848,7 @@ code {
   min-width: 0;
   display: flex;
   overflow: hidden;
-  background: var(--terminal-bg);
+  background: var(--term-canvas-bg);
 }
 #term-container > div { flex: 1 1 0; min-height: 0; min-width: 0; }
 #term-container > .browser-wrap { display: flex; }
@@ -1921,7 +1967,7 @@ code {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--terminal-bg);
+  background: var(--term-canvas-bg);
 }
 #desktop-term-container > .term-session { flex: 1 1 0; min-height: 0; }
 
@@ -2011,9 +2057,9 @@ code {
   color: var(--chrome-ink-faint);
 }
 
-/* round-162: ghost buttons on the dark nav strip */
+/* round-162: ghost buttons on the nav strip (theme-following) */
 .desktop-nav .btn-ghost { color: var(--chrome-ink-dim); }
-.desktop-nav .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
+.desktop-nav .btn-ghost:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
 
 /* Desktop open-in-app hint (shown when /desktop/ is opened in a browser). */
 .desktop-hint {

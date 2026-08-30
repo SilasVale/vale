@@ -187,6 +187,17 @@ export default function DevicesPanel() {
     }
   };
 
+  const handleRevokeAll = async () => {
+    if (!regKeys || regKeys.length === 0) return;
+    try {
+      await Promise.all(regKeys.map((k) => api.revokeRegKey(k.code)));
+      toast(t("devices.regKeysEmpty"));
+      await loadRegKeys();
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : t("devices.saveFail"), true);
+    }
+  };
+
   const handleRevokeRegKey = async (code: string) => {
     try {
       await api.revokeRegKey(code);
@@ -420,11 +431,20 @@ export default function DevicesPanel() {
 
         <p className="muted mt-12">{t("devices.installNote")}</p>
 
-        {/* Unused registration keys — visible + revocable (used to be fire-and-forget) */}
+        {/* Outstanding registration keys — filtered server-side to live
+            (unexpired) ones; each shows its remaining minutes. */}
         <div className="regkeys mt-16">
           <div className="regkeys-head">
             <span className="regkeys-title">{t("devices.regKeysTitle")}</span>
-            <span className="muted-small">{t("devices.regKeysHint")}</span>
+            <span className="muted-small">{t("devices.regkeyHint")}</span>
+            {regKeys && regKeys.length > 0 && (
+              <button
+                className="btn btn-ghost btn-mini regkeys-clear"
+                onClick={handleRevokeAll}
+              >
+                {t("devices.revokeAll")}
+              </button>
+            )}
           </div>
           {regKeys === null || regKeys.length === 0 ? (
             <p className="muted-small">
@@ -438,7 +458,9 @@ export default function DevicesPanel() {
                     <div className="list-line">
                       <span className="mono">{k.code}</span>
                     </div>
-                    <div className="list-sub">{fmtTime(k.expiresAt)}</div>
+                    <div className="list-sub">
+                      {t("devices.expiresIn", { min: String(Math.max(1, Math.ceil((k.expiresAt - Date.now()) / 60000))) })}
+                    </div>
                   </div>
                   <div className="list-actions">
                     <button

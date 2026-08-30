@@ -43,8 +43,8 @@
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.rail-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
-.rail-btn.active { background: rgba(217, 72, 15, 0.9); color: #fff; }
+.rail-btn:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
+.rail-btn.active { background: var(--chrome-active-bg); color: var(--chrome-active-ink); }
 .rail-spacer { flex: 1; }
 .rail-dot {
   width: 8px; height: 8px;
@@ -72,9 +72,9 @@
   align-items: center;
   padding: 10px 0;
   gap: 6px;
-  background: var(--ds-neutral-900);
-  color: var(--rail-ink);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--chrome-bg);
+  color: var(--chrome-ink-dim);
+  border-right: 1px solid var(--chrome-line);
 }
 .desktop-rail-brand {
   display: grid;
@@ -95,14 +95,14 @@
   border: none;
   border-radius: 10px;
   background: transparent;
-  color: var(--rail-ink);
+  color: var(--chrome-ink-dim);
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.desktop-rail-btn:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.desktop-rail-btn:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
 .desktop-rail-btn.active {
-  background: rgba(217, 72, 15, 0.85);
-  color: #fff;
+  background: var(--chrome-active-bg);
+  color: var(--chrome-active-ink);
 }
 .desktop-rail-status {
   width: 34px; height: 30px;
@@ -281,9 +281,9 @@
 .tab.closed { color: var(--chrome-ink-faint); text-decoration: line-through; }
 .tab.closed:hover { color: var(--chrome-ink-faint); }
 .tab.active {
-  background: var(--chrome-bg-3);
-  color: var(--amber-bright);
-  border-color: rgba(255, 169, 77, 0.55);
+  background: var(--chrome-active-bg);
+  color: var(--chrome-active-ink);
+  border-color: var(--chrome-active-ink);
 }
 .tab-dot {
   display: inline-block;
@@ -305,7 +305,7 @@
 }
 .tab:hover .tab-export, .tab:hover .tab-close,
 .tab.active .tab-export, .tab.active .tab-close { visibility: visible; }
-.tab-export:hover { color: var(--amber-bright); }
+.tab-export:hover { color: var(--chrome-active-ink); }
 .tab-close:hover { color: var(--danger); }
 .view-switch {
   flex: none;
@@ -1389,7 +1389,7 @@
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
-  background: rgba(31, 32, 38, 0.94);
+  background: var(--chrome-glass);
   border: 1px solid var(--chrome-line);
   border-radius: 8px;
   box-shadow: var(--shadow);
@@ -1413,7 +1413,7 @@
   border-radius: 5px;
 }
 .term-searchbar button:hover,
-.term-fontbar button:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
+.term-fontbar button:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
 .term-fontbar {
   position: absolute;
   bottom: 8px;

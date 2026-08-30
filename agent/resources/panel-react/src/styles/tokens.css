@@ -53,18 +53,26 @@
   --rail-ink: #9a9aa0;       /* desktop rail idle label (rail is always dark) */
   --rail-ink-strong: #ffffff;
 
-  /* ---- round-162 "midnight cockpit" chrome ----
-     The app frame (icon rail, tab strips, status bar) is a continuous dark
-     surface; the work surfaces (context rail, cards, pages) stay light and
-     the viewports (xterm, browser) go deeper still. Three depths + inks. */
-  --chrome-bg: #17181d;
-  --chrome-bg-2: #1f2026;
-  --chrome-bg-3: #2a2b33;
-  --chrome-ink: #ecedef;
-  --chrome-ink-dim: #a2a3ac;
-  --chrome-ink-faint: #6f707a;
-  --chrome-line: rgba(255, 255, 255, 0.07);
-  --amber-bright: #ffa94d;   /* accent readable on dark chrome */
+  /* ---- round-162 frame chrome — LIGHT by default (user preference) ----
+     The frame (icon rail, tab strips, status bar) is one continuous surface;
+     body[data-theme="dark"] (see below) flips the whole set to the midnight
+     cockpit. All frame rules consume ONLY these vars. */
+  --chrome-bg: #f4f4f5;
+  --chrome-bg-2: #ffffff;
+  --chrome-bg-3: #ececef;
+  --chrome-ink: #1d1d1f;
+  --chrome-ink-dim: #52525b;
+  --chrome-ink-faint: #a1a1aa;
+  --chrome-line: rgba(0, 0, 0, 0.08);
+  --chrome-hover: rgba(0, 0, 0, 0.05);
+  --chrome-active-bg: var(--accent-soft);
+  --chrome-active-ink: var(--accent-ink);
+  --chrome-glass: rgba(255, 255, 255, 0.96);
+  --amber-bright: #ffa94d;          /* accent readable on DARK chrome */
+  --term-canvas-bg: #ffffff;        /* xterm container (theme-following) */
+  --browser-stage-bg: #131418;      /* browser viewport / evidence (always dark) */
+  --rail-ink: var(--chrome-ink-dim);
+  --rail-ink-strong: var(--chrome-ink);
 
   /* ---- geometry ---- */
   --radius: 14px;
@@ -85,4 +93,42 @@
           "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas,
                "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* ============================================================
+   Dark theme (optional) — body[data-theme="dark"], toggled from
+   the icon rail, persisted in localStorage (lib/theme.ts). The
+   midnight-cockpit values live here; light is the default.
+   ============================================================ */
+body[data-theme="dark"] {
+  /* core surfaces */
+  --bg: #131418;
+  --surface: #1c1d22;
+  --ink: #ecedef;
+  --muted: #a2a3ac;
+  --faint: #6f707a;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --line-soft: rgba(255, 255, 255, 0.05);
+  --accent-soft: #3d2817;
+  --tag-ink: #7fd4c8;
+  --focus-ring-soft: rgba(255, 169, 77, 0.14);
+
+  /* frame chrome — midnight */
+  --chrome-bg: #17181d;
+  --chrome-bg-2: #1f2026;
+  --chrome-bg-3: #2a2b33;
+  --chrome-ink: #ecedef;
+  --chrome-ink-dim: #a2a3ac;
+  --chrome-ink-faint: #6f707a;
+  --chrome-line: rgba(255, 255, 255, 0.07);
+  --chrome-hover: rgba(255, 255, 255, 0.08);
+  --chrome-active-bg: rgba(217, 72, 15, 0.9);
+  --chrome-active-ink: #ffffff;
+  --chrome-glass: rgba(31, 32, 38, 0.94);
+  --term-canvas-bg: #131418;
+
+  /* desktop rail inks (dark rail keeps its original vocabulary) */
+  --rail-ink: #9a9aa0;
+  --rail-ink-strong: #ffffff;
 }

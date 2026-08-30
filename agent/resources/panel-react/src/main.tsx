@@ -1,4 +1,5 @@
 // react-jsx: no React import needed
+import "./lib/theme"; // theme applies before any render (light default)
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";

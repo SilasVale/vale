@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { callTool } from "../lib/api";
+import { getTheme, onThemeChange } from "../lib/theme";
 import { Icon } from "../ui/Icon";
 import type { Session } from "../hooks/useSessions";
 
@@ -30,6 +31,38 @@ const FONT_LS = "valeFontSize";
 const FONT_DEFAULT = 13;
 const FONT_MIN = 9;
 const FONT_MAX = 22;
+
+// Terminal palettes per app theme (round-163: the terminal FOLLOWS the
+// theme — light default restores the white canvas the user prefers; dark
+// keeps the midnight cockpit). Applied live via term.options.theme on flip.
+function termTheme(theme: "light" | "dark") {
+  if (theme === "dark") {
+    return {
+      background: "#131418",
+      foreground: "#d8dae0",
+      cursor: "#ffa94d",
+      cursorAccent: "#131418",
+      selectionBackground: "rgba(255, 169, 77, 0.28)",
+      black: "#2a2c33", red: "#ff6b6b", green: "#69db7c", yellow: "#ffd43b",
+      blue: "#74c0fc", magenta: "#da77f2", cyan: "#66d9e8", white: "#e8e9ec",
+      brightBlack: "#7c7e8a", brightRed: "#ff8787", brightGreen: "#8ce99a",
+      brightYellow: "#ffe066", brightBlue: "#91caff", brightMagenta: "#eebefa",
+      brightCyan: "#99e9f2", brightWhite: "#ffffff",
+    };
+  }
+  return {
+    background: "#ffffff",
+    foreground: "#1d1d1f",
+    cursor: "#d9480f",
+    cursorAccent: "#ffffff",
+    selectionBackground: "rgba(217, 72, 15, 0.2)",
+    black: "#1d1d1f", red: "#b91c1c", green: "#166534", yellow: "#854d0e",
+    blue: "#1d4ed8", magenta: "#7c3aed", cyan: "#0f766e", white: "#44403c",
+    brightBlack: "#4b5563", brightRed: "#dc2626", brightGreen: "#15803d",
+    brightYellow: "#a16207", brightBlue: "#2563eb", brightMagenta: "#9333ea",
+    brightCyan: "#0f766e", brightWhite: "#6e6e73",
+  };
+}
 
 function loadFontSize(): number {
   try {
@@ -68,21 +101,7 @@ export function TerminalPane({ session, registerWrite }: {
       // round-83: full 16-color palette (vanilla TERM_THEME) — xterm draws
       // bold text with index<8 at index+8 and falls back to the dark Tango
       // brights when unset, which are nearly invisible on white (1.2-1.6:1).
-      // round-162: DARK terminal (midnight cockpit) — the terminal is a
-      // viewport, not a document; dark matches the chrome frame and every
-      // mainstream terminal. Palette tuned for the #131418 background.
-      theme: {
-        background: "#131418",
-        foreground: "#d8dae0",
-        cursor: "#ffa94d",
-        cursorAccent: "#131418",
-        selectionBackground: "rgba(255, 169, 77, 0.28)", // amber-bright on dark
-        black: "#2a2c33", red: "#ff6b6b", green: "#69db7c", yellow: "#ffd43b",
-        blue: "#74c0fc", magenta: "#da77f2", cyan: "#66d9e8", white: "#e8e9ec",
-        brightBlack: "#7c7e8a", brightRed: "#ff8787", brightGreen: "#8ce99a",
-        brightYellow: "#ffe066", brightBlue: "#91caff", brightMagenta: "#eebefa",
-        brightCyan: "#99e9f2", brightWhite: "#ffffff",
-      },
+      theme: termTheme(getTheme()),
     } as any);
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -101,6 +120,11 @@ export function TerminalPane({ session, registerWrite }: {
     // Keystrokes up: POST terminal_write.
     const sub = term.onData((data) => {
       callTool("terminal_write", { session_id: session.sid, data }).catch(() => {});
+    });
+
+    // Follow app theme flips live (light ↔ dark) without recreating the term.
+    const offTheme = onThemeChange(() => {
+      (term as any).options.theme = termTheme(getTheme());
     });
 
     // Ctrl+F opens the scrollback search (Shift+F / browser find untouched).
@@ -167,6 +191,7 @@ export function TerminalPane({ session, registerWrite }: {
       .catch(() => {});
 
     return () => {
+      offTheme();
       sub.dispose();
       searchRef.current = null;
       term.dispose();

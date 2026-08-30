@@ -23,15 +23,16 @@ export function PageHeader({ title, description, actions }: { title: string; des
 
 /* ── Card ── */
 
-export function Card({ title, description, headerExtra, noMargin, children }: {
+export function Card({ title, description, headerExtra, noMargin, className, children }: {
   title?: ReactNode;
   description?: ReactNode;
   headerExtra?: ReactNode;
   noMargin?: boolean;
+  className?: string;
   children?: ReactNode;
 }) {
   return (
-    <section className="card">
+    <section className={`card${className ? ` ${className}` : ""}`}>
       {(title || headerExtra) && (
         <div className={`card-header${noMargin ? " no-margin" : ""}`}>
           <div>

@@ -37,9 +37,9 @@
   color: var(--chrome-ink-faint);
 }
 
-/* round-162: ghost buttons on the dark nav strip */
+/* round-162: ghost buttons on the nav strip (theme-following) */
 .desktop-nav .btn-ghost { color: var(--chrome-ink-dim); }
-.desktop-nav .btn-ghost:hover { background: rgba(255, 255, 255, 0.08); color: var(--chrome-ink); }
+.desktop-nav .btn-ghost:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
 
 /* Desktop open-in-app hint (shown when /desktop/ is opened in a browser). */
 .desktop-hint {
