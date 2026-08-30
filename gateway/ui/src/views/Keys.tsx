@@ -19,10 +19,20 @@ interface KeyInfo {
   masked: string;
 }
 
+// Full env names → the i18n prefixes ("key.<prefix>.backend/.hint"). The old
+// lowercase-suffix guess produced raw keys on the page ("key.deepseek.backend").
+const KEY_I18N_PREFIX: Record<string, string> = {
+  DEEPSEEK_API_KEY: "ds",
+  OPENCODE_GO_API_KEY: "og",
+  QWEN_API_KEY: "qw",
+  OPENROUTER_API_KEY: "or",
+  NVAPI_KEY: "nv",
+  GMI_API_KEY: "gmi",
+  CMD_API_KEY: "cmd",
+};
+
 function getKeyShortName(name: string) {
-  // NVAPI_KEY has no "_API_KEY" suffix — map it explicitly to the i18n prefix.
-  if (name === "NVAPI_KEY") return "nv";
-  return name.replace("_API_KEY", "").toLowerCase();
+  return KEY_I18N_PREFIX[name] || name.replace("_API_KEY", "").toLowerCase();
 }
 
 export default function Keys() {

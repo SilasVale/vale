@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useTranslation } from "../i18n.ts";
 import { getTheme, toggleTheme } from "../lib/theme.ts";
@@ -31,10 +31,17 @@ interface NavItem {
   icon: IconName;
 }
 
+/*
+ * Midnight-cockpit layout (round-162): dark chrome frame (sidebar + topbar)
+ * around light content cards — the same visual family as the device panel.
+ * The topbar owns identity + controls (theme / language / user); the sidebar
+ * owns navigation only, so both stay slim.
+ */
 export default function Layout() {
   const { user, logout } = useAuth();
   const { t, lang, setLang } = useTranslation();
   const [theme, setThemeState] = useState(getTheme());
+  const location = useLocation();
 
   const generalItems: NavItem[] = [
     { to: "/", label: t("nav.overview"), icon: "overview" },
@@ -49,6 +56,10 @@ export default function Layout() {
 
   const isAdmin = user?.role === "admin";
   const userInitial = user?.username?.charAt(0).toUpperCase() || "U";
+
+  // Topbar title: the active nav item's label (exact match, else Overview).
+  const allItems = [...generalItems, ...(isAdmin ? adminItems : [])];
+  const current = allItems.find((i) => i.to === location.pathname);
 
   const renderItem = (item: NavItem) => (
     <NavLink
@@ -69,7 +80,7 @@ export default function Layout() {
           <div className="sidebar-brand">
             <img className="brand-img" src="/favicon.svg" alt="Vale" width={34} />
             <div>
-              <div className="sidebar-title">Vale</div>
+              <div className="sidebar-title">Vale Gate</div>
               <div className="sidebar-subtitle">{t("app.sub")}</div>
             </div>
           </div>
@@ -87,18 +98,16 @@ export default function Layout() {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="sidebar-user">
-            <div className="sidebar-avatar">{userInitial}</div>
-            <div className="sidebar-user-info">
-              <div className="sidebar-user-name">{user?.username}</div>
-              <div className="sidebar-user-role">
-                {t(user?.role === "admin" ? "role.admin" : "role.user")}
-              </div>
-            </div>
-          </div>
-          <div className="sidebar-actions">
+          <div className="sidebar-foot-note">ai.saisi.online</div>
+        </div>
+      </aside>
+
+      <div className="main-col">
+        <header className="topbar">
+          <h1 className="topbar-title">{current?.label || t("nav.overview")}</h1>
+          <div className="topbar-actions">
             <button
-              className="icon-btn"
+              className="topbar-btn"
               title={theme === "dark" ? t("theme.light") : t("theme.dark")}
               onClick={() => setThemeState(toggleTheme())}
             >
@@ -110,18 +119,27 @@ export default function Layout() {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
               )}
             </button>
-            <button className="btn btn-secondary btn-sm" onClick={() => logout()}>
-              {t("btn.logout")}
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
+            <button className="topbar-btn topbar-lang" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
               {lang === "zh" ? "EN" : "中文"}
             </button>
+            <div className="topbar-user">
+              <div className="topbar-avatar">{userInitial}</div>
+              <div className="topbar-user-info">
+                <div className="topbar-user-name">{user?.username}</div>
+                <div className="topbar-user-role">
+                  {t(user?.role === "admin" ? "role.admin" : "role.user")}
+                </div>
+              </div>
+            </div>
+            <button className="btn btn-sm topbar-logout" onClick={() => logout()}>
+              {t("btn.logout")}
+            </button>
           </div>
-        </div>
-      </aside>
-      <main className="content">
-        <Outlet />
-      </main>
+        </header>
+        <main className="content">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }
