@@ -23,7 +23,6 @@ export interface BrowserSessionData {
 
 export const VIEW_W = 1280;
 export const VIEW_H = 800;
-const TABS_MS = 1500;
 const MAX_WS_BACKOFF_MS = 8000;
 const POLL_MS = 3000;
 
@@ -90,7 +89,6 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     let disposed = false;
     let attempts = 0;
     let reconnectTimer: number | undefined;
-    let tabsTimer: number | undefined;
 
     const connectWs = () => {
       if (disposed) return;
@@ -117,6 +115,14 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
             if (typeof m.data === "string") {
               try {
                 const o = JSON.parse(m.data);
+                // round-163: unsolicited bridge pushes — the tab list arrives
+                // when it CHANGES (open/close/select/navigate), replacing the
+                // 1.5s tabs poll.
+                if (o.ev === "tabs" && Array.isArray(o.tabs)) {
+                  setTabs(o.tabs);
+                  setSel(typeof o.sel === "number" ? o.sel : 0);
+                  return;
+                }
                 if (typeof o.id !== "undefined") {
                   const cb = pendingRef.current.get(o.id);
                   if (cb) { pendingRef.current.delete(o.id); cb(o); }
@@ -166,7 +172,8 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     };
 
     connectWs();
-    tabsTimer = window.setInterval(refreshTabs, TABS_MS);
+    // round-163: no tabs timer — the bridge pushes the tab list on every
+    // change; ws.onopen still fetches the initial snapshot.
 
     // Hidden tab: drop the socket entirely so the device stops capturing for
     // nobody; visible again → reconnect fresh.
@@ -186,7 +193,6 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
       aliveRef.current = false;
       document.removeEventListener("visibilitychange", onVisibility);
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
-      if (tabsTimer) window.clearInterval(tabsTimer);
       pendingRef.current.forEach((resolve) => resolve({}));
       pendingRef.current.clear();
       try { wsRef.current?.close(); } catch {}

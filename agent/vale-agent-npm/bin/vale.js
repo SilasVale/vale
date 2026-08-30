@@ -156,6 +156,11 @@ const commands = {
     sh(`powershell -NoProfile -Command "Remove-Item -Force -ErrorAction SilentlyContinue '${BUSY}'"`);
     // 5. Refresh the BOXED playwright bundle: delete the old tree first so a
     //    removed package/version never leaves stale files behind.
+    //    round-163: kill the runner/bridge node processes FIRST — a running
+    //    node.exe holds its image file locked, the Remove-Item/Expand-Archive
+    //    pair silently skipped it, and the device was left with a playwright
+    //    dir WITHOUT node.exe (bridge could never spawn again; observed d1).
+    sh(`powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*${DIR}*playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`);
     sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${DIR}\\playwright'"`);
     // 6. Legacy install dirs from retired installers (C:\vale-agent /
     //    D:\vale-agent). If the registry now points at a DIFFERENT dir and a
@@ -192,7 +197,19 @@ const commands = {
       const pwDir = path.join(DIR, "playwright");
       fs.mkdirSync(pwDir, { recursive: true });
       sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${PW_ZIP}' -DestinationPath '${DIR}'"`);
-      console.log("setup: playwright bundle staged (node_modules only)");
+      // round-163: the whole point of the bundle is node.exe — VERIFY it
+      // landed (a silently-missing copy killed the bridge forever on d1).
+      // One retry, then fail loudly: a half-staged bundle is worse than none.
+      if (!fs.existsSync(path.join(pwDir, "node.exe"))) {
+        console.log("setup: node.exe missing after expand — retrying once");
+        sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${PW_ZIP}' -DestinationPath '${DIR}'"`);
+      }
+      if (fs.existsSync(path.join(pwDir, "node.exe"))) {
+        console.log("setup: playwright bundle staged (node.exe + node_modules verified)");
+      } else {
+        console.error("setup: FATAL — playwright bundle expanded but node.exe is STILL missing; browser tools cannot run. Check AV/lock interference and re-run vale setup.");
+        process.exit(1);
+      }
     } else {
       console.log("setup: vale-playwright.zip not in package (browser tools disabled)");
     }

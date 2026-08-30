@@ -169,19 +169,16 @@ fn main() {
     // stale and never orphaned. Skip when 9224 is already serving.
     #[cfg(windows)]
     {
-        use std::net::TcpStream;
-        let busy = TcpStream::connect("127.0.0.1:9224").is_ok();
-        let install_dir = vale_agent::paths::install_dir();
-        let bridge = install_dir.join("bridge.js");
-        let node = install_dir.join("playwright").join("node.exe");
-        if !busy && bridge.exists() && node.exists() {
-            let _ = std::process::Command::new(&node)
-                .arg(&bridge).arg("9224")
-                .spawn();
-            log_line("browser bridge: launched on 127.0.0.1:9224");
-        } else if busy {
-            log_line("browser bridge: already running");
-        }
+        // One-shot boot probe only: a bridge running OUTSIDE this process
+        // (manual debug run) keeps the port; our own children died with the
+        // previous agent via the reaper job, so after a normal restart the
+        // port is free and the supervisor below spawns immediately.
+        let busy = std::net::TcpStream::connect("127.0.0.1:9224").is_ok();
+        log_line(if busy {
+            "browser bridge: already running (external) — supervisor idle"
+        } else {
+            "browser bridge: port free — supervisor starting"
+        });
     }
 
     // C2 unified process model — the AGENT owns the cloudflared tunnel:
@@ -521,40 +518,63 @@ async fn run_server(config_path: PathBuf) {
         });
     }
 
-    // round-143: bridge watchdog. The boot-time bridge spawn (above) runs
-    // once; if the bridge's IIFE throws (e.g. transient launchPersistentContext
-    // failure, missing browser binary, profile lock) the process exits and
-    // 9224 stays dead until the device reboots — the panel's live view goes
-    // black and "live channel reconnecting…" loops forever (observed d1, 2026-08-25).
-    // Every 30 s, TCP-probe 9224; if closed AND bridge.js + node.exe exist,
-    // respawn. The new child joins the reaper job (setup_child_reaper_job
-    // runs before main and applies to every child spawned by this process),
-    // so it dies with the agent on update.
+    // round-163: bridge SUPERVISION — event-driven, replacing the round-143
+    // blind 30s TCP-probe watchdog. The child is joined; its exit is the
+    // trigger to respawn (capped backoff), and its stdout/stderr are piped
+    // into the agent log so a crash loop is diagnosable instead of silent.
+    // The only remaining wait-for-files poll covers the degraded case where
+    // setup has not restored playwright/node.exe yet (update in flight).
     #[cfg(windows)]
     {
         tokio::spawn(async {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-            tick.tick().await; // first tick is immediate — skip it
+            let external = std::net::TcpStream::connect("127.0.0.1:9224").is_ok();
+            if external {
+                log_line("browser bridge: supervisor idle (external process owns 9224)");
+                return;
+            }
+            let mut backoff: u64 = 2;
             loop {
-                tick.tick().await;
-                let busy = tokio::net::TcpStream::connect("127.0.0.1:9224")
-                    .await
-                    .is_ok();
-                if busy {
-                    continue;
-                }
                 let install_dir = vale_agent::paths::install_dir();
                 let node = install_dir.join("playwright").join("node.exe");
                 let bridge = install_dir.join("bridge.js");
                 if !(node.exists() && bridge.exists()) {
+                    // Bundle not staged (fresh install / mid-update). Setup
+                    // restores it; check again shortly.
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                     continue;
                 }
                 let mut cmd = tokio::process::Command::new(&node);
-                cmd.arg(&bridge).arg("9224");
+                cmd.arg(&bridge).arg("9224")
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
                 match cmd.spawn() {
-                    Ok(_) => log_line("browser bridge: watchdog respawned (9224 was down)"),
-                    Err(e) => log_line(&format!("browser bridge: watchdog respawn failed: {e}")),
+                    Ok(mut child) => {
+                        log_line("browser bridge: spawned on 127.0.0.1:9224");
+                        let mut pipes: Vec<_> = Vec::new();
+                        if let Some(out) = child.stdout.take() { pipes.push(("out", out)); }
+                        if let Some(err) = child.stderr.take() { pipes.push(("err", err)); }
+                        for (tag, pipe) in pipes {
+                            tokio::spawn(async move {
+                                use tokio::io::{AsyncBufReadExt, BufReader};
+                                let mut lines = BufReader::new(pipe).lines();
+                                while let Ok(Some(line)) = lines.next_line().await {
+                                    if !line.trim().is_empty() {
+                                        log_line(&format!("bridge[{tag}] {line}"));
+                                    }
+                                }
+                            });
+                        }
+                        let status = child.wait().await;
+                        log_line(&format!(
+                            "browser bridge exited ({status:?}) — respawning in {backoff}s"
+                        ));
+                    }
+                    Err(e) => {
+                        log_line(&format!("browser bridge: spawn failed: {e} — retry in {backoff}s"));
+                    }
                 }
+                tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
+                backoff = (backoff * 2).min(30);
             }
         });
     }

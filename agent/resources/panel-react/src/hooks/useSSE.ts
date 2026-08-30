@@ -92,14 +92,12 @@ export function useSSE(
       }
     }, 30_000);
 
-    // 5s sync loop (round-86): recover bytes missed during an SSE outage —
-    // read INCREMENTALLY from each session's renderedBytes (the round-83
-    // offset:0 read re-appended the full history every tick).
-    // round-98: also sync sessions with a live write callback that are NO
-    // longer in the live list (closed/tombstone) — their drainer-tail bytes
-    // (retained in history) never got a final read, so the panel permanently
-    // missed the tail of a session that closed mid-stream.
-    const syncLoop = window.setInterval(() => {
+    // round-163: the 5s sync TIMER is gone. The sweep still exists but runs
+    // EVENT-driven: once on connect (recover everything missed while the
+    // stream was down) and on tab refocus. While the stream is healthy,
+    // frames arrive in real time and the 'lagged' broadcast marker + gap
+    // backfill cover dropped frames — a periodic re-read was pure waste.
+    const syncSweep = () => {
       const live = new Set(getLiveSidsRef.current());
       const sids = new Set<string>(live);
       for (const sid of writeCallbacks.current.keys()) sids.add(sid);
@@ -148,7 +146,10 @@ export function useSSE(
             // (un-advanced) rendered offset; nothing is lost.
           });
       }
-    }, 5_000);
+    };
+    syncSweep();
+    const onVisible = () => { if (document.visibilityState === "visible") syncSweep(); };
+    document.addEventListener("visibilitychange", onVisible);
 
     const backoff = () => {
       const base = Math.min(3000 * Math.pow(2, attempt), 30000);
@@ -207,6 +208,14 @@ export function useSSE(
               if (!dataText.trim()) continue;
               let frame;
               try { frame = JSON.parse(dataText.trim()); } catch { continue; }
+              if (typeof frame.ev === "string") {
+                // round-163: control events (sessions-changed,
+                // playwright-changed) — the agent pushes them on the same
+                // stream; hooks subscribe via these window events. This is
+                // what replaced the 3s/5s status polls.
+                window.dispatchEvent(new CustomEvent(`vale-${frame.ev}`, { detail: frame }));
+                continue;
+              }
               if (Array.isArray(frame.data) && frame.session_id) {
                 const cb = writeCallbacks.current.get(frame.session_id);
                 if (!cb) continue;
@@ -234,6 +243,9 @@ export function useSSE(
                   backfillGap(frame.session_id, issue, typeof frame.start === "number" ? frame.start : undefined, cb);
                 }
                 cb.write(new Uint8Array(frame.data));
+                // round-163: activity signal — command cards re-fetch on
+                // output instead of a 2s audit-log timer.
+                window.dispatchEvent(new CustomEvent("vale-term-output", { detail: { sid: frame.session_id } }));
               } else if (frame.lagged) {
                 // round-100: the broadcast dropped frames for this lagging
                 // subscriber — bytes in [rendered, next frame's start) were
@@ -256,7 +268,11 @@ export function useSSE(
       if (alive) setTimeout(connect, backoff());
     };
     connect();
-    return () => { alive = false; clearInterval(heartbeat); clearInterval(syncLoop); };
+    return () => {
+      alive = false;
+      clearInterval(heartbeat);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [connected, writeCallbacks, getLiveSidsRef]);
 
   return sseState;

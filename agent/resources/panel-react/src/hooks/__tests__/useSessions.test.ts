@@ -96,17 +96,21 @@ describe("useSessions", () => {
     });
   });
 
-  it("poll marks server-dead sessions closed and releases focus (R88)", async () => {
+  it("sessions-changed event marks server-dead sessions closed and releases focus (R88)", async () => {
     mockOpen("term-1");
     const { result } = renderHook(() => useSessions(true));
     await act(async () => { await result.current.openSession("pty", ""); });
     await waitFor(() => { expect(result.current.sessions[0]?.active).toBe(true); });
-    // The server-side session dies (PTY exit) — the poll's terminal_list now
-    // returns [] (term-1 gone).
+    // The server-side session dies (PTY exit) — the agent pushes the
+    // sessions-changed SSE event (round-163 replaced the 3s poll with it),
+    // terminal_list now returns [] (term-1 gone).
     liveSids.delete("term-1");
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent("vale-sessions-changed"));
+    });
     await waitFor(() => {
       expect(result.current.sessions[0]?.closed).toBe(true);
-    }, { timeout: 5000 });
+    });
     expect(result.current.activeSid).toBe(null);
   });
 });

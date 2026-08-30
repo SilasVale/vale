@@ -50,7 +50,6 @@ interface SpecPlugin {
   description: string;
 }
 
-const POLL_MS = 5000;
 const MAX_LOG = 50;
 
 export function usePlugins(active: boolean) {
@@ -93,11 +92,19 @@ export function usePlugins(active: boolean) {
     }
   }, [specLoaded]);
 
+  // round-163: the 5s status POLL is gone. The playwright status refreshes
+  // on mount, after every start/stop action (already), on the agent-pushed
+  // `playwright-changed` SSE event, and on tab refocus.
   useEffect(() => {
     if (!active) return;
     refresh();
-    const t = window.setInterval(refresh, POLL_MS);
-    return () => clearInterval(t);
+    const onChange = () => { refresh(); };
+    window.addEventListener("vale-playwright-changed", onChange);
+    document.addEventListener("visibilitychange", onChange);
+    return () => {
+      window.removeEventListener("vale-playwright-changed", onChange);
+      document.removeEventListener("visibilitychange", onChange);
+    };
   }, [active, refresh]);
 
   const pushLog = useCallback((text: string, error: boolean) => {

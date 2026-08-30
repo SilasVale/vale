@@ -118,6 +118,18 @@ function decodeClientFrames(buf, onMessage) {
   let page = ctx.pages()[0] || await ctx.newPage();
   if (page.url() === 'about:blank') await page.goto(WELCOME).catch(() => {});
   let cdp = await ctx.newCDPSession(page);
+  // External tab events: pages opened/closed by the site itself (window.open,
+  // target=_blank, JS close) and any in-page navigation change the tab list —
+  // push instead of waiting for the panel to ask.
+  ctx.on('page', (p) => {
+    scheduleTabsPush();
+    p.on('framenavigated', () => scheduleTabsPush());
+    p.on('close', () => scheduleTabsPush());
+  });
+  for (const p of ctx.pages()) {
+    p.on('framenavigated', () => scheduleTabsPush());
+    p.on('close', () => scheduleTabsPush());
+  }
   // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
   // after closes and switches the CDP pipe so screencast follows selection.
   let selPage = page;
@@ -132,6 +144,25 @@ function decodeClientFrames(buf, onMessage) {
     cdp = await ctx.newCDPSession(selPage);
     bindScreencast(cdp);
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 45, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 15 }).catch(() => {});
+  }
+
+  // round-163: push the tab list to viewers when it CHANGES (open/close/
+  // select/navigate) — the panel dropped its 1.5s tabs poll for this.
+  function pushTabs() {
+    try {
+      if (!ctx) return;
+      const f = encodeFrame(1, Buffer.from(JSON.stringify({
+        ev: 'tabs',
+        tabs: ctx.pages().map((p, i) => ({ i, url: p.url() })),
+        sel: ctx.pages().indexOf(selPage),
+      })));
+      for (const s of sockets) { try { s.write(f); } catch {} }
+    } catch (_) {}
+  }
+  let tabsDebounce = null;
+  function scheduleTabsPush() {
+    if (tabsDebounce) return;
+    tabsDebounce = setTimeout(() => { tabsDebounce = null; pushTabs(); }, 150);
   }
 
   // round-150: immediate frame on input — if no new screencast frame
@@ -173,23 +204,23 @@ function decodeClientFrames(buf, onMessage) {
       if (m.t === 'tabnew') {
         const np = await ctx.newPage();
         await np.goto(m.url || WELCOME, { waitUntil: 'domcontentloaded' }).catch(() => {});
-        selPage = np; await attachSel();
+        selPage = np; await attachSel(); scheduleTabsPush();
         return { ok: true };
       }
       if (m.t === 'tabclose') {
         pagesList();
         const ps = ctx.pages();
         const victim = ps[m.i ?? -1];
-        if (victim && ps.length > 1) { if (victim === selPage) selPage = ps[ps.length - 1] === victim ? ps[0] : ps[ps.length - 1]; await victim.close(); await attachSel(); }
+        if (victim && ps.length > 1) { if (victim === selPage) selPage = ps[ps.length - 1] === victim ? ps[0] : ps[ps.length - 1]; await victim.close(); await attachSel(); scheduleTabsPush(); }
         return { ok: true };
       }
       if (m.t === 'tabsel') {
         const ps = ctx.pages(); const p = ps[m.i ?? -1];
-        if (p) { selPage = p; page = p; await p.bringToFront().catch(() => {}); await attachSel(); }
+        if (p) { selPage = p; page = p; await p.bringToFront().catch(() => {}); await attachSel(); scheduleTabsPush(); }
         return { ok: true, url: selPage?.url() };
       }
       page = selPage || page;
-      if (m.t === 'nav') await page.goto(m.url, { waitUntil: 'domcontentloaded' });
+      if (m.t === 'nav') { await page.goto(m.url, { waitUntil: 'domcontentloaded' }); scheduleTabsPush(); }
       else if (m.t === 'm') {
         const type = m.k === 'down' ? 'mousePressed' : m.k === 'up' ? 'mouseReleased' : 'mouseMoved';
         const btn = (m.k === 'down' || m.k === 'up') ? 'left' : 'none';

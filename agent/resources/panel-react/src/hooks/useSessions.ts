@@ -32,15 +32,16 @@ export function useSessions(connected: boolean) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSid, setActiveSid] = useState<string | null>(null);
   const [status, setStatusState] = useState("");
-  const pollRef = useRef<number | null>(null);
   // round-94: a live mirror of activeSid for async callbacks (closeSession
   // awaits terminal_close, during which the user can activate another tab —
   // the closed-over activeSid was stale and stomped that activation).
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeSid;
 
-  // Poll the session list while connected (the panel polls terminal_list
-  // every 3s to pick up sessions created by other clients).
+  // round-163: the 3s terminal_list POLL is gone. The list refreshes on:
+  // connect (initial), an agent-pushed `sessions-changed` SSE event (emitted
+  // by terminal_open/close), and tab refocus. During an SSE outage the UI
+  // shows "reconnecting" anyway; the refocus sweep covers stale gaps.
   useEffect(() => {
     if (!connected) return;
     const tick = async () => {
@@ -92,8 +93,13 @@ export function useSessions(connected: boolean) {
       } catch { /* transient — next poll retries */ }
     };
     tick();
-    pollRef.current = window.setInterval(tick, 3000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    const onChange = () => { tick(); };
+    window.addEventListener("vale-sessions-changed", onChange);
+    document.addEventListener("visibilitychange", onChange);
+    return () => {
+      window.removeEventListener("vale-sessions-changed", onChange);
+      document.removeEventListener("visibilitychange", onChange);
+    };
   }, [connected]);
 
   const setStatus = useCallback((msg: string) => setStatusState(msg), []);

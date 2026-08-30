@@ -91,6 +91,9 @@ impl AppState {
             crate::plugins::memory::default_memory_dir(),
             MemoryLimits::default(),
         ));
+        // round-163: runner start/stop pushes `playwright-changed` over the
+        // SSE bus — the panel dropped its 5s status poll for this event.
+        playwright.set_bus(event_bus.clone());
         let plugin_registry = build_registry(&RegistryDeps {
             terminal_mgr: terminal_mgr.clone(),
             serial_pool: serial_pool.clone(),

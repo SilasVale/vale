@@ -473,6 +473,11 @@ fn tool_open(
                     // already emits; this is a no-op for the double-run (the
                     // event is harmless on an already-closed session).
                     bus2.emit(&close_event(&kind, &sid_buf));
+                    // round-163: backend-initiated death must also push the
+                    // SSE list event — with the panel's 3s terminal_list poll
+                    // gone, this is what tombstones the dead tab and releases
+                    // focus (the R88 contract).
+                    bus2.emit_term_output(json!({ "ev": "sessions-changed" }));
                 });
                 // round-157: log how many sessions are already open on this
                 // device — models that see "commands queuing" symptoms
@@ -484,6 +489,9 @@ fn tool_open(
                 // panel-side migration.
                 let open_count = terminal_mgr.term_list().await.len();
                 tracing::debug!("[vale-agent] terminal_open: {id} open_sessions={open_count}");
+                // round-163: push the session-list change over the SSE bus —
+                // the panel dropped its 3s terminal_list poll for this event.
+                bus.emit_term_output(json!({"ev": "sessions-changed"}));
                 Ok(json!(id))
             }
         },
@@ -545,6 +553,8 @@ fn tool_close(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, outp
                 recover_guard(&buf)
                     .retain_live(&session_id, &kind, &label);
                 bus.emit(&close_event(&kind, &session_id));
+                // round-163: same push contract as terminal_open.
+                bus.emit_term_output(json!({"ev": "sessions-changed"}));
                 Ok(json!(format!("Closed terminal session {session_id}")))
             }
         },

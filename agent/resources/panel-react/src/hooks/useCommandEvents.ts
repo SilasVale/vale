@@ -209,8 +209,24 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
       } catch { /* transient — keep the last good events, retry next tick */ }
     };
     tick();
-    const t = window.setInterval(tick, pollMs);
-    return () => clearInterval(t);
+    // round-163: no timer — the audit log refetches when THIS session
+    // produces terminal output (debounced) or the tab regains focus. A
+    // silent command still lands its cards on the next output burst.
+    let timer: number | undefined;
+    const onOutput = (e: Event) => {
+      const sid = (e as CustomEvent).detail?.sid;
+      if (sid !== sidRef.current) return; // another session's output
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(tick, 1000);
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") tick(); };
+    window.addEventListener("vale-term-output", onOutput);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("vale-term-output", onOutput);
+      document.removeEventListener("visibilitychange", onVisible);
+      if (timer) window.clearTimeout(timer);
+    };
   }, [sid, pollMs]);
 
   return events;

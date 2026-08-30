@@ -44,6 +44,9 @@ const MCP_PORT: u16 = 9229;
 /// All operations take the lock via recover_guard (poison recovery, consistent with the codebase).
 pub struct PlaywrightManager {
     inner: Mutex<Option<ManagedPlaywright>>,
+    /// round-163: set by AppState after construction — start/stop push a
+    /// `playwright-changed` SSE event so the panel needs no status poll.
+    bus: std::sync::Mutex<Option<std::sync::Arc<dyn vale_agent_core::EventBus>>>,
 }
 
 /// A running playwright-mcp instance.
@@ -171,7 +174,20 @@ async fn probe_healthy() -> bool {
 
 impl PlaywrightManager {
     pub fn new() -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self { inner: Mutex::new(None) })
+        std::sync::Arc::new(Self { inner: Mutex::new(None), bus: std::sync::Mutex::new(None) })
+    }
+
+    /// Wire the event bus (called once from AppState::new, after both Arcs
+    /// exist). Emits go out on runner start/stop regardless of WHO started
+    /// it (panel button, MCP self-heal, AI client).
+    pub fn set_bus(&self, bus: std::sync::Arc<dyn vale_agent_core::EventBus>) {
+        *self.bus.lock().unwrap() = Some(bus);
+    }
+
+    fn notify_changed(&self) {
+        if let Some(bus) = self.bus.lock().unwrap().as_ref() {
+            bus.emit_term_output(serde_json::json!({ "ev": "playwright-changed" }));
+        }
     }
 
     /// Current state — running/port/started_at, or running:false.
@@ -423,6 +439,7 @@ impl PlaywrightManager {
             let _ = child.wait().await; // reap (round-129: loser path was missing this)
             return Ok(serde_json::json!({ "status": "already_running" }));
         }
+        self.notify_changed();
         Ok(serde_json::json!({ "status": "started", "port": port }))
     }
 
@@ -449,6 +466,7 @@ impl PlaywrightManager {
                 let _ = m.child.wait().await; // reap (round-128: zombie-free)
             }
         }
+        self.notify_changed();
         Ok(serde_json::json!({ "status": "stopped" }))
     }
 }
