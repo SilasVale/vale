@@ -71,6 +71,7 @@ jobs:
 
       - name: Download cloudflared (Windows, bundled)
         if: matrix.cloudflared
+        shell: bash
         run: |
           curl -fL --retry 3 -o agent/deploy/cloudflared.exe \
             "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
@@ -80,21 +81,12 @@ jobs:
         working-directory: agent/vale-desktop
         run: npx tauri build ${{ matrix.args }}
 
-      - name: Build Windows all-in-one installer (agent + desktop + cloudflared)
-        if: matrix.platform == 'windows-latest'
-        run: |
-          ./scripts/build-installer.sh
-        env:
-          MAKENSIS: ${{ runner.tool_cache }}/nsis/makensis.exe
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: vale-${{ matrix.platform }}
           path: |
             agent/vale-desktop/src-tauri/target/**/release/bundle/**/*
-            index/public/vale-agent/ValeAgent-Setup.exe
-            agent/deploy/cloudflared.exe
 
   publish:
     name: Publish GitHub Release
