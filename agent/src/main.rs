@@ -550,9 +550,11 @@ async fn run_server(config_path: PathBuf) {
                 match cmd.spawn() {
                     Ok(mut child) => {
                         log_line("browser bridge: spawned on 127.0.0.1:9224");
-                        let mut pipes: Vec<_> = Vec::new();
-                        if let Some(out) = child.stdout.take() { pipes.push(("out", out)); }
-                        if let Some(err) = child.stderr.take() { pipes.push(("err", err)); }
+                        // Box both pipe types to one AsyncRead — stdout and
+                        // stderr are different concrete types.
+                        let mut pipes: Vec<(&str, Box<dyn tokio::io::AsyncRead + Unpin + Send>)> = Vec::new();
+                        if let Some(out) = child.stdout.take() { pipes.push(("out", Box::new(out))); }
+                        if let Some(err) = child.stderr.take() { pipes.push(("err", Box::new(err))); }
                         for (tag, pipe) in pipes {
                             tokio::spawn(async move {
                                 use tokio::io::{AsyncBufReadExt, BufReader};
