@@ -54,6 +54,13 @@ fetch_cloudflared
 # browsers on this build host. Repacked on every run.
 prepare_playwright() {
   local out="$ROOT/agent/deploy/vale-playwright.zip"
+  # Reuse an already-staged bundle (like cloudflared): the zip holds node.exe
+  # + @playwright/mcp, neither of which changes with an agent release. A
+  # rebuild needs a bump of PW_BUNDLE_VER below (or deleting the file).
+  if [ -f "$out" ] && [ "$(stat -c%s "$out" 2>/dev/null || echo 0)" -gt 1000000 ]; then
+    echo "  playwright bundle already staged ($(du -h "$out" | cut -f1))"
+    return 0
+  fi
   local work
   work="$(mktemp -d)"
   echo "  preparing playwright bundle..."

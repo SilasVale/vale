@@ -805,10 +805,16 @@ export async function consumeRegKey(env: Env, code: string): Promise<void> {
 export async function listRegKeys(env: Env): Promise<{ code: string; expiresAt: number }[]> {
   if (!env.KEYS) return [];
   const res = await env.KEYS.list({ prefix: "regkey:" });
-  return (res.keys as { name: string; expiration?: number }[]).map((k) => ({
-    code: k.name.slice("regkey:".length),
-    expiresAt: (k.expiration || 0) * 1000,
-  }));
+  // KV list() keeps returning the NAMES of expired-but-not-yet-reaped keys
+  // (value gone, entry visible until compaction) — the devices page showed a
+  // pile of dead "unused keys". Filter to genuinely live ones.
+  const now = Date.now();
+  return (res.keys as { name: string; expiration?: number }[])
+    .map((k) => ({
+      code: k.name.slice("regkey:".length),
+      expiresAt: (k.expiration || 0) * 1000,
+    }))
+    .filter((k) => k.expiresAt > now);
 }
 
 /* ---------------- Plugin (extension) registry ----------------
