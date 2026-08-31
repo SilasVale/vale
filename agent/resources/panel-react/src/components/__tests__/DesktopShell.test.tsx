@@ -29,6 +29,10 @@ const baseProps = {
   registerWrite: vi.fn(() => vi.fn()),
   plugins: { rows: [], specLoaded: false, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any,
   onNewSession: vi.fn(),
+  onConnConnect: vi.fn(() => Promise.resolve("s1")),
+  connModal: null,
+  onConnClose: vi.fn(),
+  status: "",
   sseState: "connected" as "connected" | "down" | "connecting",
   token: "t",
   cmdEvents: { cards: [], events: [] } as any,
@@ -71,5 +75,13 @@ describe("DesktopShell", () => {
     expect(container.querySelector(".desktop-rail-status.ok")).toBeTruthy();
     const { container: c2 } = render(<DesktopShell {...baseProps} sseState="down" />);
     expect(c2.querySelector(".desktop-rail-status.ok")).toBeNull();
+  });
+
+  it("renders the SSH connection modal when connModal is set (regression: desktop shell had no ConnModal mount — SSH/Serial buttons were dead)", () => {
+    const { container } = render(<DesktopShell {...baseProps} connModal="ssh" />);
+    expect(container.querySelector("#conn-modal")).toBeTruthy();
+    expect(container.querySelector(".modal-card h2")?.textContent).toBe("New SSH");
+    const { container: c2 } = render(<DesktopShell {...baseProps} connModal="serial" />);
+    expect(c2.querySelector(".modal-card h2")?.textContent).toBe("New Serial");
   });
 });

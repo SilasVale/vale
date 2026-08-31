@@ -176,6 +176,10 @@ export function App() {
           else if (kind === "browser") openBrowserSession();
           else if (kind === "ssh" || kind === "serial") setModalKind(kind);
         }}
+        onConnConnect={(kind, target, extra) => sessions.openSession(kind, target, extra)}
+        connModal={modalKind}
+        onConnClose={() => setModalKind(null)}
+        status={sessions.status}
         sseState={sseState}
       />
     );
