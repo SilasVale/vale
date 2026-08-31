@@ -231,7 +231,14 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   }, []);
 
   const navigate = useCallback(() => {
-    const u = url.startsWith("http") ? url : `https://${url}`;
+    // round-fix (P1): the old startsWith("http") check rewrote every
+    // non-http URL — "data:text/html,…" became "https://data:text/html,…"
+    // (and about:/blob:/chrome:/file: likewise). Schemes the remote browser
+    // understands are kept verbatim; anything else gets the https:// default
+    // (so "example.com" and "localhost:3000" still normalize correctly).
+    const u = /^(https?|data|about|blob|file|chrome|chrome-extension|view-source|javascript|edge):/i.test(url.trim())
+      ? url.trim()
+      : `https://${url.trim()}`;
     setUrl(u);
     send({ t: "nav", url: u });
     // Remember the URL locally (dedup, newest first, cap 20).

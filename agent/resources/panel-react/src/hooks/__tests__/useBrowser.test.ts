@@ -46,6 +46,23 @@ describe("useBrowser", () => {
     expect(result.current.urlHistory.filter((u) => u === "https://example.com").length).toBe(1);
   });
 
+  it("navigate() keeps real schemes verbatim and only defaults bare hosts (P1)", async () => {
+    const { result } = renderHook(() => useBrowser({ apiBase: "", token: "t" }));
+    const norm = async (input: string) => {
+      act(() => result.current.setUrl(input));
+      await act(async () => { result.current.navigate(); });
+      return result.current.url;
+    };
+    expect(await norm("data:text/html,<h1>hi</h1>")).toBe("data:text/html,<h1>hi</h1>");
+    expect(await norm("about:blank")).toBe("about:blank");
+    expect(await norm("http://insecure.example")).toBe("http://insecure.example");
+    expect(await norm("chrome://settings")).toBe("chrome://settings");
+    // host:port and bare hosts still normalize to https:// (the "localhost:"
+    // colon must NOT be mistaken for a scheme):
+    expect(await norm("localhost:3000")).toBe("https://localhost:3000");
+    expect(await norm("192.168.1.1")).toBe("https://192.168.1.1");
+  });
+
   it("zoom is a plain controlled value the view applies to the frame width", () => {
     const { result } = renderHook(() => useBrowser({ apiBase: "", token: "t" }));
     expect(result.current.zoom).toBe(100);
