@@ -126,6 +126,7 @@ fi
 # Tray guard: the tray has its own build (vale-tray/); check it against the
 # same inputs (the tray is NOT rebuilt by ./scripts/build.sh agent's guard).
 NEWEST_TRAY="$(find "$ROOT/agent/vale-tray" "$ROOT/agent/Cargo.toml" \
+  -path '*/target' -prune -o \
   \( -name '*.rs' -o -name '*.toml' \) -newer "$TRAYEXE" -print | head -1)"
 if [ -n "$NEWEST_TRAY" ]; then
   echo "!! $NEWEST_TRAY is newer than the release vale-tray.exe — rebuild the tray (cd agent/vale-tray && cargo xwin build --release)"
