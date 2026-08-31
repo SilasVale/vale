@@ -1,6 +1,6 @@
 // Vale Desktop P0 — Electron shell over the local vale-agent service.
 // UI = agent /desktop/ route (panel-react SPA); agent = child process.
-const { app, BrowserWindow, Tray, Menu, nativeImage } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -13,9 +13,8 @@ const BASE = "http://127.0.0.1:18080";
 // connectOverCDP("http://127.0.0.1:9333") and drives this window's pages.
 // 9333 avoids collisions with the agent's 9224 (bridge) / 9229 (runner).
 const CDP_PORT = 9333;
-// P1b: local control endpoint for browser sessions. The SPA (served by the
-// agent on 18080) calls this to open/close browser-session windows; CDP 9333
-// exposes them all to playwright.
+// P1b: fallback local control endpoint for browser sessions (used when the
+// SPA runs in a plain browser, not under the Electron preload IPC).
 const CTRL_PORT = 9444;
 let win = null, tray = null, agent = null;
 const browserSessions = new Map(); // id -> BrowserWindow
@@ -23,13 +22,35 @@ const browserSessions = new Map(); // id -> BrowserWindow
 // CDP must be enabled before app ready — pass it through Chromium switches.
 app.commandLine.appendSwitch("remote-debugging-port", String(CDP_PORT));
 
-// --- Browser-session control HTTP (127.0.0.1:9444) ---
+// --- Browser-session control: shared core (used by both IPC and HTTP) ---
+function browserOpen(url) {
+  const target = url || "about:blank";
+  const id = `browser-${Date.now()}`;
+  const bw = new BrowserWindow({ width: 1100, height: 750, title: `Vale Browser — ${target}` });
+  bw.loadURL(target);
+  bw.on("closed", () => browserSessions.delete(id));
+  browserSessions.set(id, bw);
+  return { ok: true, id, url: target, cdp: `http://127.0.0.1:${CDP_PORT}` };
+}
+function browserClose(id) {
+  const bw = browserSessions.get(id || "");
+  if (bw) { bw.close(); browserSessions.delete(id); }
+  return { ok: true };
+}
+function browserList() {
+  const list = [...browserSessions.entries()].map(([id, bw]) => ({ id, url: bw.webContents.getURL() }));
+  return { ok: true, sessions: list, cdp: `http://127.0.0.1:${CDP_PORT}` };
+}
+
+// Electron-native path: the SPA calls window.valeBrowser.* (preload bridge).
+ipcMain.handle("browser-session:open", (_e, url) => browserOpen(url));
+ipcMain.handle("browser-session:close", (_e, id) => browserClose(id));
+ipcMain.handle("browser-session:list", () => browserList());
+
+// Fallback HTTP path (plain browser / no preload): same core, CORS-open.
 const httpServer = http.createServer((req, res) => {
   const u = new URL(req.url, "http://127.0.0.1");
   const send = (obj, code = 200) => {
-    // CORS: the SPA loads from http://127.0.0.1:18080 (agent) and calls this
-    // control endpoint cross-origin — without these headers the fetch is
-    // blocked and "Browser…" silently fails.
     res.setHeader("access-control-allow-origin", "*");
     res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
     res.setHeader("access-control-allow-headers", "content-type, authorization");
@@ -38,25 +59,9 @@ const httpServer = http.createServer((req, res) => {
   };
   if (req.method === "OPTIONS") return send({ ok: true });
   try {
-    if (u.pathname === "/api/browser-session/open" && req.method === "POST") {
-      const url = u.searchParams.get("url") || "about:blank";
-      const id = `browser-${Date.now()}`;
-      const bw = new BrowserWindow({ width: 1100, height: 750, title: `Vale Browser — ${url}` });
-      bw.loadURL(url);
-      bw.on("closed", () => browserSessions.delete(id));
-      browserSessions.set(id, bw);
-      return send({ ok: true, id, url, cdp: `http://127.0.0.1:${CDP_PORT}` });
-    }
-    if (u.pathname === "/api/browser-session/close" && req.method === "POST") {
-      const id = u.searchParams.get("id") || "";
-      const bw = browserSessions.get(id);
-      if (bw) { bw.close(); browserSessions.delete(id); }
-      return send({ ok: true });
-    }
-    if (u.pathname === "/api/browser-session/list") {
-      const list = [...browserSessions.entries()].map(([id, bw]) => ({ id, url: bw.webContents.getURL() }));
-      return send({ ok: true, sessions: list, cdp: `http://127.0.0.1:${CDP_PORT}` });
-    }
+    if (u.pathname === "/api/browser-session/open" && req.method === "POST") return send(browserOpen(u.searchParams.get("url") || "about:blank"));
+    if (u.pathname === "/api/browser-session/close" && req.method === "POST") return send(browserClose(u.searchParams.get("id") || ""));
+    if (u.pathname === "/api/browser-session/list") return send(browserList());
     send({ ok: false, error: "not found" }, 404);
   } catch (e) {
     send({ ok: false, error: String(e) }, 500);
@@ -120,7 +125,16 @@ app.whenReady().then(async () => {
   httpServer.listen(CTRL_PORT, "127.0.0.1");
   console.log(`[vale] browser-session control: http://127.0.0.1:${CTRL_PORT}`);
   await startAgent();
-  win = new BrowserWindow({ width: 1200, height: 800, title: "Vale" });
+  win = new BrowserWindow({
+    width: 1200, height: 800, title: "Vale",
+    webPreferences: {
+      // preload exposes window.valeBrowser.* to the SPA (Electron-native
+      // browser-session control — no HTTP/CORS involved).
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
   win.loadURL(`${BASE}/desktop/`);
   // P1: report the CDP endpoint so AI clients (playwright-mcp) can attach:
   // connectOverCDP("http://127.0.0.1:9333") → drives THIS window's pages.

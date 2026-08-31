@@ -47,17 +47,19 @@ export function App() {
   const plugins = usePlugins(connected);
   const sessions = useSessions(connected);
 
-  // Browser session (P1): the Electron shell (when serving /desktop/) hosts
-  // a local control endpoint at 127.0.0.1:9444 that opens a browser-session
-  // window (visible to the user) — playwright drives it via CDP :9333. In a
-  // plain web browser there is no shell, so tell the user.
+  // Browser session (P1): in the Electron shell the preload bridge
+  // (window.valeBrowser) opens a browser-session window natively — no HTTP,
+  // no CORS. Fall back to the shell's local control endpoint (127.0.0.1:9444)
+  // when the SPA runs in a plain browser, and explain when neither exists.
   const openBrowserSession = async () => {
+    const bridge = (window as any).valeBrowser;
+    if (bridge?.open) {
+      try { await bridge.open("about:blank"); return; } catch { /* fall through */ }
+    }
     try {
       const r = await fetch("http://127.0.0.1:9444/api/browser-session/open", { method: "POST" });
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || "open failed");
-      // The Electron shell opens the browser-session window — nothing else
-      // needed here. (Connection banner is for errors only.)
     } catch {
       setConnError("Browser sessions need the Vale desktop app (Electron shell on this machine).");
     }
