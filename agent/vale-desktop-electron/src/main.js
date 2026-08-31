@@ -47,6 +47,24 @@ ipcMain.handle("browser-session:open", (_e, url) => browserOpen(url));
 ipcMain.handle("browser-session:close", (_e, id) => browserClose(id));
 ipcMain.handle("browser-session:list", () => browserList());
 
+// Desktop-app settings (auto-launch) — the Settings page toggles this; it
+// uses Electron's login-item API (HKCU Run / startup folder), so it works
+// only under the Electron shell (plain-browser SPA hides the card).
+ipcMain.handle("desktop:get-auto-launch", () => {
+  try { return { ok: true, enabled: app.getLoginItemSettings().openAtLogin }; }
+  catch (e) { return { ok: false, error: String(e) }; }
+});
+ipcMain.handle("desktop:set-auto-launch", (_e, enabled) => {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: !!enabled,
+      path: process.execPath,
+      args: [path.join(__dirname, "..")].concat(app.isPackaged ? [] : ["--no-sandbox"]),
+    });
+    return { ok: true, enabled: !!enabled };
+  } catch (e) { return { ok: false, error: String(e) }; }
+});
+
 // Fallback HTTP path (plain browser / no preload): same core, CORS-open.
 const httpServer = http.createServer((req, res) => {
   const u = new URL(req.url, "http://127.0.0.1");

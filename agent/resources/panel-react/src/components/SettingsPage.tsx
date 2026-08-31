@@ -9,6 +9,33 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
   const [bufferMb, setBufferMb] = useState("8");
   const [status, setStatus] = useState("");
 
+  // Desktop-app card (Electron shell only): auto-launch on login.
+  const desktopBridge = (window as any).valeDesktop;
+  const [hasDesktopBridge] = useState(!!desktopBridge?.getAutoLaunch);
+  const [autoLaunch, setAutoLaunchState] = useState(false);
+  const [autoLaunchBusy, setAutoLaunchBusy] = useState(false);
+  const [autoLaunchStatus, setAutoLaunchStatus] = useState("");
+
+  useEffect(() => {
+    if (!desktopBridge?.getAutoLaunch) return;
+    desktopBridge.getAutoLaunch().then((j: any) => {
+      if (j?.ok) setAutoLaunchState(!!j.enabled);
+    }).catch(() => setAutoLaunchStatus("desktop bridge unavailable"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function setAutoLaunch(enabled: boolean) {
+    if (!desktopBridge?.setAutoLaunch) return;
+    setAutoLaunchBusy(true);
+    setAutoLaunchStatus("");
+    try {
+      const j = await desktopBridge.setAutoLaunch(enabled);
+      if (j?.ok) { setAutoLaunchState(!!j.enabled); setAutoLaunchStatus(j.enabled ? "enabled — Vale Desktop starts at login" : "disabled"); }
+      else setAutoLaunchStatus(j?.error || "failed");
+    } catch (e: any) { setAutoLaunchStatus(e?.message || "failed"); }
+    finally { setAutoLaunchBusy(false); }
+  }
+
   // Gateway card state
   const [gwUrl, setGwUrl] = useState("");
   const [gwKey, setGwKey] = useState("");
@@ -130,6 +157,24 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
           <button className="btn btn-ghost btn-mini" onClick={save}>Save</button>
         </div>
         {status && <p className="hint">{status}</p>}
+      </div>
+
+      {/* Desktop-app card — only in the Electron shell (window.valeDesktop bridge). */}
+      <div className="settings-section">
+        <h3>Desktop app</h3>
+        <p className="muted">
+          Start Vale Desktop automatically when you log in to this machine.
+        </p>
+        <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={autoLaunch}
+            disabled={autoLaunchBusy || !hasDesktopBridge}
+            onChange={(e) => setAutoLaunch(e.target.checked)}
+          />
+          <span>Start on login{!hasDesktopBridge ? " (desktop app only)" : ""}</span>
+        </label>
+        {autoLaunchStatus && <p className="hint">{autoLaunchStatus}</p>}
       </div>
 
       <div className="settings-section">
