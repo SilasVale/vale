@@ -254,6 +254,18 @@ const commands = {
     } else {
       console.log("setup: vale-desktop not in package (skipped)");
     }
+    // stage-l: stage the Electron shell sources (main/preload) so the desktop
+    // app picks up menu/command features on a fresh install too.
+    const DESK_SRC = path.join(__dirname, "..", "vale-desktop-electron", "src");
+    if (fs.existsSync(DESK_SRC)) {
+      const desDst = path.join(DIR, "vale-desktop-electron", "src");
+      fs.mkdirSync(desDst, { recursive: true });
+      for (const f of ["main.js", "preload.js"]) {
+        const s = path.join(DESK_SRC, f);
+        if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f));
+      }
+      console.log("setup: vale-desktop-electron sources staged");
+    }
     // Register boot-start task (SYSTEM) and kick it once; the agent's own
     // first-run flow registers the device with the console using the key.
     //
@@ -341,6 +353,18 @@ const commands = {
     if (fs.existsSync(BRIDGE_SRC)) {
       fs.copyFileSync(BRIDGE_SRC, path.join(DIR, "bridge.new.js"));
     }
+    // stage-l: ship the Electron desktop shell's main/preload alongside —
+    // the desktop app (D:\Vale\vale-desktop-electron) loads these sources;
+    // without the sync, new menu/command features never reach the device.
+    const DESK_SRC = path.join(__dirname, "..", "vale-desktop-electron", "src");
+    if (fs.existsSync(DESK_SRC)) {
+      const desDst = path.join(DIR, "vale-desktop-electron", "src");
+      fs.mkdirSync(desDst, { recursive: true });
+      for (const f of ["main.js", "preload.js"]) {
+        const s = path.join(DESK_SRC, f);
+        if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f + ".new"));
+      }
+    }
     const q = DIR.replace(/'/g, "''");
     const log = `Out-File '${q}\\vale-update.log' -Append`;
     // round-143: write the run-hidden.vbs wrapper next to node.exe, so the
@@ -381,6 +405,9 @@ const commands = {
       `"[$(Get-Date -Format o)] copy ok=$ok" | ${log}`,
       `Remove-Item -Force -ErrorAction SilentlyContinue '${q}\\vale-agent.new.exe'`,
       `if (Test-Path '${q}\\bridge.new.js') { Copy-Item -Force '${q}\\bridge.new.js' '${q}\\bridge.js'; Remove-Item -Force '${q}\\bridge.new.js' }`,
+      // stage-l: swap the desktop shell sources (main/preload) with retry —
+      // the running Electron may hold them briefly.
+      `foreach($df in @('main.js','preload.js')){ $ds='${q}\\vale-desktop-electron\\src\\'+$df+'.new'; if (Test-Path $ds) { $ok2=$false; foreach($i in 1..8){ try { Copy-Item -Force -ErrorAction Stop $ds ('${q}\\vale-desktop-electron\\src\\'+$df); $ok2=$true; break } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item -Force -ErrorAction SilentlyContinue $ds; "[$(Get-Date -Format o)] desk $df ok=$ok2" | ${log} } }`,
       // NEVER leave the device dark: even a failed swap must bring the task
       // back up (it will run the old exe until the next update).
       `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,
