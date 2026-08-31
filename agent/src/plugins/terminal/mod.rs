@@ -355,17 +355,21 @@ mod tests {
     fn tool_count_and_names() {
         let tools = plugin().tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(tools.len(), 21);
+        // 25: 17 terminal_* + secret_* ×2 (canonical + legacy) + sftp ×2
+        // (canonical + legacy) + terminal_env + terminal_jobs + saved/connect.
+        assert_eq!(tools.len(), 25);
         for expected in [
             "terminal_open", "terminal_write", "terminal_close", "terminal_list",
             "terminal_execute", "terminal_list_ports", "terminal_resize",
             "terminal_select", "terminal_read", "terminal_screen",
             "terminal_history", "terminal_diag_write", "terminal_diag_read",
             "secret_set", "secret_get", "secret_delete",
+            "terminal_secret_set", "terminal_secret_get", "terminal_secret_delete",
             "terminal_saved_connections", "terminal_connect_saved",
             "terminal_jobs",
             "terminal_env",
             "sftp",
+            "terminal_sftp",
         ] {
             assert!(names.contains(&expected), "missing tool: {expected}");
         }

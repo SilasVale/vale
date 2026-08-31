@@ -1492,8 +1492,8 @@ mod tests {
         let resp = handle_request(req("GET", "/api/spec"), state()).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
-        // terminal + update + mcp-client + design + playwright + memory plugins
-        assert_eq!(v["plugins"].as_array().unwrap().len(), 6);
+        // terminal + update + mcp-client + design + playwright + memory + system
+        assert_eq!(v["plugins"].as_array().unwrap().len(), 7);
     }
 
     #[tokio::test]

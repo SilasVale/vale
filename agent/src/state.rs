@@ -10,6 +10,7 @@ use crate::plugins::memory::MemoryPlugin;
 use crate::plugins::memory::store::{MemoryLimits, MemoryStore};
 use crate::plugins::playwright::manager::PlaywrightManager;
 use crate::plugins::playwright::PlaywrightPlugin;
+use crate::plugins::system::SystemPlugin;
 use crate::plugins::terminal::TerminalPlugin;
 use crate::plugins::update::UpdatePlugin;
 use crate::tools::serial::SerialPool;
@@ -68,6 +69,7 @@ fn build_registry(deps: &RegistryDeps) -> PluginRegistry {
     registry.register(Box::new(DesignPlugin::new(deps.console_url.clone(), deps.download_url.clone())));
     registry.register(Box::new(PlaywrightPlugin::new(deps.playwright.clone())));
     registry.register(Box::new(MemoryPlugin::new(deps.memory.clone())));
+    registry.register(Box::new(SystemPlugin));
     registry
 }
 

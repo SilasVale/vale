@@ -102,7 +102,7 @@ pub(super) fn build(
     buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
 ) -> Vec<ToolDef> {
     let jobs: JobsMap = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
-    vec![
+    let mut tools = vec![
         tool_open(terminal_mgr, bus, output_buf, logger, buffer_limit),
         tool_jobs(&jobs),
         tool_write(terminal_mgr),
@@ -117,23 +117,32 @@ pub(super) fn build(
         tool_screen(output_buf),
         tool_diag_write(diag),
         tool_diag_read(diag),
-        tool_secret_set(),
-        tool_secret_get(),
-        tool_secret_delete(),
         tool_saved_connections(),
         tool_connect_saved(terminal_mgr, bus, output_buf, logger, buffer_limit),
         tool_terminal_env(),
-        tool_sftp(),
-    ]
+    ];
+    // Secrets + SFTP: canonical names carry the `terminal_` prefix (stage-l
+    // naming unification); the legacy unprefixed names stay as aliases so
+    // existing AI clients keep working.
+    tools.push(tool_secret_set("terminal_secret_set"));
+    tools.push(tool_secret_set("secret_set"));
+    tools.push(tool_secret_get("terminal_secret_get"));
+    tools.push(tool_secret_get("secret_get"));
+    tools.push(tool_secret_delete("terminal_secret_delete"));
+    tools.push(tool_secret_delete("secret_delete"));
+    tools.push(tool_sftp("terminal_sftp"));
+    tools.push(tool_sftp("sftp"));
+    tools
 }
 
 /// P4c: SFTP file operations over SSH — stateless one-shot transfers.
 /// Each call connects (password or key), performs ONE op, and closes.
 /// Ops: list (remote dir), upload (local file → remote, base64 data),
 /// download (remote → local path on THIS device), delete, mkdir.
-fn tool_sftp() -> ToolDef {
+/// `name` selects the canonical (`terminal_sftp`) or legacy alias (`sftp`).
+fn tool_sftp(name: &'static str) -> ToolDef {
     ToolDef::new(
-        "sftp",
+        name,
         "SFTP file transfer over SSH (stateless one-shot): connect with host/user/password or key_path, perform ONE operation, close. Ops: 'list' (remote_path dir → names+attrs), 'upload' (data base64 → remote_path), 'download' (remote_path → local_path on this device), 'delete' (remote_path), 'mkdir' (remote_path). Returns result summary. For persistent browsing use a terminal ssh session.",
         json!({
             "type": "object",
@@ -2071,9 +2080,9 @@ fn chrono_timestamp() -> String {
 
 // ── Secrets (keychain) ─────────────────────────────
 
-fn tool_secret_set() -> ToolDef {
+fn tool_secret_set(name: &'static str) -> ToolDef {
     ToolDef::new(
-        "secret_set",
+        name,
         "Store a secret (SSH password) in the OS keychain for a target host. Desktop only.",
         json!({"type":"object","properties":{"target":{"type":"string","description":"SSH target (user@host:port)"},"password":{"type":"string"}},"required":["target","password"]}),
         move |params: Value| async move {
@@ -2085,9 +2094,9 @@ fn tool_secret_set() -> ToolDef {
     )
 }
 
-fn tool_secret_get() -> ToolDef {
+fn tool_secret_get(name: &'static str) -> ToolDef {
     ToolDef::new(
-        "secret_get",
+        name,
         "Retrieve a stored secret for a target host. Returns the password or null.",
         json!({"type":"object","properties":{"target":{"type":"string"}},"required":["target"]}),
         move |params: Value| async move {
@@ -2100,9 +2109,9 @@ fn tool_secret_get() -> ToolDef {
     )
 }
 
-fn tool_secret_delete() -> ToolDef {
+fn tool_secret_delete(name: &'static str) -> ToolDef {
     ToolDef::new(
-        "secret_delete",
+        name,
         "Delete a stored secret for a target host.",
         json!({"type":"object","properties":{"target":{"type":"string"}},"required":["target"]}),
         move |params: Value| async move {
