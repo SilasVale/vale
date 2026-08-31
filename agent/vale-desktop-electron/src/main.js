@@ -5,6 +5,7 @@ const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
+const net = require("net");
 
 const BASE = "http://127.0.0.1:18080";
 // P1: CDP port for AI (playwright) to drive Vale's own pages — the SAME
@@ -79,19 +80,27 @@ function waitReady(ms) {
   });
 }
 
+/** True if ANY process is listening on 127.0.0.1:18080 (TCP probe). The
+ *  agent service (scheduled task) binds it at boot; if anything listens we
+ *  must NOT spawn a second agent (bind fails with os 10048 and the child
+ *  retries forever, spamming the console). */
+function portBusy(port, timeoutMs = 1000) {
+  return new Promise((res) => {
+    const sock = net.connect({ host: "127.0.0.1", port }, () => { sock.destroy(); res(true); });
+    sock.on("error", () => res(false));
+    sock.setTimeout(timeoutMs, () => { sock.destroy(); res(false); });
+  });
+}
+
 async function startAgent() {
   if (agent && !agent.killed) return;
-  // If the agent service is ALREADY serving on 18080 (e.g. the ValeAgent
-  // scheduled task), don't spawn a second one (port bind fails, os 10048).
-  // Probe for up to 5s; even a probe timeout means "something holds 18080"
-  // (the service is starting) — spawning would only fight it. The real
-  // spawn path only runs when the probe conclusively finds NO listener.
-  const already = await waitReady(5000);
-  console.log(`[vale] agent probe: ${already ? "service present" : "no service on 18080"}`);
-  if (already) {
-    console.log("[vale] agent service present on 18080 — not spawning a second instance");
-    return;
-  }
+  // TCP-level check beats an HTTP probe: the service may still be starting
+  // (HTTP not answering yet) while the port is already bound — spawning in
+  // that window fails with 10048. A bound port always means "someone owns
+  // the agent here"; skip spawn.
+  const busy = await portBusy(18080);
+  console.log(`[vale] port 18080 ${busy ? "in use — agent service present, not spawning" : "free — spawning agent"}`);
+  if (busy) return;
   const exe = agentExe();
   console.log(`[vale] agent: ${exe}`);
   agent = spawn(exe, ["--config", path.join(process.cwd(), "config.yaml")], { windowsHide: true });
