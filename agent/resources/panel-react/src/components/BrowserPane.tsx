@@ -155,17 +155,25 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
               className="browser-frame"
               alt="Remote browser"
               tabIndex={0}
+              draggable={false}
               style={{
                 transform: `scale(${b.zoom / 100})`,
                 transformOrigin: "top left",
                 display: b.hasFrame ? undefined : "none",
               }}
-              onMouseMove={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "move" }); }}
-              onMouseDown={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "down" }); e.currentTarget.focus(); }}
-              onMouseUp={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "up" }); }}
+              // round-fix: all pointer math now maps through the CONTAIN
+              // letterbox rect (mapXY), events outside the image area are
+              // dropped instead of firing at wrong remote coordinates, and
+              // native image drag is blocked — a mousedown that starts the
+              // browser's drag ghost silently kills the click pair.
+              onDragStart={(e) => e.preventDefault()}
+              onMouseMove={(e) => { const p = b.mapXY(e.currentTarget, e.clientX, e.clientY); if (p.inside) b.sendMove(p.x, p.y); }}
+              onMouseDown={(e) => { e.preventDefault(); const p = b.mapXY(e.currentTarget, e.clientX, e.clientY); if (!p.inside) return; b.send({ t: "m", x: p.x, y: p.y, k: "down" }); e.currentTarget.focus(); }}
+              onMouseUp={(e) => { const p = b.mapXY(e.currentTarget, e.clientX, e.clientY); if (!p.inside) return; b.send({ t: "m", x: p.x, y: p.y, k: "up" }); }}
               onWheel={(e) => {
-                const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY);
-                b.send({ t: "wheel", x, y, dx: e.deltaX, dy: e.deltaY });
+                const p = b.mapXY(e.currentTarget, e.clientX, e.clientY);
+                if (!p.inside) return;
+                b.send({ t: "wheel", x: p.x, y: p.y, dx: e.deltaX, dy: e.deltaY });
                 e.preventDefault();
               }}
               onKeyDown={(e) => {

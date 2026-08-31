@@ -223,12 +223,49 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const closeTab = useCallback((i: number) => { send({ t: "tabclose", i }); }, [send]);
 
   const mapXY = useCallback((el: HTMLElement, clientX: number, clientY: number) => {
+    // round-fix: the frame is rendered with object-fit: contain (letterboxed
+    // 16:10 feed inside a wider/taller box) and optionally transform:scale'd
+    // by the zoom control. getBoundingClientRect gives the VISUAL box (zoom
+    // included); the image itself only covers the centered contain rect —
+    // clicks must map through THAT, not the element box. The old element-box
+    // math offset every click by up to ~54px + 8% horizontally (right-side
+    // links fired middle-of-page targets, the letterbox bars were dead),
+    // which the user experienced as "the page can't be clicked".
     const r = el.getBoundingClientRect();
+    const img = el as HTMLImageElement;
+    const nw = img.naturalWidth || VIEW_W;
+    const nh = img.naturalHeight || VIEW_H;
+    const k = Math.min(r.width / nw, r.height / nh);
+    const iw = nw * k;
+    const ih = nh * k;
+    const ix = r.left + (r.width - iw) / 2;
+    const iy = r.top + (r.height - ih) / 2;
     return {
-      x: Math.round(((clientX - r.left) / r.width) * VIEW_W),
-      y: Math.round(((clientY - r.top) / r.height) * VIEW_H),
+      x: Math.round(((clientX - ix) / iw) * VIEW_W),
+      y: Math.round(((clientY - iy) / ih) * VIEW_H),
+      inside: clientX >= ix && clientX <= ix + iw && clientY >= iy && clientY <= iy + ih,
     };
   }, []);
+
+  // round-fix (smoothness): mouse-move COALESCING. Every mousemove used to
+  // send its own WS message (~60-120/s) through the cloudflared tunnel,
+  // queueing ahead of / competing with click round-trips and screencast
+  // frames — the "nothing happens when I click" lag the user reported. Now
+  // at most one move per ~33ms (latest position wins); down/up still go
+  // through immediately.
+  const moveTimer = useRef(0);
+  const movePending = useRef<{ x: number; y: number } | null>(null);
+  const sendMove = useCallback((x: number, y: number) => {
+    movePending.current = { x, y };
+    if (moveTimer.current) return;
+    moveTimer.current = window.setTimeout(() => {
+      moveTimer.current = 0;
+      const p = movePending.current;
+      movePending.current = null;
+      if (p) send({ t: "m", x: p.x, y: p.y, k: "move" });
+    }, 33);
+  }, [send]);
+  useEffect(() => () => { if (moveTimer.current) window.clearTimeout(moveTimer.current); }, []);
 
   const navigate = useCallback(() => {
     // round-fix (P1): the old startsWith("http") check rewrote every
@@ -299,7 +336,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     zoom, setZoom,
     error, fps, tabs, sel,
     newTab, selTab, closeTab,
-    imgRef, mapXY, send,
+    imgRef, mapXY, send, sendMove,
     shots, selected, setSelected, shotUrls,
     aiActive, hasFrame,
   };

@@ -131,7 +131,7 @@ function decodeClientFrames(buf, onMessage) {
     if (!selPage) return;
     cdp = await ctx.newCDPSession(selPage);
     bindScreencast(cdp);
-    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 45, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 15 }).catch(() => {});
+    await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 60, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 20 }).catch(() => {});
   }
 
   // round-150: immediate frame on input — if no new screencast frame
@@ -189,8 +189,13 @@ function decodeClientFrames(buf, onMessage) {
         return { ok: true, url: selPage?.url() };
       }
       page = selPage || page;
-      if (m.t === 'nav') await page.goto(m.url, { waitUntil: 'domcontentloaded' });
+      if (m.t === 'nav') { await page.goto(m.url, { waitUntil: 'domcontentloaded' }); scheduleFastFrame(); }
       else if (m.t === 'm') {
+        // round-fix (smoothness): schedule a fast frame on the click PAIR too
+        // (down AND up) — otherwise on pages that stop emitting compositor
+        // frames the first click lands visually ~1.5s late (the polling
+        // fallback interval), which reads as "clicks do nothing".
+        if (m.k === 'down' || m.k === 'up') scheduleFastFrame();
         const type = m.k === 'down' ? 'mousePressed' : m.k === 'up' ? 'mouseReleased' : 'mouseMoved';
         const btn = (m.k === 'down' || m.k === 'up') ? 'left' : 'none';
         await cdp.send('Input.dispatchMouseEvent', { type, x: m.x, y: m.y, button: btn, clickCount: btn !== 'none' ? 1 : undefined });
@@ -345,7 +350,7 @@ function decodeClientFrames(buf, onMessage) {
   console.log(`bridge listening on 127.0.0.1:${PORT} profile=${USER_DATA_DIR}`);
 
   // Start streaming + keepalive
-  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 45, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 15 });
+  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 60, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 20 });
   setInterval(async () => {
     // Nudge the renderer so idle pages still emit a frame every ~2s.
     try { await page.evaluate(() => void 0); } catch {}
