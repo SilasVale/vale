@@ -64,6 +64,7 @@ export function DesktopShell({
                 <button className="btn btn-ghost btn-mini" onClick={() => onNewSession("pty")}>+ PTY</button>
                 <button className="btn btn-ghost btn-mini" onClick={() => onNewSession("ssh")}>SSH</button>
                 <button className="btn btn-ghost btn-mini" onClick={() => onNewSession("serial")}>Serial</button>
+                <button className="btn btn-ghost btn-mini" onClick={() => onNewSession("browser")}>Browser…</button>
               </div>
             )}
             <span className="desktop-nav-label">{PAGE_TITLES[page]}</span>
