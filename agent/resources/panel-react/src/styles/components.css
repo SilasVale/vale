@@ -320,7 +320,7 @@
 .view-switch-btn {
   border: none;
   background: transparent;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   font: 600 11px var(--font);
   line-height: 1;
   padding: 5px 10px;
@@ -329,8 +329,8 @@
   transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
               background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
-.view-switch-btn:hover { color: var(--ink); }
-.view-switch-btn.active { color: var(--accent-ink); background: var(--surface); box-shadow: var(--shadow); }
+.view-switch-btn:hover { color: var(--chrome-ink); }
+.view-switch-btn.active { color: var(--accent-ink); background: var(--chrome-bg-3); box-shadow: var(--shadow); }
 
 /* ---------- status bar ---------- */
 #statusbar {
@@ -1091,29 +1091,40 @@
   flex-direction: column;
 }
 .browser-page .browser-pane { flex: 1 1 0; min-height: 0; }
-.browser-page-status {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
-  background: var(--chrome-bg);
-  border-bottom: 1px solid var(--chrome-line);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--chrome-ink-dim);
-}
-.browser-page-status .btn { margin-left: auto; }
+/* round-refactor: the runner control is a compact chip inside the
+   view-switch row — the full-width status bar is gone. */
 .bp-dot {
   width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--chrome-ink-faint);
+  flex: none;
 }
 .bp-dot.ok {
   background: var(--success);
   box-shadow: 0 0 6px rgba(47, 191, 113, 0.7);
 }
 .bp-dot.err { background: var(--danger); }
+.bp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 2px 4px 2px 8px;
+  border-radius: 999px;
+  background: var(--ds-neutral-100);
+  border: 1px solid var(--line-strong);
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 60%;
+}
+.bp-chip .btn { margin-left: 2px; }
+.bp-chip.on { border-color: color-mix(in srgb, var(--success) 40%, var(--line-strong)); }
+.bp-chip.err { border-color: color-mix(in srgb, var(--danger) 40%, var(--line-strong)); }
+.bp-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* ---------- browser ---------- */
 .browser-pane {
   flex: 1 1 0;
@@ -1127,7 +1138,7 @@
   align-items: center;
   gap: 2px;
   padding: 6px 12px;
-  background: #fff;
+  background: var(--chrome-bg);
   border-bottom: 1px solid var(--line);
 }
 .browser-view-switch .view-switch-btn { padding: 5px 14px; }
@@ -1141,8 +1152,8 @@
   display: flex;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--ds-neutral-100);
-  border-bottom: 1px solid var(--line-strong);
+  background: var(--chrome-bg-2);
+  border-bottom: 1px solid var(--chrome-line);
   overflow-x: auto;
   flex: none;
 }
@@ -1160,56 +1171,64 @@
   background: transparent;
   border: 1px solid transparent;
 }
-.browser-tab.sel { background: #fff; border-color: var(--line-strong); }
+.browser-tab.sel { background: var(--chrome-bg-3); border-color: var(--chrome-line); }
 .browser-tab-label { overflow: hidden; text-overflow: ellipsis; }
-.browser-tab-close { color: var(--faint); cursor: pointer; }
+.browser-tab-close { color: var(--chrome-ink-faint); cursor: pointer; }
 .browser-tab-close:hover { color: var(--danger); }
 .browser-tab-new {
   padding: 3px 8px;
   border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
-  border: 1px dashed var(--line-strong);
+  border: 1px dashed var(--chrome-line);
+  color: var(--chrome-ink-dim);
   flex: none;
 }
 .browser-urlbar {
   display: flex;
   gap: 6px;
   padding: 6px 10px;
-  background: var(--ds-neutral-50);
-  border-bottom: 1px solid var(--line-strong);
+  background: var(--chrome-bg);
+  border-bottom: 1px solid var(--chrome-line);
   flex: none;
 }
 .browser-url {
   flex: 1;
   padding: 5px 8px;
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--chrome-line);
   border-radius: 6px;
   font-size: 12px;
   min-width: 0;
+  background: var(--chrome-bg-2);
+  color: var(--chrome-ink);
 }
 .browser-go {
   padding: 4px 10px;
   cursor: pointer;
   flex: none;
 }
-.browser-fps {
-  align-self: center;
-  font-size: 11px;
-  color: var(--muted);
-  min-width: 34px;
-  text-align: right;
+/* round-refactor: zoom + fullscreen share one compact right-aligned group;
+   the fps counter is gone (pure debug noise, ~1fps on static pages read as
+   "broken" to users). */
+.browser-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   flex: none;
 }
 .browser-viewport {
   flex: 1;
   overflow: auto;
-  background: var(--terminal-bg);
+  background: var(--browser-stage-bg);
   position: relative;
   min-height: 0;
 }
+/* round-refactor: the frame used to grow to its natural 1280x800 ratio and
+   overflow the viewport (bottom clipped); contain it fully instead. */
 .browser-frame {
   width: 100%;
+  height: 100%;
+  object-fit: contain;
   display: block;
   cursor: text;
   outline: none;
@@ -1223,7 +1242,7 @@
 .browser-ev-stage {
   flex: 1;
   min-height: 0;
-  background: var(--terminal-bg);
+  background: var(--browser-stage-bg);
   position: relative;
   overflow: hidden;
 }
@@ -1244,8 +1263,8 @@
 }
 .browser-ev-timeline {
   flex: 0 0 auto;
-  border-top: 1px solid var(--line-strong);
-  background: #fff;
+  border-top: 1px solid var(--chrome-line);
+  background: var(--chrome-bg-2);
   padding: 6px 8px;
 }
 .browser-ev-head { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
@@ -1262,7 +1281,7 @@
 .browser-ev-thumb img { width: 96px; height: 60px; object-fit: cover; display: block; }
 .browser-ev-thumb-empty {
   width: 96px; height: 60px;
-  background: var(--ds-neutral-100);
+  background: var(--chrome-bg-3);
   display: grid; place-items: center;
   font-size: 10px; color: var(--faint);
 }
@@ -1402,17 +1421,28 @@
   border-bottom: 1px solid var(--line);
 }
 
-/* ── Browser UX (round-160: AI activity / zoom / fullscreen) ── */
+/* ── Browser UX (round-160: AI activity / zoom / fullscreen) ──
+   round-refactor: the AI banner floats over the top edge of the viewport
+   instead of pushing the page down; it uses theme tokens (was hardcoded
+   light) so dark mode stays consistent. */
 .browser-ai-indicator {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
   font-size: 12px;
   color: var(--warn-ink);
   background: var(--warn-soft);
-  border-bottom: 1px solid var(--line);
-  flex: none;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  white-space: nowrap;
 }
 .browser-ai-dot {
   width: 8px;
@@ -1423,10 +1453,10 @@
 }
 @keyframes browser-ai-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .browser-urlbar .browser-zoom {
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--chrome-line);
   border-radius: 8px;
-  background: var(--surface);
-  color: var(--ink);
+  background: var(--chrome-bg-2);
+  color: var(--chrome-ink);
   font-size: 12px;
   padding: 4px;
 }

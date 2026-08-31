@@ -78,7 +78,17 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     img.src = URL.createObjectURL(part);
     if (old.startsWith("blob:")) URL.revokeObjectURL(old);
     setError("");
-    if (!hasFrameRef.current) { hasFrameRef.current = true; setHasFrame(true); }
+    // round-fix: focus the frame ONCE on the first frame (keyboard goes
+    // straight to the remote browser), but NEVER on later frames — the old
+    // onLoad={() => img.focus()} re-fired on EVERY frame and stole focus
+    // from the URL bar mid-typing (a >1s pause in the address bar dropped
+    // all further keystrokes into the remote page). The user takes focus
+    // back by clicking the frame.
+    if (!hasFrameRef.current) {
+      hasFrameRef.current = true;
+      setHasFrame(true);
+      img.focus();
+    }
     const c = counters.current; c.n++;
     const now = Date.now();
     if (now - c.t >= 1000) { setFps(Math.round((c.n * 1000) / (now - c.t))); c.n = 0; c.t = now; }

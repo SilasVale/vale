@@ -16,9 +16,19 @@ export interface BrowserPaneProps {
   session: BrowserSessionData;
   apiBase: string; // "" (same-origin) or gateway proxy base
   token: string;
+  /** Compact AI-runner control rendered in the view-switch row (round-refactor:
+   *  the runner controls AI automation + the evidence feed, NOT the live view —
+   *  it no longer gets a full status bar of its own). */
+  runner?: {
+    running: boolean;
+    pending: boolean;
+    errored: boolean;
+    busy: "start" | "stop" | null;
+    onToggle: () => void;
+  };
 }
 
-export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
+export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps) {
   const b = useBrowser({ apiBase, token });
   const viewportRef = useRef<HTMLDivElement | null>(null);
 
@@ -29,16 +39,47 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
     else void el.requestFullscreen().catch(() => {});
   };
 
+  // Floating strip over the top edge of the viewport — does not consume
+  // layout space (round-refactor: the old banner pushed the page content
+  // down every time the AI drove the browser).
   const aiBanner = b.aiActive ? (
     <div className="browser-ai-indicator">
       <span className="browser-ai-dot" />
-      AI is operating this browser — recent screenshots detected. Click the page to take over.
+      AI 正在操作浏览器 — 点击画面可接管
     </div>
+  ) : null;
+
+  // Compact runner chip for the view-switch row.
+  const runnerChip = runner ? (
+    <span
+      className={`bp-chip${runner.running ? " on" : runner.errored ? " err" : ""}`}
+      title={runner.running
+        ? "AI 助手（playwright-mcp）运行中 — 供 AI 自动化与截图证据使用"
+        : "AI 助手未运行 — 供 AI 自动化与截图证据使用（实时画面不受影响）"}
+    >
+      <span className={`bp-dot${runner.running ? " ok" : runner.pending ? "" : runner.errored ? " err" : ""}`} />
+      <span className="bp-chip-text">
+        {runner.pending
+          ? "AI 助手…"
+          : runner.running
+            ? "AI 助手运行中"
+            : runner.errored
+              ? "AI 助手异常"
+              : "AI 助手未运行"}
+      </span>
+      <button
+        className="btn btn-ghost btn-mini"
+        onClick={runner.onToggle}
+        disabled={runner.pending || runner.busy !== null}
+      >
+        {runner.busy === "start" ? "启动中…" : runner.running ? "停止" : runner.errored ? "重试" : "启动"}
+      </button>
+    </span>
   ) : null;
 
   return (
     <div className="browser-pane">
-      {/* View switch: Live ↔ Evidence */}
+      {/* View switch: Live ↔ Evidence + AI-runner chip */}
       <div className="browser-view-switch" role="tablist" aria-label="Browser view">
         <button
           type="button"
@@ -50,11 +91,11 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
           className={`view-switch-btn${b.view === "evidence" ? " active" : ""}`}
           onClick={() => b.setView("evidence")}
         >Evidence</button>
+        {runnerChip}
       </div>
 
       {b.view === "live" ? (
         <div className="browser-live">
-          {aiBanner}
           {/* Tab strip */}
           <div className="browser-tabstrip">
             {b.tabs.map((tb) => (
@@ -66,37 +107,41 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
             <span className="browser-tab-new" onClick={() => void b.newTab()} title="New tab">+</span>
           </div>
 
-          {/* URL bar + viewport controls */}
+          {/* URL bar + compact viewport tools (zoom + fullscreen; the fps
+              counter was pure debug noise — a static page at ~1fps read as
+              "broken" to users, round-refactor) */}
           <div className="browser-urlbar">
             <input
               className="browser-url"
               value={b.url}
               onChange={(e) => b.setUrl(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && b.navigate()}
-              placeholder="Enter URL and press Enter — the page below is live and clickable"
+              placeholder="输入网址后回车 — 下方页面可实时点击操作"
               list="vale-url-history"
             />
             <datalist id="vale-url-history">
               {b.urlHistory.map((u) => <option key={u} value={u} />)}
             </datalist>
             <button className="btn btn-mini browser-go" onClick={b.navigate}>Go</button>
-            <select
-              className="browser-zoom"
-              value={b.zoom}
-              onChange={(e) => b.setZoom(Number(e.target.value))}
-              title="Viewport zoom"
-              aria-label="Viewport zoom"
-            >
-              {[75, 100, 125, 150].map((z) => <option key={z} value={z}>{z}%</option>)}
-            </select>
-            <button className="btn btn-mini browser-fullscreen" onClick={toggleFullscreen} title="Fullscreen"><Icon name="fullscreen" size={13} /></button>
-            <span className="browser-fps" title="frames per second">{b.fps}fps</span>
+            <span className="browser-tools">
+              <select
+                className="browser-zoom"
+                value={b.zoom}
+                onChange={(e) => b.setZoom(Number(e.target.value))}
+                title="画面缩放"
+                aria-label="画面缩放"
+              >
+                {[75, 100, 125, 150].map((z) => <option key={z} value={z}>{z}%</option>)}
+              </select>
+              <button className="btn btn-mini browser-fullscreen" onClick={toggleFullscreen} title="全屏"><Icon name="fullscreen" size={13} /></button>
+            </span>
           </div>
 
           {/* Live viewport — placeholder while no frame has arrived (the
               stream is offline or the page is dark); kills the "black void"
               first impression. */}
           <div className="browser-viewport" ref={viewportRef}>
+            {aiBanner}
             {!b.hasFrame && (
               <div className="browser-placeholder">
                 <Icon name="browser" size={30} />
@@ -110,9 +155,13 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
               className="browser-frame"
               alt="Remote browser"
               tabIndex={0}
-              style={{ width: `${b.zoom}%`, display: b.hasFrame ? undefined : "none" }}
+              style={{
+                transform: `scale(${b.zoom / 100})`,
+                transformOrigin: "top left",
+                display: b.hasFrame ? undefined : "none",
+              }}
               onMouseMove={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "move" }); }}
-              onMouseDown={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "down" }); }}
+              onMouseDown={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "down" }); e.currentTarget.focus(); }}
               onMouseUp={(e) => { const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY); b.send({ t: "m", x, y, k: "up" }); }}
               onWheel={(e) => {
                 const { x, y } = b.mapXY(e.currentTarget, e.clientX, e.clientY);
@@ -128,7 +177,10 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
                 e.preventDefault();
                 b.send({ t: "k", down: false, key: e.key, code: e.code, vk: e.keyCode });
               }}
-              onLoad={() => { b.imgRef.current?.focus(); }}
+              // First-frame focus + click-to-focus live in useBrowser's
+              // applyFrame / onMouseDown — onLoad must NOT focus (every
+              // frame re-fires it and would steal focus from the URL bar).
+              onLoad={() => {}}
             />
           </div>
 
@@ -136,8 +188,8 @@ export default function BrowserPane({ apiBase, token }: BrowserPaneProps) {
         </div>
       ) : (
         <div className="browser-live browser-live-evidence">
-          {aiBanner}
           <div className="browser-ev-stage">
+            {aiBanner}
             {b.selected && b.shotUrls[b.selected] ? (
               <img src={b.shotUrls[b.selected]} className="browser-ev-img" alt="AI browser evidence" />
             ) : (

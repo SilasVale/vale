@@ -14,6 +14,9 @@ class FakeWS {
   onerror: ((e?: unknown) => void) | null = null;
   binaryType = "";
   readyState = 0;
+  constructor() {
+    (globalThis as any).__lastWS = this;
+  }
   close() { this.readyState = 3; this.onclose?.(); }
   send() { /* not open — caller no-ops */ }
 }
@@ -77,5 +80,49 @@ describe("useBrowser", () => {
     const { result } = renderHook(() => useBrowser({ apiBase: "", token: "t" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(result.current.aiActive).toBe(false);
+  });
+
+  it("focuses the frame on the FIRST frame only — later frames must not steal focus from the URL bar", async () => {
+    // Regression: the old <img onLoad={() => img.focus()}> re-fired on every
+    // frame and stole focus from the URL input mid-typing (a >1s pause in
+    // the address bar dropped all further keystrokes into the remote page).
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/browser/ws-ticket")) {
+        return new Response(JSON.stringify({ ticket: "t1" }), { status: 200 });
+      }
+      if (url.includes("/api/browser/pwshots")) {
+        return new Response(JSON.stringify({ shots: [] }), { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const focusMock = vi.fn();
+    const img = {
+      focus: focusMock,
+      src: "",
+      addEventListener: vi.fn(),
+    } as unknown as HTMLImageElement;
+    const { result } = renderHook(() => useBrowser({ apiBase: "", token: "t" }));
+    // jsdom renders nothing — attach the hook's imgRef to our fake img.
+    (result.current.imgRef as { current: HTMLImageElement | null }).current = img;
+
+    // Wait for the WS ticket fetch → FakeWS construction.
+    await waitFor(() => expect((globalThis as any).__lastWS).toBeTruthy());
+    const ws = (globalThis as any).__lastWS;
+    act(() => { ws.onopen?.(); });
+
+    // Frame 1: must focus exactly once.
+    act(() => {
+      ws.onmessage({ data: new Blob(["frame1"], { type: "image/jpeg" }) });
+    });
+    expect(focusMock).toHaveBeenCalledTimes(1);
+    expect(result.current.hasFrame).toBe(true);
+
+    // Frame 2, 3: must NOT focus again.
+    act(() => { ws.onmessage({ data: new Blob(["frame2"], { type: "image/jpeg" }) }); });
+    act(() => { ws.onmessage({ data: new Blob(["frame3"], { type: "image/jpeg" }) }); });
+    expect(focusMock).toHaveBeenCalledTimes(1);
   });
 });
