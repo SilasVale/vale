@@ -47,20 +47,38 @@ ipcMain.handle("browser-session:open", (_e, url) => browserOpen(url));
 ipcMain.handle("browser-session:close", (_e, id) => browserClose(id));
 ipcMain.handle("browser-session:list", () => browserList());
 
-// Desktop-app settings (auto-launch) — the Settings page toggles this; it
-// uses Electron's login-item API (HKCU Run / startup folder), so it works
-// only under the Electron shell (plain-browser SPA hides the card).
+// Desktop-app settings (auto-launch) — the Settings page toggles this. We
+// manage a per-user scheduled task ("ValeDesktop", onlogon) instead of
+// Electron's setLoginItemSettings: in dev mode (electron .) the login-item
+// API is unreliable, while schtasks works for the current user without
+// elevation. The task runs start-desktop.ps1 (non-elevated → clickable).
+const AUTOSTART_TASK = "ValeDesktop";
+// The app dir is the cwd when launched as `electron .`; the start script
+// lives one level up (next to the vale-desktop-electron folder, e.g.
+// D:\Vale\start-desktop.ps1 — created by the shell's setup path).
+const AUTOSTART_SCRIPT = path.join(process.cwd(), "..", "start-desktop.ps1");
+function autoLaunchTaskExists() {
+  try {
+    const { execSync } = require("child_process");
+    execSync(`schtasks /query /tn "${AUTOSTART_TASK}"`, { stdio: "pipe", windowsHide: true });
+    return true;
+  } catch { return false; }
+}
+function autoLaunchTaskSet(enabled) {
+  const { execSync } = require("child_process");
+  if (enabled) {
+    execSync(`schtasks /create /tn "${AUTOSTART_TASK}" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \\"${AUTOSTART_SCRIPT}\\"" /sc onlogon /ru ${process.env.USERNAME} /f`, { stdio: "pipe", windowsHide: true });
+  } else {
+    execSync(`schtasks /delete /tn "${AUTOSTART_TASK}" /f`, { stdio: "pipe", windowsHide: true });
+  }
+}
 ipcMain.handle("desktop:get-auto-launch", () => {
-  try { return { ok: true, enabled: app.getLoginItemSettings().openAtLogin }; }
+  try { return { ok: true, enabled: autoLaunchTaskExists() }; }
   catch (e) { return { ok: false, error: String(e) }; }
 });
 ipcMain.handle("desktop:set-auto-launch", (_e, enabled) => {
   try {
-    app.setLoginItemSettings({
-      openAtLogin: !!enabled,
-      path: process.execPath,
-      args: [path.join(__dirname, "..")].concat(app.isPackaged ? [] : ["--no-sandbox"]),
-    });
+    autoLaunchTaskSet(!!enabled);
     return { ok: true, enabled: !!enabled };
   } catch (e) { return { ok: false, error: String(e) }; }
 });
