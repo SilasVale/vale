@@ -189,7 +189,15 @@ fn tool_sftp() -> ToolDef {
                             base64::engine::general_purpose::STANDARD.decode(data_b64)
                                 .map_err(|e| DeviceError::Internal { message: format!("base64 decode: {e}") })?
                         };
-                        sftp.write(&remote_path, &bytes).await.map_err(|e| DeviceError::Internal { message: format!("sftp write {remote_path}: {e}") })?;
+                        // create() opens with CREATE|TRUNCATE|WRITE — the
+                        // high-level write() uses WRITE only and fails with
+                        // NoSuchFile on a fresh remote path (P4c).
+                        {
+                            use tokio::io::AsyncWriteExt;
+                            let mut file = sftp.create(&remote_path).await.map_err(|e| DeviceError::Internal { message: format!("sftp create {remote_path}: {e}") })?;
+                            file.write_all(&bytes).await.map_err(|e| DeviceError::Internal { message: format!("sftp write: {e}") })?;
+                            file.flush().await.map_err(|e| DeviceError::Internal { message: format!("sftp flush: {e}") })?;
+                        }
                         serde_json::json!({"uploaded_bytes": bytes.len(), "remote_path": remote_path})
                     }
                     "download" => {
