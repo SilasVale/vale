@@ -26,7 +26,7 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
   sessions: Session[];
   activeSid: string | null;
   onActivate: (sid: string) => void;
-  onNewSession: (kind: "pty" | "ssh" | "serial") => void;
+  onNewSession: (kind: "pty" | "ssh" | "serial" | "browser") => void;
   plugins: ReturnType<typeof usePlugins>;
 }) {
   const [labels, setLabels] = useState<Map<string, string>>(new Map());
@@ -108,6 +108,7 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
               <button role="menuitem" onClick={() => { onNewSession("pty"); setMenuOpen(false); }}>Local shell</button>
               <button role="menuitem" onClick={() => { onNewSession("ssh"); setMenuOpen(false); }}>SSH…</button>
               <button role="menuitem" onClick={() => { onNewSession("serial"); setMenuOpen(false); }}>Serial…</button>
+              <button role="menuitem" onClick={() => { onNewSession("browser"); setMenuOpen(false); }}>Browser…</button>
             </div>
           )}
         </div>

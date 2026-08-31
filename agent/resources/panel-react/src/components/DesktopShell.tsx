@@ -22,7 +22,7 @@ interface Props {
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
-  onNewSession: (kind: "pty" | "ssh" | "serial", target?: string, extra?: Record<string, unknown>) => void;
+  onNewSession: (kind: "pty" | "ssh" | "serial" | "browser", target?: string, extra?: Record<string, unknown>) => void;
   sseState: "connected" | "down" | "connecting";
   token: string;
   plugins: ReturnType<typeof usePlugins>;

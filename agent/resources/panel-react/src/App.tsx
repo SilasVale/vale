@@ -47,6 +47,22 @@ export function App() {
   const plugins = usePlugins(connected);
   const sessions = useSessions(connected);
 
+  // Browser session (P1): the Electron shell (when serving /desktop/) hosts
+  // a local control endpoint at 127.0.0.1:9444 that opens a browser-session
+  // window (visible to the user) — playwright drives it via CDP :9333. In a
+  // plain web browser there is no shell, so tell the user.
+  const openBrowserSession = async () => {
+    try {
+      const r = await fetch("http://127.0.0.1:9444/api/browser-session/open", { method: "POST" });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error || "open failed");
+      // The Electron shell opens the browser-session window — nothing else
+      // needed here. (Connection banner is for errors only.)
+    } catch {
+      setConnError("Browser sessions need the Vale desktop app (Electron shell on this machine).");
+    }
+  };
+
   // round-157: when the panel opens with no active session, auto-activate the
   // first live session — otherwise every .term-session stays display:none
   // and the terminal area is blank (users repeatedly reported "not covering
@@ -153,7 +169,11 @@ export function App() {
     return (
       <DesktopShell
         {...shared}
-        onNewSession={(kind, target, extra) => { if (kind === "pty") sessions.openSession("pty", target ?? "").catch(() => {}); else setModalKind(kind); }}
+        onNewSession={(kind, target, extra) => {
+          if (kind === "pty") sessions.openSession("pty", target ?? "").catch(() => {});
+          else if (kind === "browser") openBrowserSession();
+          else if (kind === "ssh" || kind === "serial") setModalKind(kind);
+        }}
         sseState={sseState}
       />
     );
@@ -162,7 +182,11 @@ export function App() {
   return (
     <PanelApp
       {...shared}
-      onNewSession={(kind) => { if (kind === "pty") sessions.openSession("pty", "").catch(() => {}); else setModalKind(kind); }}
+      onNewSession={(kind) => {
+        if (kind === "pty") sessions.openSession("pty", "").catch(() => {});
+        else if (kind === "browser") openBrowserSession();
+        else if (kind === "ssh" || kind === "serial") setModalKind(kind);
+      }}
       status={sessions.status}
       sseState={sseState}
       connModal={modalKind}

@@ -12,10 +12,48 @@ const BASE = "http://127.0.0.1:18080";
 // connectOverCDP("http://127.0.0.1:9333") and drives this window's pages.
 // 9333 avoids collisions with the agent's 9224 (bridge) / 9229 (runner).
 const CDP_PORT = 9333;
+// P1b: local control endpoint for browser sessions. The SPA (served by the
+// agent on 18080) calls this to open/close browser-session windows; CDP 9333
+// exposes them all to playwright.
+const CTRL_PORT = 9444;
 let win = null, tray = null, agent = null;
+const browserSessions = new Map(); // id -> BrowserWindow
 
 // CDP must be enabled before app ready — pass it through Chromium switches.
 app.commandLine.appendSwitch("remote-debugging-port", String(CDP_PORT));
+
+// --- Browser-session control HTTP (127.0.0.1:9444) ---
+const httpServer = http.createServer((req, res) => {
+  const u = new URL(req.url, "http://127.0.0.1");
+  const send = (obj, code = 200) => {
+    res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify(obj));
+  };
+  try {
+    if (u.pathname === "/api/browser-session/open" && req.method === "POST") {
+      const url = u.searchParams.get("url") || "about:blank";
+      const id = `browser-${Date.now()}`;
+      const bw = new BrowserWindow({ width: 1100, height: 750, title: `Vale Browser — ${url}` });
+      bw.loadURL(url);
+      bw.on("closed", () => browserSessions.delete(id));
+      browserSessions.set(id, bw);
+      return send({ ok: true, id, url, cdp: `http://127.0.0.1:${CDP_PORT}` });
+    }
+    if (u.pathname === "/api/browser-session/close" && req.method === "POST") {
+      const id = u.searchParams.get("id") || "";
+      const bw = browserSessions.get(id);
+      if (bw) { bw.close(); browserSessions.delete(id); }
+      return send({ ok: true });
+    }
+    if (u.pathname === "/api/browser-session/list") {
+      const list = [...browserSessions.entries()].map(([id, bw]) => ({ id, url: bw.webContents.getURL() }));
+      return send({ ok: true, sessions: list, cdp: `http://127.0.0.1:${CDP_PORT}` });
+    }
+    send({ ok: false, error: "not found" }, 404);
+  } catch (e) {
+    send({ ok: false, error: String(e) }, 500);
+  }
+});
 
 function agentExe() {
   const cands = [];
@@ -63,6 +101,8 @@ async function startAgent() {
 }
 
 app.whenReady().then(async () => {
+  httpServer.listen(CTRL_PORT, "127.0.0.1");
+  console.log(`[vale] browser-session control: http://127.0.0.1:${CTRL_PORT}`);
   await startAgent();
   win = new BrowserWindow({ width: 1200, height: 800, title: "Vale" });
   win.loadURL(`${BASE}/desktop/`);

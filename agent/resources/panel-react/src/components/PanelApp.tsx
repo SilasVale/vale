@@ -25,7 +25,7 @@ interface Props {
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
-  onNewSession: (kind: "pty" | "ssh" | "serial") => void;
+  onNewSession: (kind: "pty" | "ssh" | "serial" | "browser") => void;
   status: string;
   sseState: string;
   token: string;
