@@ -1,6 +1,14 @@
-// Vale Desktop P0 — Electron shell over the local vale-agent service.
+// Vale Desktop — Electron shell over the local vale-agent service.
 // UI = agent /desktop/ route (panel-react SPA); agent = child process.
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } = require("electron");
+//
+// Desktop-app experience (stage-l refactor):
+// - Native application menu (File/Edit/View/Session/Help) with accelerators.
+//   Menu items send `vale-menu` events to the SPA via webContents.send —
+//   the SPA maps them to its actions (new PTY/SSH/serial/browser, close /
+//   next / prev session, export, theme flip, toggle trajectory).
+// - Browser-session windows (playwright drives them via CDP :9333).
+// - Auto-launch via the ValeDesktop scheduled task.
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, globalShortcut } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -21,6 +29,119 @@ const browserSessions = new Map(); // id -> BrowserWindow
 
 // CDP must be enabled before app ready — pass it through Chromium switches.
 app.commandLine.appendSwitch("remote-debugging-port", String(CDP_PORT));
+
+// --- Menu command bridge: SPA ⇄ native menu ---
+// Menu items fire `sendMenu(cmd)`; the SPA listens on
+// `window.valeDesktop.onCommand(cmd => …)` (preload → contextBridge).
+function sendMenu(cmd) {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("vale-menu", cmd);
+  }
+}
+// Window-focus helpers used by menu roles.
+function focusMain() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+/** Build the native application menu. Items that act on the SPA's state send
+ *  `vale-menu` commands; pure-window items use Electron roles. */
+function buildMenu() {
+  const isMac = process.platform === "darwin";
+  const template = [
+    // ── App (macOS) ────────────────────────────────────────────
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    }] : []),
+    // ── File ───────────────────────────────────────────────────
+    {
+      label: "File",
+      submenu: [
+        { label: "New Terminal", accelerator: "CmdOrCtrl+Shift+T", click: () => sendMenu("new-pty") },
+        { label: "New SSH Connection…", accelerator: "CmdOrCtrl+Shift+S", click: () => sendMenu("new-ssh") },
+        { label: "New Serial Connection…", accelerator: "CmdOrCtrl+Shift+P", click: () => sendMenu("new-serial") },
+        { label: "New Browser Session…", accelerator: "CmdOrCtrl+Shift+B", click: () => sendMenu("new-browser") },
+        { type: "separator" },
+        { label: "Close Session", accelerator: "CmdOrCtrl+W", click: () => sendMenu("close-session") },
+        { label: "Close Window", accelerator: isMac ? "Cmd+Shift+W" : "Alt+F4", role: "close" },
+        { type: "separator" },
+        isMac ? { role: "close" } : { role: "quit", label: "Exit" },
+      ],
+    },
+    // ── Edit ───────────────────────────────────────────────────
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    // ── View ───────────────────────────────────────────────────
+    {
+      label: "View",
+      submenu: [
+        { label: "Toggle Trajectory", accelerator: "CmdOrCtrl+Shift+Y", click: () => sendMenu("toggle-trajectory") },
+        { type: "separator" },
+        { label: "Reload", accelerator: "CmdOrCtrl+R", click: () => { if (win) win.webContents.reload(); } },
+        { role: "togglefullscreen" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { label: "Toggle Theme", accelerator: "CmdOrCtrl+Shift+D", click: () => sendMenu("toggle-theme") },
+        { role: "toggleDevTools" },
+      ],
+    },
+    // ── Session ────────────────────────────────────────────────
+    {
+      label: "Session",
+      submenu: [
+        { label: "Next Session", accelerator: "Ctrl+Tab", click: () => sendMenu("next-session") },
+        { label: "Previous Session", accelerator: "Ctrl+Shift+Tab", click: () => sendMenu("prev-session") },
+        { type: "separator" },
+        { label: "Export Session Log…", accelerator: "CmdOrCtrl+Shift+E", click: () => sendMenu("export-session") },
+        { type: "separator" },
+        { label: "List Sessions", accelerator: "CmdOrCtrl+Shift+L", click: () => sendMenu("list-sessions") },
+      ],
+    },
+    // ── Window ─────────────────────────────────────────────────
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        ...(isMac ? [
+          { type: "separator" },
+          { role: "front" },
+        ] : []),
+      ],
+    },
+    // ── Help ───────────────────────────────────────────────────
+    {
+      role: "help",
+      submenu: [
+        { label: "Vale Agent Status", click: () => { focusMain(); sendMenu("show-status"); } },
+      ],
+    },
+  ];
+  return Menu.buildFromTemplate(template);
+}
 
 // --- Browser-session control: shared core (used by both IPC and HTTP) ---
 function browserOpen(url) {
@@ -161,6 +282,10 @@ app.whenReady().then(async () => {
   httpServer.listen(CTRL_PORT, "127.0.0.1");
   console.log(`[vale] browser-session control: http://127.0.0.1:${CTRL_PORT}`);
   await startAgent();
+
+  // Native application menu (stage-l): menu commands → SPA via vale-menu.
+  Menu.setApplicationMenu(buildMenu());
+
   win = new BrowserWindow({
     width: 1200, height: 800, title: "Vale",
     webPreferences: {
@@ -180,7 +305,12 @@ app.whenReady().then(async () => {
   tray = new Tray(fs.existsSync(iconPath) ? iconPath : nativeImage.createEmpty());
   tray.setToolTip("Vale");
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "Open", click: () => { win.show(); win.focus(); } },
+    { label: "Open", click: () => { focusMain(); } },
+    { type: "separator" },
+    { label: "New Terminal", click: () => { focusMain(); sendMenu("new-pty"); } },
+    { label: "New SSH…", click: () => { focusMain(); sendMenu("new-ssh"); } },
+    { label: "New Serial…", click: () => { focusMain(); sendMenu("new-serial"); } },
+    { label: "New Browser…", click: () => { focusMain(); sendMenu("new-browser"); } },
     { type: "separator" },
     { label: "Quit", click: () => { app.isQuitting = true; app.quit(); } },
   ]));

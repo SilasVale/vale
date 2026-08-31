@@ -7,6 +7,7 @@ import { useSSE } from "./hooks/useSSE";
 import { usePlugins } from "./hooks/usePlugins";
 import { PanelApp } from "./components/PanelApp";
 import { DesktopShell } from "./components/DesktopShell";
+import { useDesktopCommands } from "./hooks/useDesktopCommands";
 import { BrandMark } from "./ui/Icon";
 import type { SessionView } from "./components/TabBar";
 
@@ -120,6 +121,28 @@ export function App() {
   const getLiveSidsRef = useRef(() => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid));
   getLiveSidsRef.current = () => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid);
   const sseState = useSSE(connected, writeCallbacks, getLiveSidsRef);
+
+  // Native menu + keyboard shortcut bridge (stage-l desktop refactor): maps
+  // vale-menu commands / Ctrl+Shift+* accelerators onto session actions. The
+  // Electron main process sends commands; a plain browser falls back to
+  // keydown handlers. Only active for the desktop density.
+  useDesktopCommands(
+    connected && isDesktopPath(),
+    sessions.sessions,
+    sessions.activeSid,
+    sessionViews,
+    {
+      onNewSession: (kind) => {
+        if (kind === "pty") sessions.openSession("pty", "").catch(() => {});
+        else if (kind === "browser") openBrowserSession();
+        else if (kind === "ssh" || kind === "serial") setModalKind(kind);
+      },
+      onClose: (sid) => { sessions.closeSession(sid); },
+      onActivate: (sid) => { sessions.activate(sid); },
+      onExport: (sid) => { sessions.exportSession(sid); },
+      onSetView: (sid, v) => { changeView(sid, v); },
+    },
+  );
 
   function connect() {
     // round-83: normalize the host — pasting 'https://d1…' or a trailing

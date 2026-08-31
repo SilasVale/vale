@@ -62,12 +62,19 @@ describe("Shell", () => {
 describe("DesktopShell", () => {
   it("switches between all five pages via the rail", () => {
     render(<DesktopShell {...baseProps} />);
-    // Default page: Terminal (the nav label marks the current page).
-    expect(document.querySelector(".desktop-nav-label")?.textContent).toBe("Terminal");
+    // Default page: Terminal (the header title marks the current page).
+    expect(document.querySelector(".desktop-header-title")?.textContent).toContain("Terminal");
     for (const label of ["Browser", "Memory", "Plugins", "Settings"]) {
       fireEvent.click(screen.getByTitle(label));
-      expect(document.querySelector(".desktop-nav-label")?.textContent).toBe(label);
+      expect(document.querySelector(".desktop-header-title")?.textContent).toContain(label);
     }
+  });
+
+  it("shows a single New menu instead of four scattered buttons (stage-l)", () => {
+    render(<DesktopShell {...baseProps} />);
+    expect(document.querySelectorAll(".desktop-new .btn-new").length).toBe(1);
+    // The old four-button row is gone.
+    expect(document.querySelectorAll(".desktop-new .btn-ghost").length).toBe(0);
   });
 
   it("shows connection dot state from sseState", () => {

@@ -34,24 +34,34 @@ interface Props {
   token: string;
   density: "panel" | "desktop";
   sseState: "connected" | "down" | "connecting";
+  /** Desktop density: the header (DesktopShell) owns the view switch —
+   *  pass the controlled value + setter so both render the same view. */
+  controlledView?: SessionView;
+  onControlledViewChange?: (sid: string, v: SessionView) => void;
 }
 
 export function TerminalWorkspace({
   sessions, activeSid, onActivate, onClose, onExport, onViewChange,
   registerWrite, cmdEvents, token, density, sseState,
+  controlledView, onControlledViewChange,
 }: Props) {
   const [selectedCmdId, setSelectedCmdId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
-  const sessionView: SessionView = (activeSid && sessionViews[activeSid]) || "terminal";
+  const sessionView: SessionView = density === "desktop"
+    ? (controlledView ?? "terminal")
+    : ((activeSid && sessionViews[activeSid]) || "terminal");
   const trajOpen = !!activeSid && sessionView === "trajectory";
   const selectedCard = selectedCmdId ? cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null : null;
 
   const changeView = (v: SessionView) => {
-    if (activeSid) {
-      setSessionViews((m) => ({ ...m, [activeSid]: v }));
-      onViewChange(activeSid, v);
+    if (!activeSid) return;
+    if (density === "desktop") {
+      onControlledViewChange?.(activeSid, v);
+      return;
     }
+    setSessionViews((m) => ({ ...m, [activeSid]: v }));
+    onViewChange(activeSid, v);
   };
 
   // Browserless-style connection banner: the SSE stream dropped — say so in
@@ -66,21 +76,9 @@ export function TerminalWorkspace({
       {reconnectBanner}
       {density === "desktop" ? (
         <div className="desktop-terminal">
-          <div className="desktop-tabs-row">
-            <TabBar
-              sessions={sessions}
-              activeSid={activeSid}
-              onActivate={onActivate}
-              onClose={onClose}
-              onExport={onExport}
-              view={sessionView}
-              onViewChange={changeView}
-            />
-            <div className="desktop-new">
-              {/* New-session entry points are provided by the parent (menu on
-                  panel density, buttons here on desktop density). */}
-            </div>
-          </div>
+          {/* Desktop density: session tabs + New menu live in the header card
+              (DesktopShell) — this workspace renders ONLY the terminal area.
+              The trajectory/terminal view switch is a header button. */}
           <div id="desktop-term-container" className={trajOpen ? "hidden" : undefined}>
             {trajOpen && activeSid ? (
               <TrajectoryView key={activeSid} events={cmdEvents.events} />
