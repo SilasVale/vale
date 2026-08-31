@@ -280,6 +280,34 @@ impl SshSession {
         })
     }
 
+    /// Open an SFTP session on this connection (P4c). The caller owns the
+    /// SftpSession and must close it before dropping the SshSession.
+    #[cfg(feature = "terminal")]
+    pub async fn sftp_session(
+        &self,
+    ) -> Result<russh_sftp::client::SftpSession, DeviceError> {
+        let channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(|e| DeviceError::Internal {
+                message: format!("sftp open channel: {e}"),
+            })?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| DeviceError::Internal {
+                message: format!("sftp subsystem request: {e}"),
+            })?;
+        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|e| DeviceError::Internal {
+                message: format!("sftp init: {e}"),
+            })?;
+        sftp.set_timeout(15);
+        Ok(sftp)
+    }
+
     /// Open an interactive PTY shell on this connection.
     /// Returns (output_rx, write_tx, resize_tx).
     /// A background task multiplexes read/write/resize on the channel.
@@ -296,8 +324,7 @@ impl SshSession {
             mpsc::Sender<(u16, u16)>,
         ),
         DeviceError,
-    > {
-        let channel = self
+    > {        let channel = self
             .handle
             .channel_open_session()
             .await

@@ -39,6 +39,7 @@ wait-timeout = "0.2"
 
 # Optional deps — gated behind features; headless builds skip them entirely.
 russh = { version = "0.55", default-features = false, features = ["ring"], optional = true }
+russh-sftp = { version = "2.3", optional = true }
 portable-pty = { version = "0.8", optional = true }
 keyring = { version = "2", optional = true }
 
@@ -79,7 +80,7 @@ rmcp = { version = "2", features = ["client", "transport-streamable-http-client-
 [features]
 default = []
 # Real terminal backends (PTY/SSH/Serial).
-terminal = ["dep:portable-pty", "dep:russh"]
+terminal = ["dep:portable-pty", "dep:russh", "dep:russh-sftp"]
 # OS keychain secrets for SSH passwords.
 keyring = ["dep:keyring"]
 

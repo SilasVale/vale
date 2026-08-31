@@ -123,7 +123,100 @@ pub(super) fn build(
         tool_saved_connections(),
         tool_connect_saved(terminal_mgr, bus, output_buf, logger, buffer_limit),
         tool_terminal_env(),
+        tool_sftp(),
     ]
+}
+
+/// P4c: SFTP file operations over SSH — stateless one-shot transfers.
+/// Each call connects (password or key), performs ONE op, and closes.
+/// Ops: list (remote dir), upload (local file → remote, base64 data),
+/// download (remote → local path on THIS device), delete, mkdir.
+fn tool_sftp() -> ToolDef {
+    ToolDef::new(
+        "sftp",
+        "SFTP file transfer over SSH (stateless one-shot): connect with host/user/password or key_path, perform ONE operation, close. Ops: 'list' (remote_path dir → names+attrs), 'upload' (data base64 → remote_path), 'download' (remote_path → local_path on this device), 'delete' (remote_path), 'mkdir' (remote_path). Returns result summary. For persistent browsing use a terminal ssh session.",
+        json!({
+            "type": "object",
+            "properties": {
+                "op": {"type": "string", "enum": ["list", "upload", "download", "delete", "mkdir"]},
+                "host": {"type": "string", "description": "SSH host"},
+                "user": {"type": "string", "description": "SSH username"},
+                "port": {"type": "integer", "description": "SSH port (default 22)"},
+                "password": {"type": "string", "description": "SSH password (or key passphrase)"},
+                "key_path": {"type": "string", "description": "SSH private key path (optional)"},
+                "remote_path": {"type": "string", "description": "Remote path (dir for list/mkdir, file for upload/download/delete)"},
+                "local_path": {"type": "string", "description": "(download) Local destination path on this device"},
+                "data": {"type": "string", "description": "(upload) File content as base64"}
+            },
+            "required": ["op", "host", "user", "remote_path"]
+        }),
+        move |params: Value| {
+            async move {
+                let op = require_str(&params, "op")?;
+                let host = require_str(&params, "host")?;
+                let user = require_str(&params, "user")?;
+                let port = params.get("port").and_then(|v| v.as_u64()).unwrap_or(22) as u16;
+                let password = params.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let key_path = params.get("key_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let remote_path = require_str(&params, "remote_path")?;
+                let local_path = params.get("local_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let data_b64 = params.get("data").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                // Reuse the same connect+auth path as terminal ssh sessions.
+                let session = crate::tools::ssh::SshSession::connect(
+                    &host, port, &user,
+                    if password.is_empty() { None } else { Some(&password) },
+                    if key_path.is_empty() { None } else { Some(&key_path) },
+                ).await?;
+                let sftp = session.sftp_session().await?;
+
+                let result = match op.as_str() {
+                    "list" => {
+                        let mut entries = Vec::new();
+                        let rd = sftp.read_dir(&remote_path).await.map_err(|e| DeviceError::Internal { message: format!("sftp read_dir {remote_path}: {e}") })?;
+                        for dir in rd {
+                            entries.push(serde_json::json!({
+                                "name": dir.file_name(),
+                                "size": dir.metadata().len(),
+                                "is_dir": dir.file_type().is_dir(),
+                            }));
+                        }
+                        serde_json::json!({"entries": entries})
+                    }
+                    "upload" => {
+                        let bytes = {
+                            use base64::Engine;
+                            base64::engine::general_purpose::STANDARD.decode(data_b64)
+                                .map_err(|e| DeviceError::Internal { message: format!("base64 decode: {e}") })?
+                        };
+                        sftp.write(&remote_path, &bytes).await.map_err(|e| DeviceError::Internal { message: format!("sftp write {remote_path}: {e}") })?;
+                        serde_json::json!({"uploaded_bytes": bytes.len(), "remote_path": remote_path})
+                    }
+                    "download" => {
+                        if local_path.is_empty() {
+                            return Ok(to_value_or_empty(json!({"error": "local_path required for download"})));
+                        }
+                        let buf = sftp.read(&remote_path).await.map_err(|e| DeviceError::Internal { message: format!("sftp read {remote_path}: {e}") })?;
+                        std::fs::write(&local_path, &buf).map_err(|e| DeviceError::Internal { message: format!("local write {local_path}: {e}") })?;
+                        serde_json::json!({"downloaded_bytes": buf.len(), "local_path": local_path})
+                    }
+                    "delete" => {
+                        sftp.remove_file(&remote_path).await.map_err(|e| DeviceError::Internal { message: format!("sftp remove {remote_path}: {e}") })?;
+                        serde_json::json!({"deleted": remote_path})
+                    }
+                    "mkdir" => {
+                        sftp.create_dir(&remote_path).await.map_err(|e| DeviceError::Internal { message: format!("sftp mkdir {remote_path}: {e}") })?;
+                        serde_json::json!({"created": remote_path})
+                    }
+                    _ => return Ok(to_value_or_empty(json!({"error": format!("unknown op: {op}")}))),
+                };
+
+                // Best-effort close (ignore errors — session drop cleans up).
+                let _ = sftp.close().await;
+                Ok(to_value_or_empty(result))
+            }
+        },
+    )
 }
 
 /// round-151: terminal_env — AI-friendly environment info: default shell,
