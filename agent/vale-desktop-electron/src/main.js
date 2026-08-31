@@ -27,9 +27,16 @@ app.commandLine.appendSwitch("remote-debugging-port", String(CDP_PORT));
 const httpServer = http.createServer((req, res) => {
   const u = new URL(req.url, "http://127.0.0.1");
   const send = (obj, code = 200) => {
+    // CORS: the SPA loads from http://127.0.0.1:18080 (agent) and calls this
+    // control endpoint cross-origin — without these headers the fetch is
+    // blocked and "Browser…" silently fails.
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+    res.setHeader("access-control-allow-headers", "content-type, authorization");
     res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(obj));
   };
+  if (req.method === "OPTIONS") return send({ ok: true });
   try {
     if (u.pathname === "/api/browser-session/open" && req.method === "POST") {
       const url = u.searchParams.get("url") || "about:blank";
