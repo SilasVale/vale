@@ -1,0 +1,18 @@
+{
+  "name": "vale-desktop-electron",
+  "version": "0.1.0",
+  "description": "Vale Desktop — Electron shell over the local vale-agent service (SecureCRT-style multi-session workspace: terminal / SSH / serial / browser) with AI control.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.0.0"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
+  }
+}
