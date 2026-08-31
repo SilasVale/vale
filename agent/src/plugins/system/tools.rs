@@ -50,15 +50,20 @@ fn tool_file_list() -> ToolDef {
                 let path = require_str(&params, "path")?;
                 let recursive = params.get("recursive").and_then(|v| v.as_bool()).unwrap_or(false);
                 let dir = std::path::PathBuf::from(&path);
-                let read = match std::fs::read_dir(&dir) {
+                let mut read = match tokio::fs::read_dir(&dir).await {
                     Ok(r) => r,
                     Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read_dir {path}: {e}")}))),
                 };
                 let mut entries: Vec<Value> = Vec::new();
-                for ent in read.flatten() {
+                loop {
                     if entries.len() >= MAX_LIST_ENTRIES { break; }
+                    let ent = match read.next_entry().await {
+                        Ok(Some(e)) => e,
+                        Ok(None) => break,
+                        Err(_) => break,
+                    };
                     let name = ent.file_name().to_string_lossy().to_string();
-                    let meta = ent.metadata();
+                    let meta = ent.metadata().await;
                     let (kind, size, modified) = match &meta {
                         Ok(m) => (
                             if m.is_dir() { "dir" } else if m.is_symlink() { "symlink" } else { "file" },
@@ -75,17 +80,21 @@ fn tool_file_list() -> ToolDef {
                     }));
                     // One level of recursion for dirs.
                     if recursive && kind == "dir" {
-                        if let Ok(sub) = std::fs::read_dir(ent.path()) {
-                            for subent in sub.flatten() {
-                                if entries.len() >= MAX_LIST_ENTRIES { break; }
-                                let sm = subent.metadata();
-                                entries.push(json!({
-                                    "name": format!("{name}/{}", subent.file_name().to_string_lossy()),
-                                    "kind": match &sm { Ok(m) if m.is_dir() => "dir", Ok(_) => "file", _ => "unknown" },
-                                    "size": sm.as_ref().map(|m| m.len()).unwrap_or(0),
-                                    "modified_unix": sm.as_ref().ok().and_then(|m| m.modified().ok()).map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)),
-                                }));
-                            }
+                        let mut sub = match tokio::fs::read_dir(ent.path()).await { Ok(s) => s, Err(_) => continue };
+                        loop {
+                            if entries.len() >= MAX_LIST_ENTRIES { break; }
+                            let subent = match sub.next_entry().await {
+                                Ok(Some(e)) => e,
+                                Ok(None) => break,
+                                Err(_) => break,
+                            };
+                            let sm = subent.metadata().await;
+                            entries.push(json!({
+                                "name": format!("{name}/{}", subent.file_name().to_string_lossy()),
+                                "kind": match &sm { Ok(m) if m.is_dir() => "dir", Ok(_) => "file", _ => "unknown" },
+                                "size": sm.as_ref().map(|m| m.len()).unwrap_or(0),
+                                "modified_unix": sm.as_ref().ok().and_then(|m| m.modified().ok()).map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)),
+                            }));
                         }
                     }
                 }
@@ -115,14 +124,16 @@ fn tool_file_read() -> ToolDef {
                 let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0);
                 let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(65536).min(MAX_READ_BYTES);
                 let raw = params.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
-                let f = match std::fs::File::open(&path) {
+                // Async read — the agent runtime must never block on disk I/O
+                // (a slow network drive would stall the whole MCP server).
+                let mut f = match tokio::fs::File::open(&path).await {
                     Ok(f) => f,
                     Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("open {path}: {e}")}))),
                 };
-                use std::io::{Read, Seek, SeekFrom};
-                let mut f = f;
+                use tokio::io::{AsyncReadExt, AsyncSeekExt};
                 if offset > 0 {
-                    if let Err(e) = f.seek(SeekFrom::Start(offset)) {
+                    use std::io::SeekFrom;
+                    if let Err(e) = f.seek(SeekFrom::Start(offset)).await {
                         return Ok(to_value_or_empty(json!({"ok": false, "error": format!("seek: {e}")})));
                     }
                 }
@@ -130,14 +141,14 @@ fn tool_file_read() -> ToolDef {
                 let mut total = 0usize;
                 loop {
                     if total >= buf.len() { break; }
-                    match f.read(&mut buf[total..]) {
+                    match f.read(&mut buf[total..]).await {
                         Ok(0) => break,
                         Ok(n) => total += n,
                         Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read: {e}")}))),
                     }
                 }
                 buf.truncate(total);
-                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                let size = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
                 if raw {
                     use base64::Engine;
                     Ok(to_value_or_empty(json!({
@@ -191,18 +202,19 @@ fn tool_file_write() -> ToolDef {
                 if bytes.len() > MAX_WRITE_BYTES {
                     return Ok(to_value_or_empty(json!({"ok": false, "error": format!("content too large ({} bytes, max {MAX_WRITE_BYTES})", bytes.len())})));
                 }
-                use std::io::Write;
-                let mut opts = std::fs::OpenOptions::new();
+                use tokio::io::AsyncWriteExt;
+                let mut opts = tokio::fs::OpenOptions::new();
                 opts.write(true).create(true).append(append);
                 if !append { opts.truncate(true); }
-                let mut f = match opts.open(&path) {
+                let mut f = match opts.open(&path).await {
                     Ok(f) => f,
                     Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("open {path}: {e}")}))),
                 };
-                match f.write_all(&bytes) {
+                match f.write_all(&bytes).await {
                     Ok(()) => {}
                     Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("write: {e}")}))),
                 }
+                let _ = f.flush().await;
                 Ok(to_value_or_empty(json!({"ok": true, "path": path, "bytes": bytes.len(), "append": append})))
             }
         },
@@ -222,12 +234,13 @@ fn tool_process_list() -> ToolDef {
         move |params: Value| {
             async move {
                 let filter = params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-                let mut out = std::process::Command::new("tasklist")
+                let mut out = tokio::process::Command::new("tasklist")
                     .args(["/FO", "CSV", "/NH"])
-                    .output();
+                    .output()
+                    .await;
                 if out.is_err() {
                     // tasklist is Windows-only; fall back to ps for Unix.
-                    out = std::process::Command::new("ps").args(["-eo", "pid,comm,rss"]).output();
+                    out = tokio::process::Command::new("ps").args(["-eo", "pid,comm,rss"]).output().await;
                 }
                 let out = match out {
                     Ok(o) if o.status.success() => o,
@@ -292,12 +305,13 @@ fn tool_process_kill() -> ToolDef {
                 }
                 let mut killed: Vec<Value> = Vec::new();
                 if let Some(pid) = pid {
-                    let r = std::process::Command::new("taskkill")
+                    let r = tokio::process::Command::new("taskkill")
                         .args(["/PID", &pid.to_string(), "/F"])
-                        .output();
+                        .output()
+                        .await;
                     let ok = matches!(&r, Ok(o) if o.status.success());
                     if !ok {
-                        let r2 = std::process::Command::new("kill").arg("-9").arg(pid.to_string()).output();
+                        let r2 = tokio::process::Command::new("kill").arg("-9").arg(pid.to_string()).output().await;
                         let ok2 = matches!(&r2, Ok(o) if o.status.success());
                         if !ok2 {
                             return Ok(to_value_or_empty(json!({"ok": false, "error": format!("kill {pid} failed (taskkill and kill both failed)")})));
@@ -306,19 +320,20 @@ fn tool_process_kill() -> ToolDef {
                     killed.push(json!({"pid": pid}));
                 }
                 if !name.is_empty() {
-                    let r = std::process::Command::new("taskkill")
+                    let r = tokio::process::Command::new("taskkill")
                         .args(["/IM", &name, "/F"])
-                        .output();
+                        .output()
+                        .await;
                     if let Ok(o) = &r {
                         if o.status.success() {
                             killed.push(json!({"name": name}));
                         } else {
                             // ps fallback: find pids and kill each.
-                            if let Ok(o) = std::process::Command::new("pgrep").arg("-f").arg(&name).output() {
+                            if let Ok(o) = tokio::process::Command::new("pgrep").arg("-f").arg(&name).output().await {
                                 let text = String::from_utf8_lossy(&o.stdout).to_string();
                                 for line in text.lines() {
                                     if let Ok(p) = line.trim().parse::<u64>() {
-                                        let _ = std::process::Command::new("kill").arg("-9").arg(p.to_string()).output();
+                                        let _ = tokio::process::Command::new("kill").arg("-9").arg(p.to_string()).output().await;
                                         killed.push(json!({"pid": p, "name": name}));
                                     }
                                 }
@@ -355,44 +370,54 @@ fn tool_net_test() -> ToolDef {
                 let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(5);
                 let mut result = json!({"ok": true, "host": host});
 
-                // TCP connect test.
+                // TCP connect test (async — never block the runtime on DNS or
+                // connect; a dead host must return in timeout_secs, not hang).
                 if let Some(port) = port {
-                    let addr = format!("{host}:{port}");
-                    use std::net::{TcpStream, ToSocketAddrs};
-                    let resolved = match addr.to_socket_addrs() {
-                        Ok(mut it) => it.next(),
-                        Err(e) => {
-                            result["tcp_reachable"] = json!(false);
-                            result["tcp_error"] = json!(format!("resolve {addr}: {e}"));
-                            return Ok(to_value_or_empty(result));
+                    use tokio::net::TcpStream;
+                    use tokio::time::timeout;
+                    let started = std::time::Instant::now();
+                    match timeout(
+                        std::time::Duration::from_secs(timeout_secs),
+                        TcpStream::connect((host.as_str(), port as u16)),
+                    ).await {
+                        Ok(Ok(_)) => {
+                            result["tcp_reachable"] = json!(true);
+                            result["tcp_ms"] = json!(started.elapsed().as_millis());
                         }
-                    };
-                    match resolved {
-                        Some(sa) => {
-                            let started = std::time::Instant::now();
-                            match TcpStream::connect_timeout(&sa, std::time::Duration::from_secs(timeout_secs)) {
-                                Ok(_) => {
-                                    result["tcp_reachable"] = json!(true);
-                                    result["tcp_ms"] = json!(started.elapsed().as_millis());
-                                }
-                                Err(e) => {
-                                    result["tcp_reachable"] = json!(false);
-                                    result["tcp_error"] = json!(e.to_string());
-                                }
-                            }
-                        }
-                        None => {
+                        Ok(Err(e)) => {
                             result["tcp_reachable"] = json!(false);
-                            result["tcp_error"] = json!("no address resolved");
+                            result["tcp_error"] = json!(e.to_string());
+                        }
+                        Err(_) => {
+                            result["tcp_reachable"] = json!(false);
+                            result["tcp_error"] = json!(format!("connect timed out after {timeout_secs}s"));
                         }
                     }
                 }
 
-                // ICMP ping (best-effort; not always available without privileges).
-                let ping = std::process::Command::new("ping")
-                    .args(["-n", "1", "-w", &(timeout_secs * 1000).to_string(), &host])
-                    .output();
-                if let Ok(o) = &ping {
+                // ICMP ping (best-effort; async so a hung ping can't block).
+                // Windows: ping -n 1 -w <ms>; Unix: ping -c 1 -W <secs>.
+                // A tokio timeout wraps the whole call — a platform quirk must
+                // never leave the MCP call hanging.
+                let is_windows = std::env::consts::OS == "windows";
+                let mut cmd = tokio::process::Command::new("ping");
+                if is_windows {
+                    cmd.args(["-n", "1", "-w", &(timeout_secs * 1000).to_string(), &host]);
+                } else {
+                    cmd.args(["-c", "1", "-W", &timeout_secs.to_string(), &host]);
+                }
+                let ping = match tokio::time::timeout(
+                    std::time::Duration::from_secs(timeout_secs + 2),
+                    cmd.output(),
+                ).await {
+                    Ok(Ok(o)) => Some(o),
+                    Ok(Err(_)) | Err(_) => {
+                        result["ping_ok"] = json!(false);
+                        result["ping_error"] = json!("ping failed or timed out");
+                        None
+                    }
+                };
+                if let Some(o) = &ping {
                     if o.status.success() {
                         // Parse "time=12ms" / "time<1ms" from output.
                         let text = String::from_utf8_lossy(&o.stdout);
@@ -413,9 +438,6 @@ fn tool_net_test() -> ToolDef {
                     } else {
                         result["ping_ok"] = json!(false);
                     }
-                } else {
-                    result["ping_ok"] = json!(false);
-                    result["ping_error"] = json!("ping not available");
                 }
                 Ok(to_value_or_empty(result))
             }
