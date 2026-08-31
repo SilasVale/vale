@@ -184,7 +184,7 @@ fn tool_open(
     ToolDef::new(
         "terminal_open",
         "Open a terminal connection. Kind: 'pty' (local shell; target optional — blank = default shell), 'ssh' (target=user@host:port), or 'serial' (target=port_name, optional ?baud=N&parity=E&data=8&stop=1 e.g. /dev/ttyUSB0?baud=9600&parity=even&data=8&stop=1, default 115200 8N1). Returns session ID.",
-        json!({"type":"object","properties":{"kind":{"type":"string","enum":["pty","ssh","serial"]},"target":{"type":"string","description":"pty: optional (blank = default shell); ssh: user@host:port; serial: port_name (optional ?baud=N&parity=E&data=8&stop=1)"},"password":{"type":"string"},"key_path":{"type":"string","description":"(ssh) Path to a private key file. When set, public-key auth is used; password (if any) is the key passphrase."},"rows":{"type":"integer","description":"Initial terminal rows. Default 0 (backend default)."},"cols":{"type":"integer","description":"Initial terminal columns. Default 0 (backend default)."},"data_bits":{"type":"integer","description":"(serial) Data bits 5-8. Overrides the target string."},"parity":{"type":"string","description":"(serial) Parity: none|odd|even. Overrides the target string."},"stop_bits":{"type":"integer","description":"(serial) Stop bits 1 or 2. Overrides the target string."}},"required":["kind"]}),
+        json!({"type":"object","properties":{"kind":{"type":"string","enum":["pty","ssh","serial"]},"target":{"type":"string","description":"pty: optional (blank = default shell); ssh: user@host:port; serial: port_name (optional ?baud=N&parity=E&data=8&stop=1)"},"password":{"type":"string"},"key_path":{"type":"string","description":"(ssh) Path to a private key file. When set, public-key auth is used; password (if any) is the key passphrase."},"rows":{"type":"integer","description":"Initial terminal rows. Default 0 (backend default)."},"cols":{"type":"integer","description":"Initial terminal columns. Default 0 (backend default)."},"data_bits":{"type":"integer","description":"(serial) Data bits 5-8. Overrides the target string."},"parity":{"type":"string","description":"(serial) Parity: none|odd|even. Overrides the target string."},"stop_bits":{"type":"integer","description":"(serial) Stop bits 1 or 2. Overrides the target string."},"auto_reconnect":{"type":"boolean","description":"(serial) Auto-reconnect when the port disappears (unplug / device reboot): the session stays open and re-opens the SAME port with the SAME framing when it reappears (P4b). Default false."}},"required":["kind"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let bus = bus.clone();
@@ -205,6 +205,7 @@ fn tool_open(
                 let data_bits = params.get("data_bits").and_then(|v| v.as_u64()).map(|v| v as u8);
                 let parity = params.get("parity").and_then(|v| v.as_str()).map(|s| s.to_string());
                 let stop_bits = params.get("stop_bits").and_then(|v| v.as_u64()).map(|v| v as u8);
+                let auto_reconnect = params.get("auto_reconnect").and_then(|v| v.as_bool()).unwrap_or(false);
                 let req = crate::tools::terminal::TermOpenRequest {
                     kind: kind.clone(),
                     target: target.clone(),
@@ -216,6 +217,7 @@ fn tool_open(
                     data_bits,
                     parity,
                     stop_bits,
+                    auto_reconnect,
                 };
                 let (id, _rx) = terminal_mgr.term_open(&req).await?;
                 // Phase 4: persist metadata so post-restart errors can say

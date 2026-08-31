@@ -69,6 +69,11 @@ pub struct TermOpenRequest {
     pub parity: Option<String>,
     #[serde(default)]
     pub stop_bits: Option<u8>,
+    /// (serial) Auto-reconnect: when the port disappears (unplug / device
+    /// reboot), keep the session alive and retry opening the SAME port with
+    /// the SAME framing until it reappears (P4b).
+    #[serde(default)]
+    pub auto_reconnect: bool,
 }
 
 fn default_true() -> bool { true }
@@ -316,7 +321,7 @@ mod desktop_impl {
                 }
                 "serial" => {
                     let be = serial::SerialBackend::open(
-                        self.serial_pool.clone(), &req.target, req.data_bits, req.parity.clone(), req.stop_bits, tx, id.clone(),
+                        self.serial_pool.clone(), &req.target, req.data_bits, req.parity.clone(), req.stop_bits, req.auto_reconnect, tx, id.clone(),
                     ).await?;
                     let label = format!("serial:{}", req.target.split('?').next().unwrap_or(&req.target));
                     (Arc::new(be) as Arc<dyn TermBackend>, label)
@@ -718,6 +723,7 @@ mod tests {
                 data_bits: None,
                 parity: None,
                 stop_bits: None,
+                auto_reconnect: false,
             })
             .await
             .unwrap();
@@ -763,6 +769,7 @@ mod tests {
                 data_bits: None,
                 parity: None,
                 stop_bits: None,
+                auto_reconnect: false,
             })
             .await
             .expect("open pty");

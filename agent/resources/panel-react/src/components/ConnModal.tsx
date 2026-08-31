@@ -21,6 +21,8 @@ export function ConnModal({ kind, onClose, onConnect }: {
   // serial fields
   const [sport, setSport] = useState("");
   const [baud, setBaud] = useState("115200");
+  // P4b: serial auto-reconnect (unplug / device reboot → re-open same port)
+  const [autoReconnect, setAutoReconnect] = useState(false);
 
   // Load saved connections once (best-effort — the modal works without them).
   useEffect(() => {
@@ -74,6 +76,7 @@ export function ConnModal({ kind, onClose, onConnect }: {
         // reconnect preserves the link config.
         const extra: Record<string, unknown> = { ...savedParams.current };
         delete extra.password; // never send credentials through here
+        if (autoReconnect) extra.auto_reconnect = true;
         await onConnect(`${sport}?baud=${baud}`, extra);
       }
       onClose();
@@ -118,6 +121,10 @@ export function ConnModal({ kind, onClose, onConnect }: {
           <>
             {mkField("Port", sport, setSport, "COM3 or /dev/ttyUSB0")}
             {mkField("Baud rate", baud, setBaud, "115200")}
+            <label className="settings-check">
+              <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} />
+              <span>Auto-reconnect (port 拔插/设备重启后自动重连)</span>
+            </label>
           </>
         )}
         <div className="modal-actions">
