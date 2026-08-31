@@ -34,6 +34,9 @@ impl TerminalManager {
         Err(disabled_err())
     }
     pub async fn term_try_execute(&self, _sid: &str) -> Result<bool, DeviceError> { Err(disabled_err()) }
+    /// Wait-with-timeout variant of term_try_execute (round-…: added to the
+    /// stub when the execute path gained the acquire-with-timeout call).
+    pub async fn term_acquire_execute(&self, _sid: &str, _max_wait_ms: u64) -> Result<bool, DeviceError> { Err(disabled_err()) }
     pub async fn term_marker_injected(&self, _sid: &str) -> bool { false }
     pub async fn term_set_marker_injected(&self, _sid: &str, _injected: bool) {}
     pub async fn term_release_execute(&self, _sid: &str) {}

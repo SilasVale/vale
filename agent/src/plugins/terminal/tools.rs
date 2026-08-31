@@ -140,6 +140,11 @@ pub(super) fn build(
 /// Ops: list (remote dir), upload (local file → remote, base64 data),
 /// download (remote → local path on THIS device), delete, mkdir.
 /// `name` selects the canonical (`terminal_sftp`) or legacy alias (`sftp`).
+///
+/// Feature-gating: the real implementation needs `crate::tools::ssh`, which
+/// only exists under the `terminal` feature. Headless builds get a stub that
+/// returns an explicit "backend not enabled" error (same contract as
+/// terminal_open's stub path).
 fn tool_sftp(name: &'static str) -> ToolDef {
     ToolDef::new(
         name,
@@ -159,7 +164,17 @@ fn tool_sftp(name: &'static str) -> ToolDef {
             },
             "required": ["op", "host", "user", "remote_path"]
         }),
-        move |params: Value| {
+        sftp_handler(),
+    )
+}
+
+/// The sftp handler closure — real SSH under `terminal`, explicit error stub
+/// otherwise (the feature-gating rule: public tool paths identical in both
+/// configs, only the backend differs).
+fn sftp_handler() -> impl vale_agent_core::ToolHandler + 'static {
+    move |params: Value| {
+        #[cfg(feature = "terminal")]
+        {
             async move {
                 let op = require_str(&params, "op")?;
                 let host = require_str(&params, "host")?;
@@ -232,8 +247,16 @@ fn tool_sftp(name: &'static str) -> ToolDef {
                 let _ = sftp.close().await;
                 Ok(to_value_or_empty(result))
             }
-        },
-    )
+        }
+        #[cfg(not(feature = "terminal"))]
+        {
+            async move {
+                Err(vale_agent_core::DeviceError::Internal {
+                    message: "sftp backend not enabled (built without the terminal feature)".to_string(),
+                })
+            }
+        }
+    }
 }
 
 /// round-151: terminal_env — AI-friendly environment info: default shell,
