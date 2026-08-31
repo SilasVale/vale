@@ -234,6 +234,41 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
               </div>
             )}
           </div>
+
+          {/* P2: AI-action timeline — what the AI did, paired with the shots.
+              One row per browser_run_script execution (script preview + time +
+              outcome), newest first. */}
+          <div className="browser-actions">
+            <div className="browser-ev-head">
+              AI actions ({b.actions.length}) — 操作日志
+            </div>
+            {b.actions.length === 0 ? (
+              <div className="browser-ev-empty-mini">No actions yet — they appear here when the AI drives the browser via browser_run_script</div>
+            ) : (
+              <div className="browser-actions-list">
+                {b.actions.map((a) => (
+                  <div key={a.ts} className={`browser-action${a.exit_code === 0 ? "" : a.exit_code === null ? " running" : " err"}`}>
+                    <div className="browser-action-row">
+                      <span className="browser-action-time">{new Date(a.ts).toLocaleTimeString()}</span>
+                      <span className={`browser-action-badge${a.exit_code === 0 ? " ok" : a.exit_code === null ? " run" : " err"}`}>
+                        {a.timed_out ? "timeout" : a.exit_code === 0 ? "ok" : a.exit_code === null ? "running" : `exit ${a.exit_code}`}
+                      </span>
+                      {typeof a.duration_ms === "number" && (
+                        <span className="browser-action-dur">{a.duration_ms}ms</span>
+                      )}
+                      {a.screenshots && a.screenshots.length > 0 && (
+                        <span className="browser-action-shots">{a.screenshots.length} shot{a.screenshots.length > 1 ? "s" : ""}</span>
+                      )}
+                    </div>
+                    <div className="browser-action-script">{a.script || "(no script)"}</div>
+                    {a.stderr_tail && a.exit_code !== 0 && (
+                      <div className="browser-action-err">{a.stderr_tail}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

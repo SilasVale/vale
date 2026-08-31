@@ -14,6 +14,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface TabInfo { i: number; url: string }
 export interface Shot { name: string; mtime_ms: number }
+/** P2: one AI action = one browser_run_script execution (agent-written JSONL). */
+export interface BrowserAction {
+  ts: number;
+  duration_ms?: number;
+  exit_code?: number | null;
+  timed_out?: boolean;
+  script?: string;
+  screenshots?: string[];
+  stdout_tail?: string;
+  stderr_tail?: string;
+}
 export type BrowserView = "live" | "evidence";
 export interface BrowserSessionData {
   sid: string;
@@ -53,6 +64,8 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const [shots, setShots] = useState<Shot[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [shotUrls, setShotUrls] = useState<Record<string, string>>({});
+  // P2: AI-action timeline (polled with the evidence feed)
+  const [actions, setActions] = useState<BrowserAction[]>([]);
 
   const imgRef = useRef<HTMLImageElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -323,6 +336,14 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
           }
           return next;
         });
+        // P2: AI-action timeline rides the same poll (independent failure —
+        // the actions feed is additive and may lag the shots feed).
+        fetch(`${apiBase}/api/browser/actions`, { headers: auth() })
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+          .then((ad) => {
+            if (alive && Array.isArray(ad.actions)) setActions(ad.actions);
+          })
+          .catch(() => {});
       } catch { /* transient */ }
     };
     void tick();
@@ -338,6 +359,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     newTab, selTab, closeTab,
     imgRef, mapXY, send, sendMove,
     shots, selected, setSelected, shotUrls,
+    actions,
     aiActive, hasFrame,
   };
 }

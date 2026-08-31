@@ -154,11 +154,36 @@ fn tool_browser_run_script() -> ToolDef {
                 let after: Vec<String> = std::fs::read_dir(&out_dir)
                     .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".png") && !before.contains(&e.file_name().to_string_lossy().to_string())).map(|e| e.file_name().to_string_lossy().to_string()).collect())
                     .unwrap_or_default();
+                // P2: AI-action timeline — append one JSONL line per
+                // browser_run_script execution (the panel's Evidence view
+                // polls /api/browser/actions and renders these as the "what
+                // did the AI do" log, paired with the screenshot strip).
+                let script_preview: String = {
+                    let s = script_src.replace('\n', " ").trim().to_string();
+                    if s.len() > 200 { format!("{}…", &s[..200]) } else { s }
+                };
+                let duration_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0).saturating_sub(ts);
+                let stdout_full = trunc(stdout);
+                let stderr_full = trunc(stderr);
+                let tail = |s: &str| s.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>();
+                let _ = std::fs::OpenOptions::new().create(true).append(true).open(out_dir.join("actions.jsonl")).and_then(|mut f| {
+                    use std::io::Write;
+                    writeln!(f, "{}", serde_json::json!({
+                        "ts": ts,
+                        "duration_ms": duration_ms,
+                        "exit_code": exit_code,
+                        "timed_out": timed_out,
+                        "script": script_preview,
+                        "screenshots": after,
+                        "stdout_tail": tail(&stdout_full),
+                        "stderr_tail": tail(&stderr_full),
+                    }))
+                });
                 Ok(to_value_or_empty(json!({
                     "exit_code": exit_code,
                     "timed_out": timed_out,
-                    "stdout": trunc(stdout),
-                    "stderr": trunc(stderr),
+                    "stdout": stdout_full,
+                    "stderr": stderr_full,
                     "screenshots": after,
                     "pwout_dir": out_dir.to_string_lossy(),
                     "script_file": script_path.to_string_lossy(),

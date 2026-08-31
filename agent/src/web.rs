@@ -595,13 +595,26 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // the pwout dir (browser_run_script & playwright scripts drop screenshots
     // here). The panel polls pwshots and shows new PNGs as the AI works,
     // so a human can see what the AI did without any live frame stream.
-    if method == Method::GET && (path == "/api/browser/pwshots" || path == "/api/browser/pwshot") {
+    if method == Method::GET && (path == "/api/browser/pwshots" || path == "/api/browser/pwshot" || path == "/api/browser/actions") {
         if let Err(resp) = check_auth(&req, &state) { return *resp; }
         let install = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
             .unwrap_or_default();
         let pwout = install.join("pwout");
+        // P2: AI-action timeline — the JSONL written by browser_run_script
+        // (one line per execution). Return newest-first, capped at 50.
+        if path == "/api/browser/actions" {
+            let mut actions: Vec<serde_json::Value> = Vec::new();
+            if let Ok(contents) = std::fs::read_to_string(pwout.join("actions.jsonl")) {
+                for line in contents.lines().rev().take(50) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                        actions.push(v);
+                    }
+                }
+            }
+            return built_response(StatusCode::OK, "application/json", Body::from(serde_json::json!({"actions": actions}).to_string()));
+        }
         if path == "/api/browser/pwshots" {
             let mut shots: Vec<serde_json::Value> = Vec::new();
             if let Ok(rd) = std::fs::read_dir(&pwout) {
