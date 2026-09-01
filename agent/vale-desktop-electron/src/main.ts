@@ -332,9 +332,39 @@ if (gotTheLock) {
     // exponential backoff (2s → 4s → 8s → 30s cap) so a dead agent doesn't
     // spam retries.
     const agentReady = async (): Promise<boolean> => portBusy(18080, 800);
+    // stage-n: the wait page now carries a "Start Agent" action — the
+    // header comment promised it but it never existed. The button calls the
+    // shell's own /api/shell/start-agent (schtasks /run ValeAgent — the
+    // only sanctioned spawn path), then keeps polling until the agent is
+    // up. This turns a dead-end white screen into a recoverable state when
+    // the ValeAgent task is down (crash, stopped task, update mid-swap).
     const WAIT_HTML = `<!doctype html><meta charset="utf-8"><title>Vale</title>
-      <style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}div{text-align:center}p{color:#999}</style>
-      <div><h2>Starting Vale Agent…</h2><p>waiting for 127.0.0.1:18080</p></div>`;
+      <style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}div{text-align:center}p{color:#999}button{margin-top:18px;padding:10px 22px;font-size:15px;border-radius:8px;border:1px solid #444;background:#222;color:#eee;cursor:pointer}button:hover{background:#333}button:disabled{opacity:.5;cursor:default}</style>
+      <div>
+        <h2>Vale Agent is not running</h2>
+        <p id="status">waiting for 127.0.0.1:18080…</p>
+        <button id="start">Start Agent</button>
+      </div>
+      <script>
+        const btn = document.getElementById("start");
+        const st = document.getElementById("status");
+        let busy = false;
+        btn.addEventListener("click", async () => {
+          if (busy) return;
+          busy = true; btn.disabled = true;
+          st.textContent = "starting ValeAgent task…";
+          try {
+            await fetch("http://127.0.0.1:9444/api/shell/start-agent", { method: "POST" });
+            st.textContent = "started — waiting for the agent to come up…";
+          } catch (e) {
+            st.textContent = "start request failed (" + e + ") — the task may already be starting";
+          }
+          setTimeout(() => { busy = false; btn.disabled = false; }, 3000);
+        });
+      </script>`;
+    const loadWaitPage = (): void => {
+      win?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(WAIT_HTML)}`).catch(() => {});
+    };
     let retryMs = 2000;
     const nextRetry = (): number => { retryMs = Math.min(retryMs * 2, 30000); return retryMs; };
     const resetRetry = (): void => { retryMs = 2000; };
@@ -358,7 +388,7 @@ if (gotTheLock) {
         setVersionTitle();
         win?.loadURL(`${BASE}/desktop/`).catch(() => { /* did-fail-load retries below */ });
       } else {
-        win?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(WAIT_HTML)}`).catch(() => {});
+        loadWaitPage();
         setTimeout(() => { loadDesktop(); }, nextRetry());
       }
     };
