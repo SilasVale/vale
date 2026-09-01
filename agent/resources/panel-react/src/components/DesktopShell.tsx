@@ -61,13 +61,22 @@ export function DesktopShell({
   // stage-n: agent version for the status strip — one /api/status call on
   // mount (the electron tray shows it too; the SPA status line should match).
   const [agentVersion, setAgentVersion] = useState("");
+  const [agentUptime, setAgentUptime] = useState("");
   useEffect(() => {
     let alive = true;
+    const fmtUptime = (secs: number): string => {
+      if (secs < 60) return `${secs}s`;
+      if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+      if (secs < 86400) return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+      return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
+    };
     (async () => {
       try {
         const j = await callApi("/api/status");
-        if (alive && j && typeof j.version === "string") setAgentVersion(j.version);
-      } catch { /* keep empty — version is a nicety */ }
+        if (!alive) return;
+        if (j && typeof j.version === "string") setAgentVersion(j.version);
+        if (j && typeof j.uptime_secs === "number") setAgentUptime(fmtUptime(j.uptime_secs));
+      } catch { /* keep empty — version/uptime are a nicety */ }
     })();
     return () => { alive = false; };
   }, []);
@@ -238,7 +247,7 @@ export function DesktopShell({
             <div className="desktop-status idle">
               <span className="desktop-status-msg">
                 {connected
-                  ? `${liveCount} session${liveCount === 1 ? "" : "s"}${agentVersion ? ` · v${agentVersion}` : ""}`
+                  ? `${liveCount} session${liveCount === 1 ? "" : "s"}${agentVersion ? ` · v${agentVersion}` : ""}${agentUptime ? ` · up ${agentUptime}` : ""}`
                   : "connecting…"}
               </span>
             </div>
