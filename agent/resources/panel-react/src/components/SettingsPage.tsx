@@ -112,7 +112,7 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
         <div className="settings-gw-form">
           <input
             className="settings-input"
-            placeholder="Gateway URL (e.g. https://api.saisi.online)"
+            placeholder="Gateway URL (e.g. https://gateway.example.com)"
             value={gwUrl}
             onChange={(e) => setGwUrl(e.target.value)}
             aria-label="Gateway URL"
@@ -202,7 +202,7 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
         <h3>Transport</h3>
         <p className="muted">
           The desktop shell talks to the agent over loopback HTTP/WS with the
-          device token. No cloud dependency — saisi.online endpoints are optional.
+          device token. No cloud dependency — gateway endpoints are optional.
         </p>
       </div>
     </div>

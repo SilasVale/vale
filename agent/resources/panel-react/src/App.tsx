@@ -167,7 +167,7 @@ export function App() {
         <div className="conn-brand"><BrandMark size={44} /></div>
         <h1>Vale Agent</h1>
         <label>Device hostname</label>
-        <input id="host" value={host} onChange={(e) => setHost(e.target.value)} placeholder="d1.agent.saisi.online" autoComplete="off" />
+        <input id="host" value={host} onChange={(e) => setHost(e.target.value)} placeholder="device.example.com" autoComplete="off" />
         <label>Auth token</label>
         <input id="token" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Bearer token from config.yaml" autoComplete="off" />
         <button onClick={connect}>Connect</button>
