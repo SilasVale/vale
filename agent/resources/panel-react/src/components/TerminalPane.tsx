@@ -182,18 +182,23 @@ export function TerminalPane({ session, registerWrite }: {
       .then((r: any) => {
         if (!r || (!r.text && !r.raw)) return;
         const skip = Math.max(0, renderedRef.current - Number(r.start));
+        // round-162: history replay must pass through the SAME wrapper-noise
+        // filter as the live SSE stream — a resurrected session's tail would
+        // otherwise show raw wrapper echoes/markers (observed on d1 1.0.134).
         if (r.raw) {
           const bin = atob(r.raw);
           const bytes = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
           if (skip < bytes.length) {
-            term.write(bytes.subarray(skip));
+            const filtered = wf.filter(decoder.decode(bytes.subarray(skip), { stream: true }));
+            if (filtered) term.write(new TextEncoder().encode(filtered));
             renderedRef.current += bytes.length - skip;
           }
         } else if (skip >= 0 && r.text) {
           const bytes = new TextEncoder().encode(r.text);
           if (skip < bytes.length) {
-            term.write(bytes.subarray(skip));
+            const filtered = wf.filter(decoder.decode(bytes.subarray(skip), { stream: true }));
+            if (filtered) term.write(new TextEncoder().encode(filtered));
             renderedRef.current += bytes.length - skip;
           }
         }
