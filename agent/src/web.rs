@@ -1301,9 +1301,16 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
 
 async fn api_status(state: &AppState) -> serde_json::Value {
     let serial = state.serial_pool.list_open_ports();
+    // stage-n: health diagnostics — uptime (a low value right after an
+    // update/crash is a red flag) and the live terminal session count
+    // (leaked sessions show up here without needing terminal_history).
+    let uptime_secs = state.started_at.elapsed().as_secs();
+    let live_sessions = state.terminal_mgr.term_list().await.len();
     let mut out = serde_json::json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
+        "uptime_secs": uptime_secs,
+        "live_sessions": live_sessions,
         "serial_ports": serial,
     });
     // round-103: expose the proxy secret (token-authenticated endpoint) so

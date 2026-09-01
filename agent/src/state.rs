@@ -23,6 +23,9 @@ pub struct AppState {
     pub event_bus: Arc<AppEventBus>,
     pub plugin_registry: PluginRegistry,
     pub config: Config,
+    /// Process start time — /api/status exposes uptime_secs for health
+    /// diagnosis (a low uptime after an update/crash is a red flag; stage-n).
+    pub started_at: std::time::Instant,
     /// The config file actually loaded (argv[1]) — PUT /api/settings must
     /// persist to THIS path, not a hardcoded exe_dir/config.yaml (round-101:
     /// a dev/custom invocation silently reverted buffer settings on restart).
@@ -76,6 +79,7 @@ fn build_registry(deps: &RegistryDeps) -> PluginRegistry {
 impl AppState {
     /// Create app state with the terminal plugin (PTY/SSH/serial).
     pub fn new(config: Config) -> Self {
+        let started_at = std::time::Instant::now();
         let event_bus = Arc::new(AppEventBus::new());
         let serial_pool = Arc::new(SerialPool::new(
             config.serial.default_baud_rate,
@@ -107,7 +111,7 @@ impl AppState {
             memory: memory.clone(),
         });
 
-        Self { serial_pool, terminal_mgr, event_bus, plugin_registry, config, config_path: std::sync::Arc::new(std::sync::Mutex::new(None)), terminal_buf_bytes, playwright, memory }
+        Self { serial_pool, terminal_mgr, event_bus, plugin_registry, config, started_at, config_path: std::sync::Arc::new(std::sync::Mutex::new(None)), terminal_buf_bytes, playwright, memory }
     }
 }
 
