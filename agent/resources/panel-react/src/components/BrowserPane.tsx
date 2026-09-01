@@ -11,7 +11,7 @@
  *     switch), so the page stays visible while AI screenshots are reviewed
  *   - the AI-runner chip lives in the bottom status bar, not the toolbar
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../ui/Icon";
 import { useBrowser, type BrowserSessionData } from "../hooks/useBrowser";
 
@@ -32,9 +32,44 @@ export interface BrowserPaneProps {
 export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps) {
   const b = useBrowser({ apiBase, token });
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const urlInputRef = useRef<HTMLInputElement | null>(null);
   // stage-n: the evidence panel is a DRAWER — open/closed state here, the
   // live viewport stays mounted underneath.
   const [evOpen, setEvOpen] = useState(false);
+
+  // stage-n: real-browser keyboard shortcuts while the browser page is
+  // focused: Ctrl+L focus address bar, Ctrl+T new tab, Ctrl+R reload,
+  // Ctrl+W close tab, Ctrl+Shift+Tab / Ctrl+Tab cycle tabs. The handler
+  // reads the LATEST browser state via a ref (b is a fresh object every
+  // render — depending on it would re-attach the listener each render).
+  const bRef = useRef(b);
+  bRef.current = b;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || e.altKey) return;
+      const b = bRef.current;
+      const k = e.key.toLowerCase();
+      if (k === "l") {
+        e.preventDefault();
+        urlInputRef.current?.focus();
+        urlInputRef.current?.select();
+      } else if (k === "t") {
+        e.preventDefault();
+        void b.newTab();
+      } else if (k === "r") {
+        e.preventDefault();
+        b.reload();
+      } else if (k === "w") {
+        e.preventDefault();
+        void b.closeTab(b.sel);
+      }
+      // NOTE: Ctrl+Tab / Ctrl+Shift+Tab are NOT bound here — the Electron
+      // menu reserves them for session switching (next/prev session).
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const toggleFullscreen = () => {
     const el = viewportRef.current;
@@ -106,6 +141,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
             {b.url.startsWith("https") ? "🔒" : "🌐"}
           </span>
           <input
+            ref={urlInputRef}
             className="browser-url"
             value={b.url}
             onChange={(e) => b.setUrl(e.target.value)}

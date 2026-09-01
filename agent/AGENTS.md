@@ -204,10 +204,10 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-01 (round 25 — browser nav buttons)
+Last updated: 2026-09-02 (round 29 — browser keyboard shortcuts)
 
 ### Current release
-- npm **1.2.180** (agent exe internal 1.0.145), deployed on d1
+- npm **1.2.183** (agent exe internal 1.0.145), deployed on d1
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
 - Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
   GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
@@ -217,8 +217,9 @@ Last updated: 2026-09-01 (round 25 — browser nav buttons)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
   bar with AI-runner chip (1.2.180)
-- Browser nav buttons (back/fwd/reload): bridge protocol + useBrowser +
-  BrowserPane — DONE locally, NOT yet released
+- Browser nav buttons (back/fwd/reload) + history-aware disabled
+  state (canBack/canFwd from the bridge tabs push) — released 1.2.183
+- Browser keyboard shortcuts (Ctrl+L focus URL, Ctrl+T new tab) — IN PROGRESS
 - /api/status health fields (uptime_secs, live_sessions) consumed by tray
   + SPA status strip
 - terminal_history exit codes + limit; memory multi-word AND search +
@@ -227,7 +228,8 @@ Last updated: 2026-09-01 (round 25 — browser nav buttons)
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- Browser nav buttons (back/fwd/reload) — commit + release as 1.2.181
+- Browser keyboard shortcuts (Ctrl+L focus URL bar, Ctrl+T new tab,
+  Ctrl+R reload)
 
 ### Next candidates
 - Browser back/forward state (disabled when history empty)
