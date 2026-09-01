@@ -548,10 +548,57 @@ async fn run_server(config_path: PathBuf) {
     #[cfg(windows)]
     {
         tokio::spawn(async {
-            let external = std::net::TcpStream::connect("127.0.0.1:9224").is_ok();
-            if external {
-                log_line("browser bridge: supervisor idle (external process owns 9224)");
-                return;
+            // round-n: 9224 may be owned by a LEFTOVER bridge from a PREVIOUS
+            // agent generation (agent restart does not kill the node bridge;
+            // vale update swaps bridge.js but the old process keeps serving).
+            // A plain port probe would call that "external" and idle forever,
+            // so a code update never reaches the bridge. Probe the OWNER:
+            // if it is one of OUR bridge processes (node.exe + bridge.js from
+            // the install dir) but NOT this generation's child, kill it so
+            // the new bridge.js is loaded. Only a genuinely external process
+            // (command line without our bridge.js) is left alone.
+            let install_dir = vale_agent::paths::install_dir();
+            let node = install_dir.join("playwright").join("node.exe");
+            let bridge = install_dir.join("bridge.js");
+            let occupied_by_us = || -> bool {
+                use std::process::Command;
+                let out = Command::new("powershell")
+                    .args([
+                        "-NoProfile", "-Command",
+                        &format!(
+                            "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'node.exe' -and $_.CommandLine -like '*{}*bridge.js*' }} | Select-Object -ExpandProperty ProcessId",
+                            install_dir.to_string_lossy().replace('\\', "\\\\")
+                        ),
+                    ])
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        let s = String::from_utf8_lossy(&o.stdout);
+                        s.split_whitespace().next().is_some()
+                    }
+                    _ => false,
+                }
+            };
+            if std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
+                if occupied_by_us() {
+                    // A leftover bridge of ours holds the port — reclaim it
+                    // so the CURRENT bridge.js (possibly a new version) is
+                    // loaded instead of the stale process.
+                    log_line("browser bridge: stale bridge owns 9224 — killing for respawn");
+                    let _ = std::process::Command::new("powershell")
+                        .args([
+                            "-NoProfile", "-Command",
+                            &format!(
+                                "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'node.exe' -and $_.CommandLine -like '*{}*bridge.js*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+                                install_dir.to_string_lossy().replace('\\', "\\\\")
+                            ),
+                        ])
+                        .output();
+                    // Fall through to the spawn loop below.
+                } else {
+                    log_line("browser bridge: supervisor idle (external process owns 9224)");
+                    return;
+                }
             }
             let mut backoff: u64 = 2;
             loop {
