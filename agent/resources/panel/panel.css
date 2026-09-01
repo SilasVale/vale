@@ -1241,6 +1241,30 @@ code {
   padding: 2px 8px;
   border-radius: 999px;
 }
+/* stage-n: inline edit form on a memory card. */
+.mem-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mem-edit-input,
+.mem-edit-content {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.mem-edit-content {
+  font-family: var(--font-mono, monospace);
+  resize: vertical;
+}
+.mem-edit-actions {
+  display: flex;
+  gap: 6px;
+}
 .mem-content {
   font-size: 12.5px;
   line-height: 1.55;
