@@ -110,6 +110,10 @@ impl MemoryStore {
             }),
         };
         store.load();
+        // stage-n: physically drop tombstones from the previous process —
+        // the append-only JSONL would otherwise keep every soft-deleted
+        // record forever (disk + memory growth with no reclaim path).
+        store.compact();
         store
     }
 
@@ -179,6 +183,83 @@ impl MemoryStore {
         let _ = writeln!(f, "{line}");
     }
 
+    /// Compact when tombstones dominate (≥ half of all records) — the eager
+    /// reclaim keeps memory + JSONL bounded between restarts. Cheap: a
+    /// single lock-free stats read first; the actual compact only runs when
+    /// the threshold trips (stage-n).
+    fn compact_if_tombstone_heavy(&self) {
+        let guard = recover_guard(&self.inner);
+        let total = guard.by_id.len();
+        if total < 10 {
+            return; // small stores: soft-delete restore must stay reliable
+        }
+        let deleted = guard.by_id.values().filter(|r| r.deleted).count();
+        drop(guard);
+        if deleted * 2 >= total {
+            self.compact();
+        }
+    }
+
+    /// Physically remove ALL soft-deleted records — from the in-memory index
+    /// AND the JSONL (rewritten via a temp file + rename so an interrupted
+    /// compact never truncates the store). The append-only file would
+    /// otherwise grow forever with tombstones (stage-n; the header comment
+    /// promised compaction but none existed).
+    pub fn compact(&self) -> usize {
+        let mut guard = recover_guard(&self.inner);
+        let before = guard.by_id.len();
+        // Drop deleted records from the index + tag index.
+        let removed: Vec<String> = guard
+            .by_id
+            .iter()
+            .filter(|(_, r)| r.deleted)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &removed {
+            if let Some(rec) = guard.by_id.remove(id) {
+                guard.total_bytes = guard.total_bytes.saturating_sub(rec.content.len());
+                for tag in &rec.tags {
+                    let key = tag.to_lowercase();
+                    if let Some(set) = guard.tag_index.get_mut(&key) {
+                        set.remove(id);
+                        if set.is_empty() {
+                            guard.tag_index.remove(&key);
+                        }
+                    }
+                }
+            }
+        }
+        if removed.is_empty() {
+            return 0;
+        }
+        // Rewrite the JSONL with only the survivors (temp + rename).
+        let path = self.file_path();
+        let tmp = path.with_extension("jsonl.tmp");
+        {
+            use std::io::Write;
+            let mut out = match std::fs::File::create(&tmp) {
+                Ok(f) => f,
+                Err(_) => return removed.len(), // index updated; disk rewrite best-effort
+            };
+            let _ = writeln!(
+                out,
+                "{}",
+                serde_json::json!({ "type": HEADER_TYPE, "version": HEADER_VERSION })
+            );
+            let mut survivors: Vec<&MemoryRecord> = guard.by_id.values().collect();
+            survivors.sort_by_key(|r| r.created_at);
+            for rec in survivors {
+                if let Ok(line) = serde_json::to_string(rec) {
+                    let _ = writeln!(out, "{line}");
+                }
+            }
+        }
+        let _ = std::fs::rename(&tmp, &path);
+        guard.dirty = true;
+        tracing::info!("[vale-agent] memory compact: removed {removed_count} tombstone(s)", removed_count = removed.len());
+        before.saturating_sub(guard.by_id.len())
+    }
+
     /// Insert a new record; returns its id. Enforces content cap (truncate).
     pub fn insert(&self, mut rec: MemoryRecord) -> String {
         if rec.content.len() > DEFAULT_MAX_CONTENT_BYTES {
@@ -198,6 +279,7 @@ impl MemoryStore {
             guard.dirty = true;
         }
         self.enforce_limits();
+        self.compact_if_tombstone_heavy();
         id
     }
 
@@ -255,6 +337,10 @@ impl MemoryStore {
         let line = serde_json::to_string(&rec).unwrap_or_default();
         self.append_line(&line);
         self.enforce_limits();
+        // stage-n: tombstones reclaimed eagerly once they dominate — soft
+        // deletes would otherwise accumulate in memory + JSONL forever
+        // (only startup compaction cleaned them).
+        self.compact_if_tombstone_heavy();
         true
     }
 
@@ -567,6 +653,42 @@ mod tests {
         assert!(s.get(&id, true).is_some());
         assert!(s.update(&id, None, None, None, None, Some(false)));
         assert!(s.get(&id, false).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compact_physically_removes_tombstones() {
+        let (s, dir) = tmp_store("compact_physically_removes_tombstones");
+        // Insert 5 records, soft-delete 4 → tombstone-heavy (>50%, >=10 guard
+        // bypassed by calling compact() directly).
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            ids.push(s.insert(rec(&format!("r{i}"), &format!("content{i}"))));
+        }
+        for id in &ids[1..] {
+            assert!(s.delete(id));
+        }
+        assert_eq!(s.compact(), 4, "compact removes the 4 tombstones");
+        // Survivors still queryable; tombstones gone even with include_deleted.
+        assert!(s.get(&ids[0], false).is_some());
+        for id in &ids[1..] {
+            assert!(s.get(id, true).is_none(), "tombstone physically gone");
+        }
+        // Reload from disk — the rewritten JSONL has no tombstones either.
+        let s2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        assert!(s2.get(&ids[0], false).is_some());
+        assert!(s2.get(&ids[1], true).is_none(), "disk rewrite dropped tombstones");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn small_store_never_auto_compacts() {
+        // <10 records: a single soft-delete must stay restorable (the eager
+        // threshold guard protects the soft-delete/restore contract).
+        let (s, dir) = tmp_store("small_store_never_auto_compacts");
+        let id = s.insert(rec("only", "x"));
+        s.delete(&id);
+        assert!(s.get(&id, true).is_some(), "small store keeps tombstones restorable");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
