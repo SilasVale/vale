@@ -155,9 +155,10 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   threads); keystrokes try_send drop-on-full.
 - **MCP tool additions**: define the tool in `src/plugins/<plugin>/tools.rs`;
   the registry caches it at register time — no other registration site.
-  Update the tool-count tests (45 total: 25 terminal_* incl. sftp aliases +
-  agent_update + page_view + 4 mcp_client_* + 2 playwright + 6 memory_* +
-  6 system_*) if adding/removing.
+  Update the tool-count test in plugins/terminal/mod.rs (25 tools:
+  21 terminal_* incl. env/jobs/saved/connect + secret_* legacy aliases)
+  if adding/removing terminal tools; the plugin tests in
+  plugins/{memory,system,mcp_client}/mod.rs cover their own counts.
 
 ## Device memory + desktop shell
 
