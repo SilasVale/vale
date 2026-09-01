@@ -276,10 +276,13 @@ function runSchtasks(args: string[]): Promise<{ ok: boolean; error?: string }> {
 async function autoLaunchTaskSet(enabled: boolean): Promise<{ ok: boolean; error?: string }> {
   try {
     if (enabled && !autoLaunchTaskExists()) {
+      // The current user (a SYSTEM-spawned electron needs /ru — a bare
+      // onlogon create from the service session fails with exit 1).
+      const user = process.env.USERNAME || "Administrator";
       const r = await runSchtasks([
         "/create", "/tn", AUTOSTART_TASK,
         "/tr", `powershell -NoProfile -ExecutionPolicy Bypass -File "${AUTOSTART_SCRIPT}"`,
-        "/sc", "onlogon", "/f",
+        "/sc", "onlogon", "/ru", user, "/f",
       ]);
       if (!r.ok) return r;
     } else if (!enabled && autoLaunchTaskExists()) {
