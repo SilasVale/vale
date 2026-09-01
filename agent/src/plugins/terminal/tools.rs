@@ -371,75 +371,17 @@ fn tool_open(
                 }
                 // Audit trail: session opened (round-54).
                 logger.log_status(&id, "opened");
-                // Prompt-marker injection (round-54): teach the PTY shell to
-                // emit OSC 133;D;<exit-code> right before each prompt, so the
-                // execute wait-loop can distinguish "command finished" from
-                // "output paused" (the 200ms-silence heuristic misread a
-                // `sleep 0.5 && echo done` as complete before it finished).
-                // bash: PROMPT_COMMAND runs right before the prompt, $? still
-                // holds the previous command's exit code; the existing
-                // PROMPT_COMMAND (if any) is preserved. PowerShell: the
-                // Prompt function emits the same sequence, keeping the
-                // default "PS path>" text. Only PTY sessions with a KNOWN
-                // shell get this — a custom shell target or SSH/serial are
-                // untouched (unknown syntax, must not corrupt the session).
-                if kind == "pty" && inject_marker {
-                    let (inject, injectable) = if cfg!(windows) {
-                        // target blank → default powershell.exe; a custom
-                        // target may be cmd.exe or anything else — only the
-                        // default gets the PS Prompt function (cmd has no
-                        // prompt hook, falls back to idle detection).
-                        // CRLF: PowerShell only recognizes a command on \r\n.
-                        // PS 5.1 (the default PTY shell) does NOT support the
-                        // `e backtick-escape — use [char]27/[char]7 instead
-                        // (round-55: the old `e form emitted a literal 'e',
-                        // the marker scanner never matched on the main
-                        // platform).
-                        let cmd = std::path::Path::new(&target)
-                            .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
-                        if cmd.is_empty() || cmd.eq_ignore_ascii_case("powershell.exe") || cmd.eq_ignore_ascii_case("pwsh.exe") {
-                            // round-156: measurements revert to "unload PSReadLine". With 512B/8ms
-                        // chunks, raw ConPTY echo no longer fragments (a
-                        // measured 2KB command echoes back cleanly as one
-                        // line), while PSReadLine's incremental line redraw
-                        // is the true source of the round-155 screen
-                        // fragments / `>>` continuation ghosts. After unload,
-                        // ConsoleHost echoes plainly; output and prompt are
-                        // clean. The injected line's echo is cleared by
-                        // Clear-Host; the OSC133 prompt marker stays
-                        // unchanged.
-                        ("if (Get-Module -Name PSReadLine) { Remove-Module PSReadLine -Force -EA SilentlyContinue }\r\n".to_string()
-                            + r#"function global:Prompt { Write-Host -NoNewline (([string][char]27) + "]133;D;" + $LASTEXITCODE + ([char]7)); "PS " + $(Get-Location) + "> " }"# + "\r\nClear-Host\r\n", true)
-                        } else { (String::new(), false) }
-                    } else {
-                        let cmd = std::path::Path::new(&target)
-                            .file_name().and_then(|n| n.to_str()).unwrap_or(&target);
-                        if cmd.is_empty() || cmd == "bash" || cmd == "sh" {
-                            // Single-quoted outer: a double-quoted RHS expands
-                            // $? AT ASSIGNMENT TIME (a fresh session's value,
-                            // always 0), freezing the exit code — every failed
-                            // command reported 0 (round-55).
-                            // NO old-PROMPT_COMMAND concat (round-57): joining
-                            // it outside the quotes re-parsed the user's
-                            // existing value — quotes/backticks/$() inside it
-                            // executed as new shell code on every PTY open,
-                            // and the value was actually LOST anyway (the
-                            // expand-at-assignment semantics discarded it).
-                            (r#"export PROMPT_COMMAND='printf "\033]133;D;$?\007"'"#.to_string() + "\n", true)
-                        } else { (String::new(), false) }
-                    };
-                    if injectable {
-                        // The shell echoes the injection line itself; the
-                        // first prompt after it carries the marker.
-                        let _ = terminal_mgr.term_write(&id, &inject).await;
-                    }
-                    // round-109: the marker flag must reflect whether the
-                    // injection ACTUALLY happened — a custom shell (zsh,
-                    // cmd.exe, bash.exe) gets no marker, so execute's
-                    // quiet-never-break must not apply (it would hang every
-                    // command to the deadline).
-                    terminal_mgr.term_set_marker_injected(&id, injectable).await;
-                }
+                // stage-l: the OSC 133 prompt-marker injection is GONE — it
+                // never worked on PowerShell 5.1 + ConPTY (the injected
+                // `function global:Prompt` marker was erased by PSReadLine /
+                // ConsoleHost redraw, so execute burned the full timeout on
+                // every command). Completion detection now uses the
+                // Netcatty-style command wrapper (see wrap_execute_command),
+                // which needs NO shell hooks — only the shell's syntax,
+                // inferred at open and carried in the session's `shell`.
+                // `inject_marker` (default true) survives as the backward-
+                // compatible switch for that wrapping (false → execute never
+                // wraps, quiet fallback only). Nothing is written at open.
                 // Emit event based on kind
                 match kind.as_str() {
                     "ssh" => {
@@ -924,6 +866,11 @@ fn close_event(kind: &str, sid: &str) -> AgentEvent {
 /// The marker may be split across chunks, so it is searched over the
 /// un-finalized tail; an incomplete sequence returns None and the caller
 /// keeps waiting for the next chunk.
+///
+/// stage-l: LEGACY — the shell-injection OSC 133 marker was replaced by the
+/// Netcatty-style command wrapper (see wrap_execute_command / find_exec_marker).
+/// Kept only for the headless-stub path and backward-compat reads; new code
+/// must use find_exec_marker.
 fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
     const PREFIX: &[u8] = b"\x1b]133;D;";
     // round-100: the old code stopped at the FIRST prefix — a false
@@ -950,6 +897,200 @@ fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
     None
 }
 
+// ── stage-l: Netcatty-style command wrapper + plain-text markers ────────
+//
+// The OSC 133 shell-injection marker FAILED on Windows PowerShell 5.1 +
+// ConPTY: the injected `function global:Prompt` never emitted the sequence
+// (PSReadLine unload / ConsoleHost prompt path), so terminal_execute waited
+// for a marker that never came and burned the full timeout on every command
+// (observed live on d1: `state:"timeout"` at 10s on a 50ms `echo`).
+//
+// The replacement (proven by Netcatty in production on the same platform):
+// wrap EVERY executed command in a single-line shell wrapper that prints a
+// random START marker, runs the command, then prints END:<exitcode>. The
+// wrapper is plain text — no OSC, no shell hooks — so ConPTY cannot eat it
+// and the shell kind only needs the wrapper's syntax (powershell / bash /
+// cmd / fish), never a working prompt hook.
+
+/// Generate a unique per-execute marker: `__VALE_<time36>_<128-bit-hex>__`.
+/// 128 random bits make a false positive from user output practically
+/// impossible; the time prefix aids debugging.
+fn new_exec_marker() -> String {
+    let mut buf = [0u8; 16];
+    // getrandom is already a dependency (used by vale-command-core).
+    let _ = getrandom::getrandom(&mut buf);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let hex: String = buf.iter().map(|b| format!("{b:02x}")).collect();
+    format!("__VALE_{ts:x}_{hex}__")
+}
+
+/// Escape a command for embedding in a PowerShell single-quoted string:
+/// every `'` becomes `''` (PowerShell's single-quote escape).
+fn ps_single_quote(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Escape a command for embedding in a POSIX single-quoted string: `'` → `'\''`.
+fn sh_single_quote(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
+/// Escape a command for a nested cmd.exe (`""` for `"`, `%%` for `%`).
+fn cmd_escape(s: &str) -> String {
+    s.replace('"', "\"\"").replace('%', "%%")
+}
+
+/// Shell-kind classification for the wrapper — mirrors Netcatty's
+/// resolveEffectiveShellKind. `kind` is the session kind (pty/ssh/serial),
+/// `shell_hint` is the detected shell (powershell/cmd/bash/fish/unknown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrapShell {
+    PowerShell,
+    Cmd,
+    Bash,
+    Fish,
+}
+
+impl WrapShell {
+    /// Map a session's `shell` field (see `TermSessionInfo::shell` /
+    /// `infer_shell`) to a wrapper kind. Unknown (ssh/serial/custom pty
+    /// target) → None, meaning execute uses the quiet fallback without a
+    /// wrapper (stage-l spec §4: SSH shell probing deferred).
+    pub fn from_shell(shell: &str) -> Option<WrapShell> {
+        match shell {
+            "powershell" => Some(WrapShell::PowerShell),
+            "cmd" => Some(WrapShell::Cmd),
+            "bash" => Some(WrapShell::Bash),
+            "fish" => Some(WrapShell::Fish),
+            _ => None,
+        }
+    }
+}
+
+/// Wrap `command` in a single-line shell wrapper that prints
+/// `<marker>_S` before and `<marker>_E:<exitcode>` after execution.
+///
+/// Returns the wrapper text WITHOUT a trailing newline — callers append the
+/// platform newline (append_command_newline) so PowerShell gets `\r\n`.
+///
+/// The wrapper is deliberately ONE physical line (no embedded newlines):
+/// a multiline paste would trigger the shell's continuation prompt (PS2 `>>`)
+/// and fragment the echo (the old round-155 fragment class).
+pub fn wrap_execute_command(command: &str, shell: WrapShell, marker: &str) -> String {
+    match shell {
+        WrapShell::PowerShell => {
+            let cmd = ps_single_quote(command);
+            format!(
+                "${marker}=0; ${marker}_cmd='{cmd}'; & {{ Write-Output '{marker}_S'; $env:PAGER='cat'; $env:GIT_PAGER='cat'; $env:LESS=''; $LASTEXITCODE=$null; try {{ Invoke-Expression ${marker}_cmd; ${marker}_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }} }} catch {{ ${marker}_rc = 1 }}; Write-Output '{marker}_E:' + ${marker}_rc }}"
+            )
+        }
+        WrapShell::Bash => {
+            let cmd = sh_single_quote(command);
+            format!(
+                "{marker}=0; {marker}_cmd='{cmd}'; {{ printf '%s\\n' '{marker}_S'; trap ':' INT; ( PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= eval \"${marker}_cmd\" ); {marker}_rc=$?; trap - INT; printf '%s\\n' '{marker}_E:'\"${marker}_rc\"; (exit ${marker}_rc); }}"
+            )
+        }
+        WrapShell::Cmd => {
+            let cmd = cmd_escape(command);
+            format!(
+                "set \"{marker}=0\" & set \"{marker}_CMD=<{cmd}>\" & (echo {marker}_S & set \"PAGER=cat\" & set \"LESS=\" & call cmd /d /s /c \"%{marker}_CMD%\" & call echo {marker}_E:^%errorlevel%)"
+            )
+        }
+        WrapShell::Fish => {
+            let cmd = sh_single_quote(command);
+            format!(
+                "set {marker} 0; function __vale_int --on-signal INT; printf '%s\\n' '{marker}_E:130'; functions -e __vale_int; end; set -l {marker}_cmd '{cmd}'; begin; set -gx PAGER cat; set -gx GIT_PAGER cat; set -gx LESS ''; printf '%s\\n' '{marker}_S'; eval ${marker}_cmd; set {marker}_rc $status; functions -e __vale_int; printf '%s\\n' '{marker}_E:'${marker}_rc; end"
+            )
+        }
+    }
+}
+
+/// Find the wrapper's END marker in `data`: `<marker>_E:<digits>`.
+/// Returns (start, end, exit_code). The marker may be split across chunks —
+/// the caller passes the un-finalized tail (carry) so partial matches keep
+/// accumulating. Before the START marker is confirmed, `_E:` must sit at a
+/// line start (the wrapper's own echo contains `<marker>_E:` text and must
+/// not count); after start, inline matches are allowed (a command's output
+/// need not end with a newline).
+pub fn find_exec_end_marker(data: &[u8], marker: &str, allow_inline: bool) -> Option<(usize, usize, i32)> {
+    let needle = format!("{marker}_E:");
+    let nb = needle.as_bytes();
+    let mut search_from = 0usize;
+    while search_from < data.len() {
+        let rel = data[search_from..].windows(nb.len()).position(|w| w == nb)?;
+        let start = search_from + rel;
+        if !allow_inline && start > 0 && data[start - 1] != b'\n' && data[start - 1] != b'\r' {
+            // Line-boundary required before start confirmed.
+            search_from = start + 1;
+            continue;
+        }
+        let mut i = start + nb.len();
+        let digits_start = i;
+        while i < data.len() && data[i].is_ascii_digit() { i += 1; }
+        if i == digits_start {
+            // `_E:` with no digits yet — maybe the number is in the next chunk.
+            if i >= data.len() { return None; }
+            search_from = start + 1;
+            continue;
+        }
+        if i >= data.len() {
+            // The digit run reaches the end of this chunk — the number may
+            // continue in the next one (a split "1"+"2" must not finalize as
+            // 1). Keep waiting; the caller re-scans with the accumulated tail.
+            return None;
+        }
+        let code: i32 = match std::str::from_utf8(&data[digits_start..i]).ok().and_then(|s| s.parse().ok()) {
+            Some(c) => c,
+            None => { search_from = start + 1; continue; }
+        };
+        return Some((start, i, code));
+    }
+    None
+}
+
+/// Find the wrapper's START marker line in `data`: a line whose trimmed
+/// ANSI-stripped content equals `<marker>_S`. Returns the byte offset AFTER
+/// the marker line (output begins there).
+pub fn find_exec_start_marker(data: &[u8], marker: &str) -> Option<usize> {
+    let needle = format!("{marker}_S");
+    let mut search_from = 0usize;
+    while search_from < data.len() {
+        let rel = data[search_from..].windows(needle.len()).position(|w| w == needle.as_bytes())?;
+        let start = search_from + rel;
+        // Must be on its own line: preceded by start/`\n`/`\r` and followed by
+        // `\n`/`\r` or EOF.
+        let before_ok = start == 0 || data[start - 1] == b'\n' || data[start - 1] == b'\r';
+        let after = start + needle.len();
+        let after_ok = after >= data.len() || data[after] == b'\n' || data[after] == b'\r';
+        if before_ok && after_ok {
+            // Return offset past the line terminator.
+            let mut end = after;
+            while end < data.len() && (data[end] == b'\n' || data[end] == b'\r') { end += 1; }
+            return Some(end);
+        }
+        search_from = start + 1;
+    }
+    None
+}
+
+/// Strip marker lines (`<marker>_S` / `<marker>_E:...`) and the wrapper's own
+/// echo from command output — the AI/user must not see the wrapper machinery.
+/// `pre_start` is the buffer captured before the START marker (the wrapper
+/// echo + prompt); it is discarded entirely.
+pub fn strip_exec_markers(output: &str, marker: &str) -> String {
+    let mut out = String::with_capacity(output.len());
+    for line in output.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if trimmed == format!("{marker}_S") || trimmed.starts_with(&format!("{marker}_E:")) {
+            continue;
+        }
+        out.push_str(line);
+    }
+    out
+}
 
 // ── Jobs (Phase 3) ───────────────────────────────
 
@@ -1068,11 +1209,13 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // Refactor 1.0.81: session kind drives the idle-confirm
                     // window below — SSH commands run REMOTELY and their long
                     // silent stretches must not read as "command finished".
-                    if terminal_mgr.term_info(&sid).await.is_none() {
+                    let sess_info = terminal_mgr.term_info(&sid).await;
+                    if sess_info.is_none() {
                         return Err(session_lost(&terminal_mgr, &sid).await);
                     }
-                    let sess_kind = terminal_mgr.term_info(&sid).await
-                        .map(|i| i.kind).unwrap_or_default();
+                    let sess_info = sess_info.expect("checked above");
+                    let sess_kind = sess_info.kind.clone();
+                    let sess_shell = sess_info.shell.clone();
                     // Background mode (round-60): write the command and return
                     // IMMEDIATELY — no wait loop, no busy lock. The caller
                     // collects output via terminal_read with the returned
@@ -1084,11 +1227,29 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // UTF-8 lossy conversion and 1MB eviction can never
                     // desynchronize the index (the old String-length-based
                     // offset could panic on an out-of-range slice).
-                    // Write command + newline. Windows PowerShell only recognizes
-                    // the end of a command on CRLF (\r\n) — a bare \n drops it
-                    // into the multi-line continuation prompt (>>), so the
-                    // command never executes. Unix shells accept either.
-                    let cmd_with_nl = append_command_newline(&command);
+                    // stage-l: Netcatty-style command wrapping. When the
+                    // session's shell is known AND the open-time
+                    // `inject_marker` switch is on (its stage-l meaning: "use
+                    // the command wrapper"; default true), the command is
+                    // wrapped in a single-line wrapper that prints
+                    // `<marker>_S` / `<marker>_E:<exitcode>` PLAIN-TEXT
+                    // markers; completion is detected by scanning the raw
+                    // byte stream for them. Unknown shells (ssh/serial/custom
+                    // pty target) or inject_marker=false fall back to the
+                    // quiet-period heuristic (no wrapper — spec §4).
+                    // The wrapper replaces the OSC 133 prompt-marker injection
+                    // that never worked on PowerShell 5.1 + ConPTY.
+                    let wrap_enabled = terminal_mgr.term_marker_injected(&sid).await;
+                    let wrap_shell = if wrap_enabled { WrapShell::from_shell(&sess_shell) } else { None };
+                    let marker = new_exec_marker();
+                    // Windows PowerShell only recognizes the end of a command
+                    // on CRLF (\r\n) — a bare \n drops it into the multi-line
+                    // continuation prompt (>>), so the command never executes.
+                    // Unix shells accept either.
+                    let cmd_with_nl = match wrap_shell {
+                        Some(sh) => append_command_newline(&wrap_execute_command(&command, sh, &marker)),
+                        None => append_command_newline(&command),
+                    };
                     // Busy guard FIRST (round-56): acquiring the per-session
                     // execute lock must happen BEFORE the command reaches the
                     // shell. The old order wrote the command + logged start
@@ -1102,27 +1263,31 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     if !terminal_mgr.term_acquire_execute(&sid, 30_000).await? {
                         return Err(DeviceError::SessionBusy { id: sid.clone() });
                     }
-                    // First-prompt gate: marker-injected PTY whose first prompt
-                    // hasn't been seen yet — wait for it before writing. A
-                    // command entering PowerShell during profile-init got split
-                    // into continuation prompts and output was lost (observed).
-                    let gate_marker = terminal_mgr.term_marker_injected(&sid).await;
+                    // First-prompt gate (stage-l rework): the old gate waited
+                    // for the OSC prompt marker that PowerShell 5.1 + ConPTY
+                    // never emitted. A command entering PowerShell during
+                    // profile-init still gets shredded into continuation
+                    // prompts, so the gate stays — but completion no longer
+                    // depends on an injected marker: it waits for the shell to
+                    // produce ANY output (the profile banner, or the wrapper's
+                    // echo once execute writes), and for wrapped commands also
+                    // for the START marker. A session that produced output is
+                    // alive and ready; a fully silent one gets a bounded wait
+                    // then proceeds (the execute wait loop's start-timeout
+                    // reports the failure explicitly instead of hanging).
                     let gate_needed = recover_guard(&buf)
                         .live.get(&sid).map(|e| !e.first_prompt_seen).unwrap_or(false);
-                    if gate_marker && gate_needed {
+                    if gate_needed && wrap_shell.is_some() {
                         // round-157: the gate deadline was 3s — a cold
                         // PowerShell (PSReadLine + profile init on a slow
                         // device) regularly exceeded it, so the session got
                         // DEMOTED to marker-less, and every later execute fell
-                        // into the 1.4s idle path: long commands (Start-Sleep,
-                        // plink ssh tunnels) returned `state:"partial"` while
-                        // still running, and models misread that as "commands
-                        // queuing up" and spawned endless new sessions. The
-                        // gate now waits up to 12s, and demotion requires the
-                        // shell to have produced NO output at all — a shell
-                        // that echoed anything is alive and its marker will
-                        // come; only a completely silent session (injection
-                        // truly lost) is demoted.
+                        // into the 1.4s idle path. The gate now waits up to
+                        // 12s and demotion requires the shell to have produced
+                        // NO output at all; a shell that echoed anything is
+                        // alive. With the wrapper there is no marker contract
+                        // to keep or demote — the gate only needs the first
+                        // prompt, which the START marker scan confirms.
                         let gate_deadline = Instant::now() + std::time::Duration::from_secs(12);
                         let mut scan_from = recover_guard(&buf)
                             .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
@@ -1146,7 +1311,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                             let cut = pend.len().saturating_sub(64);
                             if cut > 0 { pend.drain(..cut); }
-                            if find_prompt_marker(&pend).is_some() {
+                            if find_exec_start_marker(&pend, &marker).is_some() {
+                                // The shell is executing OUR wrapper — it is
+                                // past profile-init and at a prompt.
                                 if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
                                     e.first_prompt_seen = true;
                                 }
@@ -1154,16 +1321,20 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                             if Instant::now() >= gate_deadline { break; }
                         }
-                        // Gate expired WITHOUT a first marker. Only demote
-                        // when the shell produced NOTHING (injection line
-                        // never even echoed — shell init swallowed it or the
-                        // session is dead). A shell that echoed output is
-                        // alive; its marker just has not arrived yet (slow
-                        // PS1 / long profile), so KEEP the marker contract —
-                        // execute's wait loop then ends on marker or deadline
-                        // instead of the 1.4s idle path.
+                        // Gate expired with NO output at all: mark the session
+                        // ready anyway — the execute wait loop's start-timeout
+                        // reports a dead shell explicitly instead of hanging.
                         if !saw_any_output {
-                            terminal_mgr.term_set_marker_injected(&sid, false).await;
+                            if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
+                                e.first_prompt_seen = true;
+                            }
+                        }
+                    } else if gate_needed {
+                        // Unknown-shell sessions (ssh/serial) have no wrapper
+                        // and no marker — the shell is ready as soon as the
+                        // session exists (the quiet path is tolerant).
+                        if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
+                            e.first_prompt_seen = true;
                         }
                     }
                     // Settle-drain: consume whatever still streams in from the
@@ -1259,7 +1430,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         let sid2 = sid.clone();
                         let quiet_dur2 = quiet_dur;
                         let start2 = start;
-                        let marker_injected2 = terminal_mgr.term_marker_injected(&sid).await;
+                        // stage-l: the background waiter uses the same
+                        // wrapper-marker detection as the foreground loop.
+                        // None (unknown shell) → quiet fallback.
+                        let wrap_shell2 = wrap_shell;
+                        let marker2 = marker.clone();
                         tokio::spawn(async move {
                             // Wait for the background command to finish (same
                             // marker/quiet semantics as the foreground wait
@@ -1267,7 +1442,13 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             let mut read_abs = start2;
                             let mut quiet_since: Option<Instant> = None;
                             let mut marker_seen_at: Option<Instant> = None;
+                            let mut start_seen_at: Option<Instant> = None;
                             let mut pending: Vec<u8> = Vec::new();
+                            // stage-l: start-timeout for the background path —
+                            // the wrapper's START marker should arrive within
+                            // seconds of the write; a missing one means the
+                            // shell swallowed the command (dead session).
+                            let start_deadline = Instant::now() + std::time::Duration::from_secs(15);
                             loop {
                                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                                 // Session closed → release; retain_live already
@@ -1284,15 +1465,29 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 if chunk_len > 0 {
                                     read_abs += chunk_len;
                                     pending.extend_from_slice(&chunk);
-                                    while let Some((mstart, mend, code)) = find_prompt_marker(&pending) {
-                                        pending.drain(..mend);
-                                        marker_seen_at = Some(Instant::now());
-                                        let _ = mstart;
-                                        if let Ok(mut jm) = jobs_map().lock() {
-                                            if let Some(j) = jm.get_mut(&job_id2) {
-                                                j.done = true;
-                                                j.exit_code = Some(code);
+                                    if wrap_shell2.is_some() {
+                                        if start_seen_at.is_none() {
+                                            if let Some(pos) = find_exec_start_marker(&pending, &marker2) {
+                                                pending.drain(..pos);
+                                                start_seen_at = Some(Instant::now());
                                             }
+                                        }
+                                        if let Some((mstart, mend, code)) = find_exec_end_marker(&pending, &marker2, start_seen_at.is_some()) {
+                                            let _ = (mstart, mend);
+                                            marker_seen_at = Some(Instant::now());
+                                            if let Ok(mut jm) = jobs_map().lock() {
+                                                if let Some(j) = jm.get_mut(&job_id2) {
+                                                    j.done = true;
+                                                    j.exit_code = Some(code);
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Unknown shell: quiet-period fallback.
+                                        while let Some((mstart, mend, _code)) = find_prompt_marker(&pending) {
+                                            pending.drain(..mend);
+                                            marker_seen_at = Some(Instant::now());
+                                            let _ = mstart;
                                         }
                                     }
                                     let keep = pending.len().saturating_sub(64);
@@ -1303,8 +1498,19 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 }
                                 if let Some(at) = marker_seen_at {
                                     if at.elapsed() >= marker_confirm { break; }
+                                } else if wrap_shell2.is_some() && start_seen_at.is_none() {
+                                    // Wrapped command whose START never came —
+                                    // report done=false and release the lock
+                                    // (the job stays pending; foreground
+                                    // executes must not wedge on a dead shell).
+                                    if Instant::now() >= start_deadline { break; }
                                 } else if let Some(qs) = quiet_since {
-                                    if !marker_injected2 && qs.elapsed() >= quiet_dur2 { break; }
+                                    // Wrapped commands never break on quiet —
+                                    // the END marker (at command end) or the
+                                    // session close is the only terminator.
+                                    // Unknown-shell backends keep the quiet
+                                    // fallback.
+                                    if wrap_shell2.is_none() && qs.elapsed() >= quiet_dur2 { break; }
                                 }
                             }
                             mgr2.term_release_execute(&sid2).await;
@@ -1350,15 +1556,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // expiry fires marker_confirm after the FIRST expiry
                     // (not 2x quiet_dur, and never a future panic).
                     let mut quiet_confirm_at: Option<Instant> = None;
-                    // Read AFTER the first-prompt gate: a failed injection
-                    // demotes the session (gate above), flipping this flag.
-                    let marker_injected = terminal_mgr.term_marker_injected(&sid).await;
-                    // round-108: marker-injected PTY sessions NEVER break on
-                    // quiet — the marker arrives at the NEXT prompt (command
-                    // end), which can be seconds after the echo (`sleep 2 &&
-                    // echo done`). Only the marker or the deadline ends the
-                    // wait. Marker-less backends (SSH/serial) keep the
-                    // bounded quiet path.
+                    // stage-l: the OSC marker contract is gone. Wrapped
+                    // (known-shell) sessions end on the wrapper's END marker;
+                    // unknown-shell sessions (ssh/serial) keep the bounded
+                    // quiet path. The marker_injected flag is no longer
+                    // consulted — `wrap_shell` is the only driver.
                     let mut result = String::new();
                     // round-105: cap the session-mode result like the local
                     // mode (1 MB tail) — the old code grew to the command's
@@ -1396,16 +1598,28 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         }
                         result.push_str(s);
                     };
-                    // Marker scanner state: the OSC 133;D;N BEL sequence may
-                    // span chunks, so the last 64 bytes stay un-finalized until
-                    // they cannot be a marker prefix anymore.
+                    // Marker scanner state: the wrapper's plain-text markers
+                    // (`<marker>_S` / `<marker>_E:<code>`) may span chunks, so
+                    // the un-finalized tail stays pending until it cannot be a
+                    // marker prefix anymore. `pending` starts EMPTY for wrapped
+                    // commands — the settle-drain + START marker scan discard
+                    // everything before the marker (the wrapper echo + prompt).
+                    // Unknown-shell sessions keep the old OSC scan for
+                    // backward-compat reads (a marker-injected legacy session
+                    // still emits them), plus the quiet fallback.
                     let mut pending: Vec<u8> = Vec::new();
                     let mut marker_code: Option<i32> = None;
                     let mut marker_seen_at: Option<Instant> = None;
-                    // round-112: one re-arm of the marker confirm window —
-                    // a REAL marker's trailing prompt can arrive >300ms
-                    // later (slow PS1); a SECOND late chunk invalidates.
-                    let mut marker_confirm_rearmed = false;
+                    // stage-l: START-marker state for wrapped commands — before
+                    // the START line arrives, everything is pre-command noise
+                    // (wrapper echo + prompt); after it, output is real.
+                    let mut start_seen_at: Option<Instant> = None;
+                    // stage-l: start timeout — Netcatty's key failure mode:
+                    // the wrapper's START marker should arrive within seconds
+                    // of the write; a missing one means the shell swallowed
+                    // the command (dead/stuck session). Fail EXPLICITLY
+                    // instead of hanging to the deadline.
+                    let start_deadline = Instant::now() + std::time::Duration::from_secs(15);
                     // Every exit path below assigns it (marker / idle / timeout).
                     let wait_reason: &str;
 
@@ -1460,50 +1674,42 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         if chunk_len > 0 {
                             read_abs += chunk_len;
                             pending.extend_from_slice(&chunk);
-                            // Strip complete markers out of the un-finalized
-                            // tail (multiple can appear in one chunk).
-                            while let Some((start, end, code)) = find_prompt_marker(&pending) {
-                                if start > 0 {
-                                    append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..start]));
+                            if wrap_shell.is_some() {
+                                // Wrapped command: first confirm the START
+                                // marker (discard everything before it — the
+                                // wrapper echo + prompt), then scan for the
+                                // END marker. A multi-marker chunk (very fast
+                                // command) yields START then END in one pass.
+                                if start_seen_at.is_none() {
+                                    if let Some(pos) = find_exec_start_marker(&pending, &marker) {
+                                        pending.drain(..pos);
+                                        start_seen_at = Some(Instant::now());
+                                        if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
+                                            e.first_prompt_seen = true;
+                                        }
+                                    }
                                 }
-                                pending.drain(..end);
-                                marker_code = Some(code);
-                                marker_seen_at = Some(Instant::now());
-                                if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
-                                    e.first_prompt_seen = true;
+                                while let Some((mstart, mend, code)) = find_exec_end_marker(&pending, &marker, start_seen_at.is_some()) {
+                                    if mstart > 0 {
+                                        append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..mstart]));
+                                    }
+                                    pending.drain(..mend);
+                                    marker_code = Some(code);
+                                    marker_seen_at = Some(Instant::now());
                                 }
-                            }
-                            // round-103/104: output AFTER a marker could be a
-                            // false positive (literal OSC 133 in a log line)
-                            // OR the shell prompt that immediately follows a
-                            // REAL marker. Distinguish by volume/timing:
-                            // a real marker's prompt is ≤ a few hundred bytes
-                            // arriving within one poll; sustained output
-                            // (a burst > 1 chunk or continuing past the
-                            // confirm window) means the marker was fake.
-                            // round-103/105: output AFTER a marker is either
-                            // the real prompt (small, within the confirm
-                            // window) or sustained fake-marker output. Reset
-                            // the confirm window when output CONTINUES past
-                            // the confirm window at any size (the R104
-                            // chunk>256 heuristic let small-chunk fake
-                            // markers through; the R103 any-output reset
-                            // killed real markers).
-                            if let Some(at) = marker_seen_at {
-                                // round-112: distinguish a REAL marker's
-                                // trailing prompt from sustained fake-marker
-                                // output. A prompt is small and STOPPS; fake
-                                // output keeps coming. When a chunk arrives
-                                // past the confirm window, re-arm the confirm
-                                // window once (small output = prompt); a
-                                // SECOND late chunk (>1KB total) invalidates.
-                                if at.elapsed() >= marker_confirm {
-                                    if chunk.len() <= 1024 && !marker_confirm_rearmed {
-                                        marker_confirm_rearmed = true;
-                                        marker_seen_at = Some(Instant::now());
-                                    } else {
-                                        marker_seen_at = None;
-                                        marker_code = None;
+                            } else {
+                                // Unknown shell: legacy OSC scan (backward-
+                                // compat for marker-injected legacy sessions)
+                                // + quiet fallback.
+                                while let Some((start, end, code)) = find_prompt_marker(&pending) {
+                                    if start > 0 {
+                                        append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..start]));
+                                    }
+                                    pending.drain(..end);
+                                    marker_code = Some(code);
+                                    marker_seen_at = Some(Instant::now());
+                                    if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
+                                        e.first_prompt_seen = true;
                                     }
                                 }
                             }
@@ -1518,29 +1724,33 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         } else if quiet_since.is_none() {
                             quiet_since = Some(Instant::now());
                         }
-                        // The marker is the AUTHORITATIVE "command finished"
-                        // signal (dsh pollReadiness): while its confirm window
-                        // runs, a quiet gap must not trigger the idle path —
-                        // the command may be done and the marker chunk simply
-                        // not read yet.
+                        // The END marker is the AUTHORITATIVE "command
+                        // finished" signal: while its confirm window runs, a
+                        // quiet gap must not trigger the idle path — the
+                        // command may be done and the marker chunk simply not
+                        // read yet.
                         if let Some(at) = marker_seen_at {
                             if at.elapsed() >= marker_confirm {
                                 wait_reason = "marker";
                                 break;
                             }
+                        } else if wrap_shell.is_some() && start_seen_at.is_none() {
+                            // stage-l: wrapped command whose START marker never
+                            // arrived — the shell swallowed the wrapper (dead
+                            // or wedged session, wrong shell kind). Fail
+                            // EXPLICITLY instead of hanging to the deadline.
+                            if Instant::now() >= start_deadline {
+                                wait_reason = "start-timeout";
+                                break;
+                            }
                         } else if let Some(qs) = quiet_since {
                             if qs.elapsed() >= quiet_dur {
-                                // round-104/105: on a marker-injected PTY the
-                                // shell echoes the command, the tty goes
-                                // quiet, and the marker arrives only at the
-                                // NEXT prompt — breaking on quiet returned
-                                // premature success.
-                                // round-108: for marker-injected sessions the
-                                // quiet path NEVER breaks — the marker (at
-                                // command end) or the deadline is the only
-                                // terminator. Marker-less backends keep the
-                                // bounded once-extension.
-                                if !marker_injected {
+                                // Unknown-shell backends (ssh/serial) keep the
+                                // bounded once-extension quiet path. Wrapped
+                                // commands never break on quiet — the END
+                                // marker (at command end) or the deadline is
+                                // the only terminator.
+                                if wrap_shell.is_none() {
                                     if !quiet_extended {
                                         quiet_extended = true;
                                         quiet_since = Some(Instant::now());
@@ -1550,7 +1760,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                         break;
                                     }
                                 } else {
-                                    // Still waiting for the marker — keep
+                                    // Still waiting for the END marker — keep
                                     // polling (the deadline check below ends
                                     // the wait if the command truly hangs).
                                     quiet_since = Some(Instant::now());
@@ -1585,13 +1795,27 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // only exit path from the wait loop.
                     terminal_mgr.term_release_execute(&sid).await;
                     bus.emit(&AgentEvent::ShellExec { command });
+                    // stage-l: strip the wrapper's own echo (the wrapper line
+                    // contains `<marker>_S`/`<marker>_E:` text and must not
+                    // reach the model). The prompt markers were already
+                    // stripped during the wait.
+                    let result = if wrap_shell.is_some() {
+                        strip_exec_markers(&result, &marker)
+                    } else {
+                        result
+                    };
                     // Strip ANSI/OSC noise for the model — the MCP text path
-                    // must be printable text (the prompt markers were already
-                    // stripped during the wait); the panel keeps raw bytes
+                    // must be printable text; the panel keeps raw bytes
                     // via its own SSE stream (round-54, dsh sanitize.ts).
                     let result = clean_terminal_output(result.as_bytes());
                     let state = match wait_reason {
                         "marker" => "done",
+                        // stage-l: a wrapped command whose START marker never
+                        // arrived is a DEFINITE failure (the shell swallowed
+                        // the wrapper) — report it like a timeout, never as
+                        // "still running" (that note would make the model
+                        // re-read/retry a command that never started).
+                        "start-timeout" => "timeout",
                         "timeout" => "timeout",
                         _ => "partial",
                     };
@@ -2228,6 +2452,8 @@ mod tests {
     use super::*;
     use crate::plugins::terminal::{DiagBuf, SessionStore};
     use crate::tools::serial::SerialPool;
+    #[cfg(feature = "terminal")]
+    use crate::tools::terminal::TermOpenRequest;
     use crate::tools::terminal::TerminalManager;
     use vale_agent_core::AppEventBus;
 
@@ -2669,6 +2895,358 @@ mod tests {
         let (start, end, code) = super::find_prompt_marker(data).unwrap();
         assert_eq!(code, 3);
         assert_eq!(&data[start..end], b"\x1b]133;D;3\x07");
+    }
+
+    // ── stage-l: Netcatty-style wrapper (wrap_execute_command) ────────
+
+    #[test]
+    fn wrapper_powershell_text() {
+        let w = super::wrap_execute_command("echo hi", WrapShell::PowerShell, "M1");
+        // Single physical line (no \n inside), no trailing newline.
+        assert!(!w.contains('\n'), "wrapper must be one line: {w}");
+        assert!(!w.ends_with('\n'));
+        assert!(w.contains("'echo hi'"), "command must be single-quoted: {w}");
+        assert!(w.contains("Write-Output 'M1_S'"), "START marker print: {w}");
+        assert!(w.contains("'M1_E:' + $M1_rc"), "END marker print: {w}");
+    }
+
+    #[test]
+    fn wrapper_powershell_escapes_quotes() {
+        // A command containing a single quote must be escaped ('' doubling).
+        let w = super::wrap_execute_command("echo it's", WrapShell::PowerShell, "M2");
+        assert!(w.contains("'echo it''s'"), "single quote must double: {w}");
+    }
+
+    #[test]
+    fn wrapper_bash_text() {
+        let w = super::wrap_execute_command("echo hi", WrapShell::Bash, "M3");
+        assert!(!w.contains('\n'), "wrapper must be one line: {w}");
+        assert!(w.contains("'M3_S'"), "START marker print: {w}");
+        assert!(w.contains("'M3_E:'\"$M3_rc\""), "END marker print: {w}");
+        assert!(w.contains("PAGER=cat"), "pager neutralized: {w}");
+    }
+
+    #[test]
+    fn wrapper_bash_escapes_quotes() {
+        // sh_single_quote: ' → '\'' — the command text must stay inside one
+        // quoted word.
+        let w = super::wrap_execute_command("echo 'a b'", WrapShell::Bash, "M4");
+        assert!(w.contains("'echo '\\''a b'\\'''"), "quotes must be sh-escaped: {w}");
+    }
+
+    #[test]
+    fn wrapper_cmd_text() {
+        let w = super::wrap_execute_command("echo hi", WrapShell::Cmd, "M5");
+        assert!(!w.contains('\n'), "wrapper must be one line: {w}");
+        assert!(w.contains("echo M5_S"), "START marker print: {w}");
+        assert!(w.contains("echo M5_E:^%errorlevel%"), "END marker print: {w}");
+        assert!(w.contains("call cmd /d /s /c"), "nested cmd call: {w}");
+    }
+
+    #[test]
+    fn wrapper_cmd_escapes_percent_and_quote() {
+        let w = super::wrap_execute_command("echo 100% \"q\"", WrapShell::Cmd, "M6");
+        assert!(w.contains("<echo 100%% \"\"q\"\">"), "% must double and \" double: {w}");
+    }
+
+    #[test]
+    fn wrapper_fish_text() {
+        let w = super::wrap_execute_command("echo hi", WrapShell::Fish, "M7");
+        assert!(!w.contains('\n'), "wrapper must be one line: {w}");
+        assert!(w.contains("'M7_S'"), "START marker print: {w}");
+        assert!(w.contains("'M7_E:'$M7_rc"), "END marker print: {w}");
+    }
+
+    #[test]
+    fn wrapper_shell_from_shell_mapping() {
+        assert_eq!(WrapShell::from_shell("powershell"), Some(WrapShell::PowerShell));
+        assert_eq!(WrapShell::from_shell("cmd"), Some(WrapShell::Cmd));
+        assert_eq!(WrapShell::from_shell("bash"), Some(WrapShell::Bash));
+        assert_eq!(WrapShell::from_shell("fish"), Some(WrapShell::Fish));
+        assert_eq!(WrapShell::from_shell("unknown"), None);
+        assert_eq!(WrapShell::from_shell("zsh"), None);
+        assert_eq!(WrapShell::from_shell(""), None);
+    }
+
+    #[test]
+    fn new_marker_is_unique_and_shaped() {
+        let a = super::new_exec_marker();
+        let b = super::new_exec_marker();
+        assert_ne!(a, b, "markers must be unique per execute");
+        assert!(a.starts_with("__VALE_") && a.ends_with("__"), "shape: {a}");
+        assert!(!a.contains('\n') && !a.contains(' '), "no whitespace: {a}");
+    }
+
+    // ── stage-l: START marker scanner ────────────────────────────────
+
+    #[test]
+    fn start_marker_found_returns_offset_after_line() {
+        // Wrapper echo line ends with \r\n, then the START marker on its own
+        // line: "echo-line" (9) + "\r\n" (2) = 11, "M1_S" at 11, +"\r\n" → 17.
+        let data = b"echo-line\r\nM1_S\r\nhello\r\n";
+        assert_eq!(super::find_exec_start_marker(data, "M1"), Some(17));
+        assert_eq!(&data[17..], b"hello\r\n");
+    }
+
+    #[test]
+    fn start_marker_crlf_terminated() {
+        let data = b"prompt-line\r\nM2_S\r\nout\r\n";
+        // "prompt-line" (11) + "\r\n" (2) = 13, M2_S at 13, +"\r\n" → 19.
+        assert_eq!(super::find_exec_start_marker(data, "M2"), Some(19));
+        assert_eq!(&data[19..], b"out\r\n");
+    }
+
+    #[test]
+    fn start_marker_must_be_own_line() {
+        // Inline occurrence (echo of the wrapper command contains the text)
+        // must NOT count; the standalone line must.
+        // "PS> ${M3}_cmd='echo M3_S'\n" = 26 bytes; the standalone M3_S starts
+        // at 26, line ends at 31.
+        let data = b"PS> ${M3}_cmd='echo M3_S'\nM3_S\n";
+        assert_eq!(super::find_exec_start_marker(data, "M3"), Some(31));
+    }
+
+    #[test]
+    fn start_marker_not_found_in_plain_output() {
+        assert_eq!(super::find_exec_start_marker(b"hello world\n", "M9"), None);
+        // Partial prefix at end of chunk → not yet (caller keeps waiting).
+        assert_eq!(super::find_exec_start_marker(b"xx M9_S", "M9"), None);
+    }
+
+    // ── stage-l: END marker scanner ──────────────────────────────────
+
+    #[test]
+    fn end_marker_found_with_code() {
+        let data = b"ok\nM1_E:0\nPS C:\\>";
+        let (start, end, code) = super::find_exec_end_marker(data, "M1", true).unwrap();
+        assert_eq!(code, 0);
+        assert_eq!(&data[start..end], b"M1_E:0");
+    }
+
+    #[test]
+    fn end_marker_nonzero_exit() {
+        let data = b"err\nM2_E:127\n";
+        let (_, _, code) = super::find_exec_end_marker(data, "M2", true).unwrap();
+        assert_eq!(code, 127);
+    }
+
+    #[test]
+    fn end_marker_inline_allowed_after_start() {
+        // Command output need not end with a newline before the END marker.
+        let data = b"no trailing nlM3_E:3\n";
+        let (start, end, code) = super::find_exec_end_marker(data, "M3", true).unwrap();
+        assert_eq!(code, 3);
+        assert_eq!(&data[start..end], b"M3_E:3");
+    }
+
+    #[test]
+    fn end_marker_line_boundary_required_before_start() {
+        // Before the START marker is confirmed, an inline `_E:` (inside the
+        // wrapper's own echo line) must NOT count; a line-start occurrence
+        // does.
+        let data = b"$M4_cmd='echo M4_E:9'\nM4_E:9\n";
+        // Inline only (allow_inline=false): the echo-line match at 14 is
+        // skipped, the line-start one at 22 counts with code 9.
+        let (start, _, code) = super::find_exec_end_marker(data, "M4", false).unwrap();
+        assert_eq!(code, 9);
+        assert_eq!(start, 22, "must be the line-start occurrence");
+        // allow_inline=true: the echo-line occurrence at 14 counts.
+        let (start2, _, _) = super::find_exec_end_marker(data, "M4", true).unwrap();
+        assert_eq!(start2, 14);
+    }
+
+    #[test]
+    fn end_marker_split_across_chunks() {
+        // Chunk 1 ends mid-digits — the scanner must not finalize (None), the
+        // caller accumulates and re-scans with the tail.
+        let chunk1 = b"out\nM5_E:1";
+        assert_eq!(super::find_exec_end_marker(chunk1, "M5", true), None);
+        let mut data = chunk1.to_vec();
+        data.extend_from_slice(b"2\n");
+        let (start, end, code) = super::find_exec_end_marker(&data, "M5", true).unwrap();
+        assert_eq!(code, 12);
+        assert_eq!(&data[start..end], b"M5_E:12");
+    }
+
+    #[test]
+    fn end_marker_digits_run_to_chunk_end_keeps_waiting() {
+        // A complete-looking digit run at the very end of a chunk may still be
+        // mid-number ("12" could become "127") — never finalize on it.
+        assert_eq!(super::find_exec_end_marker(b"out M8_E:12", "M8", true), None);
+        let mut data = b"out M8_E:12".to_vec();
+        data.extend_from_slice(b"7\r\n");
+        let (_, _, code) = super::find_exec_end_marker(&data, "M8", true).unwrap();
+        assert_eq!(code, 127);
+    }
+
+    #[test]
+    fn end_marker_marker_prefix_split_at_boundary() {
+        // `M6_E:` split as `M6_` + `E:0` — a partial prefix at the end of a
+        // chunk must keep the caller waiting, not false-positive.
+        assert_eq!(super::find_exec_end_marker(b"out M6_", "M6", true), None);
+        let mut data = b"out M6_".to_vec();
+        data.extend_from_slice(b"E:0\n");
+        let (_, _, code) = super::find_exec_end_marker(&data, "M6", true).unwrap();
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn end_marker_not_found_in_plain_output() {
+        assert_eq!(super::find_exec_end_marker(b"hello world\n", "M9", true), None);
+        // `_E:` with no digits and more text after — a false prefix must not
+        // abort the scan (round-100 class).
+        assert_eq!(super::find_exec_end_marker(b"x M9_E:y M9_E:4\n", "M9", true).map(|(_, _, c)| c), Some(4));
+    }
+
+    #[test]
+    fn end_marker_missing_digits_keeps_waiting() {
+        // `_E:` at the very end of the chunk — digits may be in the next one.
+        assert_eq!(super::find_exec_end_marker(b"out M7_E:", "M7", true), None);
+    }
+
+    // ── stage-l: strip_exec_markers ──────────────────────────────────
+
+    #[test]
+    fn strip_removes_marker_lines_only() {
+        let out = super::strip_exec_markers("hello\nM1_S\nworld\nM1_E:0\n", "M1");
+        assert_eq!(out, "hello\nworld\n");
+    }
+
+    #[test]
+    fn strip_keeps_non_marker_lines_with_marker_like_text() {
+        // A user line that merely contains the marker text as a substring is
+        // NOT stripped (only whole lines equal to the markers are).
+        let out = super::strip_exec_markers("echo M1_E:0 was typed\nM1_S\n", "M1");
+        assert_eq!(out, "echo M1_E:0 was typed\n");
+    }
+
+    #[test]
+    fn strip_handles_crlf_and_no_trailing_newline() {
+        assert_eq!(super::strip_exec_markers("a\r\nM2_S\r\nb\r\nM2_E:1\r\n", "M2"), "a\r\nb\r\n");
+        assert_eq!(super::strip_exec_markers("a\nM3_S\nb", "M3"), "a\nb");
+    }
+
+    #[test]
+    fn strip_unknown_marker_noop() {
+        let out = super::strip_exec_markers("a\nb\n", "M9");
+        assert_eq!(out, "a\nb\n");
+    }
+
+    // ── stage-l: full marker round-trip (wrapper output stream) ──────
+
+    #[test]
+    fn wrapper_stream_start_then_end_roundtrip() {
+        // Simulate the raw PTY stream for a wrapped command: prompt + wrapper
+        // echo + START line + output + END line + next prompt.
+        let marker = "M1";
+        let stream = b"PS C:\\> $M1=0; $M1_cmd='echo hi'; & { Write-Output 'M1_S'; ... }\r\nM1_S\r\nhi\r\nM1_E:0\r\nPS C:\\>";
+        let start = super::find_exec_start_marker(stream, marker).unwrap();
+        let after_start = &stream[start..];
+        let (e_start, _e_end, code) = super::find_exec_end_marker(after_start, marker, true).unwrap();
+        assert_eq!(code, 0);
+        let output = String::from_utf8_lossy(&after_start[..e_start]).to_string();
+        let stripped = super::strip_exec_markers(&output, marker);
+        assert_eq!(stripped, "hi\r\n");
+    }
+
+    /// Real-PTY end-to-end smoke of the stage-l wrapper path: open a bash
+    /// PTY, wrap a command, write it, and confirm the START/END markers +
+    /// exit code arrive in the raw stream (the exact functions tool_execute
+    /// uses). Linux/macOS only (a local shell is required).
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn wrapper_end_to_end_real_pty() {
+        use std::time::Duration;
+        let pool = std::sync::Arc::new(crate::tools::serial::SerialPool::new(115200, 1000));
+        let mgr = TerminalManager::new(pool);
+        let (sid, mut rx) = mgr
+            .term_open(&TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: true,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .expect("open pty");
+        // The session's shell must be inferred as bash on Unix.
+        let info = mgr.term_info(&sid).await.expect("session info");
+        assert_eq!(info.shell, "bash");
+
+        let marker = super::new_exec_marker();
+        let wrapped = super::wrap_execute_command("echo hello-smoke; exit 3", WrapShell::Bash, &marker);
+        let cmd = format!("{wrapped}\n");
+        mgr.term_write(&sid, &cmd).await.expect("write wrapper");
+        mgr.term_write(&sid, "exit 0\n").await.expect("write exit");
+
+        let mut stream = String::new();
+        // Collect up to 10s or until the END marker ARRIVES AS A LINE (the
+        // wrapper's own echo line contains `<marker>_E:` text too — only a
+        // line-start occurrence is the real END).
+        let end_needle = format!("\n{marker}_E:");
+        let end_needle_cr = format!("\r{marker}_E:");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match tokio::time::timeout(Duration::from_millis(500), rx.recv()).await {
+                Ok(Some(out)) => {
+                    stream.push_str(&String::from_utf8_lossy(&out.data));
+                    if stream.contains(&end_needle) || stream.contains(&end_needle_cr) { break; }
+                }
+                _ => {
+                    if std::time::Instant::now() >= deadline { break; }
+                }
+            }
+        }
+        // Same scan sequence as the execute wait loop.
+        let start = super::find_exec_start_marker(stream.as_bytes(), &marker)
+            .unwrap_or_else(|| panic!("START marker missing; stream: {stream:?}"));
+        let after = &stream.as_bytes()[start..];
+        let (e_start, _e_end, code) = super::find_exec_end_marker(after, &marker, true)
+            .unwrap_or_else(|| panic!("END marker missing; stream: {stream:?}"));
+        assert_eq!(code, 3, "wrapper must report the command's exit code");
+        let output = String::from_utf8_lossy(&after[..e_start]).to_string();
+        let stripped = super::strip_exec_markers(&output, &marker);
+        assert!(stripped.contains("hello-smoke"), "output missing; got: {stripped:?}");
+        let _ = mgr.term_close(&sid).await;
+    }
+
+    #[test]
+    fn wrapper_stream_split_across_chunks_full_path() {
+        // chunk 1 = prompt + echo prefix, chunk 2 = START + output, chunk 3 =
+        // END marker. The accumulator pattern (extend + rescans) must find
+        // both markers.
+        let marker = "M2";
+        let chunks: [&[u8]; 3] = [
+            b"PS> $M2_cmd='echo hi'\r\n",
+            b"M2_S\r\nhi\r\nM2_E:",
+            b"0\r\nPS> ",
+        ];
+        let mut acc: Vec<u8> = Vec::new();
+        let mut start_pos: Option<usize> = None;
+        let mut end_code: Option<i32> = None;
+        for chunk in chunks {
+            acc.extend_from_slice(chunk);
+            if start_pos.is_none() {
+                if let Some(p) = super::find_exec_start_marker(&acc, marker) {
+                    acc.drain(..p);
+                    start_pos = Some(p);
+                }
+            }
+            if let Some((s, e, code)) = super::find_exec_end_marker(&acc, marker, start_pos.is_some()) {
+                let _ = (s, e);
+                end_code = Some(code);
+                acc.drain(..e);
+            }
+        }
+        assert!(start_pos.is_some(), "START must be found across chunks");
+        assert_eq!(end_code, Some(0), "END must be found across chunks");
+        assert_eq!(acc, b"\r\nPS> ", "post-END bytes must be the leftover prompt");
     }
 
     // ── round-157: partial-return contract (still_running + note) ──

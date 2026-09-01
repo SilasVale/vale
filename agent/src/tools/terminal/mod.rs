@@ -34,6 +34,43 @@ pub struct TermSessionInfo {
     pub id: String,
     pub kind: String, // "pty", "ssh", "serial"
     pub label: String,
+    /// Shell kind driving the Netcatty-style command wrapper (stage-l):
+    /// "powershell" | "cmd" | "bash" | "fish" | "unknown". Unknown
+    /// (ssh/serial/custom pty target) → execute falls back to the quiet
+    /// path without a wrapper.
+    pub shell: String,
+}
+
+/// Infer the session's shell kind for the command wrapper (stage-l):
+/// "powershell" | "cmd" | "bash" | "fish" | "unknown".
+/// - PTY: from the target's file name (blank target = the platform default
+///   shell: powershell.exe on Windows, bash elsewhere).
+/// - ssh/serial: "unknown" — the spec defers SSH shell probing (§4); unknown
+///   means execute uses the quiet fallback (no wrapper).
+pub fn infer_shell(kind: &str, target: &str) -> String {
+    if kind != "pty" {
+        return "unknown".to_string();
+    }
+    let cmd = std::path::Path::new(target)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(target)
+        .to_ascii_lowercase();
+    if cfg!(windows) {
+        if cmd.is_empty() || cmd == "powershell.exe" || cmd == "pwsh.exe" {
+            "powershell".to_string()
+        } else if cmd == "cmd.exe" || cmd == "cmd" {
+            "cmd".to_string()
+        } else {
+            "unknown".to_string()
+        }
+    } else if cmd.is_empty() || cmd == "bash" || cmd == "sh" {
+        "bash".to_string()
+    } else if cmd == "fish" {
+        "fish".to_string()
+    } else {
+        "unknown".to_string()
+    }
 }
 
 /// What kind of terminal to open
@@ -201,11 +238,16 @@ mod desktop_impl {
         id: String,
         kind: String,
         label: String,
+        shell: String,
         backend: Arc<dyn TermBackend>,
         /// round-108: whether this PTY session gets the OSC 133;D prompt
         /// marker — execute's quiet path must not break early on such
         /// sessions (the marker arrives at the NEXT prompt, i.e. at command
         /// end, not after the echo).
+        /// stage-l: the OSC injection was replaced by the command wrapper;
+        /// the flag survives only to honor the legacy `inject_marker` open
+        /// param (now meaning "use the command wrapper") and is no longer
+        /// consulted by execute.
         inject_marker: bool,
         /// Last time output was seen — used by the idle sweeper.
         last_output: std::time::Instant,
@@ -380,7 +422,8 @@ mod desktop_impl {
                     }
                 }
                 let inject = kind == "pty" && req.inject_marker;
-                inner.sessions.push(Session { id: id.clone(), kind, label, backend, inject_marker: inject, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now(), busy: false });
+                let shell = infer_shell(&kind, &req.target);
+                inner.sessions.push(Session { id: id.clone(), kind, label, shell, backend, inject_marker: inject, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now(), busy: false });
             }
             Ok((id, rx))
         }
@@ -556,19 +599,21 @@ mod desktop_impl {
         pub async fn term_list(&self) -> Vec<TermSessionInfo> {
             let inner = self.inner.lock().await;
             inner.sessions.iter()
-                .map(|s| TermSessionInfo { id: s.id.clone(), kind: s.kind.clone(), label: s.label.clone() })
+                .map(|s| TermSessionInfo { id: s.id.clone(), kind: s.kind.clone(), label: s.label.clone(), shell: s.shell.clone() })
                 .collect()
         }
 
-        /// Clone a session's info (id/kind/label) if it still exists. Used by
-        /// the output drainer and terminal_close to capture metadata BEFORE the
-        /// session leaves the manager, so retained history keeps its kind/label.
+        /// Clone a session's info (id/kind/label/shell) if it still exists.
+        /// Used by the output drainer and terminal_close to capture metadata
+        /// BEFORE the session leaves the manager, so retained history keeps
+        /// its kind/label.
         pub async fn term_info(&self, sid: &str) -> Option<TermSessionInfo> {
             let inner = self.inner.lock().await;
             inner.sessions.iter().find(|s| s.id == sid).map(|s| TermSessionInfo {
                 id: s.id.clone(),
                 kind: s.kind.clone(),
                 label: s.label.clone(),
+                shell: s.shell.clone(),
             })
         }
 
@@ -699,6 +744,43 @@ mod tests {
         let cfg = parse_serial_config("COM7?baud=57600&flow=hardware");
         assert_eq!(cfg.baud, 57600);
         assert!(cfg.data_bits.is_none());
+    }
+
+    // ── stage-l: shell inference for the command wrapper ─────────────
+
+    #[test]
+    fn infer_shell_windows_pty_default_is_powershell() {
+        if cfg!(windows) {
+            assert_eq!(infer_shell("pty", ""), "powershell");
+        } else {
+            assert_eq!(infer_shell("pty", ""), "bash");
+        }
+    }
+
+    #[test]
+    fn infer_shell_windows_pty_named_targets() {
+        if cfg!(windows) {
+            assert_eq!(infer_shell("pty", "powershell.exe"), "powershell");
+            assert_eq!(infer_shell("pty", "pwsh.exe"), "powershell");
+            assert_eq!(infer_shell("pty", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "powershell");
+            assert_eq!(infer_shell("pty", "cmd.exe"), "cmd");
+            assert_eq!(infer_shell("pty", "zsh.exe"), "unknown");
+        } else {
+            assert_eq!(infer_shell("pty", "bash"), "bash");
+            assert_eq!(infer_shell("pty", "/bin/sh"), "bash");
+            assert_eq!(infer_shell("pty", "fish"), "fish");
+            assert_eq!(infer_shell("pty", "/bin/zsh"), "unknown");
+        }
+    }
+
+    #[test]
+    fn infer_shell_ssh_and_serial_unknown() {
+        assert_eq!(infer_shell("ssh", "user@host"), "unknown");
+        assert_eq!(infer_shell("serial", "/dev/ttyUSB0"), "unknown");
+        // Custom target path on any platform → unknown (unless a known name).
+        if !cfg!(windows) {
+            assert_eq!(infer_shell("pty", "/usr/bin/fish"), "fish");
+        }
     }
 
     /// round-160: the execute lock WAITS when busy instead of refusing —
