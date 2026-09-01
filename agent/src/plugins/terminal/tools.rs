@@ -684,7 +684,12 @@ fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> 
                 let mut closed: Vec<(String, &RetainedSession)> = store.history.iter()
                     .map(|(k, v)| (k.clone(), v))
                     .collect();
-                closed.sort_by_key(|(_, h)| std::cmp::Reverse(h.closed_at_unix));
+                // Newest-closed first; closed_at_unix is second-granular, so
+                // same-second closes break ties on seq (monotonic retain
+                // order — a later retain is always the newer close).
+                closed.sort_by(|(_, a), (_, b)| {
+                    b.closed_at_unix.cmp(&a.closed_at_unix).then_with(|| b.seq.cmp(&a.seq))
+                });
                 let closed_budget = limit.saturating_sub(entries.len());
                 for (sid, h) in closed.iter().take(closed_budget) {
                     entries.push(json!({
