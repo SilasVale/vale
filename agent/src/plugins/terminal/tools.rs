@@ -1649,8 +1649,22 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         })
                     }
                     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
-                    let reader_stdout = pipe_reader(child.stdout.take().unwrap(), tx.clone());
-                    let reader_stderr = pipe_reader(child.stderr.take().unwrap(), tx.clone());
+                    // round-n: never panic on a missing pipe — tokio spawn
+                    // with Stdio::piped() normally guarantees both, but a
+                    // defensive take() keeps a platform quirk from killing
+                    // the whole execute handler (MCP request) with an
+                    // unwrap panic. Missing stdout → no output capture;
+                    // missing stderr just drops stderr. Both reader tasks
+                    // are still spawned so the wait loop below behaves the
+                    // same (an empty reader just ends immediately).
+                    let reader_stdout = match child.stdout.take() {
+                        Some(out) => pipe_reader(out, tx.clone()),
+                        None => tokio::task::spawn(async {}),
+                    };
+                    let reader_stderr = match child.stderr.take() {
+                        Some(err) => pipe_reader(err, tx.clone()),
+                        None => tokio::task::spawn(async {}),
+                    };
                     drop(tx); // main loop is the last receiver
 
                     const MAX_LOCAL_BYTES: usize = 1_048_576; // 1 MB tail cap
