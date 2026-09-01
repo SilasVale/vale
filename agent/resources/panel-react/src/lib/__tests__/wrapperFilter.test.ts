@@ -24,18 +24,8 @@ describe("wrapperFilter", () => {
     expect(out).toContain("PS C:\\>");
   });
 
-  it("keeps user output that merely mentions a marker-like string (not exact)", () => {
-    const { filter } = createWrapperFilter();
-    const out = filter(`echo __VALE_6a964406_b43d18d2cf7edc96___S was typed\n`);
-    expect(out).toContain("was typed");
-    // the echo line is not an exact marker nor a wrapper echo → kept as-is
-    expect(out).toContain("echo __VALE_");
-  });
-
   it("drops the ConPTY chunk-split `>>` fragments after the wrapper echo", () => {
     const { filter } = createWrapperFilter();
-    // Device capture: the 512B chunk boundary splits the wrapper mid-line;
-    // ConPTY echoes `>> ` continuation prompts between the halves.
     const chunk1 = `PS C:\\> ${WRAPPER_ECHO.slice(0, 500)}\n>> \n`;
     const chunk2 = `${WRAPPER_ECHO.slice(500)}\n${MARKER_S}\nOK\n${MARKER_E}\nPS C:\\> \n`;
     const out1 = filter(chunk1);
@@ -56,7 +46,6 @@ describe("wrapperFilter", () => {
 
   it("handles a marker split across frames (carry)", () => {
     const { filter } = createWrapperFilter();
-    // Split at a point that lands mid-hex (includes the `_` separator).
     const at = MARKER_S.indexOf("_b43d");
     expect(at).toBeGreaterThan(0);
     const out1 = filter(MARKER_S.slice(0, at));
@@ -80,7 +69,6 @@ describe("wrapperFilter", () => {
     const { filter } = createWrapperFilter();
     const out = filter(`echo __VALE_6a964406_b43d18d2cf7edc96___S was typed\n`);
     expect(out).toContain("was typed");
-    // the echo line is not an exact marker nor a wrapper echo → kept as-is
     expect(out).toContain("echo __VALE_");
   });
 
@@ -88,7 +76,7 @@ describe("wrapperFilter", () => {
     const { filter } = createWrapperFilter();
     const noise = "x".repeat(300);
     const out = filter(noise);
-    expect(out).toContain(noise); // flushed, not held
+    expect(out).toContain(noise);
   });
 
   it("strips ANSI SGR codes before classifying marker lines", () => {
@@ -96,5 +84,40 @@ describe("wrapperFilter", () => {
     const out = filter(`\u001b[92m${MARKER_S}\u001b[m\nOUT\n`);
     expect(out).not.toContain(MARKER_S);
     expect(out).toContain("OUT");
+  });
+});
+
+describe("wrapperFilter ConPTY redraw fragments (round-162)", () => {
+  it("drops a redraw fragment with the marker cut mid-hex + command text interleaved", () => {
+    const { filter } = createWrapperFilter();
+    // 512B chunk split: first chunk ends mid-marker, ConPTY redraws the
+    // partial marker + command text as one mangled line.
+    const out = filter("PS C:\\WINDOWS\\system32\\config\\systemprofile> $__VALE_6a9655df_8CLEAN-DISPLAY-TES\nT\nPS C:\\WINDOWS\\system32\\config\\systemprofile> \n>> \n");
+    expect(out).not.toContain("$__VALE_");
+    expect(out).not.toContain("CLEAN-DISPLAY-TES");
+    expect(out).not.toContain(">>");
+    expect(out).toContain("PS C:\\WINDOWS");
+  });
+
+  it("drops `>> `-prefixed continuation halves of the echo", () => {
+    const { filter } = createWrapperFilter();
+    // Real ConPTY flow: continuation fragments are prefixed `>> > $__VALE_...`
+    const out = filter(
+      "PS C:\\> $\n" +
+      ">> > $__VALE_6a9654be_ebb44a7bfc7c1179__=0; $__VALE_6a9654be_ebb44a7bfc7c1179___cmd='netstat'\n" +
+      ">> > $__VALE_6a9654be_ebb44a7bfc7c1179___rc = if ($LASTEXITCODE -ne $null) { $LASTEXITCODE } elseif ($?) { 0 } else { 1 }\n" +
+      "OK-OUTPUT\n" +
+      ">> \n"
+    );
+    expect(out).not.toContain("$__VALE_");
+    expect(out).toContain("OK-OUTPUT");
+  });
+
+  it("keeps a genuine multi-line PowerShell block (no wrapper anywhere)", () => {
+    const { filter } = createWrapperFilter();
+    const out = filter("PS C:\\> if ($true) {\n>> Write-Output 'real'\n>> }\nreal\nPS C:\\> \n");
+    expect(out).toContain("Write-Output 'real'");
+    expect(out).toContain("real");
+    expect(out).toContain(">>");
   });
 });

@@ -28,17 +28,25 @@
 
 const MARKER_RE = /^__VALE_[0-9a-f]+_[0-9a-f]{16}__(?:_S|_E:\d+)$/;
 // The wrapper echo is a single pasted line. It starts with an optional
-// prompt prefix (`PS C:\> ` / `> `) then `$__VALE_<ts>_<hex>__=0;`. NOTE:
-// the prompt alternatives must NOT include a bare `$` — the wrapper echo
-// itself begins with `$__VALE_`, and `\$` in the prefix would demand a
+// prompt prefix (`PS C:\> ` / `> ` / `>> > `) then `$__VALE_<ts>_<hex>__=0;`.
+// NOTE: the prompt alternatives must NOT include a bare `$` — the wrapper
+// echo itself begins with `$__VALE_`, and `\$` in the prefix would demand a
 // SECOND `$` before `__VALE_` (round-162, debug-verified).
-const WRAPPER_ECHO_START = /^(?:PS [^>]*>|>|C:\\[^>]*>|#)?\s*\$__VALE_[0-9a-f]+_[0-9a-f]{16}__=0;/;
+const WRAPPER_ECHO_START = /^(?:PS [^>]*>|>|>> >|C:\\[^>]*>|#)?\s*\$__VALE_[0-9a-f]+_[0-9a-f]{16}__=0;/;
 const CONT_PROMPT_RE = /^\s*>>\s*$/;
 const MAX_CARRY = 128;
-// A partial that could still become a marker line (or the start of a wrapper
-// echo). The marker shape is `__VALE_<ts-hex>_<16hex>__...` — any prefix of
-// it (with an optional leading prompt) may be held across frames.
-const CARRYABLE = /^(?:PS [^>]*>|>|C:\\[^>]*>|#)?\s*\$?__VALE_[0-9a-f_]{0,48}$/;
+// ANY line that starts with the Vale wrapper marker prefix (complete or
+// partial — ConPTY's 512B chunk split + cursor redraw can cut the marker
+// mid-hex and interleave command text) is wrapper machinery, never user
+// output. `$__VALE_` is Vale-specific; user output hitting it is effectively
+// impossible.
+const WRAPPER_PREFIX = /^(?:PS [^>]*>|>|>> >|C:\\[^>]*>|#)?\s*\$?__VALE_[0-9a-f_]/;
+// A partial (no newline yet) that could still become a wrapper line — hold
+// it across frames instead of flushing a half-echo to the screen.
+const CARRYABLE = /^(?:PS [^>]*>|>|>> >|C:\\[^>]*>|#)?\s*\$?__VALE_[0-9a-f_]{0,48}$/;
+// A prompt line that ends the wrapper-echo fragment run (the shell is back
+// at a prompt; everything after is real).
+const PROMPT_LINE = /^(?:PS [^>]*>|C:\\[^>]*>|>)\s*$/;
 
 export interface WrapperFilterState {
   carry: string;
@@ -46,13 +54,18 @@ export interface WrapperFilterState {
   // Discard mode: we saw the start of a wrapper-echo line (no newline yet).
   // Everything until the newline is part of that echo and must be dropped.
   discarding: boolean;
+  // ConPTY redraw can emit the wrapper echo as several NON-contiguous short
+  // lines (marker cut mid-hex → `$__VALE_...TES` then `T` on the next line).
+  // After a wrapper fragment, a few non-prompt short lines are still part of
+  // the echo and are dropped too.
+  echoFragments: number;
 }
 
 export function createWrapperFilter(): {
   state: WrapperFilterState;
   filter: (text: string) => string;
 } {
-  const state: WrapperFilterState = { carry: "", contAfterEcho: 0, discarding: false };
+  const state: WrapperFilterState = { carry: "", contAfterEcho: 0, discarding: false, echoFragments: 0 };
 
   function filter(text: string): string {
     const buf = state.carry + text;
@@ -84,7 +97,7 @@ export function createWrapperFilter(): {
         state.carry = buf;
         return "";
       }
-      if (WRAPPER_ECHO_START.test(clean)) {
+      if (WRAPPER_ECHO_START.test(clean) || WRAPPER_PREFIX.test(clean)) {
         // Start of a wrapper echo without its newline yet — drop it and
         // enter discard mode (it cannot become a user-visible line).
         state.discarding = true;
@@ -110,16 +123,44 @@ export function createWrapperFilter(): {
 
       if (MARKER_RE.test(line.trim())) {
         state.contAfterEcho = 0;
+        state.echoFragments = 0;
         continue;
       }
       if (WRAPPER_ECHO_START.test(line)) {
         // Whole wrapper echo line — drop it and arm the fragment dropper.
         state.contAfterEcho = 6;
+        state.echoFragments = 4;
         continue;
       }
+      if (WRAPPER_PREFIX.test(line)) {
+        // A ConPTY redraw fragment of the wrapper echo (marker cut mid-hex,
+        // command text interleaved, `>> `-prefixed continuation halves) —
+        // still wrapper machinery. Drop the line and arm the dropper.
+        state.contAfterEcho = 6;
+        state.echoFragments = 4;
+        continue;
+      }
+      // ConPTY redraw can emit the wrapper echo as several NON-contiguous
+      // lines (marker cut mid-hex → `$__VALE_...TES` then `T` on the next
+      // line). After a wrapper fragment, a few TINY lines (≤3 chars — cursor
+      // debris like `T`, `}`, `;`) are still part of the echo. Real output
+      // (even one-word results) is longer, so it is never over-dropped.
+      if (state.echoFragments > 0 && line.trim().length <= 3 && !PROMPT_LINE.test(line)) {
+        state.echoFragments -= 1;
+        continue;
+      }
+      state.echoFragments = 0;
       if (state.contAfterEcho > 0 && (CONT_PROMPT_RE.test(line) || line.trim() === "")) {
-        // Chunk-split artifact (`>>` / blank) right after the echo.
+        // Chunk-split artifact (`>>` / blank) right after the echo — even if
+        // a prompt line slipped between, the `>>` is still the artifact.
         state.contAfterEcho -= 1;
+        continue;
+      }
+      if (state.contAfterEcho > 0 && PROMPT_LINE.test(line)) {
+        // A prompt line inside the artifact window: OUTPUT it (it is the
+        // real prompt) but KEEP contAfterEcho armed — the trailing `>>`
+        // ghost may still follow.
+        out += rawLine + "\n";
         continue;
       }
       state.contAfterEcho = 0;
@@ -130,7 +171,7 @@ export function createWrapperFilter(): {
     // line (bounded); otherwise flush it now.
     if (last.length > 0) {
       const clean = last.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r$/, "");
-      if (WRAPPER_ECHO_START.test(clean)) {
+      if (WRAPPER_ECHO_START.test(clean) || WRAPPER_PREFIX.test(clean)) {
         state.discarding = true;
       } else if (clean.length <= MAX_CARRY && CARRYABLE.test(clean)) {
         state.carry = last;
