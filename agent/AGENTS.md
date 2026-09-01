@@ -205,10 +205,10 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-01 (round 25 — browser nav buttons)
+Last updated: 2026-09-02 (round 47 — auto-launch fixed)
 
 ### Current release
-- npm **1.2.180** (agent exe internal 1.0.145), deployed on d1
+- npm **1.2.195** (agent exe internal 1.0.145), deployed on d1
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
 - Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
   GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
@@ -218,8 +218,14 @@ Last updated: 2026-09-01 (round 25 — browser nav buttons)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
   bar with AI-runner chip (1.2.180)
-- Browser nav buttons (back/fwd/reload): bridge protocol + useBrowser +
-  BrowserPane — DONE locally, NOT yet released
+- Browser nav buttons (back/fwd/reload) + history-aware disabled
+  state — released (1.2.183); resolution-following sharp stream +
+  tab titles (1.2.185-186); Chrome-style visual polish (1.2.187);
+  expandable AI-action scripts (1.2.188); memory UI editing (1.2.189);
+  neutral SPA placeholders (1.2.190)
+- AUTO-LAUNCH FIX (1.2.195): the Settings toggle used sync execSync
+  schtasks which killed electron; now async spawn (15s timeout) +
+  /ru Administrator + inner-quoted /tr. Roundtrip verified on d1.
 - /api/status health fields (uptime_secs, live_sessions) consumed by tray
   + SPA status strip
 - terminal_history exit codes + limit; memory multi-word AND search +
