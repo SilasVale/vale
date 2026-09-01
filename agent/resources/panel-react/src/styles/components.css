@@ -1357,6 +1357,118 @@
   overflow: hidden;
 }
 
+/* ---------- browser (stage-n Chrome-style redesign) ---------- */
+/* Two-line toolbar like a real browser: tab row on top, address row below. */
+.browser-toolbar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--chrome-bg-2, #23262c);
+  border-bottom: 1px solid var(--chrome-line, #333);
+}
+.browser-toolbar .browser-tabstrip {
+  border-bottom: none;
+  padding: 3px 6px 0;
+  background: transparent;
+}
+.browser-toolbar .browser-urlbar {
+  border-bottom: none;
+  padding: 4px 8px 6px;
+}
+/* Address-row secure indicator (lock / globe). */
+.browser-url-secure {
+  flex: none;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted, #999);
+  padding-right: 2px;
+}
+/* Bottom status bar: evidence toggle + errors left, AI chip + live right. */
+.browser-statusbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 10px;
+  background: var(--chrome-bg, #1c1e22);
+  border-top: 1px solid var(--chrome-line, #333);
+  font-size: 11px;
+  color: var(--muted, #999);
+}
+.browser-status-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.browser-ev-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted, #999);
+  font-size: 11px;
+  cursor: pointer;
+}
+.browser-ev-toggle:hover { background: var(--chrome-bg-3, #2a2d34); color: var(--ink, #eee); }
+.browser-ev-toggle.active {
+  background: rgba(90, 130, 240, 0.15);
+  color: #7aa2ff;
+  border-color: rgba(90, 130, 240, 0.35);
+}
+.browser-error-inline {
+  color: #e06c6c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-status-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.browser-fps {
+  font-variant-numeric: tabular-nums;
+  color: var(--faint, #666);
+}
+/* Evidence drawer — right-side panel over the viewport. */
+.browser-ev-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 340px;
+  max-width: 60%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--chrome-bg-2, #23262c);
+  border-left: 1px solid var(--chrome-line, #333);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  overflow-y: auto;
+  z-index: 30;
+}
+.browser-pane { position: relative; }
+.browser-ev-drawer .browser-ev-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+}
+.browser-ev-close { flex: none; }
+.browser-ev-drawer .browser-ev-stage {
+  flex: none;
+  min-height: 160px;
+}
+.browser-ev-drawer .browser-ev-timeline { flex: none; }
+.browser-ev-drawer .browser-actions { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+
 /* ---------- settings page ---------- */
 .desktop-settings {
   flex: 1 1 0;

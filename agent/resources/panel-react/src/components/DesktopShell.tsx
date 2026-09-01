@@ -87,7 +87,8 @@ export function DesktopShell({
     const bridge = (window as any).valeDesktop;
     if (!bridge?.onCommand) return;
     const unsub = bridge.onCommand((cmd: string) => {
-      if (cmd === "open-memory") setPage("memory");
+      if (cmd === "open-browser") setPage("browser");
+      else if (cmd === "open-memory") setPage("memory");
       else if (cmd === "open-settings") setPage("settings");
       else if (cmd === "open-plugins") setPage("plugins");
     });

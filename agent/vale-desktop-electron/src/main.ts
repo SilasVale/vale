@@ -108,6 +108,7 @@ function buildMenu(): Menu {
         { label: "New Serial Connection…", accelerator: "CmdOrCtrl+Shift+P", click: () => sendMenu("new-serial") },
         { label: "New Browser Session…", accelerator: "CmdOrCtrl+Shift+B", click: () => sendMenu("new-browser") },
         { type: "separator" },
+        { label: "Browser", accelerator: "CmdOrCtrl+Shift+G", click: () => sendMenu("open-browser") },
         { label: "Memory", accelerator: "CmdOrCtrl+Shift+M", click: () => sendMenu("open-memory") },
         { label: "Settings", accelerator: "CmdOrCtrl+Shift+," , click: () => sendMenu("open-settings") },
         { label: "Plugins", click: () => sendMenu("open-plugins") },
