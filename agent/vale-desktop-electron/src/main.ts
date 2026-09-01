@@ -460,9 +460,20 @@ if (gotTheLock) {
     // the menu, refreshed on a 30s poll and on demand (menu open re-checks).
     let trayAgentRunning = false;
     let trayAgentVersion = "";
+    let trayAgentUptime = "";
+    let trayAgentSessions = 0;
+    /** "3m 24s" / "1h 5m" / "2d 3h" — compact uptime for the tray. */
+    const fmtUptime = (secs: number): string => {
+      if (secs < 60) return `${secs}s`;
+      if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+      if (secs < 86400) return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+      return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
+    };
     const refreshTray = async (): Promise<void> => {
       const running = await portBusy(18080, 600);
       let version = trayAgentVersion;
+      let uptime = trayAgentUptime;
+      let sessions = trayAgentSessions;
       if (running) {
         try {
           const ctrl = new AbortController();
@@ -470,21 +481,25 @@ if (gotTheLock) {
           const r = await fetch(`${BASE}/api/status`, { signal: ctrl.signal });
           clearTimeout(t);
           if (r.ok) {
-            const j = await r.json() as { version?: string };
+            const j = await r.json() as { version?: string; uptime_secs?: number; live_sessions?: number };
             if (j.version) version = j.version;
+            if (typeof j.uptime_secs === "number") uptime = fmtUptime(j.uptime_secs);
+            if (typeof j.live_sessions === "number") sessions = j.live_sessions;
           }
         } catch { /* keep last */ }
       }
       trayAgentRunning = running;
       trayAgentVersion = version;
-      tray!.setToolTip(running ? `Vale — Agent running (v${version || "?"})` : "Vale — Agent stopped");
+      trayAgentUptime = uptime;
+      trayAgentSessions = sessions;
+      const health = running
+        ? `Agent running (v${version || "?"}${uptime ? `, up ${uptime}` : ""}${sessions ? `, ${sessions} session${sessions === 1 ? "" : "s"}` : ""})`
+        : "Agent stopped";
+      tray!.setToolTip(`Vale — ${health}`);
       tray!.setContextMenu(Menu.buildFromTemplate([
         { label: "Open", click: () => { focusMain(); } },
         { type: "separator" },
-        {
-          label: running ? `Agent: running (v${version || "?"})` : "Agent: stopped",
-          enabled: false,
-        },
+        { label: health, enabled: false },
         { type: "separator" },
         { label: "New Terminal", click: () => { focusMain(); sendMenu("new-pty"); } },
         { label: "New SSH…", click: () => { focusMain(); sendMenu("new-ssh"); } },
