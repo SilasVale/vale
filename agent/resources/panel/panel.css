@@ -1996,6 +1996,39 @@ code {
 .tab.closed .tab-name { text-decoration: line-through; }
 .tab.closed { cursor: default; }
 
+/* ---------- global form controls follow the theme ----------
+   stage-n: inputs/selects/textareas used the BROWSER DEFAULT surface —
+   white background + black text in dark mode (glaring on the Settings
+   page). Bind them to the theme tokens so both modes look native. */
+input[type="text"],
+input[type="search"],
+input[type="url"],
+input[type="number"],
+input[type="password"],
+input:not([type]),
+select,
+textarea {
+  background: var(--surface, #ffffff);
+  color: var(--ink, #111);
+  border: 1px solid var(--line, rgba(0,0,0,0.15));
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  outline: none;
+}
+input[type="text"]:focus,
+input[type="search"]:focus,
+input[type="url"]:focus,
+input[type="number"]:focus,
+input[type="password"]:focus,
+input:not([type]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent, #4f7cff);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft, rgba(79,124,255,0.2));
+}
+input::placeholder, textarea::placeholder { color: var(--faint, #999); }
+
 
 /* ============ layout.css ============ */
 /* ============================================================
