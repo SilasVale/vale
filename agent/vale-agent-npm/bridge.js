@@ -205,6 +205,12 @@ function decodeClientFrames(buf, onMessage) {
     // exposes no direct can-go-forward, so the bridge tracks it: nav/reload
     // clears it, back sets it, fwd consumes it.
     let fwdAvailable = false;
+    // stage-n: screencast output resolution — follows the PANEL's viewport so
+    // the stream is never downscaled (blurry text). Updated via the "resize"
+    // command from the SPA (ResizeObserver); capped at the browser's native
+    // viewport so we never upscale garbage.
+    let streamW = 1280;
+    let streamH = 800;
     function pagesList() {
         const ps = ctx.pages();
         if (!ps.includes(selPage))
@@ -222,7 +228,10 @@ function decodeClientFrames(buf, onMessage) {
         bindScreencast(cdp);
         // maxFrameRate exists in newer playwright-core (1.63+); 1.62's types
         // lack it — cast the call to keep the runtime value (device bundle has it).
-        await cdp.send("Page.startScreencast", { format: "jpeg", quality: 45, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 15 }).catch(() => { });
+        // stage-n: quality 60 + resolution follows the panel viewport (streamW/
+        // streamH, updated via the resize command) so the stream is never
+        // downscaled — the sharpest possible image for the current window.
+        await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 }).catch(() => { });
     }
     // round-163: push the tab list to viewers when it CHANGES (open/close/
     // select/navigate) — the panel dropped its 1.5s tabs poll for this.
@@ -247,7 +256,20 @@ function decodeClientFrames(buf, onMessage) {
             }
             const f = encodeFrame(1, Buffer.from(JSON.stringify({
                 ev: "tabs",
-                tabs: ctx.pages().map((p, i) => ({ i, url: p.url() })),
+                // stage-n: each tab carries its PAGE TITLE (fallback: the URL) so
+                // the panel's tab strip reads like a real browser instead of raw
+                // URLs. Titles come from a non-blocking evaluate — a slow page just
+                // yields its URL.
+                tabs: await Promise.all(ctx.pages().map(async (p, i) => {
+                    let title = "";
+                    if (!p.isClosed()) {
+                        try {
+                            title = await p.title();
+                        }
+                        catch { /* closed mid-check */ }
+                    }
+                    return { i, url: p.url(), title: title || p.url().replace(/^https?:\/\//, "") || "blank" };
+                })),
                 sel: ctx.pages().indexOf(selPage),
                 canBack,
                 canFwd: fwdAvailable,
@@ -343,6 +365,31 @@ function decodeClientFrames(buf, onMessage) {
                 return { ok: true, url: selPage?.url() };
             }
             page = selPage || page;
+            // stage-n: the SPA reports its viewport size; restart screencast at
+            // that resolution (capped at 2560x1600) so the stream matches the
+            // panel — sharpest display without wasting bandwidth.
+            if (m.t === "resize" && typeof m.w === "number" && typeof m.h === "number") {
+                const w = Math.min(Math.max(Math.round(m.w), 320), 2560);
+                const h = Math.min(Math.max(Math.round(m.h), 200), 1600);
+                if (w !== streamW || h !== streamH) {
+                    streamW = w;
+                    streamH = h;
+                    // The PAGE viewport must match too — screencast can only output
+                    // what the page renders; a 1280x800 page upscaled to a 1920 panel
+                    // is blurry. Resize the page (and the shared viewport semantics
+                    // stay: every viewer sees the same stream).
+                    try {
+                        await page.setViewportSize({ width: w, height: h });
+                    }
+                    catch { /* page closed */ }
+                    try {
+                        await cdp.send("Page.stopScreencast");
+                        await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
+                    }
+                    catch { /* screencast mid-restart — next frame continues */ }
+                }
+                return { ok: true };
+            }
             if (m.t === "nav") {
                 fwdAvailable = false;
                 await page.goto(m.url, { waitUntil: "domcontentloaded" });
@@ -565,7 +612,7 @@ function decodeClientFrames(buf, onMessage) {
     await new Promise((r) => srv.listen(PORT, "127.0.0.1", () => r()));
     console.log(`bridge listening on 127.0.0.1:${PORT} profile=${USER_DATA_DIR}`);
     // Start streaming + keepalive
-    await cdp.send("Page.startScreencast", { format: "jpeg", quality: 45, everyNthFrame: 1, maxWidth: 1280, maxHeight: 800, maxFrameRate: 15 });
+    await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
     setInterval(async () => {
         // Nudge the renderer so idle pages still emit a frame every ~2s.
         try {

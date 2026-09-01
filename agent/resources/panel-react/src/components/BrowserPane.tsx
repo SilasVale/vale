@@ -32,6 +32,7 @@ export interface BrowserPaneProps {
 export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps) {
   const b = useBrowser({ apiBase, token });
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const viewportRegistered = useRef(false);
   // stage-n: the evidence panel is a DRAWER — open/closed state here, the
   // live viewport stays mounted underneath.
   const [evOpen, setEvOpen] = useState(false);
@@ -88,7 +89,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
         <div className="browser-tabstrip">
           {b.tabs.map((tb) => (
             <span key={tb.i} className={`browser-tab${tb.i === b.sel ? " sel" : ""}`} onClick={() => b.selTab(tb.i)} title={tb.url}>
-              <span className="browser-tab-label">{tb.url.replace(/^https?:\/\//, "") || "blank"}</span>
+              <span className="browser-tab-label">{tb.title || tb.url.replace(/^https?:\/\//, "") || "blank"}</span>
               <span className="browser-tab-close" onClick={(e) => { e.stopPropagation(); void b.closeTab(tb.i); }}>×</span>
             </span>
           ))}
@@ -132,8 +133,21 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
         </div>
       </div>
 
-      {/* ── Live viewport — always rendered, the dominant region ── */}
-      <div className="browser-viewport" ref={viewportRef}>
+      {/* ── Live viewport — always rendered, the dominant region. Its size
+           is reported to the bridge (reportViewport) so the stream matches
+           the panel exactly — sharpest image. ── */}
+      <div
+        className="browser-viewport"
+        ref={(el) => {
+          viewportRef.current = el;
+          // Register the ResizeObserver ONCE (el identity is stable across
+          // renders; reportViewport keeps its own observer ref).
+          if (el && !viewportRegistered.current) {
+            viewportRegistered.current = true;
+            b.reportViewport(el);
+          }
+        }}
+      >
         {aiBanner}
         {!b.hasFrame && (
           <div className="browser-placeholder">

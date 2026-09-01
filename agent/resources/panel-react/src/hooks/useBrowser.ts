@@ -12,7 +12,7 @@
 // See docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md §5.
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export interface TabInfo { i: number; url: string }
+export interface TabInfo { i: number; url: string; title?: string }
 export interface Shot { name: string; mtime_ms: number }
 /** P2: one AI action = one browser_run_script execution (agent-written JSONL). */
 export interface BrowserAction {
@@ -72,6 +72,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const [actions, setActions] = useState<BrowserAction[]>([]);
 
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const aliveRef = useRef(true);
   const pendingRef = useRef(new Map<number, (v: any) => void>());
@@ -246,6 +247,24 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     // No HTTP fallback per round-141 — no more polling.
   }, []);
 
+  // stage-n: report the panel viewport size so the bridge streams at the
+  // EXACT resolution needed — never downscaled, sharpest text. The SPA
+  // registers its viewport container; a ResizeObserver fires on resize.
+  const reportViewport = useCallback((el: HTMLElement | null) => {
+    if (!el) return;
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      const w = Math.round(r.width);
+      const h = Math.round(r.height);
+      if (w > 0 && h > 0) send({ t: "resize", w, h });
+    };
+    report();
+    const ro = new ResizeObserver(() => report());
+    ro.observe(el);
+    // Keep the observer alive for the hook's lifetime.
+    roRef.current = ro;
+  }, [send]);
+
   const newTab = useCallback(() => { send({ t: "tabnew", url: "about:blank" }); }, [send]);
   const selTab = useCallback((i: number) => { send({ t: "tabsel", i }); }, [send]);
   const closeTab = useCallback((i: number) => { send({ t: "tabclose", i }); }, [send]);
@@ -376,7 +395,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     zoom, setZoom,
     error, fps, tabs, sel,
     newTab, selTab, closeTab, goBack, goForward, reload, canBack, canFwd,
-    imgRef, mapXY, send, sendMove,
+    imgRef, mapXY, send, sendMove, reportViewport,
     shots, selected, setSelected, shotUrls,
     actions,
     aiActive, hasFrame,
