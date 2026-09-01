@@ -145,8 +145,20 @@ function buildMenu(): Menu {
 }
 
 // --- Browser-session control: shared core (used by both IPC and HTTP) ---
+/** Only http/https/about:blank targets are allowed — file:// and other
+ *  schemes would hand the AI a local-file read primitive via the shared
+ *  CDP endpoint (stage-n hardening). */
+function sanitizeBrowserUrl(url?: string): string {
+  const t = (url || "about:blank").trim();
+  if (t === "about:blank") return t;
+  try {
+    const u = new URL(t);
+    if (u.protocol === "http:" || u.protocol === "https:") return u.toString();
+  } catch { /* fall through */ }
+  return "about:blank";
+}
 function browserOpen(url?: string): { ok: true; id: string; url: string; cdp: string } {
-  const target = url || "about:blank";
+  const target = sanitizeBrowserUrl(url);
   const id = `browser-${Date.now()}`;
   const bw = new BrowserWindow({ width: 1100, height: 750, title: `Vale Browser — ${target}` });
   bw.loadURL(target);
@@ -174,7 +186,11 @@ ipcMain.handle("browser-session:list", () => browserList());
 // API is unreliable, while schtasks works for the current user without
 // elevation. The task runs start-desktop.ps1 (non-elevated → clickable).
 const AUTOSTART_TASK = "ValeDesktop";
-const AUTOSTART_SCRIPT = path.join(process.cwd(), "..", "start-desktop.ps1");
+// Resolve the autostart script from __dirname (the compiled main.js location:
+// <install>\vale-desktop-electron\src\) — process.cwd() depends on how the
+// shell was launched and broke the toggle when electron started from another
+// directory. The install root is two levels up from src/.
+const AUTOSTART_SCRIPT = path.join(__dirname, "..", "..", "start-desktop.ps1");
 function autoLaunchTaskExists(): boolean {
   try {
     execSync(`schtasks /query /tn "${AUTOSTART_TASK}"`, { stdio: "pipe", windowsHide: true });
@@ -264,22 +280,43 @@ if (gotTheLock) {
     });
     // stage-n: load /desktop/ only when the agent is actually listening.
     // A blind loadURL fails white-screen when the ValeAgent task is down
-    // (startup race, crash, update mid-swap); poll 18080 and retry.
+    // (startup race, crash, update mid-swap); poll 18080 and retry with
+    // exponential backoff (2s → 4s → 8s → 30s cap) so a dead agent doesn't
+    // spam retries.
     const agentReady = async (): Promise<boolean> => portBusy(18080, 800);
     const WAIT_HTML = `<!doctype html><meta charset="utf-8"><title>Vale</title>
       <style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}div{text-align:center}p{color:#999}</style>
       <div><h2>Starting Vale Agent…</h2><p>waiting for 127.0.0.1:18080</p></div>`;
+    let retryMs = 2000;
+    const nextRetry = (): number => { retryMs = Math.min(retryMs * 2, 30000); return retryMs; };
+    const resetRetry = (): void => { retryMs = 2000; };
+    /** Window title carries the agent version for at-a-glance diagnosis:
+     *  "Vale — v1.0.145". Falls back to "Vale" when the agent is unreachable. */
+    const setVersionTitle = async (): Promise<void> => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 3000);
+        const r = await fetch(`${BASE}/api/status`, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (r.ok) {
+          const j = await r.json() as { version?: string };
+          if (j.version) win?.setTitle(`Vale — v${j.version}`);
+        }
+      } catch { /* agent down — keep default title */ }
+    };
     const loadDesktop = async (): Promise<void> => {
       if (await agentReady()) {
+        resetRetry();
+        setVersionTitle();
         win?.loadURL(`${BASE}/desktop/`).catch(() => { /* did-fail-load retries below */ });
       } else {
         win?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(WAIT_HTML)}`).catch(() => {});
-        setTimeout(() => { loadDesktop(); }, 2000);
+        setTimeout(() => { loadDesktop(); }, nextRetry());
       }
     };
     // Retry loop: did-fail-load (agent went down mid-load) or a still-down
     // agent re-runs loadDesktop; each failure schedules exactly one retry.
-    win.webContents.on("did-fail-load", () => { setTimeout(() => { loadDesktop(); }, 2000); });
+    win.webContents.on("did-fail-load", () => { setTimeout(() => { loadDesktop(); }, nextRetry()); });
     await loadDesktop();
     console.log(`[vale] CDP endpoint: http://127.0.0.1:${CDP_PORT} (playwright connectOverCDP)`);
     win.on("close", (e) => { if (!(app as any).isQuitting) { e.preventDefault(); win?.hide(); } });
