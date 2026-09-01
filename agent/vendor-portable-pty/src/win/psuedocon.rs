@@ -25,7 +25,10 @@ use winapi::um::winnt::HANDLE;
 pub type HPCON = HANDLE;
 
 pub const PSEUDOCONSOLE_RESIZE_QUIRK: DWORD = 0x2;
-pub const PSEUDOCONSOLE_WIN32_INPUT_MODE: DWORD = 0x4;
+// PSEUDOCONSOLE_WIN32_INPUT_MODE (0x4) was deliberately REMOVED in stage-m:
+// it makes ConPTY echo console OUTPUT back as Win32 INPUT events, which
+// PSReadLine then renders as a `>>` continuation prompt (vscode#236841).
+// node-pty (VS Code) passes flags=0/INHERIT_CURSOR only — we mirror that.
 #[allow(dead_code)]
 pub const PSEUDOCONSOLE_PASSTHROUGH_MODE: DWORD = 0x8;
 

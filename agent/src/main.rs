@@ -558,8 +558,6 @@ async fn run_server(config_path: PathBuf) {
             // the new bridge.js is loaded. Only a genuinely external process
             // (command line without our bridge.js) is left alone.
             let install_dir = vale_agent::paths::install_dir();
-            let node = install_dir.join("playwright").join("node.exe");
-            let bridge = install_dir.join("bridge.js");
             let occupied_by_us = || -> bool {
                 use std::process::Command;
                 let out = Command::new("powershell")
