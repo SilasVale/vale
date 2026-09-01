@@ -4,10 +4,10 @@ Independently deployed small proxy Workers / Vercel projects, invoked by the Val
 
 | Directory | Worker name | Purpose | Secrets |
 |---|---|---|---|
-| `zen-go-proxy/` | `opencode-go-proxy` | Dedicated direct entry for opencode.saisi.online (og transcoding merged into the gateway) | `OPENCODE_GO_API_KEY`, optional `CLIENT_KEY` |
+| `zen-go-proxy/` | `opencode-go-proxy` | Dedicated direct entry for <opencode-host> (og transcoding merged into the gateway) | `OPENCODE_GO_API_KEY`, optional `CLIENT_KEY` |
 | `zen-us-proxy/` | `zen-us-proxy` | US egress proxy (D1 binding forces US-region edge → opencode zen) | `OPENCODE_GO_API_KEY` |
 | `my-openrouter-proxy/` | `openrouter-proxy` | OpenRouter BYOK passthrough (user brings their own key, falls back to the built-in one if absent) | `OPENROUTER_API_KEY` |
-| `vercel-proxy/` | Vercel project | `v.saisi.online/api/zen` + `/api/proxy` AI egress, controlled `/api/github/{web|raw|api|release}/...` GitHub HTTP reverse proxy, plus `/api/gform/{gle|docs|...}/...` Google Forms reverse proxy (body rewriting, anonymous public forms) (Vercel platform, not a Worker) | `OPENROUTER_API_KEY` (Vercel env) |
+| `vercel-proxy/` | Vercel project | `<mirror-host>/api/zen` + `/api/proxy` AI egress, controlled `/api/github/{web|raw|api|release}/...` GitHub HTTP reverse proxy, plus `/api/gform/{gle|docs|...}/...` Google Forms reverse proxy (body rewriting, anonymous public forms) (Vercel platform, not a Worker) | `OPENROUTER_API_KEY` (Vercel env) |
 
 ## Deployment
 
@@ -26,7 +26,7 @@ Independently deployed small proxy Workers / Vercel projects, invoked by the Val
 `vercel-proxy` provides a GitHub Smart HTTP reverse proxy at `/api/git/...`. Once configured, GitHub URLs in the repo do not need to change:
 
 ```bash
-git config --global url."https://v.saisi.online/api/git/".insteadOf "https://github.com/"
+git config --global url."https://<git-mirror-host>/api/git/".insteadOf "https://github.com/"
 ```
 
 Then run as usual:

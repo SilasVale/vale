@@ -14,7 +14,7 @@ Pure vanilla JS, no build step — load the folder as an unpacked extension.
    unpacked** → select this `extension/` folder.
 2. Open the extension's **Options** page (right-click the toolbar icon →
    Options) and set **Console origin** to your Vale console, e.g.
-   `https://api.saisi.online` → Save.
+   `https://<gateway-host>` → Save.
 3. On the console's Devices panel, generate a **pairing code** for the device.
 4. Click the toolbar icon → paste the code → **Pair**. The popup shows the
    paired device and the WS connection status.

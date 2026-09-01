@@ -1,8 +1,8 @@
 # Vale Studio
 
-The workspace code editor + integrated terminal for saisi.online. Connects to **real files** (the disk of the machine where DSH runs), not snapshots.
+The workspace code editor + integrated terminal for <host>. Connects to **real files** (the disk of the machine where DSH runs), not snapshots.
 
-- **Public entry point**: https://code.saisi.online (one ingress on the same cloudflared tunnel)
+- **Public entry point**: https://<code-host> (one ingress on the same cloudflared tunnel)
 - **Design doc**: `docs/superpowers/specs/2026-08-25-vale-studio-workspace-editor-design.md`
 - **Frontend**: zero-build — Monaco AMD loader (`vendor/monaco/vs`) + xterm UMD (`vendor/xterm`)
 - **Backend**: Node 22 ESM, zero framework; depends on `ws` + `node-pty` (optional, falls back to `script(1)`)
@@ -65,7 +65,7 @@ LD_LIBRARY_PATH=~/chromium-libs/root/usr/lib/x86_64-linux-gnu \
 ## Deep-link protocol
 
 ```
-https://code.saisi.online/#/open?p=<absolute-path>&l=<line>&c=<column>&sel=<l.c-l.c>
+https://<code-host>/#/open?p=<absolute-path>&l=<line>&c=<column>&sel=<l.c-l.c>
 ```
 
 On the DSH page side, the browser extension's content-script rewrites paths in messages to the above link (P3, see design doc §3.4).
