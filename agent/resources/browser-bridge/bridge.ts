@@ -161,6 +161,10 @@ interface Msg {
   // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
   // after closes and switches the CDP pipe so screencast follows selection.
   let selPage: typeof page | null = page;
+  // stage-n: forward-navigation availability — the browser page context
+  // exposes no direct can-go-forward, so the bridge tracks it: nav/reload
+  // clears it, back sets it, fwd consumes it.
+  let fwdAvailable = false;
   function pagesList(): Array<typeof page> {
     const ps = ctx!.pages();
     if (!ps.includes(selPage as typeof page)) selPage = ps[0] || null;
@@ -178,13 +182,29 @@ interface Msg {
 
   // round-163: push the tab list to viewers when it CHANGES (open/close/
   // select/navigate) — the panel dropped its 1.5s tabs poll for this.
-  function pushTabs(): void {
+  // stage-n: also report navigation history state (canBack/canFwd) so the
+  // panel can disable the back/forward buttons like a real browser.
+  async function pushTabs(): Promise<void> {
     try {
       if (!ctx) return;
+      const target = selPage || page;
+      let canBack = false;
+      let canFwd = false;
+      if (target && !target.isClosed()) {
+        try {
+          const h = await target.evaluate(() => window.history.length);
+          // history.length is the TOTAL (including the initial entry), so
+          // back is possible when >1; forward state is approximated (the
+          // browser exposes no direct can-go-forward in the page context).
+          canBack = h > 1;
+        } catch { /* closed mid-check */ }
+      }
       const f = encodeFrame(1, Buffer.from(JSON.stringify({
         ev: "tabs",
         tabs: ctx.pages().map((p, i) => ({ i, url: p.url() })),
         sel: ctx.pages().indexOf(selPage as typeof page),
+        canBack,
+        canFwd: fwdAvailable,
       })));
       for (const s of sockets) { try { s.write(f); } catch {} }
     } catch (_) {}
@@ -250,11 +270,11 @@ interface Msg {
         return { ok: true, url: selPage?.url() };
       }
       page = selPage || page;
-      if (m.t === "nav") { await page.goto(m.url as string, { waitUntil: "domcontentloaded" }); scheduleTabsPush(); }
+      if (m.t === "nav") { fwdAvailable = false; await page.goto(m.url as string, { waitUntil: "domcontentloaded" }); scheduleTabsPush(); }
       // stage-n: real-browser navigation controls — back / forward / reload.
-      else if (m.t === "back") { await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
-      else if (m.t === "fwd") { await page.goForward({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
-      else if (m.t === "reload") { await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
+      else if (m.t === "back") { fwdAvailable = true; await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
+      else if (m.t === "fwd") { fwdAvailable = false; await page.goForward({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
+      else if (m.t === "reload") { fwdAvailable = false; await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
       else if (m.t === "m") {
         const type = m.k === "down" ? "mousePressed" : m.k === "up" ? "mouseReleased" : "mouseMoved";
         const btn = (m.k === "down" || m.k === "up") ? "left" : "none";

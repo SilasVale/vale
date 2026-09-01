@@ -201,6 +201,10 @@ function decodeClientFrames(buf, onMessage) {
     // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
     // after closes and switches the CDP pipe so screencast follows selection.
     let selPage = page;
+    // stage-n: forward-navigation availability — the browser page context
+    // exposes no direct can-go-forward, so the bridge tracks it: nav/reload
+    // clears it, back sets it, fwd consumes it.
+    let fwdAvailable = false;
     function pagesList() {
         const ps = ctx.pages();
         if (!ps.includes(selPage))
@@ -222,14 +226,31 @@ function decodeClientFrames(buf, onMessage) {
     }
     // round-163: push the tab list to viewers when it CHANGES (open/close/
     // select/navigate) — the panel dropped its 1.5s tabs poll for this.
-    function pushTabs() {
+    // stage-n: also report navigation history state (canBack/canFwd) so the
+    // panel can disable the back/forward buttons like a real browser.
+    async function pushTabs() {
         try {
             if (!ctx)
                 return;
+            const target = selPage || page;
+            let canBack = false;
+            let canFwd = false;
+            if (target && !target.isClosed()) {
+                try {
+                    const h = await target.evaluate(() => window.history.length);
+                    // history.length is the TOTAL (including the initial entry), so
+                    // back is possible when >1; forward state is approximated (the
+                    // browser exposes no direct can-go-forward in the page context).
+                    canBack = h > 1;
+                }
+                catch { /* closed mid-check */ }
+            }
             const f = encodeFrame(1, Buffer.from(JSON.stringify({
                 ev: "tabs",
                 tabs: ctx.pages().map((p, i) => ({ i, url: p.url() })),
                 sel: ctx.pages().indexOf(selPage),
+                canBack,
+                canFwd: fwdAvailable,
             })));
             for (const s of sockets) {
                 try {
@@ -323,19 +344,23 @@ function decodeClientFrames(buf, onMessage) {
             }
             page = selPage || page;
             if (m.t === "nav") {
+                fwdAvailable = false;
                 await page.goto(m.url, { waitUntil: "domcontentloaded" });
                 scheduleTabsPush();
             }
             // stage-n: real-browser navigation controls — back / forward / reload.
             else if (m.t === "back") {
+                fwdAvailable = true;
                 await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => { });
                 scheduleTabsPush();
             }
             else if (m.t === "fwd") {
+                fwdAvailable = false;
                 await page.goForward({ waitUntil: "domcontentloaded" }).catch(() => { });
                 scheduleTabsPush();
             }
             else if (m.t === "reload") {
+                fwdAvailable = false;
                 await page.reload({ waitUntil: "domcontentloaded" }).catch(() => { });
                 scheduleTabsPush();
             }

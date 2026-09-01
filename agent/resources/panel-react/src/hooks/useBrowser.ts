@@ -50,6 +50,10 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const [hasFrame, setHasFrame] = useState(false);
   const [tabs, setTabs] = useState<TabInfo[]>([]);
   const [sel, setSel] = useState(0);
+  // stage-n: navigation-history availability (bridge reports it in the
+  // tabs push) — drives the disabled state of the back/forward buttons.
+  const [canBack, setCanBack] = useState(false);
+  const [canFwd, setCanFwd] = useState(false);
   // Browserless-style controls: viewport zoom (% of frame width) and the
   // locally-remembered URL history (native datalist dropdown).
   const [zoom, setZoom] = useState(100);
@@ -151,6 +155,10 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
                   // tab strip (and the page) moved on.
                   const t = o.tabs[sel];
                   if (t && typeof t.url === "string" && t.url) setUrl(t.url);
+                  // stage-n: navigation-history state for the back/forward
+                  // buttons (disabled like a real browser when unavailable).
+                  if (typeof o.canBack === "boolean") setCanBack(o.canBack);
+                  if (typeof o.canFwd === "boolean") setCanFwd(o.canFwd);
                   return;
                 }
                 if (typeof o.id !== "undefined") {
@@ -367,7 +375,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     url, setUrl, navigate, urlHistory,
     zoom, setZoom,
     error, fps, tabs, sel,
-    newTab, selTab, closeTab, goBack, goForward, reload,
+    newTab, selTab, closeTab, goBack, goForward, reload, canBack, canFwd,
     imgRef, mapXY, send, sendMove,
     shots, selected, setSelected, shotUrls,
     actions,
