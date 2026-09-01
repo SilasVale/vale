@@ -60,14 +60,6 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 
 See `agent/AGENTS.md` (Rust build guide) and `gateway/DEVICE-INTEGRATION.md` (device integration).
 
-## Ecosystem
-
-| Repo | Role |
-|---|---|
-| **vale** (this repo) | platform runtime: gateway / agent / index / extension |
-| `SilasVale/vale-forge` | developer toolchain MCP (OpenWrt build control, board SSH, TAPD) |
-| `SilasVale/vale-deploy` | ops credentials & rebuild manual (private) |
-
 ## Core design
 
 - **Gateway plugin core (DSH-style)**: every `/api/*` route and `/mcp` lives in a plugin (`gateway/src/plugins/`: auth / devices / mcp / translate / admin) on a shared context; `index.ts` is a thin front door.
