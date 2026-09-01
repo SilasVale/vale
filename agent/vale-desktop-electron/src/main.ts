@@ -258,22 +258,43 @@ function autoLaunchTaskExists(): boolean {
     return true;
   } catch { return false; }
 }
-function autoLaunchTaskSet(enabled: boolean): { ok: boolean; error?: string } {
+/** Run schtasks asynchronously with a hard timeout — the SYNC execSync
+ *  variant could hang the main process on a wedged schtasks (observed: the
+ *  electron process died when setAutoLaunch ran it inline). Spawn + await
+ *  keeps the UI thread free and bounds the call (stage-n). */
+function runSchtasks(args: string[]): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    try {
+      const { spawn } = require("child_process") as typeof import("child_process");
+      const child = spawn("schtasks", args, { windowsHide: true, stdio: "pipe" });
+      const t = setTimeout(() => { try { child.kill(); } catch {} resolve({ ok: false, error: "schtasks timed out" }); }, 15000);
+      child.on("error", (e) => { clearTimeout(t); resolve({ ok: false, error: String(e) }); });
+      child.on("close", (code) => { clearTimeout(t); resolve({ ok: code === 0, error: code === 0 ? undefined : `schtasks exit ${code}` }); });
+    } catch (e) { resolve({ ok: false, error: String(e) }); }
+  });
+}
+async function autoLaunchTaskSet(enabled: boolean): Promise<{ ok: boolean; error?: string }> {
   try {
     if (enabled && !autoLaunchTaskExists()) {
-      execSync(
-        `schtasks /create /tn "${AUTOSTART_TASK}" /tr "powershell -NoProfile -ExecutionPolicy Bypass -File \\"${AUTOSTART_SCRIPT}\\"" /sc onlogon /f`,
-        { stdio: "pipe", windowsHide: true },
-      );
+      const r = await runSchtasks([
+        "/create", "/tn", AUTOSTART_TASK,
+        "/tr", `powershell -NoProfile -ExecutionPolicy Bypass -File "${AUTOSTART_SCRIPT}"`,
+        "/sc", "onlogon", "/f",
+      ]);
+      if (!r.ok) return r;
     } else if (!enabled && autoLaunchTaskExists()) {
-      execSync(`schtasks /delete /tn "${AUTOSTART_TASK}" /f`, { stdio: "pipe", windowsHide: true });
+      // End the task first (a RUNNING task's process tree is terminated on
+      // delete) then remove it — the current electron instance must survive.
+      await runSchtasks(["/end", "/tn", AUTOSTART_TASK]);
+      const r = await runSchtasks(["/delete", "/tn", AUTOSTART_TASK, "/f"]);
+      if (!r.ok) return r;
     }
     return { ok: true };
   } catch (e) { return { ok: false, error: String(e) }; }
 }
 
 ipcMain.handle("desktop:get-auto-launch", () => ({ enabled: autoLaunchTaskExists() }));
-ipcMain.handle("desktop:set-auto-launch", (_e, enabled: boolean) => autoLaunchTaskSet(!!enabled));
+ipcMain.handle("desktop:set-auto-launch", async (_e, enabled: boolean) => autoLaunchTaskSet(!!enabled));
 
 // --- Agent lifecycle (stage-m: Rust owns it; the shell only probes/triggers) ---
 /** True if ANY process is listening on 127.0.0.1:18080 (TCP probe). */
