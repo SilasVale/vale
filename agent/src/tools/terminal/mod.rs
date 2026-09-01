@@ -57,7 +57,7 @@ pub fn infer_shell(kind: &str, target: &str) -> String {
         .unwrap_or(target)
         .to_ascii_lowercase();
     if cfg!(windows) {
-        if cmd.is_empty() || cmd == "powershell.exe" || cmd == "pwsh.exe" {
+        if cmd.is_empty() || cmd == "powershell.exe" || cmd == "pwsh.exe" || cmd == "powershell" || cmd == "pwsh" {
             "powershell".to_string()
         } else if cmd == "cmd.exe" || cmd == "cmd" {
             "cmd".to_string()
@@ -762,6 +762,11 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(infer_shell("pty", "powershell.exe"), "powershell");
             assert_eq!(infer_shell("pty", "pwsh.exe"), "powershell");
+            // round-162: bare `powershell`/`pwsh` targets (what MCP clients
+            // send as a shell hint) were NOT recognized → shell stayed
+            // "unknown" → the command wrapper was silently disabled.
+            assert_eq!(infer_shell("pty", "powershell"), "powershell");
+            assert_eq!(infer_shell("pty", "pwsh"), "powershell");
             assert_eq!(infer_shell("pty", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "powershell");
             assert_eq!(infer_shell("pty", "cmd.exe"), "cmd");
             assert_eq!(infer_shell("pty", "zsh.exe"), "unknown");

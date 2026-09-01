@@ -912,11 +912,15 @@ fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
 // and the shell kind only needs the wrapper's syntax (powershell / bash /
 // cmd / fish), never a working prompt hook.
 
-/// Generate a unique per-execute marker: `__VALE_<time36>_<128-bit-hex>__`.
-/// 128 random bits make a false positive from user output practically
-/// impossible; the time prefix aids debugging.
+/// Generate a unique per-execute marker: `__VALE_<time36>_<64-bit-hex>__`.
+/// 64 random bits + a second-granularity time prefix make a false positive
+/// from user output practically impossible. The marker is kept SHORT (34
+/// chars): it appears ~9 times in the wrapper, so 128 bits (50-char markers)
+/// pushed the wrapper past the pty write chunk boundary (512B) for typical
+/// commands — the resulting mid-line echo split produced `>>` ghost prompts
+/// and double-echo noise on ConPTY (round-162, observed live on d1).
 fn new_exec_marker() -> String {
-    let mut buf = [0u8; 16];
+    let mut buf = [0u8; 8];
     // getrandom is already a dependency (used by vale-command-core).
     let _ = getrandom::getrandom(&mut buf);
     let ts = std::time::SystemTime::now()
@@ -984,7 +988,7 @@ pub fn wrap_execute_command(command: &str, shell: WrapShell, marker: &str) -> St
         WrapShell::PowerShell => {
             let cmd = ps_single_quote(command);
             format!(
-                "${marker}=0; ${marker}_cmd='{cmd}'; & {{ Write-Output '{marker}_S'; $env:PAGER='cat'; $env:GIT_PAGER='cat'; $env:LESS=''; $LASTEXITCODE=$null; try {{ Invoke-Expression ${marker}_cmd; ${marker}_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }} }} catch {{ ${marker}_rc = 1 }}; Write-Output '{marker}_E:' + ${marker}_rc }}"
+                "${marker}=0; ${marker}_cmd='{cmd}'; & {{ Write-Output '{marker}_S'; $env:PAGER='cat'; $env:GIT_PAGER='cat'; $env:LESS=''; $LASTEXITCODE=$null; try {{ Invoke-Expression ${marker}_cmd; ${marker}_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }} }} catch {{ ${marker}_rc = 1 }}; Write-Output ('{marker}_E:' + ${marker}_rc) }}"
             )
         }
         WrapShell::Bash => {
@@ -2975,6 +2979,11 @@ mod tests {
         assert_ne!(a, b, "markers must be unique per execute");
         assert!(a.starts_with("__VALE_") && a.ends_with("__"), "shape: {a}");
         assert!(!a.contains('\n') && !a.contains(' '), "no whitespace: {a}");
+        // round-162: the marker appears ~9x in the wrapper; 128-bit (50-char)
+        // markers pushed typical wrappers past the 512B pty write chunk, so
+        // the END line could soft-wrap at the PTY width. 64-bit keeps the
+        // marker ≤ 34 chars — the END line (~40 chars) fits even narrow PTYs.
+        assert!(a.len() <= 34, "marker must stay short for narrow PTYs: {a} (len {})", a.len());
     }
 
     // ── stage-l: START marker scanner ────────────────────────────────
@@ -3130,6 +3139,49 @@ mod tests {
     fn strip_unknown_marker_noop() {
         let out = super::strip_exec_markers("a\nb\n", "M9");
         assert_eq!(out, "a\nb\n");
+    }
+
+    // ── stage-l: PowerShell wrapper END-line syntax (round-162) ──────
+
+    #[test]
+    fn ps_wrapper_end_line_uses_parenthesized_concat() {
+        // round-162 (observed live on d1, PowerShell 5.1 + ConPTY): the END
+        // line was `Write-Output '{marker}_E:' + ${marker}_rc` — PowerShell
+        // parses `+` as a SEPARATE positional argument, so the shell printed
+        // `<marker>_E:` (no digits), then `+`, then the rc on THREE lines.
+        // find_exec_end_marker requires digits right after `_E:` → never
+        // matched → every wrapped execute burned to the timeout. The fix:
+        // parenthesize the concatenation so ONE line `<marker>_E:<rc>` is
+        // emitted (verified on-device: `Write-Output ('E:' + $x)` → `E:3`).
+        let marker = "M1";
+        let wrapped = super::wrap_execute_command("echo hi", WrapShell::PowerShell, marker);
+        assert!(
+            wrapped.contains(&format!("Write-Output ('{marker}_E:' + ${marker}_rc)")),
+            "END line must be parenthesized concat, got: {wrapped}"
+        );
+        // And the wrapper must be one physical line (no embedded newlines —
+        // a multiline paste triggers the PS2 `>>` continuation prompt).
+        assert!(!wrapped.contains('\n'), "wrapper must be one line");
+    }
+
+    #[test]
+    fn ps_wrapper_end_line_emits_digits_on_one_line() {
+        // End-to-end marker scan over the wrapper's OUTPUT stream: even when
+        // the wrapped command's own output is empty, the END marker line must
+        // be `M1_E:<rc>` on one line (not `M1_E:` / `+` / `0`).
+        let marker = "M1";
+        let wrapped = super::wrap_execute_command("", WrapShell::PowerShell, marker);
+        // Simulate the shell EXECUTING the wrapper: START line, then END line.
+        // (The real PS would print `M1_E:0` — the parenthesized concat.)
+        let stream = format!("{marker}_S\r\n{marker}_E:0\r\n");
+        let start = super::find_exec_start_marker(stream.as_bytes(), marker).unwrap();
+        let (e_start, _e_end, code) = super::find_exec_end_marker(&stream.as_bytes()[start..], marker, true).unwrap();
+        assert_eq!(code, 0);
+        let output = String::from_utf8_lossy(&stream.as_bytes()[start..start + e_start]).to_string();
+        assert_eq!(output, "", "no stray output before END");
+        // Guard: the OLD broken wrapper shape must NOT be present.
+        assert!(!wrapped.contains(&format!("Write-Output '{marker}_E:' +")),
+            "old positional-arg concat must be gone: {wrapped}");
     }
 
     // ── stage-l: full marker round-trip (wrapper output stream) ──────
