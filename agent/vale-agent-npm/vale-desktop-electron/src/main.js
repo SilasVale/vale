@@ -338,7 +338,12 @@ async function autoLaunchTaskSet(enabled) {
             // session exits 0 and creates the task for the console user).
             const r = await runSchtasks([
                 "/create", "/tn", AUTOSTART_TASK,
-                "/tr", `powershell -NoProfile -ExecutionPolicy Bypass -File "${AUTOSTART_SCRIPT}"`,
+                // schtasks re-parses the /tr VALUE as a command line — it needs its
+                // OWN inner quotes around the script path (a raw space-separated
+                // value makes schtasks split "powershell -NoProfile ..." into
+                // separate args → exit 1). The spawn array keeps the outer arg
+                // intact; the embedded \\" quotes survive to schtasks.
+                "/tr", `powershell -NoProfile -ExecutionPolicy Bypass -File \\"${AUTOSTART_SCRIPT}\\"`,
                 "/sc", "onlogon", "/f",
             ]);
             if (!r.ok)
