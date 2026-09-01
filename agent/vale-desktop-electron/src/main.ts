@@ -28,6 +28,9 @@ const CTRL_PORT = 9444;
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 const browserSessions = new Map<string, BrowserWindow>();
+/** Initial target per browser window — reuse matching uses this instead of
+ *  webContents.getURL() (which lags during navigation; stage-n). */
+const browserTargets = new Map<string, string>();
 /** Cap on concurrent browser-session windows — an AI loop opening sessions
  *  repeatedly must not pile up windows on the desktop (stage-n). */
 const MAX_BROWSER_WINDOWS = 8;
@@ -185,9 +188,12 @@ function browserOpen(url?: string): { ok: true; id: string; url: string; cdp: st
   const target = sanitizeBrowserUrl(url);
   // stage-n: reuse an existing window on the same URL instead of stacking
   // duplicates (AI-driven browsing opens/closes sessions repeatedly); focus
-  // the existing window.
+  // the existing window. Match against the window's INITIAL target (stored
+  // at open) — webContents.getURL() lags during navigation (returns
+  // about:blank while loading), so a same-URL reopen right after the first
+  // open would otherwise miss the reuse and stack a duplicate.
   for (const [id, bw] of browserSessions) {
-    if (!bw.isDestroyed() && bw.webContents.getURL() === target) {
+    if (!bw.isDestroyed() && browserTargets.get(id) === target) {
       if (bw.isMinimized()) bw.restore();
       bw.show();
       bw.focus();
@@ -203,13 +209,14 @@ function browserOpen(url?: string): { ok: true; id: string; url: string; cdp: st
   const id = `browser-${Date.now()}`;
   const bw = new BrowserWindow({ width: 1100, height: 750, title: `Vale Browser — ${target}` });
   bw.loadURL(target);
-  bw.on("closed", () => browserSessions.delete(id));
+  bw.on("closed", () => { browserSessions.delete(id); browserTargets.delete(id); });
   browserSessions.set(id, bw);
+  browserTargets.set(id, target);
   return { ok: true, id, url: target, cdp: `http://127.0.0.1:${CDP_PORT}` };
 }
 function browserClose(id?: string): { ok: true } {
   const bw = browserSessions.get(id || "");
-  if (bw) { bw.close(); browserSessions.delete(id || ""); }
+  if (bw) { bw.close(); browserSessions.delete(id || ""); browserTargets.delete(id || ""); }
   return { ok: true };
 }
 function browserList(): { ok: true; sessions: { id: string; url: string }[]; cdp: string } {
