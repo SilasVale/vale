@@ -242,6 +242,23 @@ Last updated: 2026-09-01 (round 25 — browser nav buttons)
   reachability — URL install (`npm i -g <host>/vale-agent-<ver>.tgz`) is
   the working channel meanwhile.
 
+### Electron recovery on d1 (2026-09-02 incident)
+- Symptom: electron procs 0 + CDP 9333 down + ValeDesktop task gone.
+- Root cause: electron.exe was MISSING from
+  node_modules/electron/dist (binary vanished; only the pak/dll files
+  remained). A Settings auto-launch test also deleted the ValeDesktop
+  task (setAutoLaunch(false)).
+- Fix: re-download the binary from the npmmirror mirror (fast on d1,
+  github/npm direct is slow):
+  curl -L -o electron-33.4.11-win32-x64.zip
+    "https://npmmirror.com/mirrors/electron/33.4.11/electron-v33.4.11-win32-x64.zip"
+  Expand-Archive → xcopy into node_modules/electron/dist → start
+  electron (spawn detached, cwd=vale-desktop-electron).
+- ValeDesktop task recreate (SYSTEM session needs /ru):
+  schtasks /create /tn ValeDesktop /tr "powershell -NoProfile -ExecutionPolicy
+  Bypass -File D:\Vale\start-desktop.ps1" /sc onlogon /ru "$env:USERNAME" /f
+- Verify: electron procs, CDP /json/version, task State=Ready.
+
 ### Device facts (d1)
 - agent token `abacd520...97`, port 18080, CDP 9333 (Electron), bridge 9224
 - pwsh 7.6.5 at `C:\Program Files\PowerShell\7\pwsh.exe`; ValeAgent +
