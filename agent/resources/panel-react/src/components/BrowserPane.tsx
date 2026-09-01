@@ -36,6 +36,8 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
   // stage-n: the evidence panel is a DRAWER — open/closed state here, the
   // live viewport stays mounted underneath.
   const [evOpen, setEvOpen] = useState(false);
+  // stage-n: expanded AI-action scripts (Set of action timestamps).
+  const [expandedActions, setExpandedActions] = useState<Set<number>>(new Set());
 
   const toggleFullscreen = () => {
     const el = viewportRef.current;
@@ -270,7 +272,17 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                             <span className="browser-action-shots">{a.screenshots.length} shot{a.screenshots.length > 1 ? "s" : ""}</span>
                           )}
                         </div>
-                        <div className="browser-action-script">{a.script || "(no script)"}</div>
+                        {/* stage-n: click the script preview to expand/collapse
+                            long scripts (default clamped to 40px). */}
+                        <div
+                          className={`browser-action-script${expandedActions.has(a.ts) ? " expanded" : ""}`}
+                          onClick={() => setExpandedActions((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(a.ts)) next.delete(a.ts); else next.add(a.ts);
+                            return next;
+                          })}
+                          title={a.script && a.script.length > 120 ? "点击展开/收起" : undefined}
+                        >{a.script || "(no script)"}</div>
                         {a.stderr_tail && a.exit_code !== 0 && (
                           <div className="browser-action-err">{a.stderr_tail}</div>
                         )}
