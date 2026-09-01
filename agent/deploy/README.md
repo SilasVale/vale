@@ -1,53 +1,41 @@
 # Vale Agent deploy
 
-Windows deployment for the vale-agent device agent.
+Windows deployment notes for the vale-agent device agent. The install and
+update channel is **npm-only** (the NSIS installer and setup.ps1 are retired
+in `deploy/retired/`).
 
-## One-click install
+## Install / update
 
 ```powershell
-irm https://agent.saisi.online/vale-agent/vale-agent-setup.ps1 | iex
-
-# Installer download (the EXE is served from the mirror):
-# https://v.saisi.online/dl/ValeAgent-Setup.exe
+npm i -g vale-agent          # or: npm i -g <your tgz URL>
+vale setup                   # pure local install (registry-first)
+vale setup --reg-key <key>   # optional: register with a Vale Gate console
+vale update                  # one-command update
 ```
 
-The script (run as Administrator):
-
-1. Downloads `vale-agent.exe` + `vale-tray.exe` + the browser-extension zip
-2. Bootstraps `config.yaml` + a fresh auth token
-3. Installs cloudflared, authenticates (API token from the Vale console when a
-   registration key is set, else interactive browser login)
-4. Creates the per-device tunnel `vale-agent-dN` + DNS route
-5. Registers the `ValeAgent` boot task (SYSTEM, unlimited) + `ValeAgentTray`
-   logon task
-6. Installs the `Cloudflared` service
-
-Or use the NSIS installer (`ValeAgent-Setup.exe`, from the console's Devices
-page) — it bundles the binaries and runs the same setup script for fresh
-installs; silent `/S /D=<dir>` upgrades reuse the existing config.
+- Install dir: registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all
+  path resolution goes through `src/paths.rs`.
+- The `ValeAgent` boot task runs the agent as SYSTEM (no execution-time
+  limit, restart-on-failure ×8, 5-min repetition watchdog).
+- Optional public access: a Cloudflare Tunnel (`cloudflared`) exposes the
+  device at `<device-host>` — the status page, `/panel/` terminal UI, `/mcp`
+  endpoint and `/api/*` tools.
 
 ## Files
 
-- `vale-agent-setup.ps1` — the one-click install script
-- `vale-agent-install.nsi` — NSIS installer source
-- `run-setup.bat` — self-elevating wrapper for the setup script
-- `fix-tunnel.ps1` — repairs a legacy `vale-command-dN` tunnel/ingress to
-  `vale-agent-dN` + `*.agent.saisi.online` (idempotent, runs on agent start)
-- `vale-browser-control.zip` — the browser extension (load unpacked in
-  Chrome/Edge on the device)
+- `fix-tunnel.ps1` — repairs a legacy `vale-command-<device>` tunnel/ingress
+  to `vale-agent-<device>` (idempotent, runs on agent start)
+- `cloudflared-config.example.yml` — example tunnel ingress config
+- `claude-mcp.example.json` — example Claude Code MCP registration
+- `retired/` — NSIS installer + setup.ps1 (superseded by npm)
 
 ## Architecture
 
 ```
-<device> ──Cloudflare Tunnel (vale-agent-dN)──► vale-agent:18080 ──► MCP / panel
+<device> ──Cloudflare Tunnel──► vale-agent:18080 ──► MCP / panel / desktop
 ```
-
-The device is reached at `https://dN.agent.saisi.online/` — the status page,
-the `/panel/` terminal UI (token auto-injected, host-gated), the `/mcp` MCP
-endpoint and the `/api/*` tools API.
 
 ## Build
 
-`./scripts/build.sh agent` cross-compiles `vale-agent.exe` + `vale-tray.exe`;
-`./scripts/build-installer.sh` bundles the NSIS installer and stages all
-download files for the index worker.
+`./scripts/build.sh agent` cross-compiles `vale-agent.exe`;
+`./scripts/build-installer.sh` stages the npm tgz for the index worker.
