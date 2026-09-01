@@ -210,6 +210,12 @@ function browserOpen(url?: string): { ok: true; id: string; url: string; cdp: st
   const bw = new BrowserWindow({ width: 1100, height: 750, title: `Vale Browser — ${target}` });
   bw.loadURL(target);
   bw.on("closed", () => { browserSessions.delete(id); browserTargets.delete(id); });
+  // stage-n: the window title starts as "Vale Browser — <target>" but a
+  // site's own <title> is more useful after load (and after in-page
+  // navigation); follow it so window managers/taskbar show the real page.
+  bw.webContents.on("page-title-updated", (_e, title) => {
+    if (!bw.isDestroyed() && title) bw.setTitle(`Vale Browser — ${title}`);
+  });
   browserSessions.set(id, bw);
   browserTargets.set(id, target);
   return { ok: true, id, url: target, cdp: `http://127.0.0.1:${CDP_PORT}` };
