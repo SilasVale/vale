@@ -38,6 +38,12 @@ pub struct PtyBackend {
     /// Child process — polled by the reaper thread so exits are waited on
     /// (no zombies/orphans). Never taken; kill() on close, reaper reaps.
     child: Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>>,
+    /// stage-n: shared reader handle — the reaper (natural exit) and close()
+    /// (explicit close) drop it so the reader thread ends. Windows ConPTY
+    /// never EOFs its output pipe while the HPCON lives; dropping the reader
+    /// is the safe way to end the thread (vs ClosePseudoConsole, which can
+    /// kill unrelated processes on a shared console host).
+    reader_slot: Arc<Mutex<Option<Box<dyn Read + Send>>>>,
     /// Natural-exit code captured by the reaper (round-60).
     exit_code: Arc<Mutex<Option<i32>>>,
 }
@@ -117,7 +123,7 @@ impl PtyBackend {
         let child = pair.slave.spawn_command(cmd)
             .map_err(|e| DeviceError::Internal { message: format!("spawn: {e}") })?;
 
-        let mut reader = pair.master.try_clone_reader()
+        let reader = pair.master.try_clone_reader()
             .map_err(|e| DeviceError::Internal { message: format!("clone reader: {e}") })?;
         let writer: Box<dyn Write + Send> = Box::new(
             pair.master.take_writer()
@@ -128,17 +134,48 @@ impl PtyBackend {
         let slave: Arc<Mutex<Option<Box<dyn SlavePty + Send>>>> = Arc::new(Mutex::new(Some(pair.slave)));
         let child_slot: Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>> =
             Arc::new(Mutex::new(Some(child)));
+        // stage-n: the reader lives in a SHARED slot so the reaper can drop
+        // it when the shell exits naturally. On Windows ConPTY the output
+        // pipe never EOFs while the HPCON lives, and we must NOT close the
+        // HPCON eagerly (ClosePseudoConsole kills every process attached to
+        // the pseudo console — a shared conhost can take down the agent;
+        // observed on d1). The ConPTY reader is non-blocking (see
+        // conpty.rs), so the reader polls: each iteration locks briefly,
+        // reads what's available, sleeps on WouldBlock. When the reaper
+        // takes the reader out of the slot, the next iteration sees None
+        // and the thread ends → drainer finalizes → execute's closed-
+        // detection fires. On Unix the reader stays blocking (slave-take
+        // already EOFs it), so only Windows takes the reader.
+        let reader_slot: Arc<Mutex<Option<Box<dyn Read + Send>>>> =
+            Arc::new(Mutex::new(Some(reader)));
 
         // Reader thread: pushes output to channel. blocking_send applies
         // backpressure — a stalled consumer pauses the shell (PTY semantics).
         let sid_reader = sid.clone();
+        let reader_reap = reader_slot.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             loop {
-                match reader.read(&mut buf) {
+                let result = {
+                    // Lock only for the read itself — the reaper's take()
+                    // waits at most one non-blocking read (ConPTY) or the
+                    // duration of one blocking read (Unix).
+                    let mut guard = reader_reap.lock().unwrap_or_else(|p| p.into_inner());
+                    match guard.as_mut() {
+                        Some(r) => r.read(&mut buf),
+                        None => break,
+                    }
+                };
+                match result {
                     Ok(0) => break,
                     Ok(n) => {
                         if tx.blocking_send(TermOutput { session_id: sid_reader.clone(), data: buf[..n].to_vec() }).is_err() { break; }
+                    }
+                    // WouldBlock is the ConPTY non-blocking no-data case —
+                    // poll again shortly. Other errors (handle dropped by
+                    // the reaper, EBADF) end the thread.
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
                     }
                     Err(_) => break,
                 }
@@ -163,6 +200,10 @@ impl PtyBackend {
         // so the reader EOFs, the drainer finalizes the session, and the
         // exit code is delivered.
         let slave_reap = slave.clone();
+        // Only used on Windows (see the #[cfg(windows)] take below); the
+        // variable itself must exist for both platforms.
+        #[cfg_attr(not(windows), allow(unused_variables))]
+        let reader_reap = reader_slot.clone();
         std::thread::spawn(move || {
             loop {
                 let (done, code) = if let Ok(mut guard) = child_reap.lock() {
@@ -202,6 +243,19 @@ impl PtyBackend {
                     if let Ok(mut guard) = slave_reap.lock() {
                         guard.take();
                     }
+                    // stage-n: Windows ConPTY — the output pipe never EOFs
+                    // while the HPCON lives, so additionally drop the READER
+                    // handle: the (non-blocking) reader thread then sees the
+                    // slot empty within one poll interval and ends, letting
+                    // the drainer finalize the session. The HPCON itself is
+                    // deliberately NOT closed (ClosePseudoConsole kills every
+                    // process attached to the pseudo console — a shared
+                    // conhost can take down the agent; node-pty never closes
+                    // it on child exit either).
+                    #[cfg(windows)]
+                    if let Ok(mut guard) = reader_reap.lock() {
+                        guard.take();
+                    }
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -217,6 +271,7 @@ impl PtyBackend {
             master: Arc::new(Mutex::new(master)),
             _slave: slave,
             child: child_slot,
+            reader_slot,
             exit_code: exit_slot,
         })
     }
@@ -403,6 +458,14 @@ impl TermBackend for PtyBackend {
                     let _ = c.kill();
                 }
             }
+        }
+        // stage-n: drop the reader handle so the reader thread ends (the
+        // reaper does this on natural exit; here it covers explicit close).
+        // On Windows ConPTY this is what unblocks the reader (the pipe never
+        // EOFs while the HPCON lives); on Unix it's a harmless no-op after
+        // slave-take already EOF'd the reader.
+        if let Ok(mut guard) = self.reader_slot.lock() {
+            guard.take();
         }
     }
     fn exit_code(&self) -> Option<i32> {
