@@ -1073,7 +1073,26 @@ pub fn find_exec_start_marker(data: &[u8], marker: &str) -> Option<usize> {
         let start = search_from + rel;
         // Must be on its own line: preceded by start/`\n`/`\r` and followed by
         // `\n`/`\r` or EOF.
-        let before_ok = start == 0 || data[start - 1] == b'\n' || data[start - 1] == b'\r';
+        // round-162: the byte before `_S` may be the tail of an ANSI sequence
+        // (ConPTY emits `\u001b[?25h` before the marker line when PSReadLine
+        // redraws after a soft wrap at 80 cols) — skip back over CSI sequences
+        // to find the true line start.
+        let mut before = start;
+        loop {
+            if before == 0 { break; }
+            if data[before - 1] == b'\n' || data[before - 1] == b'\r' { break; }
+            if data[before - 1] == b'm' || data[before - 1] == b'h' || data[before - 1] == b'l' || data[before - 1] == b'K' || data[before - 1] == b'J' || data[before - 1] == b'H' {
+                // possible CSI terminator — walk back to its ESC
+                let mut j = before - 1;
+                while j > 0 && data[j - 1] != 0x1b { j -= 1; if before - j > 16 { break; } }
+                if j > 0 && data[j - 1] == 0x1b {
+                    before = j - 1;
+                    continue;
+                }
+            }
+            break;
+        }
+        let before_ok = before == 0 || data[before - 1] == b'\n' || data[before - 1] == b'\r';
         let after = start + needle.len();
         let after_ok = after >= data.len() || data[after] == b'\n' || data[after] == b'\r';
         if before_ok && after_ok {
@@ -3070,6 +3089,19 @@ mod tests {
         // "prompt-line" (11) + "\r\n" (2) = 13, M2_S at 13, +"\r\n" → 19.
         assert_eq!(super::find_exec_start_marker(data, "M2"), Some(19));
         assert_eq!(&data[19..], b"out\r\n");
+    }
+
+    #[test]
+    fn start_marker_preceded_by_ansi_cursor_sequence() {
+        // round-162 (d1 1.0.142, 80 cols): PSReadLine emits `\u001b[?25h`
+        // (show cursor) right before the START marker line after a soft
+        // wrap — the old line-boundary check (byte before `_S` must be
+        // `\n`/`\r`) failed and execute burned to start-timeout although
+        // the command ran fine. The scanner must skip back over the CSI
+        // sequence to find the true line start.
+        let data = b"wrapper...\r\n\x1b[?25hM3_S\r\nout\r\n";
+        let pos = super::find_exec_start_marker(data, "M3").unwrap();
+        assert_eq!(&data[pos..], b"out\r\n");
     }
 
     #[test]
