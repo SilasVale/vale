@@ -1,6 +1,6 @@
 {
   "name": "vale-agent",
-  "version": "1.2.134",
+  "version": "1.2.140",
   "description": "Vale Agent — Windows device MCP server (terminal/SSH/serial) + panel. Self-hosted npm distribution.",
   "bin": {
     "vale": "bin/vale.js"
