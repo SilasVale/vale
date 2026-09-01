@@ -318,12 +318,12 @@ export default {
       // The npm tgz (~12MB — agent + desktop + playwright node_modules, no
       // bundled node/cloudflared) fits the Workers Assets 25MiB cap and is
       // served fast from this worker; the Vercel mirror stays as fallback.
-      const download = `https://v.saisi.online/dl/vale-agent-1.2.140.tgz`;
+      const download = `https://v.saisi.online/dl/vale-agent-1.2.141.tgz`;
       return new Response(
         JSON.stringify({
-          version: "1.0.144",
+          version: "1.0.145",
           download,
-          sha256: "02c6c74e43a6f8700c561270445414e3dabed231827665b1c59a6142725e5d4a",
+          sha256: "dcaca77109a3bb860e2dd10ecf8c17260949bc90e3e8929e85ccc40f92486049",
         }),
         { headers: { "content-type": "application/json", "cache-control": "no-store" } }
       );
@@ -370,7 +370,7 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
     const consoleUrl = (env && env.CONSOLE_URL) || "https://api.saisi.online";
-    const installerUrl = `https://v.saisi.online/dl/vale-agent-1.2.140.tgz`;
+    const installerUrl = `https://v.saisi.online/dl/vale-agent-1.2.141.tgz`;
 
     return new Response(PAGE(consoleUrl, installerUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
