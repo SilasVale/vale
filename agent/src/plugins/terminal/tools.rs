@@ -662,12 +662,15 @@ fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> 
     let buf = output_buf.clone();
     ToolDef::new(
         "terminal_history",
-        "List ALL terminal sessions, including closed ones retained in history. Each entry: {id, kind, label, status: 'live'|'closed', bytes, closed_at? (unix seconds)}. Closed entries sorted newest-first.",
-        json!({"type":"object","properties":{}}),
-        move |_params: Value| {
+        "List ALL terminal sessions, including closed ones retained in history. Each entry: {id, kind, label, status: 'live'|'closed', bytes, closed_at? (unix seconds), exit_code? (natural shell exit code)}. Closed entries sorted newest-first.",
+        json!({"type":"object","properties":{
+            "limit":{"type":"integer","description":"Max entries to return (default 20; live sessions are always included)."}
+        }}),
+        move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let buf = buf.clone();
             async move {
+                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20).max(1) as usize;
                 let mut entries: Vec<Value> = Vec::new();
                 // Live sessions (from the manager) + their current byte count.
                 let live = terminal_mgr.term_list().await;
@@ -676,12 +679,14 @@ fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> 
                     let bytes = store.live.get(&s.id).map(|e| e.end_abs()).unwrap_or(0);
                     entries.push(json!({"id": s.id, "kind": s.kind, "label": s.label, "status": "live", "bytes": bytes}));
                 }
-                // Retained closed sessions, newest-closed first.
+                // Retained closed sessions, newest-closed first, capped so the
+                // total (live + closed) does not exceed the requested limit.
                 let mut closed: Vec<(String, &RetainedSession)> = store.history.iter()
                     .map(|(k, v)| (k.clone(), v))
                     .collect();
                 closed.sort_by_key(|(_, h)| std::cmp::Reverse(h.closed_at_unix));
-                for (sid, h) in closed {
+                let closed_budget = limit.saturating_sub(entries.len());
+                for (sid, h) in closed.iter().take(closed_budget) {
                     entries.push(json!({
                         "id": sid, "kind": h.kind, "label": h.label,
                         "status": "closed", "bytes": h.buf.end_abs(),
@@ -2509,6 +2514,25 @@ mod tests {
         let arr2 = out2.as_array().unwrap();
         let s2 = arr2.iter().find(|e| e["id"] == "s2").unwrap();
         assert!(s2["exit_code"].is_null(), "explicit close has no exit code");
+    }
+
+    #[tokio::test]
+    async fn history_limit_caps_closed_entries() {
+        let (tools, buf) = seeded_tools();
+        // Two closed sessions, newest first: s2 then s1.
+        seed(&buf, "s1", b"one", 0);
+        buf.lock().unwrap().retain_live("s1", "pty", "shell", None);
+        seed(&buf, "s2", b"two", 0);
+        buf.lock().unwrap().retain_live("s2", "pty", "shell", None);
+        // limit=1 → only the newest closed (s2) plus any live (none here).
+        let out = call(find(&tools, "terminal_history"), json!({"limit": 1})).await;
+        let arr = out.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "limit=1 caps to the newest closed");
+        assert_eq!(arr[0]["id"], "s2", "newest closed first");
+        // limit=5 → both.
+        let out2 = call(find(&tools, "terminal_history"), json!({"limit": 5})).await;
+        let arr2 = out2.as_array().unwrap();
+        assert_eq!(arr2.len(), 2);
     }
 
     // ── SessionStore caps + idempotent retain ────────────────────
