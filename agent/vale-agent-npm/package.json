@@ -20,5 +20,8 @@
   "cpu": [
     "x64"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "build": "cd ../resources/browser-bridge && ../../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/bridge.js ../../vale-agent-npm/bridge.js"
+  }
 }

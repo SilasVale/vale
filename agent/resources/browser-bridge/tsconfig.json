@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "typeRoots": ["../../vale-desktop-electron/node_modules/@types"],
+    "paths": {
+      "playwright-core": ["../../../studio/node_modules/playwright-core"]
+    },
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["bridge.ts"]
+}
