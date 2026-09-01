@@ -518,7 +518,7 @@ fn tool_open(
                     // second is a no-op), and unregister the manager entry so
                     // the dead session is not listed as live / written to a void.
                     recover_guard(&buf)
-                        .retain_live(&sid_buf, &kind, &label);
+                        .retain_live(&sid_buf, &kind, &label, exit_code);
                     mgr2.term_unregister(&sid_buf).await;
                     // Audit trail: session closed (round-54), then release
                     // the logger's fd for this session (round-59) — the files
@@ -625,8 +625,10 @@ fn tool_close(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, outp
                 // it (the drainer's own retain on channel close is a no-op if
                 // it ran first — retain_live is idempotent).
                 let label = meta.as_ref().map(|m| m.label.clone()).unwrap_or_default();
+                // Explicit close has no natural exit code — the drainer's
+                // later retain (if any) carries the real code and wins.
                 recover_guard(&buf)
-                    .retain_live(&session_id, &kind, &label);
+                    .retain_live(&session_id, &kind, &label, None);
                 bus.emit(&close_event(&kind, &session_id));
                 // round-163: same push contract as terminal_open.
                 bus.emit_term_output(json!({"ev": "sessions-changed"}));
@@ -684,6 +686,7 @@ fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> 
                         "id": sid, "kind": h.kind, "label": h.label,
                         "status": "closed", "bytes": h.buf.end_abs(),
                         "closed_at": h.closed_at_unix,
+                        "exit_code": h.exit_code,
                     }));
                 }
                 drop(store);
@@ -2446,7 +2449,7 @@ mod tests {
     async fn read_works_on_retained_session() {
         let (tools, buf) = seeded_tools();
         seed(&buf, "s1", b"closed-log", 0);
-        buf.lock().unwrap().retain_live("s1", "serial", "COM4");
+        buf.lock().unwrap().retain_live("s1", "serial", "COM4", None);
         let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 0})).await;
         assert_eq!(out["text"], "closed-log");
         assert_eq!(out["start"], 0);
@@ -2460,7 +2463,7 @@ mod tests {
         // Advance the live cursor past all bytes.
         call(find(&tools, "terminal_read"), json!({"session_id": "s1"})).await;
         // Retain (moves to history) — the cursor snapshot rides along.
-        buf.lock().unwrap().retain_live("s1", "pty", "shell");
+        buf.lock().unwrap().retain_live("s1", "pty", "shell", None);
         // A no-offset read on a retained session still returns all — history
         // reads never advance a cursor, so a fresh read must not be suppressed.
         let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1"})).await;
@@ -2477,7 +2480,7 @@ mod tests {
         assert!(out.is_array(), "history should return an array, got {out}");
         // No live sessions in seeded_tools (manager has none) — only history.
         seed(&buf, "s1", b"a", 0);
-        buf.lock().unwrap().retain_live("s1", "ssh", "admin@host");
+        buf.lock().unwrap().retain_live("s1", "ssh", "admin@host", None);
         let out = call(find(&tools, "terminal_history"), json!({})).await;
         let arr = out.as_array().unwrap();
         assert_eq!(arr.len(), 1);
@@ -2489,6 +2492,25 @@ mod tests {
         assert_eq!(arr[0]["bytes"], 1);
     }
 
+    #[tokio::test]
+    async fn history_retains_natural_exit_code() {
+        let (tools, buf) = seeded_tools();
+        seed(&buf, "s1", b"exit 42", 0);
+        // Drainer path: retain with the natural exit code (Some(42)).
+        buf.lock().unwrap().retain_live("s1", "pty", "shell", Some(42));
+        let out = call(find(&tools, "terminal_history"), json!({})).await;
+        let arr = out.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["exit_code"], 42, "natural exit code must surface in history");
+        // Explicit close (None) → exit_code null in JSON.
+        seed(&buf, "s2", b"closed", 0);
+        buf.lock().unwrap().retain_live("s2", "pty", "shell", None);
+        let out2 = call(find(&tools, "terminal_history"), json!({})).await;
+        let arr2 = out2.as_array().unwrap();
+        let s2 = arr2.iter().find(|e| e["id"] == "s2").unwrap();
+        assert!(s2["exit_code"].is_null(), "explicit close has no exit code");
+    }
+
     // ── SessionStore caps + idempotent retain ────────────────────
 
     #[test]
@@ -2496,7 +2518,7 @@ mod tests {
         let mut store = SessionStore::with_caps(2, 10_000_000);
         for i in 0..3 {
             store.live.entry(format!("s{i}")).or_default().data.extend_from_slice(b"x");
-            store.retain_live(&format!("s{i}"), "pty", "shell");
+            store.retain_live(&format!("s{i}"), "pty", "shell", None);
         }
         // Cap 2 → oldest (s0) evicted.
         assert!(!store.history.contains_key("s0"), "s0 should be evicted");
@@ -2508,7 +2530,7 @@ mod tests {
         let mut store = SessionStore::with_caps(10, 3); // 3 bytes total cap
         for i in 0..3 {
             store.live.entry(format!("s{i}")).or_default().data.extend_from_slice(b"xx");
-            store.retain_live(&format!("s{i}"), "pty", "shell");
+            store.retain_live(&format!("s{i}"), "pty", "shell", None);
         }
         // Total bytes exceed 3 → evict oldest until under. s0 (2B) evicted first.
         let total: u64 = store.history.values().map(|h| h.buf.end_abs() as u64).sum();
@@ -2519,8 +2541,8 @@ mod tests {
     fn retain_idempotent_second_call_false() {
         let mut store = SessionStore::new();
         store.live.entry("s1".into()).or_default().data.extend_from_slice(b"hi");
-        assert!(store.retain_live("s1", "pty", "shell"), "first retain moves it");
-        assert!(!store.retain_live("s1", "pty", "shell"), "second retain is a no-op");
+        assert!(store.retain_live("s1", "pty", "shell", None), "first retain moves it");
+        assert!(!store.retain_live("s1", "pty", "shell", None), "second retain is a no-op");
     }
 
     #[tokio::test]

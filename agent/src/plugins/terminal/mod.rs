@@ -60,8 +60,9 @@ pub struct RetainedSession {
     pub buf: SessionBuf,
     pub kind: String,
     pub label: String,
-    pub closed_at_unix: u64, // seconds since epoch, set at retain time
-    pub seq: u64,            // monotonic retain order — tie-breaks same-second closes
+    pub closed_at_unix: u64,     // seconds since epoch, set at retain time
+    pub seq: u64,                // monotonic retain order — tie-breaks same-second closes
+    pub exit_code: Option<i32>,  // natural shell exit code (PTY `exit`); None for explicit close/ssh/serial
 }
 
 /// Live + retained output buffers, guarded by one mutex so the live→history
@@ -109,7 +110,7 @@ impl SessionStore {
 
     /// Move a live buffer into history (idempotent: false if the drainer
     /// already retained it). Enforces the caps, evicting oldest-closed first.
-    pub fn retain_live(&mut self, sid: &str, kind: &str, label: &str) -> bool {
+    pub fn retain_live(&mut self, sid: &str, kind: &str, label: &str, exit_code: Option<i32>) -> bool {
         if let Some(mut buf) = self.live.remove(sid) {
             let closed_at_unix = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -131,11 +132,18 @@ impl SessionStore {
                     existing.buf.data.extend_from_slice(&buf.data);
                     existing.closed_at_unix = closed_at_unix;
                     existing.seq = self.retain_seq;
+                    // The drainer's second retain carries the real exit code
+                    // (it reads term_exit_code right before retaining); an
+                    // explicit-close first retain passed None — prefer the
+                    // code when present.
+                    if exit_code.is_some() {
+                        existing.exit_code = exit_code;
+                    }
                 }
                 None => {
                     self.history.insert(
                         sid.to_string(),
-                        RetainedSession { buf, kind: kind.to_string(), label: label.to_string(), closed_at_unix, seq: self.retain_seq },
+                        RetainedSession { buf, kind: kind.to_string(), label: label.to_string(), closed_at_unix, seq: self.retain_seq, exit_code },
                     );
                 }
             }
