@@ -1092,10 +1092,14 @@ pub fn find_exec_start_marker(data: &[u8], marker: &str) -> Option<usize> {
 /// `pre_start` is the buffer captured before the START marker (the wrapper
 /// echo + prompt); it is discarded entirely.
 pub fn strip_exec_markers(output: &str, marker: &str) -> String {
+    // round-162 (Netcatty stripJobMarkerLines semantics): drop ANY line
+    // containing THIS marker's text — the wrapper echo line
+    // (`Write-Output "..._E:$rc" }`), its fragments, and the marker lines
+    // themselves. The 64-bit per-execute marker makes false positives from
+    // user output effectively impossible.
     let mut out = String::with_capacity(output.len());
     for line in output.split_inclusive('\n') {
-        let trimmed = line.trim();
-        if trimmed == format!("{marker}_S") || trimmed.starts_with(&format!("{marker}_E:")) {
+        if line.contains(marker) {
             continue;
         }
         out.push_str(line);
@@ -1752,15 +1756,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             // Finalize everything that can no longer be a
                             // marker prefix.
                             // round-162: BEFORE the START marker is confirmed,
-                            // nothing is finalized into `result` — the
-                            // pre-START region is all wrapper/prompt/resize
-                            // noise (a 300-col resize reflows the console and
-                            // emits stray `$`/blank/cursor-move bytes that
-                            // must never reach the MCP text). It is dropped
-                            // wholesale when the START marker is found
-                            // (pending.drain(..pos)). Bounded so a wedged
-                            // session cannot grow pending forever: keep only
-                            // the last 64 bytes of pre-START noise.
+                            // nothing is finalized into `result` (pre-START is
+                            // all wrapper/prompt/resize noise; dropped
+                            // wholesale when START is found). After START the
+                            // normal 64B-window finalize applies — any late
+                            // wrapper-tail fragment is stripped at the end by
+                            // strip_exec_markers (Netcatty semantics).
                             if start_seen_at.is_some() {
                                 let keep = pending.len().saturating_sub(64);
                                 if keep > 0 {
@@ -3180,10 +3181,14 @@ mod tests {
 
     #[test]
     fn strip_keeps_non_marker_lines_with_marker_like_text() {
-        // A user line that merely contains the marker text as a substring is
-        // NOT stripped (only whole lines equal to the markers are).
+        // round-162 (Netcatty stripJobMarkerLines semantics): ANY line
+        // containing THIS marker is dropped — the wrapper echo line and its
+        // fragments carry the marker text. A line with a DIFFERENT marker
+        // (or plain text) is kept.
         let out = super::strip_exec_markers("echo M1_E:0 was typed\nM1_S\n", "M1");
-        assert_eq!(out, "echo M1_E:0 was typed\n");
+        assert_eq!(out, "", "lines containing the marker are stripped");
+        let out2 = super::strip_exec_markers("echo M2_E:0 was typed\nM1_S\n", "M1");
+        assert_eq!(out2, "echo M2_E:0 was typed\n", "other marker text is kept");
     }
 
     #[test]
