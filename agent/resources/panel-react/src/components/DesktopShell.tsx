@@ -71,6 +71,19 @@ export function DesktopShell({
     })();
     return () => { alive = false; };
   }, []);
+  // stage-n: native menu page navigation — the electron menu sends
+  // vale-menu commands for pages too (open-memory / open-settings /
+  // open-plugins); route them to the page state.
+  useEffect(() => {
+    const bridge = (window as any).valeDesktop;
+    if (!bridge?.onCommand) return;
+    const unsub = bridge.onCommand((cmd: string) => {
+      if (cmd === "open-memory") setPage("memory");
+      else if (cmd === "open-settings") setPage("settings");
+      else if (cmd === "open-plugins") setPage("plugins");
+    });
+    return unsub;
+  }, []);
   // Per-session terminal|trajectory view — mirrored from TerminalWorkspace
   // (which owns the panel-density copy) so the header toggle stays in sync.
   const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
