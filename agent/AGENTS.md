@@ -244,10 +244,15 @@ Last updated: 2026-09-01 (round 25 — browser nav buttons)
 
 ### Electron recovery on d1 (2026-09-02 incident)
 - Symptom: electron procs 0 + CDP 9333 down + ValeDesktop task gone.
-- Root cause: electron.exe was MISSING from
-  node_modules/electron/dist (binary vanished; only the pak/dll files
-  remained). A Settings auto-launch test also deleted the ValeDesktop
-  task (setAutoLaunch(false)).
+- Root cause (2026-09-02 update): Windows Defender repeatedly DELETED
+  electron.exe AND playwright/node.exe (binaries vanished after every
+  restore; only pak/dll/node_modules survived). Defender treats the
+  unsigned binaries as threats. FIX: add Defender exclusions (they
+  persist):
+    Add-MpPreference -ExclusionPath "D:\Vale\vale-desktop-electron\node_modules\electron"
+    Add-MpPreference -ExclusionPath "D:\Vale\playwright"
+  A Settings auto-launch test also deleted the ValeDesktop task
+  (setAutoLaunch(false)) — recreate with /ru (see below).
 - Fix: re-download the binary from the npmmirror mirror (fast on d1,
   github/npm direct is slow):
   curl -L -o electron-33.4.11-win32-x64.zip
