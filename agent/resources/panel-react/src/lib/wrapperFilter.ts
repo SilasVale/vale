@@ -35,12 +35,16 @@ const MARKER_RE = /^__VALE_[0-9a-f]+_[0-9a-f]{16}__(?:_S|_E:\d+)$/;
 const WRAPPER_ECHO_START = /^(?:PS [^>]*>|>|>> >|C:\\[^>]*>|#)?\s*\$__VALE_[0-9a-f]+_[0-9a-f]{16}__=0;/;
 const CONT_PROMPT_RE = /^\s*>>\s*$/;
 const MAX_CARRY = 128;
-// ANY line that starts with the Vale wrapper marker prefix (complete or
-// partial — ConPTY's 512B chunk split + cursor redraw can cut the marker
-// mid-hex and interleave command text) is wrapper machinery, never user
-// output. `$__VALE_` is Vale-specific; user output hitting it is effectively
-// impossible.
-const WRAPPER_PREFIX = /^(?:PS [^>]*>|>|>> >|C:\\[^>]*>|#)?\s*\$?__VALE_[0-9a-f_]/;
+// Strip ConPTY redraw debris (backspaces, ANSI SGR, cursor moves) so a
+// mangled echo line can be classified. `\b` + ANSI + `ESC[n;mH` cursor moves.
+const STRIP_REDRAW = /\x1b\[[0-9;?]*[A-Za-z]|\x08/g;
+// ANY line that contains the Vale wrapper marker (complete or partial —
+// ConPTY's 512B chunk split + cursor redraw can cut the marker mid-hex,
+// wrap the `$` in ANSI, insert backspaces/cursor moves and DOUBLE `$`
+// debris before it). The 64-bit random hex makes a false positive from
+// user output effectively impossible — ANY occurrence of `__VALE_` +
+// hex within a line marks it as wrapper machinery.
+const WRAPPER_PREFIX = /__VALE_[0-9a-f]{4,}/;
 // A partial (no newline yet) that could still become a wrapper line — hold
 // it across frames instead of flushing a half-echo to the screen.
 const CARRYABLE = /^(?:PS [^>]*>|>|>> >|C:\\[^>]*>|#)?\s*\$?__VALE_[0-9a-f_]{0,48}$/;
@@ -92,7 +96,7 @@ export function createWrapperFilter(): {
     // marker prefix (bounded). Anything else flushes immediately.
     const nl0 = buf.indexOf("\n");
     if (nl0 === -1) {
-      const clean = buf.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r$/, "");
+      const clean = buf.replace(STRIP_REDRAW, "").replace(/\r$/, "");
       if (clean.length <= MAX_CARRY && CARRYABLE.test(clean)) {
         state.carry = buf;
         return "";
@@ -119,7 +123,13 @@ export function createWrapperFilter(): {
     }
 
     for (const rawLine of rest.split("\n")) {
-      const line = rawLine.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r$/, "");
+      // round-162: strip ConPTY redraw debris (backspace + cursor moves)
+      // BEFORE classifying — the echo line arrives as
+      // `PS ...> \u001b[93m$\u001b[m\u001b[92m\b$__VALE_...\u001b[m\u001b[6;44H> ...`
+      // (ANSI-wrapped `$`, backspace, cursor reposition). A plain SGR strip
+      // leaves `$ $__VALE_...` which failed the prefix regex; stripping
+      // backspaces + cursor moves too yields the clean wrapper line.
+      const line = rawLine.replace(STRIP_REDRAW, "").replace(/\r$/, "");
 
       if (MARKER_RE.test(line.trim())) {
         state.contAfterEcho = 0;

@@ -65,11 +65,15 @@ describe("wrapperFilter", () => {
     expect(out2).toContain("OUT");
   });
 
-  it("keeps user output that merely mentions a marker-like string (not exact)", () => {
+  it("drops ANY line containing the random marker (round-162 redraw)", () => {
+    // round-162: ConPTY redraw can place `__VALE_` mid-line wrapped in ANSI
+    // with backspace/cursor debris — a line containing the 64-bit random
+    // marker (or its hex fragment) IS wrapper machinery; a false positive
+    // from user output is effectively impossible (marker is per-execute).
     const { filter } = createWrapperFilter();
-    const out = filter(`echo __VALE_6a964406_b43d18d2cf7edc96___S was typed\n`);
-    expect(out).toContain("was typed");
-    expect(out).toContain("echo __VALE_");
+    const out = filter(`PS C:\\> $ $__VALE_6a9660b8_1> $__VALE_6a9660b8_17be11ca5786f9f2__=0; ...}\nREAL-OUT\n`);
+    expect(out).not.toContain("__VALE_");
+    expect(out).toContain("REAL-OUT");
   });
 
   it("is bounded: a long random partial line is not retained in carry", () => {
