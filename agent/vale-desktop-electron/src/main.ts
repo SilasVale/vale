@@ -514,4 +514,14 @@ if (gotTheLock) {
   });
 }
 
-app.on("before-quit", () => { (app as any).isQuitting = true; });
+app.on("before-quit", () => {
+  (app as any).isQuitting = true;
+  // stage-n: close every browser-session window explicitly — app.quit()
+  // tears down the main window but independent BrowserWindows with pending
+  // beforeunload handlers can stall or leak on exit.
+  for (const [id, bw] of browserSessions) {
+    if (!bw.isDestroyed()) bw.destroy();
+    browserSessions.delete(id);
+    browserTargets.delete(id);
+  }
+});

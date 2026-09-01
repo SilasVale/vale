@@ -580,4 +580,15 @@ if (gotTheLock) {
         setInterval(() => { refreshTray(); }, 30000);
     });
 }
-electron_1.app.on("before-quit", () => { electron_1.app.isQuitting = true; });
+electron_1.app.on("before-quit", () => {
+    electron_1.app.isQuitting = true;
+    // stage-n: close every browser-session window explicitly — app.quit()
+    // tears down the main window but independent BrowserWindows with pending
+    // beforeunload handlers can stall or leak on exit.
+    for (const [id, bw] of browserSessions) {
+        if (!bw.isDestroyed())
+            bw.destroy();
+        browserSessions.delete(id);
+        browserTargets.delete(id);
+    }
+});
