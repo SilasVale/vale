@@ -371,6 +371,28 @@ fn tool_open(
                 }
                 // Audit trail: session opened (round-54).
                 logger.log_status(&id, "opened");
+                // round-162 (PSReadLine removal — the ONE structural fix):
+                // every ">>"/`$`-residue/soft-wrap/redraw artifact on the
+                // panel and every ANSI-around-marker detection hazard comes
+                // from PSReadLine. Remove it once per PowerShell pty session
+                // (verified on-device: after `Remove-Module PSReadLine` the
+                // wrapper echoes as ONE clean line — no `>>`, no `$`
+                // residue, no CSI cursor sequences; execute returns clean
+                // text with no noise). Delayed until ConsoleHost finishes
+                // profile init (a cold PS on a slow device takes >1s; the
+                // command must not race the profile). Best-effort; the
+                // session works with or without it.
+                if kind == "pty" {
+                    let is_ps = terminal_mgr.term_info(&id).await.map(|i| i.shell == "powershell").unwrap_or(false);
+                    if is_ps {
+                        let mgr2 = terminal_mgr.clone();
+                        let sid2 = id.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                            let _ = mgr2.term_write(&sid2, "Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n").await;
+                        });
+                    }
+                }
                 // stage-l: the OSC 133 prompt-marker injection is GONE — it
                 // never worked on PowerShell 5.1 + ConPTY (the injected
                 // `function global:Prompt` marker was erased by PSReadLine /
@@ -1389,29 +1411,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     }
                     let mut read_abs = recover_guard(&buf)
                         .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
-                    // round-162: PSReadLine soft-wraps any pasted line wider
-                    // than the terminal (the ~568B wrapper at 80 cols shows
-                    // `>> ` continuation + `$`+first-word residue on the
-                    // panel). Temporarily widen the PTY to fit the wrapper
-                    // in ONE physical line while it echoes + executes, then
-                    // restore the original size after the END marker (the
-                    // restore reflows the terminal once, far less noise than
-                    // the per-command ghost). Best-effort — a resize failure
-                    // (session dying) must not abort the execute.
-                    let orig_cols: u16 = 80;
-                    let WIDE_COLS: u16 = 300;
-                    // round-162: the temporary widen is DISABLED by default —
-                    // strip_exec_markers (Netcatty stripJobMarkerLines) now
-                    // drops ANY line containing the marker, including the
-                    // soft-wrapped fragments, so the MCP result is clean
-                    // WITHOUT widening. Widening caused xterm reflow
-                    // row-scrambling on the panel (300→80 reflow mixes
-                    // buffer lines: `line-218`). VALE_EXEC_WIDE=1 re-enables
-                    // it for experiments.
-                    let widen = std::env::var("VALE_EXEC_WIDE").map(|v| v == "1").unwrap_or(false);
-                    if widen && wrap_shell.is_some() && orig_cols < WIDE_COLS {
-                        let _ = terminal_mgr.term_resize(&sid, 30, WIDE_COLS).await;
-                    }
+                    // round-162: NO temporary widen — PSReadLine is removed
+                    // at session open (see tool_open), so the wrapper echoes
+                    // as one clean line at any width. No reflow scrambling.
                     // Write the command; on failure (session reaped mid-write)
                     // release the lock — the command never ran, nothing to
                     // audit, and the next execute must not bounce off a stale
@@ -1577,11 +1579,6 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 }
                             }
                             mgr2.term_release_execute(&sid2).await;
-                            // round-162: restore the terminal width after the
-                            // background command finished (temporary widen).
-                            if widen && wrap_shell2.is_some() && orig_cols < WIDE_COLS {
-                                let _ = mgr2.term_resize(&sid2, 24, orig_cols).await;
-                            }
                         });
                         return Ok(json!({
                             "kind": "session",
@@ -1875,12 +1872,6 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // Release the per-session execute lock (round-55) — the
                     // only exit path from the wait loop.
                     terminal_mgr.term_release_execute(&sid).await;
-                    // round-162: restore the original terminal width now the
-                    // wrapper has finished echoing + executing (the resize
-                    // during execute was temporary). Best-effort.
-                    if widen && wrap_shell.is_some() && orig_cols < WIDE_COLS {
-                        let _ = terminal_mgr.term_resize(&sid, 24, orig_cols).await;
-                    }
                     bus.emit(&AgentEvent::ShellExec { command });
                     // stage-l: strip the wrapper's own echo (the wrapper line
                     // contains `<marker>_S`/`<marker>_E:` text and must not
