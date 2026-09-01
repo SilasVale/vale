@@ -278,7 +278,17 @@ impl MemoryStore {
     /// `snippet_bytes` for the wire.
     pub fn search(&self, query: &str, namespace: Option<&str>, limit: usize) -> Vec<MemoryRecord> {
         self.rebuild_order();
-        let q = query.to_lowercase();
+        // Multi-word AND matching: the query is split on whitespace and EVERY
+        // term must appear in title/content/tags (order-independent). A bare
+        // single word behaves exactly as before (substring match). This makes
+        // "conpty exit bug" match entries containing all three terms instead
+        // of requiring the literal string — a real recall improvement for
+        // free-form queries.
+        let terms: Vec<String> = query
+            .split_whitespace()
+            .map(|t| t.to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
         let guard = recover_guard(&self.inner);
         let mut out = Vec::new();
         for id in &guard.order {
@@ -297,7 +307,7 @@ impl MemoryStore {
                 rec.content.to_lowercase(),
                 rec.tags.join(" ").to_lowercase()
             );
-            if hay.contains(&q) {
+            if terms.iter().all(|t| hay.contains(t.as_str())) {
                 let mut r = rec.clone();
                 r.content = truncate_utf8(&r.content, DEFAULT_SNIPPET_BYTES);
                 out.push(r);
@@ -524,6 +534,27 @@ mod tests {
         assert_eq!(s.search("alpha", None, 10).len(), 1);
         assert_eq!(s.search("net", None, 10).len(), 1);
         assert_eq!(s.search("nope", None, 10).len(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn search_multi_word_and_matching() {
+        let (s, dir) = tmp_store("search_multi_word_and_matching");
+        let mut a = rec("ConPTY exit", "shell exits hang the session until timeout");
+        a.tags = vec!["windows".to_string(), "terminal".to_string()];
+        let _ = s.insert(a);
+        let _ = s.insert(rec("ConPTY resize", "window reflow handling"));
+        // Two terms in different fields (title + content) → match (AND).
+        assert_eq!(s.search("conpty exit", None, 10).len(), 1, "title+content AND");
+        // Terms spanning title/tags → match.
+        assert_eq!(s.search("conpty terminal", None, 10).len(), 1, "title+tag AND");
+        // Order-independent.
+        assert_eq!(s.search("exit conpty", None, 10).len(), 1, "reversed order");
+        // One term missing → no match (AND semantics).
+        assert_eq!(s.search("conpty resize", None, 10).len(), 1, "both words present in one rec");
+        assert_eq!(s.search("conpty nope", None, 10).len(), 0, "missing term excludes");
+        // Single word still works (backward compat).
+        assert_eq!(s.search("hang", None, 10).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
