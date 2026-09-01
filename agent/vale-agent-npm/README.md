@@ -1,25 +1,26 @@
-# vale-agent (npm distribution)
+# vale-agent
 
-Self-hosted npm package for one-click install/update of the Vale Agent on
-Windows devices. Ships `vale-agent.exe`, `bridge.js` (interactive browser
-bridge) and the `vale` management CLI.
+Windows device MCP server — terminal (PTY/SSH/serial), memory, system tools
+and a web panel, with an Electron desktop shell. Installable as a global npm
+package; the `vale` CLI manages setup, updates and the tunnel.
 
 ## Install (fresh device)
 
 ```powershell
-npm i -g https://agent.saisi.online/vale-agent/vale-agent-<version>.tgz
-vale setup --reg-key <key-from-console>
+npm i -g vale-agent
+vale setup --reg-key <key-from-console>   # --reg-key is optional (local mode works without it)
 ```
 
-`setup` copies the exe to `D:\vale-agent` (override with `VALE_AGENT_DIR`),
-registers the boot-start `ValeAgent` scheduled task as SYSTEM
-(no execution-time limit, restart-on-failure ×8, 5-min repetition watchdog)
-and starts it. The device registers itself with the console using the key.
+`setup` installs to the registry-configured directory
+(`HKLM\SOFTWARE\Vale\Agent\InstallDir`), registers the boot-start
+`ValeAgent` scheduled task as SYSTEM (no execution-time limit,
+restart-on-failure ×8, 5-min repetition watchdog) and starts it. With a
+registration key the device registers itself with a Vale Gate console.
 
 ## Update (one click)
 
 ```powershell
-npm i -g https://agent.saisi.online/vale-agent/vale-agent-<newer>.tgz
+npm i -g vale-agent
 vale update
 ```
 
@@ -32,23 +33,21 @@ the device is never left dark.
 ## CLI commands
 
 ```
-vale <setup|status|start|stop|restart|update|run>
+vale <setup|status|start|stop|restart|update|uninstall|run|tunnel>
 ```
 
-## Publishing a new version (from the repo)
+## Features
 
-```bash
-# from agent/ — panel changes must be built BEFORE compiling (embedded):
-cd resources/panel-react && npm run build && npm test && cd ../..
-cargo xwin build --target x86_64-pc-windows-msvc --release --features terminal,keyring --bin vale-agent
+- **OSC 633 shell integration** (VS Code approach): PowerShell prompts and
+  command boundaries arrive as invisible sequences — clean display, exit codes.
+- **37 MCP tools**: terminal (PTY/SSH/serial, history with exit codes, SFTP,
+  saved connections, secrets, background jobs), memory (6), system (6),
+  mcp-client (4), update, design.
+- **Electron desktop shell**: tray with live agent status, native menu,
+  CDP :9333 for AI-driven UI.
+- **Memory plugin**: device-local knowledge base with multi-word search and
+  compaction.
 
-cp target/x86_64-pc-windows-msvc/release/vale-agent.exe vale-agent-npm/
-cp resources/browser-bridge/bridge.js vale-agent-npm/   # when bridge changed
-# bump "version" below, then:
-cd vale-agent-npm && npm pack
-cp vale-agent-<ver>.tgz ../../index/public/vale-agent/
-cd ../../index && CLOUDFLARE_API_TOKEN=$(cat ~/.cloudflare-token) npx wrangler deploy
-```
+## License
 
-Devices pick it up with the two-command update above. Do NOT hand-roll
-kill/copy/restart over an agent-hosted terminal — see `agent/CLAUDE.md`.
+MIT — see the repository LICENSE.
