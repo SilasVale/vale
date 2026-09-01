@@ -1381,7 +1381,16 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // (session dying) must not abort the execute.
                     let orig_cols: u16 = 80;
                     let WIDE_COLS: u16 = 300;
-                    if wrap_shell.is_some() && orig_cols < WIDE_COLS {
+                    // round-162: the temporary widen is DISABLED by default —
+                    // strip_exec_markers (Netcatty stripJobMarkerLines) now
+                    // drops ANY line containing the marker, including the
+                    // soft-wrapped fragments, so the MCP result is clean
+                    // WITHOUT widening. Widening caused xterm reflow
+                    // row-scrambling on the panel (300→80 reflow mixes
+                    // buffer lines: `line-218`). VALE_EXEC_WIDE=1 re-enables
+                    // it for experiments.
+                    let widen = std::env::var("VALE_EXEC_WIDE").map(|v| v == "1").unwrap_or(false);
+                    if widen && wrap_shell.is_some() && orig_cols < WIDE_COLS {
                         let _ = terminal_mgr.term_resize(&sid, 30, WIDE_COLS).await;
                     }
                     // Write the command; on failure (session reaped mid-write)
@@ -1551,7 +1560,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             mgr2.term_release_execute(&sid2).await;
                             // round-162: restore the terminal width after the
                             // background command finished (temporary widen).
-                            if wrap_shell2.is_some() && orig_cols < WIDE_COLS {
+                            if widen && wrap_shell2.is_some() && orig_cols < WIDE_COLS {
                                 let _ = mgr2.term_resize(&sid2, 24, orig_cols).await;
                             }
                         });
@@ -1850,7 +1859,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // round-162: restore the original terminal width now the
                     // wrapper has finished echoing + executing (the resize
                     // during execute was temporary). Best-effort.
-                    if wrap_shell.is_some() && orig_cols < WIDE_COLS {
+                    if widen && wrap_shell.is_some() && orig_cols < WIDE_COLS {
                         let _ = terminal_mgr.term_resize(&sid, 24, orig_cols).await;
                     }
                     bus.emit(&AgentEvent::ShellExec { command });
