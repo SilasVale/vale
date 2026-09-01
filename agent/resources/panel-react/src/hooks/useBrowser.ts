@@ -73,6 +73,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
 
   const imgRef = useRef<HTMLImageElement | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
+  const viewportElRef = useRef<HTMLElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const aliveRef = useRef(true);
   const pendingRef = useRef(new Map<number, (v: any) => void>());
@@ -138,6 +139,15 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
             attempts = 0;
             setError("");
             void refreshTabs();
+            // stage-n: the viewport may have been registered while the
+            // socket was down — re-report its size so the bridge streams at
+            // the right resolution immediately.
+            if (viewportElRef.current) {
+              const r = viewportElRef.current.getBoundingClientRect();
+              const w = Math.round(r.width);
+              const h = Math.round(r.height);
+              if (w > 0 && h > 0) ws.send(JSON.stringify({ t: "resize", w, h }));
+            }
           };
           ws.onmessage = (m) => {
             if (typeof m.data === "string") {
@@ -252,6 +262,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   // registers its viewport container; a ResizeObserver fires on resize.
   const reportViewport = useCallback((el: HTMLElement | null) => {
     if (!el) return;
+    viewportElRef.current = el;
     const report = () => {
       const r = el.getBoundingClientRect();
       const w = Math.round(r.width);
