@@ -22,6 +22,6 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "cd ../resources/browser-bridge && ../../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/bridge.js ../../vale-agent-npm/bridge.js"
+    "build": "../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/vale.js bin/vale.js && cd ../resources/browser-bridge && ../../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/bridge.js ../../vale-agent-npm/bridge.js"
   }
 }
