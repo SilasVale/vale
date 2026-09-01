@@ -1398,6 +1398,16 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 &cmd_with_nl[..cmd_with_nl.len().min(24)],
                                 &cmd_with_nl[cmd_with_nl.len().saturating_sub(24)..])
                         });
+                    // round-162 (Netcatty §2.5): clear the current input line
+                    // BEFORE the wrapper is echoed — `\x1b\x15\x0b` =
+                    // ESC + Ctrl-U + Ctrl-K (PSReadLine RevertLine). Without
+                    // it the prompt (`$`) and any residual edit-line text
+                    // mingle with the wrapper echo and survive as noise.
+                    // Only for wrapped (known-shell) commands; quiet path
+                    // (ssh/serial) leaves the prompt alone.
+                    if wrap_shell.is_some() {
+                        let _ = terminal_mgr.term_write(&sid, "\x1b\x15\x0b").await;
+                    }
                     if let Err(e) = terminal_mgr.term_write(&sid, &cmd_with_nl).await {
                         terminal_mgr.term_release_execute(&sid).await;
                         return Err(e);
@@ -1745,10 +1755,26 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                             // Finalize everything that can no longer be a
                             // marker prefix.
-                            let keep = pending.len().saturating_sub(64);
-                            if keep > 0 {
-                                append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]));
-                                pending.drain(..keep);
+                            // round-162: BEFORE the START marker is confirmed,
+                            // nothing is finalized into `result` — the
+                            // pre-START region is all wrapper/prompt/resize
+                            // noise (a 300-col resize reflows the console and
+                            // emits stray `$`/blank/cursor-move bytes that
+                            // must never reach the MCP text). It is dropped
+                            // wholesale when the START marker is found
+                            // (pending.drain(..pos)). Bounded so a wedged
+                            // session cannot grow pending forever: keep only
+                            // the last 64 bytes of pre-START noise.
+                            if start_seen_at.is_some() {
+                                let keep = pending.len().saturating_sub(64);
+                                if keep > 0 {
+                                    append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]));
+                                    pending.drain(..keep);
+                                }
+                            } else if pending.len() > 1024 {
+                                // Pre-START noise balloon (resize reflow loop):
+                                // drop the excess but never finalize it.
+                                pending.drain(..pending.len() - 64);
                             }
                             quiet_since = None;
                         } else if quiet_since.is_none() {
