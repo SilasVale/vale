@@ -55,3 +55,32 @@ describe("wrapperFilter (PSReadLine removed)", () => {
     expect(out).toContain("\n\n");
   });
 });
+
+describe("wrapperFilter console wrap segments (1.0.144 real bytes)", () => {
+  it("drops a wrapper wrapped into CSI-prefixed segments", () => {
+    const { filter } = createWrapperFilter();
+    // Real d1 bytes: the long wrapper at 80 cols is wrapped into segments,
+    // each prefixed with \u001b[23;80H (cursor move). Only the FIRST segment
+    // carries the `$__VALE_` prefix; later segments carry marker fragments.
+    const raw =
+      "PS C:\\WINDOWS\\system32\\config\\systemprofile> $__VALE_6a9676cc_c9fe92d68e0a9361__\r\n" +
+      "\u001b[23;80H_=0; $__VALE_6a9676cc_c9fe92d68e0a9361___cmd='Get-ChildItem D:\\Vale -Name | Selec\r\n" +
+      "\u001b[23;80Hct-Object -First 3; Write-Output \"AGAIN-OK\"'; & { Write-Output '__VALE_6a9676cc_c\r\n" +
+      "\u001b[23;80Hc9fe92d68e0a9361___S'; ... }\r\n" +
+      "__VALE_6a9676cc_c9fe92d68e0a9361___S\r\nplaywright\r\npwout\r\nsessions\r\nAGAIN-OK\r\n" +
+      "__VALE_6a9676cc_c9fe92d68e0a9361___E:0\r\nPS C:\\WINDOWS\\system32\\config\\systemprofile>\r\n";
+    const out = filter(raw);
+    expect(out).not.toContain("__VALE_");
+    expect(out).not.toContain("c9fe92d68e0a9361");
+    expect(out).toContain("playwright");
+    expect(out).toContain("AGAIN-OK");
+    expect(out).toContain("PS C:\\WINDOWS");
+  });
+
+  it("keeps output lines that merely share hex-looking text", () => {
+    const { filter } = createWrapperFilter();
+    const out = filter(`c9fe92d68e0a9361\nplain\n`);
+    expect(out).toContain("c9fe92d68e0a9361");
+    expect(out).toContain("plain");
+  });
+});
