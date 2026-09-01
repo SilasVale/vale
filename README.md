@@ -26,7 +26,7 @@ Vale Index (Cloudflare Worker) — npm tgz / download distribution
 ## Quick start (Windows)
 
 ```powershell
-npm.cmd i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.179.tgz
+npm.cmd i -g https://<distribution-host>/vale-agent/vale-agent-1.2.179.tgz   # replace <distribution-host> with your tgz host
 vale setup                 # pure local install (registry-first, no cloud needed)
 vale setup --reg-key <key> # optional: register the device with a Vale Gate console
 vale update                # later: one-command update (exe + bridge + electron)
@@ -40,7 +40,7 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 |---|---|---|---|
 | `gateway/` | **Vale Gate** | Cloudflare Worker | console (login/roles), BYOK AI gateway, `/mcp` proxy to devices, device registry |
 | `agent/` | **Vale Agent** | Windows (Rust) | headless MCP server + `/api/tools` + panel + Electron desktop shell (`vale-desktop-electron/`) + npm distribution (`vale-agent-npm/`) |
-| `index/` | **Vale Index** | Cloudflare Worker | download distribution (`vale-dist`, serves `agent.saisi.online`) |
+| `index/` | **Vale Index** | Cloudflare Worker | download distribution (`vale-dist`; hosts the npm tgz, see Quick start) |
 | `extension/` | **Vale Browser Control** | Chrome/Edge (MV3) | legacy browser drive via `chrome.debugger` (superseded by the mcp-client plugin) |
 | `docs/` | docs | — | design decisions (`docs/adr/`), agent build guide (`agent/AGENTS.md`) |
 
