@@ -1,89 +1,95 @@
-# Vale terminal_execute 重构规格（stage-l，Netcatty 式命令包装）
+# Vale terminal_execute 重构规格（stage-m，VS Code OSC 633 shell integration）
 
-> 目标：修复 Windows PowerShell 5.1 + ConPTY 下 OSC 133 shell 注入失效，
-> 导致 terminal_execute 永远等不到 marker、卡满超时、命令排队（"输出乱/卡顿"）。
-> 方案：Netcatty 式命令包装 + 纯文本唯一 marker（11 份研究报告共识的最优解）。
+> 状态：**已实施**（设备 d1 1.2.149 验证通过）。stage-l 的 Netcatty 式命令包装
+> 已整体移除（见 `git log 5aaad088`）。本文记录最终方案 + 关键决策，供后续维护参考。
 
-## 背景（研究结论）
+## 目标
 
-- 我们的 OSC 133 注入（`function global:Prompt { Write-Host ...}`）失效根因：
-  marker 在 `prompt` **返回值之外**（Write-Host 旁路）→ 被 PSReadLine 重绘擦掉/
-  位置错乱 → execute 等不到 → 卡满 timeout（d1 实测 `state:"timeout"` @10s 于 50ms 命令）。
-- Netcatty（生产验证）：每个命令包一层单行 shell wrapper，打印 `<marker>_S` 和
-  `<marker>_E:<exitcode>` 纯文本标记，在原始字节流里字符串匹配。不依赖 shell 钩子、
-  不依赖 OSC 透传（ConPTY 渲染后 VT 流对 OSC 有截断/错位历史 bug）。
-- 主流 agent（Claude Code/Codex/Gemini）= 每命令独立子进程等退出——Vale 不能用
-  （"看 AI 干活"要求同屏会话）。OpenHands = 长驻会话 + PS1 元数据注入 + 轮询，
-  与我们类似但注入点同样脆弱。Netcatty 是唯一"长驻会话 + 可靠完成检测"的成熟方案。
+修复 Windows 终端会话的显示与完成检测问题（`>>` 续行符、wrapper 回显噪声、
+完成检测不可靠），方案对齐 **VS Code shell integration（OSC 633）**——用户
+明确要求"用 VS Code 的方案，不要自己发明"。
 
-## 已完成的代码（勿重复实现）
+## 最终架构（三部分）
 
-`agent/src/plugins/terminal/tools.rs` 已添加：
-- `new_exec_marker()` → `__VALE_<time36>_<128bit-hex>__`
-- `WrapShell` enum：PowerShell / Cmd / Bash / Fish
-- `wrap_execute_command(command, shell, marker)` → 单行 wrapper（无尾部换行）
-- `find_exec_start_marker(data, marker)` → START 行后的偏移
-- `find_exec_end_marker(data, marker, allow_inline)` → (start, end, exit_code)
-- `strip_exec_markers(output, marker)` → 剥 marker 行
-- `find_prompt_marker` 已标记为 LEGACY
+```
+┌─ 注入端（Rust, pty.rs）─────────────────────────────┐
+│ pwsh spawn: -NoExit -Command "try { . "<install>/   │
+│   shell-integration/shellIntegration.ps1" } catch {}"│
+│ env: VALE_NONCE=<128-bit>（信任锚点）                │
+│ 仅 pwsh（PowerShell 7）；5.1 不支持（见决策 1）       │
+└──────────────────────────────────────────────────────┘
+        │  shell 进程内发 OSC 633（不可见序列）
+        ▼
+┌─ 脚本（resources/shell-integration/shellIntegration.ps1）─┐
+│ 移植自 microsoft/vscode@main shellIntegration.ps1：       │
+│   Prompt → 633;A（提示符始）/633;D[;rc]（完成+退出码）     │
+│   PSConsoleHostReadLine 包装 → 633;E;cmd;nonce / 633;C     │
+│ 序列在终端不渲染 → 用户屏幕天然干净，前端零过滤            │
+└────────────────────────────────────────────────────────────┘
+        │  原始字节流
+        ▼
+┌─ 消费端（Rust, shell_integration.rs）──────────────────┐
+│ find_finished(data) → 633;D[;rc] 解析（跨 chunk）      │
+│ find_prompt_started(data) → 633;A（first-prompt gate） │
+│ execute：写命令后等 633;D → wait_reason="marker"       │
+└────────────────────────────────────────────────────────┘
+```
 
-## 待实施改动
+## 关键决策（含实测证据）
 
-### 1. `agent/src/tools/terminal/mod.rs`
-- `Session` struct 加 `shell: String`（"powershell"|"cmd"|"bash"|"fish"|"unknown"）
-- `TermSessionInfo` 加 `pub shell: String`
-- `term_open` 创建 Session 时推断 shell：
-  - Windows pty：target 空或 powershell.exe/pwsh.exe → "powershell"；
-    cmd.exe → "cmd"；其他 → "unknown"
-  - Unix pty：target 空或 bash/sh → "bash"；fish → "fish"；其他 → "unknown"
-  - ssh：先默认 "unknown"（见第 4 点探测）
-  - serial：不适用（无 shell）→ "unknown"
-- `term_info` 返回 shell 字段
-- stub.rs 对应同步（TermSessionInfo 构造处）
+1. **只用 pwsh（PowerShell 7），不支持 Windows PowerShell 5.1**
+   - 5.1 的 PSReadLine 2.0.0 把注入的 OSC 序列当输入回显 → 每个提示符后 `>>`
+   （VS Code 同病：microsoft/vscode#236841，关闭为 duplicate）
+   - 设备装 pwsh 7.6.5（zip 解压到 `C:\Program Files\PowerShell\7\`，ghfast.top 加速下载）
+   - `infer_shell` 区分 `pwsh`（633 路径）与 `powershell`（quiet 路径）
 
-### 2. `agent/src/plugins/terminal/tools.rs` — tool_execute 前台路径
-- 写入前：`let shell = term_info(&sid).shell` → `WrapShell`
-- `let wrapped = wrap_execute_command(&command, shell, &marker)`（marker 每次 execute 生成）
-- `let cmd_with_nl = append_command_newline(&wrapped);`（wrapper + 平台换行）
-- 替换原 `cmd_with_nl` 写入（保持 busy 锁、first-prompt gate、settle-drain 逻辑不变，
-  但 first-prompt gate 不再依赖 OSC marker——改为等 wrapper 能执行即可，
-  或直接保留 gate 但检测改为 find_exec_start_marker）
-- 等待循环：替换 `find_prompt_marker(&pending)` 检测为：
-  - 未确认 START：`find_exec_start_marker(&pending, &marker)` → 确认后丢弃 pre-start
-  - 已确认 START：`find_exec_end_marker(&pending, &marker, true)` → (start,end,code)
-    → result = 已收集输出（到 end 前），exit_code = code，break
-- 加 **启动超时**：等不到 START marker 超过 N 秒（如 15s）→ 明确失败
-  "start marker never arrived"（Netcatty 关键：报错而非挂死）
-- 返回文本用 `strip_exec_markers` 剥离 marker 行
-- `marker_injected` 语义替换：不再需要（包装不依赖注入）。保留 quiet 兜底
-  作为 marker 缺失时的 fallback（但 wrapper 应总产生 marker）
+2. **命令结尾用 `\r`（不是 `\r\n`）—— `>>` 的真正根因**
+   - 实测：`\r\n` 被 ConPTY 读成**两个输入事件**（CR + LF），PSReadLine 渲染空续行 `>>`
+   - VS Code sendText 语义（`\n→\r`、追加 `\r`）；`append_command_newline` Windows 分支改为 `\r`
 
-### 3. `agent/src/plugins/terminal/tools.rs` — tool_execute 后台路径（run_in_background）
-- 同样包装命令 + 生成 marker
-- 后台 spawn 的等待循环同样改用新 marker 检测（`find_exec_end_marker`）
-- job 完成时记录 exit_code
+3. **ConPTY flags 对齐 node-pty（portable-pty vendored）**
+   - portable-pty 原本 `RESIZE_QUIRK | WIN32_INPUT_MODE`；node-pty 只用 `0|INHERIT_CURSOR`
+   - 去掉 `WIN32_INPUT_MODE`（0x4）—— 它把控制台输出回传为 Win32 输入事件
+   - 命名管道方案（对齐 node-pty CreateNamedPipesAndPseudoConsole）试验过：
+     解决不了 `>>`（根因是 `\r\n`），且引入回显重叠 → **回退匿名管道**
+   - vendored 方式：`[patch.crates-io] portable-pty = { path = "vendor-portable-pty" }`
 
-### 4. SSH shell 探测（可选，低优先）
-- SSH 会话首次 execute 时如果 shell=="unknown"，发 `echo __VALE_SHELL__` 探测？
-  Netcatty 用独立 exec channel 探测（Windows OpenSSH 查注册表）。Vale 可简化：
-  SSH 会话默认按 "powershell" 处理（Windows 目标）或加一个 `shell` 参数覆盖。
-  首版可先默认 unknown → 用 quiet 兜底（不包装），后续迭代加探测。
+4. **执行完成检测 = 633;D[;rc]**（`shell_integration.rs`）
+   - execute 不再包 wrapper，直接写原始命令
+   - 等待循环扫 `find_finished` → `wait_reason="marker"` + exit_code（实测生效）
+   - 非 633 会话（ssh/serial/unknown）保留 quiet-period 兜底
 
-### 5. 测试
-- `wrap_execute_command` 单测：四种 shell 的 wrapper 文本断言
-- `find_exec_end_marker`：跨 chunk、行首边界、inline、假阳性
-- `find_exec_start_marker`：整行匹配
-- `strip_exec_markers`：剥 marker 行保留其他
-- 现有 `find_prompt_marker` 测试保留（LEGACY）
+5. **agent 生命周期下沉 Rust（Chrome-OOM 根因修复）**
+   - agent `fatal()` 支持 `VALE_NO_PAUSE`：bind 失败立即退出（不挂 "Press Enter"）
+   - electron 壳不再 spawn agent（`schtasks /run ValeAgent` 是唯一拉起路径）
+   - electron 加单实例锁（`app.requestSingleInstanceLock`）
+   - 脚本 boot 时写入 `install_dir/shell-integration/`（include_str! 内嵌）
 
-### 6. 兼容性
-- `inject_marker` 参数保留（默认 true）但语义变为"是否用命令包装"——向后兼容
-- `term_marker_injected` / `term_set_marker_injected` 保留（内部不再依赖注入，
-  或直接废弃——看调用点）
+6. **前端零过滤**（wrapperFilter.ts 删除）
+   - OSC 序列 xterm.js 天然不渲染；`TerminalPane` 直接写原始字节
+   - stage-l 的 discard-mode filter 及其 10 个测试全删
+
+## 已删除（stage-l 遗留，git 可追溯）
+
+- `wrap_execute_command` / `find_exec_start_marker` / `find_exec_end_marker` /
+  `strip_exec_markers` / `WrapShell` / `ps_single_quote` / `sh_single_quote` /
+  `cmd_escape` / `new_exec_marker`（~220 行 + 31 个测试）
+- `wrapperFilter.ts` + 测试（前端）
+- pty.rs 的 `Remove-Module PSReadLine`（round-162 遗留——拆 VS Code 方案的根基）
+- electron main.js 的 spawn/waitReady/portBusy/agentExe（下沉 Rust）
+
+## 保留（quiet 兜底路径）
+
+- `find_prompt_marker`（LEGACY OSC 133 扫描，非 633 会话用）
+- `append_command_newline`（`\r` Windows / `\n` Unix）
 
 ## 验证
 
-- `cargo test --features terminal` 全绿
-- `cargo clippy --features terminal --all-targets` 0 警告
-- `cargo xwin check -p vale-agent --target x86_64-pc-windows-msvc --features terminal,keyring`
-- d1 实测：execute 简单命令应 <2s 返回且带 exit_code，不再卡 timeout
+- `cargo test --features terminal,keyring` 110 通过
+- `cargo clippy --features terminal,keyring --all-targets` 0 警告（本仓库代码）
+- `cargo xwin check` 通过
+- d1 实测（1.2.149）：
+  - 新 pty = pwsh 7.6.5，提示符干净，**无 `>>`**
+  - execute 返回 `wait_reason:"marker"`（633;D 消费），`state:"done"`
+  - 面板（xterm.js）显示干净：命令回显完整、输出正常、无 wrapper 噪声
+  - electron 单实例（4 进程一套）+ 单 agent（无孤儿）
