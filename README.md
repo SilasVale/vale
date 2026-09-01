@@ -1,120 +1,82 @@
 # Vale
 
-Vale is a unified device-control + AI-gateway platform: **one repository** for the front door, the device agent, the browser extension, and the download distribution — one "Vale" brand.
+Vale turns a Windows device into an **AI-controllable workspace** — terminal, SSH, serial and browser sessions exposed to AI through MCP, plus an Electron desktop shell and a device-local memory. One repository for the front door, the device agent and the download distribution.
 
 ```
-Vale Gate (front door, Cloudflare Worker)
-  ├─ console — login/roles, BYOK AI gateway, Devices (online status, pairing)
-  ├─ /mcp — AI-first device tools: terminal_* (proxied to the device)
-  └─ PluginHubDO — per-device WebSocket hub (browser extension, chrome.debugger)
+Vale Gate (front door, Cloudflare Worker) — console, BYOK AI gateway, /mcp proxy
         │
         ▼
-Vale Agent (Windows, slim) — headless MCP server + /api/tools + system tray
-  └─ plugin registry: terminal / update / mcp-client / design
-        │  mcp-client plugin bridges to a local browser MCP server
+Vale Agent (Windows, Rust) — headless MCP server + /api/tools + panel
+  └─ plugin registry: terminal / memory / system / mcp-client / update / design
+        │  mcp-client bridges to a local browser MCP server (playwright)
         ▼
-browser MCP server (Node: playwright-mcp / chrome-devtools-mcp) ── drives the browser
-Vale Browser Control (Chrome/Edge extension) ── legacy browser drive (chrome.debugger)
-Vale Index ── installer / script distribution
+Vale Desktop (Electron) — tray + native menu + CDP :9333 for AI-driven UI
+Vale Index (Cloudflare Worker) — npm tgz / download distribution
 ```
 
-## Layout
+## Highlights
+
+- **OSC 633 shell integration** (the VS Code approach): PowerShell prompts and command boundaries arrive as invisible sequences — clean terminal display, accurate exit codes, no wrapper text, no front-end filters.
+- **Electron desktop shell** (TypeScript): live agent status in the tray, native menu (sessions + page navigation), CDP :9333 so AI can drive the same window the user watches, browser-window reuse + cap, hide-to-tray with a one-time notification.
+- **Memory plugin**: device-local knowledge base shared across AI clients — 6 MCP tools (`memory_save/search/list/update/delete/export`), multi-word AND search, eager tombstone compaction.
+- **37 MCP tools** on the device: terminal (21: PTY/SSH/serial open/write/close/execute/read/screen/history/sftp/secrets/saved connections/background jobs), memory (6), system (6: file list/read/write, process list/kill, net test), mcp-client (4), update + design.
+- **Health endpoint**: `/api/status` reports version, uptime and live session count — consumed by the tray, the SPA status strip and AI health checks.
+- **npm-only distribution**: one-command install/update, WMI-survives-the-kill swap, electron auto-restart on update.
+
+## Quick start (Windows)
+
+```powershell
+npm.cmd i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.179.tgz
+vale setup                 # pure local install (registry-first, no cloud needed)
+vale setup --reg-key <key> # optional: register the device with a Vale Gate console
+vale update                # later: one-command update (exe + bridge + electron)
+```
+
+The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all path resolution goes through `src/paths.rs`. The terminal panel is served by the agent at `/panel` (token entered once in the browser), and the Electron desktop shell loads `/desktop/`.
+
+## Repository layout
 
 | Directory | Project | Runtime | Description |
 |---|---|---|---|
-| `gateway/` | **Vale Gate** | Cloudflare Worker | Vale console (login/roles) + AI gateway (BYOK routing) + `/mcp` (AI-first device tools) + PluginHubDO (extension hub) + device reverse proxy |
-| `extension/` | **Vale Browser Control** | Chrome/Edge (MV3) | legacy browser drive via `chrome.debugger` (no network ports), keeps a WS to PluginHubDO, full-screen terminal page — superseded by the mcp-client plugin + local browser MCP server |
-| `agent/` | **Vale Agent** | Windows (Rust) | slim headless MCP server (`/mcp`, token-gated) + `/api/tools/{name}` + system tray; terminal panel (`/panel`) |
-| `index/` | **Vale Index** | Cloudflare Worker | installer / script download distribution |
-| `docs/` | docs | — | platform & device-integration design |
+| `gateway/` | **Vale Gate** | Cloudflare Worker | console (login/roles), BYOK AI gateway, `/mcp` proxy to devices, device registry |
+| `agent/` | **Vale Agent** | Windows (Rust) | headless MCP server + `/api/tools` + panel + Electron desktop shell (`vale-desktop-electron/`) + npm distribution (`vale-agent-npm/`) |
+| `index/` | **Vale Index** | Cloudflare Worker | download distribution (`vale-dist`, serves `agent.saisi.online`) |
+| `extension/` | **Vale Browser Control** | Chrome/Edge (MV3) | legacy browser drive via `chrome.debugger` (superseded by the mcp-client plugin) |
+| `docs/` | docs | — | design decisions (`docs/adr/`), agent build guide (`agent/AGENTS.md`) |
 
 ## Build & deploy
 
 ```bash
-# Build command (Windows cross-compile; needs cargo-xwin)
-./scripts/build.sh command
+# Windows cross-compile of vale-agent (needs cargo-xwin)
+./scripts/build.sh agent
 
-# Build the NSIS installer and stage the downloads into index/public/vale-agent/
-# (*.exe is gitignored — run this before deploying index, else downloads 404)
+# Stage + pack the npm tgz (compiles the TS sources first)
 ./scripts/build-installer.sh
 
-# Deploy workers (needs a Cloudflare API token)
+# Deploy the workers (needs a Cloudflare API token)
 ./scripts/build.sh gateway
 ./scripts/build.sh index
-
-# Everything: build + deploy
-./scripts/build.sh deploy
 ```
 
-See `agent/CLAUDE.md` (Rust build guide) and `gateway/DEVICE-INTEGRATION.md` (device integration).
+See `agent/AGENTS.md` (Rust build guide) and `gateway/DEVICE-INTEGRATION.md` (device integration).
 
-### Gateway deploy (manual)
+## Ecosystem
 
-```bash
-# Pre-deploy gate: the worker test suite must stay green
-cd gateway && node --test
-
-# Validate the bundle without publishing (no API token needed)
-npx wrangler deploy --dry-run
-
-# Real deploy (needs CLOUDFLARE_API_TOKEN set in the shell; DO migration
-# v2-plugin-hub is applied automatically on first deploy)
-npx wrangler deploy
-```
-
-The post-deploy E2E script (pair → browser_open → screenshot → click → terminal) is in `gateway/DEVICE-INTEGRATION.md`.
-
-## Ecosystem (three repos, one platform)
-
-| Repo | Role | Description |
-|---|---|---|
-| **vale** (this repo) | Platform runtime | gateway / agent / index / extension / proxies |
-| `SilasVale/vale-forge` | Developer toolchain MCP | OpenWrt build control, board SSH, TAPD — registered in Claude Code alongside the device MCP |
-| `SilasVale/vale-deploy` | Ops credentials & rebuild manual | CF/GitHub/Vercel credentials, worker inventory, one-click bootstrap rebuild (private) |
-
-See `docs/adr/0003-repo-topology-and-brand.md` for the merge evaluation (conclusion: keep them separate, split by audience; integration happens at the client layer — both MCPs register side by side).
-
-## Device install / update (npm one-command flow)
-
-```powershell
-npm.cmd i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.85.tgz   # latest tgz under index/public/vale-agent/
-$env:VALE_AGENT_DIR='D:\vale-agent'
-vale.cmd setup --reg-key <reg-key>    # fresh device
-vale.cmd update                       # installed device: stop → swap exe → restart task
-```
-
-The NSIS installer (`ValeAgent-Setup.exe`), staged by `./scripts/build-installer.sh` and hosted on the Vercel mirror (`v.saisi.online/dl/`), remains the fallback channel for devices without Node.
-See `SilasVale/vale-deploy` README §0.5.
+| Repo | Role |
+|---|---|
+| **vale** (this repo) | platform runtime: gateway / agent / index / extension |
+| `SilasVale/vale-forge` | developer toolchain MCP (OpenWrt build control, board SSH, TAPD) |
+| `SilasVale/vale-deploy` | ops credentials & rebuild manual (private) |
 
 ## Core design
 
-- **Gateway plugin core (DSH-style)**: every `/api/*` route, `/mcp` and `/v1/*` lives in a plugin (`gateway/src/plugins/`: auth / devices / mcp / translate / admin) registered on a shared context; `index.ts` is a thin front door (host split, assets, `/v1` dispatch). Cross-cutting concerns have single implementations: `src/session.ts` (session auth), `src/upstream.ts` (channel route table), `src/http.ts`, `src/reliability.ts`. See `docs/adr/0001-plugin-core-single-dispatch.md`.
-- **Device control, AI-first**: Claude Code connects to `https://<console>/mcp` with the admin Bearer token and gets the device tool surface. The Vale Agent plugin registry (`agent/src/plugins/`) exposes 24 tools: the `terminal` plugin (18: PTY/SSH/serial open/write/close/execute/read/screen + secrets + saved connections), `update` (agent_update), `mcp-client` (4: connect/list/call/disconnect — bridge to a local browser MCP server, DSH-style), and `design` (page_view). `terminal_*` proxy to the device's `/api/tools` (token injected server-side); `terminal_screen` returns the ANSI-stripped tail of a session's output buffer.
-- **Browser control via mcp-client (playwright)**: the `mcp-client` plugin connects to a local browser MCP server on the device (`playwright-mcp` / `chrome-devtools-mcp`, default `http://127.0.0.1:9229/mcp`) over Streamable HTTP, and forwards its tools (`browser_navigate`, `browser_snapshot`, `browser_click`, …) through the Vale tool surface — same wiring as DeepSeek Harness's `mcp-client` plugin. The browser MCP server (Node process on the device) does the actual browser work; the Rust agent only bridges.
-- **Console UI**: React + Vite (`gateway/ui`), built into `gateway/public`. One design-system vocabulary (tokens/components in `ui/src/styles/globals.css` + `components/ui.tsx`), dark mode, hash routing (#/keys etc. — no history-API fallback needed behind Workers Assets).
-- **Extension pairing (no account)**: the console generates a one-time pairing code (10 min); the extension claims it for a plugin token, trades the token for a one-time WS ticket, and opens the per-device hub socket. The same plugin token authenticates the extension's terminal page through the device reverse proxy (token scoped to its own device only).
-- **Vale Agent (slim)**: headless MCP server + `/api/tools`; `GET /` is a minimal status page, `/panel` is the terminal panel (token entered in the browser, saved to localStorage). The tray app (vale-tray) offers four functions: copy MCP config, open console, local terminal, start/stop/restart/quit.
-- **Claude Code direct** (per device, without the gateway):
-  ```json
-  { "mcpServers": { "vale-agent": { "type": "http", "url": "https://<device-host>/mcp", "headers": { "Authorization": "Bearer <token>" } } } }
-  ```
-- **Claude Code via the gateway** (all devices, one endpoint):
-  ```json
-  { "mcpServers": { "vale-gate": { "type": "http", "url": "https://<console>/mcp", "headers": { "Authorization": "Bearer <admin-token>" } } } }
-  ```
-  The console's Devices panel shows a ready-made `vale-gate` snippet (with the current user's token) and a per-device `vale-agent` snippet.
+- **Gateway plugin core (DSH-style)**: every `/api/*` route and `/mcp` lives in a plugin (`gateway/src/plugins/`: auth / devices / mcp / translate / admin) on a shared context; `index.ts` is a thin front door.
+- **Device control, AI-first**: an AI client connects to `https://<console>/mcp` (gateway) or `https://<device>/mcp` (direct) with a bearer token and gets the device tool surface.
+- **Terminal backends**: PTY (ConPTY on Windows, OSC 633 shell integration), SSH (keepalive 5s, bounded writes) and serial (auto-reconnect). Natural shell exits are detected (exit codes surface in `terminal_history`); the reader is pollable so `exit` never hangs the session.
+- **Browser control via mcp-client**: the `mcp-client` plugin connects to a local browser MCP server (`playwright-mcp`, default `http://127.0.0.1:9229/mcp`) and forwards its tools; the Rust agent only bridges. The Electron shell also exposes CDP :9333 for driving the desktop UI itself.
+- **Memory**: JSONL-backed knowledge base under the install dir, sanitized credentials, LRU caps, soft delete + compaction.
+- **Console UI**: React + Vite (`gateway/ui`), built into `gateway/public`, dark mode, hash routing.
 
-## Tokens (3 trust boundaries → 3 tokens)
+## License
 
-| Token | Name | Where | Authenticates | Held by |
-|---|---|---|---|---|
-| **Device access token** | `device_token` (legacy `auth_token`, 0.8.5-compatible) | `C:\vale-agent\config.yaml` | Device API (`/api/*`) + MCP (`/mcp`) + terminal panel | the device (Windows) |
-| **Console token** | `console_token` (user token / x-api-key) | user settings.json / console settings | gateway admin + AI routing | you (Claude config) |
-| **Browser token** | `browser_token` (plugin token) | extension `chrome.storage` (auto-saved on pairing) | plugin WS / browser drive | the browser extension |
-
-**How to obtain**:
-- `device_token`: after installing vale-agent, read the `device_token:` line in `C:\vale-agent\config.yaml` (auto-generated). **The terminal panel uses this**: open `https://<device-host>/panel/`, enter it once, the browser remembers it.
-- `console_token`: after logging into the console, copy the MCP config (with token) from the settings/devices page.
-- `browser_token`: no manual step — the console's devices page generates a pairing code; the extension stores it automatically when pairing.
-
-**Principle**: one token per trust boundary, no duplication. `device.token` (entered when registering the device on the gateway) is the same value as `device_token` — fill in the value from config.yaml when registering a device.
+MIT — see [LICENSE](LICENSE).
