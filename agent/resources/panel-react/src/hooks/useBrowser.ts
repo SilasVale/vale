@@ -142,8 +142,15 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
                 // when it CHANGES (open/close/select/navigate), replacing the
                 // 1.5s tabs poll.
                 if (o.ev === "tabs" && Array.isArray(o.tabs)) {
+                  const sel = typeof o.sel === "number" ? o.sel : 0;
                   setTabs(o.tabs);
-                  setSel(typeof o.sel === "number" ? o.sel : 0);
+                  setSel(sel);
+                  // stage-n: keep the address bar in sync with the ACTUAL
+                  // selected tab — bridge pushes after nav/back/fwd/tab ops;
+                  // without this the URL input shows a stale value while the
+                  // tab strip (and the page) moved on.
+                  const t = o.tabs[sel];
+                  if (t && typeof t.url === "string" && t.url) setUrl(t.url);
                   return;
                 }
                 if (typeof o.id !== "undefined") {
