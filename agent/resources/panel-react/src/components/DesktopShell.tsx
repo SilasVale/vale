@@ -10,6 +10,7 @@
 // rounded corners + shadow — the desktop app reads as surfaces, not bars.
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "../hooks/useSessions";
+import { callApi } from "../lib/api";
 import { IconRail } from "./IconRail";
 import { Shell, type Page } from "./Shell";
 import { TerminalWorkspace, type CommandEvents } from "./TerminalWorkspace";
@@ -57,6 +58,19 @@ export function DesktopShell({
   const [page, setPage] = useState<Page>("terminal");
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement | null>(null);
+  // stage-n: agent version for the status strip — one /api/status call on
+  // mount (the electron tray shows it too; the SPA status line should match).
+  const [agentVersion, setAgentVersion] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const j = await callApi("/api/status");
+        if (alive && j && typeof j.version === "string") setAgentVersion(j.version);
+      } catch { /* keep empty — version is a nicety */ }
+    })();
+    return () => { alive = false; };
+  }, []);
   // Per-session terminal|trajectory view — mirrored from TerminalWorkspace
   // (which owns the panel-density copy) so the header toggle stays in sync.
   const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
@@ -210,7 +224,9 @@ export function DesktopShell({
           {!showStatus && (
             <div className="desktop-status idle">
               <span className="desktop-status-msg">
-                {connected ? `${liveCount} session${liveCount === 1 ? "" : "s"}` : "connecting…"}
+                {connected
+                  ? `${liveCount} session${liveCount === 1 ? "" : "s"}${agentVersion ? ` · v${agentVersion}` : ""}`
+                  : "connecting…"}
               </span>
             </div>
           )}
