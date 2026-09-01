@@ -987,8 +987,15 @@ pub fn wrap_execute_command(command: &str, shell: WrapShell, marker: &str) -> St
     match shell {
         WrapShell::PowerShell => {
             let cmd = ps_single_quote(command);
+            // round-162 (Netcatty §2.3): the END line must emit ONE line
+            // `<marker>_E:<rc>`. The original `Write-Output '{marker}_E:' +
+            // ${marker}_rc` was parsed by PowerShell as positional args
+            // (`_E:` / `+` / rc on three lines) → find_exec_end_marker never
+            // matched → execute burned to the start-timeout. Netcatty's form
+            // is double-quoted string interpolation — `$var` expands inside
+            // "..." (verified on-device: `Write-Output "x_E:$rc"` → `x_E:0`).
             format!(
-                "${marker}=0; ${marker}_cmd='{cmd}'; & {{ Write-Output '{marker}_S'; $env:PAGER='cat'; $env:GIT_PAGER='cat'; $env:LESS=''; $LASTEXITCODE=$null; try {{ Invoke-Expression ${marker}_cmd; ${marker}_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }} }} catch {{ ${marker}_rc = 1 }}; Write-Output ('{marker}_E:' + ${marker}_rc) }}"
+                "${marker}=0; ${marker}_cmd='{cmd}'; & {{ Write-Output '{marker}_S'; $env:PAGER='cat'; $env:GIT_PAGER='cat'; $env:LESS=''; $LASTEXITCODE=$null; try {{ Invoke-Expression ${marker}_cmd; ${marker}_rc = if ($LASTEXITCODE -ne $null) {{ $LASTEXITCODE }} elseif ($?) {{ 0 }} else {{ 1 }} }} catch {{ ${marker}_rc = 1 }}; Write-Output \"{marker}_E:${marker}_rc\" }}"
             )
         }
         WrapShell::Bash => {
@@ -2911,7 +2918,10 @@ mod tests {
         assert!(!w.ends_with('\n'));
         assert!(w.contains("'echo hi'"), "command must be single-quoted: {w}");
         assert!(w.contains("Write-Output 'M1_S'"), "START marker print: {w}");
-        assert!(w.contains("'M1_E:' + $M1_rc"), "END marker print: {w}");
+        // round-162 (Netcatty §2.3): END is double-quoted interpolation —
+        // `Write-Output "M1_E:$M1_rc"` emits ONE line `M1_E:0` (the old
+        // `'M1_E:' + $M1_rc` printed three lines and broke the marker scan).
+        assert!(w.contains("\"M1_E:$M1_rc\""), "END marker print: {w}");
     }
 
     #[test]
@@ -3144,20 +3154,22 @@ mod tests {
     // ── stage-l: PowerShell wrapper END-line syntax (round-162) ──────
 
     #[test]
-    fn ps_wrapper_end_line_uses_parenthesized_concat() {
+    fn ps_wrapper_end_line_uses_double_quoted_interpolation() {
         // round-162 (observed live on d1, PowerShell 5.1 + ConPTY): the END
         // line was `Write-Output '{marker}_E:' + ${marker}_rc` — PowerShell
         // parses `+` as a SEPARATE positional argument, so the shell printed
         // `<marker>_E:` (no digits), then `+`, then the rc on THREE lines.
         // find_exec_end_marker requires digits right after `_E:` → never
-        // matched → every wrapped execute burned to the timeout. The fix:
-        // parenthesize the concatenation so ONE line `<marker>_E:<rc>` is
-        // emitted (verified on-device: `Write-Output ('E:' + $x)` → `E:3`).
+        // matched → every wrapped execute burned to the timeout. The fix
+        // (Netcatty §2.3): double-quoted string interpolation —
+        // `Write-Output "{marker}_E:${marker}_rc"` emits ONE line
+        // `<marker>_E:<rc>` (verified on-device: `Write-Output "x_E:$rc"`
+        // → `x_E:0`).
         let marker = "M1";
         let wrapped = super::wrap_execute_command("echo hi", WrapShell::PowerShell, marker);
         assert!(
-            wrapped.contains(&format!("Write-Output ('{marker}_E:' + ${marker}_rc)")),
-            "END line must be parenthesized concat, got: {wrapped}"
+            wrapped.contains(&format!("\"{marker}_E:${marker}_rc\"")),
+            "END line must use double-quoted interpolation, got: {wrapped}"
         );
         // And the wrapper must be one physical line (no embedded newlines —
         // a multiline paste triggers the PS2 `>>` continuation prompt).

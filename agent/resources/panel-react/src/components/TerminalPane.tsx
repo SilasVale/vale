@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { callTool } from "../lib/api";
 import { getTheme, onThemeChange } from "../lib/theme";
+import { createWrapperFilter } from "../lib/wrapperFilter";
 import { Icon } from "../ui/Icon";
 import type { Session } from "../hooks/useSessions";
 
@@ -153,11 +154,20 @@ export function TerminalPane({ session, registerWrite }: {
     // round-99: registerWrite returns an unregister fn — the callback must
     // leave the map when this pane unmounts, or the 5s sync loop polls
     // closed-session entries forever (unbounded no-op polling).
+    // round-162: the stream is filtered for execute-wrapper noise (marker
+    // lines + ConPTY chunk-split `>>` fragments) before it hits xterm — the
+    // MCP result is stripped server-side, but the live SSE stream is raw.
+    const wf = createWrapperFilter();
+    const decoder = new TextDecoder();
     const unregister = registerWrite(session.sid, (bytes) => {
       // The SSE hook passed the frame; TerminalPane only needs the bytes
       // (the hook already validated session_id). Dedup is done by the hook
       // caller in useSSE — here we just write + advance.
-      term.write(bytes);
+      const filtered = wf.filter(decoder.decode(bytes, { stream: true }));
+      if (filtered) term.write(new TextEncoder().encode(filtered));
+      // round-162: renderedRef tracks the RAW stream offset (SSE frame.start
+      // is a raw offset — dedup breaks if it drifts from consumed bytes),
+      // so it always advances by the original length, never the filtered one.
       renderedRef.current += bytes.length;
     }, () => renderedRef.current);
 
