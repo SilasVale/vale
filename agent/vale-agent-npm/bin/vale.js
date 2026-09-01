@@ -412,6 +412,22 @@ const commands = {
       // back up (it will run the old exe until the next update).
       `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,
       `"[$(Get-Date -Format o)] task restarted" | ${log}`,
+      // stage-n: restart the Electron shell so newly-synced main/preload
+      // sources take effect. The shell is INDEPENDENT of the ValeAgent task —
+      // it only probes 127.0.0.1:18080 and loads /desktop/. Kill + relaunch
+      // via start-desktop.ps1 (the same path ValeDesktop onlogon uses); if
+      // the task/script is missing (non-desktop install), skip silently.
+      `$deskDir = '${q}\\vale-desktop-electron'`,
+      `$deskStart = '${q}\\start-desktop.ps1'`,
+      `if ((Test-Path $deskDir) -and (Test-Path $deskStart)) {`,
+      `  "[$(Get-Date -Format o)] desk: restarting electron shell" | ${log}`,
+      `  Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
+      `  Start-Sleep -Milliseconds 1500`,
+      `  $deskTask = Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue`,
+      `  if ($deskTask) { try { Start-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction Stop } catch { & powershell -NoProfile -ExecutionPolicy Bypass -File "$deskStart" } }`,
+      `  else { & powershell -NoProfile -ExecutionPolicy Bypass -File "$deskStart" }`,
+      `  "[$(Get-Date -Format o)] desk: electron restart initiated" | ${log}`,
+      `} else { "[$(Get-Date -Format o)] desk: no electron shell (skipped)" | ${log} }`,
       // round-143: re-register ValePlaywright via the wscript/VBS wrapper so
       // node.exe no longer allocates a visible console. Idempotent — task may
       // not exist (older install paths), so wrap in try/catch.
