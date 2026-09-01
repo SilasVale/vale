@@ -26,6 +26,14 @@ repack_extension() {
 }
 repack_extension
 
+# stage-n: compile the TS sources BEFORE packing — the npm package ships the
+# COMPILED artifacts (electron main/preload in vale-desktop-electron/src/,
+# bridge.js, bin/vale.js). Skipping this ships stale JS when someone only
+# edits the .ts sources (the release flow must never package an old build).
+echo "=== compiling TS sources (electron shell + vale CLI + bridge) ==="
+( cd "$ROOT/agent/vale-agent-npm" && npm run build --silent )
+echo "  ok: TS artifacts compiled"
+
 # Bundle cloudflared (Windows amd64) INTO the installer — one package contains
 # every piece. C2: the binary is BOXED under $INSTDIR\tools\ (the NSIS
 # script stages it there) and supervised by the agent; the setup script no
