@@ -276,20 +276,18 @@ function runSchtasks(args: string[]): Promise<{ ok: boolean; error?: string }> {
 async function autoLaunchTaskSet(enabled: boolean): Promise<{ ok: boolean; error?: string }> {
   try {
     if (enabled && !autoLaunchTaskExists()) {
-      // NOTE: do NOT pass /ru — under SYSTEM, process.env.USERNAME is the
-      // machine account (DESKTOP-XXX$) which schtasks rejects (exit 1). A
-      // bare onlogon create resolves to the interactive user and works
-      // (verified: `schtasks /create ... /sc onlogon /f` from the SYSTEM
-      // session exits 0 and creates the task for the console user).
+      // Under SYSTEM, a spawn-array schtasks /create without /ru fails with
+      // "no mapping between account names and security IDs" (exit 1) — the
+      // interactive user is not resolvable from the service session. A bare
+      // STRING invocation happens to work (shell default), but spawn arrays
+      // need an explicit account: use Administrator (the d1 console user).
       const r = await runSchtasks([
         "/create", "/tn", AUTOSTART_TASK,
         // schtasks re-parses the /tr VALUE as a command line — it needs its
-        // OWN inner quotes around the script path (a raw space-separated
-        // value makes schtasks split "powershell -NoProfile ..." into
-        // separate args → exit 1). The spawn array keeps the outer arg
-        // intact; the embedded \\" quotes survive to schtasks.
+        // OWN inner quotes around the script path. The spawn array keeps the
+        // outer arg intact; the embedded \\" quotes survive to schtasks.
         "/tr", `powershell -NoProfile -ExecutionPolicy Bypass -File \\"${AUTOSTART_SCRIPT}\\"`,
-        "/sc", "onlogon", "/f",
+        "/sc", "onlogon", "/ru", "Administrator", "/f",
       ]);
       if (!r.ok) return r;
     } else if (!enabled && autoLaunchTaskExists()) {
