@@ -24,7 +24,7 @@ fn pool_open(
     pool: &Arc<SerialPool>,
     cfg: &SerialCfg,
 ) -> Result<(Box<dyn serialport::SerialPort>, String), DeviceError> {
-    let (port_id, _) = pool.open(cfg.port.clone(), Some(cfg.baud), cfg.data_bits.clone(), cfg.parity.clone(), cfg.stop_bits)?;
+    let (port_id, _) = pool.open(cfg.port.clone(), Some(cfg.baud), cfg.data_bits, cfg.parity.clone(), cfg.stop_bits)?;
     match pool.borrow_port(&port_id) {
         Some(port) => Ok((port, port_id)),
         None => {
