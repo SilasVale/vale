@@ -234,6 +234,10 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const newTab = useCallback(() => { send({ t: "tabnew", url: "about:blank" }); }, [send]);
   const selTab = useCallback((i: number) => { send({ t: "tabsel", i }); }, [send]);
   const closeTab = useCallback((i: number) => { send({ t: "tabclose", i }); }, [send]);
+  // stage-n: real-browser navigation controls (bridge handles back/fwd/reload).
+  const goBack = useCallback(() => { send({ t: "back" }); }, [send]);
+  const goForward = useCallback(() => { send({ t: "fwd" }); }, [send]);
+  const reload = useCallback(() => { send({ t: "reload" }); }, [send]);
 
   const mapXY = useCallback((el: HTMLElement, clientX: number, clientY: number) => {
     // round-fix: the frame is rendered with object-fit: contain (letterboxed
@@ -356,7 +360,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     url, setUrl, navigate, urlHistory,
     zoom, setZoom,
     error, fps, tabs, sel,
-    newTab, selTab, closeTab,
+    newTab, selTab, closeTab, goBack, goForward, reload,
     imgRef, mapXY, send, sendMove,
     shots, selected, setSelected, shotUrls,
     actions,

@@ -97,6 +97,11 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
 
         {/* Address row */}
         <div className="browser-urlbar">
+          <span className="browser-navbtns">
+            <button className="btn btn-mini browser-nav" onClick={b.goBack} title="后退" disabled={b.tabs.length === 0}>←</button>
+            <button className="btn btn-mini browser-nav" onClick={b.goForward} title="前进" disabled={b.tabs.length === 0}>→</button>
+            <button className="btn btn-mini browser-nav" onClick={b.reload} title="刷新" disabled={b.tabs.length === 0}>↻</button>
+          </span>
           <span className="browser-url-secure" title={b.url.startsWith("https") ? "Secure" : "Not secure"}>
             {b.url.startsWith("https") ? "🔒" : "🌐"}
           </span>

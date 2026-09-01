@@ -251,6 +251,10 @@ interface Msg {
       }
       page = selPage || page;
       if (m.t === "nav") { await page.goto(m.url as string, { waitUntil: "domcontentloaded" }); scheduleTabsPush(); }
+      // stage-n: real-browser navigation controls — back / forward / reload.
+      else if (m.t === "back") { await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
+      else if (m.t === "fwd") { await page.goForward({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
+      else if (m.t === "reload") { await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
       else if (m.t === "m") {
         const type = m.k === "down" ? "mousePressed" : m.k === "up" ? "mouseReleased" : "mouseMoved";
         const btn = (m.k === "down" || m.k === "up") ? "left" : "none";

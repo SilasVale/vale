@@ -197,3 +197,52 @@ connections + keychain password. MCP: `claude` direct device MCP
 Events: `/api/events` SSE + `/api/events/term` stream. Tray: status lines
 (running/subdomain/token mask) refresh, start/stop/restart work, copy MCP
 config pastes the JSON snippet, console opens, local terminal opens.
+
+## Iteration status (stage-n) — UPDATE THIS ON EVERY ROUND
+
+> Living log for the agentic iteration loop. Any agent resuming work MUST
+> read this first, then update it at the end of its round (replace the
+> "last updated" line + append to Recent / In progress / Next).
+
+Last updated: 2026-09-01 (round 25 — browser nav buttons)
+
+### Current release
+- npm **1.2.180** (agent exe internal 1.0.145), deployed on d1
+- Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
+- Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
+  GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
+  the API when needed (see "GitHub ops" below)
+
+### Recent (stage-n)
+- Browser panel Chrome-style redesign: two-line toolbar (tab row + address
+  row), live viewport dominant, Evidence right-side drawer, bottom status
+  bar with AI-runner chip (1.2.180)
+- Browser nav buttons (back/fwd/reload): bridge protocol + useBrowser +
+  BrowserPane — DONE locally, NOT yet released
+- /api/status health fields (uptime_secs, live_sessions) consumed by tray
+  + SPA status strip
+- terminal_history exit codes + limit; memory multi-word AND search +
+  compaction; ConPTY natural-exit fix (pollable reader + reaper drop);
+  bridge supervisor reclaims stale 9224; vale CLI + bridge converted to TS
+- MIT LICENSE + README rewritten (no private host names, no private repos)
+
+### In progress
+- Browser nav buttons (back/fwd/reload) — commit + release as 1.2.181
+
+### Next candidates
+- Browser back/forward state (disabled when history empty)
+- electron tray/menu polish; Rust backend hardening; device monitoring
+
+### GitHub ops (network is broken to github.com — TLS drops)
+- Code: DO NOT push GitHub directly; Gitea mirror is the code home.
+- Releases: `curl -X POST -H "Authorization: Bearer $TOKEN" .../releases`
+  with the ghp_ token from `~/.git-credentials` (works; tag push times out).
+- npm publish: prep done (clean README, MIT); blocked on npmjs.com
+  reachability — URL install (`npm i -g <host>/vale-agent-<ver>.tgz`) is
+  the working channel meanwhile.
+
+### Device facts (d1)
+- agent token `abacd520...97`, port 18080, CDP 9333 (Electron), bridge 9224
+- pwsh 7.6.5 at `C:\Program Files\PowerShell\7\pwsh.exe`; ValeAgent +
+  ValeDesktop scheduled tasks; install dir `D:\Vale`
+- npm broken on device → use `node "D:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js"`
