@@ -10,7 +10,7 @@
 //   3. window / tray / native menu / CDP exposure / browser sessions
 // No spawn() of vale-agent.exe from JS — that was the d1 Chrome-OOM root
 // cause (a bind-failed child wedged on "Press Enter to exit" forever).
-import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, MenuItemConstructorOptions, Notification } from "electron";
 import { execSync, ChildProcess } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
@@ -27,6 +27,8 @@ const CDP_PORT = 9333;
 const CTRL_PORT = 9444;
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
+/** Whether the hide-to-tray notification has been shown (once per launch). */
+let hideNotified = false;
 const browserSessions = new Map<string, BrowserWindow>();
 /** Initial target per browser window — reuse matching uses this instead of
  *  webContents.getURL() (which lags during navigation; stage-n). */
@@ -434,7 +436,20 @@ if (gotTheLock) {
         console.warn(`[vale] CDP WARNING: could not reach ${CDP_PORT} — remote debugging may be off`);
       }
     })();
-    win.on("close", (e) => { if (!(app as any).isQuitting) { e.preventDefault(); win?.hide(); } });
+    win.on("close", (e) => {
+      if (!(app as any).isQuitting) {
+        e.preventDefault();
+        win?.hide();
+        // stage-n: first close hides to tray — tell the user once so they
+        // don't think the app exited (a silent hide reads as 'closed').
+        if (!hideNotified) {
+          hideNotified = true;
+          try {
+            new Notification({ title: "Vale", body: "Vale is still running in the system tray." }).show();
+          } catch { /* notifications unavailable — harmless */ }
+        }
+      }
+    });
     const iconPath = path.join(__dirname, "..", "icon.png");
     tray = new Tray(fs.existsSync(iconPath) ? iconPath : nativeImage.createEmpty());
     // stage-n: tray reflects live agent state — tooltip + a status line in

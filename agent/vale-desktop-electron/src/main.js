@@ -61,6 +61,8 @@ const CDP_PORT = 9333;
 const CTRL_PORT = 9444;
 let win = null;
 let tray = null;
+/** Whether the hide-to-tray notification has been shown (once per launch). */
+let hideNotified = false;
 const browserSessions = new Map();
 /** Initial target per browser window — reuse matching uses this instead of
  *  webContents.getURL() (which lags during navigation; stage-n). */
@@ -493,10 +495,21 @@ if (gotTheLock) {
                 console.warn(`[vale] CDP WARNING: could not reach ${CDP_PORT} — remote debugging may be off`);
             }
         })();
-        win.on("close", (e) => { if (!electron_1.app.isQuitting) {
-            e.preventDefault();
-            win?.hide();
-        } });
+        win.on("close", (e) => {
+            if (!electron_1.app.isQuitting) {
+                e.preventDefault();
+                win?.hide();
+                // stage-n: first close hides to tray — tell the user once so they
+                // don't think the app exited (a silent hide reads as 'closed').
+                if (!hideNotified) {
+                    hideNotified = true;
+                    try {
+                        new electron_1.Notification({ title: "Vale", body: "Vale is still running in the system tray." }).show();
+                    }
+                    catch { /* notifications unavailable — harmless */ }
+                }
+            }
+        });
         const iconPath = path.join(__dirname, "..", "icon.png");
         tray = new electron_1.Tray(fs.existsSync(iconPath) ? iconPath : electron_1.nativeImage.createEmpty());
         // stage-n: tray reflects live agent state — tooltip + a status line in
