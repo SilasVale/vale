@@ -42,9 +42,30 @@ if (!gotTheLock) {
 app.commandLine.appendSwitch("remote-debugging-port", String(CDP_PORT));
 
 // --- Menu command bridge: SPA ⇄ native menu ---
+// stage-n: commands issued before the SPA registered its vale-menu listener
+// (preload bridge + React useEffect) are silently dropped by webContents.send.
+// Queue them and flush shortly after did-finish-load; the SPA's listener is
+// registered within a second of load completing (token connect + effect).
+let menuQueue: string[] | null = [];  // null = SPA confirmed ready, send directly
+let menuFlushTimer: NodeJS.Timeout | null = null;
 function sendMenu(cmd: string): void {
   if (win && !win.isDestroyed()) {
-    win.webContents.send("vale-menu", cmd);
+    if (menuQueue) {
+      menuQueue.push(cmd);          // SPA not yet confirmed ready — queue
+    } else {
+      win.webContents.send("vale-menu", cmd);
+    }
+  }
+}
+function flushMenuQueue(): void {
+  if (menuFlushTimer) { clearTimeout(menuFlushTimer); menuFlushTimer = null; }
+  if (!win || win.isDestroyed()) return;
+  const q = menuQueue;
+  menuQueue = null;                  // drain: subsequent sends go straight out
+  if (q) {
+    for (const cmd of q) {
+      win.webContents.send("vale-menu", cmd);
+    }
   }
 }
 function focusMain(): void {
@@ -317,8 +338,39 @@ if (gotTheLock) {
     // Retry loop: did-fail-load (agent went down mid-load) or a still-down
     // agent re-runs loadDesktop; each failure schedules exactly one retry.
     win.webContents.on("did-fail-load", () => { setTimeout(() => { loadDesktop(); }, nextRetry()); });
+    // stage-n: once the SPA finished loading, give its React effect time to
+    // register the vale-menu listener, then flush any queued menu commands.
+    win.webContents.on("did-finish-load", () => {
+      if (menuFlushTimer) clearTimeout(menuFlushTimer);
+      menuFlushTimer = setTimeout(flushMenuQueue, 1000);
+    });
     await loadDesktop();
     console.log(`[vale] CDP endpoint: http://127.0.0.1:${CDP_PORT} (playwright connectOverCDP)`);
+    // stage-n: CDP self-check — if 9333 is occupied by another process
+    // (a second browser/electron), remote-debugging-port silently fails and
+    // AI driving would hit the WRONG target. Probe /json/version and verify
+    // the User-Agent belongs to this app.
+    (async () => {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 3000);
+        const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (r.ok) {
+          const j = await r.json() as { "User-Agent"?: string };
+          const ua = j["User-Agent"] || "";
+          if (ua.includes("vale-desktop-electron")) {
+            console.log(`[vale] CDP self-check OK: 127.0.0.1:${CDP_PORT} is this app`);
+          } else {
+            console.warn(`[vale] CDP WARNING: port ${CDP_PORT} answered by another browser (UA=${ua.slice(0, 60)}…) — AI driving may target the wrong process`);
+          }
+        } else {
+          console.warn(`[vale] CDP WARNING: ${CDP_PORT} not responding — remote debugging may be off`);
+        }
+      } catch {
+        console.warn(`[vale] CDP WARNING: could not reach ${CDP_PORT} — remote debugging may be off`);
+      }
+    })();
     win.on("close", (e) => { if (!(app as any).isQuitting) { e.preventDefault(); win?.hide(); } });
     const iconPath = path.join(__dirname, "..", "icon.png");
     tray = new Tray(fs.existsSync(iconPath) ? iconPath : nativeImage.createEmpty());
