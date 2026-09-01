@@ -462,17 +462,48 @@ if (gotTheLock) {
         } });
         const iconPath = path.join(__dirname, "..", "icon.png");
         tray = new electron_1.Tray(fs.existsSync(iconPath) ? iconPath : electron_1.nativeImage.createEmpty());
-        tray.setToolTip("Vale");
-        tray.setContextMenu(electron_1.Menu.buildFromTemplate([
-            { label: "Open", click: () => { focusMain(); } },
-            { type: "separator" },
-            { label: "New Terminal", click: () => { focusMain(); sendMenu("new-pty"); } },
-            { label: "New SSH…", click: () => { focusMain(); sendMenu("new-ssh"); } },
-            { label: "New Serial…", click: () => { focusMain(); sendMenu("new-serial"); } },
-            { label: "New Browser…", click: () => { focusMain(); sendMenu("new-browser"); } },
-            { type: "separator" },
-            { label: "Quit", click: () => { electron_1.app.isQuitting = true; electron_1.app.quit(); } },
-        ]));
+        // stage-n: tray reflects live agent state — tooltip + a status line in
+        // the menu, refreshed on a 30s poll and on demand (menu open re-checks).
+        let trayAgentRunning = false;
+        let trayAgentVersion = "";
+        const refreshTray = async () => {
+            const running = await portBusy(18080, 600);
+            let version = trayAgentVersion;
+            if (running) {
+                try {
+                    const ctrl = new AbortController();
+                    const t = setTimeout(() => ctrl.abort(), 2500);
+                    const r = await fetch(`${BASE}/api/status`, { signal: ctrl.signal });
+                    clearTimeout(t);
+                    if (r.ok) {
+                        const j = await r.json();
+                        if (j.version)
+                            version = j.version;
+                    }
+                }
+                catch { /* keep last */ }
+            }
+            trayAgentRunning = running;
+            trayAgentVersion = version;
+            tray.setToolTip(running ? `Vale — Agent running (v${version || "?"})` : "Vale — Agent stopped");
+            tray.setContextMenu(electron_1.Menu.buildFromTemplate([
+                { label: "Open", click: () => { focusMain(); } },
+                { type: "separator" },
+                {
+                    label: running ? `Agent: running (v${version || "?"})` : "Agent: stopped",
+                    enabled: false,
+                },
+                { type: "separator" },
+                { label: "New Terminal", click: () => { focusMain(); sendMenu("new-pty"); } },
+                { label: "New SSH…", click: () => { focusMain(); sendMenu("new-ssh"); } },
+                { label: "New Serial…", click: () => { focusMain(); sendMenu("new-serial"); } },
+                { label: "New Browser…", click: () => { focusMain(); sendMenu("new-browser"); } },
+                { type: "separator" },
+                { label: "Quit", click: () => { electron_1.app.isQuitting = true; electron_1.app.quit(); } },
+            ]));
+        };
+        refreshTray();
+        setInterval(() => { refreshTray(); }, 30000);
     });
 }
 electron_1.app.on("before-quit", () => { electron_1.app.isQuitting = true; });
