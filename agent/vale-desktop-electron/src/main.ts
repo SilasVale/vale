@@ -28,6 +28,9 @@ const CTRL_PORT = 9444;
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 const browserSessions = new Map<string, BrowserWindow>();
+/** Cap on concurrent browser-session windows — an AI loop opening sessions
+ *  repeatedly must not pile up windows on the desktop (stage-n). */
+const MAX_BROWSER_WINDOWS = 8;
 
 // stage-m: SINGLE-INSTANCE LOCK — a second Vale window exits immediately.
 // (The agent itself also enforces single-instance via bind-failure exit.)
@@ -180,6 +183,23 @@ function sanitizeBrowserUrl(url?: string): string {
 }
 function browserOpen(url?: string): { ok: true; id: string; url: string; cdp: string } {
   const target = sanitizeBrowserUrl(url);
+  // stage-n: reuse an existing window on the same URL instead of stacking
+  // duplicates (AI-driven browsing opens/closes sessions repeatedly); focus
+  // the existing window.
+  for (const [id, bw] of browserSessions) {
+    if (!bw.isDestroyed() && bw.webContents.getURL() === target) {
+      if (bw.isMinimized()) bw.restore();
+      bw.show();
+      bw.focus();
+      return { ok: true, id, url: target, cdp: `http://127.0.0.1:${CDP_PORT}` };
+    }
+  }
+  // Window cap: at most MAX_BROWSER_WINDOWS; evict the oldest when exceeded
+  // so an AI loop cannot pile up windows.
+  if (browserSessions.size >= MAX_BROWSER_WINDOWS) {
+    const oldest = browserSessions.keys().next().value as string | undefined;
+    if (oldest) browserClose(oldest);
+  }
   const id = `browser-${Date.now()}`;
   const bw = new BrowserWindow({ width: 1100, height: 750, title: `Vale Browser — ${target}` });
   bw.loadURL(target);
