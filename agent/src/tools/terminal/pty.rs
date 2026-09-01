@@ -249,7 +249,19 @@ impl TermBackend for PtyBackend {
             // gets the whole command into the edit buffer faster, halving
             // redraws; short writes/blocks stay covered by the per-chunk 9s
             // deadline + backoff, no silent char loss.
-            const CHUNK: usize = 512;
+            // round-162: 1024B/8ms — the stage-l command wrapper (~568B for
+            // a typical command + the marker machinery) with 512B chunks
+            // ALWAYS split mid-line: PowerShell shows the PS2 `>>`
+            // continuation prompt between the halves (a permanent ghost on
+            // the panel after every AI execute), and PSReadLine's
+            // incremental redraw of the split paste leaves `$`+first-word
+            // residue. 1024B fits the wrapper + ~450-char command in ONE
+            // chunk: one atomic paste, one PSReadLine render, no `>>`, no
+            // residue. Long pastes still chunk (round-132 semantics: byte-
+            // level retry + per-chunk 9s deadline keep the queue from
+            // wedging — the original 300B all-at-once breakage was the
+            // absence of retry, not the size).
+            const CHUNK: usize = 1024;
             const GAP_MS: u64 = 8;
             let mut off = 0usize;
             let mut res = Ok(());
