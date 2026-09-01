@@ -1346,16 +1346,26 @@ code {
   align-items: center;
   gap: 4px;
   max-width: 180px;
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 4px 8px 5px;
+  border-radius: 7px 7px 0 0;
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   background: transparent;
   border: 1px solid transparent;
+  border-bottom: none;
+  transition: background 0.12s ease;
 }
-.browser-tab.sel { background: var(--chrome-bg-3); border-color: var(--chrome-line); }
+.browser-tab:hover { background: var(--chrome-bg-3, #ececef); }
+/* stage-n: selected tab — Chrome-style: raised, accent top bar, connected
+   to the content below it (no bottom border → merges with the urlbar row). */
+.browser-tab.sel {
+  background: var(--chrome-bg-2, #ffffff);
+  border-color: var(--chrome-line, rgba(0,0,0,0.08));
+  box-shadow: inset 0 2px 0 var(--accent, #4f7cff);
+  font-weight: 600;
+}
 .browser-tab-label { overflow: hidden; text-overflow: ellipsis; }
 .browser-tab-close { color: var(--chrome-ink-faint); cursor: pointer; }
 .browser-tab-close:hover { color: var(--danger); }
@@ -1372,7 +1382,9 @@ code {
   display: flex;
   gap: 6px;
   padding: 6px 10px;
-  background: var(--chrome-bg);
+  /* stage-n: same surface as the SELECTED tab so the active tab visually
+     merges into the address row (Chrome's connected look). */
+  background: var(--chrome-bg-2, #23262c);
   border-bottom: 1px solid var(--chrome-line);
   flex: none;
 }
@@ -1549,6 +1561,10 @@ code {
   flex-direction: column;
   background: var(--chrome-bg-2, #23262c);
   border-bottom: 1px solid var(--chrome-line, #333);
+  /* stage-n: subtle elevation so the toolbar reads as the browser chrome
+     above the page (light theme: soft shadow; dark theme: barely visible). */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  z-index: 5;
 }
 .browser-toolbar .browser-tabstrip {
   border-bottom: none;
@@ -1567,6 +1583,27 @@ code {
   color: var(--muted, #999);
   padding-right: 2px;
 }
+/* Navigation buttons (back / forward / reload) — Chrome-style, left of URL. */
+.browser-navbtns {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-right: 4px;
+}
+.browser-nav {
+  min-width: 24px;
+  padding: 2px 5px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ink, #eee);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+.browser-nav:hover:not(:disabled) { background: var(--chrome-bg-3, #2a2d34); }
+.browser-nav:disabled { opacity: 0.35; cursor: default; }
 /* Bottom status bar: evidence toggle + errors left, AI chip + live right. */
 .browser-statusbar {
   flex: none;
