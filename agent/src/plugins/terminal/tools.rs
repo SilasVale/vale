@@ -1398,16 +1398,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 &cmd_with_nl[..cmd_with_nl.len().min(24)],
                                 &cmd_with_nl[cmd_with_nl.len().saturating_sub(24)..])
                         });
-                    // round-162 (Netcatty §2.5): clear the current input line
-                    // BEFORE the wrapper is echoed — `\x1b\x15\x0b` =
-                    // ESC + Ctrl-U + Ctrl-K (PSReadLine RevertLine). Without
-                    // it the prompt (`$`) and any residual edit-line text
-                    // mingle with the wrapper echo and survive as noise.
-                    // Only for wrapped (known-shell) commands; quiet path
-                    // (ssh/serial) leaves the prompt alone.
-                    if wrap_shell.is_some() {
-                        let _ = terminal_mgr.term_write(&sid, "\x1b\x15\x0b").await;
-                    }
+                    // round-162: (Netcatty's `\x1b\x15\x0b` clear-line prefix
+                    // was TRIED and REVERTED — under Vale's ConPTY the ESC
+                    // arrives as a keypress, not a sequence, so PowerShell
+                    // executed the stray `\x15` as a command. The pre-START
+                    // no-finalize rule (below) already keeps all pre-marker
+                    // noise out of the result, so no prefix is needed.)
                     if let Err(e) = terminal_mgr.term_write(&sid, &cmd_with_nl).await {
                         terminal_mgr.term_release_execute(&sid).await;
                         return Err(e);
