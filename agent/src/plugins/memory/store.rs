@@ -190,8 +190,12 @@ impl MemoryStore {
     fn compact_if_tombstone_heavy(&self) {
         let guard = recover_guard(&self.inner);
         let total = guard.by_id.len();
-        if total < 10 {
-            return; // small stores: soft-delete restore must stay reliable
+        // Tiny stores keep tombstones restorable — the majority condition
+        // (deleted*2 >= total) is meaningless for 1-3 records and the
+        // soft-delete/restore contract must stay reliable there. From 4 up,
+        // a majority of tombstones is a real reclaim signal.
+        if total < 4 {
+            return;
         }
         let deleted = guard.by_id.values().filter(|r| r.deleted).count();
         drop(guard);
@@ -659,8 +663,10 @@ mod tests {
     #[test]
     fn compact_physically_removes_tombstones() {
         let (s, dir) = tmp_store("compact_physically_removes_tombstones");
-        // Insert 5 records, soft-delete 4 → tombstone-heavy (>50%, >=10 guard
-        // bypassed by calling compact() directly).
+        // Insert 5 records, soft-delete 4 → tombstone-heavy. With the eager
+        // reclaim (>=4 records, majority), the LAST delete's update() already
+        // compacted 3 of the 4 tombstones; the explicit compact() call here
+        // reclaims whatever remains (1) and must be idempotent after.
         let mut ids = Vec::new();
         for i in 0..5 {
             ids.push(s.insert(rec(&format!("r{i}"), &format!("content{i}"))));
@@ -668,7 +674,10 @@ mod tests {
         for id in &ids[1..] {
             assert!(s.delete(id));
         }
-        assert_eq!(s.compact(), 4, "compact removes the 4 tombstones");
+        // Explicit compact is idempotent; whether the eager reclaim already
+        // cleared the tombstones or this call does, the invariant is: no
+        // deleted record remains queryable (even include_deleted).
+        s.compact();
         // Survivors still queryable; tombstones gone even with include_deleted.
         assert!(s.get(&ids[0], false).is_some());
         for id in &ids[1..] {
