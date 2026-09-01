@@ -77,7 +77,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
         onClick={runner.onToggle}
         disabled={runner.pending || runner.busy !== null}
       >
-        {runner.busy === "start" ? "启动中…" : runner.running ? "停止" : runner.errored ? "重试" : "启动"}
+        {runner.busy === "start" ? "Starting…" : runner.running ? "Stop" : runner.errored ? "Retry" : "Start"}
       </button>
     </span>
   ) : null;
@@ -101,9 +101,9 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
         {/* Address row */}
         <div className="browser-urlbar">
           <span className="browser-navbtns">
-            <button className="btn btn-mini browser-nav" onClick={b.goBack} title="后退" disabled={!b.canBack}>←</button>
-            <button className="btn btn-mini browser-nav" onClick={b.goForward} title="前进" disabled={!b.canFwd}>→</button>
-            <button className="btn btn-mini browser-nav" onClick={b.reload} title="刷新" disabled={b.tabs.length === 0}>↻</button>
+            <button className="btn btn-mini browser-nav" onClick={b.goBack} title="Back" disabled={!b.canBack}>←</button>
+            <button className="btn btn-mini browser-nav" onClick={b.goForward} title="Forward" disabled={!b.canFwd}>→</button>
+            <button className="btn btn-mini browser-nav" onClick={b.reload} title="Reload" disabled={b.tabs.length === 0}>↻</button>
           </span>
           <span className="browser-url-secure" title={b.url.startsWith("https") ? "Secure" : "Not secure"}>
             {b.url.startsWith("https") ? "🔒" : "🌐"}
@@ -125,12 +125,12 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
               className="browser-zoom"
               value={b.zoom}
               onChange={(e) => b.setZoom(Number(e.target.value))}
-              title="画面缩放"
-              aria-label="画面缩放"
+              title="Zoom"
+              aria-label="Zoom"
             >
               {[75, 100, 125, 150].map((z) => <option key={z} value={z}>{z}%</option>)}
             </select>
-            <button className="btn btn-mini browser-fullscreen" onClick={toggleFullscreen} title="全屏"><Icon name="fullscreen" size={13} /></button>
+            <button className="btn btn-mini browser-fullscreen" onClick={toggleFullscreen} title="Fullscreen"><Icon name="fullscreen" size={13} /></button>
           </span>
         </div>
       </div>
@@ -200,7 +200,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
             type="button"
             className={`browser-ev-toggle${evOpen ? " active" : ""}`}
             onClick={() => setEvOpen((v) => !v)}
-            title="AI 截图证据（抽屉）"
+            title="AI screenshot evidence (drawer)"
           >
             🖼 Evidence{b.shots.length > 0 ? ` (${b.shots.length})` : ""}
           </button>
@@ -208,7 +208,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
         </div>
         <div className="browser-status-right">
           {runnerChip}
-          <span className="browser-fps" title="最近画面帧">
+          <span className="browser-fps" title="Latest frame">
             ● {b.hasFrame ? "live" : "waiting"}
           </span>
         </div>
@@ -281,7 +281,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                             if (next.has(a.ts)) next.delete(a.ts); else next.add(a.ts);
                             return next;
                           })}
-                          title={a.script && a.script.length > 120 ? "点击展开/收起" : undefined}
+                          title={a.script && a.script.length > 120 ? "Click to expand/collapse" : undefined}
                         >{a.script || "(no script)"}</div>
                         {a.stderr_tail && a.exit_code !== 0 && (
                           <div className="browser-action-err">{a.stderr_tail}</div>

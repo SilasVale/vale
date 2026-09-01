@@ -123,7 +123,7 @@ export function ConnModal({ kind, onClose, onConnect }: {
             {mkField("Baud rate", baud, setBaud, "115200")}
             <label className="settings-check">
               <input type="checkbox" checked={autoReconnect} onChange={(e) => setAutoReconnect(e.target.checked)} />
-              <span>Auto-reconnect (port 拔插/设备重启后自动重连)</span>
+              <span>Auto-reconnect (reconnect after cable unplug or device restart)</span>
             </label>
           </>
         )}
