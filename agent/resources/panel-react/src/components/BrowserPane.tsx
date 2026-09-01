@@ -51,7 +51,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
   const aiBanner = b.aiActive ? (
     <div className="browser-ai-indicator">
       <span className="browser-ai-dot" />
-      AI 正在操作浏览器 — 点击画面可接管
+      AI is operating the browser — click the view to take over
     </div>
   ) : null;
 
@@ -59,18 +59,18 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
     <span
       className={`bp-chip${runner.running ? " on" : runner.errored ? " err" : ""}`}
       title={runner.running
-        ? "AI 助手（playwright-mcp）运行中 — 供 AI 自动化与截图证据使用"
-        : "AI 助手未运行 — 供 AI 自动化与截图证据使用（实时画面不受影响）"}
+        ? "AI runner (playwright-mcp) active — powers automation and screenshot evidence"
+        : "AI runner stopped — live view is unaffected"}
     >
       <span className={`bp-dot${runner.running ? " ok" : runner.pending ? "" : runner.errored ? " err" : ""}`} />
       <span className="bp-chip-text">
         {runner.pending
-          ? "AI 助手…"
+          ? "AI runner…"
           : runner.running
-            ? "AI 助手运行中"
+            ? "AI runner active"
             : runner.errored
-              ? "AI 助手异常"
-              : "AI 助手未运行"}
+              ? "AI runner error"
+              : "AI runner stopped"}
       </span>
       <button
         className="btn btn-ghost btn-mini"
@@ -113,7 +113,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
             value={b.url}
             onChange={(e) => b.setUrl(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && b.navigate()}
-            placeholder="输入网址后回车 — 下方页面可实时点击操作"
+            placeholder="Enter a URL and press Enter — the page below is live and clickable"
             list="vale-url-history"
           />
           <datalist id="vale-url-history">
@@ -218,7 +218,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
       {evOpen && (
         <div className="browser-ev-drawer">
           <div className="browser-ev-head">
-            AI screenshots ({b.shots.length}) — pwout 目录自动同步
+            AI screenshots ({b.shots.length}) — synced from the pwout dir
             <button className="btn btn-ghost btn-mini browser-ev-close" onClick={() => setEvOpen(false)}>✕</button>
           </div>
           {b.shots.length === 0 ? (
@@ -253,7 +253,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
               </div>
               {/* AI-action log */}
               <div className="browser-actions">
-                <div className="browser-ev-head">AI actions ({b.actions.length}) — 操作日志</div>
+                <div className="browser-ev-head">AI actions ({b.actions.length}) — run log</div>
                 {b.actions.length === 0 ? (
                   <div className="browser-ev-empty-mini">No actions yet — they appear here when the AI drives the browser via browser_run_script</div>
                 ) : (
