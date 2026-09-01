@@ -1366,6 +1366,20 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     }
                     let mut read_abs = recover_guard(&buf)
                         .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
+                    // round-162: PSReadLine soft-wraps any pasted line wider
+                    // than the terminal (the ~568B wrapper at 80 cols shows
+                    // `>> ` continuation + `$`+first-word residue on the
+                    // panel). Temporarily widen the PTY to fit the wrapper
+                    // in ONE physical line while it echoes + executes, then
+                    // restore the original size after the END marker (the
+                    // restore reflows the terminal once, far less noise than
+                    // the per-command ghost). Best-effort — a resize failure
+                    // (session dying) must not abort the execute.
+                    let orig_cols: u16 = 80;
+                    let WIDE_COLS: u16 = 300;
+                    if wrap_shell.is_some() && orig_cols < WIDE_COLS {
+                        let _ = terminal_mgr.term_resize(&sid, 30, WIDE_COLS).await;
+                    }
                     // Write the command; on failure (session reaped mid-write)
                     // release the lock — the command never ran, nothing to
                     // audit, and the next execute must not bounce off a stale
@@ -1525,6 +1539,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 }
                             }
                             mgr2.term_release_execute(&sid2).await;
+                            // round-162: restore the terminal width after the
+                            // background command finished (temporary widen).
+                            if wrap_shell2.is_some() && orig_cols < WIDE_COLS {
+                                let _ = mgr2.term_resize(&sid2, 24, orig_cols).await;
+                            }
                         });
                         return Ok(json!({
                             "kind": "session",
@@ -1805,6 +1824,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // Release the per-session execute lock (round-55) — the
                     // only exit path from the wait loop.
                     terminal_mgr.term_release_execute(&sid).await;
+                    // round-162: restore the original terminal width now the
+                    // wrapper has finished echoing + executing (the resize
+                    // during execute was temporary). Best-effort.
+                    if wrap_shell.is_some() && orig_cols < WIDE_COLS {
+                        let _ = terminal_mgr.term_resize(&sid, 24, orig_cols).await;
+                    }
                     bus.emit(&AgentEvent::ShellExec { command });
                     // stage-l: strip the wrapper's own echo (the wrapper line
                     // contains `<marker>_S`/`<marker>_E:` text and must not
