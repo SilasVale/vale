@@ -281,8 +281,8 @@ fn tool_terminal_env() -> ToolDef {
                     .unwrap_or_default()
                 } else { String::new() };
                 Ok(to_value_or_empty(json!({
-                    "default_shell": "powershell (Windows)",
-                    "shell_hint": "PowerShell 5.1 — use terminal_execute with full commands; long pastes are chunked automatically",
+                    "default_shell": "pwsh (PowerShell 7)",
+                    "shell_hint": "PowerShell 7 — OSC 633 shell integration active (clean display + exit codes); Windows PowerShell 5.1 is not supported",
                     "install_dir": dir.to_string_lossy(),
                     "bundled_node": { "path": node.to_string_lossy(), "version": node_ver },
                     "router_reachable": "ssh stc@192.168.1.1 (user stc)",
@@ -371,39 +371,12 @@ fn tool_open(
                 }
                 // Audit trail: session opened (round-54).
                 logger.log_status(&id, "opened");
-                // round-162 (PSReadLine removal — the ONE structural fix):
-                // every ">>"/`$`-residue/soft-wrap/redraw artifact on the
-                // panel and every ANSI-around-marker detection hazard comes
-                // from PSReadLine. Remove it once per PowerShell pty session
-                // (verified on-device: after `Remove-Module PSReadLine` the
-                // wrapper echoes as ONE clean line — no `>>`, no `$`
-                // residue, no CSI cursor sequences; execute returns clean
-                // text with no noise). Delayed until ConsoleHost finishes
-                // profile init (a cold PS on a slow device takes >1s; the
-                // command must not race the profile). Best-effort; the
-                // session works with or without it.
-                if kind == "pty" {
-                    let is_ps = terminal_mgr.term_info(&id).await.map(|i| i.shell == "powershell").unwrap_or(false);
-                    if is_ps {
-                        let mgr2 = terminal_mgr.clone();
-                        let sid2 = id.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                            let _ = mgr2.term_write(&sid2, "Remove-Module PSReadLine -ErrorAction SilentlyContinue\r\n").await;
-                        });
-                    }
-                }
-                // stage-l: the OSC 133 prompt-marker injection is GONE — it
-                // never worked on PowerShell 5.1 + ConPTY (the injected
-                // `function global:Prompt` marker was erased by PSReadLine /
-                // ConsoleHost redraw, so execute burned the full timeout on
-                // every command). Completion detection now uses the
-                // Netcatty-style command wrapper (see wrap_execute_command),
-                // which needs NO shell hooks — only the shell's syntax,
-                // inferred at open and carried in the session's `shell`.
-                // `inject_marker` (default true) survives as the backward-
-                // compatible switch for that wrapping (false → execute never
-                // wraps, quiet fallback only). Nothing is written at open.
+                // stage-m: NO PSReadLine removal — the VS Code shell
+                // integration (OSC 633) DEPENDS on PSReadLine: the script
+                // wraps PSConsoleHostReadLine to emit `633;E;<cmd>` /
+                // `633;C` (round-162 removed it to silence wrapper noise;
+                // with the wrapper gone, PSReadLine stays — VS Code's
+                // documented requirement, see terminalEnvironment.ts).
                 // Emit event based on kind
                 match kind.as_str() {
                     "ssh" => {
@@ -732,7 +705,11 @@ pub fn append_command_newline(command: &str) -> String {
     if command.ends_with('\n') || command.ends_with('\r') {
         command.to_string()
     } else if cfg!(target_os = "windows") {
-        format!("{command}\r\n")
+        // stage-m: `\r` ONLY — VS Code's sendText sends `\r` (the terminal
+        // driver maps it to Enter). `\r\n` on ConPTY can be read as TWO
+        // input events (CR + LF), so PSReadLine renders an empty
+        // continuation prompt (`>>`) after every command.
+        format!("{command}\r")
     } else {
         format!("{command}\n")
     }
@@ -941,6 +918,9 @@ fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
 /// pushed the wrapper past the pty write chunk boundary (512B) for typical
 /// commands — the resulting mid-line echo split produced `>>` ghost prompts
 /// and double-echo noise on ConPTY (round-162, observed live on d1).
+/// 64-bit per-execute marker (stage-l wrapper era — retained for the
+/// quiet-fallback path and tests; the wrapper itself is gone in stage-m).
+#[allow(dead_code)]
 fn new_exec_marker() -> String {
     let mut buf = [0u8; 8];
     // getrandom is already a dependency (used by vale-command-core).
@@ -955,16 +935,19 @@ fn new_exec_marker() -> String {
 
 /// Escape a command for embedding in a PowerShell single-quoted string:
 /// every `'` becomes `''` (PowerShell's single-quote escape).
+#[allow(dead_code)]
 fn ps_single_quote(s: &str) -> String {
     s.replace('\'', "''")
 }
 
 /// Escape a command for embedding in a POSIX single-quoted string: `'` → `'\''`.
+#[allow(dead_code)]
 fn sh_single_quote(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
 
 /// Escape a command for a nested cmd.exe (`""` for `"`, `%%` for `%`).
+#[allow(dead_code)]
 fn cmd_escape(s: &str) -> String {
     s.replace('"', "\"\"").replace('%', "%%")
 }
@@ -973,6 +956,7 @@ fn cmd_escape(s: &str) -> String {
 /// resolveEffectiveShellKind. `kind` is the session kind (pty/ssh/serial),
 /// `shell_hint` is the detected shell (powershell/cmd/bash/fish/unknown).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum WrapShell {
     PowerShell,
     Cmd,
@@ -985,6 +969,7 @@ impl WrapShell {
     /// `infer_shell`) to a wrapper kind. Unknown (ssh/serial/custom pty
     /// target) → None, meaning execute uses the quiet fallback without a
     /// wrapper (stage-l spec §4: SSH shell probing deferred).
+    #[allow(dead_code)]
     pub fn from_shell(shell: &str) -> Option<WrapShell> {
         match shell {
             "powershell" => Some(WrapShell::PowerShell),
@@ -1005,6 +990,7 @@ impl WrapShell {
 /// The wrapper is deliberately ONE physical line (no embedded newlines):
 /// a multiline paste would trigger the shell's continuation prompt (PS2 `>>`)
 /// and fragment the echo (the old round-155 fragment class).
+#[allow(dead_code)]
 pub fn wrap_execute_command(command: &str, shell: WrapShell, marker: &str) -> String {
     match shell {
         WrapShell::PowerShell => {
@@ -1048,6 +1034,7 @@ pub fn wrap_execute_command(command: &str, shell: WrapShell, marker: &str) -> St
 /// line start (the wrapper's own echo contains `<marker>_E:` text and must
 /// not count); after start, inline matches are allowed (a command's output
 /// need not end with a newline).
+#[allow(dead_code)]
 pub fn find_exec_end_marker(data: &[u8], marker: &str, allow_inline: bool) -> Option<(usize, usize, i32)> {
     let needle = format!("{marker}_E:");
     let nb = needle.as_bytes();
@@ -1087,6 +1074,7 @@ pub fn find_exec_end_marker(data: &[u8], marker: &str, allow_inline: bool) -> Op
 /// Find the wrapper's START marker line in `data`: a line whose trimmed
 /// ANSI-stripped content equals `<marker>_S`. Returns the byte offset AFTER
 /// the marker line (output begins there).
+#[allow(dead_code)]
 pub fn find_exec_start_marker(data: &[u8], marker: &str) -> Option<usize> {
     let needle = format!("{marker}_S");
     let mut search_from = 0usize;
@@ -1132,6 +1120,7 @@ pub fn find_exec_start_marker(data: &[u8], marker: &str) -> Option<usize> {
 /// echo from command output — the AI/user must not see the wrapper machinery.
 /// `pre_start` is the buffer captured before the START marker (the wrapper
 /// echo + prompt); it is discarded entirely.
+#[allow(dead_code)]
 pub fn strip_exec_markers(output: &str, marker: &str) -> String {
     // round-162 (Netcatty stripJobMarkerLines semantics): drop ANY line
     // containing THIS marker's text — the wrapper echo line
@@ -1292,20 +1281,23 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // markers; completion is detected by scanning the raw
                     // byte stream for them. Unknown shells (ssh/serial/custom
                     // pty target) or inject_marker=false fall back to the
-                    // quiet-period heuristic (no wrapper — spec §4).
-                    // The wrapper replaces the OSC 133 prompt-marker injection
-                    // that never worked on PowerShell 5.1 + ConPTY.
-                    let wrap_enabled = terminal_mgr.term_marker_injected(&sid).await;
-                    let wrap_shell = if wrap_enabled { WrapShell::from_shell(&sess_shell) } else { None };
-                    let marker = new_exec_marker();
-                    // Windows PowerShell only recognizes the end of a command
-                    // on CRLF (\r\n) — a bare \n drops it into the multi-line
-                    // continuation prompt (>>), so the command never executes.
+                    // stage-m (VS Code shell integration): PowerShell sessions
+                    // were spawned WITH the OSC 633 injection (pty.rs), so the
+                    // command is written RAW — no wrapper text — and completion
+                    // comes from `633;D[;rc]`. Other shells (unknown/ssh/serial)
+                    // keep the quiet-period fallback. Windows PowerShell only
+                    // recognizes the end of a command on CRLF (\r\n) — a bare
+                    // \n drops it into the multi-line continuation prompt (>>).
                     // Unix shells accept either.
-                    let cmd_with_nl = match wrap_shell {
-                        Some(sh) => append_command_newline(&wrap_execute_command(&command, sh, &marker)),
-                        None => append_command_newline(&command),
-                    };
+                    // stage-m: 633 completion detection only for pwsh — Windows PowerShell
+                    // 5.1 gets NO injection (pty.rs: its PSReadLine 2.0.0 +
+                    // ConPTY re-echoes OSC as input, rendering `>>` after
+                    // every prompt — VS Code has the same report, #236841).
+                    // 5.1 sessions use the quiet-period completion path.
+                    let shell_633 = sess_shell == "pwsh";
+                    // Windows PowerShell only recognizes the end of a command
+                    // on CRLF (\r\n); Unix shells accept either.
+                    let cmd_with_nl = append_command_newline(&command);
                     // Busy guard FIRST (round-56): acquiring the per-session
                     // execute lock must happen BEFORE the command reaches the
                     // shell. The old order wrote the command + logged start
@@ -1333,17 +1325,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // reports the failure explicitly instead of hanging).
                     let gate_needed = recover_guard(&buf)
                         .live.get(&sid).map(|e| !e.first_prompt_seen).unwrap_or(false);
-                    if gate_needed && wrap_shell.is_some() {
-                        // round-157: the gate deadline was 3s — a cold
-                        // PowerShell (PSReadLine + profile init on a slow
-                        // device) regularly exceeded it, so the session got
-                        // DEMOTED to marker-less, and every later execute fell
-                        // into the 1.4s idle path. The gate now waits up to
-                        // 12s and demotion requires the shell to have produced
-                        // NO output at all; a shell that echoed anything is
-                        // alive. With the wrapper there is no marker contract
-                        // to keep or demote — the gate only needs the first
-                        // prompt, which the START marker scan confirms.
+                    if gate_needed && shell_633 {
+                        // stage-m: the 633-injected shell announces itself with
+                        // `633;A` at the first prompt — wait up to 12s for it
+                        // (cold PowerShell + PSReadLine + profile init on a
+                        // slow device regularly exceeds 3s). A shell that
+                        // produced ANY output (banner or prompt) is alive; a
+                        // fully silent one gets marked ready anyway and the
+                        // execute wait loop's start-timeout reports the dead
+                        // shell explicitly instead of hanging.
                         let gate_deadline = Instant::now() + std::time::Duration::from_secs(12);
                         let mut scan_from = recover_guard(&buf)
                             .live.get(&sid).map(|e| e.end_abs()).unwrap_or(0);
@@ -1367,9 +1357,8 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                             let cut = pend.len().saturating_sub(64);
                             if cut > 0 { pend.drain(..cut); }
-                            if find_exec_start_marker(&pend, &marker).is_some() {
-                                // The shell is executing OUR wrapper — it is
-                                // past profile-init and at a prompt.
+                            // `633;A` = the injected Prompt ran → shell ready.
+                            if crate::tools::terminal::shell_integration::find_prompt_started(&pend).is_some() {
                                 if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
                                     e.first_prompt_seen = true;
                                 }
@@ -1386,8 +1375,8 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                         }
                     } else if gate_needed {
-                        // Unknown-shell sessions (ssh/serial) have no wrapper
-                        // and no marker — the shell is ready as soon as the
+                        // Unknown-shell sessions (ssh/serial) have no 633
+                        // injection — the shell is ready as soon as the
                         // session exists (the quiet path is tolerant).
                         if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
                             e.first_prompt_seen = true;
@@ -1495,25 +1484,18 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         let sid2 = sid.clone();
                         let quiet_dur2 = quiet_dur;
                         let start2 = start;
-                        // stage-l: the background waiter uses the same
-                        // wrapper-marker detection as the foreground loop.
-                        // None (unknown shell) → quiet fallback.
-                        let wrap_shell2 = wrap_shell;
-                        let marker2 = marker.clone();
+                        // stage-m: the background waiter uses the same
+                        // 633;D detection as the foreground loop. Unknown
+                        // shells (ssh/serial) → quiet fallback.
+                        let shell_633_2 = shell_633;
                         tokio::spawn(async move {
                             // Wait for the background command to finish (same
-                            // marker/quiet semantics as the foreground wait
+                            // 633;D/quiet semantics as the foreground wait
                             // loop), then release the execute lock.
                             let mut read_abs = start2;
                             let mut quiet_since: Option<Instant> = None;
                             let mut marker_seen_at: Option<Instant> = None;
-                            let mut start_seen_at: Option<Instant> = None;
                             let mut pending: Vec<u8> = Vec::new();
-                            // stage-l: start-timeout for the background path —
-                            // the wrapper's START marker should arrive within
-                            // seconds of the write; a missing one means the
-                            // shell swallowed the command (dead session).
-                            let start_deadline = Instant::now() + std::time::Duration::from_secs(15);
                             loop {
                                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                                 // Session closed → release; retain_live already
@@ -1530,20 +1512,14 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 if chunk_len > 0 {
                                     read_abs += chunk_len;
                                     pending.extend_from_slice(&chunk);
-                                    if wrap_shell2.is_some() {
-                                        if start_seen_at.is_none() {
-                                            if let Some(pos) = find_exec_start_marker(&pending, &marker2) {
-                                                pending.drain(..pos);
-                                                start_seen_at = Some(Instant::now());
-                                            }
-                                        }
-                                        if let Some((mstart, mend, code)) = find_exec_end_marker(&pending, &marker2, start_seen_at.is_some()) {
-                                            let _ = (mstart, mend);
+                                    if shell_633_2 {
+                                        while let Some(f) = crate::tools::terminal::shell_integration::find_finished(&pending) {
+                                            pending.drain(..f.end);
                                             marker_seen_at = Some(Instant::now());
                                             if let Ok(mut jm) = jobs_map().lock() {
                                                 if let Some(j) = jm.get_mut(&job_id2) {
                                                     j.done = true;
-                                                    j.exit_code = Some(code);
+                                                    j.exit_code = f.exit_code;
                                                 }
                                             }
                                         }
@@ -1563,19 +1539,13 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 }
                                 if let Some(at) = marker_seen_at {
                                     if at.elapsed() >= marker_confirm { break; }
-                                } else if wrap_shell2.is_some() && start_seen_at.is_none() {
-                                    // Wrapped command whose START never came —
-                                    // report done=false and release the lock
-                                    // (the job stays pending; foreground
-                                    // executes must not wedge on a dead shell).
-                                    if Instant::now() >= start_deadline { break; }
                                 } else if let Some(qs) = quiet_since {
-                                    // Wrapped commands never break on quiet —
-                                    // the END marker (at command end) or the
+                                    // 633 shells never break on quiet — the
+                                    // 633;D marker (at command end) or the
                                     // session close is the only terminator.
                                     // Unknown-shell backends keep the quiet
                                     // fallback.
-                                    if wrap_shell2.is_none() && qs.elapsed() >= quiet_dur2 { break; }
+                                    if !shell_633_2 && qs.elapsed() >= quiet_dur2 { break; }
                                 }
                             }
                             mgr2.term_release_execute(&sid2).await;
@@ -1675,16 +1645,6 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     let mut pending: Vec<u8> = Vec::new();
                     let mut marker_code: Option<i32> = None;
                     let mut marker_seen_at: Option<Instant> = None;
-                    // stage-l: START-marker state for wrapped commands — before
-                    // the START line arrives, everything is pre-command noise
-                    // (wrapper echo + prompt); after it, output is real.
-                    let mut start_seen_at: Option<Instant> = None;
-                    // stage-l: start timeout — Netcatty's key failure mode:
-                    // the wrapper's START marker should arrive within seconds
-                    // of the write; a missing one means the shell swallowed
-                    // the command (dead/stuck session). Fail EXPLICITLY
-                    // instead of hanging to the deadline.
-                    let start_deadline = Instant::now() + std::time::Duration::from_secs(15);
                     // Every exit path below assigns it (marker / idle / timeout).
                     let wait_reason: &str;
 
@@ -1739,27 +1699,21 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         if chunk_len > 0 {
                             read_abs += chunk_len;
                             pending.extend_from_slice(&chunk);
-                            if wrap_shell.is_some() {
-                                // Wrapped command: first confirm the START
-                                // marker (discard everything before it — the
-                                // wrapper echo + prompt), then scan for the
-                                // END marker. A multi-marker chunk (very fast
-                                // command) yields START then END in one pass.
-                                if start_seen_at.is_none() {
-                                    if let Some(pos) = find_exec_start_marker(&pending, &marker) {
-                                        pending.drain(..pos);
-                                        start_seen_at = Some(Instant::now());
-                                        if let Some(e) = recover_guard(&buf).live.get_mut(&sid) {
-                                            e.first_prompt_seen = true;
-                                        }
+                            if shell_633 {
+                                // stage-m (VS Code shell integration): the
+                                // injected PowerShell emits `633;D[;rc]` when a
+                                // command finishes — scan for it. Everything
+                                // before the FIRST `633;D` of this command is
+                                // pre-command noise (prompt sequences + the
+                                // command's own echo), finalized into `result`
+                                // once the first 633;D arrives (the sequence
+                                // itself is invisible on the terminal).
+                                while let Some(f) = crate::tools::terminal::shell_integration::find_finished(&pending) {
+                                    if f.end > 0 {
+                                        append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..f.end]));
                                     }
-                                }
-                                while let Some((mstart, mend, code)) = find_exec_end_marker(&pending, &marker, start_seen_at.is_some()) {
-                                    if mstart > 0 {
-                                        append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..mstart]));
-                                    }
-                                    pending.drain(..mend);
-                                    marker_code = Some(code);
+                                    pending.drain(..f.end);
+                                    marker_code = f.exit_code;
                                     marker_seen_at = Some(Instant::now());
                                 }
                             } else {
@@ -1780,29 +1734,19 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             }
                             // Finalize everything that can no longer be a
                             // marker prefix.
-                            // round-162: BEFORE the START marker is confirmed,
-                            // nothing is finalized into `result` (pre-START is
-                            // all wrapper/prompt/resize noise; dropped
-                            // wholesale when START is found). After START the
-                            // normal 64B-window finalize applies — any late
-                            // wrapper-tail fragment is stripped at the end by
-                            // strip_exec_markers (Netcatty semantics).
-                            if start_seen_at.is_some() {
-                                let keep = pending.len().saturating_sub(64);
-                                if keep > 0 {
-                                    append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]));
-                                    pending.drain(..keep);
-                                }
-                            } else if pending.len() > 1024 {
-                                // Pre-START noise balloon (resize reflow loop):
-                                // drop the excess but never finalize it.
-                                pending.drain(..pending.len() - 64);
+                            // stage-m: no START marker — keep the 64B finalize
+                            // window so a 633;D split across chunks is never
+                            // lost, then append the rest.
+                            let keep = pending.len().saturating_sub(64);
+                            if keep > 0 {
+                                append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]));
+                                pending.drain(..keep);
                             }
                             quiet_since = None;
                         } else if quiet_since.is_none() {
                             quiet_since = Some(Instant::now());
                         }
-                        // The END marker is the AUTHORITATIVE "command
+                        // The 633;D marker is the AUTHORITATIVE "command
                         // finished" signal: while its confirm window runs, a
                         // quiet gap must not trigger the idle path — the
                         // command may be done and the marker chunk simply not
@@ -1812,23 +1756,14 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                 wait_reason = "marker";
                                 break;
                             }
-                        } else if wrap_shell.is_some() && start_seen_at.is_none() {
-                            // stage-l: wrapped command whose START marker never
-                            // arrived — the shell swallowed the wrapper (dead
-                            // or wedged session, wrong shell kind). Fail
-                            // EXPLICITLY instead of hanging to the deadline.
-                            if Instant::now() >= start_deadline {
-                                wait_reason = "start-timeout";
-                                break;
-                            }
                         } else if let Some(qs) = quiet_since {
                             if qs.elapsed() >= quiet_dur {
                                 // Unknown-shell backends (ssh/serial) keep the
-                                // bounded once-extension quiet path. Wrapped
-                                // commands never break on quiet — the END
-                                // marker (at command end) or the deadline is
-                                // the only terminator.
-                                if wrap_shell.is_none() {
+                                // bounded once-extension quiet path. 633 shells
+                                // never break on quiet — the 633;D marker (at
+                                // command end) or the deadline is the only
+                                // terminator.
+                                if !shell_633 {
                                     if !quiet_extended {
                                         quiet_extended = true;
                                         quiet_since = Some(Instant::now());
@@ -1838,9 +1773,9 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                         break;
                                     }
                                 } else {
-                                    // Still waiting for the END marker — keep
-                                    // polling (the deadline check below ends
-                                    // the wait if the command truly hangs).
+                                    // Still waiting for 633;D — keep polling
+                                    // (the deadline check below ends the wait
+                                    // if the command truly hangs).
                                     quiet_since = Some(Instant::now());
                                 }
                             }
@@ -1873,15 +1808,10 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // only exit path from the wait loop.
                     terminal_mgr.term_release_execute(&sid).await;
                     bus.emit(&AgentEvent::ShellExec { command });
-                    // stage-l: strip the wrapper's own echo (the wrapper line
-                    // contains `<marker>_S`/`<marker>_E:` text and must not
-                    // reach the model). The prompt markers were already
-                    // stripped during the wait.
-                    let result = if wrap_shell.is_some() {
-                        strip_exec_markers(&result, &marker)
-                    } else {
-                        result
-                    };
+                    // stage-m: no wrapper → nothing to strip. The 633
+                    // sequences are invisible on the terminal and were already
+                    // consumed during the wait.
+                    let result = result;
                     // Strip ANSI/OSC noise for the model — the MCP text path
                     // must be printable text; the panel keeps raw bytes
                     // via its own SSE stream (round-54, dsh sanitize.ts).

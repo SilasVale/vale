@@ -90,3 +90,10 @@ keyring = ["dep:keyring"]
 [dependencies.getrandom]
 version = "0.2"
 features = ["rdrand"]
+
+# stage-m: portable-pty is vendored + patched — its stock ConPTY flags set
+# PSEUDOCONSOLE_WIN32_INPUT_MODE (0x4), which echoes console output back as
+# input events; PSReadLine then renders `>>` after every OSC 633 (VS Code
+# shell integration). The patch drops that flag (node-pty/VSCode parity).
+[patch.crates-io]
+portable-pty = { path = "vendor-portable-pty" }

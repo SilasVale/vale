@@ -63,10 +63,18 @@ const SERVICE_NAME: &str = "ValeCommand";
 
 /// Print error and pause before exit (Windows console friendly). In service mode
 /// stdin is not connected, so the read returns immediately and we still exit.
+/// stage-m: a parent (the Electron shell) may set VALE_NO_PAUSE=1 — then the
+/// pause is skipped entirely. Without this, an agent spawned by the shell that
+/// loses the 18080 bind race wedges on `read_line` forever, leaking an orphan
+/// process per launch (the d1 Chrome-OOM root cause).
 fn fatal(msg: &str) -> ! {
     eout!("\n  ERROR: {msg}\n");
-    eout!("  Press Enter to exit...");
-    let _ = std::io::stdin().read_line(&mut String::new());
+    if std::env::var_os("VALE_NO_PAUSE").is_none() {
+        eout!("  Press Enter to exit...");
+        let _ = std::io::stdin().read_line(&mut String::new());
+    } else {
+        eout!("  (VALE_NO_PAUSE — exiting immediately)");
+    }
     std::process::exit(1);
 }
 
@@ -153,7 +161,20 @@ fn main() {
     // user and could not always reach that file.
     #[cfg(windows)]
     {
+        // stage-m (VS Code shell integration): materialize the OSC 633
+        // injection script under install_dir/shell-integration/ so pty spawn
+        // can dot-source it (`-Command . '<path>'`). Embedded at compile time
+        // via include_str!, written once per boot (idempotent, no version
+        // churn — the script's own guard skips re-install per session).
         let install_dir = vale_agent::paths::install_dir();
+        let si_dir = install_dir.join("shell-integration");
+        let si_script = si_dir.join("shellIntegration.ps1");
+        if std::fs::create_dir_all(&si_dir).is_ok()
+            && std::fs::write(&si_script, include_str!("../resources/shell-integration/shellIntegration.ps1")).is_ok()
+        {
+            log_line(&format!("shell integration script: {}", si_script.display()));
+        }
+
         let fix_script = install_dir.join("fix-tunnel.ps1");
         if fix_script.exists() && !init_mode {
             let _ = std::process::Command::new("powershell")

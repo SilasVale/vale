@@ -13,6 +13,8 @@
 
 mod secrets;
 #[cfg(feature = "terminal")]
+pub(crate) mod shell_integration;
+#[cfg(feature = "terminal")]
 mod connections;
 #[cfg(feature = "terminal")]
 mod pty;
@@ -57,8 +59,18 @@ pub fn infer_shell(kind: &str, target: &str) -> String {
         .unwrap_or(target)
         .to_ascii_lowercase();
     if cfg!(windows) {
-        if cmd.is_empty() || cmd == "powershell.exe" || cmd == "pwsh.exe" || cmd == "powershell" || cmd == "pwsh" {
+        if cmd.is_empty() {
+            // stage-m: the default Windows shell is pwsh (pty.rs spawns it
+            // when no target is given) — report pwsh so the 633 completion
+            // path engages.
+            "pwsh".to_string()
+        } else if cmd == "powershell.exe" || cmd == "powershell" {
             "powershell".to_string()
+        } else if cmd == "pwsh.exe" || cmd == "pwsh" {
+            // stage-m: pwsh (PowerShell 7) is distinct — it gets the OSC 633
+            // shell-integration injection; 5.1 (powershell) does not (its
+            // PSReadLine 2.0.0 re-echoes the sequences as input → `>>`).
+            "pwsh".to_string()
         } else if cmd == "cmd.exe" || cmd == "cmd" {
             "cmd".to_string()
         } else {
@@ -751,7 +763,8 @@ mod tests {
     #[test]
     fn infer_shell_windows_pty_default_is_powershell() {
         if cfg!(windows) {
-            assert_eq!(infer_shell("pty", ""), "powershell");
+            // stage-m: the default Windows shell is pwsh.
+            assert_eq!(infer_shell("pty", ""), "pwsh");
         } else {
             assert_eq!(infer_shell("pty", ""), "bash");
         }
@@ -761,12 +774,13 @@ mod tests {
     fn infer_shell_windows_pty_named_targets() {
         if cfg!(windows) {
             assert_eq!(infer_shell("pty", "powershell.exe"), "powershell");
-            assert_eq!(infer_shell("pty", "pwsh.exe"), "powershell");
+            // stage-m: pwsh is distinct (OSC 633 injection).
+            assert_eq!(infer_shell("pty", "pwsh.exe"), "pwsh");
             // round-162: bare `powershell`/`pwsh` targets (what MCP clients
             // send as a shell hint) were NOT recognized → shell stayed
             // "unknown" → the command wrapper was silently disabled.
             assert_eq!(infer_shell("pty", "powershell"), "powershell");
-            assert_eq!(infer_shell("pty", "pwsh"), "powershell");
+            assert_eq!(infer_shell("pty", "pwsh"), "pwsh");
             assert_eq!(infer_shell("pty", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "powershell");
             assert_eq!(infer_shell("pty", "cmd.exe"), "cmd");
             assert_eq!(infer_shell("pty", "zsh.exe"), "unknown");

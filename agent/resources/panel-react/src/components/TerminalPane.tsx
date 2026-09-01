@@ -4,7 +4,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { callTool } from "../lib/api";
 import { getTheme, onThemeChange } from "../lib/theme";
-import { createWrapperFilter } from "../lib/wrapperFilter";
 import { Icon } from "../ui/Icon";
 import type { Session } from "../hooks/useSessions";
 
@@ -154,20 +153,18 @@ export function TerminalPane({ session, registerWrite }: {
     // round-99: registerWrite returns an unregister fn — the callback must
     // leave the map when this pane unmounts, or the 5s sync loop polls
     // closed-session entries forever (unbounded no-op polling).
-    // round-162: the stream is filtered for execute-wrapper noise (marker
-    // lines + ConPTY chunk-split `>>` fragments) before it hits xterm — the
-    // MCP result is stripped server-side, but the live SSE stream is raw.
-    const wf = createWrapperFilter();
+    // stage-m: NO wrapper filter — the execute wrapper is gone (VS Code
+    // shell integration: OSC 633 sequences are invisible on the terminal,
+    // consumed server-side by the agent). Raw bytes go straight to xterm.
     const decoder = new TextDecoder();
     const unregister = registerWrite(session.sid, (bytes) => {
       // The SSE hook passed the frame; TerminalPane only needs the bytes
       // (the hook already validated session_id). Dedup is done by the hook
       // caller in useSSE — here we just write + advance.
-      const filtered = wf.filter(decoder.decode(bytes, { stream: true }));
-      if (filtered) term.write(new TextEncoder().encode(filtered));
-      // round-162: renderedRef tracks the RAW stream offset (SSE frame.start
-      // is a raw offset — dedup breaks if it drifts from consumed bytes),
-      // so it always advances by the original length, never the filtered one.
+      term.write(new TextEncoder().encode(decoder.decode(bytes, { stream: true })));
+      // renderedRef tracks the RAW stream offset (SSE frame.start is a raw
+      // offset — dedup breaks if it drifts from consumed bytes), so it
+      // always advances by the original length.
       renderedRef.current += bytes.length;
     }, () => renderedRef.current);
 
@@ -182,23 +179,18 @@ export function TerminalPane({ session, registerWrite }: {
       .then((r: any) => {
         if (!r || (!r.text && !r.raw)) return;
         const skip = Math.max(0, renderedRef.current - Number(r.start));
-        // round-162: history replay must pass through the SAME wrapper-noise
-        // filter as the live SSE stream — a resurrected session's tail would
-        // otherwise show raw wrapper echoes/markers (observed on d1 1.0.134).
         if (r.raw) {
           const bin = atob(r.raw);
           const bytes = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
           if (skip < bytes.length) {
-            const filtered = wf.filter(decoder.decode(bytes.subarray(skip), { stream: true }));
-            if (filtered) term.write(new TextEncoder().encode(filtered));
+            term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
             renderedRef.current += bytes.length - skip;
           }
         } else if (skip >= 0 && r.text) {
           const bytes = new TextEncoder().encode(r.text);
           if (skip < bytes.length) {
-            const filtered = wf.filter(decoder.decode(bytes.subarray(skip), { stream: true }));
-            if (filtered) term.write(new TextEncoder().encode(filtered));
+            term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
             renderedRef.current += bytes.length - skip;
           }
         }

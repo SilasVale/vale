@@ -45,7 +45,11 @@ pub struct PtyBackend {
 impl PtyBackend {
     pub fn spawn(shell: &str, rows: u16, cols: u16, tx: tokio::sync::mpsc::Sender<TermOutput>, sid: String) -> Result<Self, DeviceError> {
         let shell_cmd = if shell.is_empty() {
-            if cfg!(windows) { "powershell.exe" } else { "bash" }
+            // stage-m: the ONLY supported Windows shell is pwsh (PowerShell
+            // 7) — it has clean OSC 633 shell integration. Windows
+            // PowerShell 5.1 is NOT supported: its PSReadLine 2.0.0
+            // re-echoes the injected sequences as input → `>>` (vscode#236841).
+            if cfg!(windows) { "pwsh" } else { "bash" }
         } else { shell };
 
         tracing::debug!("[vale-agent] PTY: spawning shell={shell_cmd}");
@@ -56,7 +60,60 @@ impl PtyBackend {
         let pair = pty.openpty(PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 })
             .map_err(|e| DeviceError::Internal { message: format!("PTY open: {e}") })?;
 
-        let cmd = CommandBuilder::new(shell_cmd);
+        // stage-m (VS Code shell integration): PowerShell sessions get the
+        // OSC 633 injection — a Prompt override + PSConsoleHostReadLine wrap
+        // (transplanted from microsoft/vscode shellIntegration.ps1) so every
+        // prompt/command boundary arrives as an invisible OSC 633 sequence.
+        // The agent consumes 633;D;<rc> for execute completion (no wrapper
+        // text in the user's terminal — the old __VALE_ marker wrapper and
+        // its front-end filter are gone). The script is written to the
+        // install dir at boot (main.rs) and dot-sourced via -Command, same
+        // shape as VS Code's `pwsh -noexit -command . shellIntegration.ps1`.
+        // mut only needed on Windows (shell-integration injection below);
+        // Linux builds see an unused mut (allowed).
+        #[allow(unused_mut)]
+        let mut cmd = CommandBuilder::new(shell_cmd);
+        #[cfg(windows)]
+        {
+            let lower = shell_cmd.to_ascii_lowercase();
+            // stage-m: OSC 633 injection is enabled for pwsh (PowerShell 7+)
+            // ONLY. Windows PowerShell 5.1 + PSReadLine 2.0.0 + ConPTY
+            // re-echoes the injected OSC sequences as INPUT events — every
+            // prompt then renders a `>>` continuation marker and command
+            // echo fragments (verified on d1 1.0.146; VS Code has the same
+            // report, vscode#236841). 5.1 sessions therefore get NO
+            // injection: display stays perfectly clean and execute falls
+            // back to the quiet-period completion path. The Rust 633
+            // consumer (shell_integration.rs) still serves pwsh sessions.
+            if lower.contains("pwsh") {
+                let script = crate::paths::install_dir()
+                    .join("shell-integration")
+                    .join("shellIntegration.ps1");
+                if script.exists() {
+                    // Fresh 128-bit nonce for this session's injection — the
+                    // script echoes it back inside `633;E;<cmd>;<nonce>` so
+                    // command lines from the terminal stream can be trusted.
+                    let mut nbuf = [0u8; 16];
+                    let _ = getrandom::getrandom(&mut nbuf);
+                    let nonce: String = nbuf.iter().map(|b| format!("{b:02x}")).collect();
+                    cmd.env("VALE_NONCE", &nonce);
+                    // stage-m A: VS Code's exact injection shape for Windows
+                    // PowerShell (terminalEnvironment.ts:332):
+                    //   ['-noexit', '-command', 'try { . "{0}\shellIntegration.ps1" } catch {}{1}']
+                    // Double quotes + try/catch swallow the execution-policy
+                    // error so a restricted policy cannot wedge the shell.
+                    // The `{1}` (empty) is VS Code's trailing-args slot.
+                    cmd.args([
+                        "-NoExit",
+                        "-Command",
+                        &format!(
+                            "try {{ . \"{}\" }} catch {{}}",
+                            script.to_string_lossy().replace('"', "\\\"")
+                        ),
+                    ]);
+                }
+            }
+        }
         let child = pair.slave.spawn_command(cmd)
             .map_err(|e| DeviceError::Internal { message: format!("spawn: {e}") })?;
 
