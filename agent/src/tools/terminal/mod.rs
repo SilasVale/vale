@@ -12,7 +12,10 @@
 //! one session's SSH handshake never blocks another session's write/resize.
 
 mod secrets;
-#[cfg(feature = "terminal")]
+// stage-m: OSC 633 parsing is pure byte-scanning — no backend deps, so it
+// compiles in BOTH feature configs. terminal_execute's session path
+// references it unconditionally (the feature gate lives in the backends,
+// not here).
 pub(crate) mod shell_integration;
 #[cfg(feature = "terminal")]
 mod connections;

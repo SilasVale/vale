@@ -173,6 +173,9 @@ fn tool_sftp(name: &'static str) -> ToolDef {
 /// configs, only the backend differs).
 fn sftp_handler() -> impl vale_agent_core::ToolHandler + 'static {
     move |params: Value| {
+        // round-…: headless — silence the unused closure param.
+        #[cfg(not(feature = "terminal"))]
+        let _ = &params;
         #[cfg(feature = "terminal")]
         {
             async move {
@@ -2558,11 +2561,16 @@ mod tests {
     }
 
     #[test]
-    fn append_newline_windows_uses_crlf() {
-        // On Windows, PowerShell needs \r\n to end a command — a bare \n would
-        // drop it into the continuation prompt (>>) and never execute.
+    fn append_newline_windows_uses_cr_only() {
+        // stage-m: on Windows the command terminator is a bare `\r` — VS
+        // Code's sendText sends `\r` (the terminal driver maps it to Enter).
+        // `\r\n` on ConPTY can be read as TWO input events (CR + LF), which
+        // made PSReadLine render an empty continuation prompt (`>>`) after
+        // every command (the stage-l wrapper-era CRLF bug). This is
+        // Windows-only, so the assertion is gated — but it must MATCH the
+        // implementation or it silently stops guarding.
         if cfg!(target_os = "windows") {
-            assert_eq!(append_command_newline("echo hi"), "echo hi\r\n");
+            assert_eq!(append_command_newline("echo hi"), "echo hi\r");
         }
     }
 
@@ -2672,6 +2680,120 @@ mod tests {
         let (start, end, code) = super::find_prompt_marker(data).unwrap();
         assert_eq!(code, 3);
         assert_eq!(&data[start..end], b"\x1b]133;D;3\x07");
+    }
+
+    // ── stage-m: 633 wait-loop chunk simulation ────────────
+    // The execute wait loop feeds raw pty chunks into a carry buffer and
+    // drains each found 633;D (find_finished). These tests simulate that
+    // loop over realistic PowerShell + shellIntegration.ps1 byte streams to
+    // pin the completion semantics: what text lands in `result`, what exit
+    // code, and that no partial garbage is returned. The scanner module is
+    // pure byte-parsing (available in both feature configs), so these tests
+    // run everywhere.
+
+    mod wait_loop_sim {
+        /// Simulate the execute wait loop's marker scan over a chunked stream.
+        /// Applies the same final cleaning as the real pipeline
+        /// (`clean_terminal_output` strips the invisible 633 sequences).
+        /// Returns (finalized text, last exit code seen).
+        fn scan_633_stream(chunks: &[&[u8]]) -> (String, Option<i32>) {
+            let mut carry: Vec<u8> = Vec::new();
+            let mut result = String::new();
+            let mut code: Option<i32> = None;
+            for chunk in chunks {
+                carry.extend_from_slice(chunk);
+                while let Some(f) = crate::tools::terminal::shell_integration::find_finished(&carry) {
+                    if f.end > 0 {
+                        result.push_str(&String::from_utf8_lossy(&carry[..f.end]));
+                    }
+                    carry.drain(..f.end);
+                    code = f.exit_code;
+                }
+                // 64B finalize window like the real loop.
+                let keep = carry.len().saturating_sub(64);
+                if keep > 0 {
+                    result.push_str(&String::from_utf8_lossy(&carry[..keep]));
+                    carry.drain(..keep);
+                }
+            }
+            result.push_str(&String::from_utf8_lossy(&carry));
+            let result = crate::plugins::terminal::clean_terminal_output(result.as_bytes());
+            (result, code)
+        }
+
+        #[test]
+        fn pty_stream_echo_then_d_marker() {
+            // `echo hi`: the shell echoes the command, prints output, then the
+            // injected Prompt emits 633;D;0. The wait loop must finalize the
+            // echo+output as result and report exit 0.
+            let chunks: &[&[u8]] = &[
+                b"PS C:\\Users\\x> echo hi\r\nhi\r\n\x1b]633;D;0\x07",
+                b"\x1b]633;A\x07PS C:\\Users\\x> ",
+            ];
+            let (text, code) = scan_633_stream(chunks);
+            assert_eq!(code, Some(0));
+            // The 633 sequences are invisible on the terminal: what remains is
+            // exactly the echoed prompt + command + output + next prompt.
+            assert!(text.contains("echo hi"), "echo must be in result: {text:?}");
+            assert!(text.contains("hi"), "output must be in result: {text:?}");
+            assert!(!text.contains("\x1b]633"), "no raw 633 bytes may leak: {text:?}");
+            assert!(text.contains("PS C:\\Users\\x>"), "next prompt must be in result: {text:?}");
+        }
+
+        #[test]
+        fn pty_stream_marker_split_inside_exit_code() {
+            // The 633;D sequence is split mid-exit-code across chunks — the
+            // carry buffer must bridge it and still report the code.
+            let chunks: &[&[u8]] = &[
+                b"ok\r\n\x1b]633;D;",
+                b"42\x07\x1b]633;A\x07PS> ",
+            ];
+            let (text, code) = scan_633_stream(chunks);
+            assert_eq!(code, Some(42));
+            assert!(text.contains("ok"), "output must survive: {text:?}");
+            assert!(!text.contains("\x1b]633"), "no raw 633 leaks: {text:?}");
+        }
+
+        #[test]
+        fn pty_stream_nonzero_exit_and_multiple_commands() {
+            // Two commands: one failing (exit 3), one clean (exit 0). The loop
+            // must observe BOTH codes in order (the background waiter drains
+            // repeatedly until no marker remains).
+            let chunks: &[&[u8]] = &[
+                b"cmd-1\r\n\x1b]633;D;3\x07\x1b]633;A\x07PS> ",
+                b"cmd-2\r\nout2\r\n\x1b]633;D;0\x07\x1b]633;A\x07PS> ",
+            ];
+            let (text, code) = scan_633_stream(chunks);
+            assert_eq!(code, Some(0), "last code wins");
+            assert!(text.contains("cmd-1") && text.contains("cmd-2"), "both commands in result: {text:?}");
+            assert!(text.contains("out2"), "second output in result: {text:?}");
+        }
+
+        #[test]
+        fn pty_stream_enter_on_empty_prompt_no_d() {
+            // Bare Enter on an empty prompt: ps1 emits 633;D (NO rc) — exit code
+            // None, and no command text pollutes the result.
+            let chunks: &[&[u8]] = &[
+                b"\x1b]633;E;;nonce\x07\x1b]633;C\x07\x1b]633;D\x07",
+                b"\x1b]633;A\x07PS> ",
+            ];
+            let (text, code) = scan_633_stream(chunks);
+            assert_eq!(code, None, "empty command has no exit code");
+            assert!(text.contains("PS>"), "prompt text kept: {text:?}");
+            assert!(!text.contains("\x1b]633"), "no raw 633 leaks: {text:?}");
+        }
+
+        #[test]
+        fn pty_stream_false_prefix_then_real_d() {
+            // A truncated/false 633;D prefix in output must not abort the scan —
+            // the real marker after it is found. Regression: the old OSC-skip
+            // jumped to the next BEL, which swallowed the real marker's
+            // terminator (execute would hang until timeout).
+            let data = b"log: \x1b]633;D;\r\nreal-output\r\n\x1b]633;D;0\x07";
+            let f = crate::tools::terminal::shell_integration::find_finished(data).expect("finished");
+            assert_eq!(f.exit_code, Some(0));
+            assert_eq!(&data[f.end..], b"");
+        }
     }
 
     // ── round-157: partial-return contract (still_running + note) ──
