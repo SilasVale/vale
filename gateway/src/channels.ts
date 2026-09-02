@@ -76,11 +76,13 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "cm/deepseek/deepseek-v4-flash", owned_by: "command-code" },
   // amd/ — AMD Radeon Cloud (developer.amd.com.cn/radeon), free BYOK pool. The
   // catalog is GET /v1/models; any catalog slug is reachable as amd/<id> (case
-  // matters: DeepSeek-V4-Flash, not deepseek-v4-flash). These are the three
-  // headline text models; MiniCPM5-1B is the cheap 1B option also available.
+  // matters: DeepSeek-V4-Flash, not deepseek-v4-flash). Two live warnings from
+  // the 2026-09-02 sweep: reasoning_effort IS validated upstream (absent param
+  // = thinking OFF, so clients must declare it), and GLM-5.3-Flash /
+  // Qwen3.8-Flash-Next were pulled from /v1/models / stuck at 503
+  // no_available_workers — not advertised here until they serve again.
   { id: "amd/DeepSeek-V4-Flash", owned_by: "amd-radeon" },
-  { id: "amd/GLM-5.3-Flash", owned_by: "amd-radeon" },
-  { id: "amd/Qwen3.8-Flash-Next", owned_by: "amd-radeon" },
+  { id: "amd/DeepSeek-V4-Flash-Vision-Exp", owned_by: "amd-radeon" },
 ];
 
 // Route info shown in the console ("model routing" section). Public, no keys.
@@ -136,8 +138,8 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
   {
     prefix: "amd/",
     backend: "AMD Radeon Cloud",
-    desc: "developer.amd.com.cn/radeon — free BYOK pool (user's own rc- key); native Anthropic /v1/messages AND OpenAI /v1/chat/completions, no translation; per-model global concurrency cap (429 model_concurrency_rate_limit_exceeded); always direct — the US exit has no amd target",
-    models: ["DeepSeek-V4-Flash", "GLM-5.3-Flash", "Qwen3.8-Flash-Next"],
+    desc: "developer.amd.com.cn/radeon — free BYOK pool (user's own rc- key); native Anthropic /v1/messages AND OpenAI /v1/chat/completions, no translation; reasoning_effort is validated upstream (absent = thinking off); per-model global concurrency cap (429 model_concurrency_rate_limit_exceeded); always direct — the US exit has no amd target",
+    models: ["DeepSeek-V4-Flash", "DeepSeek-V4-Flash-Vision-Exp"],
   },
   {
     prefix: "none",
@@ -170,13 +172,15 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M3" },
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M2.7" },
   { id: "cm", model: "cm/deepseek/deepseek-v4-flash" },
-  // amd/ — Radeon Cloud free pool. One card per headline model so the console
-  // switchboard lists them and `vale use amd/...` can probe. NOT added to
-  // HEALTH_PRIORITY: buildHealth reports ok for everything but og's breaker,
-  // and a global "recommended" must not point users at a BYOK pool whose
-  // requests 502 without the user's own key (or 429 on the shared cap).
+  // amd/ — Radeon Cloud free pool. One card per SERVING model so the console
+  // switchboard lists them and `vale use amd/...` can probe. GLM-5.3-Flash and
+  // Qwen3.8-Flash-Next were pulled (503 no_available_workers / GLM left the
+  // upstream catalog on 2026-09-02) but stay reachable by exact name — the
+  // route only strips the prefix, MODELS is an advertising/auto-routing
+  // whitelist, not a gate. NOT in HEALTH_PRIORITY: buildHealth reports ok for
+  // everything but og's breaker, and a global "recommended" must not point
+  // users at a BYOK pool that 502s without their own key.
   { id: "amd", model: "amd/DeepSeek-V4-Flash" },
-  { id: "amd", model: "amd/GLM-5.3-Flash" },
-  { id: "amd", model: "amd/Qwen3.8-Flash-Next" },
+  { id: "amd", model: "amd/DeepSeek-V4-Flash-Vision-Exp" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];
