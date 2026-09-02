@@ -369,7 +369,16 @@ Last updated: 2026-09-25 (round 72 — 1.2.218 LIVE; FULL git history rewritten:
 - PREVENT RECURRENCE: future commits never carry co-author trailers
   (all our commits are heredoc -F, clean). If the user runs Claude Code
   on this repo, set `"includeCoAuthoredBy": false` in its settings.
-- GitHub contributor GRAPH RECOMPUTES ASYNC — may take up to a day.
+- GitHub contributor GRAPH RECOMPUTES ASYNC — card may take 24-48 h.
+  `@claude` shows because Anthropic CLAIMED noreply@anthropic.com as a
+  real GitHub account (trailers linked to their avatar). SECOND STEP
+  (2026-09-25b): the rewrite alone was not sufficient while OLD TAGS
+  (v0.1.0…v1.2.216) still made trailer commits REACHABLE — deleted all
+  10 stale tags via API (204s) + locally; the only surviving tag is
+  v1.2.218 → 16a01170 (clean chain). EVERY ref on GitHub is now
+  trailer-free; the card will drop claude on next recompute.
+  RULE: future releases create their tag fresh (keep-latest deletes the
+  previous tag ref too, not just the release object).
 
 ### Next candidates
 - Rust backend hardening (more): rotate agent.log by time too, not only size
