@@ -63,9 +63,11 @@ cp target/x86_64-pc-windows-msvc/release/vale-agent.exe vale-agent-npm/vale-agen
 cd vale-agent-npm && npm pack          # → vale-agent-1.2.N.tgz
 
 # 3. Publish: stage the tgz into the dist worker assets (ALSO the
-#    versionless latest alias) and deploy them:
+#    versionless latest alias + the version.json discovery manifest)
+#    and deploy them:
 cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/
 cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/vale-agent-latest.tgz
+printf '{"version":"1.2.N","tarball":"vale-agent-latest.tgz","updated":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ../../index/public/vale-agent/version.json
 cd ../../index && CLOUDFLARE_API_TOKEN=$(cat ~/.cloudflare-token) npx wrangler deploy
 
 # 4. On the device (PowerShell), exactly two commands:
@@ -220,7 +222,7 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 67 — dual-review harvest LIVE; 1.2.215, click precision proven)
+Last updated: 2026-09-25 (round 69 — daily log rotation + version.json; reviews in flight)
 
 ### Current release
 - npm **1.2.215 LIVE on d1** — dual-review harvest (this round): ws_relay
@@ -289,7 +291,10 @@ Last updated: 2026-09-25 (round 67 — dual-review harvest LIVE; 1.2.215, click 
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- (none — 1.2.215 live; C stress suite 7/7 green beforehand.)
+- Two READ-ONLY audits running (terminal plugin lifecycle, memory store
+  durability); findings will ship as one release with the already-committed
+  filelog daily rotation (f15ed263) + version.json dist manifest.
+- Device stays on 1.2.215 until that bundle lands.
 
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
