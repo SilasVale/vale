@@ -336,9 +336,18 @@ mod desktop_impl {
                                 sweep.push(i);
                             }
                         }
-                        for i in sweep.into_iter().rev() {
-                            inner.sessions[i].backend.close();
-                            inner.sessions.remove(i);
+                        // review #10: clone the Arcs and drop the inner
+                        // guard BEFORE close() — close signals reader/
+                        // reaper threads (std locks + joins), and the repo
+                        // rule is never block under `inner`.
+                        let reaped: Vec<Arc<dyn TermBackend>> = sweep
+                            .into_iter()
+                            .rev()
+                            .map(|i| inner.sessions.remove(i).backend)
+                            .collect();
+                        drop(inner);
+                        for b in reaped {
+                            b.close();
                         }
                     }
                 }));
@@ -420,8 +429,11 @@ mod desktop_impl {
             // (client-disconnect leak guard; keeps the device usable). Evict
             // the session IDLE LONGEST (last_output oldest), not the OLDEST
             // opened — an old-but-actively-watched session must survive.
-            {
+            // review #10: the block RETURNS the evicted backends so their
+            // close() (thread signals) runs AFTER the inner guard drops.
+            let deferred: Vec<Arc<dyn TermBackend>> = {
                 let mut inner = self.inner.lock().await;
+                let mut deferred: Vec<Arc<dyn TermBackend>> = Vec::new();
                 while inner.sessions.len() >= MAX_SESSIONS {
                     // Evict the session idle-longest; on a last_output tie
                     // fall back to the OLDEST-opened — an old-but-actively-
@@ -432,9 +444,10 @@ mod desktop_impl {
                         .min_by_key(|(_, s)| (s.last_output, s.opened_at))
                         .map(|(i, _)| i);
                     match idle {
+                        // review #10: defer close() out of the lock (see the
+                        // sweeper); the slot is freed by remove() immediately.
                         Some(i) => {
-                            inner.sessions[i].backend.close();
-                            inner.sessions.remove(i);
+                            deferred.push(inner.sessions.remove(i).backend);
                         }
                         None => break,
                     }
@@ -445,6 +458,10 @@ mod desktop_impl {
                 let inject = kind == "pty" && req.inject_marker && backend.marker_injected();
                 let shell = infer_shell(&kind, &req.target);
                 inner.sessions.push(Session { id: id.clone(), kind, label, shell, backend, inject_marker: inject, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now(), busy: false });
+                deferred
+            };
+            for b in deferred {
+                b.close();
             }
             Ok((id, rx))
         }
@@ -494,15 +511,19 @@ mod desktop_impl {
         }
 
         pub async fn term_close(&self, sid: &str) -> Result<String, DeviceError> {
-            let mut inner = self.inner.lock().await;
-            if let Some(pos) = inner.sessions.iter().position(|s| s.id == sid) {
-                let kind = inner.sessions[pos].kind.clone();
-                // Signal backend to close
-                inner.sessions[pos].backend.close();
-                inner.sessions.remove(pos);
-                Ok(kind)
-            } else {
-                Err(DeviceError::SessionNotFound { id: sid.to_string() })
+            // review #10: remove under the lock, close AFTER it drops.
+            let removed = {
+                let mut inner = self.inner.lock().await;
+                inner.sessions.iter().position(|s| s.id == sid)
+                    .map(|pos| inner.sessions.remove(pos))
+            };
+            match removed {
+                Some(session) => {
+                    let kind = session.kind.clone();
+                    session.backend.close();
+                    Ok(kind)
+                }
+                None => Err(DeviceError::SessionNotFound { id: sid.to_string() }),
             }
         }
 
@@ -513,10 +534,14 @@ mod desktop_impl {
         /// Without this, dead sessions lingered in term_list forever and
         /// terminal_write/terminal_resize silently "succeeded" into a void.
         pub async fn term_unregister(&self, sid: &str) {
-            let mut inner = self.inner.lock().await;
-            if let Some(pos) = inner.sessions.iter().position(|s| s.id == sid) {
-                inner.sessions[pos].backend.close();
-                inner.sessions.remove(pos);
+            // review #10: remove under the lock, close AFTER it drops.
+            let removed = {
+                let mut inner = self.inner.lock().await;
+                inner.sessions.iter().position(|s| s.id == sid)
+                    .map(|pos| inner.sessions.remove(pos))
+            };
+            if let Some(session) = removed {
+                session.backend.close();
             }
         }
 
