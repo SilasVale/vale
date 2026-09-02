@@ -342,6 +342,37 @@ impl SessionLogger {
         out
     }
 
+    /// stage-n: retention — delete audit files untouched for longer than
+    /// `max_age_days`. Run at STARTUP only (after `recover_interrupted`):
+    /// the kill-on-close job (round-134) guarantees the previous agent
+    /// generation's shells are all dead, so no live writer can race a
+    /// prune. Returns the number of files removed.
+    pub fn prune_stale(&self, max_age_days: u64) -> usize {
+        use std::time::{Duration, SystemTime};
+        let Ok(now_unix) = SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+            return 0;
+        };
+        let max_age = Duration::from_secs(max_age_days.saturating_mul(86_400));
+        let mut removed = 0;
+        let Ok(entries) = std::fs::read_dir(&self.dir) else { return 0 };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+            let Ok(meta) = entry.metadata() else { continue };
+            let Ok(mtime) = meta.modified() else { continue };
+            let age = match now_unix.checked_sub(
+                mtime.duration_since(std::time::UNIX_EPOCH).unwrap_or(Duration::ZERO)
+            ) {
+                Some(a) => a,
+                None => Duration::ZERO, // clock skew: treat as fresh
+            };
+            if age > max_age && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+        removed
+    }
+
     /// Crash recovery: replay every session file; a file whose last
     /// `command/start` has no paired `command/end` gets a synthetic
     /// `command/end { reason: interrupted }` appended. Returns the affected
@@ -424,6 +455,29 @@ mod tests {
         let d = std::env::temp_dir().join(format!("vale-sesslog-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn prune_stale_keeps_fresh_and_removes_old() {
+        let dir = temp_dir("prune");
+        std::fs::create_dir_all(&dir).unwrap();
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_command_start("fresh", "echo hi");
+        logger.log_command_end("fresh", Some(0), None, None);
+        std::fs::write(dir.join("not-a-session.txt"), b"x").unwrap();
+
+        // Nothing is older than 30 days → nothing pruned, non-jsonl untouched.
+        assert_eq!(logger.prune_stale(30), 0);
+        assert!(dir.join("fresh.jsonl").exists());
+        assert!(dir.join("not-a-session.txt").exists());
+
+        // max_age_days = 0 → cutoff is "now"; any file with a nonzero age
+        // is stale. The just-written audit file qualifies.
+        assert!(logger.prune_stale(0) >= 1);
+        assert!(!dir.join("fresh.jsonl").exists());
+        // Only .jsonl files are ever considered.
+        assert!(dir.join("not-a-session.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

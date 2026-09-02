@@ -317,6 +317,14 @@ impl TerminalPlugin {
         // audit file. The command may STILL be running on the device as an
         // orphan — the log says so instead of pretending it vanished.
         let logger = crate::session_log::SessionLogger::new(log_dir());
+        // stage-n: retention — audit files older than 30 days are dropped at
+        // startup. Safe here because the kill-on-close job reaped every
+        // previous-generation shell; the dir otherwise grows one .jsonl per
+        // session forever.
+        let pruned = logger.prune_stale(30);
+        if pruned > 0 {
+            tracing::info!("[vale-agent] session log retention: pruned {pruned} stale audit file(s)");
+        }
         let interrupted = logger.recover_interrupted();
         if !interrupted.is_empty() {
             tracing::info!(
