@@ -222,11 +222,27 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 74 — 1.2.219 LIVE; audit panel RE-BLINDed->fixed;
-  SPA terminal cursor model rewritten; GitHub refs 100% claude-free)
+Last updated: 2026-09-25 (round 76 — 1.2.220 LIVE; credential audit + gateway
+  v1 proxy audit harvested; terminal panel cursor model DEVICE-VERIFIED)
 
 ### Current release
-- npm **1.2.219 LIVE on d1** — surfaces audit (Rust): /api/sessions read
+- npm **1.2.220 LIVE on d1** — CREDENTIAL audit: paths::harden_file shared
+  ACL helper, fail-CLOSED for the plaintext secret store (verified on d1
+  under SYSTEM: set→get roundtrip exact, file never world-readable, CM
+  actually WORKS on d1 so the file fallback rarely engages), terminal_forget_saved
+  (was dead forget(): removes saved conn + cascades vault delete — unknown
+  id honestly false), secret_delete propagates keyring failures (real
+  variant keyring::Error::NoEntry — caught ONLY by the features-matrix
+  check; the guessed name would not have compiled), conn list strips legacy
+  params.password; MED-3 proxy_secret-in-status investigated + DECLINED
+  (it IS the rotation-proof the gateway re-checks). GATEWAY v1 audit:
+  chat/completions was ENTIRELY rate-limit-free; probe limiter never wrote
+  KV (per-isolate only); model-prefix injected egress URLs (encoded);
+  provider 401 bodies echoed KEY FRAGMENTS (scrubKeys); Anthropic SSE
+  transform never cancelled upstream on disconnect (billing drain).
+  SPA terminal model device-proven: adopt EXACTLY once (base64-hidden
+  marker kills the echo false-positive), font 12->13px, forget+26 tools
+  live on device spec. 1.2.219 — surfaces audit (Rust): /api/sessions read
   current_exe()/sessions while the WRITER logs to registry DataDir → the
   audit panel was permanently BLIND (verified fixed: endpoint now lists
   real sessions); gateway/connect no longer rewrites config.yaml from a
@@ -395,8 +411,16 @@ Last updated: 2026-09-25 (round 74 — 1.2.219 LIVE; audit panel RE-BLINDed->fix
   previous tag ref too, not just the release object).
 
 ### Next candidates
-- Rust backend hardening (more): rotate agent.log by time too, not only size
-- GitHub push retry (SSH-443 reachable, key/API scope missing) + npm publish
+- DPAPI (CryptProtectData) envelope for the file secret store (MED-1 deeper
+  layer — ACL now fail-closed, crypto at rest is the belt to that braces)
+- secrets.rs/connections.rs unit tests + the keyring branch has ZERO test
+  coverage (the NoEntry variant compile-miss proves why) — file_impl CRUD
+  tests run on this Linux box directly
+- gateway F3: CLIENT_KEY doubles as admin token (billing keys + /mcp RCE
+  by every settings.json holder) — DESIGN decision, needs user sign-off
+  (breaks existing clients if tightened)
+- F5 breaker DoS-by-timeout, F8 tool_calls index merge, KV device-row
+  races (D1 migration), npm publish (waits on user npm login)
 
 ### GitHub ops
 - Code: push GitHub too — `git push https://SilasVale@github.com/SilasVale/vale.git main`
