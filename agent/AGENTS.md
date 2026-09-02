@@ -222,11 +222,22 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 70 — durability sweep 1.2.216 LIVE on d1; 21 device-verified)
+Last updated: 2026-09-25 (round 72 — 1.2.218 LIVE; FULL git history rewritten:
+  402 Co-Authored-By Claude trailers stripped, all three endpoints consistent)
 
 ### Current release
-- npm **1.2.216 LIVE on d1** — durability sweep, two more READ-ONLY audits
-  harvested: MEMORY store (torn-line repair fusing gone, lossy-UTF8 load,
+- npm **1.2.218 LIVE on d1** — (217: three more READ-ONLY audits harvested —
+  ELECTRON shell: execSync off the start paths, HTTP liveness watchdog,
+  main-window origin pin, permission/window-open denial, CTRL origin gate,
+  destroy-eviction; NPM CLI: fresh-install crash, WMI ReturnValue parsed,
+  PS -and parse bug (ValePlaywright re-register was NEVER running),
+  ensure-desktop path quoting; TERMINAL lock discipline: close() fully out
+  of inner). 218 = self-caught REGRESSION of 217: /api/status is token-
+  gated so a healthy agent answers the shell's probe with 401 — requiring
+  200 made live agents look dead (wait page over a working device).
+  Liveness = any HTTP response. Device-verified: running:true + src
+  markers. HISTORY: see "history rewrite" section — main@16a01170.
+- 1.2.216 durability sweep, two more READ-ONLY audits harvested: MEMORY store (torn-line repair fusing gone, lossy-UTF8 load,
   eviction tombstones PERSISTED, compaction fsync+rollback, append-under-
   lock TOCTOU, sanitizer word-boundary + title/tags coverage + JSON byte-
   stability, nanos mint_id, limit=0; +6 regression tests) and TERMINAL
@@ -267,11 +278,12 @@ Last updated: 2026-09-25 (round 70 — durability sweep 1.2.216 LIVE on d1; 21 d
   instance). Verified on d1: MSFT_TaskTimeTrigger Rep=PT5M + guarded action.
 - 1.2.207: agent.log tracing + wait-page swap; 1.2.206 electron watchdog.
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
-- Git: origin = Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`).
-  **GitHub direct push WORKS again (verified 2026-09-25)**:
-  `git push https://SilasVale@github.com/SilasVale/vale.git main` lands
-  (the userinfo prefix dodges the insteadOf rewrite; the old GnuTLS drops
-  are gone). Push BOTH remotes every round — GitHub is the public face.
+- Git: **GitHub is the TRUE origin** (public face; the v.saisi.online
+  proxy auto-mirrors GitHub, verified 2026-09-25). Normal pushes:
+  `git push https://x-access-token:<ghp>@github.com/SilasVale/vale.git
+  main:main` (HTTP/1.1, reliable); the proxy push also works for small
+  increments (its receive-body cap is ~<725MB → 413 on full repushes).
+  GitHub releases via the API as before.
 
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
@@ -338,6 +350,26 @@ Last updated: 2026-09-25 (round 70 — durability sweep 1.2.216 LIVE on d1; 21 d
 - SHIPPED FIX (1.2.206): electron now auto-runs `schtasks /run ValeAgent`
   after ≥5 consecutive failed port probes (~60 s), ≥5 min apart — remote
   operators are no longer stranded when the agent (and its tunnel) die.
+
+### History rewrite (2026-09-25 — GitHub contributor graph hygiene)
+- User request: remove "Claude" from GitHub developers. Root cause: 402
+  commits carried `Co-Authored-By: Claude <noreply@anthropic.com>` (from
+  early Claude Code sessions); GitHub counts co-authors in the graph.
+- Fix: `git filter-branch --msg-filter` over a mirror → 883 new commits,
+  **trees byte-identical** (verified `git diff` = 0 bytes; 402 trailers
+  gone), force-pushed.
+- PUSH PATH MEASURED: the proxy (v.saisi.online/api/git) rejects ~725MB
+  request bodies (HTTP 413) — full-history pushes must go **direct to
+  GitHub with the token URL** (`https://x-access-token:ghp_...@github
+  .com/SilasVale/vale.git`, HTTP/1.1 + http.postBuffer 2g; first direct
+  attempt SUCCEEDED — the old "GitHub push blocked by TLS" belief is
+  DISPROVED for this path). The proxy mirrors GitHub automatically
+  (origin caught up within ~15 min) — GitHub is now the TRUE origin.
+- Old refs kept locally (refs/original backup + rewritten-main branch).
+- PREVENT RECURRENCE: future commits never carry co-author trailers
+  (all our commits are heredoc -F, clean). If the user runs Claude Code
+  on this repo, set `"includeCoAuthoredBy": false` in its settings.
+- GitHub contributor GRAPH RECOMPUTES ASYNC — may take up to a day.
 
 ### Next candidates
 - Rust backend hardening (more): rotate agent.log by time too, not only size
