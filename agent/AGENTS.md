@@ -205,10 +205,10 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-02 (round 47 — auto-launch fixed)
+Last updated: 2026-09-25 (round 52 — vitals + build hygiene)
 
 ### Current release
-- npm **1.2.195** (agent exe internal 1.0.145), deployed on d1
+- npm **1.2.200** (agent exe internal 1.0.145), deployed on d1
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
 - Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
   GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
@@ -231,14 +231,22 @@ Last updated: 2026-09-02 (round 47 — auto-launch fixed)
 - terminal_history exit codes + limit; memory multi-word AND search +
   compaction; ConPTY natural-exit fix (pollable reader + reaper drop);
   bridge supervisor reclaims stale 9224; vale CLI + bridge converted to TS
+- Form controls themed (fix glaring white inputs in dark mode, 1.2.196);
+  SPA + bridge + electron fully English UI incl. welcome page (1.2.197-199)
+- DEVICE VITALS (1.2.200): /api/status cpu_pct/mem_pct/mem_total_mb via
+  kernel32 GetSystemTimes + GlobalMemoryStatusEx (new src/metrics.rs);
+  SPA status strip polls 15 s and renders CPU/MEM
+- Build hygiene: LNK4099 (xwin CRT PDB noise) silenced via /ignore:4099 —
+  Windows release build now warning-free (7c697bea)
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
 - Browser nav buttons (back/fwd/reload) — commit + release as 1.2.181
 
 ### Next candidates
-- Browser back/forward state (disabled when history empty)
-- electron tray/menu polish; Rust backend hardening; device monitoring
+- Tray shows vitals too (already parsed uptime/sessions)
+- Memory page: create entry from UI (memory_save exists, UI browse-only)
+- Rust backend hardening; session idle-reaper; log rotation
 
 ### GitHub ops (network is broken to github.com — TLS drops)
 - Code: DO NOT push GitHub directly; Gitea mirror is the code home.
