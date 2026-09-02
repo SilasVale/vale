@@ -164,45 +164,84 @@ async function handleSelfRegister(request: Request, env: any): Promise<Response>
   if (!/^[0-9a-f]{64}$/i.test(device.token)) {
     return jsonError(403, "Invalid device token", "authorization_error");
   }
+  {
+    const hostErr = hostAllowError(device.hostname, env);
+    if (hostErr) return jsonError(400, hostErr, "invalid_request");
+  }
+  // SECURITY (round: gateway CRITICAL): the old proof fetched
+  // deviceFetch(env, device, "/api/status") using the CALLER-SUPPLIED
+  // hostname, so an attacker POSTing {name:"d1", hostname:"evil.com",
+  // token:<random>} had THEIR server answer with any 32-char proxy_secret,
+  // "proving" ownership and overwriting the real d1's record (hostname +
+  // token). Every console/proxy/MCP call then redirected to the attacker,
+  // whose responses the worker re-served AT THE CONSOLE ORIGIN. For an
+  // existing record, identity can only be proven against the STORED
+  // hostname, and only by returning the STORED proxy_secret.
   const existing = await getDevice(env, device.name);
-  // Anti-hijack: a DIFFERENT token for the same name is normally refused.
-  // BUT the device itself can prove identity by reaching its own /api/status
-  // through the tunnel (returns proxy_secret) — a reinstall/new config that
-  // rotated the token must be allowed to update its record, otherwise the
-  // device stays "offline" forever after a reinstall (round-2026-08-29).
-  let tokenChanged = existing && existing.token !== device.token;
-  try {
-    const status = await deviceFetch(env, device, "/api/status");
-    if (status && status.resp) {
-      const j: any = await status.resp.json().catch(() => null);
+  if (existing) {
+    // Refresh-only on the public endpoint: hostname is immutable here
+    // (moving a device's tunnel is an admin/console operation).
+    if (device.hostname.toLowerCase() !== existing.hostname.toLowerCase()) {
+      return jsonError(
+        409,
+        `Device '${device.name}' hostname is fixed — change it from the console (admin)`,
+        "conflict",
+      );
+    }
+    const sameToken = existing.token === device.token;
+    if (!sameToken) {
+      // Token rotation needs proof from the STORED tunnel that the caller
+      // is the same physical device: its /api/status must answer with the
+      // proxy_secret already on record.
+      let proved = false;
+      if (existing.proxySecret) {
+        try {
+          const status = await deviceFetch(env, existing, "/api/status");
+          const j: any = status?.resp ? await status.resp.json().catch(() => null) : null;
+          if (j && typeof j.proxy_secret === "string" && j.proxy_secret === existing.proxySecret) {
+            proved = true;
+          }
+        } catch {
+          /* best-effort — a dead/changed tunnel simply cannot rotate here */
+        }
+      }
+      if (!proved) {
+        return jsonError(
+          409,
+          `Device '${device.name}' already registered with a different token — use the console (admin)`,
+          "conflict",
+        );
+      }
+      device.proxySecret = existing.proxySecret;
+    } else {
+      if (!device.proxySecret && existing.proxySecret) device.proxySecret = existing.proxySecret;
+    }
+    // Idempotent refresh: keep the original registration date + hostname.
+    await upsertDevice(env, {
+      ...device,
+      hostname: existing.hostname,
+      registeredAt: existing.registeredAt ?? Date.now(),
+    });
+    return jsonOk({ ok: true, device: { name: device.name, hostname: existing.hostname } });
+  }
+  // New device: still constrained to the agent-host suffix (SSRF) and to
+  // proving it serves its claimed hostname before it can be proxied.
+  const hostErr = hostAllowError(device.hostname, env);
+  if (hostErr) return jsonError(400, hostErr, "invalid_request");
+  if (!device.proxySecret) {
+    try {
+      const status = await deviceFetch(env, device, "/api/status");
+      const j: any = status?.resp ? await status.resp.json().catch(() => null) : null;
       if (j && typeof j.proxy_secret === "string" && j.proxy_secret.length >= 32) {
         device.proxySecret = j.proxy_secret;
-        // Device proved it owns the hostname (its own /api/status answered
-        // with a fresh proxy_secret through the tunnel) — token update OK.
-        tokenChanged = false;
       }
+    } catch {
+      /* best-effort */
     }
-  } catch {
-    /* best-effort */
   }
-  if (tokenChanged) {
-    return jsonError(
-      409,
-      `Device '${device.name}' already registered with a different token — use the console (admin)`,
-      "conflict",
-    );
-  }
-  if (existing && !device.proxySecret && existing.proxySecret) {
-    device.proxySecret = existing.proxySecret;
-  }
-  if (existing) {
-    // Idempotent refresh: keep the original registration date.
-    await upsertDevice(env, { ...device, registeredAt: existing.registeredAt ?? Date.now() });
-  } else {
-    const inserted = await insertDevice(env, { ...device, registeredAt: Date.now() });
-    if (!inserted) {
-      return jsonError(409, `Device '${device.name}' already registered`, "conflict");
-    }
+  const inserted = await insertDevice(env, { ...device, registeredAt: Date.now() });
+  if (!inserted) {
+    return jsonError(409, `Device '${device.name}' already registered`, "conflict");
   }
   return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
 }
@@ -719,6 +758,20 @@ function decodeDeviceName(seg: string): string | null {
   } catch {
     return null;
   }
+}
+
+/// Devices are always cloudflared tunnels on the agent host domain; an
+/// unvalidated hostname turns the worker into an SSRF proxy (it injects
+/// Authorization + x-vale-auth into https://<hostname>…) AND re-serves that
+/// host's responses at the console origin. Enforce a suffix allowlist,
+/// overridable per-deployment via DEVICE_HOST_SUFFIX.
+function hostAllowError(hostname: string, env: any): string | null {
+  const suffix = (env?.DEVICE_HOST_SUFFIX || ".agent.saisi.online").toLowerCase();
+  const h = hostname.toLowerCase();
+  if (!h.endsWith(suffix) || h.length <= suffix.length) {
+    return `hostname must be under ${suffix}`;
+  }
+  return null;
 }
 
 function validateDevice(body: any): Device {
