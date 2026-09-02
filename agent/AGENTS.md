@@ -481,14 +481,21 @@ Last updated: 2026-09-25 (round 84 — 1.2.227 LIVE; extension audit + npm CLI
   previous tag ref too, not just the release object).
 
 ### Next candidates
-- connections.rs CRUD tests (same harness pattern as file_store_tests)
-- gateway F5 breaker DoS-by-timeout, F8 tool_calls index merge, KV
-  device-row races (D1 migration)
+- gateway F5 breaker DoS-by-timeout (trip counted per REQUEST, slow-fail
+  clients can pin the breaker open) — inspect reliability.ts usage sites
+- M1 pair-code atomic claim across isolates + KV device-row races —
+  BOTH need a CAS primitive → the D1 migration candidate
 - gateway F3: CLIENT_KEY doubles as admin token (billing keys + /mcp RCE
   by every settings.json holder) — DESIGN decision, needs user sign-off
   (breaks existing clients if tightened)
-- F5 breaker DoS-by-timeout, F8 tool_calls index merge, KV device-row
-  races (D1 migration), npm publish (waits on user npm login)
+- npm publish (waits on user `npm login`; registry name confirmed free)
+- CI now owns the release build (new release.yml: tag → xwin exe → npm
+  pack → gh release create). Next manual release: SKIP the curl asset
+  upload — just push the tag after the version-bump commit and let CI
+  attach it; keep-latest deletion stays manual (user-approval-adjacent).
+  DONE since earlier rounds (stale entries removed): connections CRUD
+  tests (225), F8 parallel tool_calls index merge (round-116 — fixtures
+  re-verified this round).
 
 ### GitHub ops
 - Code: push GitHub too — `git push https://SilasVale@github.com/SilasVale/vale.git main`
