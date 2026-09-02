@@ -1,5 +1,7 @@
 # Vale
 
+[![CI](https://github.com/SilasVale/vale/actions/workflows/ci.yml/badge.svg)](https://github.com/SilasVale/vale/actions/workflows/ci.yml)
+
 Vale turns a Windows device into an **AI-controllable workspace** — terminal, SSH, serial and browser sessions exposed to AI through MCP, plus an Electron desktop shell and a device-local memory. One repository for the front door, the device agent and the download distribution.
 
 ```
