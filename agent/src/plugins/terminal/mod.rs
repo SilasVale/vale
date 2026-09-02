@@ -373,7 +373,7 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         // 25: 17 terminal_* + secret_* ×2 (canonical + legacy) + sftp ×2
         // (canonical + legacy) + terminal_env + terminal_jobs + saved/connect.
-        assert_eq!(tools.len(), 25);
+        assert_eq!(tools.len(), 26);
         for expected in [
             "terminal_open", "terminal_write", "terminal_close", "terminal_list",
             "terminal_execute", "terminal_list_ports", "terminal_resize",

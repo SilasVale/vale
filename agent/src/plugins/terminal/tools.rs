@@ -119,6 +119,7 @@ pub(super) fn build(
         tool_diag_read(diag),
         tool_saved_connections(),
         tool_connect_saved(terminal_mgr, bus, output_buf, logger, buffer_limit),
+        tool_forget_saved(),
         tool_terminal_env(),
     ];
     // Secrets + SFTP: canonical names carry the `terminal_` prefix (stage-l
@@ -2234,6 +2235,42 @@ fn tool_saved_connections() -> ToolDef {
             #[cfg(not(feature = "terminal"))]
             let conns: Vec<serde_json::Value> = vec![];
             Ok(json!({ "connections": conns }))
+        },
+    )
+}
+
+/// Credential audit round MED-4: forget() existed but was UNREACHABLE —
+/// saved connections accumulated forever and their keychain passwords
+/// orphaned. This tool removes the saved entry AND cascades the secret for
+/// ssh targets (the password lives in the vault under the same target).
+fn tool_forget_saved() -> ToolDef {
+    ToolDef::new(
+        "terminal_forget_saved",
+        "Remove a saved terminal connection by id (from terminal_saved_connections) and delete its stored password (ssh targets). The live session, if any, is untouched.",
+        json!({"type":"object","properties":{"id":{"type":"string","description":"The id (kind:target) from terminal_saved_connections."}},"required":["id"]}),
+        move |params: Value| async move {
+            let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if id.is_empty() {
+                return Ok(json!({ "ok": false, "error": "id is required" }));
+            }
+            #[cfg(feature = "terminal")]
+            {
+                let removed = crate::tools::terminal::conn_forget(&id)?;
+                let mut secret_removed = false;
+                if removed {
+                    if let Some(target) = id.strip_prefix("ssh:") {
+                        // best-effort cascade: forgetting must not fail when
+                        // no password was ever stored for this target.
+                        secret_removed = crate::tools::terminal::secret_delete(target).is_ok();
+                    }
+                }
+                Ok(json!({ "ok": removed, "id": id, "secret_removed": secret_removed }))
+            }
+            #[cfg(not(feature = "terminal"))]
+            {
+                let _ = id;
+                Ok(json!({ "ok": false, "error": "terminal support not compiled in" }))
+            }
         },
     )
 }

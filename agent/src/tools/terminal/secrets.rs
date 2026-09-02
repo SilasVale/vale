@@ -40,25 +40,18 @@ pub(crate) mod file_impl {
         let tmp = p.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))
             .map_err(|e| DeviceError::Keychain { reason: format!("write {tmp:?}: {e}") })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        // Credential audit round MED-2: hardening is FAIL-CLOSED for the
+        // password store — if the ACL cannot be restricted, the plaintext
+        // file would sit under inherited Users:RX ACLs (every local account
+        // could read SSH passwords), so refuse the write instead.
+        if let Err(e) = crate::paths::harden_file(&tmp) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(DeviceError::Keychain {
+                reason: format!("refusing to persist secrets unprotected ({e})"),
+            });
         }
-        #[cfg(windows)]
-        {
-            // round-122: the file store is the DE-FACTO production store
-            // (Session 0 Credential Manager is unreliable per the module doc)
-            // and holds plaintext SSH passwords — the unix-only 0o600 left it
-            // with inherited ACLs (often Users:Read) on Windows. Restrict to
-            // the current user via icacls (best-effort like the unix chmod);
-            // the grant uses the current user's SID resolved from USERNAME.
-            if let Ok(user) = std::env::var("USERNAME") {
-                let _ = std::process::Command::new("icacls")
-                    .args([tmp.to_string_lossy().as_ref(), "/inheritance:r", "/grant:r", &format!("{user}:(R,W)")])
-                    .output();
-            }
-        }
+        #[allow(unused_must_use)]
+        { /* unix permissions handled inside harden_file */ }
         std::fs::rename(&tmp, &p)
             .map_err(|e| DeviceError::Keychain { reason: format!("rename to {p:?}: {e}") })
     }
@@ -157,11 +150,32 @@ mod secrets_impl {
     pub fn delete(target: &str) -> Result<(), DeviceError> {
         match entry(target) {
             Ok(e) => {
-                let _ = e.delete_password();
+                // Credential audit round LOW-5: swallowing the keyring delete
+                // error let secret_delete report success while the keychain
+                // entry (preferred by get!) still authenticated. NoEntrySaved
+                // is fine (file fallback may still hold it); anything else
+                // propagates.
+                let mut failed: Option<String> = None;
+                match e.delete_password() {
+                    Ok(()) => {}
+                    Err(keyring::Error::NoEntry) => {}
+                    Err(err) => failed = Some(format!("normalized: {err}")),
+                }
                 // round-124: also clear the legacy raw-key spelling so a
                 // pre-R122 keychain entry does not survive "deleted".
-                let _ = Entry::new(SERVICE, &format!("ssh:{target}")).and_then(|l| l.delete_password());
-                file_impl::delete(target)
+                if let Ok(l) = Entry::new(SERVICE, &format!("ssh:{target}")) {
+                    match l.delete_password() {
+                        Ok(()) | Err(keyring::Error::NoEntry) => {}
+                        Err(err) => failed = Some(format!("legacy: {err}")),
+                    }
+                }
+                file_impl::delete(target)?;
+                match failed {
+                    Some(f) => Err(DeviceError::Keychain {
+                        reason: format!("keychain entry survives delete ({f}) — password NOT fully removed"),
+                    }),
+                    None => Ok(()),
+                }
             }
             Err(_) => file_impl::delete(target),
         }

@@ -35,10 +35,10 @@ fn write_all(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), Dev
     let tmp = p.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))
         .map_err(|e| DeviceError::Internal { message: format!("write {tmp:?}: {e}") })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    // Credential audit round MED-2: shared hardener (metadata-only store, so
+    // best-effort — a failure cannot leak more than host/port inventory).
+    if crate::paths::harden_file(&tmp).is_err() {
+        tracing::debug!("[vale-agent] connections: ACL hardening unavailable");
     }
     std::fs::rename(&tmp, &p)
         .map_err(|e| DeviceError::Internal { message: format!("rename to {p:?}: {e}") })
@@ -83,6 +83,12 @@ pub fn list() -> Vec<serde_json::Value> {
             let mut e = val;
             if let Some(obj) = e.as_object_mut() {
                 obj.insert("id".into(), serde_json::Value::String(k));
+                // Credential audit round LOW-6: pre-R92 entries persisted
+                // params VERBATIM (password included). Scrub on read too, so
+                // legacy data can never ride out via list().
+                if let Some(p) = obj.get_mut("params").and_then(|p| p.as_object_mut()) {
+                    p.remove("password");
+                }
             }
             e
         })

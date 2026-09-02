@@ -79,6 +79,41 @@ pub fn data_dir() -> PathBuf {
     install_dir()
 }
 
+/// Restrict a file to the running account ONLY (temp files pass this BEFORE
+/// the atomic rename, so a secret never lives a moment under inherited
+/// ACLs). Windows: icacls break-inheritance + grant current user RW. Unix:
+/// 0o600. Credential audit round MED-2: the store writers must call this —
+/// C:\ProgramData\Vale otherwise inherits Users:RX, exposing plaintext.
+pub fn harden_file(path: &std::path::Path) -> Result<(), std::io::Error> {
+    #[cfg(windows)]
+    {
+        let user = std::env::var("USERNAME")
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "USERNAME unavailable"))?;
+        let out = std::process::Command::new("icacls")
+            .args([
+                path.to_string_lossy().as_ref(),
+                "/inheritance:r",
+                "/grant:r",
+                &format!("{user}:(R,W)"),
+            ])
+            .output()?;
+        if !out.status.success() {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, "icacls rejected"));
+        }
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
 /// The session audit-log directory (single source of truth — the writer in
 /// plugins/terminal and the /api/sessions readers in web.rs MUST agree; on
 /// registry-first installs DataDir != InstallDir, and readers using
