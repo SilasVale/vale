@@ -151,56 +151,86 @@ interface Msg {
   // External tab events: pages opened/closed by the site itself (window.open,
   // target=_blank, JS close) and any in-page navigation change the tab list —
   // push instead of waiting for the panel to ask.
+  // stage-n (bridge review): an EXTERNAL close (page JS window.close()) of the
+  // SELECTED page used to leave selPage dangling — screencast died silently
+  // and the panel froze until unrelated input healed it. Repair immediately.
+  const onPageClosed = (p: typeof page): void => {
+    if (p === selPage || p === page) { pagesList(); void attachSel(); }
+    scheduleTabsPush();
+  };
   ctx!.on("page", (p) => {
     scheduleTabsPush();
     p.on("framenavigated", () => scheduleTabsPush());
-    p.on("close", () => scheduleTabsPush());
+    p.on("close", () => onPageClosed(p));
   });
   for (const p of ctx!.pages()) {
     p.on("framenavigated", () => scheduleTabsPush());
-    p.on("close", () => scheduleTabsPush());
+    p.on("close", () => onPageClosed(p));
   }
   // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
   // after closes and switches the CDP pipe so screencast follows selection.
   let selPage: typeof page | null = page;
   // stage-n: forward-navigation availability — the browser page context
-  // exposes no direct can-go-forward, so the bridge tracks it: nav/reload
-  // clears it, back sets it, fwd consumes it.
-  let fwdAvailable = false;
+  // exposes no direct can-go-forward, so the bridge tracks it PER PAGE (the
+  // old single flag leaked one tab's state onto another after tabsel):
+  // nav/reload clears it, a successful back sets it, a successful fwd keeps
+  // it (more entries likely), a failed fwd clears it.
+  const fwdFlags = new WeakMap<object, boolean>();
   // stage-n: screencast output resolution — follows the PANEL's viewport so
   // the stream is never downscaled (blurry text). Updated via the "resize"
   // command from the SPA (ResizeObserver); capped at the browser's native
   // viewport so we never upscale garbage.
   let streamW = 1280;
   let streamH = 800;
+  let lastResizeApplied = 0;
   function pagesList(): Array<typeof page> {
     const ps = ctx!.pages();
     if (!ps.includes(selPage as typeof page)) selPage = ps[0] || null;
     return ps;
   }
-  async function attachSel(): Promise<void> {
-    try { await cdp.detach(); } catch {}
-    if (!selPage) return;
-    cdp = await ctx!.newCDPSession(selPage);
-    bindScreencast(cdp);
+  // stage-n (bridge review): attachSel runs on a SERIAL chain. Concurrent
+  // tab ops (rapid tabsel / tabsel+tabnew) used to race: both detached the
+  // same cdp, both opened a new session, the first leaked a LIVE screencast
+  // → viewers saw frames alternating between two tabs and bandwidth doubled.
+  let attachChain: Promise<void> = Promise.resolve();
+  function attachSel(): Promise<void> {
+    const run = async (): Promise<void> => {
+      try { await cdp.detach(); } catch {}
+      if (!selPage) return;
+      const target = selPage;
+      const c = await ctx!.newCDPSession(target);
+      // Selection may have moved on while the session was opening — drop the
+      // late session (the queued attach for the newer selPage owns cdp).
+      if (selPage !== target || target.isClosed()) { try { await c.detach(); } catch {} return; }
+      cdp = c;
+      bindScreencast(c);
     // maxFrameRate exists in newer playwright-core (1.63+); 1.62's types
     // lack it — cast the call to keep the runtime value (device bundle has it).
     // stage-n: quality 60 + resolution follows the panel viewport (streamW/
     // streamH, updated via the resize command) so the stream is never
     // downscaled — the sharpest possible image for the current window.
-    await (cdp.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 }).catch(() => {});
+      await (c.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 }).catch(() => {});
+    };
+    attachChain = attachChain.then(run, run);
+    return attachChain;
   }
 
   // round-163: push the tab list to viewers when it CHANGES (open/close/
   // select/navigate) — the panel dropped its 1.5s tabs poll for this.
   // stage-n: also report navigation history state (canBack/canFwd) so the
   // panel can disable the back/forward buttons like a real browser.
+  let tabsGen = 0;
   async function pushTabs(): Promise<void> {
+    const gen = ++tabsGen;
     try {
       if (!ctx) return;
+      // stage-n (bridge review): ONE snapshot — the old code read ctx.pages()
+      // twice (once for tabs, once for sel); a close during the title awaits
+      // shifted indices and the panel highlighted the wrong tab.
+      const ps = ctx.pages();
       const target = selPage || page;
       let canBack = false;
-      let canFwd = false;
+      let canFwd = target ? fwdFlags.get(target) === true : false;
       if (target && !target.isClosed()) {
         try {
           const h = await target.evaluate(() => window.history.length);
@@ -216,18 +246,21 @@ interface Msg {
         // the panel's tab strip reads like a real browser instead of raw
         // URLs. Titles come from a non-blocking evaluate — a slow page just
         // yields its URL.
-        tabs: await Promise.all(ctx.pages().map(async (p, i) => {
+        tabs: await Promise.all(ps.map(async (p, i) => {
           let title = "";
           if (!p.isClosed()) {
             try { title = await p.title(); } catch { /* closed mid-check */ }
           }
           return { i, url: p.url(), title: title || p.url().replace(/^https?:\/\//, "") || "blank" };
         })),
-        sel: ctx.pages().indexOf(selPage as typeof page),
+        sel: ps.indexOf(selPage as typeof page),
         canBack,
-        canFwd: fwdAvailable,
+        canFwd,
       })));
-      for (const s of sockets) { try { s.write(f); } catch {} }
+      // A newer push started while we awaited titles → ours is stale, drop it
+      // (out-of-order pushes used to resurrect old tab lists).
+      if (gen !== tabsGen) return;
+      broadcast(f);
     } catch (_) {}
   }
   let tabsDebounce: NodeJS.Timeout | null = null;
@@ -260,6 +293,9 @@ interface Msg {
   // --- Shared input dispatcher (WS + HTTP) ---
   async function handleInput(m: Msg): Promise<Record<string, unknown> | undefined> {
     try {
+      // stage-n (bridge review): sync BEFORE the branches — diag/tabs used to
+      // run against a stale `page` (the old tab after a close/switch).
+      page = selPage || page;
       if (m.t === "diag") {
         const info = await page.evaluate(() => {
           const a = document.querySelector("a");
@@ -281,8 +317,13 @@ interface Msg {
       if (m.t === "tabclose") {
         pagesList();
         const ps = ctx!.pages();
-        const victim = ps[m.i ?? -1];
-        if (victim && ps.length > 1) { if (victim === selPage) selPage = ps[ps.length - 1] === victim ? ps[0] : ps[ps.length - 1]; await victim.close(); await attachSel(); scheduleTabsPush(); }
+        const idx = m.i ?? -1;
+        const victim = idx >= 0 && idx < ps.length ? ps[idx] : undefined;
+        if (!victim) return { ok: false, reason: "bad tab index" };
+        if (ps.length <= 1) return { ok: false, reason: "cannot close the last tab" };
+        if (victim === selPage) selPage = ps[ps.length - 1] === victim ? ps[0] : ps[ps.length - 1];
+        await victim.close().catch(() => {});
+        await attachSel(); scheduleTabsPush();
         return { ok: true };
       }
       if (m.t === "tabsel") {
@@ -297,25 +338,40 @@ interface Msg {
       if (m.t === "resize" && typeof m.w === "number" && typeof m.h === "number") {
         const w = Math.min(Math.max(Math.round(m.w), 320), 2560);
         const h = Math.min(Math.max(Math.round(m.h), 200), 1600);
+        // stage-n (bridge review): jitter + rate guard — two viewers of
+        // different pane sizes used to thrash the shared viewport (every
+        // ResizeObserver tick restarted everyone's screencast). Ignore deltas
+        // < 40px (scrollbar/rounding noise) and require >=600ms between
+        // applications (first significant sender wins until it settles).
+        if (Math.abs(w - streamW) < 40 && Math.abs(h - streamH) < 40) return { ok: true };
+        if (Date.now() - lastResizeApplied < 600) return { ok: true };
+        lastResizeApplied = Date.now();
         if (w !== streamW || h !== streamH) {
+          const c = cdp;
           streamW = w; streamH = h;
           // The PAGE viewport must match too — screencast can only output
           // what the page renders; a 1280x800 page upscaled to a 1920 panel
           // is blurry. Resize the page (and the shared viewport semantics
           // stay: every viewer sees the same stream).
           try { await page.setViewportSize({ width: w, height: h }); } catch { /* page closed */ }
-          try {
-            await cdp.send("Page.stopScreencast");
-            await (cdp.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
-          } catch { /* screencast mid-restart — next frame continues */ }
+          // A concurrent tabsel replaced the CDP session during the await —
+          // attachSel already restarted the screencast with the new streamW/H.
+          if (cdp === c) {
+            try {
+              await c.send("Page.stopScreencast");
+              await (c.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
+            } catch { /* screencast mid-restart — next frame continues */ }
+          }
         }
         return { ok: true };
       }
-      if (m.t === "nav") { fwdAvailable = false; await page.goto(m.url as string, { waitUntil: "domcontentloaded" }); scheduleTabsPush(); }
+      if (m.t === "nav") { fwdFlags.set(page, false); await page.goto(m.url as string, { waitUntil: "domcontentloaded" }); scheduleTabsPush(); }
       // stage-n: real-browser navigation controls — back / forward / reload.
-      else if (m.t === "back") { fwdAvailable = true; await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
-      else if (m.t === "fwd") { fwdAvailable = false; await page.goForward({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
-      else if (m.t === "reload") { fwdAvailable = false; await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
+      // canFwd reflects the ACTUAL result (the old code set fwdAvailable
+      // before goBack could fail → forward button enabled at the first entry).
+      else if (m.t === "back") { const r = await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => null); fwdFlags.set(page, r !== null); scheduleTabsPush(); }
+      else if (m.t === "fwd") { const r = await page.goForward({ waitUntil: "domcontentloaded" }).catch(() => null); fwdFlags.set(page, r !== null); scheduleTabsPush(); }
+      else if (m.t === "reload") { fwdFlags.set(page, false); await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {}); scheduleTabsPush(); }
       else if (m.t === "m") {
         const type = m.k === "down" ? "mousePressed" : m.k === "up" ? "mouseReleased" : "mouseMoved";
         const btn = (m.k === "down" || m.k === "up") ? "left" : "none";
@@ -330,12 +386,20 @@ interface Msg {
         if (m.down && m.text) p.text = m.text;
         await (cdp.send as (m: string, p?: unknown) => Promise<unknown>)("Input.dispatchKeyEvent", p);
       }
-      // round-146: the {t:"resize"} branch is GONE. The bridge viewport is
-      // FIXED at 1280x800 — the panel renders that feed with object-fit:cover
-      // per pane, so no client (old or new) may resize the shared viewport.
-      // round-144's resize sync had several live panels fighting over ONE
-      // global viewport; the last sender won and everyone else letterboxed.
-    } catch (e) { /* transient races fine */ }
+      // NOTE (round-146 comment superseded): the resize branch is BACK with
+      // guards (jitter <40px, 600ms rate limit, stale-cdp skip). The old
+      // removal fought multi-viewer thrash by banning resize outright; the
+      // guards keep the sharpest-image win without that regression.
+    } catch (e) {
+      // stage-n (bridge review): HIGH-frequency input events may swallow
+      // transient races; COMMAND failures must surface (a failed nav used to
+      // return a bare success receipt → the panel waited forever on a page
+      // that never navigated).
+      const msg = String((e as Error)?.message || e).slice(0, 200);
+      if (m.t === "m" || m.t === "k" || m.t === "wheel") return undefined;
+      lastErr = `input:${m.t}:${msg}`;
+      return { error: msg };
+    }
     return undefined;
   }
 
@@ -383,7 +447,13 @@ interface Msg {
         req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
         req.on("end", () => { try { handleInput(JSON.parse(body)); } catch {} res.writeHead(204); res.end(); });
       } else {
-        handleInput(JSON.parse(u.searchParams.get("d") || "{}"))
+        // stage-n (bridge review): the sync JSON.parse sat OUTSIDE any handler
+        // — one malformed ?d= crashed the whole bridge (uncaughtException →
+        // 9224 dark until reboot).
+        let m: Msg;
+        try { m = JSON.parse(u.searchParams.get("d") || "{}"); }
+        catch { res.writeHead(400); res.end(); return; }
+        handleInput(m)
           .then((out) => { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(out || {})); })
           .catch(() => { res.writeHead(204); res.end(); });
       }
@@ -402,6 +472,9 @@ interface Msg {
     let rem: Buffer = Buffer.alloc(0);
     sock.on("data", (d: Buffer) => {
       rem = Buffer.concat([rem, d]);
+      // stage-n (bridge review): client frames are tiny JSON commands — a
+      // huge declared length used to grow the remainder buffer forever.
+      if (rem.length > 2_000_000) { sock.destroy(); return; }
       rem = decodeClientFrames(rem, async (msg) => {
         let m: Msg; try { m = JSON.parse(msg); } catch { return; }
         // round-138: single dispatch — the old code manually re-injected
@@ -422,8 +495,8 @@ interface Msg {
         }
       });
     });
-    sock.on("close", () => sockets.delete(sock));
-    sock.on("error", () => sockets.delete(sock));
+    sock.on("close", () => { sockets.delete(sock); slowSockets.delete(sock); });
+    sock.on("error", () => { sockets.delete(sock); slowSockets.delete(sock); });
   });
 
   // --- Screencast: JPEG frames -> all sockets ---
@@ -431,11 +504,27 @@ interface Msg {
   let lastAck = 0;
   let capturing = false;
 
+  // stage-n (bridge review): frame writes were fire-and-forget — a stalled
+  // viewer (hung tunnel) grew the socket's internal buffer forever at ≤15
+  // JPEGs/s. Frames are latest-wins, so dropping for a slow socket until it
+  // drains is free correctness (and keeps memory bounded).
+  const slowSockets = new Set<Duplex>();
+  function broadcast(f: Buffer): void {
+    for (const s of sockets) {
+      if (slowSockets.has(s)) continue;
+      try {
+        if (!s.write(f)) {
+          slowSockets.add(s);
+          s.once("drain", () => slowSockets.delete(s));
+        }
+      } catch { /* close/error handlers drop the socket */ }
+    }
+  }
+
   function pushFrame(jpeg: Buffer): void {
     lastJpeg = jpeg;
     lastAck = Date.now();
-    const frame = encodeFrame(2, jpeg);
-    for (const s of sockets) { try { s.write(frame); } catch {} }
+    broadcast(encodeFrame(2, jpeg));
   }
 
   function bindScreencast(c: import("playwright-core").CDPSession): void {
