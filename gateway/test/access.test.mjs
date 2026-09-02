@@ -27,13 +27,15 @@ const keys = await makeKeys();
 
 async function signJwt({ aud = AUD, email = "someone@example.com", expSec = Math.floor(Date.now() / 1000) + 600, kid = "test-kid" } = {}) {
   const h = b64url(JSON.stringify({ alg: "RS256", typ: "JWT", kid }));
-  const p = b64url(JSON.stringify({ aud, email, exp: expSec }));
+  const p = b64url(JSON.stringify({ iss: "https://test.cloudflareaccess.com", aud, email, exp: expSec }));
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keys.priv, new TextEncoder().encode(`${h}.${p}`));
   return `${h}.${p}.${b64url(sig)}`;
 }
 
 /** Sign a JWT with an arbitrary extra-claim set (e.g. aud as array). */
 async function signJwtRaw(payload) {
+  // verifyAccessJwt now pins iss to the team domain — default the claim.
+  payload = { iss: "https://test.cloudflareaccess.com", ...payload };
   const h = b64url(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-kid" }));
   const p = b64url(JSON.stringify(payload));
   const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keys.priv, new TextEncoder().encode(`${h}.${p}`));

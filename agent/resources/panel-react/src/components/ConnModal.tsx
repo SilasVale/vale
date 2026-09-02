@@ -89,8 +89,10 @@ export function ConnModal({ kind, onClose, onConnect }: {
 
   const mkField = (label: string, value: string, set: (v: string) => void, placeholder: string, type = "text") => (
     <>
+      {/* panel audit #3: label association via aria-label (ids would collide
+          across the several mkField calls in one modal). */}
       <label>{label}</label>
-      <input value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} type={type} autoComplete="off" />
+      <input aria-label={label} value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} type={type} autoComplete="off" />
     </>
   );
 

@@ -89,8 +89,14 @@ function sh(cmd, opts = {}) {
     return (0, child_process_1.spawnSync)(cmd, { shell: true, stdio: "inherit", ...opts });
 }
 function ps(script) {
-    sh(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`);
+    // npm audit #7: results were discarded — a failed Register-ScheduledTask
+    // printed SUCCESS anyway. Return the spawn result.
+    return sh(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`);
 }
+// npm audit #6: setup interpolated RAW paths into PS single-quote literals;
+// an apostrophe in a path (O'Brien) unbalanced the literal and the script
+// PARSE-failed invisibly. Shared doubling helper.
+const psq = (x) => String(x).replace(/'/g, "''");
 function svc(action) {
     sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
 }
@@ -209,7 +215,7 @@ const commands = {
         sh("reg delete HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\Cloudflared /f 2>NUL");
         // 4. Stale update-busy marker (a crashed update would lock updates).
         const BUSY = path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
-        sh(`powershell -NoProfile -Command "Remove-Item -Force -ErrorAction SilentlyContinue '${BUSY}'"`);
+        sh(`powershell -NoProfile -Command "Remove-Item -Force -ErrorAction SilentlyContinue '${psq(BUSY)}'"`);
         // 5. Refresh the BOXED playwright bundle: delete the old tree first so a
         //    removed package/version never leaves stale files behind.
         //    round-163: kill the runner/bridge node processes FIRST — a running
@@ -226,7 +232,7 @@ const commands = {
         for (const legacy of ["C:\\vale-agent", "D:\\vale-agent"]) {
             if (legacy !== DIR && fs.existsSync(legacy)) {
                 console.log("setup: removing legacy install dir", legacy);
-                sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${legacy}'"`);
+                sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${psq(legacy)}'"`);
             }
         }
         // C1: write the registry single source of truth (InstallDir; DataDir
@@ -253,13 +259,13 @@ const commands = {
         if (fs.existsSync(PW_ZIP)) {
             const pwDir = path.join(DIR, "playwright");
             fs.mkdirSync(pwDir, { recursive: true });
-            sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${PW_ZIP}' -DestinationPath '${DIR}'"`);
+            sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${psq(PW_ZIP)}' -DestinationPath '${psq(DIR)}'"`);
             // round-163: the whole point of the bundle is node.exe — VERIFY it
             // landed (a silently-missing copy killed the bridge forever on d1).
             // One retry, then fail loudly: a half-staged bundle is worse than none.
             if (!fs.existsSync(path.join(pwDir, "node.exe"))) {
                 console.log("setup: node.exe missing after expand — retrying once");
-                sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${PW_ZIP}' -DestinationPath '${DIR}'"`);
+                sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${psq(PW_ZIP)}' -DestinationPath '${psq(DIR)}'"`);
             }
             if (fs.existsSync(path.join(pwDir, "node.exe"))) {
                 console.log("setup: playwright bundle staged (node.exe + node_modules verified)");
@@ -340,9 +346,8 @@ const commands = {
         //   - battery-safe + StartWhenAvailable
         //   - 5-min repetition watchdog   IgnoreNew = no-op while running;
         //                                 restarts within <=5 min if dead
-        const regArg = regKey ? ` --register '${regKey}'` : "";
         const reg = [
-            `$action = New-ScheduledTaskAction -Execute '${EXE_DST}' -Argument "'${EXE_DST}'${regArg}"`,
+            `$action = New-ScheduledTaskAction -Execute '${psq(EXE_DST)}' -Argument ('"' + '${psq(EXE_DST)}' + '"')`,
             "$boot = New-ScheduledTaskTrigger -AtStartup",
             "$watch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)",
             "$principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest",
@@ -350,7 +355,11 @@ const commands = {
             "Register-ScheduledTask ValeAgent -Action $action -Trigger @($boot,$watch) -Principal $principal -Settings $settings -Force | Out-Null",
             "Start-ScheduledTask ValeAgent",
         ].join("; ");
-        ps(reg);
+        const regRes = ps(reg);
+        if (!regRes || regRes.status !== 0) {
+            console.error("setup: FATAL — task registration failed (audit #7: used to claim success regardless).");
+            process.exit(1);
+        }
         console.log("setup: installed to", DIR);
         console.log("setup: device registers on start — check the console Devices list");
         // Optional: provision the tunnel in the same command (no second step).
@@ -384,6 +393,24 @@ const commands = {
         svc("Run");
     },
     update() {
+        // npm audit #10: no mutual exclusion — two updates (or setup racing a
+        // swap) interleave Copy-Item on *.new, leaving a half-written exe "ok".
+        // setup REMOVES the marker; update now CREATES it (refuse if <10 min
+        // old); the swap script clears it after restart.
+        const BUSYM = path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
+        try {
+            const st = fs.statSync(BUSYM);
+            if (Date.now() - st.mtimeMs < 10 * 60 * 1000) {
+                console.error("update: another update looks in progress (" + BUSYM + " <10 min old) — wait, or delete the marker after a mid-swap reboot");
+                process.exit(1);
+            }
+        }
+        catch { /* absent = free */ }
+        try {
+            fs.mkdirSync(path.dirname(BUSYM), { recursive: true });
+            fs.writeFileSync(BUSYM, String(Date.now()));
+        }
+        catch { /* best-effort guard */ }
         // Swap the exe in-place: stop -> replace (with retry; the running agent
         // locks its own file) -> start.
         if (!fs.existsSync(EXE_SRC)) {
@@ -463,6 +490,7 @@ const commands = {
             // back up (it will run the old exe until the next update).
             `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,
             `"[$(Get-Date -Format o)] task restarted" | ${log}`,
+            `try { Remove-Item -Force (Join-Path $env:ProgramData 'ValeAgent\\update-busy') } catch {}`,
             // stage-n: restart the Electron shell so newly-synced main/preload
             // sources take effect. The shell is INDEPENDENT of the ValeAgent task —
             // it only probes 127.0.0.1:18080 and loads /desktop/. Kill + relaunch
@@ -570,6 +598,10 @@ const commands = {
         }
         catch { /* fall through to the status/retval guard below */ }
         if (r.status !== 0 || retval !== 0) {
+            try {
+                fs.unlinkSync(BUSYM);
+            }
+            catch { /* never created */ }
             console.error(`update: WMI handoff failed (ps status ${r.status}, ReturnValue ${retval ?? "?"})`
                 + (r.stderr ? " — " + r.stderr.toString().trim() : ""));
             process.exit(1);
@@ -588,6 +620,11 @@ const commands = {
         sh("cmd /c schtasks /End /TN ValeAgent 2>NUL");
         sh("taskkill /F /IM vale-agent.exe 2>NUL");
         sh("taskkill /F /IM vale-desktop.exe 2>NUL");
+        // npm audit #11: electron survived uninstall (dead SPA window); the
+        // update-hardened ValeDesktop 5-min pulse kept firing against the deleted dir.
+        sh("taskkill /F /IM electron.exe 2>NUL");
+        sh("cmd /c schtasks /End /TN ValeDesktop 2>NUL");
+        sh("cmd /c schtasks /Delete /TN ValeDesktop /F 2>NUL");
         // kill bundled playwright node + boxed cloudflared (best effort)
         // Match ANY node.exe whose command line mentions a vale playwright
         // bundle (covers the current install dir AND legacy dirs like
@@ -609,7 +646,7 @@ const commands = {
                 console.log("uninstall: removing legacy install dir", legacy);
                 // PowerShell Remove-Item -Recurse -Force handles locked/read-only
                 // files better than rmdir; retry once after a short wait.
-                sh(`powershell -NoProfile -Command "Remove-Item -LiteralPath '${legacy}' -Recurse -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath '${legacy}' -Recurse -Force -ErrorAction SilentlyContinue"`);
+                sh(`powershell -NoProfile -Command "Remove-Item -LiteralPath '${psq(legacy)}' -Recurse -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath '${psq(legacy)}' -Recurse -Force -ErrorAction SilentlyContinue"`);
                 if (fs.existsSync(legacy)) {
                     console.log("uninstall: WARNING — legacy dir still present:", legacy);
                 }
@@ -665,11 +702,12 @@ const commands = {
                     console.error("tunnel: not installed — run setup with public-access enabled");
                     process.exit(1);
                 }
-                // detached/unref are no-ops on spawnSync (inherited from the old JS
+                // npm audit #12: detached/unref are NO-OPS on spawnSync —
+                // `vale tunnel start` blocked the CLI until the tunnel died.
                 // intent to background the tunnel); kept for parity.
-                const r = (0, child_process_1.spawnSync)(cf, ["tunnel", "--config", cfg, "run"], { stdio: "inherit", detached: true });
-                r.unref?.();
-                console.log("tunnel: started (agent also auto-spawns it on boot)");
+                const ch = (0, child_process_1.spawn)(cf, ["tunnel", "--config", cfg, "run"], { stdio: "ignore", detached: true });
+                ch.unref();
+                console.log("tunnel: started in background (agent also auto-spawns it on boot)");
                 return;
             }
             case "stop": {

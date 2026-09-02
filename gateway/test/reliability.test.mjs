@@ -212,31 +212,31 @@ function breakerDO() {
     async put(k, v) { this._m.set(k, v); },
     async delete(k) { this._m.delete(k); },
   };
-  return new BreakerDO({ storage }, {});
+  return new BreakerDO({ storage }, { DO_AUTH: "sekret" });
 }
-const check = async (do_) => (await (await do_.fetch(new Request("https://breaker/check"))).text());
+const check = async (do_) => (await (await do_.fetch(new Request("https://breaker/check", { headers: { "x-do-auth": "sekret" } }))).text());
 
 test("BreakerDO: single trip does NOT open (needs 3 consecutive failures)", async () => {
   const do_ = breakerDO();
-  await do_.fetch(new Request("https://breaker/trip"));
+  await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
   assert.equal(await check(do_), "0");
-  await do_.fetch(new Request("https://breaker/trip"));
+  await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
   assert.equal(await check(do_), "0"); // still closed at 2
-  await do_.fetch(new Request("https://breaker/trip"));
+  await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
   assert.equal(await check(do_), "1"); // 3rd consecutive failure trips
 });
 
 test("BreakerDO: reset clears the failure count, no trip on later single failure", async () => {
   const do_ = breakerDO();
-  await do_.fetch(new Request("https://breaker/trip"));
-  await do_.fetch(new Request("https://breaker/trip"));
+  await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+  await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
   // round-55: ONE success must not zero the count (a channel alternating
   // fail/success would never accumulate the 3 consecutive failures the
   // breaker needs) — two consecutive successes clear it.
-  await do_.fetch(new Request("https://breaker/reset")); // success #1 — count kept
-  await do_.fetch(new Request("https://breaker/reset")); // success #2 — count cleared
+  await do_.fetch(new Request("https://breaker/reset", { headers: { "x-do-auth": "sekret" } })); // success #1 — count kept
+  await do_.fetch(new Request("https://breaker/reset", { headers: { "x-do-auth": "sekret" } })); // success #2 — count cleared
   assert.equal(await check(do_), "0");
-  await do_.fetch(new Request("https://breaker/trip"));
+  await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
   assert.equal(await check(do_), "0"); // count restarted, 1/3
 });
 
@@ -244,12 +244,12 @@ test("BreakerDO: trips after threshold, expires after 60s, clear resets count to
   const do_ = breakerDO();
   const realNow = Date.now;
   try {
-    for (let i = 0; i < 3; i++) await do_.fetch(new Request("https://breaker/trip"));
+    for (let i = 0; i < 3; i++) await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
     assert.equal(await check(do_), "1");
     Date.now = () => realNow() + 61 * 1000; // degrade window over
     assert.equal(await check(do_), "0");
-    await do_.fetch(new Request("https://breaker/clear"));
-    for (let i = 0; i < 3; i++) await do_.fetch(new Request("https://breaker/trip"));
+    await do_.fetch(new Request("https://breaker/clear", { headers: { "x-do-auth": "sekret" } }));
+    for (let i = 0; i < 3; i++) await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
     assert.equal(await check(do_), "1");
   } finally {
     Date.now = realNow;
@@ -257,8 +257,8 @@ test("BreakerDO: trips after threshold, expires after 60s, clear resets count to
 });
 
 test("BreakerDO: unknown action → 404", async () => {
-  const do_ = new BreakerDO({ storage: { get: async () => null, put: async () => {}, delete: async () => {} } }, {});
-  const res = await do_.fetch(new Request("https://breaker/nope"));
+  const do_ = new BreakerDO({ storage: { get: async () => null, put: async () => {}, delete: async () => {} } }, { DO_AUTH: "sekret" });
+  const res = await do_.fetch(new Request("https://breaker/nope", { headers: { "x-do-auth": "sekret" } }));
   assert.equal(res.status, 404);
 });
 

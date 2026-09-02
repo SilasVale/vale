@@ -46,7 +46,7 @@ export function computeBoot(onAuthFail: () => void): Boot {
     const stored = localStorage.getItem(LS_TOKEN) || "";
     const host = location.host;
     const tok = isProxy ? (urlToken || "") : (injected || urlToken || stored);
-    localStorage.setItem(LS_HOST, host);
+    try { localStorage.setItem(LS_HOST, host); } catch { /* private mode/quota: boot must not crash */ }
     // round-122/124: in PROXY mode do NOT persist the token to
     // localStorage — the vale_pt cookie is the real credential there, and
     // persisting the plugin token made a plaintext 30-day device-control
@@ -58,7 +58,10 @@ export function computeBoot(onAuthFail: () => void): Boot {
     if (isProxy) {
       localStorage.removeItem(LS_TOKEN);
     } else if (tok) {
-      localStorage.setItem(LS_TOKEN, tok);
+      // panel audit #2: unguarded setItem INSIDE the render-phase boot →
+      // a throw (Safari private mode / quota) crashes the app and the
+      // ErrorBoundary "Reload" re-triggers it forever. Best-effort persist.
+      try { localStorage.setItem(LS_TOKEN, tok); } catch { /* session-only */ }
     }
     // round-86: a same-origin visit with NO token (LAN IP / non-allowlisted
     // host, empty storage) must show the conn form — the old code booted

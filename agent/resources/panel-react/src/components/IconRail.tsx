@@ -35,6 +35,7 @@ export function IconRail({ page, onPageChange, connected, desktop }: {
           key={p}
           type="button"
           className={btn(page === p)}
+          aria-current={page === p ? "page" : undefined}
           title={p[0].toUpperCase() + p.slice(1)}
           aria-label={p[0].toUpperCase() + p.slice(1)}
           onClick={() => onPageChange(p)}

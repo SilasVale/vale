@@ -129,10 +129,12 @@ test("proxy: non-admin session without plugin token → 401", async () => {
 
 // ── Route errors ──────────────────────────────────────────────
 
-test("proxy: unknown device → 404 before auth", async () => {
+test("proxy: unknown device → 401 for the unauthenticated caller (device-name oracle closed)", async () => {
   await withDeviceFetch(async (calls) => {
     const res = await worker.fetch(new Request("https://x/api/devices/nope/proxy/api/tools/terminal_list"), makeEnv());
-    assert.equal(res.status, 404);
+    // Gateway CRITICAL round: existence of a device name is no longer
+    // disclosed to anonymous callers — 404 only surfaces to admin sessions.
+    assert.equal(res.status, 401);
     assert.equal(calls.length, 0);
   });
 });

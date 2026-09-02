@@ -148,15 +148,19 @@ export function App() {
     // round-83: normalize the host — pasting 'https://d1…' or a trailing
     // slash built 'https://https://d1…' fetches (silent empty panel).
     const h = host.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    if (!h || !token) { setConnError("host + token required"); return; }
-    localStorage.setItem(LS_HOST, h);
+    // panel audit #1: host got trimmed, the TOKEN never did — a pasted
+    // token with trailing whitespace/newline 401'd forever AND was
+    // persisted (the bad value survived reloads).
+    const tk = token.trim();
+    if (!h || !tk) { setConnError("host + token required"); return; }
+    try { localStorage.setItem(LS_HOST, h); } catch { /* private mode: session-only */ }
     // round-124: in proxy mode never persist the token — the vale_pt cookie
     // is the credential there; persisting the plugin token to console-origin
     // localStorage is a plaintext 30-day device-control credential readable
     // by any console-origin script. Same-origin (LAN) mode keeps it.
     const isProxy = /\/proxy\/panel/.test(location.pathname);
-    if (!isProxy) localStorage.setItem(LS_TOKEN, token);
-    initTransport(h, token, () => { setConnected(false); setConnError("session expired — re-enter token"); });
+    if (!isProxy) { try { localStorage.setItem(LS_TOKEN, tk); } catch { /* session-only */ } }
+    initTransport(h, tk, () => { setConnected(false); setConnError("session expired — re-enter token"); });
     setConnected(true);
     setConnError("");
   }
@@ -166,9 +170,9 @@ export function App() {
       <div id="conn-form">
         <div className="conn-brand"><BrandMark size={44} /></div>
         <h1>Vale Agent</h1>
-        <label>Device hostname</label>
+        <label htmlFor="host">Device hostname</label>
         <input id="host" value={host} onChange={(e) => setHost(e.target.value)} placeholder="device.example.com" autoComplete="off" />
-        <label>Auth token</label>
+        <label htmlFor="token">Auth token</label>
         <input id="token" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Bearer token from config.yaml" autoComplete="off" />
         <button onClick={connect}>Connect</button>
         <div className="hint">Credentials stay in this browser (localStorage); they are never sent elsewhere.</div>

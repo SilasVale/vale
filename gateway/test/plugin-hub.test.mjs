@@ -40,18 +40,18 @@ function fakeWs() {
 test("hub /status: online when a socket is attached", async () => {
   const ws = fakeWs();
   const state = makeState([ws]);
-  const hub = new PluginHubDO(state, {});
-  const res = await hub.fetch(new Request("https://hub/status"));
+  const hub = new PluginHubDO(state, { DO_AUTH: "sekret" });
+  const res = await hub.fetch(new Request("https://hub/status", { headers: { "x-do-auth": "sekret" } }));
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { online: true });
 });
 
 test("hub /call: offline (no socket) → 503 extension_offline", async () => {
   const state = makeState([]);
-  const hub = new PluginHubDO(state, {});
+  const hub = new PluginHubDO(state, { DO_AUTH: "sekret" });
   const res = await hub.fetch(new Request("https://hub/call", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-do-auth": "sekret" },
     body: JSON.stringify({ tool: "browser_click", params: {}, requestId: "r1" }),
   }));
   assert.equal(res.status, 503);
@@ -61,7 +61,7 @@ test("hub /call: offline (no socket) → 503 extension_offline", async () => {
 // round-105: every frame is token-revalidated (a socket with NO bound token
 // is closed) — tests that drive frames must bind a valid link first.
 async function boundHub(state, ws) {
-  const env = {
+  const env = { DO_AUTH: "sekret",
     KEYS: {
       async get(k) {
         if (k === "plugins:v1") {
@@ -85,7 +85,7 @@ test("hub /call: online → forwards request to the socket and resolves the resp
   const hub = await boundHub(state, ws);
   const p = hub.fetch(new Request("https://hub/call", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-do-auth": "sekret" },
     body: JSON.stringify({ tool: "browser_click", params: { x: 1 }, requestId: "r2" }),
   }));
   // Yield once so the async fetch reaches ws.send.
@@ -115,7 +115,7 @@ test("hub webSocketMessage: ping → pong echoes t", async () => {
 test("hub webSocketMessage: hello with NO token closes (round-119: token required)", async () => {
   const ws = fakeWs();
   const state = makeState([ws]);
-  const hub = new PluginHubDO(state, {});
+  const hub = new PluginHubDO(state, { DO_AUTH: "sekret" });
   await hub.webSocketMessage(ws, JSON.stringify({ type: "hello" }));
   assert.equal(ws.closed?.code, 4001); // no bound token → close
   assert.ok(!state._storage.kv.has("lastSeen")); // nothing stored for an invalid hello
@@ -127,7 +127,7 @@ test("hub webSocketClose: rejects all in-flight calls with extension_disconnecte
   const hub = await boundHub(state, ws); // round-119: /call validates the bound token
   const p = hub.fetch(new Request("https://hub/call", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-do-auth": "sekret" },
     body: JSON.stringify({ tool: "browser_open", params: {}, requestId: "r3" }),
   }));
   await new Promise((r) => setImmediate(r)); // let /call register the pending
@@ -138,10 +138,10 @@ test("hub webSocketClose: rejects all in-flight calls with extension_disconnecte
 
 test("hub /ws: wrong device → 400; non-websocket upgrade → 400", async () => {
   const state = makeState([]);
-  const hub = new PluginHubDO(state, {});
-  const wrong = await hub.fetch(new Request("https://hub/ws?device=d2"));
+  const hub = new PluginHubDO(state, { DO_AUTH: "sekret" });
+  const wrong = await hub.fetch(new Request("https://hub/ws?device=d2", { headers: { "x-do-auth": "sekret" } }));
   assert.equal(wrong.status, 400);
-  const noUpgrade = await hub.fetch(new Request("https://hub/ws?device=d1"));
+  const noUpgrade = await hub.fetch(new Request("https://hub/ws?device=d1", { headers: { "x-do-auth": "sekret" } }));
   assert.equal(noUpgrade.status, 400);
 });
 

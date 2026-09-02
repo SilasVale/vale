@@ -883,9 +883,21 @@ export async function getPluginByToken(env: Env, token: string): Promise<PluginL
   // never expiring, granting permanent browser_* control (the exact hole
   // the TTL exists to close). One-time sweep on read.
   if (!link.expiresAt || link.expiresAt < Date.now()) {
-    // Expired — drop it (lazy cleanup) and treat as unknown.
-    delete map[token];
-    await savePluginLinks(env, map);
+    // Extension audit L3: this sweep wrote WITHOUT the PLUGIN_KEY lock and
+    // from the isolate-cached map — a stale isolate could rewrite its whole
+    // outdated blob, RESURRECTING links another isolate had revoked/paired
+    // in the cache window. Sweep inside the lock against a FRESH KV read,
+    // re-checking expiry before deleting.
+    await withKeyLock(PLUGIN_KEY, async () => {
+      const raw = await env.KEYS.get(PLUGIN_KEY);
+      let fresh: Record<string, PluginLink> = {};
+      try { fresh = raw ? JSON.parse(raw) : {}; } catch { return; }
+      const cand = fresh[token];
+      if (cand && (!cand.expiresAt || cand.expiresAt < Date.now())) {
+        delete fresh[token];
+        await env.KEYS.put(PLUGIN_KEY, JSON.stringify(fresh));
+      }
+    });
     return null;
   }
   return link;
