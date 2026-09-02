@@ -222,11 +222,24 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 82 — 1.2.226 LIVE after the 530 recovery;
-  cloudflared supervised for real; SID-based ACL harden finally VERIFIED on box)
+Last updated: 2026-09-25 (round 84 — 1.2.227 LIVE; extension audit + npm CLI
+  completion + onboarding; update mutual exclusion FIELD-PROVEN end-to-end)
 
 ### Current release
-- npm **1.2.226 LIVE on d1** — post-incident line: 224 = context-proof
+- npm **1.2.227 LIVE on d1** — THREE audits landed same round (extension,
+  onboarding, npm-CLI completion): gateway (deployed 7b6f312c) got browser-RPC
+  AbortSignal budgets + timeout_secs clamp (was unbounded worker+isolate pin),
+  plugin-link expiry sweep INSIDE the lock with fresh reads (stale-isolate
+  writeback could resurrect revoked tokens), 256 KiB WS frame cap, Access JWT
+  iss pin + atob/verify try-catch (junk sigs 500'd), /mcp one-device fallback
+  only for unnamed callers; TEST SUITE followed the new contracts (235 pass).
+  npm CLI #6-12: ps() status honesty (task-reg failure now FATAL), psq()
+  apostrophe safety, --register deleted (dead + cleartext key in task XML),
+  update BUSY marker — FIELD-PROVEN round trip (created→handoff→swap clears;
+  planted marker → second update REFUSED with exit 1), uninstall kills
+  electron + removes the ValeDesktop pulse, tunnel start truly detached.
+  Panel: token trim everywhere, boot setItem guards (private-mode render crash
+  loop), htmlFor/aria-label/aria-current. 1.2.226 — post-incident line: 224 = context-proof
   supervisor (device RECOVERED via console; tunnel self-healed through two
   subsequent swaps, cloudflared exactly 1 instance, supervisor line in
   startup.log); 225 = boot-time harden of PRE-EXISTING config.yaml +
