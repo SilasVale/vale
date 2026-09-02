@@ -13,7 +13,17 @@ use std::path::PathBuf;
 use vale_agent_core::{recover_guard, DeviceError};
 
 fn store_path() -> PathBuf {
+    #[cfg(test)]
+    if let Some(d) = TEST_DIR.with(|d| d.borrow().clone()) {
+        return d.join("vale-connections.json");
+    }
     crate::paths::data_dir().join("vale-connections.json")
+}
+
+// Test-only store directory (mirrors secrets.rs file_store_tests harness).
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 fn read_all() -> serde_json::Map<String, serde_json::Value> {
@@ -104,4 +114,73 @@ pub fn forget(id: &str) -> Result<bool, DeviceError> {
     let removed = map.remove(id).is_some();
     if removed { write_all(&map)?; }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod conn_tests {
+    //! Core-audit follow-up: connections.rs had ZERO coverage.
+    use super::*;
+
+    fn isolated(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("vale-conn-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        TEST_DIR.with(|d| *d.borrow_mut() = Some(dir.clone()));
+        dir
+    }
+
+    fn params_with_pw() -> serde_json::Map<String, serde_json::Value> {
+        let mut p = serde_json::Map::new();
+        p.insert("host".into(), serde_json::json!("10.0.0.9"));
+        p.insert("password".into(), serde_json::json!("SECRET-NOWHERE"));
+        p
+    }
+
+    #[test]
+    fn remember_dedups_updates_and_strips_passwords() {
+        let dir = isolated("dedupe");
+        remember("ssh", "u@h:22", "first", &params_with_pw()).unwrap();
+        let got = list();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0]["label"], "first");
+        // the persisted + listed params never carry the password (round-92)
+        assert!(got[0]["params"].get("password").is_none());
+        assert!(got[0]["params"]["host"] == serde_json::json!("10.0.0.9"));
+        // same kind:target UPDATEs (dedupe), never accumulates
+        remember("ssh", "u@h:22", "second", &params_with_pw()).unwrap();
+        let got = list();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0]["label"], "second");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_plaintext_password_scrubbed_on_read() {
+        // round-92 stopped WRITING passwords; files from BEFORE that still
+        // hold them — list() must scrub on read (round-80 LOW-6).
+        let dir = isolated("legacy");
+        std::fs::write(
+            dir.join("vale-connections.json"),
+            r#"{"ssh:a@b:22":{"kind":"ssh","target":"a@b:22","label":"old","params":{"password":"LEAK-ME","user":"a"}}}"#,
+        )
+        .unwrap();
+        let got = list();
+        assert!(got[0]["params"].get("password").is_none(), "legacy password leaked through list()");
+        assert_eq!(got[0]["params"]["user"], "a");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn forget_reports_reality() {
+        let dir = isolated("forget");
+        assert!(!forget("ssh:none@x:22").unwrap(), "unknown id must report false");
+        remember("pty", "pwsh", "shell", &serde_json::Map::new()).unwrap();
+        assert_eq!(list().len(), 1);
+        assert!(forget("pty:pwsh").unwrap());
+        assert!(list().is_empty());
+        // pty-default (empty target) never remembered (round design)
+        remember("pty", "", "x", &serde_json::Map::new()).unwrap();
+        assert!(list().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

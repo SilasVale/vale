@@ -507,6 +507,16 @@ fn run_bounded(what: &str, mut cmd: std::process::Command) {
 /// Load config (creating a default file + auth token if missing); persist and
 /// print a freshly generated token.
 fn load_config(config_path: &Path) -> Config {
+    // Core-audit #9 FOLLOW-UP (caught on d1 post-recovery): atomic_write
+    // hardening only covers files written AFTER 1.2.224 — a PRE-EXISTING
+    // config.yaml keeps its inherited Users:RX until the Settings page is
+    // saved again. Harden the file on EVERY boot (idempotent, ~ms) so an
+    // upgraded device self-heals without waiting for the next write.
+    if config_path.exists() {
+        if let Err(e) = vale_agent::paths::harden_file(config_path) {
+            tracing::warn!("config.yaml ACL hardening unavailable: {e}");
+        }
+    }
     let (config, token) = match vale_agent::bootstrap::load_or_create(config_path, None, &|msg| eout!("{msg}")) {
         Ok(v) => v,
         Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
