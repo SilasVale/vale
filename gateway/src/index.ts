@@ -134,6 +134,12 @@ export async function probeRateLimited(env: any, request: Request) {
     }
     __probeRate.set(key, cur + 1);
     if (__probeRate.size > 4096) __probeRate.delete(__probeRate.keys().next().value);
+    // audit round F2: the counter was NEVER written back to KV — every new
+    // isolate reseeded from 0, so the 60/min/IP ceiling was per-isolate
+    // (trivially multiplied across isolates/egress IPs). Persist it.
+    try {
+      await env.KEYS.put(key, String(cur + 1), { expirationTtl: Math.ceil((PROBE_RATE_WINDOW_MS / 1000) * 2) + 10 });
+    } catch { /* KV write error: isolate-local count still better than nothing */ }
     return cur >= PROBE_RATE_LIMIT;
   } catch {
     return false;
@@ -239,7 +245,9 @@ export default {
       // ---- /v1/* gateway (both domains) ----
       return await handleGateway(request, env, url);
     } catch (error) {
-      return jsonError(500, (error as any).message || "Internal error", "api_error");
+      // Never echo raw error internals to clients (logged server-side).
+      console.error("[gateway] unhandled:", error);
+      return jsonError(500, "Internal error", "api_error");
     }
   },
 };

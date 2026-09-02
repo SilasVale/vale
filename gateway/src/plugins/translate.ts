@@ -146,6 +146,12 @@ async function openAIUpstreamToAnthropicResponse(
 /* ---------------- /v1/* gateway ---------------- */
 
 // In-memory per-token rate-limit counters (per isolate). The old KV
+// audit round F6: upstream 401 bodies often embed the offending key
+// (sk-or-…, rc-…, sc-…); scrub key-shaped tokens before echoing to clients.
+function scrubKeys(msg: string): string {
+  return String(msg || "").replace(/\b(?:sk|rc|sc|or|xox[baprs])-[A-Za-z0-9_-]{8,}/g, "***");
+}
+
 // get-then-put counters cost 2 reads + 2 writes per /v1/messages request —
 // that alone burned the Free-plan daily KV WRITE quota (1000/day) at ~250
 // requests. Never written; each window's first request per token reads KV
@@ -218,7 +224,11 @@ async function handleGatewayImpl(
   // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
   // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
   // the double-count that halved the effective budget for Claude Code turns.
-  if (env.KEYS && method === "POST" && path.endsWith("/messages") && !path.endsWith(COUNT_PATH)) {
+  // audit round F1: /v1/chat/completions (OpenAI format) skipped the limiter
+  // ENTIRELY — a leaked token burned quota unthrottled on that path.
+  if (env.KEYS && method === "POST"
+      && (path.endsWith("/messages") || path.endsWith("/chat/completions"))
+      && !path.endsWith(COUNT_PATH)) {
     const mk = `min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
     const dk = `day:${effectiveToken}:${Math.floor(Date.now() / 86400000)}`;
     const minute = __rlMin.get(mk) ?? 0;
@@ -682,7 +692,7 @@ async function handleGatewayImpl(
         // surface with a stringified body and a bare api_error type.
         const err: any =
           rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
-        message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
+        message = scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) || message;
         const upType = err.error?.type || err.type;
         const KNOWN = [
           "rate_limit_error",
@@ -948,7 +958,7 @@ async function handleGatewayImpl(
         // (AMD Radeon Cloud) must keep its message + rate_limit_error type.
         const err: any =
           rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
-        message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
+        message = scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) || message;
         // Forward the upstream's OWN error.type (Claude Code keys retry and
         // auth flows off it) — a DeepSeek 429 rate_limit_error collapsed to
         // api_error was NON-retryable for the client. Whitelist the known

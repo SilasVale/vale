@@ -217,6 +217,12 @@ export function streamOgToAnthropic(
   };
 
   const readStream = new ReadableStream({
+    // audit round F7: a client disconnect left the upstream reader draining
+    // (and billing) the FULL completion — a transformed stream has no
+    // implicit cancel like Response(upstream.body) does.
+    cancel() {
+      try { void reader.cancel(); } catch { /* already closed */ }
+    },
     async pull(controller) {
       while (true) {
         // Emit any pending Anthropic events already queued by the last chunk.
