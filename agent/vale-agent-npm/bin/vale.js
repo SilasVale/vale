@@ -466,24 +466,29 @@ const commands = {
             // the task/script is missing (non-desktop install), skip silently.
             `$deskDir = '${q}\\vale-desktop-electron'`,
             `$deskStart = '${q}\\start-desktop.ps1'`,
-            // stage-n: harden the SHELL supervisor itself — give ValeDesktop a
-            // 5-minute repetition trigger. Electron's single-instance lock makes
-            // overlapping /run invocations no-ops (a live shell ignores the poke),
-            // while a DEAD shell is relaunched within ≤5 min. Previously electron
-            // only started at logon, so "watchdog died" left the device one dark
-            // reboot from a manual click (d1, 2026-09-25). Re-creating the task
-            // with /ri is idempotent; if the task is missing entirely, create it.
-            `$deskTaskExists = $null -ne (Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue)`,
-            `if ($deskTaskExists) {`,
-            // cmd-style "/RI 5" args split under PowerShell array invocation (the
-            // d1 test applied nothing) — rebuild the trigger with the ScheduledTasks
-            // cmdlets and re-register the task.
-            `$dtrg = New-ScheduledTaskTrigger -AtLogOn`,
-            `$dtrg.Repetition = (New-ScheduledTaskTrigger -AtLogOn -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Hours 24)).Repetition`,
-            `Set-ScheduledTask -TaskName 'ValeDesktop' -Trigger $dtrg | Out-Null`,
-            `"[$(Get-Date -Format o)] desk: ValeDesktop repetition trigger applied" | ${log}`,
+            // stage-n: harden the SHELL supervisor itself — ValeDesktop gains a
+            // 5-minute repetition trigger so a dead electron is reborn within
+            // ≤5 min (previously only started at logon: "the watchdog died" left
+            // d1 dark on 2026-09-25). Two field-test lessons encoded here:
+            //  - `schtasks /Change /RI 5` prompts for the /ru password interactively
+            //    (hung the PTY) and PS-array invocation mangles cmd-style args —
+            //    use the ScheduledTasks cmdlets (SYSTEM runs them without prompt,
+            //    mirroring ValeAgent's proven -Once + -RepetitionInterval pattern).
+            //  - the pulse must NOT start a second electron while one is alive
+            //    (second-instance focuses the window = focus steal every 5 min) —
+            //    the guarded ensure-desktop.ps1 checks Get-Process first, and the
+            //    wscript wrapper runs it with no console flash.
+            `$en1 = '${q}\\ensure-desktop.ps1'`,
+            `$vb1 = '${q}\\desktop-pulse.vbs'`,
+            `Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File ${q}\\start-desktop.ps1' -Force`,
+            `Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "${q}\\ensure-desktop.ps1" & Chr(34), 0, False' -Force`,
+            `if ($null -ne (Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue)) {`,
+            `  $da = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $vb1 + '"') -WorkingDirectory '${q}'`,
+            `  $dt1 = New-ScheduledTaskTrigger -AtLogOn`,
+            `  $dw1 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)`,
+            `  Set-ScheduledTask -TaskName 'ValeDesktop' -Action $da -Trigger @($dt1, $dw1) | Out-Null`,
+            `  "[$(Get-Date -Format o)] desk: ValeDesktop hardened (guarded 5-min pulse)" | ${log}`,
             `}`,
-            `if ((Test-Path $deskDir) -and (Test-Path $deskStart)) {`,
             `  "[$(Get-Date -Format o)] desk: restarting electron shell" | ${log}`,
             `  Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
             `  Start-Sleep -Milliseconds 1500`,
