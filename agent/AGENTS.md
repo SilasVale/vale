@@ -231,12 +231,26 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-26 (round 86 — 1.2.230 LIVE; **ONE-BROWSER fix for the
-  user-reported "AI 调用 MCP 后 browser 面板显示不正确"** + electron IPC audit
-  batch; CI release flow dogfooding (tag→xwin→gh release))
+Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
+  FIRST electron + npm-CLI test suites + auth-gate matrix; the 231
+  package-files-whitelist incident (device-caught); CI release proven on
+  repeat tags)
 
 ### Current release
-- npm **1.2.230 LIVE on d1** — ONE-BROWSER (user report): the panel
+- npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
+  tests (CSRF matrix + Breaker/RouteDO fail-closed denies — shipped with
+  ZERO refs), electron FIRST tests via pure src/url-policy.ts extraction
+  (userinfo trick, frame IPC auth, scheme sanitizer — chain: build mirror
+  + setup/update staging + swap foreach + **package.json files whitelist**
+  — the whitelist omission CRASHED electron on 231 (main.js required a
+  module the tgz never shipped); device verification caught it in-round,
+  232 restaged, electron 4 procs + CDP 9333 + desktop 200 all green. npm
+  CLI first tests (psq table + busyIsFresh window, require.main-guarded
+  exports); Rust +harden unix 0o600 +tunnel_ctl generation tests (161);
+  bridge welcome page now tells users AI drives this same browser.
+  RULE: any NEW file under vale-desktop-electron/src or staged onto the
+  device MUST be added to package.json "files" AND the staging/swap
+  arrays — grep the packed tgz (tar tzf) before deploying. 1.2.230 — ONE-BROWSER (user report): the panel
   screencasts the BRIDGE chromium while playwright-mcp launched its OWN
   headless browser — AI navigation could NEVER appear (live-proved: AI at
   example.com, panel on welcome page). Fix: bridge exposes CDP on loopback
