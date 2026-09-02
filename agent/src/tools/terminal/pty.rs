@@ -24,6 +24,16 @@ pub struct PtyBackend {
     last_write_start: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Master handle — kept for real PTY resize (ResizePseudoConsole on
     /// Windows, TIOCSWINSZ on Unix).
+    /// review #3: TRUE only when the pwsh shell-integration script was
+    /// ACTUALLY appended to the spawn command. execute's 633 wait path keys
+    /// on this via term_marker_injected instead of trusting the shell NAME
+    /// (missing script = silent injection failure = every execute burning
+    /// the full timeout).
+    marker_injected: bool,
+    /// review #9: an explicit close kills the child; the reaper then records
+    /// the kill's exit status like a natural end. Contract says exit_code is
+    /// None after terminal_close — this flag enforces it.
+    closed_explicitly: std::sync::Arc<std::sync::atomic::AtomicBool>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     /// The slave MUST stay alive: on Windows the HPCON closes (killing the
     /// shell) when both master and slave drop. (This is why the old code
@@ -79,6 +89,12 @@ impl PtyBackend {
         // Linux builds see an unused mut (allowed).
         #[allow(unused_mut)]
         let mut cmd = CommandBuilder::new(shell_cmd);
+        // review #3: whether the pwsh integration was ACTUALLY injected.
+        // Function-scoped (not inside the cfg(windows) block) so the
+        // PtyBackend literal below sees it on both platforms; Linux shells
+        // never inject (false).
+        #[allow(unused_mut, unused_assignments)]
+        let mut marker_injected = false;
         #[cfg(windows)]
         {
             let lower = shell_cmd.to_ascii_lowercase();
@@ -96,6 +112,7 @@ impl PtyBackend {
                     .join("shell-integration")
                     .join("shellIntegration.ps1");
                 if script.exists() {
+                    marker_injected = true;
                     // Fresh 128-bit nonce for this session's injection — the
                     // script echoes it back inside `633;E;<cmd>;<nonce>` so
                     // command lines from the terminal stream can be trusted.
@@ -264,6 +281,8 @@ impl PtyBackend {
         });
 
         Ok(PtyBackend {
+            marker_injected,
+            closed_explicitly: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             writer: Arc::new(Mutex::new(writer)),
             write_in_flight: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_write_timeout: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -422,18 +441,6 @@ impl TermBackend for PtyBackend {
                 );
             }
             in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
-            // round-132: write-side diagnostics — cross-checked against
-            // term_execute's recv_len to determine whether lost chars
-            // happen in the gateway tunnel or the PTY write.
-            let _ = std::fs::OpenOptions::new().create(true).append(true)
-                .open("D:\\vale-agent\\diag.log")
-                .and_then(|mut f| {
-                    use std::io::Write;
-                    writeln!(f, "[pty_write] total={} ok={} head={:?} tail={:?}",
-                        d.len(), res.is_ok(),
-                        &d[..d.len().min(24)],
-                        &d[d.len().saturating_sub(24)..])
-                });
             res
         })
     }
@@ -445,6 +452,9 @@ impl TermBackend for PtyBackend {
         }
     }
     fn close(&self) {
+        // review #9: from here on, any recorded exit status belongs to the
+        // kill WE issued — report None (explicit close), not "natural exit".
+        self.closed_explicitly.store(true, std::sync::atomic::Ordering::SeqCst);
         // Kill the shell; the reaper thread observes the exit and reaps it.
         // Handles drop with the backend, closing the HPCON cleanly.
         if let Ok(mut guard) = self.child.lock() {
@@ -469,7 +479,13 @@ impl TermBackend for PtyBackend {
         }
     }
     fn exit_code(&self) -> Option<i32> {
+        if self.closed_explicitly.load(std::sync::atomic::Ordering::SeqCst) {
+            return None;
+        }
         self.exit_code.lock().ok().and_then(|g| *g)
+    }
+    fn marker_injected(&self) -> bool {
+        self.marker_injected
     }
     fn terminate(&self) {
         // Send ^C to the shell's input (round-92) — the old code killed the

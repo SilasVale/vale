@@ -25,6 +25,25 @@ const SECRET_KEYS: &[&str] = &[
     "cf-access-client-secret",
 ];
 
+/// Word-boundary secret-key match (stage-n review fix): the old
+/// `key.contains("token")` style flagged "tokenizer", "secretary", and
+/// similar innocuous words. A key is secret-shaped when it EQUALS a secret
+/// name, is delimited-suffixed/prefixed (`api_token`, `token_value`,
+/// `x-api-key`), or its alphanumeric-compacted form ENDS with it
+/// ("authtoken", "accesstoken", "clientsecret", "masterkey").
+fn key_is_secret(key: &str) -> bool {
+    let k = key.to_lowercase();
+    let compact: String = k.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    SECRET_KEYS.iter().any(|sk| {
+        k == *sk
+            || k.ends_with(&format!("_{sk}"))
+            || k.ends_with(&format!("-{sk}"))
+            || k.starts_with(&format!("{sk}_"))
+            || k.starts_with(&format!("{sk}-"))
+            || compact.ends_with(sk)
+    })
+}
+
 /// Redact credential-shaped data in a content string.
 ///
 /// Strategies (applied in order):
@@ -38,11 +57,18 @@ const SECRET_KEYS: &[&str] = &[
 /// nested secrets (e.g. `{"headers":{"Authorization":"Bearer x"}}`) are
 /// caught too.
 pub fn sanitize(content: &str) -> String {
-    // Try JSON-aware redaction first.
+    // Try JSON-aware redaction first — but ONLY rewrite (and re-serialize)
+    // when something was actually redacted. The old unconditional rewrite
+    // reordered keys and normalized numbers of every JSON-shaped content,
+    // silently mangling legitimate data.
     if let Ok(v) = serde_json::from_str::<Value>(content) {
-        let redacted = redact_json(v);
-        if let Ok(s) = serde_json::to_string(&redacted) {
-            return s;
+        let (redacted, changed) = redact_json(v);
+        if changed {
+            if let Ok(s) = serde_json::to_string(&redacted) {
+                return s;
+            }
+        } else {
+            return content.to_string();
         }
     }
     // Fallback: line-based regex-free redaction.
@@ -65,16 +91,18 @@ fn redact_line(line: &str) -> String {
         let (head, _) = line.split_at(idx + 1);
         return format!("{head} <redacted>");
     }
-    // Bearer <long-token> on its own.
+    // Bearer <long-token> on its own. Slice the TRIMMED line ("Bearer " is
+    // 7 ASCII bytes) — the old &line[..7] could panic mid-multibyte when the
+    // raw line carried non-ASCII indentation before "bearer".
     if trimmed.to_lowercase().starts_with("bearer ") && trimmed.len() > 12 {
-        return format!("{} <redacted>", &line[..7]);
+        return "Bearer <redacted>".to_string();
     }
     // key=value / key: value with secret-shaped key.
     for sep in ["=", ": "] {
         if let Some(idx) = line.find(sep) {
             let key = line[..idx].trim().trim_matches('"');
             let key_lower = key.to_lowercase();
-            if SECRET_KEYS.iter().any(|k| key_lower.contains(k)) {
+            if key_is_secret(&key_lower) {
                 let (head, _) = line.split_at(idx + sep.len());
                 return format!("{head}<redacted>");
             }
@@ -83,29 +111,70 @@ fn redact_line(line: &str) -> String {
     line.to_string()
 }
 
-/// Recursively redact a JSON value in place.
-fn redact_json(v: Value) -> Value {
+/// Recursively redact a JSON value; returns (value, changed).
+fn redact_json(v: Value) -> (Value, bool) {
     match v {
         Value::Object(map) => {
             let mut out = serde_json::Map::new();
+            let mut changed = false;
             for (k, val) in map.into_iter() {
                 let k_lower = k.to_lowercase();
-                if SECRET_KEYS.iter().any(|s| k_lower.contains(s)) {
+                if key_is_secret(&k_lower) {
                     out.insert(k, Value::String("<redacted>".to_string()));
+                    changed = true;
                 } else {
-                    out.insert(k, redact_json(val));
+                    let (rv, rc) = redact_json(val);
+                    changed |= rc;
+                    out.insert(k, rv);
                 }
             }
-            Value::Object(out)
+            (Value::Object(out), changed)
         }
-        Value::Array(arr) => Value::Array(arr.into_iter().map(redact_json).collect()),
-        other => other,
+        Value::Array(arr) => {
+            let mut changed = false;
+            let out: Vec<Value> = arr
+                .into_iter()
+                .map(|v| {
+                    let (rv, rc) = redact_json(v);
+                    changed |= rc;
+                    rv
+                })
+                .collect();
+            (Value::Array(out), changed)
+        }
+        other => (other, false),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // review #4 regression: word-boundary matching must stop mangling
+    // innocuous words that merely CONTAIN a secret name.
+    #[test]
+    fn benign_words_are_not_redacted() {
+        assert_eq!(sanitize("gateway timeout: 30s"), "gateway timeout: 30s");
+        assert_eq!(sanitize("tokenizer: gpt2"), "tokenizer: gpt2");
+        assert_eq!(sanitize("secretary: ann"), "secretary: ann");
+        // …while real shapes still redact:
+        assert!(sanitize("auth_token: abc123").contains("<redacted>"));
+        assert!(sanitize("authtoken abc123\n").contains("<redacted>") || sanitize("x-api-key: abc123").contains("<redacted>"));
+        assert!(sanitize("api_key=supersecretvalue").contains("<redacted>"));
+    }
+
+    // review #12 regression: JSON-shaped content with NO secrets must be
+    // returned byte-for-byte (the old unconditional re-serialization
+    // reordered keys and re-wrote number formats).
+    #[test]
+    fn json_without_secrets_is_byte_stable() {
+        let src = "{ \"b\": 0.10, \"a\": [1, 2] }";
+        assert_eq!(sanitize(src), src);
+        let withsecret = "{ \"a\": 1, \"password\": \"hunter2\" }";
+        let out = sanitize(withsecret);
+        assert!(!out.contains("hunter2"));
+        assert!(out.contains("password"));
+    }
 
     #[test]
     fn redacts_authorization_header() {

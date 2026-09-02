@@ -28,10 +28,10 @@ pub struct JobInfo {
     pub exit_code: Option<i32>,
 }
 type JobsMap = std::sync::Arc<std::sync::Mutex<HashMap<String, JobInfo>>>;
-fn jobs_map() -> JobsMap {
-    static JOBS: OnceLock<JobsMap> = OnceLock::new();
-    JOBS.get_or_init(|| std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()))).clone()
-}
+// (A process-global jobs_map() once existed here — review #2 removed it:
+// the bg waiter wrote THAT map while inserts/reads used the per-registry
+// one, so terminal_jobs never observed completion. One map, threaded
+// explicitly, is the fix.)
 
 /// Sessions that existed before the last agent restart (Phase 4). PTYs die
 /// with the process; keeping their metadata lets errors say "this session
@@ -491,8 +491,16 @@ fn tool_open(
                             if spill_len > MAX_SPILL_BYTES {
                                 let keep = MAX_SPILL_BYTES / 2;
                                 let discard = spill_len - keep;
-                                entry.spill_base += discard;
-                                rotate_spill(&sid_buf, discard);
+                                // review #5: advance spill_base ONLY when the
+                                // rotation truly happened (Windows remove_file
+                                // loses to a concurrent terminal_read handle;
+                                // advancing anyway misaligns every later spill
+                                // read). On failure the evicted bytes simply
+                                // drop with `dropped` — the existing gap
+                                // invariant already covers it.
+                                if rotate_spill(&sid_buf, discard) {
+                                    entry.spill_base += discard;
+                                }
                             }
                             append_spill(&sid_buf, &entry.data[..remove]);
                             entry.data.drain(..remove);
@@ -737,6 +745,18 @@ pub fn append_command_newline(command: &str) -> String {
 /// file exceeds this, rotate_spill drops the oldest half.
 const MAX_SPILL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB per live session
 
+/// review #8: session ids are server-generated `term-<hex>-<n>`; anything
+/// else (path separators, `..`) must NEVER reach spill_path — read_spill is
+/// driven by client-controlled `session_id` and this process runs as SYSTEM.
+fn valid_spill_id(sid: &str) -> bool {
+    // The whitelist itself is the traversal defense: no '.', '/' or '\'
+    // can appear, so neither ".." nor absolute paths can be named. (Term
+    // ids are `term-<hex>-<n>`; tests seed simpler synthetic ids.)
+    !sid.is_empty()
+        && sid.len() <= 64
+        && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 fn spill_path(sid: &str) -> std::path::PathBuf {
     std::env::temp_dir().join("vale").join(format!("{sid}.spill"))
 }
@@ -750,15 +770,16 @@ fn spill_path(sid: &str) -> std::path::PathBuf {
 /// the file (append_spill's create_new also refuses to follow a symlink
 /// planted by another local process). A rotation copies up to MAX_SPILL_BYTES
 /// — rare (once per ~128MiB of output) and bounded.
-fn rotate_spill(sid: &str, discard: u64) {
+/// true when the file now starts at `discard` (or is gone) — the caller
+/// advances spill_base only on true (review #5).
+fn rotate_spill(sid: &str, discard: u64) -> bool {
     use std::io::{Seek, SeekFrom, Write};
     let p = spill_path(sid);
-    let Ok(mut f) = std::fs::File::open(&p) else { return };
+    let Ok(mut f) = std::fs::File::open(&p) else { return true };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if discard >= len {
         drop(f);
-        let _ = std::fs::remove_file(&p);
-        return;
+        return std::fs::remove_file(&p).is_ok();
     }
     let _ = f.seek(SeekFrom::Start(discard));
     let mut tail = Vec::with_capacity((len - discard) as usize);
@@ -772,11 +793,17 @@ fn rotate_spill(sid: &str, discard: u64) {
         remain -= n as u64;
     }
     drop(f);
-    let _ = std::fs::remove_file(&p);
+    if std::fs::remove_file(&p).is_err() {
+        return false; // old file intact — do NOT advance the base
+    }
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
-    if let Ok(mut nf) = opts.open(&p) {
-        let _ = nf.write_all(&tail);
+    match opts.open(&p) {
+        Ok(mut nf) => {
+            let _ = nf.write_all(&tail);
+            true
+        }
+        Err(_) => false,
     }
 }
 
@@ -811,6 +838,9 @@ fn append_spill(sid: &str, bytes: &[u8]) {
 /// file is no longer stream byte 0). Everything before `base` is gone;
 /// requests there return empty with actual_start = max(start, base).
 fn read_spill(sid: &str, start: usize, end: usize, base: u64) -> (Vec<u8>, u64) {
+    if !valid_spill_id(sid) {
+        return (Vec::new(), 0);
+    }
     // round-110/111: the whole spill file was read into RAM then sliced —
     // a log-streaming session accumulates hundreds of MB, so a first
     // no-offset read (cursor 0) OOM'd the agent. Cap a single read at 1MB.
@@ -1080,7 +1110,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // ConPTY re-echoes OSC as input, rendering `>>` after
                     // every prompt — VS Code has the same report, #236841).
                     // 5.1 sessions use the quiet-period completion path.
-                    let shell_633 = sess_shell == "pwsh";
+                    // review #3: pwsh by NAME was assumed injected — when
+                    // shellIntegration.ps1 is missing the dot-source
+                    // silently no-ops, 633 codes never arrive, and the
+                    // quiet path never runs: EVERY execute burns the full
+                    // timeout. The PTY backend now reports actual injection
+                    // (marker_injected) through the revived
+                    // term_marker_injected API.
+                    let shell_633 = sess_shell == "pwsh"
+                        && terminal_mgr.term_marker_injected(&sid).await;
                     // Windows PowerShell only recognizes the end of a command
                     // on CRLF (\r\n); Unix shells accept either.
                     let cmd_with_nl = append_command_newline(&command);
@@ -1109,8 +1147,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // alive and ready; a fully silent one gets a bounded wait
                     // then proceeds (the execute wait loop's start-timeout
                     // reports the failure explicitly instead of hanging).
+                    // review #6: NO live entry yet (banner still in flight)
+                    // must mean "prompt not seen" — the old false skipped
+                    // the gate for open→execute races, dumping the command
+                    // into mid-profile-init PowerShell (`>>` shredding).
                     let gate_needed = recover_guard(&buf)
-                        .live.get(&sid).map(|e| !e.first_prompt_seen).unwrap_or(false);
+                        .live.get(&sid).map(|e| !e.first_prompt_seen).unwrap_or(true);
                     if gate_needed && shell_633 {
                         // stage-m: the 633-injected shell announces itself with
                         // `633;A` at the first prompt — wait up to 12s for it
@@ -1193,20 +1235,6 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // release the lock — the command never ran, nothing to
                     // audit, and the next execute must not bounce off a stale
                     // busy flag.
-                    // round-132: receive-side diagnostics — long commands occasionally
-                    // lose mid chars over the gateway link; log the length
-                    // the agent actually received plus head/tail fragments
-                    // to locate where the loss happened (gateway tunnel vs
-                    // PTY write).
-                    let _ = std::fs::OpenOptions::new().create(true).append(true)
-                        .open("D:\\vale-agent\\diag.log")
-                        .and_then(|mut f| {
-                            use std::io::Write;
-                            writeln!(f, "[term_execute] sid={sid} recv_len={} head={:?} tail={:?}",
-                                cmd_with_nl.len(),
-                                &cmd_with_nl[..cmd_with_nl.len().min(24)],
-                                &cmd_with_nl[cmd_with_nl.len().saturating_sub(24)..])
-                        });
                     // round-162: (Netcatty's `\x1b\x15\x0b` clear-line prefix
                     // was TRIED and REVERTED — under Vale's ConPTY the ESC
                     // arrives as a keypress, not a sequence, so PowerShell
@@ -1264,6 +1292,11 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                             });
                         }
                         let job_id2 = job_id.clone();
+                        // review #2: the waiter wrote the static jobs_map()
+                        // while the insert used the per-registry `jobs`
+                        // (the openapi test harness) map — terminal_jobs
+                        // never observed done/exit_code. One map now.
+                        let jobs_bg = jobs.clone();
                         let marker_confirm = std::time::Duration::from_millis(300);
                         let mgr2 = terminal_mgr.clone();
                         let buf2 = buf.clone();
@@ -1302,7 +1335,7 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                         while let Some(f) = crate::tools::terminal::shell_integration::find_finished(&pending) {
                                             pending.drain(..f.end);
                                             marker_seen_at = Some(Instant::now());
-                                            if let Ok(mut jm) = jobs_map().lock() {
+                                            if let Ok(mut jm) = jobs_bg.lock() {
                                                 if let Some(j) = jm.get_mut(&job_id2) {
                                                     j.done = true;
                                                     j.exit_code = f.exit_code;
@@ -1399,7 +1432,17 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                         if s.len() > MAX_SESSION_BYTES {
                             *truncated = true;
                             let keep = s.floor_char_boundary(MAX_SESSION_BYTES);
-                            s = &s[s.len() - keep..];
+                            // floor bounds the WINDOW size, not the slice
+                            // start: s.len()-keep can land mid-char on a CJK
+                            // flood and PANIC inside the wait loop — past
+                            // term_release_execute, wedging the session busy
+                            // flag forever (review #1; same class as the
+                            // round-106 drain fix). Walk forward to safety.
+                            let mut start = s.len() - keep;
+                            while start < s.len() && !s.is_char_boundary(start) {
+                                start += 1;
+                            }
+                            s = &s[start..];
                         }
                         if result.len() + s.len() > MAX_SESSION_BYTES {
                             *truncated = true;

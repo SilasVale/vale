@@ -101,25 +101,31 @@ impl SerialBackend {
         // keystrokes when full, matching the documented channel policy.
         let (write_tx, write_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1024);
         let (close_tx, close_rx) = std::sync::mpsc::channel::<()>();
+        // review #4: ONE shared slot for the live port handle. The old code
+        // swapped only the reader's local Arc on auto-reconnect — the writer
+        // thread kept the DEAD handle, its write errored, the loop broke,
+        // and TX was permanently lost after any unplug/replug.
+        let port_shared: std::sync::Arc<std::sync::Mutex<_>> =
+            std::sync::Arc::new(std::sync::Mutex::new(port.clone()));
 
         // Reader thread — owns its own Arc clone, no pool lock needed.
         // P4b: with auto_reconnect, a read error (unplug / device reboot)
         // releases the pool entry and retries the SAME link config until the
         // port reappears; status lines are emitted so the user/AI sees the
         // session is alive and waiting.
-        let port_r = port.clone();
         let pool_r = pool.clone();
         let link_r = link.clone();
         let tx_r = tx.clone();
         let sid_r = sid.clone();
         let port_id_r = port_id.clone();
+        let port_shared_r = port_shared.clone();
         std::thread::spawn(move || {
-            let mut port = port_r;
             let mut port_id = port_id_r;
             loop {
                 if close_rx.try_recv().is_ok() { break; }
+                let cur = port_shared_r.lock().unwrap_or_else(|p| p.into_inner()).clone();
                 let result = {
-                    let mut p = port.blocking_lock();
+                    let mut p = cur.blocking_lock();
                     let mut buf = vec![0u8; 4096];
                     read_chunk(p.as_mut(), &mut buf)
                 };
@@ -156,7 +162,8 @@ impl SerialBackend {
                                         session_id: sid_r.clone(),
                                         data: format!("\r\n\x1b[32m[serial] {port_name}: reconnected\x1b[0m\r\n").into_bytes(),
                                     });
-                                    port = Arc::new(tokio::sync::Mutex::new(new_port));
+                                    *port_shared_r.lock().unwrap_or_else(|p| p.into_inner()) =
+                                        Arc::new(tokio::sync::Mutex::new(new_port));
                                     port_id = new_id;
                                     break;
                                 }
@@ -173,14 +180,40 @@ impl SerialBackend {
             tracing::debug!("[vale-agent] Serial reader ended: {sid_r}");
         });
 
-        // Writer thread — direct byte write, no hex encoding
-        let port_w = port.clone();
+        // Writer thread — direct byte write, no hex encoding. review #4:
+        // resolves the CURRENT handle from the shared slot on every attempt
+        // and retries a dropped write for ~10 s (the reconnect loop swaps in
+        // a live handle meanwhile) instead of dying on first error.
+        let port_shared_w = port_shared.clone();
         std::thread::spawn(move || {
-            while let Ok(data) = write_rx.recv() {
-                let mut p = port_w.blocking_lock();
-                if p.write_all(&data).is_err() || p.flush().is_err() {
-                    break;
+            let mut pending: Option<Vec<u8>> = None;
+            let mut attempts = 0u32;
+            loop {
+                let data = match pending.take() {
+                    Some(d) => d,
+                    None => match write_rx.recv() {
+                        Ok(d) => d,
+                        Err(_) => return, // backend dropped: session gone
+                    },
+                };
+                let cur = port_shared_w.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                let ok = {
+                    let mut p = cur.blocking_lock();
+                    p.write_all(&data).is_ok() && p.flush().is_ok()
+                };
+                if ok {
+                    attempts = 0;
+                    continue;
                 }
+                attempts += 1;
+                if attempts > 200 {
+                    // ~10 s of dead port: drop THIS frame (matching the old
+                    // break's outcome) but stay alive for the next one.
+                    attempts = 0;
+                    continue;
+                }
+                pending = Some(data);
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
         });
 

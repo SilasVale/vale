@@ -240,6 +240,9 @@ pub trait TermBackend: Send + Sync {
     /// Natural-exit code of the backend process, if it exited on its own
     /// (PTY only; SSH/serial return None) (round-60).
     fn exit_code(&self) -> Option<i32> { None }
+    /// review #3: whether this backend ACTUALLY received shell-integration
+    /// injection (PTY: script present). Default false for ssh/serial.
+    fn marker_injected(&self) -> bool { false }
 }
 
 #[cfg(feature = "terminal")]
@@ -436,7 +439,10 @@ mod desktop_impl {
                         None => break,
                     }
                 }
-                let inject = kind == "pty" && req.inject_marker;
+                // inject_marker reflects the BACKEND'S REAL injection
+                // (review #3): a missing integration script must NOT leave
+                // execute on the never-arriving 633 path.
+                let inject = kind == "pty" && req.inject_marker && backend.marker_injected();
                 let shell = infer_shell(&kind, &req.target);
                 inner.sessions.push(Session { id: id.clone(), kind, label, shell, backend, inject_marker: inject, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now(), busy: false });
             }

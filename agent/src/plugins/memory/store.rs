@@ -117,6 +117,12 @@ impl MemoryStore {
         store
     }
 
+    /// Test/reliability hook: tracked live content bytes (the byte cap's
+    /// ledger).
+    pub fn total_bytes_live(&self) -> usize {
+        recover_guard(&self.inner).total_bytes
+    }
+
     /// Path of the JSONL file.
     fn file_path(&self) -> PathBuf {
         self.dir.join("memory.jsonl")
@@ -124,23 +130,38 @@ impl MemoryStore {
 
     /// Load records from disk at startup; rebuild index. Best-effort.
     fn load(&self) {
-        let Ok(text) = std::fs::read_to_string(self.file_path()) else { return };
+        // A torn write can cut a multi-byte UTF-8 sequence in half — one
+        // invalid byte must not hide the WHOLE store (read_to_string fails
+        // then), so decode lossy and let the per-line parse skip junk.
+        let Ok(bytes) = std::fs::read(self.file_path()) else { return };
+        let text = String::from_utf8_lossy(&bytes);
         let mut guard = recover_guard(&self.inner);
-        let mut total = 0usize;
         for line in text.lines() {
             // Skip the version header.
             if line.contains("\"type\":\"memory\"") || line.contains("\"type\": \"memory\"") {
                 continue;
             }
             let Ok(rec) = serde_json::from_str::<MemoryRecord>(line) else { continue };
-            total += rec.content.len();
+            // Dedup by id is last-wins; tag index is rebuilt after the sweep
+            // so a superseded line's tags cannot orphan-register the winner.
             guard.by_id.insert(rec.id.clone(), rec.clone());
-            for tag in &rec.tags {
+        }
+        let live: Vec<(String, Vec<String>)> = guard
+            .by_id
+            .values()
+            .filter(|r| !r.deleted)
+            .map(|r| (r.id.clone(), r.tags.clone()))
+            .collect();
+        for (id, tags) in live {
+            for tag in tags {
                 let key = tag.to_lowercase();
-                guard.tag_index.entry(key).or_default().insert(rec.id.clone());
+                guard.tag_index.entry(key).or_default().insert(id.clone());
             }
         }
-        guard.total_bytes = total;
+        // total_bytes counts LIVE records only — the old per-line sum counted
+        // every update revision (store.rs history), inflating the byte cap
+        // into premature evictions.
+        guard.total_bytes = guard.by_id.values().filter(|r| !r.deleted).map(|r| r.content.len()).sum();
         // order is rebuilt lazily in list/search; mark dirty for the first
         // rebuild.
         guard.dirty = true;
@@ -172,13 +193,31 @@ impl MemoryStore {
             Ok(f) => f,
             Err(_) => return,
         };
-        // Write version header on a fresh (empty) file.
-        if f.metadata().map(|m| m.len() == 0).unwrap_or(false) {
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        if len == 0 {
+            // Fresh (empty) file: version header first.
             let _ = writeln!(
                 f,
                 "{}",
                 serde_json::json!({ "type": HEADER_TYPE, "version": HEADER_VERSION })
             );
+        } else {
+            // Torn-write guard: a crash mid-writeln can leave a fragment
+            // without the trailing newline; the NEXT append would fuse onto it
+            // and silently destroy that record on every future load. Detect
+            // the missing terminator and start a fresh line.
+            use std::io::{Read, Seek, SeekFrom};
+            let tail_bad = std::fs::OpenOptions::new().read(true).open(&path)
+                .and_then(|mut r| {
+                    r.seek(SeekFrom::End(-1))?;
+                    let mut b = [0u8; 1];
+                    r.read_exact(&mut b)?;
+                    Ok(b[0] != b'\n')
+                })
+                .unwrap_or(false);
+            if tail_bad {
+                let _ = f.write_all(b"\n");
+            }
         }
         let _ = writeln!(f, "{line}");
     }
@@ -236,29 +275,46 @@ impl MemoryStore {
         if removed.is_empty() {
             return 0;
         }
+        // Snapshot the doomed tombstones so a FAILED disk rewrite can be
+        // rolled back into the index — otherwise memory (clean) and disk
+        // (still holding them) diverge and they RESURRECT at next load.
+        let removed_records: Vec<MemoryRecord> = removed.iter().filter_map(|id| guard.by_id.get(id).cloned()).collect();
         // Rewrite the JSONL with only the survivors (temp + rename).
         let path = self.file_path();
         let tmp = path.with_extension("jsonl.tmp");
-        {
+        let write_ok = {
             use std::io::Write;
-            let mut out = match std::fs::File::create(&tmp) {
-                Ok(f) => f,
-                Err(_) => return removed.len(), // index updated; disk rewrite best-effort
-            };
-            let _ = writeln!(
-                out,
-                "{}",
-                serde_json::json!({ "type": HEADER_TYPE, "version": HEADER_VERSION })
-            );
-            let mut survivors: Vec<&MemoryRecord> = guard.by_id.values().collect();
-            survivors.sort_by_key(|r| r.created_at);
-            for rec in survivors {
-                if let Ok(line) = serde_json::to_string(rec) {
-                    let _ = writeln!(out, "{line}");
+            match std::fs::File::create(&tmp) {
+                Ok(mut out) => {
+                    let _ = writeln!(
+                        out,
+                        "{}",
+                        serde_json::json!({ "type": HEADER_TYPE, "version": HEADER_VERSION })
+                    );
+                    let mut survivors: Vec<&MemoryRecord> = guard.by_id.values().collect();
+                    survivors.sort_by_key(|r| r.created_at);
+                    for rec in survivors {
+                        if let Ok(line) = serde_json::to_string(rec) {
+                            let _ = writeln!(out, "{line}");
+                        }
+                    }
+                    // Durability: the rename must not outrun the data. A
+                    // power cut after rename, without this sync, can leave
+                    // the replaced file EMPTY — total knowledge loss (the
+                    // process-kill story is temp+rename safe; power is not).
+                    out.flush().is_ok() && out.sync_all().is_ok()
                 }
+                Err(_) => false,
             }
+        };
+        if !write_ok || std::fs::rename(&tmp, &path).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            for rec in removed_records {
+                guard.by_id.insert(rec.id.clone(), rec);
+            }
+            guard.dirty = true;
+            return 0;
         }
-        let _ = std::fs::rename(&tmp, &path);
         guard.dirty = true;
         tracing::info!("[vale-agent] memory compact: removed {removed_count} tombstone(s)", removed_count = removed.len());
         before.saturating_sub(guard.by_id.len())
@@ -272,11 +328,21 @@ impl MemoryStore {
         rec.tags.retain(|t| !t.trim().is_empty());
         let id = rec.id.clone();
         let line = serde_json::to_string(&rec).unwrap_or_default();
-        self.append_line(&line);
         {
             let mut guard = recover_guard(&self.inner);
-            guard.total_bytes += rec.content.len();
-            guard.by_id.insert(id.clone(), rec.clone());
+            // append inside the guard: a concurrent compact() renames the
+            // file under its own lock — an append outside it could land on
+            // the OLD inode and be destroyed while the record sits in memory
+            // (lost at next restart).
+            self.append_line(&line);
+            if let Some(prev) = guard.by_id.insert(id.clone(), rec.clone()) {
+                if !prev.deleted {
+                    guard.total_bytes = guard.total_bytes.saturating_sub(prev.content.len());
+                }
+            }
+            if !rec.deleted {
+                guard.total_bytes += rec.content.len();
+            }
             for tag in &rec.tags {
                 guard.tag_index.entry(tag.to_lowercase()).or_default().insert(id.clone());
             }
@@ -367,6 +433,9 @@ impl MemoryStore {
     /// Returns records ordered updated_at desc, content truncated to
     /// `snippet_bytes` for the wire.
     pub fn search(&self, query: &str, namespace: Option<&str>, limit: usize) -> Vec<MemoryRecord> {
+        // limit=0 must return 0 hits, not the first match (the old
+        // check-AFTER-push semantics pushed one before comparing).
+        let limit = limit.max(1);
         self.rebuild_order();
         // Multi-word AND matching: the query is split on whitespace and EVERY
         // term must appear in title/content/tags (order-independent). A bare
@@ -480,6 +549,10 @@ impl MemoryStore {
         self.rebuild_order();
         let mut guard = recover_guard(&self.inner);
         let limits = self.limits;
+        // Evicted/retired tombstones must be PERSISTED (append their record
+        // line) — memory-only flips resurrect on restart (they were observed
+        // live again after a process bounce).
+        let mut persist: Vec<String> = Vec::new();
         // Evict while over entry cap. The victim is the OLDEST non-deleted
         // record (smallest updated_at; ties by smallest id) — NOT the last
         // of `order`, which is newest-first for query display.
@@ -497,7 +570,9 @@ impl MemoryStore {
                     if let Some(rec) = guard.by_id.get_mut(&id) {
                         rec.deleted = true;
                         rec.updated_at = unix_now();
+                        if let Ok(line) = serde_json::to_string(&*rec) { persist.push(line); }
                     }
+                    guard.total_bytes = guard.by_id.values().filter(|r| !r.deleted).map(|r| r.content.len()).sum();
                     guard.dirty = true;
                 }
                 None => break,
@@ -523,6 +598,7 @@ impl MemoryStore {
                     if let Some(rec) = guard.by_id.get_mut(&id) {
                         rec.deleted = true;
                         rec.updated_at = unix_now();
+                        if let Ok(line) = serde_json::to_string(&*rec) { persist.push(line); }
                     }
                     guard.total_bytes = new_total;
                     guard.dirty = true;
@@ -542,9 +618,16 @@ impl MemoryStore {
             for id in ids {
                 if let Some(rec) = guard.by_id.get_mut(&id) {
                     rec.deleted = true;
+                    rec.updated_at = unix_now();
+                    if let Ok(line) = serde_json::to_string(&*rec) { persist.push(line); }
                 }
                 guard.dirty = true;
             }
+            guard.total_bytes = guard.by_id.values().filter(|r| !r.deleted).map(|r| r.content.len()).sum();
+        }
+        drop(guard);
+        for line in persist {
+            self.append_line(&line);
         }
     }
 }
@@ -575,6 +658,88 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vale-mem-test-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         (MemoryStore::new(dir.clone(), MemoryLimits::default()), dir)
+    }
+
+    // ---- review regression tests (round: memory durability audit) ----
+
+    #[test]
+    fn append_repairs_a_torn_final_line() {
+        // A crash mid-writeln leaves a fragment with no trailing newline.
+        // The NEXT append must not fuse onto it (that silently destroyed the
+        // new record on every subsequent load).
+        let dir = std::env::temp_dir().join(format!("vale-mem-torn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("memory.jsonl"), b"{\"id\":\"m-a\",\"title\":\"hel").unwrap();
+        let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        store.insert(rec("b", "body-b"));
+        drop(store);
+        // Reload: "b" must be present (its line survived the repair), the
+        // torn fragment is simply skipped.
+        let store2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        let hits = store2.search("body-b", None, 10);
+        assert!(hits.iter().any(|r| r.title == "b"), "post-repair append must be loadable");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_survives_invalid_utf8() {
+        // A torn write can split a multi-byte char; one invalid byte must
+        // not hide the WHOLE store (the old read_to_string failed hard).
+        let dir = std::env::temp_dir().join(format!("vale-mem-badutf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut bytes = b"{\"id\":\"m-ok\",\"title\":\"ok\",\"content\":\"keep me\",\"tags\":[],\"namespace\":\"shared\",\"source\":\"t\",\"created_at\":1,\"updated_at\":1,\"deleted\":false}\n".to_vec();
+        bytes.extend_from_slice(&[0xf0, 0x9f, 0x94]); // truncated emoji, no newline
+        std::fs::write(dir.join("memory.jsonl"), &bytes).unwrap();
+        let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        let hits = store.search("keep", None, 10);
+        assert!(hits.iter().any(|r| r.title == "ok"), "valid records must load despite a trailing invalid byte");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn eviction_tombstones_persist_across_restart() {
+        // max_entries=2: inserting a 3rd evicts the oldest. The flip MUST be
+        // on disk — otherwise the evicted entry resurrects on restart.
+        let dir = std::env::temp_dir().join(format!("vale-mem-evict-{}", std::process::id()));
+        let store = MemoryStore::new(dir.clone(), MemoryLimits { max_entries: 2, ..MemoryLimits::default() });
+        // EXPLICIT timestamps — unix_now() is second-granular, so three fast
+        // inserts tie and the victim would fall to id ordering, not age.
+        let mut a = rec("oldest", "O"); a.updated_at = 100; a.created_at = 100;
+        let mut b = rec("mid", "M"); b.updated_at = 200; b.created_at = 200;
+        let mut c = rec("newest", "N"); c.updated_at = 300; c.created_at = 300;
+        store.insert(a);
+        store.insert(b);
+        store.insert(c);
+        let live_ids: Vec<String> = store.list(None, None, 50, false).into_iter().map(|r| r.title).collect();
+        assert!(!live_ids.contains(&"oldest".to_string()), "oldest should be evicted in-memory");
+        drop(store);
+        let store2 = MemoryStore::new(dir.clone(), MemoryLimits { max_entries: 2, ..MemoryLimits::default() });
+        let titles: Vec<String> = store2.list(None, None, 50, false).into_iter().map(|r| r.title).collect();
+        assert!(!titles.contains(&"oldest".to_string()), "eviction must survive restart, got {titles:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn total_bytes_counts_deduped_live_only() {
+        // The old per-line sum counted every update revision; total_bytes
+        // must be the deduped LIVE content bytes so the cap never fires
+        // prematurely after edits.
+        let dir = std::env::temp_dir().join(format!("vale-mem-total-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        let id = store.insert(rec("doc", "v1-content"));
+        for i in 0..10 {
+            store.update(&id, None, Some(format!("v{}-content-longer", i)), None, None, None);
+        }
+        let expected = store.get(&id, false).unwrap().content.len();
+        drop(store);
+        let store2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        store2.insert(rec("probe", "x")); // touches enforce; total recomputed on load
+        let live_total = store2.total_bytes_live();
+        assert_eq!(live_total, expected + 1, "total must equal live contents, not update history");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn rec(title: &str, content: &str) -> MemoryRecord {

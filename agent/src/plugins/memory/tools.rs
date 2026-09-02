@@ -26,13 +26,16 @@ pub fn set_source(source: &str) {
 
 /// Mint a new record id: `m-<unix_ts>-<rand6>`.
 fn mint_id() -> String {
-    let ts = std::time::SystemTime::now()
+    // Seconds+nanos+counter: the old ts+counter-only form collided when an
+    // update-swap restarted the process within the same second — both ids
+    // landed identical and load's last-wins SILENTLY ERASED the earlier
+    // entry (memory store review #9).
+    let d = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .unwrap_or_default();
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::SeqCst) % 1_000_000;
-    format!("m-{ts}-{n:06}")
+    format!("m-{}-{:09}-{n:06}", d.as_secs(), d.subsec_nanos())
 }
 
 fn source_now() -> String {
@@ -88,9 +91,12 @@ fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
                     .unwrap_or(0);
                 let rec = MemoryRecord {
                     id: mint_id(),
-                    title,
+                    // the sanitizer used to see ONLY content — a secret in
+                    // the title or a tag persisted raw and rode out through
+                    // search/list/export (memory store review #5).
+                    title: sanitize(&title),
                     content: sanitize(&content),
-                    tags,
+                    tags: tags.iter().map(|t| sanitize(t)).collect(),
                     namespace,
                     source: source_now(),
                     created_at: now,
@@ -187,12 +193,15 @@ fn tool_update(store: Arc<MemoryStore>) -> ToolDef {
                 if id.is_empty() {
                     return Ok(json!({"ok": false, "error": "id is required"}));
                 }
-                let title = params.get("title").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let title = params.get("title").and_then(|v| v.as_str()).map(sanitize)
+                    // empty-string title means "clear"? the store treats
+                    // Some("") as a real update; keep rejecting it loudly.
+                    .filter(|t| !t.trim().is_empty());
                 let content = params.get("content").and_then(|v| v.as_str()).map(sanitize);
                 let tags = params
                     .get("tags")
                     .and_then(|v| v.as_array())
-                    .map(|a| a.iter().filter_map(|t| t.as_str().map(|s| s.to_string())).collect());
+                    .map(|a| a.iter().filter_map(|t| t.as_str().map(|s| sanitize(s.to_string().as_str()))).collect());
                 let namespace = params.get("namespace").and_then(|v| v.as_str()).map(|s| s.to_string());
                 let deleted = params.get("deleted").and_then(|v| v.as_bool());
                 let ok = store.update(&id, title, content, tags, namespace, deleted);
