@@ -58,14 +58,19 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
       .catch(() => setStatus("read failed"));
   }, []);
 
+  const [saveBusy, setSaveBusy] = useState(false);
   async function save() {
     const mb = Number(bufferMb);
     if (!Number.isFinite(mb) || mb < 1 || mb > 64) { setStatus("enter 1-64"); return; }
+    // SPA audit LOW-4: unguarded Save double-clicked duplicate PUTs with
+    // racing status.
+    setSaveBusy(true);
     try {
       const j = await callApi("/api/settings", { method: "PUT", body: JSON.stringify({ buffer_mb: mb }) });
       if (j && j.ok) setStatus("saved");
       else setStatus("save failed");
     } catch { setStatus("save failed"); }
+    finally { setSaveBusy(false); }
   }
 
   // Save gateway config + register + optional tunnel, one click.
@@ -88,14 +93,35 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
           `tunnel: ${j.tunnel || "skipped"}`,
         ];
         setGwStatus(parts.join(" · "));
+        // SPA audit MED-1: a used one-time reg-key must NOT linger in the
+        // visible form (screen share / shoulder surf) — wipe it on success.
+        setGwKey("");
       } else {
-        setGwStatus(j?.error || "connect failed");
+        await gwFailure("connect failed", String(j?.error || "connect failed"));
       }
     } catch (e: any) {
-      setGwStatus(e?.message || "connect failed");
+      await gwFailure("connect failed", String(e?.message || "connect failed"));
     } finally {
       setGwBusy(false);
     }
+  }
+
+  // SPA audit MED-2: the key is SPENT server-side before the slow tunnel
+  // step — a client-side timeout (30s abort) makes the panel say "failed"
+  // while the device is actually bound; re-sending burns a dead key. On ANY
+  // failure with a key typed, re-read settings: a bound console_url means
+  // "do not retry" — clear the field and say so.
+  async function gwFailure(prefix: string, msg: string) {
+    if (!gwKey.trim()) { setGwStatus(msg || prefix); return; }
+    try {
+      const st = await callApi("/api/settings");
+      if (st && st.console_url) {
+        setGwKey("");
+        setGwStatus(`${msg || prefix} — but the gateway IS bound now: do NOT re-send the same key`);
+        return;
+      }
+    } catch { /* fall through to the plain error */ }
+    setGwStatus(msg || prefix);
   }
 
   return (
@@ -119,10 +145,12 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
           />
           <input
             className="settings-input"
+            type="password"
             placeholder="Registration key (optional — generate at the console)"
             value={gwKey}
             onChange={(e) => setGwKey(e.target.value)}
             aria-label="Registration key"
+            autoComplete="off"
           />
           <label className="settings-check">
             <input type="checkbox" checked={gwTunnel} onChange={(e) => setGwTunnel(e.target.checked)} />
@@ -154,7 +182,7 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
             onChange={(e) => setBufferMb(e.target.value)}
             aria-label="Session buffer MiB"
           />
-          <button className="btn btn-ghost btn-mini" onClick={save}>Save</button>
+          <button className="btn btn-ghost btn-mini" onClick={save} disabled={saveBusy}>Save</button>
         </div>
         {status && <p className="hint">{status}</p>}
       </div>

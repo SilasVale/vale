@@ -1874,3 +1874,7 @@ input::placeholder, textarea::placeholder { color: var(--faint, #999); }
   70% { box-shadow: 0 0 0 7px rgba(48, 209, 88, 0); }
   100% { box-shadow: 0 0 0 0 rgba(48, 209, 88, 0); }
 }
+
+/* button reset for the tab close affordance (was a span) */
+button.dtab-close { background: none; border: 0; padding: 0; margin-left: 6px; cursor: pointer; color: inherit; display: inline-flex; align-items: center; opacity: .6; }
+button.dtab-close:hover { opacity: 1; }

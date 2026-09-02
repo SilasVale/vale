@@ -161,13 +161,15 @@ export function DesktopShell({
                     >
                       <span className="dtab-dot" data-kind={s.kind} />
                       <span className="dtab-name">{s.label}</span>
-                      <span
+                      <button
+                        type="button"
                         className="dtab-close"
                         title="Close session"
+                        aria-label={`Close session ${s.label}`}
                         onClick={(e) => { e.stopPropagation(); onClose(s.sid); }}
                       >
                         <Icon name="close" size={10} />
-                      </span>
+                      </button>
                     </div>
                   ))}
                 </div>

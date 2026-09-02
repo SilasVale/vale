@@ -213,11 +213,28 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
     // produces terminal output (debounced) or the tab regains focus. A
     // silent command still lands its cards on the next output burst.
     let timer: number | undefined;
+    // SPA audit MED-3: the pure trailing-edge debounce STARVED under
+    // continuous output (every burst byte-stream re-armed the 1s timer —
+    // during builds/serial floods the cards froze). Max-wait pattern: a
+    // pending refresh older than 5s runs immediately.
+    let armedAt = 0;
     const onOutput = (e: Event) => {
       const sid = (e as CustomEvent).detail?.sid;
       if (sid !== sidRef.current) return; // another session's output
+      const now = Date.now();
+      if (!armedAt) armedAt = now;
       if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(tick, 1000);
+      if (now - armedAt >= 5000) {
+        armedAt = 0;
+        timer = undefined;
+        void tick();
+        return;
+      }
+      timer = window.setTimeout(() => {
+        armedAt = 0;
+        timer = undefined;
+        void tick();
+      }, 1000);
     };
     const onVisible = () => { if (document.visibilityState === "visible") tick(); };
     window.addEventListener("vale-term-output", onOutput);

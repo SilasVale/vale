@@ -167,11 +167,16 @@ export function MemoryPage() {
   }, []);
 
   const doExport = useCallback(async () => {
+    // SPA audit LOW-5: the Export button's disabled={busy} was VACUOUS —
+    // doExport never set busy, so double-clicks ran two full exports.
+    setBusy(true);
     try {
       const r = await callTool("memory_export", namespace ? { namespace } : {});
       setExportText(r?.export || "");
     } catch (e: any) {
       setError(e?.message || String(e));
+    } finally {
+      setBusy(false);
     }
   }, [namespace]);
 
@@ -233,6 +238,7 @@ export function MemoryPage() {
           </div>
         )}
         {entries.length === 0 && !busy && <p className="muted">No memory entries yet — AI clients save knowledge via memory_save.</p>}
+        {entries.length >= 50 && <p className="muted">Showing the first 50 entries — narrow the namespace filter or search to reach older knowledge.</p>}
         {entries.map((e) => (
           <div className="mem-card" key={e.id} data-deleted={e.deleted || undefined}>
             {editId === e.id ? (
@@ -252,7 +258,7 @@ export function MemoryPage() {
                   <span className="mem-title">{e.title}</span>
                   <span className="mem-meta">{e.namespace} · {e.source} · {fmt(e.updated_at)}</span>
                   <span className="mem-actions">
-                    <button className="btn btn-ghost btn-mini" title="Edit entry" onClick={() => startEdit(e)}>
+                    <button className="btn btn-ghost btn-mini" title="Edit entry" aria-label="Edit entry" onClick={() => startEdit(e)}>
                       <Icon name="edit" size={11} />
                     </button>
                     {confirmId === e.id ? (
@@ -262,7 +268,7 @@ export function MemoryPage() {
                         <button className="btn btn-ghost btn-mini" onClick={() => setConfirmId(null)}>Cancel</button>
                       </>
                     ) : (
-                      <button className="btn btn-danger btn-mini" title="Delete entry" onClick={() => setConfirmId(e.id)}>
+                      <button className="btn btn-danger btn-mini" title="Delete entry" aria-label="Delete entry" onClick={() => setConfirmId(e.id)}>
                         <Icon name="close" size={11} />
                       </button>
                     )}
