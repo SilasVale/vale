@@ -55,7 +55,14 @@ impl PluginRegistry {
     pub fn register(&mut self, plugin: Box<dyn Plugin>) {
         let tools: Vec<Arc<vale_agent_core::ToolDef>> = plugin.tools().into_iter().map(Arc::new).collect();
         for t in &tools {
-            self.by_name.insert(t.name.clone(), t.clone());
+            if let Some(prev) = self.by_name.insert(t.name.clone(), t.clone()) {
+                // Core audit #12: last-wins SHADOWING silently duplicates the
+                // name in tools/list (MCP spec violation) while dispatch hits
+                // the later handler. None exists today — surface it if one
+                // ever does.
+                let _ = &prev;
+                tracing::warn!("plugin tool name collision: '{}' registered twice", t.name);
+            }
         }
         self.tools_by_plugin.push((plugin.name().to_string(), tools));
         self.plugins.push(plugin);

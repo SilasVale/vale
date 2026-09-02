@@ -249,7 +249,7 @@ mod secrets_impl {
                     // query must find a legacy "ssh:user@host" CM entry,
                     // same gap closed in file_impl::get).
                     let raw = format!("ssh:{target}");
-                    for probe in [raw.clone(), raw.clone()]
+                    for probe in [raw]
                         .into_iter()
                         .chain(target.strip_suffix(":22").map(|t| format!("ssh:{t}")))
                     {

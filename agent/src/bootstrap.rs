@@ -19,6 +19,12 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
         f.write_all(contents)?;
         f.sync_all()?;
     }
+    // Core audit #9 (HIGH): config.yaml carries the device_token (= a bearer
+    // key to the whole RCE surface) yet was the ONE secret-adjacent file
+    // never ACL-hardened — any local account read it through the inherited
+    // Users:RX on the data dir. Harden every atomic write (best-effort: a
+    // volume without ACL support must not fail the boot path).
+    let _ = crate::paths::harden_file(&tmp);
     std::fs::rename(&tmp, path)?;
     Ok(())
 }

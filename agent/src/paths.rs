@@ -89,12 +89,18 @@ pub fn harden_file(path: &std::path::Path) -> Result<(), std::io::Error> {
     {
         let user = std::env::var("USERNAME")
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "USERNAME unavailable"))?;
+        // Grant CURRENT USER + SYSTEM (S-1-5-18): files move between those
+        // two contexts (setup writes config.yaml as the interactive user,
+        // the service rewrites it as SYSTEM) — an ACL that only names one
+        // bricks the other. Inheritance is stripped, so BUILTIN\Users lose
+        // the RX they used to inherit over C:\ProgramData\Vale.
         let out = std::process::Command::new("icacls")
             .args([
                 path.to_string_lossy().as_ref(),
                 "/inheritance:r",
                 "/grant:r",
                 &format!("{user}:(R,W)"),
+                "*S-1-5-18:(R,W)",
             ])
             .output()?;
         if !out.status.success() {

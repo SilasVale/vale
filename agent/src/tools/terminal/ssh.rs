@@ -108,9 +108,19 @@ impl TermBackend for SshBackend {
         // dropping the connection (the session stays usable).
         // round-102: bounded retry without blocking sleeps — a dropped ^C
         // leaves the timed-out command running on the remote.
+        let mut sent = false;
         for _ in 0..8 {
-            if self.write_tx.try_send(vec![0x03]).is_ok() { return; }
+            if self.write_tx.try_send(vec![0x03]).is_ok() { sent = true; break; }
             std::thread::yield_now();
+        }
+        if !sent {
+            // SSH audit #2 (MED): the full queue is EXACTLY the backpressure
+            // that timed out the execute — a dropped ^C leaves the remote
+            // command running while the tool reports success. Blocking send
+            // could wedge the worker (the consumer itself waits on the jammed
+            // channel), so: loud observability now, async-bounded-send when
+            // terminate() gains a Future signature.
+            tracing::warn!("[vale-agent] ssh terminate: interrupt DROPPED (write queue full) — remote command may still be running");
         }
     }
 }

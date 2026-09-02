@@ -191,11 +191,23 @@ fn sftp_handler() -> impl vale_agent_core::ToolHandler + 'static {
                 let data_b64 = params.get("data").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
                 // Reuse the same connect+auth path as terminal ssh sessions.
-                let session = crate::tools::ssh::SshSession::connect(
-                    &host, port, &user,
-                    if password.is_empty() { None } else { Some(&password) },
-                    if key_path.is_empty() { None } else { Some(&key_path) },
-                ).await?;
+                // SSH audit #4 (LOW): the terminal path wraps connect in a
+                // 30 s ceiling — sftp called it BARE; a dribbling tarpit can
+                // extend an auth hang indefinitely (russh's inactivity timer
+                // resets on ANY byte). Bound it identically.
+                let session = match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    crate::tools::ssh::SshSession::connect(
+                        &host, port, &user,
+                        if password.is_empty() { None } else { Some(&password) },
+                        if key_path.is_empty() { None } else { Some(&key_path) },
+                    ),
+                ).await {
+                    Ok(r) => r?,
+                    Err(_) => return Err(DeviceError::Internal {
+                        message: format!("sftp: ssh connect to {user}@{host}:{port} timed out after 30s"),
+                    }),
+                };
                 let sftp = session.sftp_session().await?;
 
                 let result = match op.as_str() {

@@ -396,6 +396,16 @@ mod desktop_impl {
                     (Arc::new(be) as Arc<dyn TermBackend>, label)
                 }
                 _ => {
+                    // SSH/core audit #1 (MED): kind reached this catch-all
+                    // UNVALIDATED — {kind:"SSH"} or a typo opened a LOCAL
+                    // PowerShell while the caller believed it was remote (the
+                    // commands simply ran on the device). Only genuine PTY
+                    // spellings land here now.
+                    if !matches!(kind.as_str(), "pty" | "pwsh" | "powershell" | "bash" | "shell") {
+                        return Err(DeviceError::InvalidParams {
+                            message: format!("unknown terminal kind '{kind}' (expected pty|ssh|serial)"),
+                        });
+                    }
                     // PTY spawn (openpty + spawn_command) blocks — off-executor
                     let be = {
                         let target = req.target.clone();

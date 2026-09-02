@@ -185,8 +185,24 @@ async fn provision_tunnel(cf_token: &str) -> String {
     }
     let hostname = std::fs::read_to_string(install_dir.join("vale-agent.hostname"))
         .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "d1.agent.saisi.online".to_string());
-    let tunnel_name = format!("vale-agent-{}", hostname.split('.').next().unwrap_or("d1"));
+        .unwrap_or_default();
+    // Supervision audit #5: hostname flows into cloudflared ARGV and an
+    // unquoted YAML line. A value starting with '-' becomes a FLAG, an
+    // embedded newline injects keys (e.g. a different `service:` target).
+    // Validate to bare subdomain charset before anything else touches it.
+    let host_ok = |v: &str| -> bool {
+        !v.is_empty()
+            && v.len() <= 253
+            && !v.starts_with('-')
+            && v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    };
+    if !host_ok(&hostname) {
+        return "cannot provision: vale-agent.hostname missing or invalid (set it via `vale setup --hostname <sub>` first)".to_string();
+    }
+    if !host_ok(cf_token) {
+        return "cannot provision: gateway returned a malformed API token".to_string();
+    }
+    let tunnel_name = format!("vale-agent-{}", hostname.split('.').next().unwrap_or("device"));
     // 1. login with token. cloudflared writes cert.pem to %USERPROFILE%\.cloudflared\
     //    — under the SYSTEM service that is systemprofile, and `tunnel login
     //    --token` may not write it there reliably. After login, ensure the
@@ -298,13 +314,11 @@ async fn provision_tunnel(cf_token: &str) -> String {
         "tunnel: {id}\ncredentials-file: {cred}\nallow-remote-config: false\ningress:\n  - hostname: {hostname}\n    service: http://127.0.0.1:18080\n  - service: http_status:404\n"
     );
     let cfg_path = install_dir.join("tunnel.yml");
-    let _ = std::fs::write(&cfg_path, yml);
-    // 5. spawn (spawn-if-absent). tunnel.yml sets allow-remote-config: false
-    //    so a stale Cloudflare-side config (e.g. an old 127.0.0.2 ingress)
-    //    can never override the local ingress (127.0.0.1).
-    let _ = tokio::process::Command::new(&cf)
-        .args(["tunnel", "--config"]).arg(&cfg_path).arg("run")
-        .spawn();
+    // Supervision audit #5: atomic (the boot-spawned cloudflared may be
+    // mid-read) — and #1: DO NOT spawn a second tunnel here; the supervisor
+    // task owns the single child and restarts on the generation bump.
+    let _ = crate::bootstrap::atomic_write(&cfg_path, yml.as_bytes());
+    crate::tunnel_ctl::request_restart();
     format!("ok ({hostname})")
 }
 

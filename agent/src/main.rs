@@ -236,15 +236,68 @@ fn main() {
         // C2: cloudflared is BOXED under install_dir\tools\ and the AGENT owns
         // the tunnel lifecycle (spawn-if-absent on boot). No Windows service,
         // no external owner — this is the single supervision path.
-        let cf = install_dir.join("tools").join("cloudflared.exe");
-        let cfg = install_dir.join("tunnel.yml");
-        if cf.exists() && cfg.exists() {
-            let _ = std::process::Command::new(&cf)
-                .args(["tunnel", "--config"]).arg(&cfg).arg("run")
-                .spawn();
-            log_line("cloudflared tunnel: launched from install dir");
-        } else {
-            log_line("cloudflared tunnel: not staged (cloudflared.exe/tunnel.yml missing) — skipped");
+        // Supervision audit #1: the OLD code spawned cloudflared once,
+        // fire-and-forget — a tunnel that exited (CF network-fatal, cert
+        // churn, OOM) left the device DARK while /api/status kept answering,
+        // and provision_tunnel could stack a SECOND concurrent tunnel. One
+        // supervisor task now owns the child for the process lifetime:
+        // respawn with capped backoff (reset after a healthy minute) and a
+        // RESTART when tunnel_ctl's generation bumps (fresh tunnel.yml).
+        {
+            let inst = install_dir.clone();
+            tokio::spawn(async move {
+                use std::time::{Duration, Instant};
+                let mut backoff: u64 = 5;
+                loop {
+                    let cf = inst.join("tools").join("cloudflared.exe");
+                    let cfg = inst.join("tunnel.yml");
+                    if !(cf.exists() && cfg.exists()) {
+                        // Not staged yet — provision downloads later; keep polling.
+                        tokio::time::sleep(Duration::from_secs(30)).await;
+                        continue;
+                    }
+                    let my_gen = vale_agent::tunnel_ctl::generation();
+                    match tokio::process::Command::new(&cf)
+                        .args(["tunnel", "--config"]).arg(&cfg).arg("run")
+                        .kill_on_drop(true)
+                        .spawn()
+                    {
+                        Ok(mut child) => {
+                            log_line("cloudflared tunnel: launched from install dir (supervised)");
+                            let started = Instant::now();
+                            let mut restarted = false;
+                            loop {
+                                if let Ok(Some(_)) = child.try_wait() {
+                                    break;
+                                }
+                                if vale_agent::tunnel_ctl::generation() != my_gen {
+                                    let _ = child.kill().await;
+                                    let _ = child.wait().await;
+                                    restarted = true;
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                            }
+                            if started.elapsed() >= Duration::from_secs(60) {
+                                backoff = 5; // survived a healthy minute — reset
+                            }
+                            if restarted {
+                                log_line("cloudflared tunnel: restart requested (re-provisioned)");
+                                continue; // immediate respawn on the new config
+                            }
+                            log_line(&format!(
+                                "cloudflared tunnel exited after {}s — respawn in {backoff}s",
+                                started.elapsed().as_secs()
+                            ));
+                        }
+                        Err(e) => {
+                            log_line(&format!("cloudflared tunnel: spawn failed: {e} — retry in {backoff}s"));
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_secs(backoff)).await;
+                    backoff = (backoff * 2).min(60);
+                }
+            });
         }
     }
 
@@ -493,51 +546,73 @@ async fn run_server(config_path: PathBuf) {
     // subdomain. Runs at boot after the server is up, then every 6h; failures
     // are silent (the console may be offline at boot).
     {
-        let reg_cfg = state.config.clone();
         let reg_install = vale_agent::paths::install_dir();
+        let reg_cfgpath = state.config_path.clone();
         tokio::spawn(async move {
-            // saisi decouple: self-register only when a console is configured.
-            // Fall back to the default gateway so a device that connected via
-            // the Settings card (or never set console_url) still registers.
-            let console = match reg_cfg.platform.console_url.clone() {
-                Some(c) if !c.trim().is_empty() => c,
-                _ => "https://api.saisi.online".to_string(),
-            };
-            let token = reg_cfg.server.device_token.clone().unwrap_or_default();
-            // hostname file may be missing on fresh installs — fall back to
-            // the default d1.agent.saisi.online so the device still registers.
-            let hostname = std::fs::read_to_string(reg_install.join("vale-agent.hostname"))
-                .map(|s| s.trim().to_string())
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "d1.agent.saisi.online".to_string());
-            if token.is_empty() {
-                return;
-            }
-            let name = hostname.split('.').next().unwrap_or("device").to_string();
-            let body = format!(
-                r#"{{"name":"{name}","hostname":"{hostname}","token":"{token}"}}"#,
-                name = name, hostname = hostname, token = token
-            );
+            // Supervision audit #2: the old loop SNAPSHOT-READ the config
+            // once and — violating the documented saisi decouple — fell back
+            // to the HARDCODED gateway "https://api.saisi.online" plus a
+            // hardcoded hostname, POSTing the device TOKEN from "pure local"
+            // installs. Now EVERY cycle re-reads live config + hostname file
+            // (so Settings-card changes apply without restart), and with no
+            // console_url configured NOTHING is ever sent anywhere.
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             loop {
-                let ok = match reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(10))
-                    .build()
-                {
-                    Ok(c) => c
-                        .post(format!("{console}/api/devices/self-register"))
-                        .header("content-type", "application/json")
-                        .body(body.clone())
-                        .send()
-                        .await
-                        .ok()
-                        .map(|r| r.status().is_success())
-                        .unwrap_or(false),
-                    Err(_) => false,
-                };
-                tracing::debug!(ok, "device self-register to {console}");
-                tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+                let cfg_path = reg_cfgpath
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
+                let cfg = cfg_path.as_ref().and_then(|p| Config::load(p).ok());
+                let console = cfg
+                    .as_ref()
+                    .and_then(|c| c.platform.console_url.clone())
+                    .map(|x| x.trim().to_string())
+                    .filter(|x| !x.is_empty());
+                let token = cfg
+                    .as_ref()
+                    .and_then(|c| c.server.device_token.clone())
+                    .unwrap_or_default();
+                let hostname = std::fs::read_to_string(reg_install.join("vale-agent.hostname"))
+                    .map(|x| x.trim().to_string())
+                    .unwrap_or_default();
+                let ready = console.is_some() && !token.is_empty() && !hostname.is_empty();
+                let mut fast_retry = true;
+                if ready {
+                    let console = console.unwrap_or_default();
+                    let name = hostname.split('.').next().unwrap_or("device").to_string();
+                    // serde_json (audit habit): never hand-build JSON from
+                    // interpolated values.
+                    let body = serde_json::json!({
+                        "name": name, "hostname": hostname, "token": token,
+                    })
+                    .to_string();
+                    let ok = match reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(10))
+                        .build()
+                    {
+                        Ok(c) => c
+                            .post(format!("{}/api/devices/self-register", console.trim_end_matches('/')))
+                            .header("content-type", "application/json")
+                            .body(body)
+                            .send()
+                            .await
+                            .ok()
+                            .map(|r| r.status().is_success())
+                            .unwrap_or(false),
+                        Err(_) => false,
+                    };
+                    tracing::debug!(ok, "device self-register to gateway");
+                    // steady-state heartbeat hourly; failures retry in 60 s.
+                    fast_retry = !ok;
+                    if !fast_retry {
+                        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                        continue;
+                    }
+                }
+                // not bound / not ready / failed: retry in 60 s (the old
+                // empty-token `return` made a boot-order hiccup PERMANENT).
+                let _ = &mut fast_retry;
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             }
         });
     }
@@ -581,44 +656,70 @@ async fn run_server(config_path: PathBuf) {
             // the new bridge.js is loaded. Only a genuinely external process
             // (command line without our bridge.js) is left alone.
             let install_dir = vale_agent::paths::install_dir();
-            let occupied_by_us = || -> bool {
-                use std::process::Command;
-                let out = Command::new("powershell")
-                    .args([
-                        "-NoProfile", "-Command",
-                        &format!(
-                            "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'node.exe' -and $_.CommandLine -like '*{}*bridge.js*' }} | Select-Object -ExpandProperty ProcessId",
-                            install_dir.to_string_lossy().replace('\\', "\\\\")
-                        ),
-                    ])
-                    .output();
-                match out {
-                    Ok(o) if o.status.success() => {
-                        let s = String::from_utf8_lossy(&o.stdout);
-                        s.split_whitespace().next().is_some()
-                    }
-                    _ => false,
-                }
-            };
-            if std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
-                if occupied_by_us() {
-                    // A leftover bridge of ours holds the port — reclaim it
-                    // so the CURRENT bridge.js (possibly a new version) is
-                    // loaded instead of the stale process.
-                    log_line("browser bridge: stale bridge owns 9224 — killing for respawn");
+            // supervision audit #3: (a) occupied_by_us ran a SYNCHRONOUS
+            // PowerShell (Get-CimInstance can take seconds) on the async
+            // worker — move it to spawn_blocking; (b) an unmatched squatter
+            // made the supervisor RETURN FOREVER — a renamed/stale bridge
+            // (exactly the update-delta case) silently never got replaced.
+            // Re-probe every 60 s until the port is ours again.
+            let kill_ours = || -> bool {
+                let id = install_dir.clone();
+                std::thread::spawn(move || {
                     let _ = std::process::Command::new("powershell")
                         .args([
                             "-NoProfile", "-Command",
                             &format!(
                                 "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'node.exe' -and $_.CommandLine -like '*{}*bridge.js*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
-                                install_dir.to_string_lossy().replace('\\', "\\\\")
+                                id.to_string_lossy().replace('\\', "\\\\")
                             ),
                         ])
                         .output();
-                    // Fall through to the spawn loop below.
-                } else {
-                    log_line("browser bridge: supervisor idle (external process owns 9224)");
-                    return;
+                });
+                true
+            };
+            if std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
+                let probe_factory = {
+                    let id = install_dir.clone();
+                    move || {
+                        let id = id.clone();
+                        let probe = move || {
+                        let out = std::process::Command::new("powershell")
+                            .args([
+                                "-NoProfile", "-Command",
+                                &format!(
+                                    "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'node.exe' -and $_.CommandLine -like '*{}*bridge.js*' }} | Select-Object -ExpandProperty ProcessId",
+                                    id.to_string_lossy().replace('\\', "\\\\")
+                                ),
+                            ])
+                            .output();
+                        match out {
+                            Ok(o) if o.status.success() => {
+                                let s = String::from_utf8_lossy(&o.stdout);
+                                s.split_whitespace().next().is_some()
+                            }
+                            _ => false,
+                        }
+                    };
+                        probe
+                    }
+                };
+                loop {
+                    let ours = tokio::task::spawn_blocking(probe_factory()).await.unwrap_or(false);
+                    if ours {
+                        log_line("browser bridge: stale bridge owns 9224 — killing for respawn");
+                        let _ = kill_ours();
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        if std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
+                            continue; // still held; re-probe
+                        }
+                        break; // port free — spawn loop below
+                    }
+                    log_line("browser bridge: foreign process owns 9224 — re-probing every 60s");
+                    // Never assume permanence: wait until SOMETHING frees it.
+                    while std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    }
+                    break;
                 }
             }
             let mut backoff: u64 = 2;
@@ -639,6 +740,11 @@ async fn run_server(config_path: PathBuf) {
                 match cmd.spawn() {
                     Ok(mut child) => {
                         log_line("browser bridge: spawned on 127.0.0.1:9224");
+                        // supervision audit #4: track child uptime so the
+                        // backoff RESETS after a healthy run — the old
+                        // monotonic growth meant a days-later crash respawned
+                        // only after the accumulated 30 s stall.
+                        let child_started = std::time::Instant::now();
                         // Box both pipe types to one AsyncRead — stdout and
                         // stderr are different concrete types.
                         let mut pipes: Vec<(&str, Box<dyn tokio::io::AsyncRead + Unpin + Send>)> = Vec::new();
@@ -656,6 +762,9 @@ async fn run_server(config_path: PathBuf) {
                             });
                         }
                         let status = child.wait().await;
+                        if child_started.elapsed() >= std::time::Duration::from_secs(60) {
+                            backoff = 2;
+                        }
                         log_line(&format!(
                             "browser bridge exited ({status:?}) — respawning in {backoff}s"
                         ));
