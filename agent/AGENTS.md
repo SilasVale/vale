@@ -205,12 +205,14 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 56 — audit retention + watchdog; device dark)
+Last updated: 2026-09-25 (round 57 — device RECOVERED on 1.2.207, retention verified)
 
 ### Current release
-- npm **1.2.206** published (agent exe internal 1.0.145). Device d1 runs
-  **1.2.205 binaries installed but OFFLINE** — see incident below; on next
-  logon/reboot it returns and self-verifies, then update to 1.2.206
+- npm **1.2.207** (agent exe internal 1.0.145) — LIVE AND VERIFIED on d1
+  (user rebooted/logged in; a stray `npm i -g …1.2.151` briefly downgraded,
+  then re-upgraded remote to 1.2.207). Electron watchdog/wait-page code is
+  synced on disk; it takes effect when the electron process next restarts
+  (next logon or manual schtasks /run ValeDesktop after /end).
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
 - Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
   GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
@@ -261,10 +263,13 @@ Last updated: 2026-09-25 (round 56 — audit retention + watchdog; device dark)
   agent with ONE atomic command:
   cmd /c "schtasks /End /TN ValeAgent & timeout /t 3 & schtasks /Run /TN ValeAgent"
   — or better, the WMI swap trick used by `vale update`.
-- PENDING SELF-VERIFY on next boot: D:\Vale\sessions\stale-test.jsonl
-  (mtime −40 d) must be DELETED by the 1.2.205 startup prune; keep-test.jsonl
-  (fresh) must survive. Then `npm i -g …/vale-agent-1.2.206.tgz; vale update`
-  to land the electron watchdog.
+- VERIFIED after recovery (round 57): the REAL sessions dir is
+  `C:\ProgramData\Vale\sessions` (registry DataDir — NOT D:\Vale\sessions;
+  my first test files went to the wrong dir). With files placed correctly:
+  stale (-40 d mtime) PRUNED, fresh KEPT, agent.log line
+  'session log retention: pruned 1 stale audit file(s)' — and the dir had
+  genuinely accumulated 167 audit files, proving the unbounded growth.
+- agent.log (new in 1.2.207): runtime tracing now visible on the device.
 - SHIPPED FIX (1.2.206): electron now auto-runs `schtasks /run ValeAgent`
   after ≥5 consecutive failed port probes (~60 s), ≥5 min apart — remote
   operators are no longer stranded when the agent (and its tunnel) die.
