@@ -220,11 +220,14 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 63 — guarded ValeDesktop pulse LIVE; 1.2.210)
+Last updated: 2026-09-25 (round 65 — bridge review hardening shipped; 1.2.211)
 
 ### Current release
-- npm **1.2.210** LIVE on d1 (recovered same day via console `schtasks /run
-  /TN ValeAgent` after the dark incident — user action). 1.2.209→210 fixed
+- npm **1.2.211** published (bridge review hardening: 11 fixes incl. the
+  GET /input crash guard and serialized CDP attach). d1 runs **1.2.210** —
+  update pending (device verification agent must finish first; the swap
+  kills terminal sessions). Recovered this round from the dark incident via
+  console `schtasks /run /TN ValeAgent` (user action). 1.2.209→210 fixed
   the ValeDesktop hardening: `schtasks /Change` prompts for the /ru password
   (PTY hang!) → use ScheduledTasks cmdlets; pulse action is a GUARDED
   wscript→ensure-desktop.ps1 (Get-Process check → no focus-steal second
@@ -268,7 +271,8 @@ Last updated: 2026-09-25 (round 63 — guarded ValeDesktop pulse LIVE; 1.2.210)
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- (none — device back, hardened, on 1.2.210)
+- Ship 1.2.211 to d1 once the verification agent is done; then re-run the
+  browser regression (tabs push, nav receipts, resize stability).
 
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
@@ -299,7 +303,7 @@ Last updated: 2026-09-25 (round 63 — guarded ValeDesktop pulse LIVE; 1.2.210)
 - Code: DO NOT push GitHub directly; Gitea mirror is the code home.
 - Releases: `curl -X POST -H "Authorization: Bearer $TOKEN" .../releases`
   with the ghp_ token from `~/.git-credentials` (works; tag push times out).
-  CURRENT: v1.2.210 is the ONLY release on GitHub (asset = 9.0 MB tgz,
+  CURRENT: v1.2.211 is the ONLY release on GitHub (asset = 9.0 MB tgz,
   verified public); older releases deleted per the keep-latest policy.
 - npm publish (2026-09-25 update): registry.npmjs.org is REACHABLE from the
   dsh box now (404 on /vale-agent = the name is FREE) but no npm credentials
