@@ -222,11 +222,25 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 72 — 1.2.218 LIVE; FULL git history rewritten:
-  402 Co-Authored-By Claude trailers stripped, all three endpoints consistent)
+Last updated: 2026-09-25 (round 74 — 1.2.219 LIVE; audit panel RE-BLINDed->fixed;
+  SPA terminal cursor model rewritten; GitHub refs 100% claude-free)
 
 ### Current release
-- npm **1.2.218 LIVE on d1** — (217: three more READ-ONLY audits harvested —
+- npm **1.2.219 LIVE on d1** — surfaces audit (Rust): /api/sessions read
+  current_exe()/sessions while the WRITER logs to registry DataDir → the
+  audit panel was permanently BLIND (verified fixed: endpoint now lists
+  real sessions); gateway/connect no longer rewrites config.yaml from a
+  token-less default on transient load failure (token-rotation catastrophe
+  avoided) + console_url partial semantics; reg-key body via serde_json;
+  PUT /api/settings keeps absent keys untouched; session_log: 4 KiB command
+  cap + REAL torn-tail repair (first cut was a no-op — caught by self-
+  review, regression test now proves it) + .jsonl.tmp pruning. SPA terminal
+  audit: cursor model is POSITION-ABSOLUTE (server clamps used to desync it
+  permanently → dup/loss storms), evicted→reset, termRef.current=term (one
+  line revives refit/resize-push/focus/FONT controls — all silently dead),
+  reconnect self-heal, serialized keystrokes, immutable poll updater,
+  paged export. Gateway: RouteDO/BreakerDO gained the DO_AUTH gate (they
+  ARE externally addressable — PluginHub comment says so). 1.2.218 — (217: three more READ-ONLY audits harvested —
   ELECTRON shell: execSync off the start paths, HTTP liveness watchdog,
   main-window origin pin, permission/window-open denial, CTRL origin gate,
   destroy-eviction; NPM CLI: fresh-install crash, WMI ReturnValue parsed,
