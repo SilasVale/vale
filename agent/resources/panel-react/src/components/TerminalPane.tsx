@@ -74,7 +74,7 @@ function loadFontSize(): number {
 
 export function TerminalPane({ session, registerWrite }: {
   session: Session;
-  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
+  registerWrite: (sid: string, fn: (bytes: Uint8Array, start?: number) => void, getRendered: () => number, setRendered?: (n: number) => void) => (() => void) & { unregister?: (sid: string) => void };
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -103,6 +103,11 @@ export function TerminalPane({ session, registerWrite }: {
       // brights when unset, which are nearly invisible on white (1.2-1.6:1).
       theme: termTheme(getTheme()),
     } as any);
+// review #3 (HIGH): termRef was NEVER assigned (only nulled on cleanup) —
+    // refit, the terminal_resize push (remote wrapping stuck at 120x30 —
+    // the round-96 bug returning), focus-on-activate and the FONT buttons
+    // were ALL silently dead.
+    termRef.current = term;
     const fit = new FitAddon();
     const search = new SearchAddon();
     term.loadAddon(fit);
@@ -117,9 +122,16 @@ export function TerminalPane({ session, registerWrite }: {
     // and produces a partial grid (the "not filling the screen" bug).
     requestAnimationFrame(() => requestAnimationFrame(() => { try { fit.fit(); } catch {} }));
 
-    // Keystrokes up: POST terminal_write.
+    // Keystrokes up: POST terminal_write. review #5: serialized through a
+    // promise chain — concurrent write POSTs race over the multiplexed
+    // tunnel and can arrive SWAPPED (fast typing/paste reordering).
+    let writeChain: Promise<unknown> = Promise.resolve();
     const sub = term.onData((data) => {
-      callTool("terminal_write", { session_id: session.sid, data }).catch(() => {});
+      writeChain = writeChain
+        .then(() => callTool("terminal_write", { session_id: session.sid, data }))
+        .catch(() => {
+          window.dispatchEvent(new CustomEvent("vale-write-failed", { detail: { sid: session.sid } }));
+        });
     });
 
     // Follow app theme flips live (light ↔ dark) without recreating the term.
@@ -157,16 +169,20 @@ export function TerminalPane({ session, registerWrite }: {
     // shell integration: OSC 633 sequences are invisible on the terminal,
     // consumed server-side by the agent). Raw bytes go straight to xterm.
     const decoder = new TextDecoder();
-    const unregister = registerWrite(session.sid, (bytes) => {
+    const unregister = registerWrite(session.sid, (bytes, start) => {
       // The SSE hook passed the frame; TerminalPane only needs the bytes
       // (the hook already validated session_id). Dedup is done by the hook
       // caller in useSSE — here we just write + advance.
       term.write(new TextEncoder().encode(decoder.decode(bytes, { stream: true })));
-      // renderedRef tracks the RAW stream offset (SSE frame.start is a raw
-      // offset — dedup breaks if it drifts from consumed bytes), so it
-      // always advances by the original length.
-      renderedRef.current += bytes.length;
-    }, () => renderedRef.current);
+      // review #1: when the caller knows the ABSOLUTE offset of these
+      // bytes (every SSE frame + every clamped read does), position there —
+      // the += form permanently desyncs across server-side clamps.
+      if (typeof start === "number") {
+        renderedRef.current = start + bytes.length;
+      } else {
+        renderedRef.current += bytes.length;
+      }
+    }, () => renderedRef.current, (v) => { renderedRef.current = v; });
 
     // Pull retained history so a resurrected session shows its tail.
     // round-96: the adopt read used offset:0 and rewrote EVERYTHING, while
@@ -177,6 +193,7 @@ export function TerminalPane({ session, registerWrite }: {
     // are skipped, nothing is re-written.
     callTool("terminal_read", { session_id: session.sid, offset: renderedRef.current, clean: false })
       .then((r: any) => {
+        if (r?.evicted) { renderedRef.current = 0; return; }
         if (!r || (!r.text && !r.raw)) return;
         const skip = Math.max(0, renderedRef.current - Number(r.start));
         if (r.raw) {
@@ -185,13 +202,13 @@ export function TerminalPane({ session, registerWrite }: {
           for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
           if (skip < bytes.length) {
             term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
-            renderedRef.current += bytes.length - skip;
+            renderedRef.current = Math.max(renderedRef.current, Number(r.start) + bytes.length);
           }
         } else if (skip >= 0 && r.text) {
           const bytes = new TextEncoder().encode(r.text);
           if (skip < bytes.length) {
             term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
-            renderedRef.current += bytes.length - skip;
+            renderedRef.current = Math.max(renderedRef.current, Number(r.start) + bytes.length);
           }
         }
       })

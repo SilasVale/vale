@@ -26,7 +26,7 @@ function backfillGap(
   sid: string,
   issueOffset: number,
   gapEnd: number | undefined,
-  cb: { write: (bytes: Uint8Array) => void; getRendered: () => number },
+  cb: { write: (bytes: Uint8Array, start?: number) => void; getRendered: () => number; setRendered?: (n: number) => void },
 ) {
   // Read [issueOffset, end) from the server buffer; write only the dropped
   // range [issueOffset, gapEnd) — bytes at or above gapEnd are (or will be)
@@ -57,7 +57,7 @@ function backfillGap(
       const syncDelivered = Math.max(0, before - issueOffset);
       const effectiveFrom = Math.max(from, rel + syncDelivered);
       if (to > effectiveFrom) {
-        cb.write(bytes.subarray(effectiveFrom, to));
+        cb.write(bytes.subarray(effectiveFrom, to), Number(r.start) + effectiveFrom);
       }
     })
     .catch(() => {
@@ -70,7 +70,7 @@ function backfillGap(
 
 export function useSSE(
   connected: boolean,
-  writeCallbacks: React.MutableRefObject<Map<string, { write: (bytes: Uint8Array) => void; getRendered: () => number }>>,
+  writeCallbacks: React.MutableRefObject<Map<string, { write: (bytes: Uint8Array, start?: number) => void; getRendered: () => number; setRendered?: (n: number) => void }>>,
   getLiveSidsRef: React.MutableRefObject<() => string[]>,
 ) {
   const [sseState, setSseState] = useState<SseState>("connecting");
@@ -79,10 +79,14 @@ export function useSSE(
     if (!connected) { setSseState("connecting"); return; }
     const hostname = (localStorage.getItem("valeHost") || "").trim();
     const token = localStorage.getItem("valeToken") || "";
-    if (!hostname) return;
+    if (!hostname) { setSseState("down"); return; }
 
     let attempt = 0;
     let alive = true;
+    // review #4: round-163 removed the polls, so a RECONNECTED stream must
+    // self-heal: sweep bytes missed while down + re-tick the session list
+    // (retire pushes during the outage are lost forever otherwise).
+    let needResync = false;
 
     // 30s heartbeat: keep watched-but-silent sessions alive (the backend
     // reaps sessions with no output after 15 min).
@@ -107,6 +111,13 @@ export function useSSE(
         const from = cb.getRendered();
         callTool("terminal_read", { session_id: sid, offset: from, clean: false })
           .then((r: any) => {
+            if (r?.evicted) {
+              // review #2: server reset/eviction — WITHOUT a cursor reset
+              // every later frame dedups against a cursor ABOVE the stream
+              // position and the pane silently dies on a stale transcript.
+              cb.setRendered?.(0);
+              return;
+            }
             if (!r || (!r.text && !r.raw)) return;
             // round-88: dedup against the CURRENT rendered offset at RESPONSE
             // time — the server always returns start == the requested offset,
@@ -128,14 +139,18 @@ export function useSSE(
               const bin = atob(r.raw);
               const bytes = new Uint8Array(bin.length);
               for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-              if (skip < bytes.length) cb.write(bytes.subarray(skip));
+              // review #1: cursor is POSITION-ABSOLUTE — the server may
+              // clamp/rotate/trim and return a start AHEAD of the requested
+              // offset; advancing by bytes-written desyncs it permanently
+              // (dup + loss storms on every later sweep/frame).
+              if (skip < bytes.length) cb.write(bytes.subarray(skip), Number(r.start) + skip);
             } else if (skip > 0) {
               // No raw payload (clean path): best-effort re-encode — byte
               // alignment via TextEncoder, still safe for CJK.
               const bytes = new TextEncoder().encode(r.text);
-              cb.write(bytes.subarray(skip));
+              cb.write(bytes.subarray(skip), Number(r.start) + skip);
             } else if (r.text) {
-              cb.write(new TextEncoder().encode(r.text));
+              cb.write(new TextEncoder().encode(r.text), Number(r.start));
             }
           })
           .catch(() => {
@@ -171,8 +186,8 @@ export function useSSE(
           headers: { authorization: `Bearer ${token}` },
           signal: ctl.signal,
         }).finally(() => clearTimeout(abortTimer));
-        if (res.status === 401) { setSseState("down"); setTimeout(connect, backoff()); return; }
-        if (!res.ok || !res.body) { setSseState("down"); setTimeout(connect, backoff()); return; }
+        if (res.status === 401) { setSseState("down"); needResync = true; setTimeout(connect, backoff()); return; }
+        if (!res.ok || !res.body) { setSseState("down"); needResync = true; setTimeout(connect, backoff()); return; }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -198,6 +213,11 @@ export function useSSE(
             const { done, value } = await readWithTimeout();
             if (done) break;
             attempt = 0;
+            if (needResync) {
+              needResync = false;
+              syncSweep();
+              window.dispatchEvent(new CustomEvent("vale-sessions-changed", { detail: {} }));
+            }
             buffer += decoder.decode(value, { stream: true });
             let idx;
             while ((idx = buffer.indexOf("\n\n")) !== -1) {
@@ -242,7 +262,7 @@ export function useSSE(
                   // threw on cb.getRendered() and the gap was never written.
                   backfillGap(frame.session_id, issue, typeof frame.start === "number" ? frame.start : undefined, cb);
                 }
-                cb.write(new Uint8Array(frame.data));
+                cb.write(new Uint8Array(frame.data), typeof frame.start === "number" ? frame.start : undefined);
                 // round-163: activity signal — command cards re-fetch on
                 // output instead of a 2s audit-log timer.
                 window.dispatchEvent(new CustomEvent("vale-term-output", { detail: { sid: frame.session_id } }));
@@ -264,7 +284,7 @@ export function useSSE(
             }
           }
         } finally { await reader.cancel().catch(() => {}); }
-      } catch { setSseState("down"); }
+      } catch { setSseState("down"); needResync = true; }
       if (alive) setTimeout(connect, backoff());
     };
     connect();

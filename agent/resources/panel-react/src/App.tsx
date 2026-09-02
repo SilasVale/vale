@@ -104,13 +104,13 @@ export function App() {
   // TerminalWorkspace via selectedCmdId keyed to the session.
 
   // SSE: per-session xterm write callbacks registered by TerminalPane.
-  const writeCallbacks = useRef(new Map<string, { write: (bytes: Uint8Array) => void; getRendered: () => number }>());
+  const writeCallbacks = useRef(new Map<string, { write: (bytes: Uint8Array, start?: number) => void; getRendered: () => number; setRendered?: (n: number) => void }>());
   const registerWrite = useMemo(() => {
     // round-99: a removable registration — without unregister, closed
     // session callbacks lived in the map forever and the sync loop polled
     // them every 5s (unbounded no-op polling as sessions accumulate).
-    const reg = (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => {
-      writeCallbacks.current.set(sid, { write: fn, getRendered });
+    const reg = (sid: string, fn: (bytes: Uint8Array, start?: number) => void, getRendered: () => number, setRendered?: (n: number) => void) => {
+      writeCallbacks.current.set(sid, { write: fn, getRendered, setRendered });
       return () => { writeCallbacks.current.delete(sid); };
     };
     reg.unregister = (sid: string) => { writeCallbacks.current.delete(sid); };

@@ -64,31 +64,36 @@ export function useSessions(connected: boolean) {
           // serial error) must ALSO release focus — the R86 close-switching
           // only covered the ✕ path, so a dead active tab kept the blinking
           // cursor and swallowed keystrokes.
+          // review #6: immutable pass — the old loop MUTATED objects still
+          // referenced by the previous state array (breaks memo/batching
+          // contracts; React 18 double-invoke shows stale tabs).
           let deadActive = false;
-          for (const s of next) {
-            if (!seen.has(s.sid) && !s.savedOnly) {
-              if (s.active) deadActive = true;
-              s.closed = true;
-              s.closedAt = s.closedAt || Date.now();
-              s.active = false;
+          const next2 = next.map((x) => {
+            if (!seen.has(x.sid) && !x.savedOnly) {
+              if (x.active) deadActive = true;
+              return { ...x, closed: true, closedAt: x.closedAt || Date.now(), active: false };
             }
-          }
+            return x;
+          });
+          let out = next2;
           if (deadActive) {
-            const nextLive = next.find((s) => !s.closed);
-            if (nextLive) { setActiveSid(nextLive.sid); nextLive.active = true; }
-            else setActiveSid(null);
+            const nextLive = out.find((s) => !s.closed);
+            if (nextLive) {
+              setActiveSid(nextLive.sid);
+              out = out.map((x) => (x.sid === nextLive.sid ? { ...x, active: true } : x));
+            } else setActiveSid(null);
           }
           // round-117: cap the tombstone count — every session the device
           // ever hosted (PTY/SSH churn, other clients) accumulated forever,
           // growing the tab bar and the per-tick O(m) scan. Keep the newest
           // 32 closed entries; older ones are dropped (their history is
           // still readable server-side via the sessions dir).
-          const closed = next.filter((s) => s.closed);
+          const closed = out.filter((s) => s.closed);
           if (closed.length > 32) {
             const drop = new Set(closed.slice(0, closed.length - 32).map((s) => s.sid));
-            return next.filter((s) => !drop.has(s.sid));
+            return out.filter((s) => !drop.has(s.sid));
           }
-          return next;
+          return out;
         });
       } catch { /* transient — next poll retries */ }
     };
@@ -178,18 +183,32 @@ export function useSessions(connected: boolean) {
   }, []);
 
   const exportSession = useCallback((sid: string) => {
-    // Pull the retained history text (terminal_read from 0, raw) and save.
-    callTool("terminal_read", { session_id: sid, offset: 0, clean: false })
-      .then((r: any) => {
-        const text = (r && r.text) || "";
-        const blob = new Blob([text], { type: "text/plain" });
+    // review #7: ONE read returns at most 1 MiB (the spill cap tail-clamps)
+    // — long sessions exported as a truncated slice with no marker. Page
+    // the retained history with the returned END cursor (bounded: 64 MiB).
+    (async () => {
+      try {
+        const parts: string[] = [];
+        let offset = 0;
+        for (let i = 0; i < 64; i++) {
+          const r: any = await callTool("terminal_read", { session_id: sid, offset, clean: true });
+          const text = (r && r.text) || "";
+          if (!text) break;
+          parts.push(text);
+          const end = Number(r.end ?? 0);
+          if (!Number.isFinite(end) || end <= offset) break;
+          offset = end;
+        }
+        const blob = new Blob([parts.join("")], { type: "text/plain" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = `${sid}.log`;
         a.click();
         URL.revokeObjectURL(a.href);
-      })
-      .catch(() => setStatusState("export failed"));
+      } catch {
+        setStatusState("export failed");
+      }
+    })();
   }, [setStatusState]);
 
   return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes };
