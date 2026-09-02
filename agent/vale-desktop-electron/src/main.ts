@@ -424,13 +424,36 @@ if (gotTheLock) {
         }
       } catch { /* agent down — keep default title */ }
     };
+    // stage-n: SELF-HEAL watchdog. The wait-page button needed a human, but
+    // when the AGENT is down the cloudflared tunnel (agent-supervised) dies
+    // too — a remote operator then has NO channel left to click anything
+    // (happened on d1: a killed script had run `schtasks /End` before its
+    // `/Run`, and the device stayed dark). After ≥5 consecutive failed
+    // probes (~60 s of silence — comfortably past an update swap's ~10 s
+    // stop/restart window, so no race with the sanctioned updater) the
+    // shell runs the only sanctioned spawn path itself, at most once per
+    // 5 minutes. The async schtasks (runSchtasks) keeps the main process
+    // free — the same hang class that killed the old auto-launch toggle.
+    let agentMissCount = 0;
+    let lastAutoStartAt = 0;
+    const AUTO_START_AFTER_MISSES = 5;
+    const AUTO_START_MIN_GAP_MS = 5 * 60 * 1000;
     const loadDesktop = async (): Promise<void> => {
       if (await agentReady()) {
+        agentMissCount = 0;
         resetRetry();
         setVersionTitle();
         win?.loadURL(`${BASE}/desktop/`).catch(() => { /* did-fail-load retries below */ });
       } else {
         loadWaitPage();
+        agentMissCount += 1;
+        if (agentMissCount >= AUTO_START_AFTER_MISSES && Date.now() - lastAutoStartAt > AUTO_START_MIN_GAP_MS) {
+          lastAutoStartAt = Date.now();
+          agentMissCount = 0;
+          void runSchtasks(["/run", "/tn", "ValeAgent"]).then((r) => {
+            console.log(`[vale] agent watchdog: schtasks /run ValeAgent → ${r.ok ? "ok" : "failed: " + r.error}`);
+          });
+        }
         setTimeout(() => { loadDesktop(); }, nextRetry());
       }
     };
