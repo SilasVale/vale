@@ -42,6 +42,7 @@ import {
   passthroughTimeoutMs,
   isChannelDegraded,
   recordChannelFailure,
+  isChannelDownFailure,
   recordChannelSuccess,
 } from "../reliability.ts";
 import {
@@ -676,10 +677,7 @@ async function handleGatewayImpl(
       );
     }
     if (!upstream.ok) {
-      if (
-        route.kind === "opencode" &&
-        (detail?.startsWith("network error") || detail?.startsWith("timeout"))
-      ) {
+      if (route.kind === "opencode" && isChannelDownFailure(detail)) {
         await recordChannelFailure(env);
       }
       let message = `Upstream ${upstream.status}`;

@@ -224,15 +224,17 @@ export function passthroughTimeoutMs(env: any, kind: string): number {
 //     the pre-write state → never trips
 //   - Cache API: put() is not available on the free plan → silently no-ops
 //
-// Semantics: only HARD network failures (channel unreachable) count toward the
-// breaker, and only BREAKER_FAIL_THRESHOLD (3) CONSECUTIVE failures open it for
-// BREAKER_DEGRADE_MS (60s) — a single network blip must not take the whole og
-// channel down. Slow responses (timeout) are zen's normal behavior (multi-second
-// latency observed routinely) and do NOT count; fast 5xx/429 stays handled by
-// fetchWithRetry's retries and does NOT trip, so zen's intermittent 500s
-// (~50% observed 2026-08-03) never cut the channel. A successful response
-// (/reset) zeroes the count. After the TTL the first request probes zen for
-// real and re-trips on failure.
+// Semantics: breaker input is exactly what translate.ts hands
+// recordChannelFailure (opencode/og route): HARD network errors AND FULL
+// TIMEOUTS (detail starts "timeout") both count — a channel that stalls and
+// times out every time must open the circuit, or every user burns the
+// 120 s timeout indefinitely (the DoS-by-timeout class). What does NOT
+// count: fast 5xx/429 (absorbed by fetchWithRetry's retries), and short
+// latency spikes, since only a COMPLETE timeout reaching this layer counts.
+// BREAKER_FAIL_THRESHOLD (3) CONSECUTIVE counted failures open for
+// BREAKER_DEGRADE_MS (60 s); /reset (two genuine successes) clears.
+// (Comment previously claimed timeouts never tripped — stale since the
+// 5a42122-era call-site change; code is the truth. F5 closed 2026-09-25.)
 const BREAKER_DEGRADE_MS = 60000;
 const BREAKER_FAIL_THRESHOLD = 3;
 // True "consecutive" with bounded memory: failures older than this window
@@ -352,6 +354,19 @@ export function __clearDegradedCache() {
 
 let degradedCache = { at: 0, value: false };
 const DEGRADED_CACHE_TTL_MS = 5000;
+
+/**
+ * F5 closure test anchor: WHICH upstream failures feed the breaker. Exactly
+ * hard network errors and FULL timeouts (the caller already filtered retry-
+ * able fast 5xx/4xx out of `detail`). Exported so the semantics that used to
+ * live inline in translate.ts are unit-testable — do NOT weaken without also
+ * reopening the DoS-by-timeout question this answers.
+ */
+export function isChannelDownFailure(detail: string | undefined | null): boolean {
+  return (
+    !!detail && (detail.startsWith("network error") || detail.startsWith("timeout"))
+  );
+}
 
 export async function isChannelDegraded(env: any): Promise<boolean> {
   const now = Date.now();

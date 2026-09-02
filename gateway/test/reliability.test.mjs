@@ -360,3 +360,14 @@ test("stream: upstream throw closes the stream gracefully (no hang)", async () =
   // The graceful close emits message_stop even with zero upstream bytes.
   assert.match(text, /message_stop/);
 });
+
+// ── F5 (closed): the breaker's failure classifier, extracted to
+// isChannelDownFailure so the timeout-DOS answer is provable at unit level.
+test("isChannelDownFailure: network errors + FULL timeouts feed the breaker", async () => {
+  const { isChannelDownFailure } = await import("../src/reliability.ts");
+  assert.equal(isChannelDownFailure("network error: connection refused"), true);
+  assert.equal(isChannelDownFailure("timeout after 120000ms"), true); // DoS-by-timeout class: COUNTS
+  assert.equal(isChannelDownFailure("upstream 429"), false); // absorbed by retries
+  assert.equal(isChannelDownFailure("upstream 500"), false); // zen's intermittent 500s must not cut the channel
+  assert.equal(isChannelDownFailure(undefined), false);
+});

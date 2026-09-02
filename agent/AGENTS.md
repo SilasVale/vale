@@ -481,8 +481,6 @@ Last updated: 2026-09-25 (round 84 — 1.2.227 LIVE; extension audit + npm CLI
   previous tag ref too, not just the release object).
 
 ### Next candidates
-- gateway F5 breaker DoS-by-timeout (trip counted per REQUEST, slow-fail
-  clients can pin the breaker open) — inspect reliability.ts usage sites
 - M1 pair-code atomic claim across isolates + KV device-row races —
   BOTH need a CAS primitive → the D1 migration candidate
 - gateway F3: CLIENT_KEY doubles as admin token (billing keys + /mcp RCE
@@ -495,7 +493,10 @@ Last updated: 2026-09-25 (round 84 — 1.2.227 LIVE; extension audit + npm CLI
   attach it; keep-latest deletion stays manual (user-approval-adjacent).
   DONE since earlier rounds (stale entries removed): connections CRUD
   tests (225), F8 parallel tool_calls index merge (round-116 — fixtures
-  re-verified this round).
+  re-verified this round), F5 DoS-by-timeout (INVESTIGATED this round —
+  already fixed at the call sites: full timeouts DO feed recordChannel-
+  Failure via detail "timeout"; the stale comment claiming otherwise was
+  corrected in reliability.ts; a RED test now proves it).
 
 ### GitHub ops
 - Code: push GitHub too — `git push https://SilasVale@github.com/SilasVale/vale.git main`
