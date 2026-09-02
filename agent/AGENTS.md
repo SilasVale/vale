@@ -241,7 +241,7 @@ Last updated: 2026-09-25 (round 52 — vitals + build hygiene)
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- Browser nav buttons (back/fwd/reload) — commit + release as 1.2.181
+- (none — everything above is shipped through 1.2.200)
 
 ### Next candidates
 - Tray shows vitals too (already parsed uptime/sessions)
