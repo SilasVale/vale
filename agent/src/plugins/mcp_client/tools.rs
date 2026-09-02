@@ -818,9 +818,16 @@ pub fn mcp_client_call() -> ToolDef {
                     let bytes = text.as_bytes();
                     // back to the '(' that opens this reference
                     let open = text[..marker].rfind('(').unwrap_or(marker);
-                    if let Some(dot) = text[marker..].find(".png\"")
-                        .or_else(|| text[marker..].find(".jpg\""))
-                        .or_else(|| text[marker..].find(".jpeg\"")) {
+                    // PRE-EXISTING BUG (one-browser round): the old patterns
+                    // required .png\" (quote IMMEDIATELY after the extension)
+                    // and then checked the next byte == ')' — mutually
+                    // exclusive, so the markdown-reference branch NEVER fired
+                    // and MCP screenshots were silently unresolvable. Match
+                    // the extension bare; the paren check below is the real
+                    // terminator.
+                    if let Some(dot) = text[marker..].find(".png")
+                        .or_else(|| text[marker..].find(".jpg"))
+                        .or_else(|| text[marker..].find(".jpeg")) {
                         let end_rel = marker + dot + 4; // include extension
                         if end_rel < text.len() && bytes.get(end_rel) == Some(&b')') {
                             let rel = &text[open + 1..end_rel];

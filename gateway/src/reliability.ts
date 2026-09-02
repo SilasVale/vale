@@ -363,9 +363,7 @@ const DEGRADED_CACHE_TTL_MS = 5000;
  * reopening the DoS-by-timeout question this answers.
  */
 export function isChannelDownFailure(detail: string | undefined | null): boolean {
-  return (
-    !!detail && (detail.startsWith("network error") || detail.startsWith("timeout"))
-  );
+  return !!detail && (detail.startsWith("network error") || detail.startsWith("timeout"));
 }
 
 export async function isChannelDegraded(env: any): Promise<boolean> {
