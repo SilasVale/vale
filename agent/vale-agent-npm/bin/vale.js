@@ -489,6 +489,7 @@ const commands = {
             `  Set-ScheduledTask -TaskName 'ValeDesktop' -Action $da -Trigger @($dt1, $dw1) | Out-Null`,
             `  "[$(Get-Date -Format o)] desk: ValeDesktop hardened (guarded 5-min pulse)" | ${log}`,
             `}`,
+            `if ((Test-Path $deskDir) -and (Test-Path $deskStart)) {`,
             `  "[$(Get-Date -Format o)] desk: restarting electron shell" | ${log}`,
             `  Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
             `  Start-Sleep -Milliseconds 1500`,
