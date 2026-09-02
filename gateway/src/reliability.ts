@@ -357,7 +357,9 @@ export async function isChannelDegraded(env: any): Promise<boolean> {
   const now = Date.now();
   if (now - degradedCache.at < DEGRADED_CACHE_TTL_MS) return degradedCache.value;
   try {
-    const res = await breakerStub(env).fetch("https://breaker/check", { headers: breakerHeaders(env) });
+    const res = await breakerStub(env).fetch("https://breaker/check", {
+      headers: breakerHeaders(env),
+    });
     degradedCache = { at: now, value: (await res.text()) === "1" };
     return degradedCache.value;
   } catch (e: any) {

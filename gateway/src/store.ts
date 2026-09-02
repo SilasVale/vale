@@ -890,8 +890,12 @@ export async function getPluginByToken(env: Env, token: string): Promise<PluginL
     // re-checking expiry before deleting.
     await withKeyLock(PLUGIN_KEY, async () => {
       const raw = await env.KEYS.get(PLUGIN_KEY);
-      let fresh: Record<string, PluginLink> = {};
-      try { fresh = raw ? JSON.parse(raw) : {}; } catch { return; }
+      let fresh: Record<string, PluginLink>;
+      try {
+        fresh = raw ? JSON.parse(raw) : {};
+      } catch {
+        return;
+      }
       const cand = fresh[token];
       if (cand && (!cand.expiresAt || cand.expiresAt < Date.now())) {
         delete fresh[token];

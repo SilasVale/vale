@@ -170,8 +170,17 @@ async function callMcpClientBridge(name: string, _env: any, device: any, args: a
     // round-132: "Session not found" is also covered by self-healing — playwright-mcp 0.0.79
     // reclaims sessions server-side after ~15s idle; resending connect restores them.
     if (/not connected|server running|refused|timed out|session not found/i.test(msg)) {
-      await fetch(`${base}/api/plugins/playwright/start`, { method: "POST", headers, signal: AbortSignal.timeout(callBudgetMs) });
-      await fetch(`${base}/api/tools/mcp_client_connect`, { method: "POST", headers, body: "{}", signal: AbortSignal.timeout(callBudgetMs) });
+      await fetch(`${base}/api/plugins/playwright/start`, {
+        method: "POST",
+        headers,
+        signal: AbortSignal.timeout(callBudgetMs),
+      });
+      await fetch(`${base}/api/tools/mcp_client_connect`, {
+        method: "POST",
+        headers,
+        body: "{}",
+        signal: AbortSignal.timeout(callBudgetMs),
+      });
       out = await invoke();
     }
     if (out && out.ok === false) {

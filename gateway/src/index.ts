@@ -139,8 +139,12 @@ export async function probeRateLimited(env: any, request: Request) {
     // isolate reseeded from 0, so the 60/min/IP ceiling was per-isolate
     // (trivially multiplied across isolates/egress IPs). Persist it.
     try {
-      await env.KEYS.put(key, String(cur + 1), { expirationTtl: Math.ceil((PROBE_RATE_WINDOW_MS / 1000) * 2) + 10 });
-    } catch { /* KV write error: isolate-local count still better than nothing */ }
+      await env.KEYS.put(key, String(cur + 1), {
+        expirationTtl: Math.ceil((PROBE_RATE_WINDOW_MS / 1000) * 2) + 10,
+      });
+    } catch {
+      /* KV write error: isolate-local count still better than nothing */
+    }
     return cur >= PROBE_RATE_LIMIT;
   } catch {
     return false;

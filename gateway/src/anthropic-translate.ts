@@ -221,7 +221,11 @@ export function streamOgToAnthropic(
     // (and billing) the FULL completion — a transformed stream has no
     // implicit cancel like Response(upstream.body) does.
     cancel() {
-      try { void reader.cancel(); } catch { /* already closed */ }
+      try {
+        void reader.cancel();
+      } catch {
+        /* already closed */
+      }
     },
     async pull(controller) {
       while (true) {

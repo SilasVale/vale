@@ -44,10 +44,10 @@ export function pickRoute(
   // per-request value — never mutate the shared env object with it.
   const via = (direct: string, path: string): string =>
     usProxy
-      // audit round F4: prefix is model-derived ARBITRARY text — unencoded
-      // it could inject &path=… into the egress URL and re-point the proxy
-      // request. Encode (the proxy decodes) so it stays one opaque value.
-      ? `${usProxyBase(env)}/api/zen?target=${encodeURIComponent(prefix)}&path=${encodeURIComponent(path)}`
+      ? // audit round F4: prefix is model-derived ARBITRARY text — unencoded
+        // it could inject &path=… into the egress URL and re-point the proxy
+        // request. Encode (the proxy decodes) so it stays one opaque value.
+        `${usProxyBase(env)}/api/zen?target=${encodeURIComponent(prefix)}&path=${encodeURIComponent(path)}`
       : direct;
   switch (prefix) {
     case "or": {

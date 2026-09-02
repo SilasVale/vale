@@ -135,7 +135,11 @@ export class PluginHubDO {
     // response frames were parsed then re-stringified). Bound the frame
     // first; drop oversized/garbage without touching storage.
     if (typeof message !== "string" || message.length > 262_144) {
-      try { ws.close(1009, "frame too large"); } catch { /* already closed */ }
+      try {
+        ws.close(1009, "frame too large");
+      } catch {
+        /* already closed */
+      }
       return;
     }
     this.state.storage.setAlarm(Date.now() + 65_000);

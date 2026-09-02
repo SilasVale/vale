@@ -947,7 +947,10 @@ function rewriteDeviceBody(text: string, name: string): string {
   // a console-origin page (DOM/devtools/XSS) and keeping direct control of
   // /api/tools/* and /mcp after the plugin-link TTL or unpair — the exact
   // revocation scope the plugin token exists to enforce.
-  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*(?:"[^"]*"|'[^']*')/g, 'window.__PANEL_TOKEN__=""');
+  out = out.replace(
+    /window\.__PANEL_TOKEN__\s*=\s*(?:"[^"]*"|'[^']*')/g,
+    'window.__PANEL_TOKEN__=""',
+  );
   return out;
 }
 

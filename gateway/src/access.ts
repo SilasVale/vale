@@ -98,7 +98,7 @@ export async function verifyAccessJwt(
   // audit L5: atob THROWS on garbage signature characters and subtle.verify
   // rejects malformed key/sig input — every cookie-less request carrying a
   // junk cf-access-jwt 500'd instead of 401. Any throw = invalid token.
-  let ok = false;
+  let ok: boolean;
   try {
     const sigB64 = parts[2]!.replace(/-/g, "+").replace(/_/g, "/");
     const sigPad = sigB64.length % 4 === 0 ? "" : "=".repeat(4 - (sigB64.length % 4));

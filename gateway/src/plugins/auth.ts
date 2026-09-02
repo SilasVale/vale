@@ -31,7 +31,8 @@ import {
   setGlobalSetting,
   globalSettingEnabled,
 } from "../store.ts";
-import { safeEq,
+import {
+  safeEq,
   verifyPassword,
   issueSessionToken,
   parseCookie,
@@ -140,7 +141,11 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
   if (!user || !user.enabled) {
     // Auth-core audit LOW: burn the SAME PBKDF2 work as a real attempt — the
     // instant return was a username-enumeration timing oracle.
-    await verifyPassword(body.password || "", "00000000000000000000000000000000", "00000000000000000000000000000000");
+    await verifyPassword(
+      body.password || "",
+      "00000000000000000000000000000000",
+      "00000000000000000000000000000000",
+    );
     return jsonError(401, "Incorrect username or password", "authentication_error");
   }
   // eslint-disable-next-line no-useless-assignment
