@@ -222,11 +222,19 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 80 — 1.2.222 LIVE; DPAPI envelope + first-ever
-  secrets tests (which caught a real legacy-spelling gap) + SPA audit batch)
+Last updated: 2026-09-25 (round 82 — 1.2.226 LIVE after the 530 recovery;
+  cloudflared supervised for real; SID-based ACL harden finally VERIFIED on box)
 
 ### Current release
-- npm **1.2.222 LIVE on d1** — DPAPI (VALEDPA1) seals the file secret store
+- npm **1.2.226 LIVE on d1** — post-incident line: 224 = context-proof
+  supervisor (device RECOVERED via console; tunnel self-healed through two
+  subsequent swaps, cloudflared exactly 1 instance, supervisor line in
+  startup.log); 225 = boot-time harden of PRE-EXISTING config.yaml +
+  connections CRUD tests (3); 226 = harden switched from NAME grants
+  (unmappable machine-account under services → silently NEVER applied,
+  config.yaml still world-readable!) to FIXED SIDs — d1 readback now shows
+  ONLY Administrators+SYSTEM. kind whitelist device-probed: "SSH" →
+  "unknown terminal kind" error. 1.2.222 — DPAPI (VALEDPA1) seals the file secret store
   on Windows (CM still preferred; d1 probe: set→get ACROSS the ':22'/no-
   port spellings — the fallback gap the brand-new unit tests exposed, now
   fixed in file AND keyring get/delete). SPA audit batch device-verified via
@@ -395,6 +403,19 @@ Last updated: 2026-09-25 (round 80 — 1.2.222 LIVE; DPAPI envelope + first-ever
   correct; the 10s incremental relink fooled me twice — verify on device
   within the same round as shipping any boot-path change.
 - 1.2.224 = fix + release; device recovered via console; incident closed.
+- RECOVERY AUDIT (1.2.225/226): verifying the boot harden on d1 exposed a
+  SECOND, older latent bug — paths::harden_file granted by NAME
+  ($env:USERNAME), which under a service context is the MACHINE ACCOUNT
+  (DESKTOP-xxx$): icacls cannot map it → WHOLE COMMAND REJECTED → the
+  round-80/122 "fail-closed" ACL never actually applied on the service at
+  all (config.yaml still had inherited Users:RX!). d1 proof post-226:
+  config.yaml now shows exactly Administrators+SYSTEM RW, all inherited
+  entries gone. harden_file now grants FIXED SIDs (*S-1-5-18,
+  *S-1-5-32-544 — icacls resolves SIDs without name lookup in any context).
+  Lesson: security-relevant "best-effort" CLI shims must be verified by
+  EFFECT (read back the ACL), never by exit code alone — icacls exited 0 on
+  the name-mapping failure path it swallowed… (our status.success() check
+  caught it only once we made boot harden VISIBLE via WARN + icacls readback).
 
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was

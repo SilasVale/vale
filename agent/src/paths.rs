@@ -87,20 +87,24 @@ pub fn data_dir() -> PathBuf {
 pub fn harden_file(path: &std::path::Path) -> Result<(), std::io::Error> {
     #[cfg(windows)]
     {
-        let user = std::env::var("USERNAME")
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "USERNAME unavailable"))?;
-        // Grant CURRENT USER + SYSTEM (S-1-5-18): files move between those
-        // two contexts (setup writes config.yaml as the interactive user,
-        // the service rewrites it as SYSTEM) — an ACL that only names one
-        // bricks the other. Inheritance is stripped, so BUILTIN\Users lose
-        // the RX they used to inherit over C:\ProgramData\Vale.
+        // d1 PROVED the old NAME-based grant silently never applied: under
+        // the service context USERNAME is the MACHINE ACCOUNT
+        // ('DESKTOP-xxx$'), which icacls cannot map (“no mapping between
+        // security IDs and names”) -> whole command rejected -> config.yaml
+        // kept its inherited Users:RX. Fixed SIDs resolve in EVERY context
+        // (icacls '*' prefix = already-SID, no name lookup):
+        //   *S-1-5-18       SYSTEM — the service (setup writes as the
+        //   *S-1-5-32-544   Administrators —   interactive user, both cover)
+        // files move between those two writer contexts; stripping
+        // inheritance is what actually removes BUILTIN\Users' inherited RX
+        // over C:\ProgramData\Vale / the install dir.
         let out = std::process::Command::new("icacls")
             .args([
                 path.to_string_lossy().as_ref(),
                 "/inheritance:r",
                 "/grant:r",
-                &format!("{user}:(R,W)"),
                 "*S-1-5-18:(R,W)",
+                "*S-1-5-32-544:(R,W)",
             ])
             .output()?;
         if !out.status.success() {
