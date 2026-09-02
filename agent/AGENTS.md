@@ -255,7 +255,12 @@ Last updated: 2026-09-26 (round 86 — 1.2.230 LIVE; **ONE-BROWSER fix for the
   registry-path blindness fix. CI: panel-react lock regenerated with
   optional platform deps (npm-10 CI vs npm-11 local drift), release.yml
   npm ci --include=optional. v1.2.228/229 releases FAILED (lock); 230 =
-  dogfood retry via tag push. 1.2.227 — THREE audits landed same round (extension,
+  RETAGGED onto the npm-10-parity lock fix and the CI flow went FULL GREEN:
+  release v1.2.230 (asset vale-agent-1.2.230.tgz) built+attached by
+  Actions itself. The lock saga: npm-11 resolution hid vitest→vite8→
+  esbuild@0.28.2 from npm-10's ci; regenerated with a locally-installed
+  npm@10.9.2 + ci --dry-run verified. Tags now go on via API (git push of
+  tags intermittently times out here). CDN pruned to last-5 + latest. 1.2.227 — THREE audits landed same round (extension,
   onboarding, npm-CLI completion): gateway (deployed 7b6f312c) got browser-RPC
   AbortSignal budgets + timeout_secs clamp (was unbounded worker+isolate pin),
   plugin-link expiry sweep INSIDE the lock with fresh reads (stale-isolate
