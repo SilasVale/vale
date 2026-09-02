@@ -183,8 +183,19 @@ function decodeClientFrames(buf, onMessage) {
         }
     }
     let page = ctx.pages()[0] || await ctx.newPage();
-    if (page.url() === "about:blank")
-        await page.goto(WELCOME).catch(() => { });
+    // stage-n: the welcome doc is SET (setContent on about:blank) instead of
+    // goto(data:) — navigating AWAY from a data: URL races playwright's commit
+    // and surfaces as a spurious net::ERR_ABORTED (seen on d1: the first nav
+    // from the welcome page "fails" although the page lands fine).
+    if (page.url() === "about:blank") {
+        const body = WELCOME.slice(WELCOME.indexOf(",") + 1);
+        try {
+            await page.setContent(decodeURIComponent(body), { waitUntil: "domcontentloaded" });
+        }
+        catch {
+            await page.goto(WELCOME).catch(() => { });
+        }
+    }
     let cdp = await ctx.newCDPSession(page);
     // External tab events: pages opened/closed by the site itself (window.open,
     // target=_blank, JS close) and any in-page navigation change the tab list —
@@ -451,7 +462,18 @@ function decodeClientFrames(buf, onMessage) {
             }
             if (m.t === "nav") {
                 fwdFlags.set(page, false);
-                await page.goto(m.url, { waitUntil: "domcontentloaded" });
+                try {
+                    await page.goto(m.url, { waitUntil: "domcontentloaded" });
+                }
+                catch (e) {
+                    // playwright can report ERR_ABORTED while the navigation still
+                    // commits fine (leaving about:/data: docs) — verify the landing
+                    // before declaring failure, else the panel gets a false error.
+                    const want = String(m.url || "").trim();
+                    const got = page.url();
+                    if (!(got === want || got.startsWith(want) || (want.endsWith("/") && got === want.slice(0, -1))))
+                        throw e;
+                }
                 scheduleTabsPush();
             }
             // stage-n: real-browser navigation controls — back / forward / reload.
