@@ -399,7 +399,12 @@ function agentResponds(timeoutMs = 2000) {
         } };
         const req = http.get(`${BASE}/api/status`, { timeout: timeoutMs }, (r) => {
             r.resume();
-            finish(r.statusCode === 200);
+            // ANY HTTP response = the accept loop is alive (this is the exact thing
+            // the TCP probe could not see). Do NOT require 200: /api/status is
+            // token-gated, so a HEALTHY agent answers 401 to the shell's
+            // credential-less probe — requiring 200 made a live agent look dead and
+            // sent the watchdog into a restart loop (self-caught regression).
+            finish(typeof r.statusCode === "number" && r.statusCode > 0);
         });
         req.on("timeout", () => { req.destroy(); finish(false); });
         req.on("error", () => finish(false));
