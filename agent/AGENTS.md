@@ -222,11 +222,24 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 76 — 1.2.220 LIVE; credential audit + gateway
-  v1 proxy audit harvested; terminal panel cursor model DEVICE-VERIFIED)
+Last updated: 2026-09-25 (round 78 — 1.2.221 LIVE; auth-core CSRF gate + plugin
+  matrix security sweep, all device-probed; AI-activity visibility shipped)
 
 ### Current release
-- npm **1.2.220 LIVE on d1** — CREDENTIAL audit: paths::harden_file shared
+- npm **1.2.221 LIVE on d1** — ANSWER to "browser 面板看不到 AI": panel
+  activity signal is now the ACTIONS feed too (pulsing dot on Evidence +
+  last-action hover), since terminal-driven automation produces none of
+  the old screenshot triggers. AUDIT HARVEST (auth-core + plugin-matrix,
+  2 sub-agents): gateway got a global CSRF gate (Lax ≠ protection against
+  SAME-SITE device panels — cookie mutations now need Sec-Fetch-Site
+  same-origin|none), DO_AUTH fail-CLOSED ×3 (DOs have external addrs),
+  constant-time admin compares, login dummy-hash; agent: mcp_client
+  remote-panic slices (tokio-mutex no-poisoning claim corrected), server-
+  path file EXFIL containment, https/loopback policy + 16 MiB caps + log
+  rotation; design loopback pin (was an internal port-scan); system clamp;
+  update WMI ReturnValue parse + https/same-host download + .old.exe.
+  DEVICE-PROBED: design external refused, metadata SSRF refused, loopback
+  9229 connects (24 tools) — no false positives. 1.2.220 — CREDENTIAL audit: paths::harden_file shared
   ACL helper, fail-CLOSED for the plaintext secret store (verified on d1
   under SYSTEM: set→get roundtrip exact, file never world-readable, CM
   actually WORKS on d1 so the file fallback rarely engages), terminal_forget_saved
