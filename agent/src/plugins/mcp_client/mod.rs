@@ -10,7 +10,7 @@
 //! discovery — the AI calls `mcp_client_connect` first, then drives the
 //! browser through `mcp_client_call`.
 
-mod tools;
+pub(crate) mod tools;
 
 use vale_agent_core::ToolDef;
 

@@ -302,18 +302,18 @@ impl PlaywrightManager {
         let mut child = tokio::process::Command::new(&node);
         child
             .arg(&entry)
-            .arg("--port").arg(port.to_string())
-            // round-142: align with the working ValePlaywright scheduled-task command line —
-// the agent-hosted path previously lacked --headless; in SYSTEM session 0 a
-// headed chromium can't start and the health check inevitably times out
-// (always masked by the external instance's already_running short-circuit);
-// the duplicate --allowed-hosts arg is gone too.
-            .arg("--headless")
-            // Edge 151+ crashes on startup under session 0 (SYSTEM service) (exitCode 1002,
-// reproducible even with --headless --dump-dom) — switch to Playwright's
-// bundled chromium (setup.ps1 Phase 3 / install-browser lands in
-// %LOCALAPPDATA%\ms-playwright).
-            .arg("--browser").arg("chromium")
+            .arg("--port").arg(port.to_string());
+        // ONE-BROWSER FIX: same attach-or-fork decision as the stdio spawn —
+        // when the bridge's chromium exposes CDP (loopback 9223), drive THAT
+        // browser so the panel's screencast follows every AI action. Only
+        // fall back to a private headless chromium (round-142: session 0
+        // cannot run headed; Edge 151 crash → bundled chromium).
+        if crate::plugins::mcp_client::tools::bridge_cdp_up() {
+            child.arg("--cdp-endpoint").arg("http://127.0.0.1:9223");
+        } else {
+            child.arg("--headless").arg("--browser").arg("chromium");
+        }
+        child
             .arg("--host").arg("127.0.0.1")
             // round-131: playwright-mcp's Host comparison is a RAW string including the
 // port — on non-default port 9229 you must write "127.0.0.1:9229" (writing

@@ -51,6 +51,53 @@ const fs = __importStar(require("fs"));
 const http = __importStar(require("http"));
 const net = __importStar(require("net"));
 const BASE = "http://127.0.0.1:18080";
+// IPC audit #1 (HIGH): startsWith(BASE) was BYPASSABLE — the string
+// 'http://127.0.0.1:18080@evil.com/x' passes the prefix test but Chromium
+// parses its host as evil.com (userinfo trick). Every origin decision now
+// compares the PARSED origin.
+const BASE_ORIGIN = new URL(BASE).origin;
+function isBaseOrigin(url) {
+    try {
+        return new URL(url).origin === BASE_ORIGIN;
+    }
+    catch {
+        return false;
+    }
+}
+// IPC audit #3: /api/status is TOKEN-GATED (same fact the watchdog fix cites);
+// credential-less fetches got 401 -> version title + tray vitals were DEAD on
+// every configured device. The shell runs as the interactive admin, and the
+// config is now ACL-restricted to SYSTEM+Administrators (1.2.226) — reading
+// the local device_token from it is exactly the trust that grants.
+let _tokenCache = { at: 0, tok: null };
+function agentToken() {
+    if (Date.now() - _tokenCache.at < 60_000)
+        return _tokenCache.tok;
+    let tok = null;
+    try {
+        const raw = fs.readFileSync(path.join(__dirname, "..", "..", "config.yaml"), "utf8");
+        const m = /device_token:\s*"?([0-9a-f]{16,})"?/.exec(raw);
+        if (m)
+            tok = m[1];
+    }
+    catch { /* no local config — vitals stay hidden, same as before */ }
+    _tokenCache = { at: Date.now(), tok };
+    return tok;
+}
+function authHeaders() {
+    const t = agentToken();
+    return t ? { authorization: `Bearer ${t}` } : {};
+}
+// IPC audit #2: preload runs in EVERY frame; will-navigate never gated
+// iframes. Handlers must reject anything not sourced from the pinned panel.
+function frameOk(e) {
+    try {
+        return isBaseOrigin(e.senderFrame?.url || "");
+    }
+    catch {
+        return false;
+    }
+}
 // P1: CDP port for AI (playwright) to drive Vale's own pages — the SAME
 // Electron window the user watches. Vale's playwright-mcp connects via
 // connectOverCDP("http://127.0.0.1:9333") and drives this window's pages.
@@ -192,7 +239,8 @@ function buildMenu() {
                 { type: "separator" },
                 { label: "Export Session Log…", accelerator: "CmdOrCtrl+Shift+E", click: () => sendMenu("export-session") },
                 { type: "separator" },
-                { label: "List Sessions", accelerator: "CmdOrCtrl+Shift+L", click: () => sendMenu("list-sessions") },
+                // IPC audit #6: the "List Sessions" entry dispatched 'list-sessions',
+                // a command with NO SPA-side handler — deleted (dead menu surface).
             ],
         },
         {
@@ -295,9 +343,9 @@ function browserList() {
     const list = [...browserSessions.entries()].map(([id, bw]) => ({ id, url: bw.webContents.getURL() }));
     return { ok: true, sessions: list, cdp: `http://127.0.0.1:${CDP_PORT}` };
 }
-electron_1.ipcMain.handle("browser-session:open", (_e, url) => browserOpen(url));
-electron_1.ipcMain.handle("browser-session:close", (_e, id) => browserClose(id));
-electron_1.ipcMain.handle("browser-session:list", () => browserList());
+electron_1.ipcMain.handle("browser-session:open", (e, url) => frameOk(e) ? browserOpen(url) : { ok: false, error: "forbidden frame" });
+electron_1.ipcMain.handle("browser-session:close", (e, id) => frameOk(e) ? browserClose(id) : { ok: false, error: "forbidden frame" });
+electron_1.ipcMain.handle("browser-session:list", (e) => frameOk(e) ? browserList() : { ok: false, error: "forbidden frame" });
 // Desktop-app settings (auto-launch) — the Settings page toggles this. We
 // manage a per-user scheduled task ("ValeDesktop", onlogon) instead of
 // Electron's setLoginItemSettings: in dev mode (electron .) the login-item
@@ -374,8 +422,10 @@ async function autoLaunchTaskSet(enabled) {
         return { ok: false, error: String(e) };
     }
 }
-electron_1.ipcMain.handle("desktop:get-auto-launch", async () => ({ enabled: await autoLaunchTaskExists() }));
-electron_1.ipcMain.handle("desktop:set-auto-launch", async (_e, enabled) => autoLaunchTaskSet(!!enabled));
+electron_1.ipcMain.handle("desktop:get-auto-launch", async (e) => frameOk(e) ? { enabled: await autoLaunchTaskExists() } : { ok: false, error: "forbidden frame" });
+// The auto-launch pair is the PERSISTENCE primitive (onlogon schtasks in an
+// admin context) — it absolutely cannot be reachable from a foreign frame.
+electron_1.ipcMain.handle("desktop:set-auto-launch", async (e, enabled) => frameOk(e) ? autoLaunchTaskSet(!!enabled) : { ok: false, error: "forbidden frame" });
 // --- Agent lifecycle (stage-m: Rust owns it; the shell only probes/triggers) ---
 /** True if ANY process is listening on 127.0.0.1:18080 (TCP probe). */
 function portBusy(port, timeoutMs = 1000) {
@@ -421,8 +471,9 @@ async function startAgentTask() {
     return runSchtasks(["/run", "/tn", "ValeAgent"]);
 }
 // The SPA asks the shell for agent status / to (re)start the agent task.
-electron_1.ipcMain.handle("shell:agent-status", async () => ({ running: await agentResponds() }));
-electron_1.ipcMain.handle("shell:start-agent", () => startAgentTask());
+// IPC audit #6: shell:agent-status / shell:start-agent had ZERO consumers
+// (preload never exposed them; the wait page and SPA use the 9444 HTTP API).
+// Dead handlers removed — every exposed channel is attack surface.
 // Fallback HTTP path (plain browser / no preload): same core, CORS-open.
 const httpServer = http.createServer((req, res) => {
     const u = new URL(req.url || "/", "http://127.0.0.1");
@@ -496,7 +547,10 @@ if (gotTheLock) {
         // IPC channels for persistence. Pin the main window to its own origin
         // (the SPA is served from BASE; the wait page is a data: URL).
         win.webContents.on("will-navigate", (e, url) => {
-            if (!url.startsWith(BASE) && !url.startsWith("data:"))
+            // audit #1: PARSED-origin veto. The data: carve-out was unnecessary
+            // (programmatic loadURL — including the wait page — never fires
+            // will-navigate) and only widened the hole.
+            if (!isBaseOrigin(url))
                 e.preventDefault();
         });
         // review #7: a target=_blank from the SPA must NOT get a preload-bearing
@@ -553,7 +607,7 @@ if (gotTheLock) {
             try {
                 const ctrl = new AbortController();
                 const t = setTimeout(() => ctrl.abort(), 3000);
-                const r = await fetch(`${BASE}/api/status`, { signal: ctrl.signal });
+                const r = await fetch(`${BASE}/api/status`, { signal: ctrl.signal, headers: authHeaders() });
                 clearTimeout(t);
                 if (r.ok) {
                     const j = await r.json();
@@ -698,7 +752,7 @@ if (gotTheLock) {
                 try {
                     const ctrl = new AbortController();
                     const t = setTimeout(() => ctrl.abort(), 2500);
-                    const r = await fetch(`${BASE}/api/status`, { signal: ctrl.signal });
+                    const r = await fetch(`${BASE}/api/status`, { signal: ctrl.signal, headers: authHeaders() });
                     clearTimeout(t);
                     if (r.ok) {
                         const j = await r.json();
@@ -736,7 +790,7 @@ if (gotTheLock) {
             // ValeAgent` after ~60 s of misses. One loop guard so repeated tray
             // polls cannot stack retries.
             if (!running && !agentWatchActive && win && !win.isDestroyed()
-                && win.webContents.getURL().startsWith(BASE)) {
+                && isBaseOrigin(win.webContents.getURL())) {
                 agentWatchActive = true;
                 void loadDesktop();
             }

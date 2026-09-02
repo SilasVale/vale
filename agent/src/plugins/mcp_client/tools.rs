@@ -393,6 +393,74 @@ fn bundled_playwright() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
 
 /// Spawn the bundled playwright-mcp over stdio (no port) and serve it as an
 /// MCP client. Returns the connected session + tool list.
+/// True when the bridge's chromium exposes its CDP endpoint (loopback 9223).
+pub(crate) fn bridge_cdp_up() -> bool {
+    std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:9223".parse().unwrap(),
+        std::time::Duration::from_millis(300),
+    )
+    .is_ok()
+}
+
+/// Panel-visibility: record MCP-driven browser actions in the SAME
+/// actions.jsonl browser_run_script writes, so the Evidence strip's
+/// aiActive pulse and the action timeline light up for plain
+/// mcp_client_call flows too (previously ONLY run_script wrote it — MCP
+/// sessions looked DEAD to the panel by construction).
+fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: bool) {
+    if !tool.starts_with("browser_") {
+        return;
+    }
+    let pwout = crate::paths::install_dir().join("pwout");
+    let _ = std::fs::create_dir_all(&pwout);
+    let summary: String = {
+        let a = args
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| {
+                        format!("{}={}", k, v.as_str().unwrap_or(&v.to_string()))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        let s = format!("{tool} {a}");
+        if s.len() > 200 {
+            // byte-slice at a CHAR BOUNDARY (CJK URLs would panic the naive [..200])
+            let mut e = 200;
+            while e > 0 && !s.is_char_boundary(e) {
+                e -= 1;
+            }
+            format!("{}…", &s[..e])
+        } else {
+            s
+        }
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let line = serde_json::json!({
+        "ts": ts,
+        "duration_ms": dur_ms,
+        "exit_code": if ok { 0 } else { 1 },
+        "timed_out": false,
+        "script": format!("mcp: {summary}"),
+        "screenshots": [],
+        "stdout_tail": "",
+        "stderr_tail": "",
+    });
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(pwout.join("actions.jsonl"))
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), DeviceError> {
     // Test override: the stdio integration test points at a minimal node MCP
     // server (no device bundle in CI). Production uses the bundled playwright.
@@ -417,9 +485,21 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     if std::env::var("VALE_TEST_STDIO_ENTRY").is_err() {
-        cmd.arg("--headless")
-            .arg("--browser").arg("chromium")
-            .arg("--ignore-https-errors");
+        // ONE-BROWSER FIX (user report: "AI 调用 MCP 后 browser 面板显示不
+        // 正确"): the panel screencasts the BRIDGE's chromium while every
+        // playwright-mcp spawn launched its OWN headless browser — AI
+        // navigation could NEVER appear. The bridge now exposes CDP on
+        // loopback 9223; attach there when it is up. Private-headless stays
+        // as the fallback (bridge down ⇒ AI still works, panel just cannot
+        // watch — strictly better than the always-split status quo).
+        if bridge_cdp_up() {
+            cmd.arg("--cdp-endpoint").arg("http://127.0.0.1:9223")
+                .arg("--ignore-https-errors");
+        } else {
+            cmd.arg("--headless")
+                .arg("--browser").arg("chromium")
+                .arg("--ignore-https-errors");
+        }
     }
     #[cfg(windows)]
     {
@@ -663,6 +743,7 @@ pub fn mcp_client_call() -> ToolDef {
             let tool = params.get("tool").and_then(|v| v.as_str())
                 .ok_or_else(|| DeviceError::InvalidParams { message: "missing required field: tool".into() })?
                 .to_string();
+            let t0 = std::time::Instant::now();
             let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
 
             let mut guard = SESSION.lock().await;
@@ -719,6 +800,8 @@ pub fn mcp_client_call() -> ToolDef {
                 }
             }
             track_page_url(sess, &result);
+            // one-browser fix: the panel's action timeline now sees MCP work
+            record_mcp_action(&tool, &args, t0.elapsed().as_millis(), true);
 
             // playwright-mcp 1.6x saves screenshots to %TEMP%\.playwright-mcp
             // and returns a text REFERENCE instead of inline image content.
@@ -764,6 +847,19 @@ pub fn mcp_client_call() -> ToolDef {
                     let _ = &rel;
                     for cand in &candidates {
                         if let Ok(bytes) = std::fs::read(cand) {
+                            // one-browser fix: ALSO park a copy under
+                            // install\pwout so the Evidence drawer (which
+                            // lists pwout/*.png) surfaces MCP screenshots —
+                            // previously they lived only in %TEMP% forever.
+                            if !name.is_empty() {
+                                let pwout = crate::paths::install_dir().join("pwout");
+                                if std::fs::create_dir_all(&pwout).is_ok() {
+                                    let dst = pwout.join(format!("mcp-{name}"));
+                                    if !dst.exists() {
+                                        let _ = std::fs::write(&dst, &bytes);
+                                    }
+                                }
+                            }
                             use base64::Engine as _;
                             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                             // Early-return the structured shape BrowserPane

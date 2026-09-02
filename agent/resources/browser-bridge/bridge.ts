@@ -135,8 +135,15 @@ interface Msg {
   let ctx: import("playwright-core").BrowserContext | null = null;
   for (let attempt = 1; attempt <= MAX_LAUNCH_ATTEMPTS; attempt++) {
     try {
+      // ONE-BROWSER FIX (user report: "AI 调用 MCP 后 browser 面板显示不正确"):
+      // the panel screencasts THIS browser while playwright-mcp used to launch
+      // its OWN headless chromium — AI navigation could never appear. The
+      // bridge now exposes its CDP on loopback 9223 and every playwright-mcp
+      // spawn attaches here via --cdp-endpoint. Loopback-only + no browser
+      // content of value before login ⇒ port is not an external surface.
       ctx = await chromium.launchPersistentContext(USER_DATA_DIR, {
         headless: true, viewport: { width: 1280, height: 800 },
+        args: ["--remote-debugging-port=9223", "--remote-debugging-address=127.0.0.1"],
       });
       break;
     } catch (e) {
@@ -166,7 +173,13 @@ interface Msg {
     if (p === selPage || p === page) { pagesList(); void attachSel(); }
     scheduleTabsPush();
   };
+  // AI (playwright-mcp over CDP) and window.open create pages: FOLLOW the
+  // newest one so the viewport shows what the AI is doing — unless a human
+  // selected a tab within the last 30 s (their choice wins).
   ctx!.on("page", (p) => {
+    if (Date.now() - lastUserSelAt > 30_000) {
+      selPage = p; void attachSel();
+    }
     scheduleTabsPush();
     p.on("framenavigated", () => scheduleTabsPush());
     p.on("close", () => onPageClosed(p));
@@ -178,6 +191,7 @@ interface Msg {
   // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
   // after closes and switches the CDP pipe so screencast follows selection.
   let selPage: typeof page | null = page;
+  let lastUserSelAt = 0;
   // stage-n: forward-navigation availability — the browser page context
   // exposes no direct can-go-forward, so the bridge tracks it PER PAGE (the
   // old single flag leaked one tab's state onto another after tabsel):
@@ -317,6 +331,7 @@ interface Msg {
         return { tabs: ctx!.pages().map((p, i) => ({ i, url: p.url() })), sel: ctx!.pages().indexOf(selPage as typeof page) };
       }
       if (m.t === "tabnew") {
+        lastUserSelAt = Date.now();
         const np = await ctx!.newPage();
         await np.goto(m.url || WELCOME, { waitUntil: "domcontentloaded" }).catch(() => {});
         selPage = np; await attachSel(); scheduleTabsPush();
@@ -335,6 +350,7 @@ interface Msg {
         return { ok: true };
       }
       if (m.t === "tabsel") {
+        lastUserSelAt = Date.now(); // human picks — hold the viewport there
         const ps = ctx!.pages(); const p = ps[m.i ?? -1];
         if (p) { selPage = p; page = p; await p.bringToFront().catch(() => {}); await attachSel(); scheduleTabsPush(); }
         return { ok: true, url: selPage?.url() };

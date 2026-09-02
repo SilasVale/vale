@@ -611,11 +611,11 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // so a human can see what the AI did without any live frame stream.
     if method == Method::GET && (path == "/api/browser/pwshots" || path == "/api/browser/pwshot" || path == "/api/browser/actions") {
         if let Err(resp) = check_auth(&req, &state) { return *resp; }
-        let install = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_default();
-        let pwout = install.join("pwout");
+        // Surface audit D#2 (one-browser round): the READ side resolved
+        // current_exe()'s parent while the WRITE side (playwright tools)
+        // uses the registry install_dir() — the exact 1.2.219 /api/sessions
+        // blindness pattern. Same source of truth now.
+        let pwout = crate::paths::install_dir().join("pwout");
         // P2: AI-action timeline — the JSONL written by browser_run_script
         // (one line per execution). Return newest-first, capped at 50.
         if path == "/api/browser/actions" {

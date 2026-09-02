@@ -170,8 +170,15 @@ function decodeClientFrames(buf, onMessage) {
     let ctx = null;
     for (let attempt = 1; attempt <= MAX_LAUNCH_ATTEMPTS; attempt++) {
         try {
+            // ONE-BROWSER FIX (user report: "AI 调用 MCP 后 browser 面板显示不正确"):
+            // the panel screencasts THIS browser while playwright-mcp used to launch
+            // its OWN headless chromium — AI navigation could never appear. The
+            // bridge now exposes its CDP on loopback 9223 and every playwright-mcp
+            // spawn attaches here via --cdp-endpoint. Loopback-only + no browser
+            // content of value before login ⇒ port is not an external surface.
             ctx = await chromium.launchPersistentContext(USER_DATA_DIR, {
                 headless: true, viewport: { width: 1280, height: 800 },
+                args: ["--remote-debugging-port=9223", "--remote-debugging-address=127.0.0.1"],
             });
             break;
         }
@@ -210,7 +217,14 @@ function decodeClientFrames(buf, onMessage) {
         }
         scheduleTabsPush();
     };
+    // AI (playwright-mcp over CDP) and window.open create pages: FOLLOW the
+    // newest one so the viewport shows what the AI is doing — unless a human
+    // selected a tab within the last 30 s (their choice wins).
     ctx.on("page", (p) => {
+        if (Date.now() - lastUserSelAt > 30_000) {
+            selPage = p;
+            void attachSel();
+        }
         scheduleTabsPush();
         p.on("framenavigated", () => scheduleTabsPush());
         p.on("close", () => onPageClosed(p));
@@ -222,6 +236,7 @@ function decodeClientFrames(buf, onMessage) {
     // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
     // after closes and switches the CDP pipe so screencast follows selection.
     let selPage = page;
+    let lastUserSelAt = 0;
     // stage-n: forward-navigation availability — the browser page context
     // exposes no direct can-go-forward, so the bridge tracks it PER PAGE (the
     // old single flag leaked one tab's state onto another after tabsel):
@@ -384,6 +399,7 @@ function decodeClientFrames(buf, onMessage) {
                 return { tabs: ctx.pages().map((p, i) => ({ i, url: p.url() })), sel: ctx.pages().indexOf(selPage) };
             }
             if (m.t === "tabnew") {
+                lastUserSelAt = Date.now();
                 const np = await ctx.newPage();
                 await np.goto(m.url || WELCOME, { waitUntil: "domcontentloaded" }).catch(() => { });
                 selPage = np;
@@ -408,6 +424,7 @@ function decodeClientFrames(buf, onMessage) {
                 return { ok: true };
             }
             if (m.t === "tabsel") {
+                lastUserSelAt = Date.now(); // human picks — hold the viewport there
                 const ps = ctx.pages();
                 const p = ps[m.i ?? -1];
                 if (p) {

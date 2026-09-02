@@ -506,6 +506,46 @@ fn run_bounded(what: &str, mut cmd: std::process::Command) {
 
 /// Load config (creating a default file + auth token if missing); persist and
 /// print a freshly generated token.
+/// Core-audit #10: unknown YAML keys were SILENTLY accepted (serde default) —
+/// a typo'd `devce_token:` generated a FRESH token while the intended one was
+/// ignored: every client 401'd and the only hint was a stdout line nobody
+/// sees under the service. deny_unknown_fields is deliberately NOT used (a
+/// parse failure triggers bootstrap's quarantine-to-defaults = token churn —
+/// the audit's own warning), so we mirror-parse into Value and LOUDLY flag
+/// extra keys with the accepted set, recursively for our known sections.
+fn warn_unknown_keys(config_path: &Path) {
+    const SECTIONS: &[(&str, &[&str])] = &[
+        ("server", &["host", "port", "name", "device_token", "proxy_secret"]),
+        ("serial", &["default_baud_rate", "default_timeout_ms"]),
+        ("terminal", &["buffer_mb"]),
+        ("browser", &["page_load_timeout_secs", "headless_executable", "headless_cdp_port"]),
+        ("platform", &["console_url", "download_url"]),
+    ];
+    let Ok(raw) = std::fs::read_to_string(config_path) else { return };
+    let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&raw) else { return };
+    let Some(map) = val.as_mapping() else { return };
+    let known_top: Vec<&str> = SECTIONS.iter().map(|(k, _)| *k).collect();
+    for (k, v) in map {
+        let Some(key) = k.as_str() else { continue };
+        if let Some((_, fields)) = SECTIONS.iter().find(|(name, _)| *name == key) {
+            // one level in: unknown KEYS inside a known section
+            if let Some(sec) = v.as_mapping() {
+                for (sk, _) in sec {
+                    if let Some(s) = sk.as_str() {
+                        if !fields.contains(&s) {
+                            tracing::warn!("config.yaml: unknown key '{key}.{s}' — IGNORED by the agent (typo? check docs; will never take effect)");
+                        }
+                    }
+                }
+            } else {
+                tracing::warn!("config.yaml: section '{key}' is not a mapping — ignored");
+            }
+        } else if !known_top.contains(&key) {
+            tracing::warn!("config.yaml: unknown top-level key '{key}' — IGNORED by the agent (typo? check docs; will never take effect)");
+        }
+    }
+}
+
 fn load_config(config_path: &Path) -> Config {
     // Core-audit #9 FOLLOW-UP (caught on d1 post-recovery): atomic_write
     // hardening only covers files written AFTER 1.2.224 — a PRE-EXISTING
@@ -521,6 +561,10 @@ fn load_config(config_path: &Path) -> Config {
         Ok(v) => v,
         Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
     };
+    // After the load path (a created-if-missing default holds only known
+    // keys; anything unexpected here is from the user's file, pre-existing
+    // or just typo'd). Non-fatal by design — see warn_unknown_keys.
+    warn_unknown_keys(config_path);
     // round-104: bootstrap persists a newly generated proxy secret/token.
     // This branch only warns on a fresh token (it was already persisted by
     // load_or_create; a stale-token rewrite is a no-op here).
@@ -754,7 +798,12 @@ async fn run_server(config_path: PathBuf) {
                     continue;
                 }
                 let mut cmd = tokio::process::Command::new(&node);
-                cmd.arg(&bridge).arg("9224")
+                // bridge argv: [port, token, profileDir]. Token unused ("");
+                // profileDir fixes audit #4 — the bridge used to fall back
+                // to a HARDCODED C:/Users/Administrator/... profile because
+                // the supervisor passed only the port.
+                cmd.arg(&bridge).arg("9224").arg("")
+                    .arg(install_dir.join("vale-browser"))
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped());
                 match cmd.spawn() {
