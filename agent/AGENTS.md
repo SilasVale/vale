@@ -222,10 +222,25 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 69 — daily log rotation + version.json; reviews in flight)
+Last updated: 2026-09-25 (round 70 — durability sweep 1.2.216 LIVE on d1; 21 device-verified)
 
 ### Current release
-- npm **1.2.215 LIVE on d1** — dual-review harvest (this round): ws_relay
+- npm **1.2.216 LIVE on d1** — durability sweep, two more READ-ONLY audits
+  harvested: MEMORY store (torn-line repair fusing gone, lossy-UTF8 load,
+  eviction tombstones PERSISTED, compaction fsync+rollback, append-under-
+  lock TOCTOU, sanitizer word-boundary + title/tags coverage + JSON byte-
+  stability, nanos mint_id, limit=0; +6 regression tests) and TERMINAL
+  backend (CJK tail-trim char-boundary panic → busy-wedge GONE, bg-job
+  marks the one real jobs map, shell_633 keys on ACTUAL injection not the
+  shell name, serial reconnect shares the live handle with the writer,
+  spill_base advances only on successful rotation, first-prompt gate
+  covers zero-entry sessions, round-132 D:\diag.log deleted, read_spill
+  validates client sids, close reports exit None). DEVICE-PROVEN: flood
+  survives, job state:done exit:0, marker path intact, warm bg submit
+  62 ms, api_key redacted / tokenizer+secretary benign / ns-id minted /
+  tombstone on disk. Also f15ed263 filelog DAILY rotation + dist
+  version.json discovery manifest. 1.2.215 was the ws_relay + panel
+  dual-review harvest: ws_relay
   hardening (upgrade-header validation before ticket redeem, single-flight,
   3s dial budget, keepalive-adjacent guards, 150 s idle-capped pump
   replacing copy_bidirectional — half-open relays can no longer pin bridge
@@ -291,10 +306,17 @@ Last updated: 2026-09-25 (round 69 — daily log rotation + version.json; review
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- Two READ-ONLY audits running (terminal plugin lifecycle, memory store
-  durability); findings will ship as one release with the already-committed
-  filelog daily rotation (f15ed263) + version.json dist manifest.
-- Device stays on 1.2.215 until that bundle lands.
+- (none — 1.2.216 live + device-verified; both audits harvested.)
+
+### Round-70 test-harness lessons (terminal verification via nested HTTP)
+- Executing Invoke-RestMethod terminal_execute(TARGET=self session) from
+  INSIDE that session DEADLOCKS the busy lock (30 s wait) — always drive
+  the target from a DIFFERENT session.
+- A COLD pwsh session's first foreground execute eats up to 12 s in the
+  stage-l first-prompt gate (633;A scan starts at buffer tail, banner is
+  already past it) — WARM the target with one call before timing anything.
+- terminal_jobs(job_id) returns {result:{state, exit_code, job_id}} —
+  NOT a .jobs array. terminal_* tools wrap under .result.
 
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
