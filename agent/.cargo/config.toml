@@ -1,6 +1,10 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = [
     "-C", "target-feature=+crt-static",
+    # LNK4099: the xwin SDK cache ships MSVC CRT libs without their PDBs
+    # (libcmt.amd64.pdb et al) — debug info is irrelevant for release
+    # binaries, silence the cosmetic linker warning to keep the build green.
+    "-C", "link-arg=/ignore:4099",
 ]
 
 [target.x86_64-pc-windows-gnu]
