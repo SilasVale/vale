@@ -34,6 +34,8 @@ export interface PluginRow {
   enabled: boolean;
   state: PluginState;
   stateLabel: string;
+  /** stage-n: number of MCP tools the plugin registers (from /api/spec). */
+  toolCount?: number;
   /** Live playwright detail; only set on the playwright row. */
   playwright?: PlaywrightStatus;
 }
@@ -48,6 +50,10 @@ interface SpecPlugin {
   name: string;
   displayName: string;
   description: string;
+  /** Full tool definitions from /api/spec — only the COUNT is surfaced
+   *  (PluginRow.toolCount); the schemas themselves are dropped in the row
+   *  map so state stays light. */
+  tools?: { name: string }[];
 }
 
 const MAX_LOG = 50;
@@ -137,13 +143,21 @@ export function usePlugins(active: boolean) {
   // StateDot states: running → ongoing, last action failed → error,
   // stopped → warn.
   const rows = useMemo<PluginRow[]>(() => spec.map((p) => {
+    const base = {
+      name: p.name,
+      displayName: p.displayName,
+      description: p.description,
+      enabled: true,
+      // stage-n: tools count badge (terminal=25, memory=6, …)
+      toolCount: Array.isArray(p.tools) ? p.tools.length : undefined,
+    };
     if (p.name === "playwright") {
       const pw = playwright ?? undefined; // PluginRow.playwright is `?`, not nullable
-      if (playwright?.running) return { ...p, enabled: true, state: "ongoing", stateLabel: "Running", playwright: pw };
-      if (actionError) return { ...p, enabled: true, state: "error", stateLabel: "Error", playwright: pw };
-      return { ...p, enabled: true, state: "warn", stateLabel: "Stopped", playwright: pw };
+      if (playwright?.running) return { ...base, state: "ongoing" as const, stateLabel: "Running", playwright: pw };
+      if (actionError) return { ...base, state: "error" as const, stateLabel: "Error", playwright: pw };
+      return { ...base, state: "warn" as const, stateLabel: "Stopped", playwright: pw };
     }
-    return { ...p, enabled: true, state: "success", stateLabel: "Loaded" };
+    return { ...base, state: "success" as const, stateLabel: "Loaded" };
   }), [spec, playwright, actionError]);
 
   // The playwright card is driven by the live status DIRECTLY — independent

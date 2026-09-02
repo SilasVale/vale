@@ -1131,6 +1131,18 @@ code {
   padding: 1px 8px;
   white-space: nowrap;
 }
+/* stage-n: tools-count badge — neutral, monospace, quieter than the
+   status tag and Enabled pill so the eye reads state first. */
+.plug-tools {
+  flex: none;
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--muted);
+  background: var(--ds-neutral-100);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
 .plug-tag {
   flex: none;
   font-size: 11px;
