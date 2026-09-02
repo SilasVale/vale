@@ -466,6 +466,18 @@ const commands = {
             // the task/script is missing (non-desktop install), skip silently.
             `$deskDir = '${q}\\vale-desktop-electron'`,
             `$deskStart = '${q}\\start-desktop.ps1'`,
+            // stage-n: harden the SHELL supervisor itself — give ValeDesktop a
+            // 5-minute repetition trigger. Electron's single-instance lock makes
+            // overlapping /run invocations no-ops (a live shell ignores the poke),
+            // while a DEAD shell is relaunched within ≤5 min. Previously electron
+            // only started at logon, so "watchdog died" left the device one dark
+            // reboot from a manual click (d1, 2026-09-25). Re-creating the task
+            // with /ri is idempotent; if the task is missing entirely, create it.
+            `$deskTaskExists = $null -ne (Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue)`,
+            `if ($deskTaskExists) {`,
+            `  schtasks /Change /TN ValeDesktop /RI 5 /DU 24:00 2>&1 | Out-Null`,
+            `  "[$(Get-Date -Format o)] desk: ValeDesktop repetition trigger ensured" | ${log}`,
+            `}`,
             `if ((Test-Path $deskDir) -and (Test-Path $deskStart)) {`,
             `  "[$(Get-Date -Format o)] desk: restarting electron shell" | ${log}`,
             `  Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
