@@ -75,6 +75,15 @@ npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   (or pin t
 vale update
 ```
 
+# 5. GitHub Release = CI (release.yml rewrite): after the version-bump
+# commit is pushed, create the tag ON GITHUB VIA THE API — direct git
+# push of tags intermittently times out on this network; the API is
+# reliable, and the tag-push event triggers the workflow (panel build →
+# xwin exe → npm pack → gh release create --verify-tag). package.json
+# version MUST equal the tag; mismatch fails fast. keep-latest: delete
+# the previous release AND older tag refs manually (API, /git/refs/tags/
+# <tag> — the URL needs the full refs path, not just the name).
+
 What `vale update` does (bin/vale.js): stages exe + bridge.js next to the
 install dir, hands a PS swap script to WMI Win32_Process.Create (parented by
 WmiPrvSE so it survives the CLI AND the agent dying; plain `-NoProfile -File`
