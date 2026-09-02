@@ -79,12 +79,35 @@ fn fatal(msg: &str) -> ! {
 }
 
 fn init_tracing() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let env = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info".into());
+    let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
+    // stage-n: on Windows ALSO mirror tracing into agent.log (next to the
+    // exe, 1 MB rotation) — the scheduled task / service context has no
+    // console, and without this the runtime `tracing!` call sites
+    // (recovery notices, bridge supervision…) were invisible on the device.
+    #[cfg(windows)]
+    {
+        let file_layer = std::env::current_exe().ok().and_then(|p| {
+            let dir = p.parent()?.to_path_buf();
+            vale_agent::filelog::RotatingFile::new(dir.join("agent.log"))
+                .ok()
+                .map(|w| tracing_subscriber::fmt::layer().with_ansi(false).with_writer(w))
+        });
+        tracing_subscriber::Registry::default()
+            .with(env)
+            .with(stdout_layer)
+            .with(file_layer)
+            .init();
+        return;
+    }
+    #[cfg(not(windows))]
+    {
+        tracing_subscriber::Registry::default().with(env).with(stdout_layer).init();
+    }
 }
 
 fn main() {

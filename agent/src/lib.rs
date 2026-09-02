@@ -5,6 +5,7 @@ pub use vale_agent_core::events;
 pub use vale_agent_core::{Config, DeviceError, AgentEvent, Plugin, ToolDef, ToolHandler, NavItem, EventBus, AppEventBus};
 
 pub mod bootstrap;
+pub mod filelog;
 pub mod mcp;
 pub mod metrics;
 pub mod paths;

@@ -512,6 +512,8 @@ if (gotTheLock) {
     // stage-n: tray reflects live agent state — tooltip + a status line in
     // the menu, refreshed on a 30s poll and on demand (menu open re-checks).
     let trayAgentRunning = false;
+    // stage-n: guards the single loadDesktop re-entry loop (see tray hook).
+    let agentWatchActive = false;
     let trayAgentVersion = "";
     let trayAgentUptime = "";
     let trayAgentSessions = 0;
@@ -561,6 +563,19 @@ if (gotTheLock) {
       const health = running
         ? `Agent running (v${version || "?"}${uptime ? `, up ${uptime}` : ""}${sessions ? `, ${sessions} session${sessions === 1 ? "" : "s"}` : ""}${vitals})`
         : "Agent stopped";
+      // stage-n: the agent died WHILE the window was showing the SPA (the
+      // wait page only renders when the boot probe fails). Swap the window
+      // to the wait page — its "Start Agent" button is now actually visible
+      // (user report: the button could never be reached) — and re-enter the
+      // loadDesktop retry loop, whose watchdog auto-runs `schtasks /run
+      // ValeAgent` after ~60 s of misses. One loop guard so repeated tray
+      // polls cannot stack retries.
+      if (!running && !agentWatchActive && win && !win.isDestroyed()
+          && win.webContents.getURL().startsWith(BASE)) {
+        agentWatchActive = true;
+        void loadDesktop();
+      }
+      if (running && agentWatchActive) agentWatchActive = false;
       tray!.setToolTip(`Vale — ${health}`);
       tray!.setContextMenu(Menu.buildFromTemplate([
         { label: "Open", click: () => { focusMain(); } },
