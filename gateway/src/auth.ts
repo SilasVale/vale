@@ -36,6 +36,31 @@ export async function verifyPassword(
   return timingSafeEqual(h, expectedHash);
 }
 
+/// Constant-time string compare for credential-shaped values (auth-core
+/// audit LOW: plain !== on the admin token leaked timing, and the compare
+/// itself must not early-exit).
+export function safeEq(a: string, b: string): boolean {
+  return timingSafeEqual(a, b);
+}
+
+/// Auth-core audit MED-1: SameSite=Lax only blocks CROSS-SITE sends — but
+/// every device panel (*.agent.saisi.online) is SAME-SITE with the console,
+/// so rogue/XSS JS there could POST cookie-authed mutations (regenerate
+/// token, toggle users, unpair…) with SameSite not saving us. Gate every
+/// cookie-carrying mutation on Sec-Fetch-Site (browser-managed, unforgeable
+/// via fetch): same-origin (our SPA) or none (direct/user-initiated) pass;
+/// same-site/cross-site are rejected. Bearer-token clients carry no cookie
+/// and are untouched.
+export const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+export function csrfCookieViolation(request: Request): boolean {
+  const method = request.method.toUpperCase();
+  if (!MUTATING_METHODS.has(method)) return false;
+  const cookie = request.headers.get("cookie") || "";
+  if (!cookie.includes(SESSION_COOKIE + "=")) return false; // bearer path
+  const site = (request.headers.get("sec-fetch-site") || "").toLowerCase();
+  return site !== "same-origin" && site !== "none";
+}
+
 function timingSafeEqual(a: string, b: string): boolean {
   if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
   let diff = 0;

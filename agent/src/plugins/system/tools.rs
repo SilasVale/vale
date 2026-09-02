@@ -367,12 +367,14 @@ fn tool_net_test() -> ToolDef {
             async move {
                 let host = require_str(&params, "host")?;
                 let port = params.get("port").and_then(|v| v.as_u64());
-                let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(5);
+                // Plugin audit: 1e19 secs parked the handler ~forever and
+                // orphaned the ping child — clamp to a minute.
+                let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(5).clamp(1, 60);
                 let mut result = json!({"ok": true, "host": host});
 
                 // TCP connect test (async — never block the runtime on DNS or
                 // connect; a dead host must return in timeout_secs, not hang).
-                if let Some(port) = port {
+                if let Some(port) = port.filter(|p| (1..=65535).contains(p)) {
                     use tokio::net::TcpStream;
                     use tokio::time::timeout;
                     let started = std::time::Instant::now();

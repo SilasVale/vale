@@ -454,9 +454,17 @@ export async function deleteUserKey(
 function routeStub(env: any) {
   return env.ROUTE.get(env.ROUTE.idFromName("global"));
 }
+// Attach the DO shared secret when configured (RouteDO now enforces it).
+function routeHeaders(env: any, extra: Record<string, string> = {}): Record<string, string> {
+  const h: Record<string, string> = { ...extra };
+  if (env.DO_AUTH) h["x-do-auth"] = env.DO_AUTH;
+  return h;
+}
 
 export async function getUserRoute(env: Env, id: string): Promise<string | null> {
-  const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`);
+  const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
+    headers: routeHeaders(env),
+  });
   const data: any = await res.json();
   if (data.model != null) return data.model;
   // Legacy KV fallback (one-time migration).
@@ -477,11 +485,13 @@ export async function setUserRoute(
   if (model === null || model === undefined || model === "") {
     await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
       method: "DELETE",
+      headers: routeHeaders(env),
     });
     return;
   }
   await routeStub(env).fetch("https://route/route", {
     method: "PUT",
+    headers: routeHeaders(env, { "content-type": "application/json" }),
     body: JSON.stringify({ uid: id, model: String(model) }),
   });
 }

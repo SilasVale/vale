@@ -90,7 +90,13 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   // AI-activity signal (Browserless "watching sessions" pattern): the AI's
   // browser_run_script drops screenshots into pwout — a fresh mtime means
   // the AI drove (or is driving) the browser. Derived at render time.
-  const aiActive = shots.some((s) => Date.now() - s.mtime_ms < 90000);
+  // User-visible gap: the AI's recent VERIFICATION scripts (and plenty of
+  // real automation) run WITHOUT screenshots — the 90s evidence window left
+  // the panel silent while the actions feed was busy. Activity now follows
+  // actions too (their ts is ms since epoch; abs() tolerates clock skew).
+  const aiActive =
+    shots.some((s) => Date.now() - s.mtime_ms < 90000) ||
+    actions.some((a) => Math.abs(Date.now() - Number(a.ts)) < 90000);
 
   const applyFrame = useCallback((blob: Blob | ArrayBuffer) => {
     const img = imgRef.current;

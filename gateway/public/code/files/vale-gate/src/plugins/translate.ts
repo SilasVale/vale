@@ -563,9 +563,11 @@ async function handleGatewayImpl(
     // picked by the messages flow is /v1/messages; reusing it directly would stuff an OpenAI body
     // into the Anthropic endpoint (bugfix 2026-08-22). Re-fetch the chat-path upstream per the switch:
     // off = direct openrouter.ai/api/v1/chat/completions; on = via the US egress (target=or).
-    if (route.kind === "openrouter" || route.kind === "commandgoat") {
+    // qwen/ is the same trap: the /apps/anthropic endpoint rejects OpenAI bodies, so chat
+    // completions re-pick the compatible-mode upstream (bugfix 2026-08-30).
+    if (route.kind === "openrouter" || route.kind === "commandgoat" || route.kind === "qwen") {
       route.upstream = pickRoute(
-        route.kind === "openrouter" ? "or" : "cm",
+        route.kind === "openrouter" ? "or" : route.kind === "commandgoat" ? "cm" : "qw",
         env,
         usProxy,
         "/v1/chat/completions",
@@ -1304,6 +1306,7 @@ export async function resolveAutoModel(env: any, uid: string): Promise<string> {
   for (const m of [
     DEFAULT_ROUTE_MODEL,
     "qw/qwen3.8-max-preview",
+    "qw/qwen3.8-flash",
     "og/deepseek-v4-flash",
     "or/openai/gpt-5.6-luna:floor[1m]",
   ]) {

@@ -126,9 +126,10 @@ Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force -Erro
 Get-Process node -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '*vale-agent*' }} | Stop-Process -Force -ErrorAction SilentlyContinue;
 Start-Sleep -Milliseconds 1500;
 $ok=$false;
+if (Test-Path '{q}\vale-agent.exe') {{ try {{ Copy-Item -Force '{q}\vale-agent.exe' '{q}\vale-agent.old.exe' }} catch {{}} }}
 foreach($i in 1..12){{ try {{ Copy-Item -Force -ErrorAction Stop '{q}\vale-agent.new.exe' '{q}\vale-agent.exe'; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 800 }} }};
 "[$(Get-Date -Format o)] copy ok=$ok" | Out-File '{q}\vale-update.log' -Append;
-Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe';
+if ($ok) {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe' }};
 if (Test-Path '{q}\bridge.new.js') {{ Copy-Item -Force '{q}\bridge.new.js' '{q}\bridge.js'; Remove-Item -Force '{q}\bridge.new.js' }};
 if (Test-Path '{q}\vale-desktop.new.exe') {{ Copy-Item -Force '{q}\vale-desktop.new.exe' '{q}\vale-desktop.exe'; Remove-Item -Force '{q}\vale-desktop.new.exe' }};
 try {{ Start-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{ schtasks /Run /TN ValeAgent }};
@@ -147,14 +148,31 @@ Remove-Item -Force -ErrorAction SilentlyContinue "$env:ProgramData\ValeAgent\upd
         // WMI handoff — survives this process dying (see vale.js).
         let inner = format!("powershell -NoProfile -File \"{}\"", ps1.to_string_lossy());
         let wmi = format!(
-            "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine='{}'}} | Select-Object ProcessId,ReturnValue",
+            "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine='{}'}} | ConvertTo-Json -Compress",
             inner.replace('\'', "''"),
         );
         let r = Command::new("powershell")
             .args(["-NoProfile", "-Command", &wmi])
             .output().await;
+        // Plugin audit MED (CLI round-217 lesson, Rust twin): powershell's
+        // own exit code is NOT the WMI result — Win32_Process.Create reports
+        // via ReturnValue; a rejected handoff (9/21) used to print success
+        // while nothing swapped, and the busy marker lingered for an hour.
         match r {
-            Ok(o) if o.status.success() => true,
+            Ok(o) if o.status.success() => {
+                let txt = String::from_utf8_lossy(o.stdout.to_vec().as_slice()).trim().to_string();
+                match serde_json::from_str::<serde_json::Value>(&txt) {
+                    Ok(v) if v.get("ReturnValue").and_then(|x| x.as_i64()) == Some(0) => true,
+                    Ok(v) => {
+                        tracing::error!("[vale-agent] agent_update: WMI Create rejected (ReturnValue {:?})", v.get("ReturnValue"));
+                        false
+                    }
+                    Err(_) => {
+                        tracing::error!("[vale-agent] agent_update: WMI handoff output unparseable: {txt:?}");
+                        false
+                    }
+                }
+            }
             _ => {
                 tracing::error!("[vale-agent] agent_update: WMI handoff failed");
                 false
@@ -197,6 +215,9 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
             let version_url = download_url
                 .as_deref()
                 .map(version_url);
+            // (host-pin guard below needs the site URL too — clone OUTSIDE
+            // the async block, else the outer closure becomes FnOnce)
+            let dl_site = download_url.clone();
             async move {
             let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
             let local = env!("CARGO_PKG_VERSION").to_string();
@@ -227,6 +248,28 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 .map_err(|e| DeviceError::Internal { message: format!("bad version response: {e}") })?;
             let remote = j.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let download = j.get("download").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            // Plugin audit MED: sha256 proves CONSISTENCY of whatever was
+            // downloaded, not authenticity — over plain http (or pointed at
+            // another host) a network MITM supplies exe+matching hash and
+            // gets SYSTEM code execution. Require https (loopback dev
+            // exempt) and the SAME host as the configured download site.
+            {
+                let host_of = |u: &str| -> String {
+                    u.split("://").nth(1).unwrap_or("")
+                        .split('/').next().unwrap_or("")
+                        .rsplit('@').next().unwrap_or("")
+                        .split(':').next().unwrap_or("").to_lowercase()
+                };
+                let dl_host = host_of(&download);
+                let site_host = host_of(dl_site.as_deref().unwrap_or(""));
+                let loopback = matches!(dl_host.as_str(), "127.0.0.1" | "localhost" | "::1");
+                if !(download.starts_with("https://") || (loopback && download.starts_with("http://"))) {
+                    return Err(DeviceError::Internal { message: format!("refusing non-https download URL: {download}") });
+                }
+                if !loopback && !site_host.is_empty() && dl_host != site_host {
+                    return Err(DeviceError::Internal { message: format!("download host {dl_host} != release site {site_host}") });
+                }
+            }
             // Integrity anchor: the sha256 of the npm tgz, published
             // by the release server and verified against the downloaded bytes
             // BEFORE spawn (round-54 — the installer is AI-triggerable code

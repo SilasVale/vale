@@ -30,7 +30,10 @@ export class PluginHubDO {
    */
   authorized(request: Request) {
     const expected = this.env.DO_AUTH || "";
-    if (!expected) return true; // unconfigured: match legacy behavior
+    // Auth-core audit MED-2: FAIL CLOSED — a DO has its own external
+    // address; an unconfigured DO_AUTH must DENY every caller, not wave
+    // the browser hub gate open. Deploy: wrangler secret put DO_AUTH.
+    if (!expected) return false;
     const got = request.headers.get("x-do-auth") || "";
     if (got.length !== expected.length) return false;
     let diff = 0;

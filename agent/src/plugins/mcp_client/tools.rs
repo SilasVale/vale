@@ -77,6 +77,13 @@ fn diag_log(line: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
+    // plugin audit: same unbounded-append class as the deleted round-132
+    // diag.log — cap generations at 1 MB.
+    if let Ok(m) = std::fs::metadata(diag_path()) {
+        if m.len() > 1_000_000 {
+            let _ = std::fs::rename(diag_path(), diag_path().with_extension("log.old"));
+        }
+    }
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -180,13 +187,22 @@ async fn rpc_ref_http(
         DeviceError::Internal { message: format!("MCP response read failed: {e}") }
     })?;
     // round-132 diagnostics: record the method/id/session used/status of every
+    // Plugin audit: bound what a rogue server can pour into memory/echo.
+    if text.len() > 16 * 1024 * 1024 {
+        return Err(DeviceError::Internal { message: "MCP response exceeds 16 MiB cap".into() });
+    }
     // MCP round trip (with millisecond timestamps since round-137).
     {
         let sid_used = session_id.clone().unwrap_or_default();
         diag_log(&format!(
             "[rpc] method={method} id={id:?} sid={sid_used} http={} body_head={:?}",
             status.as_u16(),
-            &text[..text.len().min(80)]
+            // Plugin audit HIGH: remote-controlled bytes sliced at a raw index — a
+            // non-200 body whose byte 80 split a char PANICKED the handler
+            // mid-call. (SESSION is a TOKIO mutex — no poisoning; the guard
+            // simply drops on unwind — but the panic still killed the tool
+            // call.) Boundary-safe now.
+            &text[..text.floor_char_boundary(text.len().min(80))]
         ));
     }
     if !status.is_success() {
@@ -249,7 +265,8 @@ fn check_envelope(v: Value, id: Option<u64>) -> Result<Value, DeviceError> {
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { format!("{}…", &s[..n]) }
+    // char-boundary-safe (remote payloads slice here too — audit HIGH #1)
+    if s.len() <= n { s.to_string() } else { format!("{}…", &s[..s.floor_char_boundary(n)]) }
 }
 
 /// `mcp_client_connect` — open a client session to a local browser MCP server.
@@ -300,6 +317,17 @@ pub fn mcp_client_connect() -> ToolDef {
 
 /// Connect over Streamable HTTP (legacy 9229 / any URL).
 async fn connect_http(url: String) -> Result<serde_json::Value, DeviceError> {
+    // Plugin audit MED: connect took ANY caller URL — plain http to internal
+    // hosts was an SSRF + sniffable. Policy: https anywhere; http ONLY for
+    // the loopback bundled server (9229).
+    let parsed = reqwest::Url::parse(&url)
+        .map_err(|e| DeviceError::InvalidParams { message: format!("bad MCP url: {e}") })?;
+    let loopback = matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost") | Some("::1"));
+    if !(parsed.scheme() == "https" || (parsed.scheme() == "http" && loopback)) {
+        return Err(DeviceError::InvalidParams {
+            message: "MCP url must be https, or http to a loopback host".into(),
+        });
+    }
     // Same URL reuses the existing session; a different URL drops the old
     // session and rebuilds (round-118).
     {
@@ -722,15 +750,18 @@ pub fn mcp_client_call() -> ToolDef {
                     let name = std::path::Path::new(&rel)
                         .file_name().map(|f| f.to_string_lossy().to_string())
                         .unwrap_or_default();
+                    // Plugin audit HIGH #2: candidate[0] was the SERVER-
+                    // CONTROLLED path verbatim — a malicious/compromised MCP
+                    // server answering "(C:\\secret.png") got ANY file on the
+                    // SYSTEM box read + base64-exfiltrated. Containment:
+                    // ONLY the basename joined under the playwright temp root
+                    // (stale hardcoded Administrator profile path removed —
+                    // the service's temp IS env::temp_dir()).
                     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-                    candidates.push(std::path::PathBuf::from(&rel));
-                    if let Ok(cwd) = std::env::current_dir() { candidates.push(cwd.join(&rel)); }
-                    for base in [
-                        std::env::temp_dir(),
-                        std::path::PathBuf::from("C:\\Users\\Administrator\\AppData\\Local\\Temp"),
-                    ] {
-                        candidates.push(base.join(".playwright-mcp").join(&name));
+                    if !name.is_empty() {
+                        candidates.push(std::env::temp_dir().join(".playwright-mcp").join(&name));
                     }
+                    let _ = &rel;
                     for cand in &candidates {
                         if let Ok(bytes) = std::fs::read(cand) {
                             use base64::Engine as _;

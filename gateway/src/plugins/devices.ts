@@ -401,8 +401,13 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   const deviceName = decodeDeviceName(proxyMatch[1]!);
   if (deviceName === null) return jsonError(400, "Invalid device name", "invalid_request");
   const d = await getDevice(env, deviceName);
-  if (!d) return jsonError(404, "Device not found", "not_found_error");
   const user = await requireSession(request, env);
+  if (!d) {
+    // round: the 404 here was an UNAUTHENTICATED device-name oracle (probe
+    // names → 404 vs 401). Unveil existence only to admin sessions.
+    if (user && user.role === "admin") return jsonError(404, "Device not found", "not_found_error");
+    return jsonError(401, "Not logged in or invalid plugin token", "authentication_error");
+  }
   if (user && user.role === "admin") {
     return await proxyDevice(request, env, d, proxyMatch[2] || "/");
   }
@@ -819,6 +824,9 @@ async function proxyDevice(
   // header was client-spoofable end-to-end (a direct curl could set it and
   // read the token → /api/tools RCE). The secret is read from the device at
   // registration; only this authenticated proxy path presents it.
+  // Strip inbound FIRST: a client-sent x-vale-auth must never ride through
+  // when the record has no proxySecret (the header is ours to mint).
+  headers.delete("x-vale-auth");
   if (device.proxySecret) headers.set("x-vale-auth", device.proxySecret);
 
   // Never forward the extension's ?token= to the device — the plugin token
@@ -939,7 +947,7 @@ function rewriteDeviceBody(text: string, name: string): string {
   // a console-origin page (DOM/devtools/XSS) and keeping direct control of
   // /api/tools/* and /mcp after the plugin-link TTL or unpair — the exact
   // revocation scope the plugin token exists to enforce.
-  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*"[^"]*"/g, 'window.__PANEL_TOKEN__=""');
+  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*(?:"[^"]*"|'[^']*')/g, 'window.__PANEL_TOKEN__=""');
   return out;
 }
 

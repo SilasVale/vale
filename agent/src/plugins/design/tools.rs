@@ -49,6 +49,14 @@ fn parse_target(t: &str) -> Result<(String, u16), DeviceError> {
         })?),
         None => (t.to_string(), 18080),
     };
+    // Plugin audit MED: the comment promised "always the LOCAL agent" but
+    // the host came straight from the caller — an internal GET-read + port
+    // scan primitive from SYSTEM. Enforce it.
+    if !matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1") {
+        return Err(DeviceError::InvalidParams {
+            message: "design target must be the loopback agent (127.0.0.1[:port])".into(),
+        });
+    }
     Ok((host, port))
 }
 

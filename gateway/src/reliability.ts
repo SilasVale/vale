@@ -242,11 +242,27 @@ const BREAKER_WINDOW_MS = 10 * 60 * 1000;
 /** Durable Object holding the breaker state (single instance per channel name). */
 export class BreakerDO {
   state: any;
-  constructor(state: any, _env: any) {
+  env: any;
+  constructor(state: any, env: any) {
     this.state = state;
+    this.env = env;
+  }
+  // DO external-address defense-in-depth (see RouteDO/PluginHubDO).
+  authorized(request: Request): boolean {
+    const expected = this.env?.DO_AUTH || "";
+    // Auth-core audit MED-2: FAIL CLOSED — a DO has its own external
+    // address; an unconfigured DO_AUTH must DENY every caller, not wave
+    // the breaker gate open. Deploy: wrangler secret put DO_AUTH.
+    if (!expected) return false;
+    const got = request.headers.get("x-do-auth") || "";
+    if (got.length !== expected.length) return false;
+    let diff = 0;
+    for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+    return diff === 0;
   }
 
   async fetch(request: Request): Promise<Response> {
+    if (!this.authorized(request)) return new Response("unauthorized", { status: 401 });
     const action = new URL(request.url).pathname;
     try {
       if (action === "/trip") {
@@ -319,6 +335,9 @@ export class BreakerDO {
 function breakerStub(env: any) {
   return env.BREAKER.get(env.BREAKER.idFromName("og"));
 }
+function breakerHeaders(env: any): Record<string, string> {
+  return env.DO_AUTH ? { "x-do-auth": env.DO_AUTH } : {};
+}
 
 // In-isolate cache for the breaker check: the DO /check does a storage get
 // (~5-20ms) on EVERY og translate request, /api/health, and probe, while
@@ -338,7 +357,7 @@ export async function isChannelDegraded(env: any): Promise<boolean> {
   const now = Date.now();
   if (now - degradedCache.at < DEGRADED_CACHE_TTL_MS) return degradedCache.value;
   try {
-    const res = await breakerStub(env).fetch("https://breaker/check");
+    const res = await breakerStub(env).fetch("https://breaker/check", { headers: breakerHeaders(env) });
     degradedCache = { at: now, value: (await res.text()) === "1" };
     return degradedCache.value;
   } catch (e: any) {
@@ -349,7 +368,7 @@ export async function isChannelDegraded(env: any): Promise<boolean> {
 
 export async function recordChannelFailure(env: any): Promise<void> {
   try {
-    await breakerStub(env).fetch("https://breaker/trip");
+    await breakerStub(env).fetch("https://breaker/trip", { headers: breakerHeaders(env) });
     // Invalidate the 5s stale cache immediately — otherwise this isolate's
     // health checks keep reporting ok for up to 5s after a trip.
     degradedCache = { at: 0, value: false };
@@ -361,7 +380,7 @@ export async function recordChannelFailure(env: any): Promise<void> {
 
 export async function recordChannelSuccess(env: any): Promise<void> {
   try {
-    await breakerStub(env).fetch("https://breaker/reset");
+    await breakerStub(env).fetch("https://breaker/reset", { headers: breakerHeaders(env) });
   } catch (e: any) {
     console.error("[breaker] reset failed:", e.message);
   }

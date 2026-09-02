@@ -17,6 +17,12 @@ export const OG_ZEN_CHAT: string = "https://opencode.ai/zen/go/v1/chat/completio
 // the live API); cm/ models therefore ride the OpenAI endpoint, and
 // /v1/messages is Anthropic→OpenAI translated (the og pattern).
 export const CMD_CHAT: string = "https://api.commandcode.ai/provider/v1/chat/completions";
+// Qwen MaaS (Aliyun Token Plan) OpenAI-compatible endpoint — the Anthropic
+// /apps/anthropic/v1/messages endpoint rejects OpenAI-format bodies (400
+// "Request body format invalid"), so chat/completions requests (DSH & co.)
+// must ride the compatible-mode endpoint instead.
+export const QWEN_COMPAT_CHAT: string =
+  "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
 // Reserved for future use — currently empty. Models listed here would bypass
 // the OpenAI translate path and use native Anthropic /v1/messages passthrough.
 export const OG_NATIVE_ANTHROPIC: Set<string> = new Set();
@@ -52,6 +58,7 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "or/stealth/ox-alpha", owned_by: "openrouter" },
   { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
+  { id: "qw/qwen3.8-flash", owned_by: "qwen" },
   // cm/ — Command Code (api.commandcode.ai/provider). GOAT plan and above have
   // Provider API access (the Go plan doesn't); one CMD_API_KEY works for both
   // the CLI and the API, usage meters against the plan credits. The Anthropic
@@ -103,7 +110,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "qw/",
     backend: "Qwen MaaS (Aliyun)",
     desc: "token-plan.ap-southeast-1.maas.aliyuncs.com — Anthropic passthrough",
-    models: ["qwen3.8-max-preview"],
+    models: ["qwen3.8-max-preview", "qwen3.8-flash"],
   },
   {
     prefix: "cm/",
@@ -123,6 +130,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
 export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "ds", model: "ds/deepseek-v4-flash" },
   { id: "qw", model: "qw/qwen3.8-max-preview" },
+  { id: "qw", model: "qw/qwen3.8-flash" },
   { id: "og", model: "og/deepseek-v4-flash" },
   // More og/ route cards: gpt-5.6-luna (auto-routes via the OpenRouter US
   // exit — translate.ts remaps it), mimo, ox-alpha. Duplicate ids are safe

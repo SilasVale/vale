@@ -31,7 +31,7 @@ import {
   setGlobalSetting,
   globalSettingEnabled,
 } from "../store.ts";
-import {
+import { safeEq,
   verifyPassword,
   issueSessionToken,
   parseCookie,
@@ -137,8 +137,12 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
     return jsonError(429, "Too many attempts — try again in ~30s", "rate_limit_error");
   }
   const user = await findUserByUsername(env, body.username);
-  if (!user || !user.enabled)
+  if (!user || !user.enabled) {
+    // Auth-core audit LOW: burn the SAME PBKDF2 work as a real attempt — the
+    // instant return was a username-enumeration timing oracle.
+    await verifyPassword(body.password || "", "00000000000000000000000000000000", "00000000000000000000000000000000");
     return jsonError(401, "Incorrect username or password", "authentication_error");
+  }
   // eslint-disable-next-line no-useless-assignment
   let ok = false;
   if (user.id === ADMIN_ID) {
@@ -205,7 +209,7 @@ async function authResetPassword(request: Request, env: any): Promise<Response> 
   }
   // Prove possession of the admin gateway token (the console's Overview
   // shows this value; it is the same key Claude Code uses as x-api-key).
-  if (!admin.token || adminKey !== admin.token) {
+  if (!admin.token || !safeEq(adminKey, admin.token)) {
     return jsonError(403, "Invalid admin key", "authentication_error");
   }
   await setAdminPassword(env, newPassword);

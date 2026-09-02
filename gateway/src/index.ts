@@ -45,6 +45,7 @@ import {
 import { pickRoute, passthroughHeaders, stripBracket } from "./upstream.ts";
 import { createPluginContext, registerPlugins, dispatch } from "./plugins/registry.ts";
 import authPlugin from "./plugins/auth.ts";
+import { csrfCookieViolation } from "./auth.ts";
 import devicesPlugin from "./plugins/devices.ts";
 import mcpPlugin from "./plugins/mcp.ts";
 import translatePlugin, { handleGateway as translateHandleGateway } from "./plugins/translate.ts";
@@ -148,6 +149,12 @@ export async function probeRateLimited(env: any, request: Request) {
 
 export default {
   async fetch(request: Request, env: any) {
+    // Auth-core audit MED-1: global CSRF gate for cookie-authed mutations
+    // (device panels are SAME-SITE with the console; SameSite=Lax does not
+    // help there). Bearer clients carry no cookie — untouched.
+    if (csrfCookieViolation(request)) {
+      return jsonError(403, "Cross-site request blocked", "csrf_error");
+    }
     const url = new URL(request.url);
 
     // Force HTTPS: the Secure session cookie is only stored over https; on plain http

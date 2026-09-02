@@ -210,9 +210,16 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
               // manual thumbnail click (client-review fix 7).
               if (open && !b.selected && b.shots.length > 0) b.setSelected(b.shots[0].name);
             }}
-            title="AI screenshot evidence (drawer)"
+            title={(() => {
+              const last = b.actions[0];
+              if (!last) return "AI screenshot evidence (drawer)";
+              const head = String(last.script || "").split("\n")[0].slice(0, 70);
+              const rc = last.exit_code == null ? "running…" : `exit ${last.exit_code}`;
+              return `AI screenshot evidence — last action: ${head} (${rc})`;
+            })()}
           >
             🖼 Evidence{b.shots.length > 0 ? ` (${b.shots.length})` : ""}
+            {b.aiActive && <span className="browser-ev-live" aria-hidden />}
           </button>
           {b.error && <span className="browser-error-inline">{b.error}</span>}
         </div>

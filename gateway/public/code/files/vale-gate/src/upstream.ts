@@ -10,7 +10,7 @@
  * battle-tested copy).
  */
 
-import { VERIFY_PATH, usProxyBase, CMD_CHAT } from "./channels.ts";
+import { VERIFY_PATH, usProxyBase, CMD_CHAT, QWEN_COMPAT_CHAT } from "./channels.ts";
 
 export interface RouteInfo {
   type: string;
@@ -61,15 +61,26 @@ export function pickRoute(
         upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
       };
     case "qw":
-      return {
-        type: "passthrough",
-        kind: "qwen",
-        stripPrefix: true,
-        upstream: via(
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
-          "/apps/anthropic/v1/messages",
-        ),
-      };
+      // Anthropic endpoint by default (/v1/messages — Claude Code & Anthropic
+      // clients). OpenAI-format requests (/v1/chat/completions — DSH & co.)
+      // must ride the compatible-mode endpoint: the /apps/anthropic endpoint
+      // rejects OpenAI bodies (400 "Request body format invalid").
+      return requestPath === "/v1/chat/completions"
+        ? {
+            type: "passthrough",
+            kind: "qwen",
+            stripPrefix: true,
+            upstream: via(QWEN_COMPAT_CHAT, "/compatible-mode/v1/chat/completions"),
+          }
+        : {
+            type: "passthrough",
+            kind: "qwen",
+            stripPrefix: true,
+            upstream: via(
+              "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
+              "/apps/anthropic/v1/messages",
+            ),
+          };
     case "og":
       return {
         type: "translate",
