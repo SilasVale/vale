@@ -275,8 +275,8 @@ Last updated: 2026-09-25 (round 57 — device RECOVERED on 1.2.207, retention ve
   operators are no longer stranded when the agent (and its tunnel) die.
 
 ### Next candidates
-- Rust backend hardening (more): log rotation for agent-stdout.log
-- GitHub push retry + npm publish when network allows
+- Rust backend hardening (more): rotate agent.log by time too, not only size
+- GitHub push retry (SSH-443 reachable, key/API scope missing) + npm publish
 
 ### GitHub ops (network is broken to github.com — TLS drops)
 - Code: DO NOT push GitHub directly; Gitea mirror is the code home.
@@ -307,6 +307,13 @@ Last updated: 2026-09-25 (round 57 — device RECOVERED on 1.2.207, retention ve
   schtasks /create /tn ValeDesktop /tr "powershell -NoProfile -ExecutionPolicy
   Bypass -File D:\Vale\start-desktop.ps1" /sc onlogon /ru "$env:USERNAME" /f
 - Verify: electron procs, CDP /json/version, task State=Ready.
+
+### Dist housekeeping (2026-09-25)
+`index/public/vale-agent/` had accumulated 79 tgz (748 MB); pruned to the
+latest 5 (1.2.204-208). Update URLs pin explicit versions, so dropped
+<204 builds are unreferenced and rebuildable from git. Wrangler deploy
+propagated the deletions (verified: 1.2.151 now 404, 1.2.208 200).
+tgz files are gitignored — cleanup is deploy-side only, no commit.
 
 ### Device facts (d1)
 - agent token `abacd520...97`, port 18080, CDP 9333 (Electron), bridge 9224
