@@ -73,7 +73,7 @@ retired; the browser extension + gateway MCP replaced them. The web panel
 the browser, kept in localStorage (no server-side injection since 1.0.5). A
 standalone tray app (`vale-tray/`) controls the Windows service.
 
-- **MCP** (rmcp): external tool interface at `http://0.0.0.0:3000/mcp` —
+- **MCP** (rmcp): served at `/mcp` ON THE MAIN AGENT PORT (default 18080) —
   token-gated via `TokenGate` in `src/web.rs` (rmcp has no server-side auth hook)
 
 ### Module map

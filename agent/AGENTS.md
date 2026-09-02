@@ -83,15 +83,17 @@ Gateway (`gateway/`) deploys separately: `cd gateway && wrangler deploy`.
 
 ## Architecture
 
-vale-agent is a pure service — MCP server + terminal backends + SSE endpoints.
-The Tauri desktop app and browser automation (CDP / headless Chrome-Edge) are
-retired; the browser extension + gateway MCP replaced them. The web panel
-(`/panel`, Apple-style terminal) is served by `src/web.rs` — token entered in
-the browser, kept in localStorage (no server-side injection since 1.0.5). A
-standalone tray app (`vale-tray/`) controls the Windows service.
+vale-agent is a pure service — MCP server + terminal backends + SSE endpoints
++ the remote browser (bridge 9224). The Tauri desktop (`vale-desktop/`), the
+standalone `vale-tray/`, and the NSIS-era installers are RETIRED; the Electron
+shell (`vale-desktop-electron/`) and the gateway device app replaced them. The
+web panel (`/panel`, Apple-style terminal) is served by `src/web.rs` — token
+entered in the browser, kept in localStorage (no server-side injection since
+1.0.5).
 
-- **MCP** (rmcp): external tool interface at `http://0.0.0.0:3000/mcp` —
-  token-gated via `TokenGate` in `src/web.rs` (rmcp has no server-side auth hook)
+- **MCP** (rmcp): served at `/mcp` ON THE MAIN AGENT PORT (default 18080,
+  same HTTP surface) — token-gated via `TokenGate` in `src/web.rs` (rmcp has
+  no server-side auth hook). There is no separate port 3000 any more.
 
 ### Module map
 
@@ -102,6 +104,9 @@ src/
   lib.rs           crate root; DEFAULT_CONFIG_YAML embedded (include_str!)
   bootstrap.rs     vale_command::bootstrap::load_or_create(path, fallback) —
                    create-if-missing, load, ensure_token. Single bootstrap site.
+  metrics.rs       device vitals for /api/status (CPU delta + memory, kernel32)
+  filelog.rs       size-rotating tracing writer -> agent.log next to the exe
+  session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
                    no locks in AppState
@@ -116,7 +121,11 @@ src/
                    POST /api/gateway/connect (Settings-page Gateway card:
                    persist console_url, reg-key → CF token exchange, optional
                    free tunnel via provision_tunnel),
-                   POST /api/tools/{name}
+                   POST /api/tools/{name}, GET /api/plugins/status,
+                   GET/POST /api/browser/{frame,input} + /api/browser/{pwshots,
+                   pwshot,actions} (bridge proxy), POST /api/browser/ws-ticket
+                   + GET /api/browser/ws (ws_relay ticketed WS), GET
+                   /api/sessions (audit list)
   plugins/         PluginRegistry (tools cached once at register); terminal/
                    mod.rs (plugin struct + shared helpers) + tools.rs (one
                    builder fn per tool)
@@ -166,7 +175,8 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   across AI clients — 6 MCP tools (`memory_save/search/list/update/delete/
   export`). JSONL + in-memory index at `<install>/memory/memory.jsonl`, soft
   delete, LRU capacity from config `memory: { max_entries, max_bytes,
-  retention_days }`, credential sanitizer (`sanitize.rs`).
+  retention_days }`, credential sanitizer (`sanitize.rs`). Lives at
+  `data_dir()/memory` (registry-first `DataDir`), NOT under InstallDir.
 - **stdio transport (no port)**: `mcp_client_connect` defaults to
   `transport=stdio` — the bundled playwright-mcp is spawned over stdin/stdout
   (newline-JSON frames, rmcp `TokioChildProcess`), NO listening port.
@@ -176,10 +186,13 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
 - **saisi decouple**: `config.yaml platform.console_url/download_url` are
   OPTIONAL — unset means a purely local install; `agent_update` and
   `page_view` remote pages error explicitly, device self-register skips.
-- **desktop shell**: `vale-desktop/` (Tauri 2, Windows) loads
-  `http://127.0.0.1:18080/desktop/` — the same SPA in desktop mode
-  (multi-tab terminal + memory + settings). The `/desktop/` route reuses the
-  `/panel/` static assets + loopback token injection (web.rs).
+- **desktop shell**: `vale-desktop-electron/` (Electron) loads
+  `http://127.0.0.1:18080/desktop/` — the same SPA in desktop mode (terminal/
+  browser/memory/plugins/settings rail). Owns CDP 9333 for AI driving, a tray
+  with health + vitals, a 60 s AGENT WATCHDOG (`schtasks /run ValeAgent`), and
+  a wait page that reappears when the agent dies mid-session. The
+  `vale-desktop/` Tauri shell is retired. `/desktop/` reuses `/panel/` assets +
+  loopback token injection (web.rs).
 
 ## vale-tray (Windows, legacy)
 
@@ -205,14 +218,15 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 57 — device RECOVERED on 1.2.207, retention verified)
+Last updated: 2026-09-25 (round 59 — docs audit; device DARK awaiting console recovery)
 
 ### Current release
-- npm **1.2.207** (agent exe internal 1.0.145) — LIVE AND VERIFIED on d1
-  (user rebooted/logged in; a stray `npm i -g …1.2.151` briefly downgraded,
-  then re-upgraded remote to 1.2.207). Electron watchdog/wait-page code is
-  synced on disk; it takes effect when the electron process next restarts
-  (next logon or manual schtasks /run ValeDesktop after /end).
+- npm **1.2.208** published (CLI-only: ValeDesktop 5-min repetition trigger;
+  1.2.207 added agent.log + wait-page swap). d1: 1.2.207 binaries installed,
+  agent STOPPED by my schtasks /End test → DARK awaiting console recovery
+  (`schtasks /run /TN ValeAgent`), then `npm i -g …1.2.208.tgz; vale update`
+  to land the watchdog-in-task-scheduler hardening. Watcher job pings when
+  d1 returns.
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
 - Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
   GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via

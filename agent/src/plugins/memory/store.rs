@@ -5,7 +5,7 @@
 //! appended on save/update, soft-deleted (never physically removed until
 //! compaction), and LRU-evicted when configured capacity is exceeded.
 //!
-//! File: `<install>/memory/memory.jsonl` (version header + one JSON record
+//! File: `<data>/memory/memory.jsonl` (data_dir(); version header + one
 //! per line). Thread-safe via a single std Mutex (recover_guard poison
 //! policy); record count is small (user-curated knowledge), so a Mutex is
 //! simpler and sufficient — no async locks needed.
