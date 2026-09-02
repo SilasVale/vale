@@ -70,7 +70,7 @@ const USER_DATA_DIR = dirArg || "C:/Users/Administrator/AppData/Local/vale-brows
 // Headless pages emit no compositor frames while visually idle; a styled
 // welcome page guarantees the first screencast frames are non-empty.
 const WELCOME = "data:text/html," + encodeURIComponent(
-  "<body style=\"margin:0;background:linear-gradient(135deg,#f59f00,#e8590c);color:#fff;font-family:sans-serif;padding:48px;font-size:30px\">Vale 远程浏览器已就绪<br><span style=\"font-size:16px;opacity:.8\">在上方地址栏输入网址开始</span></body>");
+  "<body style=\"margin:0;height:100vh;box-sizing:border-box;background:linear-gradient(135deg,#f59f00,#e8590c);color:#fff;font-family:'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:center\"><div style=\"text-align:center\"><div style=\"font-size:44px;font-weight:200;letter-spacing:2px\">Vale Remote Browser</div><div style=\"margin-top:14px;font-size:16px;opacity:.85\">Ready — type a URL in the address bar above</div></div></body>");
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
