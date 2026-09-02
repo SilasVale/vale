@@ -66,12 +66,13 @@ Gateway (`gateway/`) deploys separately: `cd gateway && wrangler deploy`.
 
 ## Architecture
 
-vale-agent is a pure service — MCP server + terminal backends + SSE endpoints.
-The Tauri desktop app and browser automation (CDP / headless Chrome-Edge) are
-retired; the browser extension + gateway MCP replaced them. The web panel
-(`/panel`, Apple-style terminal) is served by `src/web.rs` — token entered in
-the browser, kept in localStorage (no server-side injection since 1.0.5). A
-standalone tray app (`vale-tray/`) controls the Windows service.
+vale-agent is a pure service — MCP server + terminal backends + SSE endpoints
++ the remote browser (bridge 9224). The Tauri desktop (`vale-desktop/`), the
+standalone `vale-tray/`, and the NSIS-era installers are RETIRED; the Electron
+shell (`vale-desktop-electron/`) and the gateway device app replaced them. The
+web panel (`/panel`, Apple-style terminal) is served by `src/web.rs` — token
+entered in the browser, kept in localStorage (no server-side injection since
+1.0.5).
 
 - **MCP** (rmcp): served at `/mcp` ON THE MAIN AGENT PORT (default 18080) —
   token-gated via `TokenGate` in `src/web.rs` (rmcp has no server-side auth hook)
@@ -85,6 +86,9 @@ src/
   lib.rs           crate root; DEFAULT_CONFIG_YAML embedded (include_str!)
   bootstrap.rs     vale_command::bootstrap::load_or_create(path, fallback) —
                    create-if-missing, load, ensure_token. Single bootstrap site.
+  metrics.rs       device vitals for /api/status (CPU delta + memory, kernel32)
+  filelog.rs       size-rotating tracing writer -> agent.log next to the exe
+  session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
                    no locks in AppState
@@ -95,7 +99,11 @@ src/
                    wraps the /mcp route with the bearer check. Routes:
                    GET / (minimal status page), /api/status, /api/spec,
                    /api/events (SSE), /api/events/poll, /api/events/term (SSE),
-                   POST /api/tools/{name}
+                   POST /api/tools/{name}, GET /api/plugins/status,
+                   GET/POST /api/browser/{frame,input} + /api/browser/{pwshots,
+                   pwshot,actions} (bridge proxy), POST /api/browser/ws-ticket
+                   + GET /api/browser/ws (ws_relay ticketed WS), GET
+                   /api/sessions (audit list)
   plugins/         PluginRegistry (tools cached once at register); terminal/
                    mod.rs (plugin struct + shared helpers) + tools.rs (one
                    builder fn per tool)
@@ -134,9 +142,10 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   threads); keystrokes try_send drop-on-full.
 - **MCP tool additions**: define the tool in `src/plugins/<plugin>/tools.rs`;
   the registry caches it at register time — no other registration site.
-  Update the tool-count tests (45 total: 25 terminal_* incl. sftp aliases +
-  agent_update + page_view + 4 mcp_client_* + 2 playwright + 6 memory_* +
-  6 system_*) if adding/removing.
+  Update the tool-count test in plugins/terminal/mod.rs (25 tools:
+  21 terminal_* incl. env/jobs/saved/connect + secret_* legacy aliases)
+  if adding/removing terminal tools; the plugin tests in
+  plugins/{memory,system,mcp_client}/mod.rs cover their own counts.
 
 ## Device memory + desktop shell
 
@@ -144,7 +153,8 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   across AI clients — 6 MCP tools (`memory_save/search/list/update/delete/
   export`). JSONL + in-memory index at `<install>/memory/memory.jsonl`, soft
   delete, LRU capacity from config `memory: { max_entries, max_bytes,
-  retention_days }`, credential sanitizer (`sanitize.rs`).
+  retention_days }`, credential sanitizer (`sanitize.rs`). Lives at
+  `data_dir()/memory` (registry-first `DataDir`), NOT under InstallDir.
 - **stdio transport (no port)**: `mcp_client_connect` defaults to
   `transport=stdio` — the bundled playwright-mcp is spawned over stdin/stdout
   (newline-JSON frames, rmcp `TokioChildProcess`), NO listening port.
@@ -154,10 +164,12 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
 - **saisi decouple**: `config.yaml platform.console_url/download_url` are
   OPTIONAL — unset means a purely local install; `agent_update` and
   `page_view` remote pages error explicitly, device self-register skips.
-- **desktop shell**: `vale-desktop/` (Tauri 2, Windows) loads
-  `http://127.0.0.1:18080/desktop/` — the same SPA in desktop mode
-  (multi-tab terminal + memory + settings). The `/desktop/` route reuses the
-  `/panel/` static assets + loopback token injection (web.rs).
+- **desktop shell**: `vale-desktop-electron/` (Electron) loads
+  `http://127.0.0.1:18080/desktop/` — the same SPA in desktop mode (terminal/
+  browser/memory/plugins/settings rail). Owns CDP 9333 for AI driving, a tray
+  with health + vitals, a 60 s AGENT WATCHDOG (`schtasks /run ValeAgent`), and
+  a wait page that reappears when the agent dies mid-session. `/desktop/`
+  reuses `/panel/` assets + loopback token injection (web.rs).
 
 ## vale-tray (Windows)
 
