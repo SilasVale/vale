@@ -72,7 +72,7 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
             <span className="plug-desc" title={r.description}>{r.description}</span>
             {typeof r.toolCount === "number" && (
               /* stage-n: MCP surface of the plugin — the number clients care about */
-              <span className="plug-tools" title={`${r.toolCount} MCP tools`}>{r.toolCount} tools</span>
+              <span className="plug-tools" title={`${r.toolCount} MCP tools`}>{r.toolCount} tool{r.toolCount === 1 ? "" : "s"}</span>
             )}
             <span className="plug-tag" data-state={r.state}>{r.stateLabel}</span>
             {r.enabled && <span className="plug-pill">Enabled</span>}
