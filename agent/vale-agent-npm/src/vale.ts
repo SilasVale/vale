@@ -428,16 +428,27 @@ const commands = {
       // with /ri is idempotent; if the task is missing entirely, create it.
       `$deskTaskExists = $null -ne (Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue)`,
       `if ($deskTaskExists) {`,
-      `  schtasks /Change /TN ValeDesktop /RI 5 /DU 24:00 2>&1 | Out-Null`,
-      `  "[$(Get-Date -Format o)] desk: ValeDesktop repetition trigger ensured" | ${log}`,
+      // cmd-style "/RI 5" args split under PowerShell array invocation (the
+      // d1 test applied nothing) — rebuild the trigger with the ScheduledTasks
+      // cmdlets and re-register the task.
+      `$dtrg = New-ScheduledTaskTrigger -AtLogOn`,
+      `$dtrg.Repetition = (New-ScheduledTaskTrigger -AtLogOn -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Hours 24)).Repetition`,
+      `Set-ScheduledTask -TaskName 'ValeDesktop' -Trigger $dtrg | Out-Null`,
+      `"[$(Get-Date -Format o)] desk: ValeDesktop repetition trigger applied" | ${log}`,
       `}`,
       `if ((Test-Path $deskDir) -and (Test-Path $deskStart)) {`,
       `  "[$(Get-Date -Format o)] desk: restarting electron shell" | ${log}`,
       `  Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue`,
       `  Start-Sleep -Milliseconds 1500`,
       `  $deskTask = Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue`,
-      `  if ($deskTask) { try { Start-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction Stop } catch { & powershell -NoProfile -ExecutionPolicy Bypass -File "$deskStart" } }`,
-      `  else { & powershell -NoProfile -ExecutionPolicy Bypass -File "$deskStart" }`,
+      // Start-ScheduledTask works for Ready AND Running tasks (Running is a
+      // no-op) — use it unconditionally; the WMI-hosted swap process must not
+      // spawn electron as its own child (it would be reaped with us; proven
+      // twice on d1).
+      `  if ($deskTask) { Start-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue }`,
+      // no ValeDesktop task (headless install): `cmd start` detaches the
+      // shell from the swap host so it is not reaped with it.
+      `  else { & cmd /c start /min "" powershell -NoProfile -ExecutionPolicy Bypass -File "$deskStart" }`,
       `  "[$(Get-Date -Format o)] desk: electron restart initiated" | ${log}`,
       `} else { "[$(Get-Date -Format o)] desk: no electron shell (skipped)" | ${log} }`,
       // round-143: re-register ValePlaywright via the wscript/VBS wrapper so
