@@ -313,6 +313,12 @@ impl PlaywrightManager {
         } else {
             child.arg("--headless").arg("--browser").arg("chromium");
         }
+        // evidence land: same --output-dir pin as the stdio spawn
+        {
+            let pwout = crate::paths::install_dir().join("pwout");
+            let _ = std::fs::create_dir_all(&pwout);
+            child.arg("--output-dir").arg(pwout);
+        }
         child
             .arg("--host").arg("127.0.0.1")
             // round-131: playwright-mcp's Host comparison is a RAW string including the

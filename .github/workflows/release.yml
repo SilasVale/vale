@@ -37,7 +37,7 @@ jobs:
         run: cargo install cargo-xwin --locked
       # panel.js is include_str!-embedded — it must be built BEFORE the exe.
       - name: Build panel SPA
-        run: npm ci && npm run build
+        run: npm ci --include=optional && npm run build
         working-directory: agent/resources/panel-react
       - name: Cross-compile the agent exe
         run: cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --release --features terminal,keyring --bin vale-agent

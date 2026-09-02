@@ -492,13 +492,22 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
         // loopback 9223; attach there when it is up. Private-headless stays
         // as the fallback (bridge down ⇒ AI still works, panel just cannot
         // watch — strictly better than the always-split status quo).
+        // Evidence land: playwright-mcp's DEFAULT output dir is relative to
+        // ITS CWD (device proof: files landed in D:\Vale\playwright\TEMP,
+        // while the agent's temp_dir() probe found only weeks-old files) —
+        // pin it to install\pwout so screenshots appear in the Evidence
+        // drawer with zero copying.
+        let pwout = crate::paths::install_dir().join("pwout");
+        let _ = std::fs::create_dir_all(&pwout);
         if bridge_cdp_up() {
             cmd.arg("--cdp-endpoint").arg("http://127.0.0.1:9223")
-                .arg("--ignore-https-errors");
+                .arg("--ignore-https-errors")
+                .arg("--output-dir").arg(&pwout);
         } else {
             cmd.arg("--headless")
                 .arg("--browser").arg("chromium")
-                .arg("--ignore-https-errors");
+                .arg("--ignore-https-errors")
+                .arg("--output-dir").arg(&pwout);
         }
     }
     #[cfg(windows)]
@@ -849,6 +858,10 @@ pub fn mcp_client_call() -> ToolDef {
                     // the service's temp IS env::temp_dir()).
                     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
                     if !name.is_empty() {
+                        // --output-dir pins shots under pwout; the temp path
+                        // stays as the fallback for servers that ignore the
+                        // flag (their CWD-relative default we cannot know).
+                        candidates.push(crate::paths::install_dir().join("pwout").join(&name));
                         candidates.push(std::env::temp_dir().join(".playwright-mcp").join(&name));
                     }
                     let _ = &rel;
