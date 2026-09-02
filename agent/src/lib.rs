@@ -6,6 +6,7 @@ pub use vale_agent_core::{Config, DeviceError, AgentEvent, Plugin, ToolDef, Tool
 
 pub mod bootstrap;
 pub mod mcp;
+pub mod metrics;
 pub mod paths;
 pub mod session_log;
 pub mod plugins;

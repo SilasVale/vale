@@ -1306,6 +1306,9 @@ async fn api_status(state: &AppState) -> serde_json::Value {
     // (leaked sessions show up here without needing terminal_history).
     let uptime_secs = state.started_at.elapsed().as_secs();
     let live_sessions = state.terminal_mgr.term_list().await.len();
+    // stage-n: device vitals (Windows: CPU delta + memory; other hosts
+    // return None → fields are omitted, endpoint shape stays additive).
+    let vitals = crate::metrics::sample();
     let mut out = serde_json::json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
@@ -1313,6 +1316,15 @@ async fn api_status(state: &AppState) -> serde_json::Value {
         "live_sessions": live_sessions,
         "serial_ports": serial,
     });
+    if let Some(cpu) = vitals.cpu_pct {
+        out["cpu_pct"] = serde_json::json!(cpu);
+    }
+    if let Some(mem) = vitals.mem_pct {
+        out["mem_pct"] = serde_json::json!(mem);
+    }
+    if let Some(mb) = vitals.mem_total_mb {
+        out["mem_total_mb"] = serde_json::json!(mb);
+    }
     // round-103: expose the proxy secret (token-authenticated endpoint) so
     // the console can store it at registration and present X-Vale-Auth when
     // proxying /panel/ — the agent injects the panel token only for

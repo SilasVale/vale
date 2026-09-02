@@ -270,6 +270,9 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
       if (w > 0 && h > 0) send({ t: "resize", w, h });
     };
     report();
+    // ResizeObserver is absent in some test environments (jsdom) — report
+    // once and skip live observation there.
+    if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => report());
     ro.observe(el);
     // Keep the observer alive for the hook's lifetime.

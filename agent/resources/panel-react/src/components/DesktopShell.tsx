@@ -58,10 +58,13 @@ export function DesktopShell({
   const [page, setPage] = useState<Page>("terminal");
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement | null>(null);
-  // stage-n: agent version for the status strip — one /api/status call on
-  // mount (the electron tray shows it too; the SPA status line should match).
+  // stage-n: agent version + vitals for the status strip — /api/status is
+  // polled every 15 s (the electron tray shows the same data; CPU% is a
+  // server-side delta metric so it needs repeated samples to appear).
   const [agentVersion, setAgentVersion] = useState("");
   const [agentUptime, setAgentUptime] = useState("");
+  const [agentCpu, setAgentCpu] = useState<number | null>(null);
+  const [agentMem, setAgentMem] = useState<number | null>(null);
   useEffect(() => {
     let alive = true;
     const fmtUptime = (secs: number): string => {
@@ -70,15 +73,19 @@ export function DesktopShell({
       if (secs < 86400) return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
       return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
     };
-    (async () => {
+    const tick = async () => {
       try {
         const j = await callApi("/api/status");
-        if (!alive) return;
-        if (j && typeof j.version === "string") setAgentVersion(j.version);
-        if (j && typeof j.uptime_secs === "number") setAgentUptime(fmtUptime(j.uptime_secs));
-      } catch { /* keep empty — version/uptime are a nicety */ }
-    })();
-    return () => { alive = false; };
+        if (!alive || !j) return;
+        if (typeof j.version === "string") setAgentVersion(j.version);
+        if (typeof j.uptime_secs === "number") setAgentUptime(fmtUptime(j.uptime_secs));
+        if (typeof j.cpu_pct === "number") setAgentCpu(j.cpu_pct);
+        if (typeof j.mem_pct === "number") setAgentMem(j.mem_pct);
+      } catch { /* keep last values — vitals are a nicety */ }
+    };
+    void tick();
+    const t = window.setInterval(tick, 15000);
+    return () => { alive = false; window.clearInterval(t); };
   }, []);
   // stage-n: native menu page navigation — the electron menu sends
   // vale-menu commands for pages too (open-memory / open-settings /
@@ -248,7 +255,7 @@ export function DesktopShell({
             <div className="desktop-status idle">
               <span className="desktop-status-msg">
                 {connected
-                  ? `${liveCount} session${liveCount === 1 ? "" : "s"}${agentVersion ? ` · v${agentVersion}` : ""}${agentUptime ? ` · up ${agentUptime}` : ""}`
+                  ? `${liveCount} session${liveCount === 1 ? "" : "s"}${agentVersion ? ` · v${agentVersion}` : ""}${agentUptime ? ` · up ${agentUptime}` : ""}${agentCpu !== null ? ` · CPU ${Math.round(agentCpu)}%` : ""}${agentMem !== null ? ` · MEM ${Math.round(agentMem)}%` : ""}`
                   : "connecting…"}
               </span>
             </div>

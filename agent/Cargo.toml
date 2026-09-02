@@ -71,7 +71,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 # Windows service (SCM protocol). Ignored entirely on Linux/macOS builds.
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"
-windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "0.52", features = ["Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 rmcp = { version = "2", features = ["client", "transport-streamable-http-client-reqwest"] }
