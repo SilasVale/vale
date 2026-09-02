@@ -563,6 +563,10 @@ if (gotTheLock) {
         let trayAgentVersion = "";
         let trayAgentUptime = "";
         let trayAgentSessions = 0;
+        // stage-n: vitals mirrored from /api/status into the tray (the SPA
+        // status strip shows the same pair).
+        let trayAgentCpu = null;
+        let trayAgentMem = null;
         /** "3m 24s" / "1h 5m" / "2d 3h" — compact uptime for the tray. */
         const fmtUptime = (secs) => {
             if (secs < 60)
@@ -578,6 +582,8 @@ if (gotTheLock) {
             let version = trayAgentVersion;
             let uptime = trayAgentUptime;
             let sessions = trayAgentSessions;
+            let cpu = trayAgentCpu;
+            let mem = trayAgentMem;
             if (running) {
                 try {
                     const ctrl = new AbortController();
@@ -592,6 +598,10 @@ if (gotTheLock) {
                             uptime = fmtUptime(j.uptime_secs);
                         if (typeof j.live_sessions === "number")
                             sessions = j.live_sessions;
+                        if (typeof j.cpu_pct === "number")
+                            cpu = j.cpu_pct;
+                        if (typeof j.mem_pct === "number")
+                            mem = j.mem_pct;
                     }
                 }
                 catch { /* keep last */ }
@@ -600,8 +610,13 @@ if (gotTheLock) {
             trayAgentVersion = version;
             trayAgentUptime = uptime;
             trayAgentSessions = sessions;
+            trayAgentCpu = cpu;
+            trayAgentMem = mem;
+            const vitals = running && mem !== null
+                ? `, CPU ${cpu === null ? "?" : Math.round(cpu)}% · MEM ${Math.round(mem)}%`
+                : "";
             const health = running
-                ? `Agent running (v${version || "?"}${uptime ? `, up ${uptime}` : ""}${sessions ? `, ${sessions} session${sessions === 1 ? "" : "s"}` : ""})`
+                ? `Agent running (v${version || "?"}${uptime ? `, up ${uptime}` : ""}${sessions ? `, ${sessions} session${sessions === 1 ? "" : "s"}` : ""}${vitals})`
                 : "Agent stopped";
             tray.setToolTip(`Vale — ${health}`);
             tray.setContextMenu(electron_1.Menu.buildFromTemplate([
