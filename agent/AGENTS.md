@@ -205,10 +205,10 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 54 — memory CRUD complete + tray vitals)
+Last updated: 2026-09-25 (round 55 — plugin tool-count badges)
 
 ### Current release
-- npm **1.2.202** (agent exe internal 1.0.145), deployed on d1
+- npm **1.2.204** (agent exe internal 1.0.145), deployed on d1
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
 - Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
   GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
@@ -239,16 +239,18 @@ Last updated: 2026-09-25 (round 54 — memory CRUD complete + tray vitals)
 - Memory UI CRUD complete: inline edit (1.2.189) + '+ New' create via
   memory_save (1.2.201, end-to-end verified incl. delete cleanup)
 - Tray menu/tooltip shows CPU/MEM vitals (1.2.202), mirroring the strip
+- Plugins page: per-row MCP tool-count badges from /api/spec (1.2.203-204;
+  device live: Terminal 25 / Memory 6 / System 6 / MCP Client 4 /
+  Playwright 2 / Update 1 / Design 1 — registry total 45, singular fixed)
 - Build hygiene: LNK4099 (xwin CRT PDB noise) silenced via /ignore:4099 —
   Windows release build now warning-free (7c697bea)
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- (none — everything above is shipped through 1.2.202)
+- (none — everything above is shipped through 1.2.204)
 
 ### Next candidates
 - Rust backend hardening; session idle-reaper; log rotation
-- Plugins page audit (last un-polished surface)
 - GitHub push retry + npm publish when network allows
 
 ### GitHub ops (network is broken to github.com — TLS drops)
