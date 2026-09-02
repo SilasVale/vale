@@ -140,3 +140,24 @@ pub fn node_path() -> Option<PathBuf> {
     let p = PathBuf::from(v);
     p.exists().then_some(p)
 }
+
+#[cfg(all(test, unix))]
+mod harden_tests {
+    //! Coverage audit row 6: the unix harden_file arm runs on CI (ubuntu)
+    //! today — the 0o600 contract behind every secrets/config write on
+    //! non-Windows devices had no test at all.
+    use super::*;
+
+    #[test]
+    fn harden_file_reduces_to_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("vale-harden-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let p = dir.join("secret.yaml");
+        std::fs::write(&p, b"x").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        harden_file(&p).expect("harden ok");
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

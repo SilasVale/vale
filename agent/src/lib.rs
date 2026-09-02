@@ -20,6 +20,28 @@ pub mod tunnel_ctl {
     pub fn generation() -> u64 {
         GEN.load(Ordering::SeqCst)
     }
+
+    #[cfg(test)]
+    mod tests {
+        //! Coverage audit row 10: the restart-signal contract the tunnel
+        //! supervisor and provision_tunnel share.
+        use super::*;
+        use std::sync::Mutex;
+
+        // Serialize against any other test touching GEN.
+        static LOCK: Mutex<()> = Mutex::new(());
+
+        #[test]
+        fn request_restart_bumps_generation() {
+            let _g = LOCK.lock().unwrap_or_else(|p| p.into_inner());
+            let before = generation();
+            request_restart();
+            assert_eq!(generation(), before + 1);
+            request_restart();
+            request_restart();
+            assert_eq!(generation(), before + 3);
+        }
+    }
 }
 pub mod filelog;
 pub mod mcp;

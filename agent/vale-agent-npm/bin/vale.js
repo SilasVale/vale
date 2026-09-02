@@ -34,6 +34,8 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.psq = void 0;
+exports.busyIsFresh = busyIsFresh;
 /**
  * vale CLI — DSH-style management for the Vale Agent.
  *
@@ -96,7 +98,13 @@ function ps(script) {
 // npm audit #6: setup interpolated RAW paths into PS single-quote literals;
 // an apostrophe in a path (O'Brien) unbalanced the literal and the script
 // PARSE-failed invisibly. Shared doubling helper.
+// exported: unit-tested in test/cli.test.mjs (SYSTEM-context PS quoting = injection surface)
 const psq = (x) => String(x).replace(/'/g, "''");
+exports.psq = psq;
+// exported: the update mutual-exclusion window (npm audit #10 seam), unit-tested.
+function busyIsFresh(mtimeMs, nowMs) {
+    return nowMs - mtimeMs < 10 * 60 * 1000;
+}
 function svc(action) {
     sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
 }
@@ -215,7 +223,7 @@ const commands = {
         sh("reg delete HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\Cloudflared /f 2>NUL");
         // 4. Stale update-busy marker (a crashed update would lock updates).
         const BUSY = path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
-        sh(`powershell -NoProfile -Command "Remove-Item -Force -ErrorAction SilentlyContinue '${psq(BUSY)}'"`);
+        sh(`powershell -NoProfile -Command "Remove-Item -Force -ErrorAction SilentlyContinue '${(0, exports.psq)(BUSY)}'"`);
         // 5. Refresh the BOXED playwright bundle: delete the old tree first so a
         //    removed package/version never leaves stale files behind.
         //    round-163: kill the runner/bridge node processes FIRST — a running
@@ -232,7 +240,7 @@ const commands = {
         for (const legacy of ["C:\\vale-agent", "D:\\vale-agent"]) {
             if (legacy !== DIR && fs.existsSync(legacy)) {
                 console.log("setup: removing legacy install dir", legacy);
-                sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${psq(legacy)}'"`);
+                sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${(0, exports.psq)(legacy)}'"`);
             }
         }
         // C1: write the registry single source of truth (InstallDir; DataDir
@@ -259,13 +267,13 @@ const commands = {
         if (fs.existsSync(PW_ZIP)) {
             const pwDir = path.join(DIR, "playwright");
             fs.mkdirSync(pwDir, { recursive: true });
-            sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${psq(PW_ZIP)}' -DestinationPath '${psq(DIR)}'"`);
+            sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${(0, exports.psq)(PW_ZIP)}' -DestinationPath '${(0, exports.psq)(DIR)}'"`);
             // round-163: the whole point of the bundle is node.exe — VERIFY it
             // landed (a silently-missing copy killed the bridge forever on d1).
             // One retry, then fail loudly: a half-staged bundle is worse than none.
             if (!fs.existsSync(path.join(pwDir, "node.exe"))) {
                 console.log("setup: node.exe missing after expand — retrying once");
-                sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${psq(PW_ZIP)}' -DestinationPath '${psq(DIR)}'"`);
+                sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${(0, exports.psq)(PW_ZIP)}' -DestinationPath '${(0, exports.psq)(DIR)}'"`);
             }
             if (fs.existsSync(path.join(pwDir, "node.exe"))) {
                 console.log("setup: playwright bundle staged (node.exe + node_modules verified)");
@@ -326,7 +334,7 @@ const commands = {
         if (fs.existsSync(DESK_SRC)) {
             const desDst = path.join(DIR, "vale-desktop-electron", "src");
             fs.mkdirSync(desDst, { recursive: true });
-            for (const f of ["main.js", "preload.js"]) {
+            for (const f of ["main.js", "preload.js", "url-policy.js"]) {
                 const s = path.join(DESK_SRC, f);
                 if (fs.existsSync(s))
                     fs.copyFileSync(s, path.join(desDst, f));
@@ -347,7 +355,7 @@ const commands = {
         //   - 5-min repetition watchdog   IgnoreNew = no-op while running;
         //                                 restarts within <=5 min if dead
         const reg = [
-            `$action = New-ScheduledTaskAction -Execute '${psq(EXE_DST)}' -Argument ('"' + '${psq(EXE_DST)}' + '"')`,
+            `$action = New-ScheduledTaskAction -Execute '${(0, exports.psq)(EXE_DST)}' -Argument ('"' + '${(0, exports.psq)(EXE_DST)}' + '"')`,
             "$boot = New-ScheduledTaskTrigger -AtStartup",
             "$watch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)",
             "$principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest",
@@ -400,7 +408,7 @@ const commands = {
         const BUSYM = path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
         try {
             const st = fs.statSync(BUSYM);
-            if (Date.now() - st.mtimeMs < 10 * 60 * 1000) {
+            if (busyIsFresh(st.mtimeMs, Date.now())) {
                 console.error("update: another update looks in progress (" + BUSYM + " <10 min old) — wait, or delete the marker after a mid-swap reboot");
                 process.exit(1);
             }
@@ -440,7 +448,7 @@ const commands = {
         if (fs.existsSync(DESK_SRC)) {
             const desDst = path.join(DIR, "vale-desktop-electron", "src");
             fs.mkdirSync(desDst, { recursive: true });
-            for (const f of ["main.js", "preload.js"]) {
+            for (const f of ["main.js", "preload.js", "url-policy.js"]) {
                 const s = path.join(DESK_SRC, f);
                 if (fs.existsSync(s))
                     fs.copyFileSync(s, path.join(desDst, f + ".new"));
@@ -485,7 +493,7 @@ const commands = {
             `if (Test-Path '${q}\\bridge.new.js') { Copy-Item -Force '${q}\\bridge.new.js' '${q}\\bridge.js'; Remove-Item -Force '${q}\\bridge.new.js' }`,
             // stage-l: swap the desktop shell sources (main/preload) with retry —
             // the running Electron may hold them briefly.
-            `foreach($df in @('main.js','preload.js')){ $ds='${q}\\vale-desktop-electron\\src\\'+$df+'.new'; if (Test-Path $ds) { $ok2=$false; foreach($i in 1..8){ try { Copy-Item -Force -ErrorAction Stop $ds ('${q}\\vale-desktop-electron\\src\\'+$df); $ok2=$true; break } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item -Force -ErrorAction SilentlyContinue $ds; "[$(Get-Date -Format o)] desk $df ok=$ok2" | ${log} } }`,
+            `foreach($df in @('main.js','preload.js','url-policy.js')){ $ds='${q}\\vale-desktop-electron\\src\\'+$df+'.new'; if (Test-Path $ds) { $ok2=$false; foreach($i in 1..8){ try { Copy-Item -Force -ErrorAction Stop $ds ('${q}\\vale-desktop-electron\\src\\'+$df); $ok2=$true; break } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item -Force -ErrorAction SilentlyContinue $ds; "[$(Get-Date -Format o)] desk $df ok=$ok2" | ${log} } }`,
             // NEVER leave the device dark: even a failed swap must bring the task
             // back up (it will run the old exe until the next update).
             `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,
@@ -646,7 +654,7 @@ const commands = {
                 console.log("uninstall: removing legacy install dir", legacy);
                 // PowerShell Remove-Item -Recurse -Force handles locked/read-only
                 // files better than rmdir; retry once after a short wait.
-                sh(`powershell -NoProfile -Command "Remove-Item -LiteralPath '${psq(legacy)}' -Recurse -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath '${psq(legacy)}' -Recurse -Force -ErrorAction SilentlyContinue"`);
+                sh(`powershell -NoProfile -Command "Remove-Item -LiteralPath '${(0, exports.psq)(legacy)}' -Recurse -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath '${(0, exports.psq)(legacy)}' -Recurse -Force -ErrorAction SilentlyContinue"`);
                 if (fs.existsSync(legacy)) {
                     console.log("uninstall: WARNING — legacy dir still present:", legacy);
                 }
@@ -726,10 +734,14 @@ const commands = {
         }
     },
 };
-const [cmd, ...rest] = process.argv.slice(2);
-if (!cmd || !commands[cmd]) {
-    console.log("vale <setup|status|start|stop|restart|update|uninstall|run|tunnel> — Vale Agent control");
-    Object.keys(commands).forEach((k) => console.log(" ", k));
-    process.exit(cmd ? 1 : 0);
+// require.main guard: test/cli.test.mjs imports the pure helpers above
+// WITHOUT tripping the usage print + process.exit at module load.
+if (require.main === module) {
+    const [cmd, ...rest] = process.argv.slice(2);
+    if (!cmd || !commands[cmd]) {
+        console.log("vale <setup|status|start|stop|restart|update|uninstall|run|tunnel> — Vale Agent control");
+        Object.keys(commands).forEach((k) => console.log(" ", k));
+        process.exit(cmd ? 1 : 0);
+    }
+    commands[cmd](rest);
 }
-commands[cmd](rest);

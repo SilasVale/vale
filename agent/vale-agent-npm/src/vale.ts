@@ -57,7 +57,13 @@ function ps(script) {
 // npm audit #6: setup interpolated RAW paths into PS single-quote literals;
 // an apostrophe in a path (O'Brien) unbalanced the literal and the script
 // PARSE-failed invisibly. Shared doubling helper.
-const psq = (x: string) => String(x).replace(/'/g, "''");
+// exported: unit-tested in test/cli.test.mjs (SYSTEM-context PS quoting = injection surface)
+export const psq = (x: string) => String(x).replace(/'/g, "''");
+// exported: the update mutual-exclusion window (npm audit #10 seam), unit-tested.
+export function busyIsFresh(mtimeMs: number, nowMs: number): boolean {
+  return nowMs - mtimeMs < 10 * 60 * 1000;
+}
+
 function svc(action) {
   sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
 }
@@ -270,7 +276,7 @@ const commands = {
     if (fs.existsSync(DESK_SRC)) {
       const desDst = path.join(DIR, "vale-desktop-electron", "src");
       fs.mkdirSync(desDst, { recursive: true });
-      for (const f of ["main.js", "preload.js"]) {
+      for (const f of ["main.js", "preload.js", "url-policy.js"]) {
         const s = path.join(DESK_SRC, f);
         if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f));
       }
@@ -351,7 +357,7 @@ const commands = {
     const BUSYM = path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
     try {
       const st = fs.statSync(BUSYM);
-      if (Date.now() - st.mtimeMs < 10 * 60 * 1000) {
+      if (busyIsFresh(st.mtimeMs, Date.now())) {
         console.error("update: another update looks in progress (" + BUSYM + " <10 min old) — wait, or delete the marker after a mid-swap reboot");
         process.exit(1);
       }
@@ -389,7 +395,7 @@ const commands = {
     if (fs.existsSync(DESK_SRC)) {
       const desDst = path.join(DIR, "vale-desktop-electron", "src");
       fs.mkdirSync(desDst, { recursive: true });
-      for (const f of ["main.js", "preload.js"]) {
+      for (const f of ["main.js", "preload.js", "url-policy.js"]) {
         const s = path.join(DESK_SRC, f);
         if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f + ".new"));
       }
@@ -436,7 +442,7 @@ const commands = {
       `if (Test-Path '${q}\\bridge.new.js') { Copy-Item -Force '${q}\\bridge.new.js' '${q}\\bridge.js'; Remove-Item -Force '${q}\\bridge.new.js' }`,
       // stage-l: swap the desktop shell sources (main/preload) with retry —
       // the running Electron may hold them briefly.
-      `foreach($df in @('main.js','preload.js')){ $ds='${q}\\vale-desktop-electron\\src\\'+$df+'.new'; if (Test-Path $ds) { $ok2=$false; foreach($i in 1..8){ try { Copy-Item -Force -ErrorAction Stop $ds ('${q}\\vale-desktop-electron\\src\\'+$df); $ok2=$true; break } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item -Force -ErrorAction SilentlyContinue $ds; "[$(Get-Date -Format o)] desk $df ok=$ok2" | ${log} } }`,
+      `foreach($df in @('main.js','preload.js','url-policy.js')){ $ds='${q}\\vale-desktop-electron\\src\\'+$df+'.new'; if (Test-Path $ds) { $ok2=$false; foreach($i in 1..8){ try { Copy-Item -Force -ErrorAction Stop $ds ('${q}\\vale-desktop-electron\\src\\'+$df); $ok2=$true; break } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item -Force -ErrorAction SilentlyContinue $ds; "[$(Get-Date -Format o)] desk $df ok=$ok2" | ${log} } }`,
       // NEVER leave the device dark: even a failed swap must bring the task
       // back up (it will run the old exe until the next update).
       `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,
@@ -678,10 +684,14 @@ const commands = {
   },
 };
 
-const [cmd, ...rest] = process.argv.slice(2);
-if (!cmd || !commands[cmd]) {
-  console.log("vale <setup|status|start|stop|restart|update|uninstall|run|tunnel> — Vale Agent control");
-  Object.keys(commands).forEach((k) => console.log(" ", k));
-  process.exit(cmd ? 1 : 0);
+// require.main guard: test/cli.test.mjs imports the pure helpers above
+// WITHOUT tripping the usage print + process.exit at module load.
+if (require.main === module) {
+  const [cmd, ...rest] = process.argv.slice(2);
+  if (!cmd || !commands[cmd]) {
+    console.log("vale <setup|status|start|stop|restart|update|uninstall|run|tunnel> — Vale Agent control");
+    Object.keys(commands).forEach((k) => console.log(" ", k));
+    process.exit(cmd ? 1 : 0);
+  }
+  commands[cmd](rest);
 }
-commands[cmd](rest);

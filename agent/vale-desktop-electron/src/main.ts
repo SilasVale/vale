@@ -20,15 +20,9 @@ import * as fs from "fs";
 import * as http from "http";
 import * as net from "net";
 
-const BASE = "http://127.0.0.1:18080";
-// IPC audit #1 (HIGH): startsWith(BASE) was BYPASSABLE — the string
-// 'http://127.0.0.1:18080@evil.com/x' passes the prefix test but Chromium
-// parses its host as evil.com (userinfo trick). Every origin decision now
-// compares the PARSED origin.
-const BASE_ORIGIN = new URL(BASE).origin;
-function isBaseOrigin(url: string): boolean {
-  try { return new URL(url).origin === BASE_ORIGIN; } catch { return false; }
-}
+// url-policy.ts (shipped alongside, staged by vale update): pure
+// origin/URL predicates, unit-tested in test/url-policy.test.mjs.
+import { BASE, isBaseOrigin, frameUrlOk, sanitizeBrowserUrl } from "./url-policy";
 // IPC audit #3: /api/status is TOKEN-GATED (same fact the watchdog fix cites);
 // credential-less fetches got 401 -> version title + tray vitals were DEAD on
 // every configured device. The shell runs as the interactive admin, and the
@@ -53,7 +47,7 @@ function authHeaders(): Record<string, string> {
 // IPC audit #2: preload runs in EVERY frame; will-navigate never gated
 // iframes. Handlers must reject anything not sourced from the pinned panel.
 function frameOk(e: Electron.IpcMainInvokeEvent): boolean {
-  try { return isBaseOrigin(e.senderFrame?.url || ""); } catch { return false; }
+  return frameUrlOk(e.senderFrame?.url || "");
 }
 // P1: CDP port for AI (playwright) to drive Vale's own pages — the SAME
 // Electron window the user watches. Vale's playwright-mcp connects via
@@ -220,15 +214,6 @@ function buildMenu(): Menu {
 /** Only http/https/about:blank targets are allowed — file:// and other
  *  schemes would hand the AI a local-file read primitive via the shared
  *  CDP endpoint (stage-n hardening). */
-function sanitizeBrowserUrl(url?: string): string {
-  const t = (url || "about:blank").trim();
-  if (t === "about:blank") return t;
-  try {
-    const u = new URL(t);
-    if (u.protocol === "http:" || u.protocol === "https:") return u.toString();
-  } catch { /* fall through */ }
-  return "about:blank";
-}
 function browserOpen(url?: string): { ok: true; id: string; url: string; cdp: string } {
   const target = sanitizeBrowserUrl(url);
   // stage-n: reuse an existing window on the same URL instead of stacking
