@@ -198,13 +198,27 @@ impl SessionLogger {
                     // fused pair once swallowed the "interrupted" recovery
                     // marker (crashed command looked FINISHED). Terminate the
                     // fragment before appending anything.
-                    let len0 = file.metadata().map(|m| m.len()).unwrap_or(0);
+                    let tail_bad = file
+                        .metadata()
+                        .ok()
+                        .filter(|m| m.len() > 0)
+                        .and_then(|_m| {
+                            use std::io::{Read, Seek, SeekFrom};
+                            std::fs::OpenOptions::new()
+                                .read(true)
+                                .open(&path)
+                                .and_then(|mut r| {
+                                    r.seek(SeekFrom::End(-1))?;
+                                    let mut b = [0u8; 1];
+                                    r.read_exact(&mut b)?;
+                                    Ok(b[0] != b'\n')
+                                })
+                                .ok()
+                        })
+                        .unwrap_or(false);
                     let mut w = std::io::BufWriter::new(file);
-                    if len0 > 0 {
-                        let tail_ok = w.get_ref().metadata().map(|m| m.len() == len0).unwrap_or(true);
-                        if !tail_ok {
-                            let _ = w.write_all(b"\n");
-                        }
+                    if tail_bad {
+                        let _ = w.write_all(b"\n");
                     }
                     // New file → write the version header FIRST (round-56).
                     if w.get_ref().metadata().map(|m| m.len() == 0).unwrap_or(false) {
@@ -480,6 +494,27 @@ mod tests {
         let d = std::env::temp_dir().join(format!("vale-sesslog-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn torn_final_fragment_is_repaired_before_next_append() {
+        // Crash mid-writeln leaves `{"id"...` with no trailing \n. Without
+        // repair the next event FUSES onto it and BOTH become unparseable —
+        // the exact failure that silently swallowed recovery markers.
+        let dir = std::env::temp_dir().join(format!("vale-slog-torn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("s1.jsonl").as_path(), b"{\"id\":\"s1\",\"seq\":1,\"kind\":\"comm").unwrap();
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_status("s1", "resumed");
+        drop(logger);
+        let logger2 = SessionLogger::new(dir.clone());
+        let events = logger2.events_of("s1");
+        assert!(
+            events.iter().any(|e| e["status"].as_str() == Some("resumed")),
+            "post-repair append must parse cleanly, got {events:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
