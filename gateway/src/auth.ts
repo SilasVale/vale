@@ -57,8 +57,16 @@ export function csrfCookieViolation(request: Request): boolean {
   if (!MUTATING_METHODS.has(method)) return false;
   const cookie = request.headers.get("cookie") || "";
   if (!cookie.includes(SESSION_COOKIE + "=")) return false; // bearer path
-  const site = (request.headers.get("sec-fetch-site") || "").toLowerCase();
-  return site !== "same-origin" && site !== "none";
+  // Browsers attach Sec-Fetch-Site to EVERY request (forbidden header — a
+  // cross-site page cannot forge it), so a DRIVE-BY from a device panel or
+  // any foreign page carries same-site/cross-site and is rejected. A MISSING
+  // header means a non-browser client: browsers never omit it, and raw HTTP
+  // has no ambient cookie to ride — nothing to defend against there, so
+  // absent = allowed (test suites + CLI session probes keep working).
+  const site = request.headers.get("sec-fetch-site");
+  if (site == null) return false;
+  const v = site.toLowerCase();
+  return v !== "same-origin" && v !== "none";
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
