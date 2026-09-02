@@ -124,6 +124,10 @@ const commands = {
     // self-register reads it at boot).
     const hi = args.indexOf("--hostname");
     const deviceHost = hi >= 0 ? args[hi + 1] : (process.env.VALE_HOSTNAME || "d1.agent.saisi.online");
+    // review #1 (HIGH): the hostname write ran BEFORE the mkdirSync below —
+    // on a FRESH machine DIR doesn't exist yet → ENOENT throw → setup died
+    // having installed nothing. Ensure the dir first.
+    fs.mkdirSync(DIR, { recursive: true });
     fs.writeFileSync(path.join(DIR, "vale-agent.hostname"), deviceHost);
     // No key required for a local install — key/tunnel are optional extras.
     if (regKey) {
@@ -433,7 +437,7 @@ const commands = {
       //    wscript wrapper runs it with no console flash.
       `$en1 = '${q}\\ensure-desktop.ps1'`,
       `$vb1 = '${q}\\desktop-pulse.vbs'`,
-      `Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File ${q}\\start-desktop.ps1' -Force`,
+      `Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "${q}\\start-desktop.ps1"' -Force`,
       `Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "${q}\\ensure-desktop.ps1" & Chr(34), 0, False' -Force`,
       `if ($null -ne (Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue)) {`,
       `  $da = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $vb1 + '"') -WorkingDirectory '${q}'`,
@@ -464,7 +468,7 @@ const commands = {
       `if (Test-Path $pwVbs) {`,
       `  $pwNode = '${q}\\playwright\\node.exe'`,
       `  $pwCli  = '${q}\\playwright\\node_modules\\@playwright\\mcp\\cli.js'`,
-      `  if (Test-Path $pwNode -and Test-Path $pwCli) {`,
+      `  if ((Test-Path $pwNode) -and (Test-Path $pwCli)) {`,  // parens: bare -and is a param parse error
       // Read the CURRENT task's UserId BEFORE unregistering — we need to know
       // who the task runs as (Administrator), but $env:USERNAME returns
       // "SYSTEM" when spawned via WMI, and Win32_ComputerSystem.UserName is
@@ -506,13 +510,26 @@ const commands = {
     );
     const ps1 = path.join(DIR, "vale-update.ps1");
     const inner = `powershell -NoProfile -File "${ps1}"`;
-    const wmi = `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${inner.replace(/'/g, "''")}'} | Select-Object ProcessId,ReturnValue`;
+    const wmi = `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${inner.replace(/'/g, "''")}'} | ConvertTo-Json -Compress`;
     const r = spawnSync("powershell", ["-NoProfile", "-Command", wmi], {
-      stdio: "inherit",
+      stdio: ["ignore", "pipe", "pipe"],
       timeout: 20000,
     });
-    if (r.status !== 0) {
-      console.error("update: WMI handoff failed");
+    // review #2 (HIGH): Win32_Process.Create reports success via
+    // ReturnValue=0, but the old stdio:"inherit" printed the object and
+    // checked only powershell's own exit code — a Create that returned 9
+    // (path not found) / 21 still printed "swap launched" and the update
+    // was a silent no-op (exactly incident #1's class). Parse the code.
+    let retval: number | null = null;
+    try {
+      const j = JSON.parse((r.stdout || Buffer.from("")).toString().trim());
+      retval = typeof j?.ReturnValue === "number" ? j.ReturnValue : null;
+    } catch { /* fall through to the status/retval guard below */ }
+    if (r.status !== 0 || retval !== 0) {
+      console.error(
+        `update: WMI handoff failed (ps status ${r.status}, ReturnValue ${retval ?? "?"})`
+        + (r.stderr ? " — " + r.stderr.toString().trim() : ""),
+      );
       process.exit(1);
     }
     console.log("update: swap launched (connection drops, reconnect in ~10s)");

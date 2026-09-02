@@ -46,7 +46,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 // No spawn() of vale-agent.exe from JS — that was the d1 Chrome-OOM root
 // cause (a bind-failed child wedged on "Press Enter to exit" forever).
 const electron_1 = require("electron");
-const child_process_1 = require("child_process");
 const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 const http = __importStar(require("http"));
@@ -257,7 +256,15 @@ function browserOpen(url) {
             browserClose(oldest);
     }
     const id = `browser-${Date.now()}`;
-    const bw = new electron_1.BrowserWindow({ width: 1100, height: 750, title: `Vale Browser — ${target}` });
+    const bw = new electron_1.BrowserWindow({
+        width: 1100, height: 750, title: `Vale Browser — ${target}`,
+        // review #6/#7: these windows load ARBITRARY internet pages. contextIsolation
+        // on + nodeIntegration off + NO preload = zero Node/bridge surface (the
+        // default; made explicit). Popups are denied (they would otherwise spawn
+        // unmanaged windows outside the MAX_BROWSER_WINDOWS cap).
+        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    });
+    bw.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     bw.loadURL(target);
     bw.on("closed", () => { browserSessions.delete(id); browserTargets.delete(id); });
     // stage-n: the window title starts as "Vale Browser — <target>" but a
@@ -273,8 +280,12 @@ function browserOpen(url) {
 }
 function browserClose(id) {
     const bw = browserSessions.get(id || "");
+    // review #g: close() is vetoable by a page's beforeunload — an arbitrary
+    // remote page could refuse eviction, so the MAX_BROWSER_WINDOWS cap never
+    // freed and browserOpen stalled. destroy() is unconditional (these are
+    // disposable, headless-driven windows).
     if (bw) {
-        bw.close();
+        bw.destroy();
         browserSessions.delete(id || "");
         browserTargets.delete(id || "");
     }
@@ -298,14 +309,11 @@ const AUTOSTART_TASK = "ValeDesktop";
 // shell was launched and broke the toggle when electron started from another
 // directory. The install root is two levels up from src/.
 const AUTOSTART_SCRIPT = path.join(__dirname, "..", "..", "start-desktop.ps1");
-function autoLaunchTaskExists() {
-    try {
-        (0, child_process_1.execSync)(`schtasks /query /tn "${AUTOSTART_TASK}"`, { stdio: "pipe", windowsHide: true });
-        return true;
-    }
-    catch {
-        return false;
-    }
+async function autoLaunchTaskExists() {
+    // review #4: was sync execSync schtasks — the same hang class that killed
+    // electron; route through the bounded async runner.
+    const r = await runSchtasks(["/query", "/tn", AUTOSTART_TASK]);
+    return r.ok;
 }
 /** Run schtasks asynchronously with a hard timeout — the SYNC execSync
  *  variant could hang the main process on a wedged schtasks (observed: the
@@ -316,6 +324,11 @@ function runSchtasks(args) {
         try {
             const { spawn } = require("child_process");
             const child = spawn("schtasks", args, { windowsHide: true, stdio: "pipe" });
+            // review #5: consume the pipes — a task "already running" message on
+            // stdout with no reader EPIPE-kills the child and surfaces a spurious
+            // error even though schtasks succeeded.
+            child.stdout?.resume();
+            child.stderr?.resume();
             const t = setTimeout(() => { try {
                 child.kill();
             }
@@ -330,7 +343,7 @@ function runSchtasks(args) {
 }
 async function autoLaunchTaskSet(enabled) {
     try {
-        if (enabled && !autoLaunchTaskExists()) {
+        if (enabled && !(await autoLaunchTaskExists())) {
             // Under SYSTEM, a spawn-array schtasks /create without /ru fails with
             // "no mapping between account names and security IDs" (exit 1) — the
             // interactive user is not resolvable from the service session. A bare
@@ -347,7 +360,7 @@ async function autoLaunchTaskSet(enabled) {
             if (!r.ok)
                 return r;
         }
-        else if (!enabled && autoLaunchTaskExists()) {
+        else if (!enabled && (await autoLaunchTaskExists())) {
             // End the task first (a RUNNING task's process tree is terminated on
             // delete) then remove it — the current electron instance must survive.
             await runSchtasks(["/end", "/tn", AUTOSTART_TASK]);
@@ -361,7 +374,7 @@ async function autoLaunchTaskSet(enabled) {
         return { ok: false, error: String(e) };
     }
 }
-electron_1.ipcMain.handle("desktop:get-auto-launch", () => ({ enabled: autoLaunchTaskExists() }));
+electron_1.ipcMain.handle("desktop:get-auto-launch", async () => ({ enabled: await autoLaunchTaskExists() }));
 electron_1.ipcMain.handle("desktop:set-auto-launch", async (_e, enabled) => autoLaunchTaskSet(!!enabled));
 // --- Agent lifecycle (stage-m: Rust owns it; the shell only probes/triggers) ---
 /** True if ANY process is listening on 127.0.0.1:18080 (TCP probe). */
@@ -372,34 +385,65 @@ function portBusy(port, timeoutMs = 1000) {
         sock.setTimeout(timeoutMs, () => { sock.destroy(); res(false); });
     });
 }
+// review #2 (HIGH): a raw TCP connect only proves the PORT is held — an
+// agent that is wedged (deadlock / OOM-parked) but still listening keeps the
+// connect succeeding, so the watchdog's miss counter NEVER reached the gate,
+// the wait page never showed, and a stuck device stayed stuck in silence.
+// Liveness = GET /api/status answers 200 within the budget.
+function agentResponds(timeoutMs = 2000) {
+    return new Promise((res) => {
+        let done = false;
+        const finish = (v) => { if (!done) {
+            done = true;
+            res(v);
+        } };
+        const req = http.get(`${BASE}/api/status`, { timeout: timeoutMs }, (r) => {
+            r.resume();
+            finish(r.statusCode === 200);
+        });
+        req.on("timeout", () => { req.destroy(); finish(false); });
+        req.on("error", () => finish(false));
+    });
+}
 /** Start the agent via the ValeAgent scheduled task — the ONLY sanctioned
  *  spawn path (the task runs the agent as SYSTEM; the agent itself enforces
  *  single-instance via VALE_NO_PAUSE bind-failure exit). Never spawn the exe
  *  directly from JS. */
-function startAgentTask() {
-    try {
-        (0, child_process_1.execSync)('schtasks /run /tn "ValeAgent"', { stdio: "pipe", windowsHide: true });
-        return { ok: true };
-    }
-    catch (e) {
-        return { ok: false, error: String(e) };
-    }
+async function startAgentTask() {
+    // review #1 (HIGH): sync execSync on the wait-page button / IPC / HTTP
+    // paths — one wedged schtasks froze the WHOLE main process (the exact
+    // hang class already fixed for the watchdog). Same bounded async runner.
+    return runSchtasks(["/run", "/tn", "ValeAgent"]);
 }
 // The SPA asks the shell for agent status / to (re)start the agent task.
-electron_1.ipcMain.handle("shell:agent-status", async () => ({ running: await portBusy(18080) }));
+electron_1.ipcMain.handle("shell:agent-status", async () => ({ running: await agentResponds() }));
 electron_1.ipcMain.handle("shell:start-agent", () => startAgentTask());
 // Fallback HTTP path (plain browser / no preload): same core, CORS-open.
 const httpServer = http.createServer((req, res) => {
     const u = new URL(req.url || "/", "http://127.0.0.1");
     const send = (obj, code = 200) => {
-        res.setHeader("access-control-allow-origin", "*");
+        // review #8: was ACAO:* with no origin check — ANY web page open in ANY
+        // local browser could POST /api/shell/start-agent or spam
+        // /api/browser-session/open (loopback is exempt from mixed-content
+        // blocking). Reflect the origin, and reject state-changing requests
+        // from foreign origins. "null" (our data: wait page) and absent
+        // (native tooling/curl) stay allowed.
+        res.setHeader("access-control-allow-origin", req.headers.origin || "*");
         res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
         res.setHeader("access-control-allow-headers", "content-type, authorization");
+        res.setHeader("vary", "Origin");
         res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" });
         res.end(JSON.stringify(obj));
     };
     if (req.method === "OPTIONS")
         return send({ ok: true });
+    if (req.method === "POST") {
+        const origin = req.headers.origin;
+        if (origin && origin !== "null"
+            && !/^(https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?|file:\/\/)/i.test(origin)) {
+            return send({ ok: false, error: "forbidden origin" }, 403);
+        }
+    }
     try {
         if (u.pathname === "/api/browser-session/open" && req.method === "POST")
             return send(browserOpen(u.searchParams.get("url") || "about:blank"));
@@ -408,9 +452,9 @@ const httpServer = http.createServer((req, res) => {
         if (u.pathname === "/api/browser-session/list")
             return send(browserList());
         if (u.pathname === "/api/shell/start-agent" && req.method === "POST")
-            return send(startAgentTask());
+            return (async () => send(await startAgentTask()))();
         if (u.pathname === "/api/shell/agent-status")
-            return (async () => send({ ok: true, running: await portBusy(18080) }))();
+            return (async () => send({ ok: true, running: await agentResponds(1000) }))();
         send({ ok: false, error: "not found" }, 404);
     }
     catch (e) {
@@ -419,6 +463,14 @@ const httpServer = http.createServer((req, res) => {
 });
 if (gotTheLock) {
     electron_1.app.whenReady().then(async () => {
+        // review #7: with no handler Electron AUTO-GRANTS every permission
+        // request (media/geolocation/clipboard) — deny by default for all
+        // windows, esp. the remote-browser ones loading arbitrary pages.
+        try {
+            electron_1.session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+            electron_1.session.defaultSession.setPermissionCheckHandler(() => false);
+        }
+        catch { /* non-fatal */ }
         httpServer.listen(CTRL_PORT, "127.0.0.1");
         console.log(`[vale] browser-session control: http://127.0.0.1:${CTRL_PORT}`);
         // Native application menu (stage-l): menu commands → SPA via vale-menu.
@@ -430,6 +482,23 @@ if (gotTheLock) {
                 contextIsolation: true,
                 nodeIntegration: false,
             },
+        });
+        // review #6 (MED) TOP RISK: the main window carries the valeDesktop/
+        // valeBrowser preload bridge (setAutoLaunch → schtasks /create …
+        // -File <ps1>, browser-session:open). Without a navigation veto a
+        // compromised/redirected agent page — or any window.open target — could
+        // load an ARBITRARY origin into this privileged window and drive those
+        // IPC channels for persistence. Pin the main window to its own origin
+        // (the SPA is served from BASE; the wait page is a data: URL).
+        win.webContents.on("will-navigate", (e, url) => {
+            if (!url.startsWith(BASE) && !url.startsWith("data:"))
+                e.preventDefault();
+        });
+        // review #7: a target=_blank from the SPA must NOT get a preload-bearing
+        // window; route it to a sandboxed browser session instead.
+        win.webContents.setWindowOpenHandler(({ url }) => {
+            browserOpen(url);
+            return { action: "deny" };
         });
         // stage-n: load /desktop/ only when the agent is actually listening.
         // A blind loadURL fails white-screen when the ValeAgent task is down
@@ -525,7 +594,15 @@ if (gotTheLock) {
         };
         // Retry loop: did-fail-load (agent went down mid-load) or a still-down
         // agent re-runs loadDesktop; each failure schedules exactly one retry.
-        win.webContents.on("did-fail-load", () => { setTimeout(() => { loadDesktop(); }, nextRetry()); });
+        // review #3: a same-URL reload dispatches did-fail-load(-3, ERR_ABORTED)
+        // on the MAIN frame, and subframe failures fired too — each stacked
+        // ANOTHER loadDesktop chain (accelerated miss counting + duplicate
+        // loadURLs). Only a real main-frame failure (not ABORTED) should retry.
+        win.webContents.on("did-fail-load", (_e, errorCode, _desc, _url, isMainFrame) => {
+            if (!isMainFrame || errorCode === -3)
+                return;
+            setTimeout(() => { loadDesktop(); }, nextRetry());
+        });
         // stage-n: once the SPA finished loading, give its React effect time to
         // register the vale-menu listener, then flush any queued menu commands.
         win.webContents.on("did-finish-load", () => {
@@ -580,6 +657,9 @@ if (gotTheLock) {
         });
         const iconPath = path.join(__dirname, "..", "icon.png");
         tray = new electron_1.Tray(fs.existsSync(iconPath) ? iconPath : electron_1.nativeImage.createEmpty());
+        // review #f: single/double-click on the tray icon did nothing (only the
+        // context-menu "Open" worked).
+        tray.on("click", () => focusMain());
         // stage-n: tray reflects live agent state — tooltip + a status line in
         // the menu, refreshed on a 30s poll and on demand (menu open re-checks).
         let trayAgentRunning = false;
