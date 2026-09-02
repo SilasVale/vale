@@ -220,10 +220,20 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 66 — bridge fixes LIVE on d1, regressions green; 1.2.214)
+Last updated: 2026-09-25 (round 67 — dual-review harvest LIVE; 1.2.215, click precision proven)
 
 ### Current release
-- npm **1.2.214 LIVE on d1** — full chain green: 1.2.211/212 shipped the
+- npm **1.2.215 LIVE on d1** — dual-review harvest (this round): ws_relay
+  hardening (upgrade-header validation before ticket redeem, single-flight,
+  3s dial budget, keepalive-adjacent guards, 150 s idle-capped pump
+  replacing copy_bidirectional — half-open relays can no longer pin bridge
+  WS slots forever; 8-relay budget) + client audit fixes (hidden-tab no
+  reconnect, mapXY emits NATIVE frame px — clicks were up to 2x off since
+  1.2.185, PROVEN FIXED on d1: precise hit on diag-reported link (262,183)
+  → example.com "Learn more" → iana.org; focused address bar no longer
+  clobbered by pushes; blob URL + ResizeObserver teardown; evidence cache
+  keyed name:mtime; drawer auto-select; lastErr = current-fault gauge,
+  cleared on success — verified null after clean nav). 1.2.214 shipped the
   bridge review fixes (212 after catching that 211 carried a STALE dist —
   an old npx-tsc silently emitted nothing; ALWAYS grep the built artifact
   for markers before releasing), 1.2.213 restored the swap script's
@@ -279,7 +289,7 @@ Last updated: 2026-09-25 (round 66 — bridge fixes LIVE on d1, regressions gree
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- (none — 1.2.214 live on d1, regressions green, GitHub release synced.)
+- (none — 1.2.215 live; C stress suite 7/7 green beforehand.)
 
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
