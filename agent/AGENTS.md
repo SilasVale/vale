@@ -205,10 +205,12 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 55 — plugin tool-count badges)
+Last updated: 2026-09-25 (round 56 — audit retention + watchdog; device dark)
 
 ### Current release
-- npm **1.2.204** (agent exe internal 1.0.145), deployed on d1
+- npm **1.2.206** published (agent exe internal 1.0.145). Device d1 runs
+  **1.2.205 binaries installed but OFFLINE** — see incident below; on next
+  logon/reboot it returns and self-verifies, then update to 1.2.206
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
 - Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
   GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
@@ -249,8 +251,26 @@ Last updated: 2026-09-25 (round 55 — plugin tool-count badges)
 ### In progress
 - (none — everything above is shipped through 1.2.204)
 
+### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
+- I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
+  killed before its `schtasks /Run` (the /End also killed the agent-supervised
+  cloudflared → the gateway channel died with it → no remote way to /Run).
+  Device stays dark until a console login or reboot; the electron wait page
+  has a "Start Agent" button for whoever is physically there.
+- LESSON: never split End/Run across an interruptible script. Restart the
+  agent with ONE atomic command:
+  cmd /c "schtasks /End /TN ValeAgent & timeout /t 3 & schtasks /Run /TN ValeAgent"
+  — or better, the WMI swap trick used by `vale update`.
+- PENDING SELF-VERIFY on next boot: D:\Vale\sessions\stale-test.jsonl
+  (mtime −40 d) must be DELETED by the 1.2.205 startup prune; keep-test.jsonl
+  (fresh) must survive. Then `npm i -g …/vale-agent-1.2.206.tgz; vale update`
+  to land the electron watchdog.
+- SHIPPED FIX (1.2.206): electron now auto-runs `schtasks /run ValeAgent`
+  after ≥5 consecutive failed port probes (~60 s), ≥5 min apart — remote
+  operators are no longer stranded when the agent (and its tunnel) die.
+
 ### Next candidates
-- Rust backend hardening; session idle-reaper; log rotation
+- Rust backend hardening (more): log rotation for agent-stdout.log
 - GitHub push retry + npm publish when network allows
 
 ### GitHub ops (network is broken to github.com — TLS drops)
