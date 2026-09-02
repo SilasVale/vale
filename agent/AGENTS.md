@@ -222,11 +222,31 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 84 — 1.2.227 LIVE; extension audit + npm CLI
-  completion + onboarding; update mutual exclusion FIELD-PROVEN end-to-end)
+Last updated: 2026-09-26 (round 86 — 1.2.230 LIVE; **ONE-BROWSER fix for the
+  user-reported "AI 调用 MCP 后 browser 面板显示不正确"** + electron IPC audit
+  batch; CI release flow dogfooding (tag→xwin→gh release))
 
 ### Current release
-- npm **1.2.227 LIVE on d1** — THREE audits landed same round (extension,
+- npm **1.2.230 LIVE on d1** — ONE-BROWSER (user report): the panel
+  screencasts the BRIDGE chromium while playwright-mcp launched its OWN
+  headless browser — AI navigation could NEVER appear (live-proved: AI at
+  example.com, panel on welcome page). Fix: bridge exposes CDP on loopback
+  9223 + auto-FOLLOWS AI tabs (30 s human-pick wins); stdio+HTTP spawns
+  attach via --cdp-endpoint (probe, headless fallback); mcp_client_call
+  now writes actions.jsonl (timeline + aiActive pulse light up for MCP)
+  and --output-dir pins screenshots INTO pwout (its default was CWD-
+  relative D:\Vale\playwright\TEMP — invisible forever). DEVICE-PROVEN
+  end-to-end: navigate deepseek.com → panel frame shows it; page-*.png
+  332KB top of evidence; mcp: lines top of timeline. Also this batch:
+  electron IPC audit (origin-pin USERINFO trick 127.0.0.1:18080@evil.com
+  → parsed-origin compare; senderFrame auth on all 5 handlers — iframe
+  had setAutoLaunch persistence; tray/title /api/status now BEARER-authed
+  (401 meant version/CPU/MEM permanently dead); CTRL GET gate; dead
+  shell:* IPC removed) + config.yaml unknown-key boot warning + pwshots
+  registry-path blindness fix. CI: panel-react lock regenerated with
+  optional platform deps (npm-10 CI vs npm-11 local drift), release.yml
+  npm ci --include=optional. v1.2.228/229 releases FAILED (lock); 230 =
+  dogfood retry via tag push. 1.2.227 — THREE audits landed same round (extension,
   onboarding, npm-CLI completion): gateway (deployed 7b6f312c) got browser-RPC
   AbortSignal budgets + timeout_secs clamp (was unbounded worker+isolate pin),
   plugin-link expiry sweep INSIDE the lock with fresh reads (stale-isolate
