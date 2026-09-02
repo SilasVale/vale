@@ -62,12 +62,14 @@ cp target/x86_64-pc-windows-msvc/release/vale-agent.exe vale-agent-npm/vale-agen
 # then bump "version" in vale-agent-npm/package.json (1.2.x)
 cd vale-agent-npm && npm pack          # → vale-agent-1.2.N.tgz
 
-# 3. Publish: stage the tgz into the dist worker assets and deploy them:
+# 3. Publish: stage the tgz into the dist worker assets (ALSO the
+#    versionless latest alias) and deploy them:
 cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/
+cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/vale-agent-latest.tgz
 cd ../../index && CLOUDFLARE_API_TOKEN=$(cat ~/.cloudflare-token) npx wrangler deploy
 
 # 4. On the device (PowerShell), exactly two commands:
-npm i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.N.tgz
+npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   (or pin the version)
 vale update
 ```
 
@@ -218,7 +220,7 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 59 — docs audit; device DARK awaiting console recovery)
+Last updated: 2026-09-25 (round 61 — latest alias; device DARK)
 
 ### Current release
 - npm **1.2.208** published (CLI-only: ValeDesktop 5-min repetition trigger;
@@ -296,9 +298,13 @@ Last updated: 2026-09-25 (round 59 — docs audit; device DARK awaiting console 
 - Code: DO NOT push GitHub directly; Gitea mirror is the code home.
 - Releases: `curl -X POST -H "Authorization: Bearer $TOKEN" .../releases`
   with the ghp_ token from `~/.git-credentials` (works; tag push times out).
-- npm publish: prep done (clean README, MIT); blocked on npmjs.com
-  reachability — URL install (`npm i -g <host>/vale-agent-<ver>.tgz`) is
-  the working channel meanwhile.
+- npm publish (2026-09-25 update): registry.npmjs.org is REACHABLE from the
+  dsh box now (404 on /vale-agent = the name is FREE) but no npm credentials
+  on this machine (`npm whoami` → ENEEDAUTH; ~/.npmrc points at npmmirror).
+  One-time user action: `npm login` then `npm publish` from agent/vale-agent-npm.
+  Until then, URL install works via the versioned tgz or the versionless
+  https://agent.saisi.online/vale-agent/vale-agent-latest.tgz alias (mirrored
+  on every release; verified end-to-end).
 
 ### Electron recovery on d1 (2026-09-02 incident)
 - Symptom: electron procs 0 + CDP 9333 down + ValeDesktop task gone.
