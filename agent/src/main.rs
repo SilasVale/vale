@@ -243,9 +243,19 @@ fn main() {
         // supervisor task now owns the child for the process lifetime:
         // respawn with capped backoff (reset after a healthy minute) and a
         // RESTART when tunnel_ctl's generation bumps (fresh tunnel.yml).
-        {
-            let inst = install_dir.clone();
-            tokio::spawn(async move {
+        // CRITICAL (d1 530 incident, round-80): this block runs in main()
+        // BEFORE the runtime exists — tokio::spawn HERE PANICKED the service
+        // at boot on Windows only (cfg(windows) elided from Linux checks),
+        // killing the agent and the tunnel = device unreachable. Own a
+        // private current-thread runtime on a plain thread: correct in ANY
+        // context, panic-proof placement.
+        std::thread::spawn(move || {
+            let inst = install_dir;
+            let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(rt) => rt,
+                Err(e) => { log_line(&format!("cloudflared supervisor: no runtime: {e}")); return; }
+            };
+            rt.block_on(async move {
                 use std::time::{Duration, Instant};
                 let mut backoff: u64 = 5;
                 loop {
@@ -298,7 +308,7 @@ fn main() {
                     backoff = (backoff * 2).min(60);
                 }
             });
-        }
+        });
     }
 
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");

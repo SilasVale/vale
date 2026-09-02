@@ -379,6 +379,23 @@ Last updated: 2026-09-25 (round 80 — 1.2.222 LIVE; DPAPI envelope + first-ever
 - terminal_jobs(job_id) returns {result:{state, exit_code, job_id}} —
   NOT a .jobs array. terminal_* tools wrap under .result.
 
+### 2026-09-25 d1 530 incident (MY REGRESSION — cfg(windows) boot panic)
+- 1.2.223's cloudflared supervisor used tokio::spawn INSIDE main()'s
+  #[cfg(windows)] boot block — BEFORE the runtime exists. Windows-only:
+  cargo test/clippy/xwin-check all pass (elided on Linux, compiles on
+  check), the panic only fires when the EXE boots: service dies instantly,
+  tunnel never spawns, every remote channel 530s. The device cannot
+  self-heal (the update path needs a live agent) — recovery = console
+  `npm i -g …/vale-agent-<good>.tgz && vale.cmd update` (WMI swap works
+  fine from a dead agent).
+- RULE ADDED: any tokio API added to a cfg(windows)-only path MUST be
+  assumed untested by the Linux matrix — either build it CONTEXT-PROOF
+  (own std::thread + current_thread runtime, as 1.2.224's supervisor
+  now is) or gate behind run_server. cargo xwin CHECK compiling ≠ runtime
+  correct; the 10s incremental relink fooled me twice — verify on device
+  within the same round as shipping any boot-path change.
+- 1.2.224 = fix + release; device recovered via console; incident closed.
+
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
   killed before its `schtasks /Run` (the /End also killed the agent-supervised
