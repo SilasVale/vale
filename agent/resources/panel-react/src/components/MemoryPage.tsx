@@ -24,6 +24,9 @@ interface MemEntry {
 }
 
 const PAGE = 50;
+// stage-n: sentinel edit id meaning "create a new entry" (real ids are
+// random hex and never collide).
+const NEW_ID = "__new__";
 
 export function MemoryPage() {
   const [entries, setEntries] = useState<MemEntry[]>([]);
@@ -127,13 +130,24 @@ export function MemoryPage() {
     if (!editId) return;
     setEditBusy(true);
     try {
-      await callTool("memory_update", {
-        id: editId,
-        title: editTitle.trim(),
-        content: editContent,
-        tags: editTags.split(",").map((t) => t.trim()).filter(Boolean),
-      });
-      toastMsg("saved");
+      const tags = editTags.split(",").map((t) => t.trim()).filter(Boolean);
+      if (editId === NEW_ID) {
+        // stage-n: create from the UI — memory_save was AI-only until now.
+        if (!editTitle.trim() || !editContent.trim()) {
+          setError("title and content are required");
+          return;
+        }
+        await callTool("memory_save", { title: editTitle.trim(), content: editContent, tags });
+        toastMsg("entry created");
+      } else {
+        await callTool("memory_update", {
+          id: editId,
+          title: editTitle.trim(),
+          content: editContent,
+          tags,
+        });
+        toastMsg("saved");
+      }
       setEditId(null);
       load();
     } catch (e: any) {
@@ -142,6 +156,15 @@ export function MemoryPage() {
       setEditBusy(false);
     }
   }, [editId, editTitle, editContent, editTags, load, toastMsg]);
+
+  // stage-n: start a NEW entry — same inline form, empty fields.
+  const startNew = useCallback(() => {
+    setEditId(NEW_ID);
+    setEditTitle("");
+    setEditContent("");
+    setEditTags("");
+    setError("");
+  }, []);
 
   const doExport = useCallback(async () => {
     try {
@@ -188,11 +211,27 @@ export function MemoryPage() {
         <button className="btn btn-ghost btn-mini" onClick={search} disabled={busy}>Search</button>
         <button className="btn btn-ghost btn-mini" onClick={load} disabled={busy}>List</button>
         <button className="btn btn-ghost btn-mini" onClick={doExport} disabled={busy}>Export</button>
+        {/* stage-n: create entries from the UI (was AI-only via memory_save) */}
+        <button className="btn btn-mini" onClick={startNew} disabled={editId !== null}>+ New</button>
         {busy && <span className="mem-busy" title="loading">◌</span>}
       </div>
       {error && <div className="error">{error}</div>}
       {toast && <div className="hint">{toast}</div>}
       <div className="mem-list">
+        {editId === NEW_ID && (
+          /* stage-n: new-entry card (same form as inline edit) */
+          <div className="mem-card">
+            <div className="mem-edit">
+              <input className="mem-edit-input" autoFocus value={editTitle} onChange={(ev) => setEditTitle(ev.target.value)} placeholder="Title (required)" />
+              <textarea className="mem-edit-content" value={editContent} onChange={(ev) => setEditContent(ev.target.value)} placeholder="Content (required)" rows={3} />
+              <input className="mem-edit-input" value={editTags} onChange={(ev) => setEditTags(ev.target.value)} placeholder="Tags (comma separated)" />
+              <div className="mem-edit-actions">
+                <button className="btn btn-mini" onClick={saveEdit} disabled={editBusy}>{editBusy ? "Saving…" : "Create"}</button>
+                <button className="btn btn-ghost btn-mini" onClick={() => setEditId(null)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        )}
         {entries.length === 0 && !busy && <p className="muted">No memory entries yet — AI clients save knowledge via memory_save.</p>}
         {entries.map((e) => (
           <div className="mem-card" key={e.id} data-deleted={e.deleted || undefined}>
