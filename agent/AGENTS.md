@@ -220,14 +220,20 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 65 — bridge review hardening shipped; 1.2.211)
+Last updated: 2026-09-25 (round 66 — bridge fixes LIVE on d1, regressions green; 1.2.214)
 
 ### Current release
-- npm **1.2.211** published (bridge review hardening: 11 fixes incl. the
-  GET /input crash guard and serialized CDP attach). d1 runs **1.2.210** —
-  update pending (device verification agent must finish first; the swap
-  kills terminal sessions). Recovered this round from the dark incident via
-  console `schtasks /run /TN ValeAgent` (user action). 1.2.209→210 fixed
+- npm **1.2.214 LIVE on d1** — full chain green: 1.2.211/212 shipped the
+  bridge review fixes (212 after catching that 211 carried a STALE dist —
+  an old npx-tsc silently emitted nothing; ALWAYS grep the built artifact
+  for markers before releasing), 1.2.213 restored the swap script's
+  desk-restart `if` opening (a consumed line made the WMI swap die at PS
+  PARSE time — two silent no-op updates; diagnose by running the staged
+  D:\Vale\vale-update.ps1 synchronously), 1.2.214 killed the last nav bug
+  (welcome doc now setContent() + nav verifies page.url() before failing
+  on spurious ERR_ABORTED). Browser regression on d1: title push, address
+  sync, back/fwd state machine ALL green. Recovered from the dark incident
+  via console `schtasks /run /TN ValeAgent` (user action). 1.2.209→210 fixed
   the ValeDesktop hardening: `schtasks /Change` prompts for the /ru password
   (PTY hang!) → use ScheduledTasks cmdlets; pulse action is a GUARDED
   wscript→ensure-desktop.ps1 (Get-Process check → no focus-steal second
@@ -271,8 +277,8 @@ Last updated: 2026-09-25 (round 65 — bridge review hardening shipped; 1.2.211)
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- Ship 1.2.211 to d1 once the verification agent is done; then re-run the
-  browser regression (tabs push, nav receipts, resize stability).
+- (none — 1.2.214 live + regressions green. GitHub release pointer still
+  says v1.2.211; bump it with the next release.)
 
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
