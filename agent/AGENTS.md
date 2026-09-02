@@ -220,7 +220,7 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 61 — latest alias; device DARK)
+Last updated: 2026-09-25 (round 62 — GitHub release v1.2.208; device DARK)
 
 ### Current release
 - npm **1.2.208** published (CLI-only: ValeDesktop 5-min repetition trigger;
@@ -298,6 +298,8 @@ Last updated: 2026-09-25 (round 61 — latest alias; device DARK)
 - Code: DO NOT push GitHub directly; Gitea mirror is the code home.
 - Releases: `curl -X POST -H "Authorization: Bearer $TOKEN" .../releases`
   with the ghp_ token from `~/.git-credentials` (works; tag push times out).
+  CURRENT: v1.2.208 is the ONLY release on GitHub (asset = 9.0 MB tgz,
+  verified public); older releases deleted per the keep-latest policy.
 - npm publish (2026-09-25 update): registry.npmjs.org is REACHABLE from the
   dsh box now (404 on /vale-agent = the name is FREE) but no npm credentials
   on this machine (`npm whoami` → ENEEDAUTH; ~/.npmrc points at npmmirror).
