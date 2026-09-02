@@ -240,9 +240,11 @@ Last updated: 2026-09-25 (round 66 — bridge fixes LIVE on d1, regressions gree
   instance). Verified on d1: MSFT_TaskTimeTrigger Rep=PT5M + guarded action.
 - 1.2.207: agent.log tracing + wait-page swap; 1.2.206 electron watchdog.
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
-- Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
-  GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
-  the API when needed (see "GitHub ops" below)
+- Git: origin = Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`).
+  **GitHub direct push WORKS again (verified 2026-09-25)**:
+  `git push https://SilasVale@github.com/SilasVale/vale.git main` lands
+  (the userinfo prefix dodges the insteadOf rewrite; the old GnuTLS drops
+  are gone). Push BOTH remotes every round — GitHub is the public face.
 
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
@@ -304,8 +306,9 @@ Last updated: 2026-09-25 (round 66 — bridge fixes LIVE on d1, regressions gree
 - Rust backend hardening (more): rotate agent.log by time too, not only size
 - GitHub push retry (SSH-443 reachable, key/API scope missing) + npm publish
 
-### GitHub ops (network is broken to github.com — TLS drops)
-- Code: DO NOT push GitHub directly; Gitea mirror is the code home.
+### GitHub ops
+- Code: push GitHub too — `git push https://SilasVale@github.com/SilasVale/vale.git main`
+  (works since 2026-09-25; fall back to Gitea-only + API if TLS drops return).
 - Releases: `curl -X POST -H "Authorization: Bearer $TOKEN" .../releases`
   with the ghp_ token from `~/.git-credentials` (works; tag push times out).
   CURRENT: v1.2.214 is the ONLY release on GitHub (asset = 9.0 MB tgz,
