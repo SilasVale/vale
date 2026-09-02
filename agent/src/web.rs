@@ -902,11 +902,13 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         // logger lives in the terminal plugin's private field — read the
         // same directory directly (cheap: one file per session).
         ("GET", "/api/sessions") => {
-            let dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_default()
-                .join("sessions");
+            // HIGH(audit round): the WRITER (terminal plugin) logs to
+                // paths::data_dir()/sessions — on registry-first installs the
+                // exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
+                // Vale), and these endpoints scanned an empty dir: the audit
+                // panel was permanently blind. Read the same dir; also honors
+                // the "zero current_exe() guessing outside paths.rs" rule.
+                let dir = crate::paths::sessions_dir();
             let logger = crate::session_log::SessionLogger::new(dir);
             let list: serde_json::Value = logger.list_sessions().iter().map(|(sid, state)| {
                 serde_json::json!({ "id": sid, "state": state })
@@ -935,11 +937,13 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             if !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
                 return built_response(StatusCode::BAD_REQUEST, "application/json", Body::from(r#"{"ok":false,"error":"invalid session id"}"#));
             }
-            let dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_default()
-                .join("sessions");
+            // HIGH(audit round): the WRITER (terminal plugin) logs to
+                // paths::data_dir()/sessions — on registry-first installs the
+                // exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
+                // Vale), and these endpoints scanned an empty dir: the audit
+                // panel was permanently blind. Read the same dir; also honors
+                // the "zero current_exe() guessing outside paths.rs" rule.
+                let dir = crate::paths::sessions_dir();
             let logger = crate::session_log::SessionLogger::new(dir);
             let events = logger.events_of(&sid);
             serde_json::json!({ "ok": true, "id": sid, "events": events })
@@ -996,12 +1000,18 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                     "ok": false, "error": format!("invalid JSON: {e}"), "code": "invalid_params",
                 })).into_response(),
             };
-            let mb = v.get("buffer_mb").and_then(|b| b.as_u64()).unwrap_or(8).clamp(1, 64) as usize;
-            state.terminal_buf_bytes.store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
-            // console_url is OPTIONAL — gateway config from the Settings page
-            // (empty string clears it back to a purely local install).
-            let console_url = v.get("console_url").and_then(|c| c.as_str()).map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
+            // stage-n (settings audit): a PUT may legitimately carry ONLY ONE
+            // of the keys — the old code reset buffer_mb to 8 whenever it was
+            // ABSENT (a console-only save silently clobbered a user's 64).
+            // Missing key = leave unchanged; empty console_url string =
+            // explicit clear (unchanged semantics).
+            let mb = v.get("buffer_mb").and_then(|b| b.as_u64()).map(|x| (x as usize).clamp(1, 64));
+            if let Some(mb) = mb {
+                state.terminal_buf_bytes.store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
+            }
+            let console_url = v.get("console_url").map(|val| {
+                val.as_str().map(|x| x.trim().to_string()).filter(|x| !x.is_empty())
+            });
             // Persist to the ACTUALLY-LOADED config path (round-101: the old
             // hardcoded exe_dir/config.yaml silently reverted on restart for
             // dev/custom invocations — main.rs sets state.config_path from
@@ -1015,14 +1025,22 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                     .unwrap_or_default()
                     .join("config.yaml")
             });
-            if let Ok(mut cfg) = Config::load(&cfg_path) {
-                cfg.terminal.buffer_mb = mb as u32;
-                cfg.platform.console_url = console_url.clone();
-                if let Ok(yaml) = serde_yaml::to_string(&cfg) {
-                    let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
+            if mb.is_some() || console_url.is_some() {
+                if let Ok(mut cfg) = Config::load(&cfg_path) {
+                    if let Some(mb) = mb {
+                        cfg.terminal.buffer_mb = mb as u32;
+                    }
+                    if let Some(url) = console_url.clone() {
+                        cfg.platform.console_url = url;
+                    }
+                    if let Ok(yaml) = serde_yaml::to_string(&cfg) {
+                        let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
+                    }
                 }
             }
-            serde_json::json!({ "ok": true, "buffer_mb": mb })
+            serde_json::json!({ "ok": true, "buffer_mb": mb.unwrap_or_else(|| {
+                state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024)
+            }) })
         }
 
         // Gateway connect (Settings page card): persist console_url, then
@@ -1047,8 +1065,24 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             let want_tunnel = v.get("tunnel").and_then(|t| t.as_bool()).unwrap_or(false);
             // 1. Persist console_url to config.yaml.
             let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_default();
-            let mut cfg = Config::load(&cfg_path).unwrap_or_default();
-            cfg.platform.console_url = console_url.clone();
+            // HIGH(audit round): the old `unwrap_or_default()` meant a
+            // TRANSIENT load failure (AV file-sharing lock, concurrent edit)
+            // rewrote the WHOLE config.yaml from a token-less default — next
+            // boot ensure_token minted a NEW device token, the gateway saw a
+            // fresh device, and every client 401'd. Fall back to the LIVE
+            // in-memory config instead of a blank default.
+            let mut cfg = Config::load(&cfg_path)
+                .unwrap_or_else(|_| state.config.clone());
+            // Only touch console_url when the request actually speaks to it:
+            // absent = keep binding, "" = clear (the partial-PUT semantics
+            // audit flagged — a reg-key-only request used to silently
+            // unbind the gateway).
+            if let Some(val) = v.get("console_url") {
+                cfg.platform.console_url = val
+                    .as_str()
+                    .map(|x| x.trim().to_string())
+                    .filter(|x| !x.is_empty());
+            }
             if let Ok(yaml) = serde_yaml::to_string(&cfg) {
                 let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
             }
@@ -1065,7 +1099,9 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                     let r = client
                         .post(format!("{}/api/install/tunnel-token", url.trim_end_matches('/')))
                         .header("content-type", "application/json")
-                        .body(format!(r#"{{"key":"{key}"}}"#))
+                        // MED(audit round): a key containing \" or , used to
+                        // corrupt/inject fields in the hand-built JSON body.
+                        .body(serde_json::json!({ "key": key }).to_string())
                         .send().await;
                     if let Ok(resp) = r {
                         if let Ok(j) = resp.json::<serde_json::Value>().await {

@@ -79,6 +79,14 @@ pub fn data_dir() -> PathBuf {
     install_dir()
 }
 
+/// The session audit-log directory (single source of truth — the writer in
+/// plugins/terminal and the /api/sessions readers in web.rs MUST agree; on
+/// registry-first installs DataDir != InstallDir, and readers using
+/// current_exe() went permanently blind). All path resolution lives here.
+pub fn sessions_dir() -> PathBuf {
+    data_dir().join("sessions")
+}
+
 /// The node runtime path recorded by `vale setup` (registry NodePath).
 /// None when unset or missing on disk. The SYSTEM agent may not see the
 /// user PATH, so setup records the absolute path explicitly.

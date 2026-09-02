@@ -191,7 +191,21 @@ impl SessionLogger {
             let path = self.dir.join(format!("{sid}.jsonl"));
             match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
                 Ok(file) => {
+                    // audit round: a crash mid-writeln can leave a fragment
+                    // WITHOUT the trailing newline (lines past the 8 KiB
+                    // BufWriter split their physical writes). The next append
+                    // FUSES onto it — both events become unparseable, and the
+                    // fused pair once swallowed the "interrupted" recovery
+                    // marker (crashed command looked FINISHED). Terminate the
+                    // fragment before appending anything.
+                    let len0 = file.metadata().map(|m| m.len()).unwrap_or(0);
                     let mut w = std::io::BufWriter::new(file);
+                    if len0 > 0 {
+                        let tail_ok = w.get_ref().metadata().map(|m| m.len() == len0).unwrap_or(true);
+                        if !tail_ok {
+                            let _ = w.write_all(b"\n");
+                        }
+                    }
                     // New file → write the version header FIRST (round-56).
                     if w.get_ref().metadata().map(|m| m.len() == 0).unwrap_or(false) {
                         let _ = writeln!(w, "{}", serde_json::json!({
@@ -260,7 +274,15 @@ impl SessionLogger {
     }
 
     pub fn log_command_start(&self, sid: &str, command: &str) {
-        self.log(sid, SessionEvent::command_start(0, command));
+        // audit round: the 4 KiB cap existed for OUTPUT only — a single
+        // multi-MB command line (`python -c '<payload>'`) rode the trail
+        // forever (trim counts LINES) and forced a multi-MB read_line at
+        // close. Cap identically (char-boundary-safe).
+        let command = if command.len() > 4096 {
+            let cut = command.floor_char_boundary(4096);
+            format!("{}…[truncated {} bytes]", &command[..cut], command.len() - cut)
+        } else { command.to_string() };
+        self.log(sid, SessionEvent::command_start(0, &command));
     }
     pub fn log_output(&self, sid: &str, text: String) {
         // Cap a single chunk at 4 KiB — a full 1MB burst would dominate the
@@ -357,7 +379,10 @@ impl SessionLogger {
         let Ok(entries) = std::fs::read_dir(&self.dir) else { return 0 };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
+            // audit round: crashed trim rotations left `<sid>.jsonl.tmp`
+            // litter invisible to the `.jsonl`-extension filter.
+            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            if !(fname.ends_with(".jsonl") || fname.ends_with(".jsonl.tmp")) { continue; }
             let Ok(meta) = entry.metadata() else { continue };
             let Ok(mtime) = meta.modified() else { continue };
             let age = match now_unix.checked_sub(

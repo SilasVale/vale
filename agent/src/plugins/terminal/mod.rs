@@ -302,7 +302,7 @@ pub struct TerminalPlugin {
 /// Audit log dir — under the DATA dir (C1: registry DataDir, else exe dir),
 /// same root as vale-known-hosts.json (writable and stable across upgrades).
 pub(super) fn log_dir() -> std::path::PathBuf {
-    crate::paths::data_dir().join("sessions")
+    crate::paths::sessions_dir()
 }
 
 impl TerminalPlugin {
