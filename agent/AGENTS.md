@@ -244,7 +244,7 @@ Last updated: 2026-09-25 (round 54 — memory CRUD complete + tray vitals)
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- (none — everything above is shipped through 1.2.200)
+- (none — everything above is shipped through 1.2.202)
 
 ### Next candidates
 - Rust backend hardening; session idle-reaper; log rotation
