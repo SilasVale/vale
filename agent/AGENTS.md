@@ -348,7 +348,7 @@ Last updated: 2026-09-25 (round 70 — durability sweep 1.2.216 LIVE on d1; 21 d
   (works since 2026-09-25; fall back to Gitea-only + API if TLS drops return).
 - Releases: `curl -X POST -H "Authorization: Bearer $TOKEN" .../releases`
   with the ghp_ token from `~/.git-credentials` (works; tag push times out).
-  CURRENT: v1.2.215 is the ONLY release on GitHub (asset = 9.0 MB tgz,
+  CURRENT: v1.2.216 is the ONLY release on GitHub (asset = 9.0 MB tgz,
   verified public); older releases deleted per the keep-latest policy.
 - npm publish (2026-09-25 update): registry.npmjs.org is REACHABLE from the
   dsh box now (404 on /vale-agent = the name is FREE) but no npm credentials
