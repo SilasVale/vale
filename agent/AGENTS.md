@@ -220,15 +220,16 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 62 — GitHub release v1.2.208; device DARK)
+Last updated: 2026-09-25 (round 63 — guarded ValeDesktop pulse LIVE; 1.2.210)
 
 ### Current release
-- npm **1.2.208** published (CLI-only: ValeDesktop 5-min repetition trigger;
-  1.2.207 added agent.log + wait-page swap). d1: 1.2.207 binaries installed,
-  agent STOPPED by my schtasks /End test → DARK awaiting console recovery
-  (`schtasks /run /TN ValeAgent`), then `npm i -g …1.2.208.tgz; vale update`
-  to land the watchdog-in-task-scheduler hardening. Watcher job pings when
-  d1 returns.
+- npm **1.2.210** LIVE on d1 (recovered same day via console `schtasks /run
+  /TN ValeAgent` after the dark incident — user action). 1.2.209→210 fixed
+  the ValeDesktop hardening: `schtasks /Change` prompts for the /ru password
+  (PTY hang!) → use ScheduledTasks cmdlets; pulse action is a GUARDED
+  wscript→ensure-desktop.ps1 (Get-Process check → no focus-steal second
+  instance). Verified on d1: MSFT_TaskTimeTrigger Rep=PT5M + guarded action.
+- 1.2.207: agent.log tracing + wait-page swap; 1.2.206 electron watchdog.
 - Distribution: `https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz`
 - Git: main pushed to Gitea mirror (`v.saisi.online/api/git/SilasVale/vale.git`);
   GitHub push is BLOCKED by TLS drops — push Gitea only, GitHub releases via
@@ -267,7 +268,7 @@ Last updated: 2026-09-25 (round 62 — GitHub release v1.2.208; device DARK)
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- (none — everything above is shipped through 1.2.204)
+- (none — device back, hardened, on 1.2.210)
 
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
