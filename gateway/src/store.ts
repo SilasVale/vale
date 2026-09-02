@@ -72,6 +72,9 @@ export const USER_KEY_NAMES = [
   // Command Code (api.commandcode.ai/provider) — GOAT plan & up. Same key
   // works for the CLI and the Provider API (Go plan has no API access).
   "CMD_API_KEY",
+  // AMD Radeon Cloud (developer.amd.com.cn/radeon) — free BYOK pool, the key
+  // is the "rc-…" token from the Radeon developer console.
+  "AMD_API_KEY",
 ];
 
 /* ---- Per-isolate TTL cache ----

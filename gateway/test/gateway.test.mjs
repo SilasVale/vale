@@ -266,6 +266,88 @@ test("gmi /v1/messages without GMI_API_KEY → 502 config error", async () => {
   assert.match(body.error?.message || body.message || "", /GMI_API_KEY not configured/);
 });
 
+// ── qw/ (Qwen MaaS / Aliyun Token Plan) — Anthropic /v1/messages rides the
+// /apps/anthropic endpoint; OpenAI-format /v1/chat/completions (DSH & co.)
+// must ride the compatible-mode endpoint (the Anthropic endpoint rejects
+// OpenAI bodies with 400 "Request body format invalid").
+
+test("qw/qwen3.8-flash /v1/chat/completions → Qwen compatible-mode endpoint with QWEN_API_KEY", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { QWEN_API_KEY: "sk-qw" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "chatcmpl-1", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "qw/qwen3.8-flash",
+    max_tokens: 8,
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+    tools: [{ type: "function", function: { name: "bash", description: "x", parameters: { type: "object" } } }],
+  }, "/v1/chat/completions"));
+  assert.equal(seen.url, "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-qw");
+  // qw/ prefix stripped; OpenAI body forwarded verbatim (tools format intact).
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "qwen3.8-flash");
+  assert.ok(sent.tools[0].type === "function");
+  assert.equal(res.status, 200);
+});
+
+test("qw/qwen3.8-flash /v1/messages → Anthropic /apps/anthropic endpoint (passthrough)", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { QWEN_API_KEY: "sk-qw" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "msg_1", type: "message", role: "assistant", model: "qwen3.8-flash",
+      content: [{ type: "text", text: "ok" }], stop_reason: "end_turn",
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "qw/qwen3.8-flash",
+    max_tokens: 8,
+    messages: [{ role: "user", content: "hi" }],
+  }));
+  assert.equal(seen.url, "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic/v1/messages");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-qw");
+  assert.equal(JSON.parse(seen.init.body).model, "qwen3.8-flash");
+  assert.equal(res.status, 200);
+});
+
+test("qw /v1/chat/completions with US_PROXY → egress path targets compatible-mode", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { QWEN_API_KEY: "sk-qw" }, usProxy: true, usProxyBase: "https://v.example.com" });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "chatcmpl-1", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "qw/qwen3.8-flash",
+    max_tokens: 8,
+    messages: [{ role: "user", content: "hi" }],
+  }, "/v1/chat/completions"));
+  assert.equal(
+    seen.url,
+    "https://v.example.com/api/zen?target=qw&path=%2Fcompatible-mode%2Fv1%2Fchat%2Fcompletions",
+  );
+  assert.equal(res.status, 200);
+});
+
 // ── cm/ (Command Code GOAT) — Anthropic /v1/messages is translated to the
 // OpenAI chat/completions endpoint (the Command Code Anthropic endpoint only
 // serves claude-* models); /v1/chat/completions passes through directly.
@@ -381,6 +463,147 @@ test("cm /v1/messages stream:true → Command Code reasoning delta becomes think
   assert.match(text, /"type":"thinking_delta","thinking":"思考"/);
   assert.match(text, /"type":"text_delta","text":"好"/);
   assert.match(text, /event: message_stop/);
+});
+
+// ── amd/ (AMD Radeon Cloud, developer.amd.com.cn/radeon) — BOTH formats are
+// native upstream: Anthropic /v1/messages (thinking + tool_use verified live
+// 2026-09-02, x-api-key auth) and OpenAI /v1/chat/completions (Bearer). No
+// translation on either path, and the route always stays off the US exit.
+
+test("amd/DeepSeek-V4-Flash /v1/messages → native Anthropic passthrough with x-api-key", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { AMD_API_KEY: "rc-amd" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "msg_amd1", type: "message", role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hm" },
+        { type: "tool_use", id: "call_1", name: "get_time", input: { tz: "Asia/Tokyo" } },
+      ],
+      stop_reason: "tool_use",
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "amd/DeepSeek-V4-Flash",
+    max_tokens: 8,
+    messages: [{ role: "user", content: "what time in Tokyo?" }],
+    tools: [{ name: "get_time", description: "x", input_schema: { type: "object" } }],
+  }));
+  assert.equal(seen.url, "https://developer.amd.com.cn/radeon/api/v1/messages");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  const apiKey = seen.init.headers.get
+    ? seen.init.headers.get("x-api-key")
+    : seen.init.headers["x-api-key"];
+  // x-api-key (the header the Radeon docs show), never Bearer, never the
+  // client's own gateway token.
+  assert.equal(apiKey, "rc-amd");
+  assert.equal(auth, null);
+  // amd/ prefix stripped, Anthropic body forwarded un-translated (a chat
+  // reshaping would turn tools[].input_schema into function.parameters).
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "DeepSeek-V4-Flash");
+  assert.equal(sent.tools[0].input_schema.type, "object");
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.content[1].type, "tool_use");
+});
+
+test("amd/Qwen3.8-Flash-Next /v1/chat/completions → OpenAI passthrough with Bearer", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { AMD_API_KEY: "rc-amd" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "chatcmpl-amd", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "amd/Qwen3.8-Flash-Next",
+    max_tokens: 8,
+    messages: [{ role: "user", content: "hi" }],
+    tools: [{ type: "function", function: { name: "bash", description: "x", parameters: { type: "object" } } }],
+  }, "/v1/chat/completions"));
+  assert.equal(seen.url, "https://developer.amd.com.cn/radeon/api/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer rc-amd");
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "Qwen3.8-Flash-Next");
+  assert.equal(sent.tools[0].type, "function");
+  assert.equal(res.status, 200);
+});
+
+test("amd/ ignores the US exit (no amd target in the proxy; CN-served host)", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({
+    keys: { AMD_API_KEY: "rc-amd" },
+    usProxy: true,
+    usProxyBase: "https://v.example.com",
+  });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({ id: "m", type: "message", role: "assistant", content: [], stop_reason: "end_turn" }), { status: 200 });
+  }, () => post(env, token, {
+    model: "amd/GLM-5.3-Flash",
+    max_tokens: 8,
+    messages: [{ role: "user", content: "hi" }],
+  }));
+  assert.ok(!seen.url.startsWith("https://v.example.com"), `proxied: ${seen.url}`);
+  assert.equal(seen.url, "https://developer.amd.com.cn/radeon/api/v1/messages");
+  assert.equal(res.status, 200);
+});
+
+test("amd /v1/messages without AMD_API_KEY → 502 config error, no upstream call", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { AMD_API_KEY: undefined } });
+  let calls = 0;
+  const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
+    post(env, token, {
+      model: "amd/DeepSeek-V4-Flash",
+      max_tokens: 1,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(calls, 0);
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.match(body.error?.message || body.message || "", /AMD_API_KEY not configured/);
+});
+
+test("amd 429 concurrency limit: {detail:{error}} envelope unwrapped, status + rate_limit_error kept", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { AMD_API_KEY: "rc-amd" }, timeout: 1000 });
+  let calls = 0;
+  const res = await withFetch(async () => {
+    calls++;
+    return new Response(JSON.stringify({
+      detail: {
+        error: {
+          message: "Model 'DeepSeek-V4-Flash' is at its concurrency limit (64); please retry later or use another model",
+          type: "rate_limit_error",
+          code: "model_concurrency_rate_limit_exceeded",
+        },
+      },
+    }), { status: 429, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "amd/DeepSeek-V4-Flash",
+    max_tokens: 8,
+    messages: [{ role: "user", content: "hi" }],
+  }));
+  assert.ok(calls >= 2, `a 429 on a free shared pool should be retried, got ${calls}`);
+  assert.equal(res.status, 429);
+  const body = await res.json();
+  // Without the detail-unwrap this came back as a stringified blob with a
+  // non-retryable api_error type, so clients stopped backing off.
+  assert.match(body.error.message, /concurrency limit/);
+  assert.equal(body.error.type, "rate_limit_error");
 });
 
 test("nv Anthropic-format request (/v1/messages) is translated with NVAPI_KEY", async () => {

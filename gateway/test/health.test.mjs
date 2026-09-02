@@ -40,10 +40,11 @@ test("health: breaker closed → all channels ok, recommended still qw", async (
 
 test("health: channels cover all prefixes in priority order", async () => {
   const h = await buildHealth(closedEnv);
-  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv", "gmi", "gmi", "cm"]);
+  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "qw", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv", "gmi", "gmi", "cm", "amd", "amd", "amd"]);
   assert.deepEqual(h.channels.map((c) => c.model), [
     "ds/deepseek-v4-flash",
     "qw/qwen3.8-max-preview",
+    "qw/qwen3.8-flash",
     "og/deepseek-v4-flash",
     "og/gpt-5.6-luna",
     "og/mimo-v2.5",
@@ -57,10 +58,13 @@ test("health: channels cover all prefixes in priority order", async () => {
     "gmi/MiniMaxAI/MiniMax-M3",
     "gmi/MiniMaxAI/MiniMax-M2.7",
     "cm/deepseek/deepseek-v4-flash",
+    "amd/DeepSeek-V4-Flash",
+    "amd/GLM-5.3-Flash",
+    "amd/Qwen3.8-Flash-Next",
   ]);
   // og and or repeat per model card; the dedup'd set must still cover every
   // priority prefix in order.
-  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or", "nv", "gmi", "cm"]);
+  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or", "nv", "gmi", "cm", "amd"]);
 });
 
 test("installer round-trip: non-ASCII CLI encodes and decodes losslessly", () => {
@@ -242,6 +246,30 @@ test("valeProbe: nv channel uses NVAPI_KEY (not the DeepSeek key)", async () => 
   assert.equal(auth, "Bearer nv-key");
   const body = await res.json();
   assert.equal(body.ok, true);
+});
+
+test("valeProbe: amd channel probes the native Radeon /v1/messages with the AMD key", async () => {
+  // BYOK isolation: with only AMD_API_KEY left, amd/ must probe with it (an
+  // unlisted prefix would silently fall through to the DEEPSEEK_API_KEY arm).
+  const env = {
+    ...keyedEnv,
+    DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined,
+    OPENCODE_GO_API_KEY: undefined, OPENROUTER_API_KEY: undefined,
+    GMI_API_KEY: undefined, NVAPI_KEY: undefined, CMD_API_KEY: undefined,
+    AMD_API_KEY: "rc-key",
+  };
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response("{}", { status: 200 });
+  }, () => valeProbe(env, "amd/DeepSeek-V4-Flash"));
+  assert.equal(seen.url, "https://developer.amd.com.cn/radeon/api/v1/messages");
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer rc-key");
+  assert.equal(JSON.parse(seen.init.body).model, "DeepSeek-V4-Flash");
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.channel, "amd");
 });
 
 // ── probeRateLimited (KV-backed, whole-gateway) ──────────────────

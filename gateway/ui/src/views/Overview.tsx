@@ -15,6 +15,7 @@ const KEY_ORDER = [
   "NVAPI_KEY",
   "GMI_API_KEY",
   "CMD_API_KEY",
+  "AMD_API_KEY",
 ];
 
 // "DEEPSEEK_API_KEY" → "DEEPSEEK"; NVAPI_KEY has no "_API_KEY" suffix to strip.

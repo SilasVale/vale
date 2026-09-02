@@ -10,7 +10,14 @@
  * battle-tested copy).
  */
 
-import { VERIFY_PATH, usProxyBase, CMD_CHAT } from "./channels.ts";
+import {
+  VERIFY_PATH,
+  usProxyBase,
+  CMD_CHAT,
+  QWEN_COMPAT_CHAT,
+  AMD_ANTHROPIC,
+  AMD_CHAT,
+} from "./channels.ts";
 
 export interface RouteInfo {
   type: string;
@@ -61,15 +68,26 @@ export function pickRoute(
         upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
       };
     case "qw":
-      return {
-        type: "passthrough",
-        kind: "qwen",
-        stripPrefix: true,
-        upstream: via(
-          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
-          "/apps/anthropic/v1/messages",
-        ),
-      };
+      // Anthropic endpoint by default (/v1/messages — Claude Code & Anthropic
+      // clients). OpenAI-format requests (/v1/chat/completions — DSH & co.)
+      // must ride the compatible-mode endpoint: the /apps/anthropic endpoint
+      // rejects OpenAI bodies (400 "Request body format invalid").
+      return requestPath === "/v1/chat/completions"
+        ? {
+            type: "passthrough",
+            kind: "qwen",
+            stripPrefix: true,
+            upstream: via(QWEN_COMPAT_CHAT, "/compatible-mode/v1/chat/completions"),
+          }
+        : {
+            type: "passthrough",
+            kind: "qwen",
+            stripPrefix: true,
+            upstream: via(
+              "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
+              "/apps/anthropic/v1/messages",
+            ),
+          };
     case "og":
       return {
         type: "translate",
@@ -117,6 +135,30 @@ export function pickRoute(
         stripPrefix: true,
         upstream: via(CMD_CHAT, "/v1/chat/completions"),
       };
+    case "amd":
+      // AMD Radeon Cloud (developer.amd.com.cn/radeon) — a free BYOK pool that
+      // speaks BOTH formats natively: Anthropic /v1/messages (thinking blocks,
+      // tool_use and SSE verified against the live API 2026-09-02; accepts
+      // x-api-key or Bearer) and OpenAI /v1/chat/completions (Bearer). So the
+      // route is picked by requestPath, like qw/ — but no translation anywhere.
+      //
+      // Always DIRECT, never the US exit: developer.amd.com.cn is a CN-served
+      // host (a US egress only adds a round the world), and the proxy's TARGETS
+      // map has no amd entry — an unknown target silently falls back to zen,
+      // which would answer with the wrong model AND the wrong key.
+      return requestPath === "/v1/chat/completions"
+        ? {
+            type: "passthrough",
+            kind: "amd",
+            stripPrefix: true,
+            upstream: AMD_CHAT,
+          }
+        : {
+            type: "passthrough",
+            kind: "amd",
+            stripPrefix: true,
+            upstream: AMD_ANTHROPIC,
+          };
     default:
       // No prefix / unknown prefix → DeepSeek official
       return {

@@ -12,6 +12,7 @@ const KEY_NAMES = [
   "NVAPI_KEY",
   "GMI_API_KEY",
   "CMD_API_KEY",
+  "AMD_API_KEY",
 ];
 
 interface KeyInfo {
@@ -29,6 +30,7 @@ const KEY_I18N_PREFIX: Record<string, string> = {
   NVAPI_KEY: "nv",
   GMI_API_KEY: "gmi",
   CMD_API_KEY: "cmd",
+  AMD_API_KEY: "amd",
 };
 
 function getKeyShortName(name: string) {
@@ -204,7 +206,9 @@ export default function Keys() {
                 >
                   {testing === name ? t("btn.testing") : t("btn.test")}
                 </button>
-                {(name === "OPENROUTER_API_KEY" || name === "OPENCODE_GO_API_KEY") && (
+                {(name === "OPENROUTER_API_KEY" ||
+                  name === "OPENCODE_GO_API_KEY" ||
+                  name === "AMD_API_KEY") && (
                   <button
                     className="btn btn-ghost btn-mini"
                     disabled={usageLoading === name}

@@ -66,6 +66,8 @@
   // Secrets (set via `wrangler secret put`): CLIENT_KEY, DEEPSEEK_API_KEY, OPENCODE_GO_API_KEY,
   // OPENROUTER_API_KEY, QWEN_API_KEY, CMD_API_KEY (worker-level Command Code
   // key, e.g. for the vale-probe health check; per-user keys are BYOK via the console),
+  // NVAPI_KEY, GMI_API_KEY, AMD_API_KEY (same pattern: worker-level key only
+  // feeds /api/vale-probe; real traffic uses the requesting user's own key),
   // ADMIN_PASSWORD,
   // SESSION_SECRET (high-entropy; decouples session signing from the admin password — set it!),
   // DO_AUTH (shared secret the main worker passes to PluginHubDO to gate its /call and /ws)

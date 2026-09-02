@@ -17,6 +17,20 @@ export const OG_ZEN_CHAT: string = "https://opencode.ai/zen/go/v1/chat/completio
 // the live API); cm/ models therefore ride the OpenAI endpoint, and
 // /v1/messages is Anthropic→OpenAI translated (the og pattern).
 export const CMD_CHAT: string = "https://api.commandcode.ai/provider/v1/chat/completions";
+// Qwen MaaS (Aliyun Token Plan) OpenAI-compatible endpoint — the Anthropic
+// /apps/anthropic/v1/messages endpoint rejects OpenAI-format bodies (400
+// "Request body format invalid"), so chat/completions requests (DSH & co.)
+// must ride the compatible-mode endpoint instead.
+export const QWEN_COMPAT_CHAT: string =
+  "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
+// AMD Radeon Cloud (developer.amd.com.cn/radeon) — self-deploy inference pool
+// ("Dynamic sglang/vllm-router service managed by Model Ops"), free tier with
+// a per-model global concurrency cap. BOTH formats are native: /api/v1/messages
+// really speaks Anthropic (thinking blocks + tool_use + SSE, verified against
+// the live API 2026-09-02) and /api/v1/chat/completions speaks OpenAI — no
+// translation needed on either path.
+export const AMD_ANTHROPIC: string = "https://developer.amd.com.cn/radeon/api" + VERIFY_PATH;
+export const AMD_CHAT: string = "https://developer.amd.com.cn/radeon/api/v1/chat/completions";
 // Reserved for future use — currently empty. Models listed here would bypass
 // the OpenAI translate path and use native Anthropic /v1/messages passthrough.
 export const OG_NATIVE_ANTHROPIC: Set<string> = new Set();
@@ -52,6 +66,7 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "or/stealth/ox-alpha", owned_by: "openrouter" },
   { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
+  { id: "qw/qwen3.8-flash", owned_by: "qwen" },
   // cm/ — Command Code (api.commandcode.ai/provider). GOAT plan and above have
   // Provider API access (the Go plan doesn't); one CMD_API_KEY works for both
   // the CLI and the API, usage meters against the plan credits. The Anthropic
@@ -59,6 +74,13 @@ export const MODELS: { id: string; owned_by: string }[] = [
   // (translated for /v1/messages, direct for /v1/chat/completions). Model id
   // is the provider-catalog slug verbatim (any catalog model works as cm/<id>).
   { id: "cm/deepseek/deepseek-v4-flash", owned_by: "command-code" },
+  // amd/ — AMD Radeon Cloud (developer.amd.com.cn/radeon), free BYOK pool. The
+  // catalog is GET /v1/models; any catalog slug is reachable as amd/<id> (case
+  // matters: DeepSeek-V4-Flash, not deepseek-v4-flash). These are the three
+  // headline text models; MiniCPM5-1B is the cheap 1B option also available.
+  { id: "amd/DeepSeek-V4-Flash", owned_by: "amd-radeon" },
+  { id: "amd/GLM-5.3-Flash", owned_by: "amd-radeon" },
+  { id: "amd/Qwen3.8-Flash-Next", owned_by: "amd-radeon" },
 ];
 
 // Route info shown in the console ("model routing" section). Public, no keys.
@@ -103,13 +125,19 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "qw/",
     backend: "Qwen MaaS (Aliyun)",
     desc: "token-plan.ap-southeast-1.maas.aliyuncs.com — Anthropic passthrough",
-    models: ["qwen3.8-max-preview"],
+    models: ["qwen3.8-max-preview", "qwen3.8-flash"],
   },
   {
     prefix: "cm/",
     backend: "Command Code (GOAT)",
     desc: "api.commandcode.ai/provider — GOAT plan & up get Provider API access (Go plan excluded); Anthropic /v1/messages translated to chat/completions (the Anthropic endpoint only serves claude-*), OpenAI format passes through; any catalog model reachable as cm/<id>",
     models: ["deepseek/deepseek-v4-flash"],
+  },
+  {
+    prefix: "amd/",
+    backend: "AMD Radeon Cloud",
+    desc: "developer.amd.com.cn/radeon — free BYOK pool (user's own rc- key); native Anthropic /v1/messages AND OpenAI /v1/chat/completions, no translation; per-model global concurrency cap (429 model_concurrency_rate_limit_exceeded); always direct — the US exit has no amd target",
+    models: ["DeepSeek-V4-Flash", "GLM-5.3-Flash", "Qwen3.8-Flash-Next"],
   },
   {
     prefix: "none",
@@ -123,6 +151,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
 export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "ds", model: "ds/deepseek-v4-flash" },
   { id: "qw", model: "qw/qwen3.8-max-preview" },
+  { id: "qw", model: "qw/qwen3.8-flash" },
   { id: "og", model: "og/deepseek-v4-flash" },
   // More og/ route cards: gpt-5.6-luna (auto-routes via the OpenRouter US
   // exit — translate.ts remaps it), mimo, ox-alpha. Duplicate ids are safe
@@ -141,5 +170,13 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M3" },
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M2.7" },
   { id: "cm", model: "cm/deepseek/deepseek-v4-flash" },
+  // amd/ — Radeon Cloud free pool. One card per headline model so the console
+  // switchboard lists them and `vale use amd/...` can probe. NOT added to
+  // HEALTH_PRIORITY: buildHealth reports ok for everything but og's breaker,
+  // and a global "recommended" must not point users at a BYOK pool whose
+  // requests 502 without the user's own key (or 429 on the shared cap).
+  { id: "amd", model: "amd/DeepSeek-V4-Flash" },
+  { id: "amd", model: "amd/GLM-5.3-Flash" },
+  { id: "amd", model: "amd/Qwen3.8-Flash-Next" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];

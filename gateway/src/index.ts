@@ -330,7 +330,7 @@ export async function valeProbe(env: any, model: string) {
       detail: res.ok ? "" : `upstream ${res.status}`,
     });
   }
-  // Passthrough channels (ds/qw/or/nv/gmi): reuse the exact route config of
+  // Passthrough channels (ds/qw/or/nv/gmi/amd): reuse the exact route config of
   // /v1/messages.
   const route = pickRoute(prefix, env);
   const key =
@@ -344,7 +344,9 @@ export async function valeProbe(env: any, model: string) {
             ? env.GMI_API_KEY || ""
             : prefix === "cm"
               ? env.CMD_API_KEY || ""
-              : env.DEEPSEEK_API_KEY || "";
+              : prefix === "amd"
+                ? env.AMD_API_KEY || ""
+                : env.DEEPSEEK_API_KEY || "";
   if (!key) return jsonOk({ ok: false, channel: prefix, detail: `${prefix}: key not configured` });
   const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
   let res;

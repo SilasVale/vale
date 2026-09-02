@@ -206,10 +206,14 @@ export function ogTimeoutMs(env: any): number {
  * max-thinking runs 40-54s to first byte — while every other passthrough
  * channel (ds/qw/or) keeps the generic 30s upstream budget. cm/ (Command Code)
  * is a third-party gateway like zen with the same long-thinking profile, so it
- * shares the og budget.
+ * shares the og budget. amd/ (Radeon Cloud) shares it too: the free pool is a
+ * cold-starting self-deploy router whose GLM backend measured >40s to first
+ * byte under load (2026-09-02), and thinking-heavy answers run long.
  */
 export function passthroughTimeoutMs(env: any, kind: string): number {
-  return kind === "opencode" || kind === "commandgoat" ? ogTimeoutMs(env) : upstreamTimeoutMs(env);
+  return kind === "opencode" || kind === "commandgoat" || kind === "amd"
+    ? ogTimeoutMs(env)
+    : upstreamTimeoutMs(env);
 }
 
 // Circuit breaker for the og channel, backed by a Durable Object so every

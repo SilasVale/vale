@@ -204,6 +204,9 @@ async function handleGatewayImpl(
   // (the Go plan has no API access). One key for CLI and API; usage meters
   // against the plan credits.
   const cmdKey = ukeys.CMD_API_KEY || null;
+  // AMD Radeon Cloud (developer.amd.com.cn/radeon) — free BYOK pool, keys are
+  // the "rc-…" tokens from the Radeon developer console. Same BYOK blob.
+  const amdKey = ukeys.AMD_API_KEY || null;
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
   // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
@@ -318,17 +321,25 @@ async function handleGatewayImpl(
       // nv/gmi ride the translation branch below (toOpenAIRequest needs the
       // parsed body) — always parse, same as the og translate models.
       route.kind === "gmi" ||
+      // amd/ models are text-only (its /v1/models reports input_modalities
+      // ["text"]), so image blocks must be described by the vision model like
+      // on ds/ — but the body still goes out un-translated (native Anthropic).
+      route.kind === "amd" ||
       route.kind === "nvidia")
   ) {
     // CPU guard: parsing a multi-MB body into an object graph blows the Free
     // plan's 10ms budget (Error 1102) — but web_search detection and image
     // preprocessing NEED the object. The translate path MUST parse (it
-    // reshapes the request), so the scan-skip ONLY applies to the native
-    // opencode PASSTHROUGH (deepseek-v4-flash, route.type === "passthrough"):
+    // reshapes the request), so the scan-skip applies to the NATIVE-Anthropic
+    // passthrough channels (og/deepseek-v4-flash, ds/, amd/ — amd's upstream
+    // speaks Anthropic directly, so its body needs no reshaping):
     // scan the RAW text for the triggers ("web_search" tool, image blocks)
     // BEFORE parsing — a plain text-only request (the common case) skips the
     // parse entirely. Translate models (minimax/mimo/kimi) always parse.
-    if ((route.kind === "opencode" || route.kind === "deepseek") && route.type === "passthrough") {
+    if (
+      route.type === "passthrough" &&
+      (route.kind === "opencode" || route.kind === "deepseek" || route.kind === "amd")
+    ) {
       // Precise triggers. IMAGE: scan ONLY the LAST user message (from the
       // last '"role":"user"' to the end) — the current image's
       // "type":"image" marker always sits in the freshly-sent message,
@@ -501,9 +512,11 @@ async function handleGatewayImpl(
             ? nvKey
             : route.kind === "gmi"
               ? gmiKey
-              : route.kind === "opencode"
-                ? opencodeGoKey
-                : deepseekKey;
+              : route.kind === "amd"
+                ? amdKey
+                : route.kind === "opencode"
+                  ? opencodeGoKey
+                  : deepseekKey;
 
   // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
   // Accepts OpenAI-format requests directly and forwards to the upstream
@@ -521,6 +534,13 @@ async function handleGatewayImpl(
       return jsonError(
         502,
         "GMI_API_KEY not configured — add your GMI Cloud key in the console",
+        "config_error",
+      );
+    }
+    if (route.kind === "amd" && !amdKey) {
+      return jsonError(
+        502,
+        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
         "config_error",
       );
     }
@@ -563,13 +583,20 @@ async function handleGatewayImpl(
     // picked by the messages flow is /v1/messages; reusing it directly would stuff an OpenAI body
     // into the Anthropic endpoint (bugfix 2026-08-22). Re-fetch the chat-path upstream per the switch:
     // off = direct openrouter.ai/api/v1/chat/completions; on = via the US egress (target=or).
-    if (route.kind === "openrouter" || route.kind === "commandgoat") {
-      route.upstream = pickRoute(
-        route.kind === "openrouter" ? "or" : "cm",
-        env,
-        usProxy,
-        "/v1/chat/completions",
-      ).upstream;
+    // qwen/ is the same trap: the /apps/anthropic endpoint rejects OpenAI bodies, so chat
+    // completions re-pick the compatible-mode upstream (bugfix 2026-08-30).
+    // amd/ is the same shape again: pickRoute defaults to Radeon's native
+    // /v1/messages URL (Anthropic clients), an OpenAI body must go to
+    // /v1/chat/completions instead.
+    if (
+      route.kind === "openrouter" ||
+      route.kind === "commandgoat" ||
+      route.kind === "qwen" ||
+      route.kind === "amd"
+    ) {
+      // Re-pick by the REQUEST prefix (kind→prefix is 1:1 for these four);
+      // pickRoute ignores the US exit for amd — that host is CN-served.
+      route.upstream = pickRoute(prefix2, env, usProxy, "/v1/chat/completions").upstream;
     }
     // Body is already OpenAI format — forward as-is with model field swapped.
     let forwardBody = rawWithModel(rawText, upstreamModel, scanned);
@@ -649,7 +676,12 @@ async function handleGatewayImpl(
       let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
       let extra = {};
       try {
-        const err: any = await upstream.json();
+        const rawErr: any = await upstream.json();
+        // Radeon Cloud (FastAPI-style) nests its payload as
+        // {"detail":{"error":{…}}} — unwrap it, or AMD's concurrency 429 would
+        // surface with a stringified body and a bare api_error type.
+        const err: any =
+          rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
         const upType = err.error?.type || err.type;
         const KNOWN = [
@@ -700,6 +732,13 @@ async function handleGatewayImpl(
       return jsonError(
         502,
         "QWEN_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
+    }
+    if (route.kind === "amd" && !amdKey) {
+      return jsonError(
+        502,
+        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
         "config_error",
       );
     }
@@ -768,7 +807,7 @@ async function handleGatewayImpl(
     return openAIUpstreamToAnthropicResponse(upstream, body, body.model, upstreamModel);
   }
 
-  // Passthrough routes (or/ds/qw): the upstream already speaks the Anthropic
+  // Passthrough routes (or/ds/qw/amd): the upstream already speaks the Anthropic
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
     if (route.kind === "deepseek" && !deepseekKey) {
@@ -782,6 +821,15 @@ async function handleGatewayImpl(
       return jsonError(
         502,
         "QWEN_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
+    }
+    // amd/ (AMD Radeon Cloud) is pure BYOK too — without the user's rc-… key
+    // the request would go out headerless and 401 at the upstream.
+    if (route.kind === "amd" && !amdKey) {
+      return jsonError(
+        502,
+        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
         "config_error",
       );
     }
@@ -809,8 +857,11 @@ async function handleGatewayImpl(
     // pre-processing) — forward THAT (images must arrive described, deepseek
     // is text-only). ds/qw/or never parse: raw text with only the top-level
     // model field swapped — no parse, no spread, no full re-stringify (Free
-    // plan 10ms CPU budget). og-native authenticates with x-api-key;
-    // every other passthrough channel uses Bearer.
+    // plan 10ms CPU budget). amd/ parses only when the raw scan finds an
+    // image (its models are text-only, so vision needs preprocessing); a plain
+    // request rides the same raw-swap path. og-native authenticates with
+    // x-api-key (amd/ too — its docs use that header, though it accepts
+    // Bearer as well); every other passthrough channel uses Bearer.
     let forwardBody =
       body !== null
         ? JSON.stringify({ ...body, model: upstreamModel })
@@ -841,7 +892,7 @@ async function handleGatewayImpl(
       {
         method: "POST",
         headers: passthroughHeaders(bearerKey, {
-          apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false,
+          apiKeyHeader: route.kind === "opencode" || route.kind === "amd" ? "x-api-key" : false,
         }),
         body: forwardBody,
       },
@@ -892,7 +943,11 @@ async function handleGatewayImpl(
       let type = "api_error";
       let extra = {};
       try {
-        const err: any = await upstream.json();
+        const rawErr: any = await upstream.json();
+        // Same unwrap as the chat/completions site: {"detail":{"error":{…}}}
+        // (AMD Radeon Cloud) must keep its message + rate_limit_error type.
+        const err: any =
+          rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
         message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
         // Forward the upstream's OWN error.type (Claude Code keys retry and
         // auth flows off it) — a DeepSeek 429 rate_limit_error collapsed to
@@ -1280,6 +1335,9 @@ export async function isModelUsable(env: any, model: string, uid: string): Promi
   if (prefix === "gmi/" && !userKeys.GMI_API_KEY) return false;
   // cm/ — Command Code is pure BYOK too; without a user key every request 502s.
   if (prefix === "cm/" && !(userKeys.CMD_API_KEY || env.CMD_API_KEY)) return false;
+  // amd/ — Radeon Cloud free pool, the rc-… key belongs to the user who added
+  // it (a missing key 502s; a shared-pool 429 is the upstream's, not a 502).
+  if (prefix === "amd/" && !(userKeys.AMD_API_KEY || env.AMD_API_KEY)) return false;
   if (model.startsWith("og/")) return !(await isChannelDegraded(env));
   return true;
 }
@@ -1304,6 +1362,7 @@ export async function resolveAutoModel(env: any, uid: string): Promise<string> {
   for (const m of [
     DEFAULT_ROUTE_MODEL,
     "qw/qwen3.8-max-preview",
+    "qw/qwen3.8-flash",
     "og/deepseek-v4-flash",
     "or/openai/gpt-5.6-luna:floor[1m]",
   ]) {
