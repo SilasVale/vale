@@ -46,8 +46,10 @@ fn random_hex_32() -> String {
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Issue a one-time WS ticket. Fails (None) only if the store is poisoned
-/// beyond recovery AND pruning cannot make room — practically never.
+/// Issue a one-time WS ticket. A poisoned store FAILS CLOSED (None →
+/// caller gets 503): these are credentials, so the repo's into_inner()
+/// recovery convention is deliberately not applied here. Returns None on
+/// store saturation (256 live) or — retried once — a 128-bit collision.
 pub fn issue_ticket() -> Option<String> {
     let mut guard = TICKETS.lock().ok()?;
     let map = guard.get_or_insert_with(HashMap::new);
@@ -57,14 +59,16 @@ pub fn issue_ticket() -> Option<String> {
     if map.len() >= MAX_LIVE_TICKETS {
         return None;
     }
-    // Constant-time-ish uniqueness is irrelevant here; collision with a live
-    // ticket would be a 128-bit accident, but retry once regardless.
-    let ticket = random_hex_32();
-    if map.contains_key(&ticket) {
-        return None;
+    // Collision with a live ticket is a 128-bit accident — but honor the
+    // retry rather than 503-ing on it.
+    for _ in 0..2 {
+        let ticket = random_hex_32();
+        if !map.contains_key(&ticket) {
+            map.insert(ticket.clone(), now + TICKET_TTL);
+            return Some(ticket);
+        }
     }
-    map.insert(ticket.clone(), now + TICKET_TTL);
-    Some(ticket)
+    None
 }
 
 /// Redeem a ticket: single-use — valid tickets are consumed on read.
@@ -79,6 +83,12 @@ pub fn redeem_ticket(ticket: &str) -> bool {
         None => false,
     }
 }
+
+/// Established relays are bounded independently of ticket minting (the 256
+/// ticket budget never capped live pipes): one token holder could pile up
+/// sockets on the bridge. Over cap → 502-class error, ticket permitting.
+static LIVE_RELAYS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const MAX_LIVE_RELAYS: usize = 8;
 
 /// Sec-WebSocket-Accept per RFC 6455 §1.3: base64(SHA-1(key + GUID)).
 pub fn ws_accept(client_key: &str) -> String {
@@ -113,17 +123,34 @@ pub async fn relay_to_bridge(
 ) -> Result<axum::response::Response, String> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let mut up = tokio::net::TcpStream::connect("127.0.0.1:9224")
-        .await
-        .map_err(|e| format!("bridge unreachable: {e}"))?;
+    // stage-n (relay review): bound the dial + the handshake write (a wedged
+    // 9224 listener used to pin this handler forever), disable Nagle (the
+    // interactive keystroke path is exactly what this relay exists for), and
+    // enable keepalive as one layer against half-open peers.
+    // std dial with a hard 3 s ceiling + loopback tuning (nodelay for the
+    // keystroke path, keepalive as one layer against half-open peers), then
+    // hand to tokio. (tokio 1.52's TcpStream has no keepalive setter; std
+    // does.) Loopback connect is ~0 ms, so the brief blocking dial is moot.
+    let stdsock = std::net::TcpStream::connect_timeout(
+        &"127.0.0.1:9224".parse().expect("static loopback addr"),
+        Duration::from_secs(3),
+    )
+    .map_err(|e| format!("bridge unreachable: {e}"))?;
+    let _ = stdsock.set_nodelay(true);
+    // (OS-level keepalive tuning needs a newer std than the pinned
+    // toolchain; the pump's 150 s idle cap is the active half-open defense.)
+    let _ = stdsock.set_nonblocking(true);
+    let mut up = tokio::net::TcpStream::from_std(stdsock)
+        .map_err(|e| format!("bridge socket: {e}"))?;
 
     let hs = format!(
         "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:9224\r\nUpgrade: websocket\r\n\
          Connection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\n\r\n",
         random_ws_key()
     );
-    up.write_all(hs.as_bytes())
+    tokio::time::timeout(Duration::from_secs(3), up.write_all(hs.as_bytes()))
         .await
+        .map_err(|_| "bridge handshake write timeout".to_string())?
         .map_err(|e| format!("bridge handshake write: {e}"))?;
 
     // Read the bridge's 101 head (bounded: headers only, 5 s ceiling).
@@ -166,21 +193,73 @@ pub async fn relay_to_bridge(
         .body(axum::body::Body::empty())
         .map_err(|e| format!("build 101: {e}"))?;
 
+    // Enforce the live-relay budget: take a slot NOW (the response commits
+    // to a relay), release it when the pump task ends.
+    if LIVE_RELAYS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= MAX_LIVE_RELAYS {
+        LIVE_RELAYS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        return Err("relay capacity reached".to_string());
+    }
     tokio::spawn(async move {
+        struct Guard;
+        impl Drop for Guard {
+            fn drop(&mut self) { LIVE_RELAYS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst); }
+        }
+        let _guard = Guard;
         match on_upgrade.await {
             Ok(io) => {
                 // hyper 1.x's Upgraded only implements hyper::rt::{Read, Write};
                 // TokioIo adapts it to tokio::io style (same approach as axum ws).
-                let mut io = hyper_util::rt::TokioIo::new(io);
-                if let Err(e) = tokio::io::copy_bidirectional(&mut io, &mut up).await {
-                    tracing::debug!(target: "ws_relay", "pipe ended: {e}");
-                }
+                let io = hyper_util::rt::TokioIo::new(io);
+                pump(io, up).await;
             }
             Err(e) => tracing::debug!(target: "ws_relay", "upgrade failed: {e}"),
         }
     });
 
     Ok(resp)
+}
+
+/// Bidirectional pump with an IDLE CEILING — the review's finding: a client
+/// that vanishes without a FIN (CF tunnel death, laptop sleep) leaves
+/// copy_bidirectional parked forever, pinning a task AND a bridge WS slot
+/// that then starves the next viewer. 150 s of silence in both directions
+/// tears the relay down; the panel's WS backoff silently re-establishes it,
+/// so an over-eager timeout is invisible. (While a relay lives, the bridge
+/// streams keepalive frames ~every 1.5 s, so the cap only ever hits genuinely
+/// dead pipes.)
+async fn pump<C, U>(io: C, up: U)
+where
+    C: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    U: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    const IDLE_CAP: Duration = Duration::from_secs(150);
+    let (mut cr, mut cw) = tokio::io::split(io);
+    let (mut ur, mut uw) = tokio::io::split(up);
+    let mut cb = [0u8; 8192];
+    let mut ub = [0u8; 8192];
+    loop {
+        let step = async {
+            tokio::select! {
+                r = cr.read(&mut cb) => match r {
+                    Ok(0) => Ok(false),
+                    Ok(n) => uw.write_all(&cb[..n]).await.map(|_| true),
+                    Err(e) => Err(e),
+                },
+                r = ur.read(&mut ub) => match r {
+                    Ok(0) => Ok(false),
+                    Ok(n) => cw.write_all(&ub[..n]).await.map(|_| true),
+                    Err(e) => Err(e),
+                },
+            }
+        };
+        match tokio::time::timeout(IDLE_CAP, step).await {
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) => break,                       // EOF either side
+            Ok(Err(e)) => { tracing::debug!(target: "ws_relay", "pipe ended: {e}"); break; }
+            Err(_) => { tracing::debug!(target: "ws_relay", "pipe idle-capped"); break; }
+        }
+    }
 }
 
 #[cfg(test)]

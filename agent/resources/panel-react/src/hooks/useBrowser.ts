@@ -83,6 +83,9 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
   const viewRef = useRef<BrowserView>("live");
   viewRef.current = view;
   const seenLoaded = useRef<Set<string>>(new Set());
+  // stage-n (client review): mirrors for teardown + focus/editing guards.
+  const shotUrlsRef = useRef<Record<string, string>>({});
+  const urlEditingRef = useRef(false);
 
   // AI-activity signal (Browserless "watching sessions" pattern): the AI's
   // browser_run_script drops screenshots into pwout — a fresh mtime means
@@ -119,8 +122,11 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     let attempts = 0;
     let reconnectTimer: number | undefined;
 
+    let connecting = false;
     const connectWs = () => {
-      if (disposed) return;
+      if (disposed || connecting) return;
+      if (reconnectTimer) { window.clearTimeout(reconnectTimer); reconnectTimer = undefined; }
+      connecting = true;
       attempts++;
       // Show the reconnect state only from the second failure so the happy
       // path never flashes a warning.
@@ -128,7 +134,8 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
       fetch(`${apiBase}/api/browser/ws-ticket`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
         .then(({ ticket }) => {
-          if (disposed) return;
+          connecting = false;
+          if (disposed || document.hidden) return; // visible handler resumes
           if (!ticket) throw new Error("no ticket");
           const proto = location.protocol === "https:" ? "wss:" : "ws:";
           const ws = new WebSocket(
@@ -165,7 +172,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
                   // without this the URL input shows a stale value while the
                   // tab strip (and the page) moved on.
                   const t = o.tabs[sel];
-                  if (t && typeof t.url === "string" && t.url) setUrl(t.url);
+                  if (t && typeof t.url === "string" && t.url && !urlEditingRef.current) setUrl(t.url);
                   // stage-n: navigation-history state for the back/forward
                   // buttons (disabled like a real browser when unavailable).
                   if (typeof o.canBack === "boolean") setCanBack(o.canBack);
@@ -190,12 +197,16 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
           wsRef.current = ws;
         })
         .catch(() => {
+          connecting = false;
           if (disposed) return;
           scheduleReconnect();
         });
     };
 
     const scheduleReconnect = () => {
+      // A hidden tab must NOT stream to nobody: onVisibility drives the
+      // resume, so the backoff loop stops at the next failure while hidden.
+      if (document.hidden) return;
       const delay = Math.min(500 * 2 ** attempts, MAX_WS_BACKOFF_MS);
       reconnectTimer = window.setTimeout(connectWs, delay);
     };
@@ -246,6 +257,15 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
       pendingRef.current.clear();
       try { wsRef.current?.close(); } catch {}
       wsRef.current = null;
+      // stage-n (client review): teardown must also release the object URLs
+      // (live frame + cached evidence shots) and the viewport observer —
+      // the pane re-mounts on every rail switch and used to leak per visit.
+      roRef.current?.disconnect();
+      roRef.current = null;
+      const src = imgRef.current?.src;
+      if (src && src.startsWith("blob:")) URL.revokeObjectURL(src);
+      Object.values(shotUrlsRef.current).forEach((u) => URL.revokeObjectURL(u));
+      shotUrlsRef.current = {};
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBase, token]);
@@ -273,6 +293,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     // ResizeObserver is absent in some test environments (jsdom) — report
     // once and skip live observation there.
     if (typeof ResizeObserver === "undefined") return;
+    roRef.current?.disconnect(); // one live observer per hook, ever
     const ro = new ResizeObserver(() => report());
     ro.observe(el);
     // Keep the observer alive for the hook's lifetime.
@@ -306,8 +327,12 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     const ix = r.left + (r.width - iw) / 2;
     const iy = r.top + (r.height - ih) / 2;
     return {
-      x: Math.round(((clientX - ix) / iw) * VIEW_W),
-      y: Math.round(((clientY - iy) / ih) * VIEW_H),
+      // stage-n (client review): OUTPUT coordinates are the page's own CSS
+      // pixels — since 1.2.185 the stream follows the panel resolution
+      // (naturalWidth == page viewport), so the old VIEW_W/VIEW_H scaling
+      // multiplied clicks by 1280/nw — up to ~2x off on small panels.
+      x: Math.round(((clientX - ix) / iw) * nw),
+      y: Math.round(((clientY - iy) / ih) * nh),
       inside: clientX >= ix && clientX <= ix + iw && clientY >= iy && clientY <= iy + ih,
     };
   }, []);
@@ -369,23 +394,28 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
         if (viewRef.current === "evidence") {
           setSelected((cur) => cur && list.some((s) => s.name === cur) ? cur : (list[0]?.name ?? null));
         }
-        const missing = list.filter((s) => !seenLoaded.current.has(s.name));
+        // Cache key = name:mtime — a screenshot OVERWRITTEN under the same
+        // name (new mtime) is refetched instead of serving the stale image.
+        const keyOf = (x: Shot) => `${x.name}:${x.mtime_ms}`;
+        const missing = list.filter((x) => !seenLoaded.current.has(keyOf(x)));
         for (const shot of missing) {
+          const key = keyOf(shot);
           fetch(`${apiBase}/api/browser/pwshot?name=${encodeURIComponent(shot.name)}`, { headers: auth() })
             .then((res) => (res.ok ? res.blob() : Promise.reject(new Error(String(res.status)))))
             .then((blob) => {
               if (!alive) return;
-              seenLoaded.current.add(shot.name);
-              setShotUrls((prev) => ({ ...prev, [shot.name]: URL.createObjectURL(blob) }));
+              seenLoaded.current.add(key);
+              setShotUrls((prev) => ({ ...prev, [key]: URL.createObjectURL(blob) }));
             })
             .catch(() => {});
         }
         setShotUrls((prev) => {
           const next = { ...prev };
-          const keep = new Set(list.map((s) => s.name));
+          const keep = new Set(list.map(keyOf));
           for (const k of Object.keys(next)) {
             if (!keep.has(k)) { URL.revokeObjectURL(next[k]); delete next[k]; }
           }
+          shotUrlsRef.current = next;
           return next;
         });
         // P2: AI-action timeline rides the same poll (independent failure —
@@ -403,14 +433,24 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     return () => { alive = false; window.clearInterval(t); };
   }, [apiBase, auth]);
 
+  // Resolve a shot NAME (selected, stale-free UI identity) to the current
+  // cache key name:mtime used by the poll (client-review fix 6).
+  const shotKey = useCallback(
+    (name: string): string => {
+      const hit = shots.find((x) => x.name === name);
+      return hit ? `${hit.name}:${hit.mtime_ms}` : name;
+    },
+    [shots],
+  );
+
   return {
     view, setView,
     url, setUrl, navigate, urlHistory,
     zoom, setZoom,
     error, fps, tabs, sel,
     newTab, selTab, closeTab, goBack, goForward, reload, canBack, canFwd,
-    imgRef, mapXY, send, sendMove, reportViewport,
-    shots, selected, setSelected, shotUrls,
+    imgRef, mapXY, send, sendMove, reportViewport, urlEditingRef,
+    shots, selected, setSelected, shotUrls, shotKey,
     actions,
     aiActive, hasFrame,
   };

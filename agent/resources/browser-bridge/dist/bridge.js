@@ -646,11 +646,21 @@ function decodeClientFrames(buf, onMessage) {
                 // twice); now everything goes through handleInput.
                 lastCmd = JSON.stringify(m).slice(0, 120);
                 let out;
+                let threw = false;
                 try {
                     out = await handleInput(m);
                 }
                 catch (e) {
+                    threw = true;
                     lastErr = String(e && e.message || e).slice(0, 120);
+                }
+                // stage-n (stress run): lastErr is a CURRENT-FAULT gauge, not a
+                // history tape — one benign superseded ERR_ABORTED used to stay
+                // "visible" all session. Command succeeded → clear; command
+                // returned {error} → record it.
+                if (!threw) {
+                    const errField = out && typeof out.error === "string" ? out.error : null;
+                    lastErr = errField ? `input:${m.t}:${errField}`.slice(0, 120) : null;
                 }
                 // round-137 Plan C: request receipts carrying an id (the correlation
                 // key for queries like tabs/diag), so the panel gets structured

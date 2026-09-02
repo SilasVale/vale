@@ -662,12 +662,30 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // ways; framing belongs to the two ends (browser ↔ bridge.js).
     if method == Method::GET && path == "/api/browser/ws" {
         let mut req = req;
-        let query = req.uri().query().map(|q| q.to_string());
-        let ticket = query.as_deref().and_then(|q| query_param(Some(q), "ticket")).unwrap_or("");
-        if !crate::ws_relay::redeem_ticket(ticket) {
-            return built_response(StatusCode::FORBIDDEN, "text/plain", Body::from("invalid or expired ticket"));
+        // stage-n (ws_relay review): validate the WS handshake BEFORE
+        // redeeming the ticket — hyper inserts OnUpgrade on every HTTP/1
+        // request, so a plain GET previously burned a ticket (and dialled the
+        // bridge) for a non-upgrading request.
+        let hdrs = req.headers();
+        let upgrade_ws = hdrs
+            .get("upgrade")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.eq_ignore_ascii_case("websocket"))
+            .unwrap_or(false);
+        let connection_ok = hdrs
+            .get("connection")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("upgrade")))
+            .unwrap_or(false);
+        let version_ok = hdrs
+            .get("sec-websocket-version")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v == "13")
+            .unwrap_or(false);
+        if !(upgrade_ws && connection_ok && version_ok) {
+            return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("not a websocket handshake"));
         }
-        let Some(key) = req.headers()
+        let Some(key) = hdrs
             .get("sec-websocket-key")
             .and_then(|v| v.to_str().ok())
             .map(|v| v.to_string())
@@ -680,9 +698,20 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         let Some(on_upgrade) = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>() else {
             return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("upgrade unsupported"));
         };
+        // Ticket redeemed LAST — every cheap rejection above leaves it usable.
+        let query = req.uri().query().map(|q| q.to_string());
+        let ticket = query.as_deref().and_then(|q| query_param(Some(q), "ticket")).unwrap_or("");
+        if !crate::ws_relay::redeem_ticket(ticket) {
+            return built_response(StatusCode::FORBIDDEN, "text/plain", Body::from("invalid or expired ticket"));
+        }
         return match crate::ws_relay::relay_to_bridge(key, on_upgrade).await {
             Ok(resp) => resp,
-            Err(e) => built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from(e)),
+            // Static body (review: internal error strings were echoed to the
+            // caller); the real cause goes to the durable log.
+            Err(e) => {
+                tracing::warn!(target: "ws_relay", "bridge relay refused: {e}");
+                built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge unavailable"))
+            }
         };
     }
 

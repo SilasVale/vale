@@ -36,8 +36,9 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
   // stage-n: the evidence panel is a DRAWER — open/closed state here, the
   // live viewport stays mounted underneath.
   const [evOpen, setEvOpen] = useState(false);
-  // stage-n: expanded AI-action scripts (Set of action timestamps).
-  const [expandedActions, setExpandedActions] = useState<Set<number>>(new Set());
+  // stage-n: expanded AI-action scripts — key is `${ts}:${i}` (two actions
+  // can share a millisecond; ts alone collided — client-review fix 8).
+  const [expandedActions, setExpandedActions] = useState<Set<string>>(new Set());
 
   const toggleFullscreen = () => {
     const el = viewportRef.current;
@@ -112,6 +113,8 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
             className="browser-url"
             value={b.url}
             onChange={(e) => b.setUrl(e.target.value)}
+            onFocus={() => { b.urlEditingRef.current = true; }}
+            onBlur={() => { b.urlEditingRef.current = false; }}
             onKeyDown={(e) => e.key === "Enter" && b.navigate()}
             placeholder="Enter a URL and press Enter — the page below is live and clickable"
             list="vale-url-history"
@@ -199,7 +202,14 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
           <button
             type="button"
             className={`browser-ev-toggle${evOpen ? " active" : ""}`}
-            onClick={() => setEvOpen((v) => !v)}
+            onClick={() => {
+              const open = !evOpen;
+              setEvOpen(open);
+              // stage-n: opening the drawer with shots present selects the
+              // newest automatically — the stage used to sit empty until a
+              // manual thumbnail click (client-review fix 7).
+              if (open && !b.selected && b.shots.length > 0) b.setSelected(b.shots[0].name);
+            }}
             title="AI screenshot evidence (drawer)"
           >
             🖼 Evidence{b.shots.length > 0 ? ` (${b.shots.length})` : ""}
@@ -226,8 +236,8 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
           ) : (
             <>
               <div className="browser-ev-stage">
-                {b.selected && b.shotUrls[b.selected] ? (
-                  <img src={b.shotUrls[b.selected]} className="browser-ev-img" alt="AI browser evidence" />
+                {b.selected && b.shotUrls[b.shotKey(b.selected)] ? (
+                  <img src={b.shotUrls[b.shotKey(b.selected)]} className="browser-ev-img" alt="AI browser evidence" />
                 ) : (
                   <div className="browser-ev-empty">Select a screenshot</div>
                 )}
@@ -241,8 +251,8 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                       title={`${s.name} · ${new Date(s.mtime_ms).toLocaleTimeString()}`}
                       onClick={() => b.setSelected(s.name)}
                     >
-                      {b.shotUrls[s.name] ? (
-                        <img src={b.shotUrls[s.name]} alt={s.name} loading="lazy" />
+                      {b.shotUrls[`${s.name}:${s.mtime_ms}`] ? (
+                        <img src={b.shotUrls[`${s.name}:${s.mtime_ms}`]} alt={s.name} loading="lazy" />
                       ) : (
                         <div className="browser-ev-thumb-empty">Loading…</div>
                       )}
@@ -258,8 +268,8 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                   <div className="browser-ev-empty-mini">No actions yet — they appear here when the AI drives the browser via browser_run_script</div>
                 ) : (
                   <div className="browser-actions-list">
-                    {b.actions.map((a) => (
-                      <div key={a.ts} className={`browser-action${a.exit_code === 0 ? "" : a.exit_code === null ? " running" : " err"}`}>
+                    {b.actions.map((a, ai) => (
+                      <div key={`${a.ts}:${ai}`} className={`browser-action${a.exit_code === 0 ? "" : a.exit_code === null ? " running" : " err"}`}>
                         <div className="browser-action-row">
                           <span className="browser-action-time">{new Date(a.ts).toLocaleTimeString()}</span>
                           <span className={`browser-action-badge${a.exit_code === 0 ? " ok" : a.exit_code === null ? " run" : " err"}`}>
@@ -275,10 +285,11 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                         {/* stage-n: click the script preview to expand/collapse
                             long scripts (default clamped to 40px). */}
                         <div
-                          className={`browser-action-script${expandedActions.has(a.ts) ? " expanded" : ""}`}
+                          className={`browser-action-script${expandedActions.has(`${a.ts}:${ai}`) ? " expanded" : ""}`}
                           onClick={() => setExpandedActions((prev) => {
+                            const key = `${a.ts}:${ai}`;
                             const next = new Set(prev);
-                            if (next.has(a.ts)) next.delete(a.ts); else next.add(a.ts);
+                            if (next.has(key)) next.delete(key); else next.add(key);
                             return next;
                           })}
                           title={a.script && a.script.length > 120 ? "Click to expand/collapse" : undefined}
