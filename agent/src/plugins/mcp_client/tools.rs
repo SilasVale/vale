@@ -393,6 +393,23 @@ fn bundled_playwright() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
 
 /// Spawn the bundled playwright-mcp over stdio (no port) and serve it as an
 /// MCP client. Returns the connected session + tool list.
+/// The ONE-BROWSER arg decision for every playwright-mcp spawn, extracted
+/// (coverage audit row 11) so the attach-vs-fork contract is unit-tested:
+/// bridge CDP up ⇒ ATTACH (panel sees everything); down ⇒ private headless
+/// fallback (AI still works, evidence still lands in pwout via
+/// --output-dir — the default was CWD-relative and invisible).
+pub(crate) fn mcp_browser_args(cdp_up: bool, pwout: &std::path::Path) -> Vec<String> {
+    let mut args: Vec<String> = if cdp_up {
+        vec!["--cdp-endpoint".into(), "http://127.0.0.1:9223".into()]
+    } else {
+        vec!["--headless".into(), "--browser".into(), "chromium".into()]
+    };
+    args.push("--ignore-https-errors".into());
+    args.push("--output-dir".into());
+    args.push(pwout.to_string_lossy().into_owned());
+    args
+}
+
 /// True when the bridge's chromium exposes its CDP endpoint (loopback 9223).
 pub(crate) fn bridge_cdp_up() -> bool {
     std::net::TcpStream::connect_timeout(
@@ -400,6 +417,31 @@ pub(crate) fn bridge_cdp_up() -> bool {
         std::time::Duration::from_millis(300),
     )
     .is_ok()
+}
+
+/// One-line human summary of an MCP browser call for the panel timeline.
+/// Truncation MUST respect char boundaries (CJK URLs panicked the naive
+/// [..200] — byte-slicing mid-sequence aborts the whole MCP handler task).
+fn mcp_action_summary(tool: &str, args: &serde_json::Value) -> String {
+    let a = args
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| format!("{}={}", k, v.as_str().unwrap_or(&v.to_string())))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    let s = format!("{tool} {a}");
+    if s.len() > 200 {
+        let mut e = 200;
+        while e > 0 && !s.is_char_boundary(e) {
+            e -= 1;
+        }
+        format!("{}…", &s[..e])
+    } else {
+        s
+    }
 }
 
 /// Panel-visibility: record MCP-driven browser actions in the SAME
@@ -413,30 +455,7 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
     }
     let pwout = crate::paths::install_dir().join("pwout");
     let _ = std::fs::create_dir_all(&pwout);
-    let summary: String = {
-        let a = args
-            .as_object()
-            .map(|m| {
-                m.iter()
-                    .map(|(k, v)| {
-                        format!("{}={}", k, v.as_str().unwrap_or(&v.to_string()))
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .unwrap_or_default();
-        let s = format!("{tool} {a}");
-        if s.len() > 200 {
-            // byte-slice at a CHAR BOUNDARY (CJK URLs would panic the naive [..200])
-            let mut e = 200;
-            while e > 0 && !s.is_char_boundary(e) {
-                e -= 1;
-            }
-            format!("{}…", &s[..e])
-        } else {
-            s
-        }
-    };
+    let summary = mcp_action_summary(tool, args);
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -499,15 +518,8 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
         // drawer with zero copying.
         let pwout = crate::paths::install_dir().join("pwout");
         let _ = std::fs::create_dir_all(&pwout);
-        if bridge_cdp_up() {
-            cmd.arg("--cdp-endpoint").arg("http://127.0.0.1:9223")
-                .arg("--ignore-https-errors")
-                .arg("--output-dir").arg(&pwout);
-        } else {
-            cmd.arg("--headless")
-                .arg("--browser").arg("chromium")
-                .arg("--ignore-https-errors")
-                .arg("--output-dir").arg(&pwout);
+        for a in mcp_browser_args(bridge_cdp_up(), &pwout) {
+            cmd.arg(a);
         }
     }
     #[cfg(windows)]
@@ -959,4 +971,42 @@ pub fn mcp_client_disconnect() -> ToolDef {
             Ok(json!({ "status": "disconnected" }))
         },
     )
+}
+
+#[cfg(test)]
+mod one_browser_tests {
+    //! Coverage audit rows 11+12: the attach-vs-fork contract and the
+    //! CJK-safe summary truncation that keep the panel seeing AI browsing.
+    use super::*;
+
+    #[test]
+    fn mcp_browser_args_attach_arm_carries_cdp_and_output_dir() {
+        let args = mcp_browser_args(true, std::path::Path::new("D:\\Vale\\pwout"));
+        assert_eq!(args[0], "--cdp-endpoint");
+        assert_eq!(args[1], "http://127.0.0.1:9223");
+        assert!(!args.iter().any(|a| a == "--headless"), "attach mode must not fork a private browser");
+        assert!(args.contains(&"--output-dir".to_string()));
+        assert_eq!(args.last().unwrap(), "D:\\Vale\\pwout");
+    }
+
+    #[test]
+    fn mcp_browser_args_fallback_arm_is_headless_but_still_pinned_output() {
+        let args = mcp_browser_args(false, std::path::Path::new("/tmp/pwout"));
+        assert!(args.contains(&"--headless".to_string()));
+        assert!(args.contains(&"chromium".to_string()));
+        assert!(!args.iter().any(|a| a.contains("9223")));
+        assert_eq!(args.last().unwrap(), "/tmp/pwout", "evidence must land in pwout either way");
+    }
+
+    #[test]
+    fn mcp_action_summary_truncates_on_char_boundary() {
+        // 300 CJK chars: the naive [..200] would slice mid-UTF8 and PANIC.
+        let cjk = "一".repeat(300);
+        let args = serde_json::json!({ "url": cjk });
+        let sum = mcp_action_summary("browser_navigate", &args);
+        assert!(sum.len() <= 203 && sum.ends_with('…'), "len={}", sum.len());
+        assert!(sum.is_char_boundary(sum.len()), "truncated string must END on a char boundary");
+        let short = mcp_action_summary("browser_click", &serde_json::json!({ "ref": "e12" }));
+        assert_eq!(short, "browser_click ref=e12");
+    }
 }
