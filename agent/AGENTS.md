@@ -277,8 +277,7 @@ Last updated: 2026-09-25 (round 66 — bridge fixes LIVE on d1, regressions gree
 - MIT LICENSE + README rewritten (no private host names, no private repos)
 
 ### In progress
-- (none — 1.2.214 live + regressions green. GitHub release pointer still
-  says v1.2.211; bump it with the next release.)
+- (none — 1.2.214 live on d1, regressions green, GitHub release synced.)
 
 ### 2026-09-25 d1 DARK incident (my fault — read before restarting tasks)
 - I stopped ValeAgent with `schtasks /End` from a browser_run_script that was
@@ -309,7 +308,7 @@ Last updated: 2026-09-25 (round 66 — bridge fixes LIVE on d1, regressions gree
 - Code: DO NOT push GitHub directly; Gitea mirror is the code home.
 - Releases: `curl -X POST -H "Authorization: Bearer $TOKEN" .../releases`
   with the ghp_ token from `~/.git-credentials` (works; tag push times out).
-  CURRENT: v1.2.211 is the ONLY release on GitHub (asset = 9.0 MB tgz,
+  CURRENT: v1.2.214 is the ONLY release on GitHub (asset = 9.0 MB tgz,
   verified public); older releases deleted per the keep-latest policy.
 - npm publish (2026-09-25 update): registry.npmjs.org is REACHABLE from the
   dsh box now (404 on /vale-agent = the name is FREE) but no npm credentials
