@@ -222,11 +222,17 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-25 (round 78 — 1.2.221 LIVE; auth-core CSRF gate + plugin
-  matrix security sweep, all device-probed; AI-activity visibility shipped)
+Last updated: 2026-09-25 (round 80 — 1.2.222 LIVE; DPAPI envelope + first-ever
+  secrets tests (which caught a real legacy-spelling gap) + SPA audit batch)
 
 ### Current release
-- npm **1.2.221 LIVE on d1** — ANSWER to "browser 面板看不到 AI": panel
+- npm **1.2.222 LIVE on d1** — DPAPI (VALEDPA1) seals the file secret store
+  on Windows (CM still preferred; d1 probe: set→get ACROSS the ':22'/no-
+  port spellings — the fallback gap the brand-new unit tests exposed, now
+  fixed in file AND keyring get/delete). SPA audit batch device-verified via
+  bundle markers: reg-key type=password + wiped, spent-key "do NOT re-send"
+  guard, browser-ev-live pulse, max-wait debounce, export busy, keyboard
+  tab-close. 155 Rust tests (+3). 1.2.221 — ANSWER to "browser 面板看不到 AI": panel
   activity signal is now the ACTIONS feed too (pulsing dot on Evidence +
   last-action hover), since terminal-driven automation produces none of
   the old screenshot triggers. AUDIT HARVEST (auth-core + plugin-matrix,
@@ -424,11 +430,9 @@ Last updated: 2026-09-25 (round 78 — 1.2.221 LIVE; auth-core CSRF gate + plugi
   previous tag ref too, not just the release object).
 
 ### Next candidates
-- DPAPI (CryptProtectData) envelope for the file secret store (MED-1 deeper
-  layer — ACL now fail-closed, crypto at rest is the belt to that braces)
-- secrets.rs/connections.rs unit tests + the keyring branch has ZERO test
-  coverage (the NoEntry variant compile-miss proves why) — file_impl CRUD
-  tests run on this Linux box directly
+- connections.rs CRUD tests (same harness pattern as file_store_tests)
+- gateway F5 breaker DoS-by-timeout, F8 tool_calls index merge, KV
+  device-row races (D1 migration)
 - gateway F3: CLIENT_KEY doubles as admin token (billing keys + /mcp RCE
   by every settings.json holder) — DESIGN decision, needs user sign-off
   (breaks existing clients if tightened)
