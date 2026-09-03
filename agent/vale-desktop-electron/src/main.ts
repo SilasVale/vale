@@ -802,6 +802,17 @@ if (gotTheLock) {
       menuFlushTimer = setTimeout(flushMenuQueue, 1000);
     });
     await loadDesktop();
+    // round-259: eagerly create the EMBEDDED view at startup (hidden) so an
+    // attached playwright/AI ALWAYS has its own dedicated page to drive —
+    // without it, playwright grabbed the MAIN window (now tripwired) or the
+    // user had to open the Browser page first. The view is hidden until the
+    // SPA's Browser page reports bounds (embeddedViewPlace shows it).
+    try {
+      const v = embeddedViewEnsure();
+      if (v && !v.webContents.isDestroyed()) {
+        v.webContents.loadURL("https://www.bing.com").catch(() => { /* pre-created; user/AI navigates next */ });
+      }
+    } catch { /* non-fatal */ }
     console.log(`[vale] CDP endpoint: http://127.0.0.1:${CDP_PORT} (playwright connectOverCDP)`);
     // stage-n: CDP self-check — if 9333 is occupied by another process
     // (a second browser/electron), remote-debugging-port silently fails and
