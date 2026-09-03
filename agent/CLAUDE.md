@@ -129,11 +129,12 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
 - **Commit style**: conventional commits with stage tags (`fix(stage-g)`,
   `refactor(stage-i)`, `perf(stage-h)`, `feat(stage-k)` …). Each commit must
   leave the workspace green.
-- **Verification per change**: `cargo test` → `cargo clippy --all-targets`
-  (target: zero warnings) → `cargo xwin check -p vale-agent
+- **Verification per change**: `cargo test` → `cargo clippy --all-targets
+  -- -D warnings` (round-301: CI promotes EVERY warning — mirror CI exactly;
+  grep ^error misses warnings CI fails on) → `cargo xwin check -p vale-agent
   --target x86_64-pc-windows-msvc --features terminal,keyring`. After touching
   feature-gated code, also run `cargo test --features terminal,keyring` and
-  `cargo clippy --features terminal,keyring --all-targets`. Smoke:
+  `cargo clippy --features terminal,keyring --all-targets -- -D warnings`. Smoke:
   `cargo run --bin vale-agent --features terminal,keyring -- /tmp/ct.yaml`
   then curl `/api/status` and `/api/tools/terminal_list` with the Bearer token
   from `/tmp/ct.yaml`.
