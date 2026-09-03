@@ -248,10 +248,12 @@ interface Msg {
       try { idleCaptureCdp = await ctx!.newCDPSession(target); } catch { idleCaptureCdp = null; }
     // maxFrameRate exists in newer playwright-core (1.63+); 1.62's types
     // lack it — cast the call to keep the runtime value (device bundle has it).
-    // stage-n: quality 60 + resolution follows the panel viewport (streamW/
+    // round-246: quality 92 (local-loopback desktop: no bandwidth constraint —
+    // text stays razor sharp; the old q60 JPEG smeared small fonts). Resolution
+    // follows the panel viewport (streamW/
     // streamH, updated via the resize command) so the stream is never
     // downscaled — the sharpest possible image for the current window.
-      await (c.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 }).catch(() => {});
+      await (c.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 }).catch(() => {});
     };
     attachChain = attachChain.then(run, run);
     return attachChain;
@@ -325,7 +327,7 @@ interface Msg {
       if (!target || capturing) return;
       capturing = true;
       try {
-        const jpeg = await target.screenshot({ type: "jpeg", quality: 60 });
+        const jpeg = await target.screenshot({ type: "jpeg", quality: 92 });
         if (jpeg.length >= 800) pushFrame(jpeg);
       } catch (_) {}
       finally { capturing = false; }
@@ -403,7 +405,7 @@ interface Msg {
           if (cdp === c) {
             try {
               await c.send("Page.stopScreencast");
-              await (c.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
+              await (c.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
             } catch { /* screencast mid-restart — next frame continues */ }
           }
         }
@@ -507,7 +509,7 @@ interface Msg {
       };
       if (!lastJpeg || Date.now() - lastAck > 400) {
         const target = selPage || page;
-        target.screenshot({ type: "jpeg", quality: 55 })
+        target.screenshot({ type: "jpeg", quality: 92 })
           .then((jpeg) => { lastJpeg = jpeg; lastAck = Date.now(); serve(jpeg); })
           .catch(() => { if (lastJpeg) serve(lastJpeg); else { res.writeHead(204); res.end(); } });
       } else if (lastJpeg) { serve(lastJpeg); }
@@ -655,10 +657,11 @@ interface Msg {
     if (!target || target.isClosed()) return;
     if (!idleCaptureCdp) return;
     // CDP captureScreenshot is faster than PW screenshot (no full render pass).
-    // quality 50 keeps text legible at ≤15 KB/frame vs the old q90 ≤45 KB.
+    // round-246: quality 92 — this is a LOCAL loopback desktop stream (no
+    // tunnel), so the old q50 size-saving smeared text for nothing.
     idleCaptureCdp.send("Page.captureScreenshot", {
       format: "jpeg",
-      quality: 50,
+      quality: 92,
       clip: { x: 0, y: 0, width: streamW, height: streamH, scale: 1 },
     }).then(async (res: { data: string }) => {
       const jpeg = Buffer.from(res.data, "base64");
@@ -712,7 +715,7 @@ interface Msg {
   } catch { idleCaptureCdp = null; }
 
   // Start streaming + keepalive
-  await (cdp.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
+  await (cdp.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
   setInterval(async () => {
     // Nudge the renderer so idle pages still emit a frame every ~2s.
     try { await page.evaluate(() => void 0); } catch {}

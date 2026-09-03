@@ -315,10 +315,12 @@ function decodeClientFrames(buf, onMessage, onControl) {
             }
             // maxFrameRate exists in newer playwright-core (1.63+); 1.62's types
             // lack it — cast the call to keep the runtime value (device bundle has it).
-            // stage-n: quality 60 + resolution follows the panel viewport (streamW/
+            // round-246: quality 92 (local-loopback desktop: no bandwidth constraint —
+            // text stays razor sharp; the old q60 JPEG smeared small fonts). Resolution
+            // follows the panel viewport (streamW/
             // streamH, updated via the resize command) so the stream is never
             // downscaled — the sharpest possible image for the current window.
-            await c.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 }).catch(() => { });
+            await c.send("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 }).catch(() => { });
         };
         attachChain = attachChain.then(run, run);
         return attachChain;
@@ -401,7 +403,7 @@ function decodeClientFrames(buf, onMessage, onControl) {
                 return;
             capturing = true;
             try {
-                const jpeg = await target.screenshot({ type: "jpeg", quality: 60 });
+                const jpeg = await target.screenshot({ type: "jpeg", quality: 92 });
                 if (jpeg.length >= 800)
                     pushFrame(jpeg);
             }
@@ -501,7 +503,7 @@ function decodeClientFrames(buf, onMessage, onControl) {
                     if (cdp === c) {
                         try {
                             await c.send("Page.stopScreencast");
-                            await c.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
+                            await c.send("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
                         }
                         catch { /* screencast mid-restart — next frame continues */ }
                     }
@@ -628,7 +630,7 @@ function decodeClientFrames(buf, onMessage, onControl) {
             };
             if (!lastJpeg || Date.now() - lastAck > 400) {
                 const target = selPage || page;
-                target.screenshot({ type: "jpeg", quality: 55 })
+                target.screenshot({ type: "jpeg", quality: 92 })
                     .then((jpeg) => { lastJpeg = jpeg; lastAck = Date.now(); serve(jpeg); })
                     .catch(() => { if (lastJpeg)
                     serve(lastJpeg);
@@ -826,10 +828,11 @@ function decodeClientFrames(buf, onMessage, onControl) {
         if (!idleCaptureCdp)
             return;
         // CDP captureScreenshot is faster than PW screenshot (no full render pass).
-        // quality 50 keeps text legible at ≤15 KB/frame vs the old q90 ≤45 KB.
+        // round-246: quality 92 — this is a LOCAL loopback desktop stream (no
+        // tunnel), so the old q50 size-saving smeared text for nothing.
         idleCaptureCdp.send("Page.captureScreenshot", {
             format: "jpeg",
-            quality: 50,
+            quality: 92,
             clip: { x: 0, y: 0, width: streamW, height: streamH, scale: 1 },
         }).then(async (res) => {
             const jpeg = Buffer.from(res.data, "base64");
@@ -889,7 +892,7 @@ function decodeClientFrames(buf, onMessage, onControl) {
         idleCaptureCdp = null;
     }
     // Start streaming + keepalive
-    await cdp.send("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
+    await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
     setInterval(async () => {
         // Nudge the renderer so idle pages still emit a frame every ~2s.
         try {
