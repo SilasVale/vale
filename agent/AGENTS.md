@@ -846,6 +846,16 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   /api/git mirror is LIVE; its dead dl/ staging of retired installers
   removed). All doc refs repointed at publish-release.sh; index/README
   rewritten for the npm-only architecture. -261 lines dead code.
+  ROUND-321 (2026-09-04): electron src freshness GATE in release.yml —
+  main/preload/url-policy .js are COMMITTED tsc artifacts (outDir=dist,
+  package ships src/*.js) with NO freshness guard — a .ts edit without
+  recompiling silently shipped the old main.js. Pack step now recompiles
+  electron TS with the CI-installed tsc (typeRoots -> vale-agent-npm's
+  @types) and FAILS if committed src/*.js differ. Verified locally: all
+  3 identical (no drift). ALSO dropped the dead "vale-desktop.exe" entry
+  from the npm files list (retired Tauri exe never enters CI tgzs);
+  vale.ts keeps its existsSync-guarded optional paths. Cleaned 178
+  local pack tgz junk.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
