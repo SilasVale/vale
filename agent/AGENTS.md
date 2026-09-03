@@ -656,6 +656,19 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   GitHub API). Backed up v1.2.272 locally (-> 2199b327, matches GitHub)
   so a GitHub loss/rebuild can't strand the release chain. Local refs now
   mirror GitHub (only v1.2.272).
+  ROUND-297 (2026-09-04): agent_update manifest un-rotted — index
+  worker's /api/version was hard-coded to v1.2.141/1.0.145 with the 141
+  tgz long deleted from assets (an update check that ever fired would
+  404). agent_update is LIVE on d1 (registered tool, download_url set).
+  The endpoint now derives the manifest from the version.json discovery
+  asset (version + sha256 published by the release flow); assets-down
+  fallback = 503 (never a fabricated manifest). version.json gained the
+  sha256 field (verified against the CDN tgz). Device-verified: live
+  manifest version=1.2.272, download 200, sha256 64-hex. NOTE: agent_update
+  compares remote 1.2.x against the LOCAL Cargo 1.0.145 — remote always
+  wins, so a real agent_update call performs a tgz swap (device restart);
+  the local version it compares is the Cargo crate version, not the npm
+  release number.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
