@@ -893,6 +893,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   16MB — build-installer.sh leftovers, round-320 missed them). Deleted;
   assets now hold only tracked files + release tgzs (last-5 + latest).
   Redeploy synced: all 3 exes now 404 on the CDN.
+  ROUND-327 (2026-09-04): product-side health round — panel vitest 82/82
+  (16 files, Node 24 = CI panel job version) after the deploy-chain
+  rounds; evidence feed healthy on d1 (actions 50 + pwshots 17, latest =
+  the round-315 e2e browser_run_script with stdout TITLE=Example Domain);
+  CI fc4e24d2 GREEN. No product regressions from the round-318..326
+  release-chain cleanup.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
