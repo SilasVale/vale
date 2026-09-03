@@ -52,8 +52,9 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 # Windows cross-compile of vale-agent (needs cargo-xwin)
 ./scripts/build.sh agent
 
-# Stage + pack the npm tgz (compiles the TS sources first)
-./scripts/build-installer.sh
+# CDN-publish a release (pack + stage + version.json sha256 + last-5 prune
+# + deploy; then push + tag vX to get the CI-built GitHub release)
+./scripts/publish-release.sh 1.2.N
 
 # Deploy the workers (needs a Cloudflare API token)
 ./scripts/build.sh gateway

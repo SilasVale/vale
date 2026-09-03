@@ -1,34 +1,45 @@
-# Vale Command Index — installer / script distribution
+# Vale Index — download landing page
 
-A tiny Cloudflare Worker serving `<download-host>`: the download landing page
-for the vale-command installer and setup scripts. Device management (registry +
-MCP config + panel proxy) lives in the Vale console (admin-only) — this worker
-only distributes the install artifacts and points users to the console.
+A tiny Cloudflare Worker serving `agent.saisi.online`: the download landing
+page for vale-agent (npm-only channel since 2026-08-28) and the static
+release artifacts (versioned npm tgz + `vale-agent-latest.tgz` alias +
+`version.json` discovery manifest). Device management lives in the Vale
+console — this worker only distributes install artifacts.
 
 ## Deploy
 
 ```bash
 cd index
-wrangler var put CONSOLE_URL <console-url>   # the Vale console URL, admin login (vars are NOT committed)
-wrangler deploy
+CLOUDFLARE_API_TOKEN=$(cat ~/.cloudflare-token) npx wrangler deploy
 ```
 
-Then add the custom domain **<download-host>** in the Cloudflare
-dashboard (Workers → vale-dist → Settings → Domains & Routes), same
-as the other Vale workers. `workers_dev: false` so only the custom
-domain is served.
+Custom domain **agent.saisi.online** is bound in the Cloudflare dashboard
+(`workers_dev: false`).
 
-The small static assets in `index/public/` (the setup script, agent/tray
-binaries, and browser extension) are served first via the `ASSETS` binding;
-the installer `.exe` is served from the Vercel mirror at
-`https://<mirror-host>/dl/ValeAgent-Setup.exe` because it exceeds the Workers
-Assets per-file limit. Run `./scripts/build-installer.sh` before deploying so
-the installer and mirror artifacts are refreshed. The legacy installer path
-`/vale-agent/ValeAgent-Setup.exe` redirects to the mirror.
+## Publishing a release (the ONLY supported path)
 
-## Installing Vale Command on a machine
+```bash
+./scripts/publish-release.sh 1.2.N
+```
 
-Follow `agent/deploy/README.md` — one-click install on the target Windows
-machine (`irm https://<download-host>/vale-agent/vale-agent-setup.ps1 | iex`).
-After install, register the device in the Vale console (Devices → generate a
-registration key), which stores the device name / host / token.
+from the repo root. It packs the npm tgz, stages it + the `latest` alias,
+writes `version.json` (with the sha256 agent_update requires), prunes old
+versions to the last 5 (round-309), commits, and deploys this worker. Then
+push main and create the GitHub tag `v1.2.N` via the API — release.yml
+builds the GitHub release asset.
+
+Static assets in `index/public/` are served first via the `ASSETS` binding;
+everything else hits the Worker (`/api/version` derives the update manifest
+from `version.json`, round-297).
+
+## Installing vale-agent on a machine
+
+```bash
+npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz
+vale setup            # pure local; --reg-key <key> registers with a console
+vale update           # same channel
+```
+
+## Legacy redirects
+
+- `/vale-agent/ValeAgent-Setup.exe` → the download page (NSIS retired).

@@ -51,7 +51,7 @@ build_agent() {
 
   # npm-only packaging (2026-08-28): the NSIS installer is retired — the
   # npm tgz (vale-agent-npm/) is the single install/update channel, packed
-  # by scripts/build-installer.sh.
+  # by scripts/publish-release.sh (round-320).
 }
 
 deploy_worker() {

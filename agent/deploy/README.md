@@ -35,7 +35,8 @@ vale update                  # one-command update
 <device> ──Cloudflare Tunnel──► vale-agent:18080 ──► MCP / panel / desktop
 ```
 
-## Build
+## Build / release
 
 `./scripts/build.sh agent` cross-compiles `vale-agent.exe`;
-`./scripts/build-installer.sh` stages the npm tgz for the index worker.
+`./scripts/publish-release.sh 1.2.N` (from the repo root) does the CDN
+release (pack + stage + version.json sha256 + last-5 prune + deploy).
