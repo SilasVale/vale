@@ -614,6 +614,15 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   --include=optional restored the full platform set (12+14 entries) —
   npm ci --dry-run clean, 82/82 tests. Tag v1.2.272 rebuilt again onto
   the lock fix.
+  ROUND-288 (2026-09-04): release 1.2.272 CI failed a THIRD time — the
+  round-283 tgz content gate itself was broken under `set -o pipefail`:
+  `tar tzf | grep -q` made grep exit after the first match, SIGPIPE killed
+  tar mid-stream ("tar: stdout: write error"), and pipefail turned the
+  pipeline into a failure EVEN THOUGH every required file was present.
+  Fix: list the tgz to a temp file first, then grep it (SIGPIPE-safe);
+  prefix-agnostic basename matching kept. Gate verified locally. The
+  round-283/287 gates keep earning their keep — three release-CI defects
+  caught before shipping.
 
 ### Current release
 - npm **1.2.272 LIVE on d1 (round-285)** — MCP connect auto-selects the
