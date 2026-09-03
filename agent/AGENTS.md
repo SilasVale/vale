@@ -414,6 +414,21 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
     longer embeds extension pages. Rust 194 / clippy clean.
     DEVICE-VERIFIED: exe has no ws_relay/ws-ticket strings; ws-ticket ->
     generic not-found; pwshots 200.
+  ROUND-264 (2026-09-04): E2E display verification — simulated AI
+  operating terminal + browser while watching the Vale Desktop panel:
+  TERMINAL: terminal_open via agent HTTP tools -> wrote 30-line output +
+  CJK + live marker; panel xterm (DOM renderer, .xterm-rows spans) showed
+  ALL of it (hasCJK/hasLine30/hasLive777/hasDONE). BROWSER: playwright
+  connectOverCDP drove the embedded view cn.bing.com -> qq.com; SPA
+  address bar synced (https://www.qq.com/), canBack true, view target
+  confirmed. EVIDENCE: AI screenshot + action line -> drawer shows
+  "AI screenshots (28)" + "AI actions (50)". METHOD NOTES for future E2E:
+  Page.captureScreenshot on the desktop SPA target TIMES OUT (Electron CDP
+  quirk) — verify xterm via .term-host[x].xterm-rows spans (DOM renderer,
+  no canvas; hidden hosts exist per session, read the VISIBLE one), and
+  verify the embedded browser via the view target URL + SPA .browser-url
+  value. Tools: POST /api/tools/{name} with body = the args object (no
+  {tool,args} wrapper); terminal_open result is the sid string directly.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
