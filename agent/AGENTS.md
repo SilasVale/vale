@@ -800,6 +800,9 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   element_ref forwards unchanged, type converts + keeps text. Gateway
   255 tests / 254 pass. (Real AI clients reach the device THROUGH this
   gateway path — the round-313 e2e click checks the direct path.)
+  ROUND-317 (2026-09-04): CI 9d096d53 GREEN — round-316's gateway click
+  conversion tests pass on CI (all 5 jobs incl. gateway test/typecheck).
+  Local tsc --noEmit clean too.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
