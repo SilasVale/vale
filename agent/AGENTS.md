@@ -681,6 +681,11 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   22 zstd leak, cloudflared pm2 recovery, CORS, anycast latency) and
   added .gitignore rules (.dsh-tmp-*, .zcode/, cloudflared-run.sh local
   pm2 launcher). Untracked files now ZERO.
+  ROUND-334 (2026-09-04): full 30-check e2e suite re-verified on d1 after
+  the round-318..333 cleanup marathon (mcp 12 + terminal/file/workflow
+  12 + panel/evidence/browser 6 — all PASS, exit 0). Device hygiene:
+  1 node + 5 electron, 0 e2e png leftovers (self-cleaning), release
+  1.2.278. Repo-side cleanup caused ZERO product regressions.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
