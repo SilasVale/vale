@@ -856,6 +856,13 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   from the npm files list (retired Tauri exe never enters CI tgzs);
   vale.ts keeps its existsSync-guarded optional paths. Cleaned 178
   local pack tgz junk.
+  ROUND-322 (2026-09-04): round-321 gate cwd FIXED before it ever ran —
+  the electron freshness gate invoked ./node_modules/.bin/tsc from
+  agent/ (parent dir) where no tsc exists — would have failed every
+  release. Now (cd vale-agent-npm && tsc -p ../vale-desktop-electron/
+  tsconfig.json --typeRoots ./node_modules/@types) like the bin/vale.js
+  compile. Full CI-equivalent simulation (typescript@5 @types/node@22
+  installed): tsc exit 0, 3 artifacts IDENTICAL; stale artifact caught.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
