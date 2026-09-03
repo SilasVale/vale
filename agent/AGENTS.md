@@ -448,6 +448,14 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   memory_save -> memory_search (retrieved). All tools chained cleanly
   with consistent {ok, result} envelopes — MCP design is AI-friendly
   (execute's NEVER-rerun guidance, read's cursor model).
+  ROUND-268 (2026-09-04): AI terminal/browser DRIVE paths E2E-verified on
+  the current arch: (1) terminal_execute SESSION mode — open -> execute
+  (state:done, prompt-detected, exit 0) -> run_in_background (job_id +
+  read_from, status:running) -> terminal_read collects BG-DONE. (2)
+  browser_run_script (the AI's canonical browser tool) — self-contained
+  CommonJS script connectOverCDP 9333, drove the embedded view to
+  example.com, returned TITLE/URL/exit 0; SPA address bar SYNCED to
+  example.com (user sees what the AI drives). Both key AI paths clean.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
