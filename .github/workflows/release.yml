@@ -39,6 +39,9 @@ jobs:
       - name: Build panel SPA
         run: npm ci --include=optional && npm run build
         working-directory: agent/resources/panel-react
+      - name: Test panel SPA
+        run: npm test
+        working-directory: agent/resources/panel-react
       - name: Cross-compile the agent exe
         run: cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --release --features terminal,keyring --bin vale-agent
         working-directory: agent
@@ -54,6 +57,21 @@ jobs:
           fi
           cp target/x86_64-pc-windows-msvc/release/vale-agent.exe vale-agent-npm/vale-agent.exe
           cd vale-agent-npm && npm pack
+          # round-278/282 lesson: verify the packed tgz ships every file the
+          # device update flow swaps (a missing file silently keeps the stale
+          # one on devices). Fail the release if any is absent.
+          TGZ="vale-agent-${VER}.tgz"
+          for F in "package/vale-agent.exe" \
+                   "package/vale-desktop-electron/src/main.js" \
+                   "package/vale-desktop-electron/src/preload.js" \
+                   "package/vale-desktop-electron/src/url-policy.js" \
+                   "package/bin/vale.js"; do
+            if ! tar tzf "$TGZ" | grep -qx "$F"; then
+              echo "::error::tgz missing required file: $F"
+              exit 1
+            fi
+          done
+          echo "tgz content check OK ($TGZ)"
           echo "VER=$VER" >> "$GITHUB_ENV"
       - name: Create release with the tgz asset
         env:
