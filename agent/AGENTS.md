@@ -710,6 +710,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   arm. Fixed (let _ = ...); CI 739d4913 green. LESSON: local clippy MUST
   mirror CI exactly (cargo clippy -- -D warnings) — grep ^error misses
   warnings CI fails on.
+  ROUND-303 (2026-09-04): GitHub release synced to 1.2.275 — v1.2.272
+  was the last CI-built release (round-289); 273/274/275 were CDN-only
+  manual publishes. Tag v1.2.275 pushed via API -> release.yml ran GREEN
+  (the round-299 tsc-compile-bin step's FIRST real run) -> gh release
+  created with the 6.4MB tgz; keep-latest deleted v1.2.272 release+tag.
+  Local tags re-synced (v1.2.272 backup dropped, v1.2.275 backed up).
+  Lesson: after manual CDN publishes, mirror to GitHub via the tag API so
+  the release chain + keep-latest stay current.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
