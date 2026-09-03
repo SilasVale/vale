@@ -111,6 +111,17 @@ else {
 }
 // CDP must be enabled before app ready — pass it through Chromium switches.
 electron_1.app.commandLine.appendSwitch("remote-debugging-port", String(CDP_PORT));
+// round-274 (device-caught): when the window is hidden (hide-to-tray /
+// SYSTEM-session background) Chromium flips the page to visibilityState
+// "hidden" and STOPS requestAnimationFrame — xterm's rAF-driven DOM
+// renderer then never paints, so every terminal goes blank while the AI
+// keeps operating. backgroundThrottling:false alone does NOT restore rAF
+// for hidden pages; these renderer-level switches do:
+//   disable-renderer-backgrounding        — don't pause rAF/timers when the
+//                                           renderer is backgrounded
+//   disable-backgrounding-occluded-windows — same for occluded windows
+electron_1.app.commandLine.appendSwitch("disable-renderer-backgrounding");
+electron_1.app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
 // --- Menu command bridge: SPA ⇄ native menu ---
 // stage-n: commands issued before the SPA registered its vale-menu listener
 // (preload bridge + React useEffect) are silently dropped by webContents.send.
