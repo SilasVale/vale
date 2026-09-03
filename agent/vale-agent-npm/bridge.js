@@ -226,11 +226,11 @@ function decodeClientFrames(buf, onMessage) {
             void attachSel();
         }
         scheduleTabsPush();
-        p.on("framenavigated", () => scheduleTabsPush());
+        p.on("framenavigated", () => { resetFrameCache(); scheduleTabsPush(); });
         p.on("close", () => onPageClosed(p));
     });
     for (const p of ctx.pages()) {
-        p.on("framenavigated", () => scheduleTabsPush());
+        p.on("framenavigated", () => { resetFrameCache(); scheduleTabsPush(); });
         p.on("close", () => onPageClosed(p));
     }
     // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
@@ -701,6 +701,12 @@ function decodeClientFrames(buf, onMessage) {
     let lastJpeg = null;
     let lastAck = 0;
     let capturing = false;
+    // FIX (panel display): HTTP /frame must NOT serve a stale screenshot from
+    // a previous page after a navigation — the old `lastAck` guard let the
+    // screencast heartbeat keep the cache alive forever, so the panel's
+    // fallback poll showed the welcome page long after the AI navigated away.
+    // Reset the cache whenever the selected page navigates.
+    const resetFrameCache = () => { lastJpeg = null; lastAck = 0; };
     // stage-n (bridge review): frame writes were fire-and-forget — a stalled
     // viewer (hung tunnel) grew the socket's internal buffer forever at ≤15
     // JPEGs/s. Frames are latest-wins, so dropping for a slow socket until it
@@ -736,28 +742,33 @@ function decodeClientFrames(buf, onMessage) {
             pushFrame(jpeg);
         });
     }
-    // round-137 Plan C: idle-frame guarantee. Screencast is change-driven —
-    // when a headless page is visually idle the compositor emits no frames,
-    // and WS viewers stare at the last stale image. With viewers present and
-    // >700ms of silence, fall back to one real screenshot (static page ≤1
-    // capture/s vs the old polling path's 7 req/s + ≤2.5 captures/s; active
-    // pages are handled by screencast, no stacking).
+    // round-72: idle-frame guarantee — screencast is change-driven, so a
+    // static page emits no frames and viewers stare at a stale image.
+    // Fallback to ~10fps screenshot (CDP capture, faster than PW screenshot)
+    // when no screencast frame has arrived recently. Capturing runs
+    // CONCURRENTLY with screencast (no `capturing` lock) — both push to the
+    // ring buffer; slow-path CDPs don't block the fast path.
+    const idleCaptureCdp = await ctx.newCDPSession(page);
     setInterval(() => {
-        if (sockets.size === 0 || capturing)
+        if (sockets.size === 0)
             return;
-        if (Date.now() - lastAck < 1500)
-            return; // animation is handled by screencast
+        if (Date.now() - lastAck < 800)
+            return; // screencast is active — skip
         const target = selPage || page;
-        if (!target)
+        if (!target || target.isClosed())
             return;
-        capturing = true;
-        // round-150: final frame for static pages — high-quality q90 so text on
-        // idle pages stays sharp
-        target.screenshot({ type: "jpeg", quality: 90 })
-            .then((jpeg) => pushFrame(jpeg))
-            .catch(() => { })
-            .finally(() => { capturing = false; });
-    }, 300);
+        // CDP captureScreenshot is faster than PW screenshot (no full render pass).
+        // quality 50 keeps text legible at ≤15 KB/frame vs the old q90 ≤45 KB.
+        idleCaptureCdp.send("Page.captureScreenshot", {
+            format: "jpeg",
+            quality: 50,
+            clip: { x: 0, y: 0, width: streamW, height: streamH, scale: 1 },
+        }).then(async (res) => {
+            const jpeg = Buffer.from(res.data, "base64");
+            if (jpeg.length >= 800)
+                pushFrame(jpeg);
+        }).catch(() => { });
+    }, 150);
     await new Promise((r) => srv.listen(PORT, "127.0.0.1", () => r()));
     console.log(`bridge listening on 127.0.0.1:${PORT} profile=${USER_DATA_DIR}`);
     // Start streaming + keepalive
