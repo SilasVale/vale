@@ -308,6 +308,33 @@ test("probeRateLimited: 前 60 次放行, 第 61 次限流, 换时间桶后放�
   }
 });
 
+// ── F2 coverage: probe-limiter KV write-back ─────────────────────────────
+// The existing test exercises the limiter but never asserts the KV put —
+// a regression that stopped writing the bucket back (so the ceiling multiplies
+// per isolate) would be invisible. Assert the key is written with the count.
+test("probeRateLimited: writes bucket back to KV (F2 coverage)", async () => {
+  const now = 1785000000000;
+  const realDateNow = Date.now;
+  Date.now = () => now;
+  const { env, kv } = kvEnv();
+  try {
+    // Use a unique IP to get a fresh bucket (the module-level __probeRate
+    // Map persists across tests, so the default "unknown" IP may already be
+    // at the limit from the preceding test).
+    const req = new Request("https://g/health", { headers: { "cf-connecting-ip": "203.0.113.5" } });
+    // First call seeds the bucket (KV miss → cur=0 → writes "1").
+    assert.equal(await probeRateLimited(env, req), false);
+    const raw = await env.KEYS.get("probe-rate:203.0.113.5:" + Math.floor(now / 60000));
+    assert.equal(raw, "1", "first call must persist the bucket to KV (the F2 write-back fix)");
+    // Second call is tracked in-memory — KV is NOT written again (the
+    // "no per-request KV writes" invariant). Verify the value is unchanged.
+    assert.equal(await probeRateLimited(env, req), false);
+    assert.equal(await env.KEYS.get("probe-rate:203.0.113.5:" + Math.floor(now / 60000)), "1", "subsequent calls must not write KV");
+  } finally {
+    Date.now = realDateNow;
+  }
+});
+
 test("probeRateLimited: KV 错误时 fail-open（不拦请求）", async () => {
   const env = {
     KEYS: {

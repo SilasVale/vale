@@ -1257,3 +1257,33 @@ test("scanTopLevelModel: model after system/tools (Claude Code field order)", ()
   const out = rawWithModel(raw, "ds/deepseek-v4-flash");
   assert.equal(JSON.parse(out).model, "ds/deepseek-v4-flash");
 });
+
+// ── F1 coverage: /v1/chat/completions per-token limiter ─────────────────
+// The limiter shipped with ZERO test coverage. Drive 49 calls with one
+// token; the 49th must 429. Module-level Maps persist across tests, so
+// each test uses a unique token (gwEnv's uid) for a clean bucket.
+test("chat/completions: per-token limiter trips at ~60/min (F1 coverage)", async () => {
+  const now = 1785000000000;
+  const realDateNow = Date.now;
+  Date.now = () => now;
+  const { env, token } = gwEnv();
+  try {
+    await withFetch(
+      async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: "x" }, finish_reason: "stop" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      async () => {
+        for (let i = 0; i < 48; i++) {
+          const r = await post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions");
+          assert.equal(r.status, 200, `call ${i + 1} should pass`);
+        }
+        const limited = await post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions");
+        assert.equal(limited.status, 429, "49th call within the minute must be rate-limited");
+      },
+    );
+  } finally {
+    Date.now = realDateNow;
+  }
+});

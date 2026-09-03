@@ -79,8 +79,17 @@ impl ServerHandler for DeviceServer {
         // foreground command, and cleared the busy flag a background
         // execute legitimately holds).
         let cancel = context.ct.clone();
+        // MCP audit MED: tool.handler.call_cancellable has no panic isolation
+        // — a panicking handler crashed the whole /mcp request task and leaked
+        // the panic message to stderr via the default hook (the client saw a
+        // connection drop / 500 instead of an MCP isError). Wrap the call so
+        // a panic maps to McpError::internal_error and the task survives.
+        let call = std::panic::AssertUnwindSafe(tool.handler.call_cancellable(params.clone(), cancel.clone()));
         let result = tokio::select! {
-            r = tool.handler.call_cancellable(params.clone(), cancel.clone()) => r,
+            r = futures::FutureExt::catch_unwind(call) => match r {
+                Ok(inner) => inner,
+                Err(_) => Err(DeviceError::Internal { message: "tool handler panicked".into() }),
+            },
             _ = cancel.cancelled() => {
                 // terminal_execute is the only tool that owns the busy flag
                 // and a running command — terminate + release so the session
