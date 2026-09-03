@@ -193,24 +193,31 @@ async function sectionPanel() {
 }
 
 // ── 4c2. mcp: stdio connect auto-selects the embedded view (round-281) ──
-async function sectionMcp() {
-  // Regression for round-281: mcp_client_connect (stdio -> bundled
-  // playwright-mcp) must auto-select the EMBEDDED-VIEW tab so the first
-  // browser_navigate drives the page the user watches (not the desktop SPA).
+// Shared: connect (given transport/url) -> immediate navigate -> the
+// embedded view must reach the marker URL with NO manual tab select, and
+// the SPA must stay intact. Returns the transport tag for check names.
+async function mcpAutoselectProbe(tag, connArgs) {
   const marker = 'mcp-autoselect-' + Date.now();
-  const c = await tool('mcp_client_connect', { name: 'pw', transport: 'stdio' });
-  check('mcp connect', c && c.status === 'connected', (c && c.status) || JSON.stringify(c).slice(0, 60));
-  // NO manual tab select — the auto-select must have happened inside connect
+  const c = await tool('mcp_client_connect', connArgs);
+  check('mcp ' + tag + ' connect', c && c.status === 'connected', (c && c.status) || JSON.stringify(c).slice(0, 60));
+  if (!c || c.status !== 'connected') { return; }
   const nav = await tool('mcp_client_call', { tool: 'browser_navigate', arguments: { url: 'https://example.com/' + marker } });
-  check('mcp navigate ok', nav && nav.ok, (nav && JSON.stringify(nav).slice(0, 60)) || 'no result');
+  check('mcp ' + tag + ' navigate ok', nav && nav.ok, (nav && JSON.stringify(nav).slice(0, 60)) || 'no result');
   await sleep(6000);
-  // the embedded view target must be AT the marker URL; the SPA must be intact
   const list = await (await fetch('http://127.0.0.1:9333/json/list')).json();
   const embedded = list.find((t) => !t.url.includes('/desktop/'));
   const spaOk = list.some((t) => t.url.includes('/desktop/'));
-  check('mcp drives embedded view', embedded && embedded.url.includes(marker), (embedded && embedded.url.slice(0, 60)) || 'NO VIEW');
-  check('mcp SPA intact', spaOk, 'targets=' + list.length);
+  check('mcp ' + tag + ' drives embedded view', embedded && embedded.url.includes(marker), (embedded && embedded.url.slice(0, 60)) || 'NO VIEW');
+  check('mcp ' + tag + ' SPA intact', spaOk, 'targets=' + list.length);
   await tool('mcp_client_disconnect', {}).catch(() => {});
+}
+
+async function sectionMcp() {
+  // round-281 regression (stdio) + round-285 regression (http/9229):
+  // mcp_client_connect must auto-select the EMBEDDED-VIEW tab so the first
+  // browser_navigate drives the page the user watches (not the desktop SPA).
+  await mcpAutoselectProbe('stdio', { name: 'pw', transport: 'stdio' });
+  await mcpAutoselectProbe('http', { name: 'pw-http', transport: 'http', url: 'http://127.0.0.1:9229/mcp' });
 }
 
 // ── 4c. evidence: an AI screenshot lands in pwout and shows in pwshots ────
