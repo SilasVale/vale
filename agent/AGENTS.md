@@ -694,6 +694,12 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md; root
   AGENTS.md/CLAUDE.md design-doc refs updated. docs/research/* keep
   their Tauri-era notes (historical research records).
+  ROUND-336 (2026-09-04): root README stale points fixed — install
+  example pinned the DEAD vale-agent-1.2.179.tgz (→ versionless latest
+  alias); "update (exe + bridge + electron)" (bridge removed round-265);
+  extension row → Vale Studio Links (round-262); design-doc pointer →
+  current desktop-core spec. "bridges to playwright" in the mcp-client
+  description is the LIVE architecture (verb, not the bridge component).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
