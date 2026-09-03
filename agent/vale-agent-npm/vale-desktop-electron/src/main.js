@@ -348,6 +348,8 @@ function embeddedViewEnsure() {
     view.setVisible(false);
     embeddedVisible = false;
     view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    // round-247: real-navigation events → SPA (URL/title/history tracking).
+    embeddedWireNavEvents(view);
     try {
         electron_1.session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
         electron_1.session.defaultSession.setPermissionCheckHandler(() => false);
@@ -380,23 +382,71 @@ function embeddedViewPlace(bounds) {
 }
 function embeddedNavigate(raw) {
     const url = (0, url_policy_1.sanitizeBrowserUrl)(raw);
-    if (!url || url === "about:blank") {
-        // about:blank is a valid reset — load the welcome-ish blank.
-    }
     const view = embeddedViewEnsure();
     embeddedUrl = url;
     view.webContents.loadURL(url).catch(() => { });
     return { ok: true, url };
 }
+/** round-247: nav controls on the embedded view (the SPA's toolbar mirrors a
+ *  real browser: back/fwd/reload operate the actual webContents history). */
+function embeddedGo(delta) {
+    const view = embeddedView;
+    if (!view || view.webContents.isDestroyed())
+        return { ok: false };
+    try {
+        if (delta < 0)
+            view.webContents.goBack();
+        else
+            view.webContents.goForward();
+        return { ok: true };
+    }
+    catch {
+        return { ok: false };
+    }
+}
+function embeddedReload() {
+    const view = embeddedView;
+    if (!view || view.webContents.isDestroyed())
+        return { ok: false };
+    try {
+        view.webContents.reload();
+        return { ok: true };
+    }
+    catch {
+        return { ok: false };
+    }
+}
 function embeddedState() {
     const view = embeddedView;
+    const wc = view && !view.webContents.isDestroyed() ? view.webContents : null;
     return {
         ok: true,
-        url: embeddedUrl,
+        url: wc ? wc.getURL() || embeddedUrl : embeddedUrl,
+        canBack: !!wc && wc.navigationHistory.canGoBack(),
+        canFwd: !!wc && wc.navigationHistory.canGoForward(),
+        title: wc ? wc.getTitle() : "",
         visible: embeddedVisible && !!view && !view.webContents.isDestroyed(),
     };
 }
+/** round-247: push real navigation state (URL + title + history) to the SPA
+ *  so its address bar and back/fwd buttons track the ACTUAL embedded page —
+ *  event-driven (fires on navigation, no polling). */
+function embeddedWireNavEvents(view) {
+    const wc = view.webContents;
+    const push = () => {
+        if (!win || win.isDestroyed())
+            return;
+        const s = embeddedState();
+        win.webContents.send("embedded-browser:nav", { url: s.url, canBack: s.canBack, canFwd: s.canFwd, title: s.title });
+    };
+    wc.on("did-navigate", push);
+    wc.on("did-navigate-in-page", push);
+    wc.on("page-title-updated", push);
+}
 electron_1.ipcMain.handle("embedded-browser:navigate", (e, url) => frameOk(e) ? embeddedNavigate(String(url || "")) : { ok: false, error: "forbidden frame" });
+electron_1.ipcMain.handle("embedded-browser:back", (e) => frameOk(e) ? embeddedGo(-1) : { ok: false });
+electron_1.ipcMain.handle("embedded-browser:fwd", (e) => frameOk(e) ? embeddedGo(1) : { ok: false });
+electron_1.ipcMain.handle("embedded-browser:reload", (e) => frameOk(e) ? embeddedReload() : { ok: false });
 electron_1.ipcMain.handle("embedded-browser:place", (e, bounds) => {
     if (!frameOk(e))
         return { ok: false };

@@ -8,17 +8,29 @@
 //   - renders an empty slot the main process overlays the view onto
 //   - reports the slot's bounds (position:relative to the window content)
 //     on mount / resize / page switch, so the view tracks the layout
-//   - routes the address bar + nav buttons to the embedded view (IPC)
+//   - routes the address bar + back/fwd/reload to the embedded view (IPC)
+//   - the address bar + button disabled-states FOLLOW the real page via
+//     main-process navigation events (round-247) — event-driven, no polling
 //
 // Plain-browser contexts (no window.valeEmbedded) never mount this — they
 // keep the screenshot BrowserPane.
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Icon } from "../ui/Icon";
 
+interface EmbeddedNavState {
+  url: string;
+  canBack: boolean;
+  canFwd: boolean;
+  title: string;
+}
 interface EmbeddedBridge {
   navigate: (url: string) => Promise<unknown>;
+  back: () => Promise<unknown>;
+  fwd: () => Promise<unknown>;
+  reload: () => Promise<unknown>;
   place: (bounds: { x: number; y: number; width: number; height: number } | null) => Promise<unknown>;
-  state: () => Promise<{ ok: boolean; url?: string; visible?: boolean }>;
+  state: () => Promise<{ ok: boolean; url?: string; canBack?: boolean; canFwd?: boolean; visible?: boolean }>;
+  onNav: (handler: (s: EmbeddedNavState) => void) => () => void;
 }
 
 function bridge(): EmbeddedBridge | null {
@@ -29,8 +41,11 @@ const slotId = "vale-embedded-browser-slot";
 
 export function EmbeddedBrowserPane({ token }: { token: string }) {
   const slotRef = useRef<HTMLDivElement | null>(null);
-  const [url, setUrl] = useState("https://www.wikipedia.org");
+  const [url, setUrl] = useState("");
+  const [canBack, setCanBack] = useState(false);
+  const [canFwd, setCanFwd] = useState(false);
   const [ready, setReady] = useState(false);
+  const urlEditingRef = useRef(false);
 
   // Report the slot bounds to the main process so it can position the real
   // WebContentsView over it. Bounds are relative to the window content — the
@@ -45,12 +60,27 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   }, []);
 
   // Register the slot once; a ResizeObserver keeps the view glued to the
-  // layout when the panel resizes / the drawer opens. (Event-driven: no
-  // polling — the observer fires only on actual layout changes.)
+  // layout when the panel resizes. (Event-driven: no polling — the observer
+  // fires only on actual layout changes.)
   useEffect(() => {
     const b = bridge();
     if (!b) return;
-    void b.state().then((s) => { if (s?.ok) setReady(true); });
+    // Initial state + real-navigation subscription (round-247): the main
+    // process pushes url/canBack/canFwd/title after EVERY actual navigation,
+    // so the address bar and button states mirror the real page.
+    void b.state().then((s) => {
+      if (s?.ok) {
+        setReady(true);
+        if (s.url) setUrl(s.url);
+        if (typeof s.canBack === "boolean") setCanBack(s.canBack);
+        if (typeof s.canFwd === "boolean") setCanFwd(s.canFwd);
+      }
+    });
+    const offNav = b.onNav((s) => {
+      if (!urlEditingRef.current && s.url) setUrl(s.url);
+      setCanBack(s.canBack);
+      setCanFwd(s.canFwd);
+    });
     reportBounds();
     const el = slotRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -60,6 +90,7 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", reportBounds);
+      offNav();
       // Leaving the page: hide the embedded view so it does not linger over
       // other SPA pages.
       void b.place(null);
@@ -73,13 +104,21 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
     setUrl(u);
     void b.navigate(u);
   }, [url]);
+  const goBack = useCallback(() => { void bridge()?.back(); }, []);
+  const goForward = useCallback(() => { void bridge()?.fwd(); }, []);
+  const reload = useCallback(() => { void bridge()?.reload(); }, []);
 
   return (
     <div className="browser-pane" style={{ position: "relative" }}>
-      {/* Chrome-style toolbar: address row (no bridge tabs — the embedded
-          view is a single real page; back/fwd live inside it natively). */}
+      {/* Chrome-style toolbar: nav buttons + address row. Back/fwd disabled
+          states mirror the REAL page history (main-process pushes). */}
       <div className="browser-toolbar">
         <div className="browser-urlbar">
+          <span className="browser-navbtns">
+            <button className="btn btn-mini browser-nav" onClick={goBack} title="Back" disabled={!canBack}>←</button>
+            <button className="btn btn-mini browser-nav" onClick={goForward} title="Forward" disabled={!canFwd}>→</button>
+            <button className="btn btn-mini browser-nav" onClick={reload} title="Reload" disabled={!ready}>↻</button>
+          </span>
           <span className="browser-url-secure" title={url.startsWith("https") ? "Secure" : "Not secure"}>
             {url.startsWith("https") ? "🔒" : "🌐"}
           </span>
@@ -87,6 +126,8 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
             className="browser-url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            onFocus={() => { urlEditingRef.current = true; }}
+            onBlur={() => { urlEditingRef.current = false; }}
             onKeyDown={(e) => e.key === "Enter" && navigate()}
             placeholder="Enter a URL — rendered live by the real embedded browser"
             spellCheck={false}

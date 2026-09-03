@@ -22,8 +22,23 @@ electron_1.contextBridge.exposeInMainWorld("valeBrowser", {
 // SPA falls back to the screenshot stream there.
 electron_1.contextBridge.exposeInMainWorld("valeEmbedded", {
     navigate: (url) => electron_1.ipcRenderer.invoke("embedded-browser:navigate", url),
+    back: () => electron_1.ipcRenderer.invoke("embedded-browser:back"),
+    fwd: () => electron_1.ipcRenderer.invoke("embedded-browser:fwd"),
+    reload: () => electron_1.ipcRenderer.invoke("embedded-browser:reload"),
     place: (bounds) => electron_1.ipcRenderer.invoke("embedded-browser:place", bounds),
     state: () => electron_1.ipcRenderer.invoke("embedded-browser:state"),
+    // round-247: real-navigation pushes from the main process (URL/title/
+    // history state after every actual navigation). Returns an unsubscribe fn.
+    onNav: (handler) => {
+        const listener = (_e, s) => {
+            try {
+                handler(s);
+            }
+            catch { /* SPA-side */ }
+        };
+        electron_1.ipcRenderer.on("embedded-browser:nav", listener);
+        return () => electron_1.ipcRenderer.removeListener("embedded-browser:nav", listener);
+    },
 });
 // Desktop-app settings + menu bridge (Electron-specific — hidden when running
 // in a plain browser; the SPA detects the bridge and shows the card only when
