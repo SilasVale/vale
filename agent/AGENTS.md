@@ -338,6 +338,17 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   needs text: for char insertion): focus bar -> type bing.com -> Enter ->
   view at https://cn.bing.com/, focus released to BODY, bar shows the real
   URL. +1 test (bare host Enter -> https navigate + blur). Panel 93/93.
+  ROUND-255 (2026-09-26, 1.2.258 LIVE on d1): embedded-pane EVIDENCE
+  DRAWER (last display-parity gap vs the screenshot pane). New
+  self-contained EvidenceDrawer: fetches pwshots + actions ON DEMAND when
+  opened + refreshes on the SSE browser-actions-changed push while open
+  (round-252) + per-row blob loads — NO polling. Reuses .browser-ev-*
+  classes. Embedded pane: "🖼 Evidence" toggle in the status bar; opening
+  SHRINKS the native view slot by the drawer width (drawer-open class ->
+  ResizeObserver re-places the WebContentsView) so the native view never
+  sits under the SPA drawer. DEVICE-VERIFIED: drawer open=true, slot
+  753px vs pane 1093px (=340px drawer), 27 shots + 50 actions loaded
+  from real pwout. +1 test. Panel 94/94.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
