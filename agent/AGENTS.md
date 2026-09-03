@@ -524,7 +524,8 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   fix: backgroundThrottling:false + --disable-renderer-backgrounding +
   --disable-backgrounding-occluded-windows keep the SPA painting (xterm
   rAF) when the window is hidden. E2E suite (agent/scripts/e2e/e2e.js)
-  16/16 on d1 incl. panel section (AI marker visible in the SPA xterm).
+  18/18 on d1: terminal/file/workflow/panel/evidence/browser sections
+  (display + evidence + drive paths all repeatable).
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
