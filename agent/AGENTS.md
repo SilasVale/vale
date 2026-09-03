@@ -429,6 +429,12 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   verify the embedded browser via the view target URL + SPA .browser-url
   value. Tools: POST /api/tools/{name} with body = the args object (no
   {tool,args} wrapper); terminal_open result is the sid string directly.
+  ROUND-265 (2026-09-04): bridge.js FULLY removed — the last 9223 tier is
+  gone. mcp_client preferred_cdp_endpoint: 9333 (Electron) -> none
+  (headless fork); ValePlaywright probe script no longer probes 9223;
+  vale.ts no longer stages/compiles bridge.js; npm package no longer ships
+  it; browser-bridge/ source deleted (1647 lines). Non-Electron installs
+  fall back to playwright --headless. Rust 194 / clippy clean.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
