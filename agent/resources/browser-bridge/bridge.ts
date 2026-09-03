@@ -181,11 +181,11 @@ interface Msg {
       selPage = p; void attachSel();
     }
     scheduleTabsPush();
-    p.on("framenavigated", () => scheduleTabsPush());
+    p.on("framenavigated", () => { resetFrameCache(); scheduleTabsPush(); });
     p.on("close", () => onPageClosed(p));
   });
   for (const p of ctx!.pages()) {
-    p.on("framenavigated", () => scheduleTabsPush());
+    p.on("framenavigated", () => { resetFrameCache(); scheduleTabsPush(); });
     p.on("close", () => onPageClosed(p));
   }
   // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
@@ -550,6 +550,12 @@ interface Msg {
   let lastJpeg: Buffer | null = null;
   let lastAck = 0;
   let capturing = false;
+  // FIX (panel display): HTTP /frame must NOT serve a stale screenshot from
+  // a previous page after a navigation — the old `lastAck` guard let the
+  // screencast heartbeat keep the cache alive forever, so the panel's
+  // fallback poll showed the welcome page long after the AI navigated away.
+  // Reset the cache whenever the selected page navigates.
+  const resetFrameCache = (): void => { lastJpeg = null; lastAck = 0; };
 
   // stage-n (bridge review): frame writes were fire-and-forget — a stalled
   // viewer (hung tunnel) grew the socket's internal buffer forever at ≤15
