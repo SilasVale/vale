@@ -318,6 +318,92 @@ function browserList() {
 electron_1.ipcMain.handle("browser-session:open", (e, url) => frameOk(e) ? browserOpen(url) : { ok: false, error: "forbidden frame" });
 electron_1.ipcMain.handle("browser-session:close", (e, id) => frameOk(e) ? browserClose(id) : { ok: false, error: "forbidden frame" });
 electron_1.ipcMain.handle("browser-session:list", (e) => frameOk(e) ? browserList() : { ok: false, error: "forbidden frame" });
+// ── Embedded real-render browser view (round-246) ──────────────────────────
+// The SPA's Browser page used to show the BRIDGE's headless-chromium as a
+// JPEG screencast (lossy q60-92 frames over a websocket) — never as sharp as
+// a real browser, and a SECOND browser instance alongside the desktop shell.
+// In the Electron shell we replace it with a REAL WebContentsView embedded
+// over the SPA's browser placeholder: GPU-composited, vector text, directly
+// interactive. Its webContents is a first-class CDP target on the SAME
+// :9333 endpoint, so AI (playwright connectOverCDP) drives EXACTLY the page
+// the user sees — one browser, zero JPEG.
+//
+// Security posture mirrors the browser-session windows: the view loads
+// arbitrary internet pages, so contextIsolation on, nodeIntegration off, NO
+// preload, sandbox on, popups denied, permissions denied by default.
+let embeddedView = null;
+let embeddedVisible = false;
+let embeddedUrl = "about:blank";
+function embeddedViewEnsure() {
+    if (embeddedView && !embeddedView.webContents.isDestroyed())
+        return embeddedView;
+    const view = new electron_1.WebContentsView({
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            // round-246 (review #6/#7 parity): no preload = zero Node surface.
+        },
+    });
+    view.setVisible(false);
+    embeddedVisible = false;
+    view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    try {
+        electron_1.session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+        electron_1.session.defaultSession.setPermissionCheckHandler(() => false);
+    }
+    catch { /* non-fatal (already set at app ready) */ }
+    embeddedView = view;
+    // Attach to the main window's content view once the window exists. The
+    // view is added hidden and only shown when the SPA's Browser page is
+    // active and reports its placeholder bounds.
+    if (win)
+        win.contentView.addChildView(view);
+    return view;
+}
+/** Place the embedded view over the SPA's browser placeholder (CSS px in the
+ *  window's content coordinate space). Empty bounds hide it. */
+function embeddedViewPlace(bounds) {
+    const view = embeddedViewEnsure();
+    if (!win)
+        return;
+    if (!bounds || bounds.width < 50 || bounds.height < 50) {
+        view.setVisible(false);
+        embeddedVisible = false;
+        return;
+    }
+    view.setBounds(bounds);
+    view.setVisible(true);
+    embeddedVisible = true;
+    // Keep it above the SPA content (the SPA placeholder is an empty div).
+    win.contentView.addChildView(view);
+}
+function embeddedNavigate(raw) {
+    const url = (0, url_policy_1.sanitizeBrowserUrl)(raw);
+    if (!url || url === "about:blank") {
+        // about:blank is a valid reset — load the welcome-ish blank.
+    }
+    const view = embeddedViewEnsure();
+    embeddedUrl = url;
+    view.webContents.loadURL(url).catch(() => { });
+    return { ok: true, url };
+}
+function embeddedState() {
+    const view = embeddedView;
+    return {
+        ok: true,
+        url: embeddedUrl,
+        visible: embeddedVisible && !!view && !view.webContents.isDestroyed(),
+    };
+}
+electron_1.ipcMain.handle("embedded-browser:navigate", (e, url) => frameOk(e) ? embeddedNavigate(String(url || "")) : { ok: false, error: "forbidden frame" });
+electron_1.ipcMain.handle("embedded-browser:place", (e, bounds) => {
+    if (!frameOk(e))
+        return { ok: false };
+    embeddedViewPlace(bounds);
+    return { ok: true };
+});
+electron_1.ipcMain.handle("embedded-browser:state", (e) => frameOk(e) ? embeddedState() : { ok: false, error: "forbidden frame" });
 // Desktop-app settings (auto-launch) — the Settings page toggles this. We
 // manage a per-user scheduled task ("ValeDesktop", onlogon) instead of
 // Electron's setLoginItemSettings: in dev mode (electron .) the login-item
@@ -509,6 +595,9 @@ if (gotTheLock) {
                 preload: path.join(__dirname, "preload.js"),
                 contextIsolation: true,
                 nodeIntegration: false,
+                // stage-n preload audit LOW: defense-in-depth — the preload is
+                // static/safe, but sandbox:true removes any Node escape path.
+                sandbox: true,
             },
         });
         // review #6 (MED) TOP RISK: the main window carries the valeDesktop/

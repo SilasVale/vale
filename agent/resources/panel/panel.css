@@ -1702,6 +1702,20 @@ code {
   font-variant-numeric: tabular-nums;
   color: var(--faint, #666);
 }
+/* round-246: embedded REAL-browser slot (Electron shell) — the main process
+   overlays a WebContentsView on this area; the div itself stays empty. */
+.browser-embedded-slot {
+  background: var(--browser-stage-bg, #111);
+}
+.browser-embedded-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--success, #4caf50);
+  border: 1px solid var(--chrome-line, #333);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
 /* Evidence drawer — right-side panel over the viewport. */
 .browser-pane { position: relative; }
 .browser-ev-drawer {

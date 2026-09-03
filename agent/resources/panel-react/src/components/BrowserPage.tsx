@@ -12,6 +12,7 @@
 // to a compact chip in BrowserPane's view-switch row, so the page reads as a
 // browser (tabs + URL + live view), not as a service dashboard.
 import BrowserPane from "./BrowserPane";
+import { EmbeddedBrowserPane } from "./EmbeddedBrowserPane";
 import type { usePlugins } from "../hooks/usePlugins";
 
 interface Props {
@@ -20,6 +21,17 @@ interface Props {
 }
 
 export function BrowserPage({ plugins, token }: Props) {
+  // round-246: in the Electron shell the main process embeds a REAL
+  // WebContentsView (window.valeEmbedded) — render the controller for it
+  // instead of the JPEG screencast pane. Plain browsers keep the stream.
+  const embedded = !!((window as any).valeEmbedded);
+  if (embedded) {
+    return (
+      <div className="browser-page">
+        <EmbeddedBrowserPane token={token} />
+      </div>
+    );
+  }
   const pw = plugins.playwright;
   const running = !!pw?.running;
   const pending = pw === null;
