@@ -689,6 +689,19 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   typeRoots now points at the package's OWN node_modules/@types (was
   hard-coded to the desktop shell's node_modules, which CI never
   installs). CI-compile simulated clean in a scratch dir.
+  ROUND-300 (2026-09-04, 1.2.275 LIVE on d1): auto-select regression FOUND
+  + FIXED (device-caught by full-suite verification on 1.2.274): mcp e2e
+  "drives embedded view" FAILed while manual browser_tabs worked. connect's
+  embedded-view auto-select saw EMPTY tab lists (diag: "[select] initial
+  tab list text:" blank, 4 retries failed) and left the desktop SPA
+  current — the first browser_navigate drove the SPA instead of the
+  embedded view. ROOT CAUSE: rmcp 2.x CallToolResult serializes as
+  {content:[...]} with NO "result" wrapper; extract_tool_text only parsed
+  /result/content (the round-281/285 shape) — a floating rmcp 2.x upgrade
+  silently broke auto-select. FIX: parse /content too (same shape
+  mcp_client_call handles). +1 test (top-level content). Device-verified:
+  connect -> tabs show embedded view (current) -> navigate reaches marker
+  URL on BOTH transports; full suite 26/26 on 1.2.275.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
