@@ -8,7 +8,6 @@
   "files": [
     "README.md",
     "bin/",
-    "bridge.js",
     "vale-agent.exe",
     "vale-desktop.exe",
     "vale-desktop-electron/src/main.js",
@@ -23,7 +22,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "cd ../vale-desktop-electron && ../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/main.js src/main.js && cp dist/preload.js src/preload.js && cp dist/url-policy.js src/url-policy.js && cp src/main.js src/preload.js src/url-policy.js ../vale-agent-npm/vale-desktop-electron/src/ && cd ../vale-agent-npm && ../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/vale.js bin/vale.js && cd ../resources/browser-bridge && ../../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/bridge.js ../../vale-agent-npm/bridge.js",
+    "build": "cd ../vale-desktop-electron && ../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/main.js src/main.js && cp dist/preload.js src/preload.js && cp dist/url-policy.js src/url-policy.js && cp src/main.js src/preload.js src/url-policy.js ../vale-agent-npm/vale-desktop-electron/src/ && cd ../vale-agent-npm && ../vale-desktop-electron/node_modules/.bin/tsc -p tsconfig.json && cp dist/vale.js bin/vale.js",
     "test": "node --test"
   }
 }

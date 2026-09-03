@@ -396,14 +396,6 @@ const commands = {
     if (fs.existsSync(DESKTOP_SRC)) {
       fs.copyFileSync(DESKTOP_SRC, path.join(DIR, "vale-desktop.new.exe"));
     }
-    // round-137 Plan C: ship bridge.js alongside the exe — otherwise the
-    // device keeps running the old bridge and the new protocol (idle frames /
-    // command receipts) never reaches the device (exe updated but bridge not;
-    // hit on d1).
-    const BRIDGE_SRC = path.join(__dirname, "..", "bridge.js");
-    if (fs.existsSync(BRIDGE_SRC)) {
-      fs.copyFileSync(BRIDGE_SRC, path.join(DIR, "bridge.new.js"));
-    }
     // stage-l: ship the Electron desktop shell's main/preload alongside —
     // the desktop app (D:\Vale\vale-desktop-electron) loads these sources;
     // without the sync, new menu/command features never reach the device.
@@ -423,14 +415,14 @@ const commands = {
     // visible cmd window. Idempotent — overwrites any existing copy.
     const pwDir = path.join(DIR, "playwright");
     const vbsPath = path.join(pwDir, "run-hidden.vbs");
-    // round-246 (browser-display audit C3) + round-257: ONE-BROWSER — the AI
-    // must drive the SAME browser the user watches. Desktop shell = the
-    // embedded WebContentsView (CDP 9333); the plain-web panel screencasts
-    // the bridge chromium (CDP 9223). The ValePlaywright task used to launch
-    // playwright-mcp with --headless (a PRIVATE chromium nobody sees). The
-    // task now goes through a probe launcher that attaches to the DESKTOP
-    // view (9333) first, then the bridge (9223), and falls back to a private
-    // headless only when neither is up (agent restart window).
+    // round-246 (browser-display audit C3) + round-257 + round-263:
+    // ONE-BROWSER — the AI must drive the SAME browser the user watches:
+    // the Electron desktop embedded WebContentsView (CDP 9333). The
+    // ValePlaywright task used to launch playwright-mcp with --headless (a
+    // PRIVATE chromium nobody sees). The task now goes through a probe
+    // launcher that attaches to the DESKTOP view (9333) and falls back to a
+    // private headless only when the desktop is down (agent restart window).
+    // The bridge chromium (9223) tier was removed in round-263.
     const probePath = path.join(pwDir, "playwright-probe.ps1");
     if (fs.existsSync(pwDir)) {
       // round-143: ASCII-only VBS (no em-dash, no Unicode). VBScript on
@@ -449,14 +441,14 @@ const commands = {
           "sh.Run cmd,0,False",
         ].join("\r\n"),
       );
-      // round-246 (C3) + round-257: the probe launcher. ASCII-only, plain
-      // -NoProfile -File (the repo rule: -ExecutionPolicy Bypass /
-      // -EncodedCommand die silently under WMI/session-0 launches). Args:
-      // $node $cli. Probe order matches the agent's preferred_cdp_endpoint():
-      // 9333 (Electron DESKTOP embedded view — what the user watches) first,
-      // then 9223 (bridge chromium), then private --headless only as the
-      // last-resort fallback. --output-dir pins MCP screenshots where the
-      // Evidence drawer lists them (install\pwout).
+      // round-246 (C3) + round-257 + round-263: the probe launcher.
+      // ASCII-only, plain -NoProfile -File (the repo rule: -ExecutionPolicy
+      // Bypass / -EncodedCommand die silently under WMI/session-0 launches).
+      // Args: $node $cli. Probe order matches the agent's
+      // preferred_cdp_endpoint(): 9333 (Electron DESKTOP embedded view —
+      // what the user watches) when up, else private --headless (the
+      // bridge/9223 tier was removed in round-263). --output-dir pins MCP
+      // screenshots where the Evidence drawer lists them (install\pwout).
       fs.writeFileSync(
         probePath,
         [
@@ -475,7 +467,6 @@ const commands = {
           "  return $false",
           "}",
           "if (Test-Port 9333) { $ep = 'http://127.0.0.1:9333' }",
-          "elseif (Test-Port 9223) { $ep = 'http://127.0.0.1:9223' }",
           "if ($ep) {",
           "  & $node $cli --port 9229 --host 127.0.0.1 --cdp-endpoint $ep --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
           "} else {",
@@ -490,15 +481,11 @@ const commands = {
       // first (task end + process kill), THEN swap with retry.
       "try { Stop-ScheduledTask ValeAgent -ErrorAction Stop } catch {}",
       "Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue",
-      // The bridge is a child of the agent (node bridge.js on 9224); killing
-      // the tree frees 9224 so the restarted agent re-spawns the NEW bridge.
-      "Get-Process node -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*vale-agent*' } | Stop-Process -Force -ErrorAction SilentlyContinue",
       "Start-Sleep -Milliseconds 1500",
       "$ok=$false",
       `foreach($i in 1..12){ try { Copy-Item -Force -ErrorAction Stop '${q}\\vale-agent.new.exe' '${q}\\vale-agent.exe'; $ok=$true; break } catch { Start-Sleep -Milliseconds 800 } }`,
       `"[$(Get-Date -Format o)] copy ok=$ok" | ${log}`,
       `Remove-Item -Force -ErrorAction SilentlyContinue '${q}\\vale-agent.new.exe'`,
-      `if (Test-Path '${q}\\bridge.new.js') { Copy-Item -Force '${q}\\bridge.new.js' '${q}\\bridge.js'; Remove-Item -Force '${q}\\bridge.new.js' }`,
       // stage-l: swap the desktop shell sources (main/preload) with retry —
       // the running Electron may hold them briefly.
       `foreach($df in @('main.js','preload.js','url-policy.js')){ $ds='${q}\\vale-desktop-electron\\src\\'+$df+'.new'; if (Test-Path $ds) { $ok2=$false; foreach($i in 1..8){ try { Copy-Item -Force -ErrorAction Stop $ds ('${q}\\vale-desktop-electron\\src\\'+$df); $ok2=$true; break } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item -Force -ErrorAction SilentlyContinue $ds; "[$(Get-Date -Format o)] desk $df ok=$ok2" | ${log} } }`,
@@ -569,9 +556,10 @@ const commands = {
       `    $oldTask = Get-ScheduledTask -TaskName 'ValePlaywright' -ErrorAction SilentlyContinue`,
       `    $pwUser = if ($oldTask) { $oldTask.Principal.UserId } else { (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName -replace '^.*\\\\', '' }`,
       `    try { Unregister-ScheduledTask -TaskName 'ValePlaywright' -Confirm:$false -ErrorAction SilentlyContinue } catch {}`,
-      // round-246 (C3): route through the probe launcher — it attaches to the
-      // bridge's chromium (CDP 9223) when up, so AI actions on 9229 drive the
-      // SAME browser the panel shows (no more invisible private headless).
+      // round-246 (C3) + round-263: route through the probe launcher — it
+      // attaches to the Electron desktop view (CDP 9333) when up, so AI
+      // actions on 9229 drive the SAME browser the user watches (no more
+      // invisible private headless).
       `    $pwPs = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'`,
       `    $pwArgs = '"' + $pwVbs + '" "' + $pwPs + '" -NoProfile -File "' + $pwProbe + '" "' + $pwNode + '" "' + $pwCli + '"'`,
       `    $pwAction = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\\wscript.exe') -Argument $pwArgs`,
