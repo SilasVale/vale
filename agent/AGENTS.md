@@ -374,6 +374,20 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   test-script residuals. After regen + task rerun, playwright-mcp runs with
   --cdp-endpoint http://127.0.0.1:9333 (PID check). Round-246's "AI drives
   what the user sees" architecture now holds end-to-end.
+  ROUND-258 (2026-09-26, 1.2.262 LIVE on d1): MAIN-WINDOW HIJACK fix —
+  device-caught during one-browser verification: an attached playwright
+  (AI) CDP-navigated the MAIN window (Page.navigate bypasses will-navigate)
+  — browser_navigate sent the desktop SPA to qq.com and the panel
+  vanished, surviving electron restarts (session restore racing loadURL).
+  Fix: did-navigate TRIPWIRE on the main window — any landing that is not
+  base origin / wait page / about:blank snaps straight back to the desktop
+  SPA (snappingBack latch prevents loops). DEVICE-VERIFIED: CDP Page.navigate
+  to qq.com -> 6s later the window is back at /desktop/ (SNAPPED_BACK_OK).
+  Also DEVICE-PROVEN this round: playwright-mcp browser_navigate works
+  against Electron 9333 (qq.com loaded via the real MCP path) and
+  playwright connectOverCDP drives the embedded view (goto example.com) —
+  the round-246 one-browser architecture is real, now with the main window
+  protected from AI hijack.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
