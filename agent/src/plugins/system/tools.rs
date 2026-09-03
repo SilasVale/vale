@@ -17,7 +17,7 @@ use vale_agent_core::ToolDef;
 
 use crate::plugins::{require_str, to_value_or_empty};
 
-const MAX_READ_BYTES: u64 = 256 * 1024; // 256 KiB per file_read
+const MAX_READ_BYTES: u64 = 1024 * 1024; // 1 MiB per file_read
 const MAX_WRITE_BYTES: usize = 4 * 1024 * 1024; // 4 MiB per file_write
 const MAX_LIST_ENTRIES: usize = 500;
 
@@ -25,6 +25,7 @@ const MAX_LIST_ENTRIES: usize = 500;
 pub fn build() -> Vec<ToolDef> {
     vec![
         tool_file_list(),
+        tool_file_stat(),
         tool_file_read(),
         tool_file_write(),
         tool_process_list(),
@@ -104,16 +105,52 @@ fn tool_file_list() -> ToolDef {
     )
 }
 
+fn tool_file_stat() -> ToolDef {
+    ToolDef::new(
+        "system_file_stat",
+        "Stat a file or directory on THIS device: size, modified time, kind. Use it BEFORE a transfer to plan paging (system_file_read offset/limit + system_file_write append), or to check a path exists.",
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "File path (absolute recommended)."}
+            },
+            "required": ["path"]
+        }),
+        move |params: Value| {
+            async move {
+                let path = require_str(&params, "path")?;
+                match tokio::fs::metadata(&path).await {
+                    Ok(md) => {
+                        use std::time::UNIX_EPOCH;
+                        let modified = md.modified().ok()
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(0);
+                        Ok(to_value_or_empty(json!({
+                            "ok": true,
+                            "path": path,
+                            "kind": if md.is_dir() { "dir" } else if md.is_file() { "file" } else { "other" },
+                            "size": md.len(),
+                            "modified_ms": modified,
+                        })))
+                    }
+                    Err(e) => Ok(to_value_or_empty(json!({"ok": false, "error": format!("stat {path}: {e}")}))),
+                }
+            }
+        },
+    )
+}
+
 fn tool_file_read() -> ToolDef {
     ToolDef::new(
         "system_file_read",
-        "Read a file on THIS device (the agent host). Returns the content as UTF-8 text (binary files return an error — use a terminal session for binary inspection), capped at 256 KiB. `raw: true` returns base64 for binary-safe reads.",
+        "Read a file on THIS device (the agent host). Returns the content as UTF-8 text (binary files return an error — use a terminal session for binary inspection), capped at 1 MiB. `raw: true` returns base64 for binary-safe reads.",
         json!({
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path (absolute recommended)."},
                 "offset": {"type": "integer", "description": "Byte offset to start from (default 0)."},
-                "limit": {"type": "integer", "description": "Max bytes to read (default 65536, cap 262144)."},
+                "limit": {"type": "integer", "description": "Max bytes to read (default 65536, cap 1048576)."},
                 "raw": {"type": "boolean", "description": "Return base64-encoded raw bytes (for binary files). Default false (text)."}
             },
             "required": ["path"]
@@ -445,4 +482,59 @@ fn tool_net_test() -> ToolDef {
             }
         },
     )
+}
+
+#[cfg(test)]
+mod file_tool_tests {
+    //! round-266: system_file_stat + the read/write paging contract that
+    //! makes bidirectional device file transfer work for AI agents.
+    use super::*;
+    use base64::Engine;
+    use serde_json::json;
+
+    async fn run(tool: &ToolDef, params: serde_json::Value) -> serde_json::Value {
+        tool.handler.call(params).await.unwrap_or_else(|e| json!({"ok": false, "error": e.to_string()}))
+    }
+
+    #[tokio::test]
+    async fn file_stat_reports_size_and_kind() {
+        let tmp = std::env::temp_dir().join(format!("vale-stat-test-{}", std::process::id()));
+        std::fs::write(&tmp, b"hello world").unwrap();
+        let out = run(&tool_file_stat(), json!({ "path": tmp.to_string_lossy() })).await;
+        assert_eq!(out["ok"], true);
+        assert_eq!(out["kind"], "file");
+        assert_eq!(out["size"], 11);
+        assert!(out["modified_ms"].as_i64().unwrap() > 0);
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[tokio::test]
+    async fn file_stat_missing_returns_error() {
+        let out = run(&tool_file_stat(), json!({ "path": "Z:/definitely/not/here.txt" })).await;
+        assert_eq!(out["ok"], false);
+    }
+
+    #[test]
+    fn file_build_includes_stat() {
+        let names: Vec<String> = build().iter().map(|t| t.name.clone()).collect();
+        assert!(names.contains(&"system_file_stat".to_string()));
+        assert_eq!(names.len(), 7);
+    }
+
+    #[tokio::test]
+    async fn write_then_paged_read_roundtrip() {
+        // The AI transfer contract: stat -> paged raw read (or append write).
+        let tmp = std::env::temp_dir().join(format!("vale-paging-test-{}", std::process::id()));
+        let content = vec![b'x'; 200_000]; // 200 KiB
+        let w = run(&tool_file_write(), json!({ "path": tmp.to_string_lossy(), "data": base64::engine::general_purpose::STANDARD.encode(&content) })).await;
+        assert_eq!(w["ok"], true);
+        let r1 = run(&tool_file_read(), json!({ "path": tmp.to_string_lossy(), "offset": 0, "limit": 131072, "raw": true })).await;
+        assert_eq!(r1["ok"], true);
+        assert_eq!(r1["bytes"], 131072);
+        assert_eq!(r1["size"], 200000);
+        let r2 = run(&tool_file_read(), json!({ "path": tmp.to_string_lossy(), "offset": 131072, "limit": 131072, "raw": true })).await;
+        assert_eq!(r2["ok"], true);
+        assert_eq!(r2["bytes"], 200000 - 131072);
+        std::fs::remove_file(&tmp).ok();
+    }
 }
