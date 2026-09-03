@@ -718,6 +718,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   Local tags re-synced (v1.2.272 backup dropped, v1.2.275 backed up).
   Lesson: after manual CDN publishes, mirror to GitHub via the tag API so
   the release chain + keep-latest stay current.
+  ROUND-304 (2026-09-04, 1.2.276 LIVE on d1): /api/status now reports the
+  npm RELEASE version — "version" was the Cargo crate version (1.0.145,
+  protocol anchor) and never changed, so consumers saw 1.0.145 forever
+  while the device ran 1.2.x. status adds "release" = <install>/.vale-
+  release (written by BOTH swap paths, round-298/298b), omitted when
+  absent. Device-verified: version=1.0.145 release=1.2.276.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
