@@ -91,7 +91,11 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
     // EVERY non-POST method. POST is bounded at 60 s (stage-n MEDIUM: the
     // old unbounded POST was a slow-loris vector on blackholed tunnels;
     // idempotency is the caller's concern — they can always retry).
-    resp = await fetchWithTimeout(upstream.toString(), { ...init, headers }, init.method === "POST" ? 60000 : 15000);
+    resp = await fetchWithTimeout(
+      upstream.toString(),
+      { ...init, headers },
+      init.method === "POST" ? 60000 : 15000,
+    );
   } catch (e) {
     return { status: 502, ok: false, error: `Device unreachable: ${(e as Error).message}` };
   }

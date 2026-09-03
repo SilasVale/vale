@@ -82,27 +82,39 @@ impl client::Handler for SshHandler {
         &mut self,
         key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        let fp = fingerprint_of(key);
         // stage-n: the user drives SSH via MCP to devices on the local network
         // — host-key verification blocks legitimate connections when a device's
         // key changes (reinstall, sshd regen). Accept every key (TOFU on first
         // use, update-on-change) and log the change for observability. This
         // matches `ssh -o StrictHostKeyChecking=accept-new` — the password/OTP
         // is the real credential, not the host key.
+        let fp = fingerprint_of(key);
         let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let mut hosts = load_known_hosts_or_empty().map_err(|_| russh::Error::UnknownKey)?;
-        match hosts.get(&self.trust_key) {
+        // Clone the existing fingerprint (if any) so we can release the borrow
+        // on `hosts` before mutating it. Compute the action first — the log
+        // macros borrow `fp`/`old_fp`, so the insert (which moves `fp`) must
+        // happen AFTER logging in its own scope.
+        let existing = hosts.get(&self.trust_key).and_then(|v| v.as_str().map(String::from));
+        let changed = match &existing {
             None => {
-                hosts.insert(self.trust_key.clone(), serde_json::Value::String(fp));
-                let _ = save_known_hosts(&hosts);
                 tracing::info!("[vale-agent] ssh: TOFU trust {} fp={}", self.trust_key, fp);
+                true
             }
-            Some(stored) if stored.as_str() != Some(fp.as_str()) => {
-                hosts.insert(self.trust_key.clone(), serde_json::Value::String(fp));
-                let _ = save_known_hosts(&hosts);
-                tracing::warn!("[vale-agent] ssh: host key CHANGED for {} (old={:?}, new={}) — updated trust", self.trust_key, stored, fp);
+            Some(old_fp) if old_fp != &fp => {
+                tracing::warn!(
+                    "[vale-agent] ssh: host key CHANGED for {} (old={}, new={}) — updated trust",
+                    self.trust_key,
+                    old_fp,
+                    fp
+                );
+                true
             }
-            _ => {}
+            _ => false,
+        };
+        if changed {
+            hosts.insert(self.trust_key.clone(), serde_json::Value::String(fp));
+            let _ = save_known_hosts(&hosts);
         }
         Ok(true)
     }
