@@ -221,7 +221,38 @@ async function sectionMcp() {
 }
 
 // ── 4c. evidence: an AI screenshot lands in pwout and shows in pwshots ────
+// Shared: switch the desktop SPA to the given rail page so the embedded
+// view has non-zero bounds (the WebContentsView is placed only while the
+// Browser page is active — device-caught round-291: screenshot of a
+// hidden view fails with "Cannot take screenshot with 0 width").
+async function spaRailClick(label) {
+  const list = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+  const spa = list.find((t) => t.url.includes('/desktop/'));
+  if (!spa) return false;
+  const ws = new WebSocket(spa.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  const raw = await new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), 15000);
+    const onMsg = (m) => {
+      const o = JSON.parse(m.data);
+      if (o.id === 1) { clearTimeout(t); ws.removeEventListener('message', onMsg); resolve(o); }
+    };
+    ws.addEventListener('message', onMsg);
+    ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: {
+      expression: "(function(){ var bs = document.querySelectorAll('button, [role=button]'); for (var i=0;i<bs.length;i++){ var el = bs[i]; var t = (el.getAttribute('aria-label')||el.title||el.textContent||'').trim(); if (t === '" + label + "' || (t.indexOf('" + label + "') === 0 && t.length < 15)) { el.click(); return 'clicked'; } } return 'no-rail'; })()",
+      returnByValue: true } }));
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  try { ws.close(); } catch (e) {}
+  const v = raw && raw.result && raw.result.result && raw.result.result.value;
+  return v === 'clicked';
+}
+
 async function sectionEvidence() {
+  // 0. the embedded view only has non-zero bounds while the SPA shows the
+  //    Browser page — switch there first so the screenshot can succeed
+  await spaRailClick('Browser');
+  await sleep(2000);
   // 1. AI takes a screenshot of the embedded view (browser_run_script,
   //    screenshot saved into the pwout dir — the round-252 evidence path)
   const name = 'e2e_evidence_' + Date.now() + '.png';
