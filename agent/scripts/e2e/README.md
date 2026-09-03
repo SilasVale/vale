@@ -24,7 +24,20 @@ node e2e.js --token <token> --no-browser           # agent-only, no CDP
 Env: `VALE_AGENT_TOKEN` also works; `--base` overrides the agent URL;
 `VALE_PW_DIR` overrides the playwright dir (default `D:\Vale\playwright`).
 
-Exit code 0 = all selected sections passed.
+Exit code 0 = all selected sections passed. Full run: 14 checks
+(terminal 3, file 3, workflow 6, browser 2).
+
+## Known device quirks (handled by the suite)
+
+- Right after a playwright-driven navigation, the desktop SPA target may
+  answer `Runtime.evaluate` without `result.value` for a few seconds
+  (Electron CDP quirk, observed ~3s → fine at ~8s). The browser section
+  polls generously and tolerates empty responses.
+- Closing a CDP WebSocket immediately after `send` can trip Node's
+  `UV_HANDLE_CLOSING` assert on Windows — the suite waits for the close
+  handshake.
+- Pulling the suite from `raw.githubusercontent.com` can be flaky from d1
+  (remote closed connections); retry, or pin the commit SHA in the URL.
 
 ## Prereqs
 

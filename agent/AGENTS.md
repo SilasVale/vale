@@ -478,6 +478,14 @@ Last updated: 2026-09-04 (round 271 — doc sync: build guide + route map
   endpoints (round-270 only fixed AGENTS.md's copy); AGENTS.md "Last
   updated" line sat at round 87. Both fixed. No stale bridge-era
   description remains in either agent-facing doc's guide sections.
+  ROUND-273 (2026-09-04): REPEATABLE E2E SUITE in the repo — the round-
+  264..268 device verifications were one-off scripts in D:\Vale\pwout.
+  Now agent/scripts/e2e/e2e.js + README: one Node file, sections
+  terminal/file/workflow/browser, each check PASS/FAIL, exit 0 = all
+  passed. DEVICE-VERIFIED on d1: full run 14/14 (terminal 3, file 3,
+  workflow 6, browser 2) incl. browser_run_script driving the embedded
+  view + SPA address-bar sync (Electron CDP evaluate quirk after nav
+  handled by generous polling).
 
 ### Current release
 - npm **1.2.266 LIVE on d1 (round-266)** — bidirectional device file
