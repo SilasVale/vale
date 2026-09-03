@@ -56,6 +56,7 @@ import {
   consumePairCode,
   createWsTicket,
   consumeWsTicket,
+  withKeyLock,
   type Device,
 } from "../store.ts";
 import { parseCookie, randomHex } from "../auth.ts";
@@ -287,20 +288,20 @@ async function handlePairClaim(request: Request, env: any): Promise<Response> {
   if (!c || !(await env.KEYS.get(`pair:${c}`))) {
     return jsonError(403, "Invalid or used pairing code", "authorization_error");
   }
-  // Single-flight: consumePairCode was check-then-act on eventually-
-  // consistent KV — two concurrent claims both passed and minted two
-  // 30-day device-control tokens from one code. A claim lock bounds it.
-  const claim = await env.KEYS.get(`pairclaim:${c}`);
-  if (claim) return jsonError(403, "Pairing code already in use", "authorization_error");
-  await env.KEYS.put(`pairclaim:${c}`, "1", { expirationTtl: 60 });
-  const device = await consumePairCode(env, c);
-  if (!device) {
-    await env.KEYS.delete(`pairclaim:${c}`);
-    return jsonError(403, "Invalid or used pairing code", "authorization_error");
-  }
-  const token = randomHex(16);
-  await addPluginLink(env, token, device);
-  return jsonOk({ token, device });
+  // stage-n M1 fix: wrap the entire claim under withKeyLock(\`pair:${c}\`, ...)
+  // so the get-check-then-delete is atomic across isolates. The old
+  // best-effort pairclaim: KV put had a race window between the pre-check
+  // and the put where two concurrent claims could both read the code and
+  // mint two 30-day device-control tokens from one pairing code.
+  return withKeyLock(`pair:${c}`, async () => {
+    const device = await consumePairCode(env, c);
+    if (!device) {
+      return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    }
+    const token = randomHex(16);
+    await addPluginLink(env, token, device);
+    return jsonOk({ token, device });
+  });
 }
 
 // Extension unpair: revoke the plugin token server-side (local-only unpair

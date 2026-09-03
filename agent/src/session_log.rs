@@ -13,8 +13,10 @@
 //! break the terminal itself.
 
 use std::collections::HashMap;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -378,6 +380,38 @@ impl SessionLogger {
         out
     }
 
+    /// Age of a session file in seconds. Prefers the stored `createdAt` from
+    /// the version header (immune to clock jumps — mtime can jump forward via
+    /// NTP/DST/manual adjust and prune fresh logs as "stale"). Falls back to
+    /// mtime only when the header is missing or corrupt.
+    fn age_of(&self, path: &std::path::Path, meta: &std::fs::Metadata) -> Duration {
+        if let Ok(f) = std::fs::File::open(path) {
+            let mut line = String::with_capacity(256);
+            let mut r = std::io::BufReader::new(f);
+            if r.read_line(&mut line).is_ok() {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(ts) = v.get("createdAt").and_then(|c| c.as_u64()) {
+                        let now_unix = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or(Duration::ZERO);
+                        let created_unix = Duration::from_secs(ts);
+                        return now_unix.checked_sub(created_unix).unwrap_or(Duration::ZERO);
+                    }
+                }
+            }
+        }
+        // Fallback: mtime.
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .unwrap_or(Duration::ZERO);
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO);
+        now_unix.checked_sub(mtime).unwrap_or(Duration::ZERO)
+    }
+
     /// stage-n: retention — delete audit files untouched for longer than
     /// `max_age_days`. Run at STARTUP only (after `recover_interrupted`):
     /// the kill-on-close job (round-134) guarantees the previous agent
@@ -398,13 +432,10 @@ impl SessionLogger {
             let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
             if !(fname.ends_with(".jsonl") || fname.ends_with(".jsonl.tmp")) { continue; }
             let Ok(meta) = entry.metadata() else { continue };
-            let Ok(mtime) = meta.modified() else { continue };
-            let age = match now_unix.checked_sub(
-                mtime.duration_since(std::time::UNIX_EPOCH).unwrap_or(Duration::ZERO)
-            ) {
-                Some(a) => a,
-                None => Duration::ZERO, // clock skew: treat as fresh
-            };
+            // stage-n: use the stored createdAt from the version header instead
+            // of mtime — a forward clock jump (NTP/DST/manual adjust) of >30 days
+            // would otherwise prune FRESH session logs as "stale".
+            let age = self.age_of(&path, &meta);
             if age > max_age && std::fs::remove_file(&path).is_ok() {
                 removed += 1;
             }
