@@ -423,6 +423,14 @@ const commands = {
     // visible cmd window. Idempotent — overwrites any existing copy.
     const pwDir = path.join(DIR, "playwright");
     const vbsPath = path.join(pwDir, "run-hidden.vbs");
+    // round-246 (browser-display audit C3): ONE-BROWSER — the panel
+    // screencasts the BRIDGE's chromium (CDP 9223). The ValePlaywright task
+    // used to launch playwright-mcp with --headless (a PRIVATE chromium the
+    // panel cannot see), so AI clients pointed at 9229 drove a browser that
+    // never appeared in the panel. The task now goes through a probe launcher
+    // that attaches to the bridge when it is up (9223) and falls back to a
+    // private headless only when the bridge is down (agent restart window).
+    const probePath = path.join(pwDir, "playwright-probe.ps1");
     if (fs.existsSync(pwDir)) {
       // round-143: ASCII-only VBS (no em-dash, no Unicode). VBScript on
       // Windows uses the system locale; non-ASCII in comments corrupts the
@@ -438,6 +446,35 @@ const commands = {
           "  cmd=cmd & \" \" & WScript.Arguments(i)",
           "Next",
           "sh.Run cmd,0,False",
+        ].join("\r\n"),
+      );
+      // round-246 (C3): the probe launcher. ASCII-only, plain -NoProfile -File
+      // (the repo rule: -ExecutionPolicy Bypass / -EncodedCommand die silently
+      // under WMI/session-0 launches). Args: $node $cli. Probes the bridge's
+      // CDP (127.0.0.1:9223) with a short TCP connect, then execs playwright-
+      // mcp attached to it (--cdp-endpoint) so the panel's screencast follows
+      // every AI action; --headless is only the fallback when the bridge is
+      // down. --output-dir pins MCP screenshots where the Evidence drawer
+      // lists them (install\pwout), mirroring the agent's own manager spawn.
+      fs.writeFileSync(
+        probePath,
+        [
+          "param([string]$node, [string]$cli)",
+          "$ErrorActionPreference = 'Continue'",
+          "$pwout = Join-Path (Split-Path $node -Parent) '..\\pwout'",
+          "if (!(Test-Path $pwout)) { New-Item -ItemType Directory -Path $pwout -Force | Out-Null }",
+          "$bridgeUp = $false",
+          "try {",
+          "  $c = New-Object System.Net.Sockets.TcpClient",
+          "  $iar = $c.BeginConnect('127.0.0.1', 9223, $null, $null)",
+          "  if ($iar.AsyncWaitHandle.WaitOne(1500)) { $bridgeUp = $c.Connected }",
+          "  $c.Close()",
+          "} catch { $bridgeUp = $false }",
+          "if ($bridgeUp) {",
+          "  & $node $cli --port 9229 --host 127.0.0.1 --cdp-endpoint http://127.0.0.1:9223 --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
+          "} else {",
+          "  & $node $cli --port 9229 --browser chromium --host 127.0.0.1 --headless --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
+          "}",
         ].join("\r\n"),
       );
     }
@@ -513,7 +550,8 @@ const commands = {
       // node.exe no longer allocates a visible console. Idempotent — task may
       // not exist (older install paths), so wrap in try/catch.
       `$pwVbs = '${q}\\playwright\\run-hidden.vbs'`,
-      `if (Test-Path $pwVbs) {`,
+      `$pwProbe = '${q}\\playwright\\playwright-probe.ps1'`,
+      `if ((Test-Path $pwVbs) -and (Test-Path $pwProbe)) {`,
       `  $pwNode = '${q}\\playwright\\node.exe'`,
       `  $pwCli  = '${q}\\playwright\\node_modules\\@playwright\\mcp\\cli.js'`,
       `  if ((Test-Path $pwNode) -and (Test-Path $pwCli)) {`,  // parens: bare -and is a param parse error
@@ -525,14 +563,18 @@ const commands = {
       `    $oldTask = Get-ScheduledTask -TaskName 'ValePlaywright' -ErrorAction SilentlyContinue`,
       `    $pwUser = if ($oldTask) { $oldTask.Principal.UserId } else { (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName -replace '^.*\\\\', '' }`,
       `    try { Unregister-ScheduledTask -TaskName 'ValePlaywright' -Confirm:$false -ErrorAction SilentlyContinue } catch {}`,
-      `    $pwArgs = '"' + $pwVbs + '" "' + $pwNode + '" "' + $pwCli + '" --port 9229 --browser chromium --host 127.0.0.1 --headless --ignore-https-errors --allowed-hosts "127.0.0.1:9229,localhost:9229"'`,
+      // round-246 (C3): route through the probe launcher — it attaches to the
+      // bridge's chromium (CDP 9223) when up, so AI actions on 9229 drive the
+      // SAME browser the panel shows (no more invisible private headless).
+      `    $pwPs = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'`,
+      `    $pwArgs = '"' + $pwVbs + '" "' + $pwPs + '" -NoProfile -File "' + $pwProbe + '" "' + $pwNode + '" "' + $pwCli + '"'`,
       `    $pwAction = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\\wscript.exe') -Argument $pwArgs`,
       `    $pwBoot = New-ScheduledTaskTrigger -AtLogOn`,
       `    $pwWatch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)`,
       `    $pwSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable`,
       `    Register-ScheduledTask -TaskName 'ValePlaywright' -Action $pwAction -Trigger @($pwBoot, $pwWatch) -Principal (New-ScheduledTaskPrincipal -UserId $pwUser -LogonType Interactive -RunLevel Limited) -Settings $pwSettings -Force | Out-Null`,
       `    Start-ScheduledTask -TaskName 'ValePlaywright' | Out-Null`,
-      `    "[$(Get-Date -Format o)] ValePlaywright re-registered (hidden via vbs, user=$pwUser)" | ${log}`,
+      `    "[$(Get-Date -Format o)] ValePlaywright re-registered (probe launcher, user=$pwUser)" | ${log}`,
       `  }`,
       `}`,
     ].join("\r\n");
