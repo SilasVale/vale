@@ -250,26 +250,7 @@ const commands = {
       fs.copyFileSync(CF_SRC, path.join(DIR, "tools", "cloudflared.exe"));
       console.log("setup: cloudflared staged (tunnel optional — `vale tunnel install` to enable)");
     }
-    // round-desktop: ship the vale-desktop shell (Tauri 2) alongside the
-    // agent — a portable exe, no installer needed (WebView2 ships with
-    // Win10/11). setup copies it and creates a desktop shortcut so the user
-    // gets an app-like entry (tray + independent window over /desktop/).
-    const DESKTOP_SRC = path.join(__dirname, "..", "vale-desktop.exe");
-    if (fs.existsSync(DESKTOP_SRC)) {
-      fs.copyFileSync(DESKTOP_SRC, path.join(DIR, "vale-desktop.exe"));
-      const q = DIR.replace(/'/g, "''");
-      ps(
-        [
-          "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\\Vale.lnk')",
-          `$s.TargetPath='${q}\\vale-desktop.exe'`,
-          `$s.WorkingDirectory='${q}'`,
-          "$s.Save()",
-        ].join("; ")
-      );
-      console.log("setup: vale-desktop installed + desktop shortcut created");
-    } else {
-      console.log("setup: vale-desktop not in package (skipped)");
-    }
+    // round-330: Tauri vale-desktop staging removed (retired).
     // stage-l: stage the Electron shell sources (main/preload) so the desktop
     // app picks up menu/command features on a fresh install too.
     const DESK_SRC = path.join(__dirname, "..", "vale-desktop-electron", "src");
@@ -390,12 +371,6 @@ const commands = {
     }
     fs.mkdirSync(DIR, { recursive: true });
     fs.copyFileSync(EXE_SRC, path.join(DIR, "vale-agent.new.exe"));
-    // round-desktop: keep the desktop shell in sync on update too (portable
-    // exe; harmless when absent).
-    const DESKTOP_SRC = path.join(__dirname, "..", "vale-desktop.exe");
-    if (fs.existsSync(DESKTOP_SRC)) {
-      fs.copyFileSync(DESKTOP_SRC, path.join(DIR, "vale-desktop.new.exe"));
-    }
     // stage-l: ship the Electron desktop shell's main/preload alongside —
     // the desktop app (D:\Vale\vale-desktop-electron) loads these sources;
     // without the sync, new menu/command features never reach the device.
