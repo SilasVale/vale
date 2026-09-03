@@ -503,6 +503,24 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
     {
         let _ = writeln!(f, "{line}");
     }
+    // round-252: event-driven AI-actions feed — panels refresh on this push
+    // instead of polling actions.jsonl.
+    notify_actions_changed();
+}
+
+/// round-252: module-level event bus for the event-driven actions feed. Set
+/// once by McpClientPlugin (the registry owns the real bus); the tools emit
+/// `browser-actions-changed` after recording an action or screenshot.
+static ACTIONS_BUS: std::sync::OnceLock<std::sync::Arc<dyn vale_agent_core::EventBus>> = std::sync::OnceLock::new();
+
+pub(crate) fn set_actions_bus(bus: std::sync::Arc<dyn vale_agent_core::EventBus>) {
+    let _ = ACTIONS_BUS.set(bus);
+}
+
+fn notify_actions_changed() {
+    if let Some(bus) = ACTIONS_BUS.get() {
+        bus.emit_term_output(serde_json::json!({ "ev": "browser-actions-changed" }));
+    }
 }
 
 /// round-246 (B5 part 2): append an action-timeline line that LINKS a real
@@ -539,6 +557,8 @@ fn record_mcp_screenshot(dst: &std::path::Path) {
     {
         let _ = writeln!(f, "{line}");
     }
+    // round-252: event-driven actions feed (screenshots refresh the drawer).
+    notify_actions_changed();
 }
 
 async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), DeviceError> {

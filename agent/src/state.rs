@@ -68,7 +68,7 @@ fn build_registry(deps: &RegistryDeps) -> PluginRegistry {
         deps.buffer_limit.clone(),
     )));
     registry.register(Box::new(UpdatePlugin::new(deps.download_url.clone())));
-    registry.register(Box::new(McpClientPlugin::new()));
+    registry.register(Box::new(McpClientPlugin::new(deps.event_bus.clone() as Arc<dyn EventBus>)));
     registry.register(Box::new(DesignPlugin::new(deps.console_url.clone(), deps.download_url.clone())));
     registry.register(Box::new(PlaywrightPlugin::new(deps.playwright.clone())));
     registry.register(Box::new(MemoryPlugin::new(deps.memory.clone())));

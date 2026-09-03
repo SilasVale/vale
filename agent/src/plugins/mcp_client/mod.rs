@@ -14,18 +14,23 @@ pub(crate) mod tools;
 
 use vale_agent_core::ToolDef;
 
-/// Plugin struct — stateless; tools close over shared connection state.
+/// Plugin struct — tools close over shared connection state; the event bus
+/// powers the round-252 event-driven AI-actions feed (panels refresh on the
+/// `browser-actions-changed` push instead of polling actions.jsonl). The bus
+/// is handed to tools::set_actions_bus (module OnceLock); the plugin itself
+/// stays stateless.
 pub struct McpClientPlugin;
 
 impl McpClientPlugin {
-    pub fn new() -> Self {
+    pub fn new(bus: std::sync::Arc<dyn vale_agent_core::EventBus>) -> Self {
+        tools::set_actions_bus(bus);
         Self
     }
 }
 
 impl Default for McpClientPlugin {
     fn default() -> Self {
-        Self::new()
+        Self::new(std::sync::Arc::new(vale_agent_core::AppEventBus::new()))
     }
 }
 

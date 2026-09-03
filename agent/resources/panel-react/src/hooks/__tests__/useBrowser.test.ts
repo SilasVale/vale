@@ -142,4 +142,39 @@ describe("useBrowser", () => {
     act(() => { ws.onmessage({ data: new Blob(["frame3"], { type: "image/jpeg" }) }); });
     expect(focusMock).toHaveBeenCalledTimes(1);
   });
+
+  it("refreshes the actions feed on a browser-actions-changed SSE push (round-252)", async () => {
+    // /api/events streams a browser-actions-changed frame; the feed must
+    // refetch /api/browser/actions IMMEDIATELY (event-driven, not waiting
+    // for the 3s safety-net poll).
+    let actionsFetches = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/browser/ws-ticket")) {
+        return new Response(JSON.stringify({ ticket: "t1" }), { status: 200 });
+      }
+      if (url.includes("/api/browser/pwshots")) {
+        return new Response(JSON.stringify({ shots: [] }), { status: 200 });
+      }
+      if (url.includes("/api/browser/actions")) {
+        actionsFetches += 1;
+        return new Response(JSON.stringify({ actions: [] }), { status: 200 });
+      }
+      if (url.includes("/api/events")) {
+        // A stream that emits one browser-actions-changed frame then holds.
+        const enc = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(enc.encode('data: {"ev":"browser-actions-changed"}\n\n'));
+          },
+        });
+        return new Response(stream, { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    renderHook(() => useBrowser({ apiBase: "", token: "t" }));
+    // Wait for the SSE connection + the pushed event to trigger a refetch.
+    await waitFor(() => expect(actionsFetches).toBeGreaterThanOrEqual(1), { timeout: 3000 });
+  });
 });

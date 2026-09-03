@@ -384,9 +384,11 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
 
   const auth = useCallback(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  // ---- Evidence + AI-activity polling (round-154, extended round-160) ----
-  // Runs in BOTH views: the evidence timeline needs the shots, and the live
-  // view derives the "AI is operating" indicator from the newest mtime.
+  // ---- Evidence + AI-activity feed (round-154; round-252 event-driven) ----
+  // The agent emits `browser-actions-changed` on the SSE channel whenever an
+  // MCP browser action/screenshot is recorded — the feed refreshes on that
+  // push so AI activity appears INSTANTLY. The 3s interval stays only as a
+  // safety net for events that arrive while the SSE channel is down.
   useEffect(() => {
     let alive = true;
     const tick = async () => {
@@ -424,7 +426,7 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
           shotUrlsRef.current = next;
           return next;
         });
-        // P2: AI-action timeline rides the same poll (independent failure —
+        // P2: AI-action timeline rides the same refresh (independent failure —
         // the actions feed is additive and may lag the shots feed).
         fetch(`${apiBase}/api/browser/actions`, { headers: auth() })
           .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
@@ -436,8 +438,58 @@ export function useBrowser({ apiBase, token }: UseBrowserOpts) {
     };
     void tick();
     const t = window.setInterval(tick, POLL_MS);
-    return () => { alive = false; window.clearInterval(t); };
-  }, [apiBase, auth]);
+    // round-252: event-driven refresh — the agent pushes browser-actions-
+    // changed (and playwright-changed) on /api/events when an MCP browser
+    // action/screenshot is recorded. EventSource cannot send the Bearer
+    // header, so use the fetch+ReadableStream pattern (same as useSSE).
+    let evtAbort: AbortController | null = null;
+    let evtRetry = 0;
+    let evtDead = false;
+    const evtConnect = async () => {
+      if (evtDead) return;
+      try {
+        const ctl = new AbortController();
+        evtAbort = ctl;
+        const timer = setTimeout(() => ctl.abort(), 30000);
+        const res = await fetch(`${apiBase}/api/events`, {
+          headers: { authorization: `Bearer ${token}` },
+          signal: ctl.signal,
+        }).finally(() => clearTimeout(timer));
+        if (!res.ok || !res.body) throw new Error(String(res.status));
+        evtRetry = 0;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (!evtDead) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const line = frame.split("\n").find((l) => l.startsWith("data: "));
+            if (!line) continue;
+            try {
+              const o = JSON.parse(line.slice(6));
+              if (o?.ev === "browser-actions-changed" || o?.ev === "playwright-changed") void tick();
+            } catch { /* non-JSON keepalive */ }
+          }
+        }
+      } catch { /* fall through to retry */ }
+      if (!evtDead) {
+        evtRetry = Math.min(evtRetry + 1, 5);
+        setTimeout(evtConnect, Math.min(2000 * 2 ** evtRetry, 30000));
+      }
+    };
+    void evtConnect();
+    return () => {
+      alive = false;
+      evtDead = true;
+      window.clearInterval(t);
+      try { evtAbort?.abort(); } catch { /* noop */ }
+    };
+  }, [apiBase, auth, token]);
 
   // Resolve a shot NAME (selected, stale-free UI identity) to the current
   // cache key name:mtime used by the poll (client-review fix 6).
