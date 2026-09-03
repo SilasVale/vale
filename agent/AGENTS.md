@@ -456,6 +456,11 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   CommonJS script connectOverCDP 9333, drove the embedded view to
   example.com, returned TITLE/URL/exit 0; SPA address bar SYNCED to
   example.com (user sees what the AI drives). Both key AI paths clean.
+  ROUND-269 (2026-09-04): bridge-removal (round-263) DEVICE-VERIFIED on
+  d1: probe script has NO 9223 (9333 + Test-Port only); running exe has NO
+  '127.0.0.1:9223' string (9333 present); the live playwright-mcp attaches
+  --cdp-endpoint http://127.0.0.1:9333 (not headless). The 9223 tier is
+  fully gone on the device — attach chain is 9333 -> headless only.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
