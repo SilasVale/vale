@@ -127,6 +127,9 @@ async function sectionWorkflow() {
   check('workflow memory_save', !!(ms && ms.ok !== false && ms.id), 'id=' + (ms && ms.id));
   const mq = await tool('memory_search', { query: 'E2E suite marker' });
   check('workflow memory_search', !!(mq && mq.results && mq.results.length > 0), 'hits=' + (mq && mq.results && mq.results.length));
+  // self-clean: delete the marker so repeated runs don't accumulate entries
+  // (device-caught round-294: memory_search hits grew across runs)
+  if (ms && ms.id) await tool('memory_delete', { id: ms.id }).catch(() => {});
   require('fs').unlinkSync('D:\\Vale\\pwout\\e2e_wf.json');
 }
 
