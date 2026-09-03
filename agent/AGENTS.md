@@ -789,6 +789,10 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   suite (1 node proc, 5 electron, no e2e png leftovers — pwout holds only
   real operation evidence), e2e.js identical across repo/GitHub/device
   (24048B @ a6a2bd84).
+  ROUND-315 (2026-09-04): full 30-check e2e suite verified on 1.2.278 —
+  terminal/file/workflow 12 + mcp 12 (incl. the round-313 click
+  interaction) + panel/evidence/browser 6. All green; the expanded suite
+  runs clean end-to-end on the current release.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
