@@ -8,13 +8,9 @@ use vale_agent_core::{DeviceError, ToolDef};
 /// `Local(path)`  = this agent's own HTTP surface at host:port (no tunnel).
 /// `Remote(url)`  = the deployed worker pages (console / download site) so
 ///                  the AI sees the REAL production design, not a mirror.
-/// `Embedded(src)`= static files that are not served anywhere (extension
-///                  popup/options CSS) — embedded at compile time so the
-///                  design is inspectable without a browser on the device.
 enum PageSource {
     Local(&'static str),
     Remote(&'static str),
-    Embedded(&'static str),
 }
 const PAGES: &[(&str, PageSource)] = &[
     ("status", PageSource::Local("/")),
@@ -26,15 +22,9 @@ const PAGES: &[(&str, PageSource)] = &[
     ("console", PageSource::Remote("https://api.saisi.online/")),
     ("console-css", PageSource::Remote("https://api.saisi.online/style.css")),
     ("download", PageSource::Remote("https://agent.saisi.online/")),
-    ("popup-css", PageSource::Embedded(include_str!("../../../../extension/popup/popup.css"))),
-    ("popup-html", PageSource::Embedded(include_str!("../../../../extension/popup/popup.html"))),
-    ("options-css", PageSource::Embedded(include_str!("../../../../extension/options/options.css"))),
-    ("options-html", PageSource::Embedded(include_str!("../../../../extension/options/options.html"))),
-    ("terminal-css", PageSource::Embedded(include_str!("../../../../extension/terminal/terminal.css"))),
-    ("terminal-html", PageSource::Embedded(include_str!("../../../../extension/terminal/terminal.html"))),
-    ("terminal-js", PageSource::Embedded(include_str!("../../../../extension/terminal/terminal.js"))),
-    ("popup-js", PageSource::Embedded(include_str!("../../../../extension/popup/popup.js"))),
-    ("options-js", PageSource::Embedded(include_str!("../../../../extension/options/options.js"))),
+    // round-262 (user: extension unused): the Vale Browser Control extension
+    // (popup/options/terminal) was removed — its Embedded page entries went
+    // with it. PAGES now covers the agent + deployed console/download only.
 ];
 
 /// Max bytes returned per page — enough to see tokens/structure without
@@ -170,34 +160,25 @@ pub fn page_view(console_url: Option<String>, download_url: Option<String>) -> T
                 _ => None,
             };
 
-            // Embedded pages (extension popup/options CSS) are compile-time
-            // constants — no fetch needed.
             let url = match source {
                 PageSource::Local(p) => format!("http://{host}:{port}{p}"),
                 PageSource::Remote(u) => remote_url.unwrap_or_else(|| u.to_string()),
-                PageSource::Embedded(_) => String::new(),
             };
-            let (body, truncated): (String, bool) = match source {
-                PageSource::Embedded(s) => ((*s).to_string(), false),
-                _ => {
-                    // Local static pages need no auth (the panel HTML is
-                    // public; the token is injected server-side, the static
-                    // file itself has no secrets). Remote pages are the
-                    // public console/download sites — no credentials needed.
-                    let resp = reqwest::Client::builder()
-                        .timeout(std::time::Duration::from_secs(10))
-                        .build()
-                        .map_err(|e| DeviceError::Internal { message: format!("client: {e}") })?
-                        .get(&url)
-                        .send()
-                        .await
-                        .map_err(|e| DeviceError::Internal { message: format!("fetch {url}: {e}") })?;
-                    let body = resp.text().await
-                        .map_err(|e| DeviceError::Internal { message: format!("read {url}: {e}") })?;
-                    let len = body.len();
-                    (body, len > MAX_PAGE_BYTES)
-                }
-            };
+            // Local static pages need no auth (the panel HTML is public;
+            // the token is injected server-side, the static file itself has
+            // no secrets). Remote pages are public console/download sites.
+            let resp = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .map_err(|e| DeviceError::Internal { message: format!("client: {e}") })?
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| DeviceError::Internal { message: format!("fetch {url}: {e}") })?;
+            let body = resp.text().await
+                .map_err(|e| DeviceError::Internal { message: format!("read {url}: {e}") })?;
+            let len = body.len();
+            let truncated = len > MAX_PAGE_BYTES;
             // Redact any injected device token before returning: the panel
             // HTML embeds window.__PANEL_TOKEN__ = "<token>", which a design
             // review must never see (a leaked review output = device control).
