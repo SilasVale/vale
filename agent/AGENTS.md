@@ -686,6 +686,14 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   12 + panel/evidence/browser 6 — all PASS, exit 0). Device hygiene:
   1 node + 5 electron, 0 e2e png leftovers (self-cleaning), release
   1.2.278. Repo-side cleanup caused ZERO product regressions.
+  ROUND-335 (2026-09-04): stale-doc sweep — agent/README.md DELETED
+  (retired Vale Command era: vale-tray build steps for a deleted crate,
+  stale module map; no refs, zero unique info). gateway/
+  DEVICE-INTEGRATION.md marked SUPERSEDED (2026-08 extension-era v2
+  design) with banner → current design is
+  docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md; root
+  AGENTS.md/CLAUDE.md design-doc refs updated. docs/research/* keep
+  their Tauri-era notes (historical research records).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
