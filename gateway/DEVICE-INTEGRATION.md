@@ -1,6 +1,15 @@
+> **SUPERSEDED (2026-09-04, round-335)** — this v2 design (browser
+> extension + chrome.debugger + vale-tray) describes the 2026-08 era.
+> Current architecture: the Electron desktop shell
+> (`agent/vale-desktop-electron/`, embedded WebContentsView on CDP 9333)
+> replaced the extension's browser control and the tray; the gateway
+> `/mcp` proxy + device registry still apply. See `agent/AGENTS.md` and
+> `docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md` for the
+> current design. Kept as an architecture-history record.
+
 # Vale device control — Vale Gate + browser extension (v2)
 
-> Status: **implemented** (monorepo `gateway/` + `extension/` + `agent/`)
+> Status: **superseded** (was implemented 2026-08-06; see banner above)
 > Date: 2026-08-06 (v2 — browser extension + chrome.debugger replaces the 2026-08-02 design: web panel, remote CDP, panel-only proxy)
 
 ## Background & goal
