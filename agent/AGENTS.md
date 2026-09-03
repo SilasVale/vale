@@ -617,6 +617,13 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   string probes must use CODE strings, not comments (Rust comments never
   reach the exe — "exposes browser_tabs" was a comment and correctly
   absent). Device fully consistent with the CI-built release.
+  ROUND-291 (2026-09-04): e2e evidence section hardened x2 (device-caught):
+  (1) it never self-cleaned its screenshot (terminal/file sections do) —
+  now unlinks after the pwshots check; (2) the embedded WebContentsView
+  has ZERO bounds unless the SPA shows the Browser page, so screenshots
+  failed with "Cannot take screenshot with 0 width" — the section now
+  clicks the Browser rail (SPA CDP eval, shared spaRailClick helper)
+  before shooting. Device-verified: evidence 2/2 + leftover 0.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
