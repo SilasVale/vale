@@ -585,11 +585,21 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   (mcp-autoselect URL reached), evidence pwshots, browser SPA-bar sync.
   Evidence test shots cleaned up. All display + drive paths green on the
   current release.
+  ROUND-285 (2026-09-04, 1.2.272 LIVE on d1): http-transport connect now
+  auto-selects the embedded-view tab too (round-281 covered only stdio).
+  connect_http had the same default-tab-0 problem via the legacy 9229
+  playwright-mcp. The select runs ONLY when the desktop CDP is up AND the
+  connected server exposes browser_tabs (i.e. it IS a playwright-mcp
+  driving the desktop) — foreign MCP servers never receive the call.
+  DEVICE-VERIFIED on d1: connect transport=http (9229) -> immediate
+  browser_navigate reached example.com/http-autoselect-test on the
+  embedded view. 204/204 tests.
 
 ### Current release
-- npm **1.2.271 LIVE on d1 (round-281)** — MCP stdio connect auto-selects
-  the embedded-view tab (3s settle for the playwright-mcp browser attach,
-  then list + select) so AI navigation drives the page the user watches.
+- npm **1.2.272 LIVE on d1 (round-285)** — MCP connect auto-selects the
+  embedded-view tab on BOTH transports (stdio 1.2.271 + http 1.2.272:
+  desktop-CDP + browser_tabs guard) so AI navigation drives the page the
+  user watches.
   Earlier: 1.2.267 (round-274) hidden-window render fix; E2E suite
   agent/scripts/e2e/e2e.js 22/22 on d1 (terminal/file/workflow/panel/
   mcp/evidence/browser sections).
