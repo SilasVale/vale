@@ -478,13 +478,14 @@ const commands = {
         // visible cmd window. Idempotent — overwrites any existing copy.
         const pwDir = path.join(DIR, "playwright");
         const vbsPath = path.join(pwDir, "run-hidden.vbs");
-        // round-246 (browser-display audit C3): ONE-BROWSER — the panel
-        // screencasts the BRIDGE's chromium (CDP 9223). The ValePlaywright task
-        // used to launch playwright-mcp with --headless (a PRIVATE chromium the
-        // panel cannot see), so AI clients pointed at 9229 drove a browser that
-        // never appeared in the panel. The task now goes through a probe launcher
-        // that attaches to the bridge when it is up (9223) and falls back to a
-        // private headless only when the bridge is down (agent restart window).
+        // round-246 (browser-display audit C3) + round-257: ONE-BROWSER — the AI
+        // must drive the SAME browser the user watches. Desktop shell = the
+        // embedded WebContentsView (CDP 9333); the plain-web panel screencasts
+        // the bridge chromium (CDP 9223). The ValePlaywright task used to launch
+        // playwright-mcp with --headless (a PRIVATE chromium nobody sees). The
+        // task now goes through a probe launcher that attaches to the DESKTOP
+        // view (9333) first, then the bridge (9223), and falls back to a private
+        // headless only when neither is up (agent restart window).
         const probePath = path.join(pwDir, "playwright-probe.ps1");
         if (fs.existsSync(pwDir)) {
             // round-143: ASCII-only VBS (no em-dash, no Unicode). VBScript on
@@ -500,28 +501,33 @@ const commands = {
                 "Next",
                 "sh.Run cmd,0,False",
             ].join("\r\n"));
-            // round-246 (C3): the probe launcher. ASCII-only, plain -NoProfile -File
-            // (the repo rule: -ExecutionPolicy Bypass / -EncodedCommand die silently
-            // under WMI/session-0 launches). Args: $node $cli. Probes the bridge's
-            // CDP (127.0.0.1:9223) with a short TCP connect, then execs playwright-
-            // mcp attached to it (--cdp-endpoint) so the panel's screencast follows
-            // every AI action; --headless is only the fallback when the bridge is
-            // down. --output-dir pins MCP screenshots where the Evidence drawer
-            // lists them (install\pwout), mirroring the agent's own manager spawn.
+            // round-246 (C3) + round-257: the probe launcher. ASCII-only, plain
+            // -NoProfile -File (the repo rule: -ExecutionPolicy Bypass /
+            // -EncodedCommand die silently under WMI/session-0 launches). Args:
+            // $node $cli. Probe order matches the agent's preferred_cdp_endpoint():
+            // 9333 (Electron DESKTOP embedded view — what the user watches) first,
+            // then 9223 (bridge chromium), then private --headless only as the
+            // last-resort fallback. --output-dir pins MCP screenshots where the
+            // Evidence drawer lists them (install\pwout).
             fs.writeFileSync(probePath, [
                 "param([string]$node, [string]$cli)",
                 "$ErrorActionPreference = 'Continue'",
                 "$pwout = Join-Path (Split-Path $node -Parent) '..\\pwout'",
                 "if (!(Test-Path $pwout)) { New-Item -ItemType Directory -Path $pwout -Force | Out-Null }",
-                "$bridgeUp = $false",
-                "try {",
-                "  $c = New-Object System.Net.Sockets.TcpClient",
-                "  $iar = $c.BeginConnect('127.0.0.1', 9223, $null, $null)",
-                "  if ($iar.AsyncWaitHandle.WaitOne(1500)) { $bridgeUp = $c.Connected }",
-                "  $c.Close()",
-                "} catch { $bridgeUp = $false }",
-                "if ($bridgeUp) {",
-                "  & $node $cli --port 9229 --host 127.0.0.1 --cdp-endpoint http://127.0.0.1:9223 --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
+                "$ep = ''",
+                "function Test-Port([int]$port) {",
+                "  try {",
+                "    $c = New-Object System.Net.Sockets.TcpClient",
+                "    $iar = $c.BeginConnect('127.0.0.1', $port, $null, $null)",
+                "    if ($iar.AsyncWaitHandle.WaitOne(1500)) { return $c.Connected }",
+                "    $c.Close()",
+                "  } catch { }",
+                "  return $false",
+                "}",
+                "if (Test-Port 9333) { $ep = 'http://127.0.0.1:9333' }",
+                "elseif (Test-Port 9223) { $ep = 'http://127.0.0.1:9223' }",
+                "if ($ep) {",
+                "  & $node $cli --port 9229 --host 127.0.0.1 --cdp-endpoint $ep --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
                 "} else {",
                 "  & $node $cli --port 9229 --browser chromium --host 127.0.0.1 --headless --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
                 "}",
