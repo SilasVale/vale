@@ -250,6 +250,25 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   1.2.241 — two bridge/agent fixes (242/243) behind. Full diagnostics from 2
   parallel audit subagents; all fixes committed + tests green (197 rust / 80
   panel); 1.2.244 = exe rebuild with fixed embedded panel + new bridge.
+  ROUND-246 (2026-09-26, 1.2.245 staged): display-path backlog + REAL
+  browser. User direction: "面板要像真实浏览器一样清晰,不要截图流,不要
+  业务轮询" -> (1) EMBEDDED REAL BROWSER (feat 11aff3a2): Electron shell's
+  Browser page now renders a sandboxed WebContentsView over the SPA slot -
+  GPU-composited vector text, CDP target on :9333 (SAME endpoint AI drives:
+  one browser, zero JPEG). Main-process manager + window.valeEmbedded IPC
+  (navigate/place/state, frameOk-gated) + EmbeddedBrowserPane (bounds via
+  ResizeObserver, event-driven) + BrowserPage branch (plain browsers keep
+  the screenshot stream as fallback). (2) Bridge JPEG q92 for the fallback
+  only (bd722b81). (3) C3: ValePlaywright task now probes 9223 and attaches
+  --cdp-endpoint when the bridge is up (playwright-probe.ps1; 1f52233b).
+  (4) HIGH-3 paged adopt-read (a8ce8c3d) so big AI terminal sessions never
+  lose their head (pure helper lib/terminalAdopt.ts + 8 tests). (5) B1
+  bridge per-socket ping/pong watchdog reaps ws_relay zombies (f503d614).
+  (6) B5 part 2: MCP screenshot action lines link real shots (d35686dc).
+  Rust 197 / panel 90 green. Still OPEN: embedded view must be DEVICE-
+  VERIFIED on d1 (WebContentsView overlaying the SPA slot, AI driving the
+  same target); AI drive-path switch (playwright target = embedded view);
+  ValePlaywright task re-register on d1 via next `vale update`.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
