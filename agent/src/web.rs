@@ -583,51 +583,6 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         return sse_term_stream(state).await;
     }
 
-    // Browser bridge proxy (round-135): pull latest JPEG frame / push input
-    // events to the device-local bridge on 127.0.0.1:9224. Standard bearer
-    // gate applies (both paths start with /api). frame = GET only; input
-    // accepts GET (?d=json) and POST (JSON body, round-153: the manual probe
-    // panel navigates via POST /api/browser/input).
-    if (method == Method::GET && (path == "/api/browser/frame" || path == "/api/browser/input"))
-        || (method == Method::POST && path == "/api/browser/input")
-    {
-        if let Err(resp) = check_auth(&req, &state) { return *resp; }
-        let q = req.uri().query().map(|q| q.to_string());
-        let q = q.as_deref().map(|q| format!("?{}", q)).unwrap_or_default();
-        let sub = if path.ends_with("frame") { "/frame" } else { "/input" };
-        let cli = match reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
-            .build() {
-            Ok(c) => c,
-            Err(_) => return built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge client")),
-        };
-        let url = format!("http://127.0.0.1:9224{}{}", sub, q);
-        let fut = if method == Method::POST {
-            let body_bytes = match axum::body::to_bytes(req.into_body(), 64 * 1024).await {
-                Ok(b) => b,
-                Err(_) => return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("bad body")),
-            };
-            cli.post(url).header("content-type", "application/json").body(body_bytes.to_vec())
-        } else {
-            cli.get(url)
-        };
-        return match fut.send().await {
-            Ok(up) => {
-                let st = StatusCode::from_u16(up.status().as_u16()).unwrap_or(StatusCode::OK);
-                // built_response takes &'static str — bridge only emits these two.
-                let ct: &'static str = if sub == "/frame" { "image/jpeg" } else { "application/json" };
-                let body = up.bytes().await.unwrap_or_default();
-                let mut resp = built_response(st, ct, Body::from(body));
-                resp.headers_mut().insert(
-                    axum::http::HeaderName::from_static("cache-control"),
-                    axum::http::HeaderValue::from_static("no-store"),
-                );
-                resp
-            }
-            Err(_) => built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge down")),
-        };
-    }
-
     // round-152: AI browser evidence stream — list + fetch screenshots from
     // the pwout dir (browser_run_script & playwright scripts drop screenshots
     // here). The panel polls pwshots and shows new PNGs as the AI works,
@@ -693,65 +648,6 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     }
 
     // round-137 Plan C: interactive-browser WebSocket relay. MUST sit before
-    // the standard auth gate — browsers cannot attach an Authorization header
-    // to a WebSocket handshake, so auth is the one-time ?ticket= minted by
-    // POST /api/browser/ws-ticket (Bearer-gated below). Raw byte pipe both
-    // ways; framing belongs to the two ends (browser ↔ bridge.js).
-    if method == Method::GET && path == "/api/browser/ws" {
-        let mut req = req;
-        // stage-n (ws_relay review): validate the WS handshake BEFORE
-        // redeeming the ticket — hyper inserts OnUpgrade on every HTTP/1
-        // request, so a plain GET previously burned a ticket (and dialled the
-        // bridge) for a non-upgrading request.
-        let hdrs = req.headers();
-        let upgrade_ws = hdrs
-            .get("upgrade")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.eq_ignore_ascii_case("websocket"))
-            .unwrap_or(false);
-        let connection_ok = hdrs
-            .get("connection")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("upgrade")))
-            .unwrap_or(false);
-        let version_ok = hdrs
-            .get("sec-websocket-version")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v == "13")
-            .unwrap_or(false);
-        if !(upgrade_ws && connection_ok && version_ok) {
-            return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("not a websocket handshake"));
-        }
-        let Some(key) = hdrs
-            .get("sec-websocket-key")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.to_string())
-        else {
-            return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("not a websocket handshake"));
-        };
-        // hyper places the pending upgrade handle in the request extensions;
-        // take it out (same move as axum ws), and after returning 101 the
-        // spawned task takes over the raw IO.
-        let Some(on_upgrade) = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>() else {
-            return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("upgrade unsupported"));
-        };
-        // Ticket redeemed LAST — every cheap rejection above leaves it usable.
-        let query = req.uri().query().map(|q| q.to_string());
-        let ticket = query.as_deref().and_then(|q| query_param(Some(q), "ticket")).unwrap_or("");
-        if !crate::ws_relay::redeem_ticket(ticket) {
-            return built_response(StatusCode::FORBIDDEN, "text/plain", Body::from("invalid or expired ticket"));
-        }
-        return match crate::ws_relay::relay_to_bridge(key, on_upgrade).await {
-            Ok(resp) => resp,
-            // Static body (review: internal error strings were echoed to the
-            // caller); the real cause goes to the durable log.
-            Err(e) => {
-                tracing::warn!(target: "ws_relay", "bridge relay refused: {e}");
-                built_response(StatusCode::BAD_GATEWAY, "text/plain", Body::from("bridge unavailable"))
-            }
-        };
-    }
-
     // Terminal panel + desktop shell (static SPA, public like the status page
     // — it shows no data until the user enters the device token). Assets are
     // embedded at compile time from resources/panel/. /desktop/ is the
@@ -921,20 +817,6 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let result: serde_json::Value = match (method.as_str(), path.as_str()) {
         ("GET", "/api/spec") => api_spec(&state),
         ("GET", "/api/status") => api_status(&state).await,
-        // round-137 Plan C: mint a one-time WS relay ticket. Bearer-gated
-        // like every other /api route; the ticket itself is what the browser
-        // WebSocket handshake presents (?ticket=), keeping the long-lived
-        // device token out of URLs entirely.
-        ("POST", "/api/browser/ws-ticket") => match crate::ws_relay::issue_ticket() {
-            Some(t) => serde_json::json!({ "ok": true, "ticket": t }),
-            None => {
-                return built_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "application/json",
-                    Body::from(r#"{"ok":false,"error":"ws ticket budget exceeded"}"#),
-                )
-            }
-        },
         // Audit trail: session list with terminal state (round-56). The
         // logger lives in the terminal plugin's private field — read the
         // same directory directly (cheap: one file per session).

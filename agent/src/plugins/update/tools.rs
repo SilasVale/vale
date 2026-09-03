@@ -98,14 +98,10 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8]) -> bool {
         if std::fs::copy(&pkg_exe, &new_exe).is_err() {
             return false;
         }
-        // Also stage the desktop shell + bridge if present (keep in sync).
+        // Also stage the desktop shell if present (keep in sync).
         let pkg_desktop = extract.join("package").join("vale-desktop.exe");
         if pkg_desktop.exists() {
             let _ = std::fs::copy(&pkg_desktop, dir.join("vale-desktop.new.exe"));
-        }
-        let pkg_bridge = extract.join("package").join("bridge.js");
-        if pkg_bridge.exists() {
-            let _ = std::fs::copy(&pkg_bridge, dir.join("bridge.new.js"));
         }
         // Boxed playwright + cloudflared refresh.
         let pkg_pw = extract.join("package").join("vale-playwright.zip");
@@ -130,7 +126,6 @@ if (Test-Path '{q}\vale-agent.exe') {{ try {{ Copy-Item -Force '{q}\vale-agent.e
 foreach($i in 1..12){{ try {{ Copy-Item -Force -ErrorAction Stop '{q}\vale-agent.new.exe' '{q}\vale-agent.exe'; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 800 }} }};
 "[$(Get-Date -Format o)] copy ok=$ok" | Out-File '{q}\vale-update.log' -Append;
 if ($ok) {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe' }};
-if (Test-Path '{q}\bridge.new.js') {{ Copy-Item -Force '{q}\bridge.new.js' '{q}\bridge.js'; Remove-Item -Force '{q}\bridge.new.js' }};
 if (Test-Path '{q}\vale-desktop.new.exe') {{ Copy-Item -Force '{q}\vale-desktop.new.exe' '{q}\vale-desktop.exe'; Remove-Item -Force '{q}\vale-desktop.new.exe' }};
 try {{ Start-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{ schtasks /Run /TN ValeAgent }};
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '{q}\.vale-update';
