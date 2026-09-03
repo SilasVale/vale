@@ -532,6 +532,14 @@ if (gotTheLock) {
       webPreferences.contextIsolation = true;
       webPreferences.sandbox = true;
     });
+    // round-249 (fix): bind the guest's window.open handler when the webview
+    // ACTUALLY attaches — did-attach-webview hands us the real guest
+    // webContents, which is far more reliable than the SPA's announceGuest
+    // round-trip (which ran before attach and got no guest). This is what
+    // makes target=_blank links navigate in-view (round-248 parity).
+    win.webContents.on("did-attach-webview", (_e, guestWebContents) => {
+      trackEmbeddedGuest(guestWebContents);
+    });
     // review #6 (MED) TOP RISK: the main window carries the valeDesktop/
     // valeBrowser preload bridge (setAutoLaunch → schtasks /create …
     // -File <ps1>, browser-session:open). Without a navigation veto a
