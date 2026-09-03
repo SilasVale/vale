@@ -568,6 +568,15 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   SPA intact — the round-281 auto-select regression). Device-verified
   4/4 + file/workflow/evidence 11/11. GitHub release v1.2.271 CI-built
   (asset 6.4MB tgz); keep-latest: v1.2.267 release+tag deleted.
+  ROUND-283 (2026-09-04): CI/release workflow hardening. (1) Verified the
+  local feature-gated suite (--features terminal,keyring) matches CI and
+  passes 204/204 — no more masked integration failures (round-282 lesson).
+  (2) release.yml gained TWO gates it was missing: `npm test` after the
+  panel SPA build (built but never tested), and a packed-tgz content gate
+  (tar tzf must contain vale-agent.exe + main.js/preload.js/url-policy.js
+  + bin/vale.js under package/) — the round-278 url-policy.js gap would
+  now FAIL the release instead of silently shipping an incomplete tgz.
+  Gate validated against the real 1.2.271 tgz (5/5 files OK).
 
 ### Current release
 - npm **1.2.271 LIVE on d1 (round-281)** — MCP stdio connect auto-selects
