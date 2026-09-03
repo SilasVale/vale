@@ -885,6 +885,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   (7.47s, Version c07a2225). Live /code/ viewer on api.saisi.online now
   serves the CURRENT sources — sha256 of live mcp.ts and plugins/admin.ts
   IDENTICAL to the repo files (was 17/17 stale before round-324).
+  ROUND-326 (2026-09-04): index deploy smoke VERIFIED live + dead exe
+  purge — real `build.sh index` twice: smoke passed both times
+  ("v1.2.278, binary sha verified", Versions 700375b1/fd27b0c2).
+  ALSO: index/public/vale-agent held 3 dead non-git STAGING exes
+  (vale-desktop.exe 8.5MB Tauri + vale-tray.exe 896KB + vale-agent.exe
+  16MB — build-installer.sh leftovers, round-320 missed them). Deleted;
+  assets now hold only tracked files + release tgzs (last-5 + latest).
+  Redeploy synced: all 3 exes now 404 on the CDN.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
