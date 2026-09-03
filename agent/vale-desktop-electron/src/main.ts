@@ -410,6 +410,16 @@ ipcMain.handle("embedded-browser:fwd", (e) =>
   frameOk(e) ? embeddedGo(1) : { ok: false });
 ipcMain.handle("embedded-browser:reload", (e) =>
   frameOk(e) ? embeddedReload() : { ok: false });
+/** round-251: zoom the REAL embedded view (webContents.setZoomFactor — the
+ *  native browser zooms, not a CSS scale). factor: 0.5-3.0. */
+ipcMain.handle("embedded-browser:zoom", (e, factor: number) => {
+  if (!frameOk(e)) return { ok: false };
+  const view = embeddedView;
+  if (!view || view.webContents.isDestroyed()) return { ok: false };
+  const f = Math.min(3, Math.max(0.5, Number(factor) || 1));
+  try { view.webContents.setZoomFactor(f); return { ok: true, factor: f }; }
+  catch { return { ok: false }; }
+});
 ipcMain.handle("embedded-browser:place", (e, bounds: { x: number; y: number; width: number; height: number } | null) => {
   if (!frameOk(e)) return { ok: false };
   embeddedViewPlace(bounds);

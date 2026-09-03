@@ -28,6 +28,7 @@ interface EmbeddedBridge {
   back: () => Promise<unknown>;
   fwd: () => Promise<unknown>;
   reload: () => Promise<unknown>;
+  zoom: (factor: number) => Promise<unknown>;
   place: (bounds: { x: number; y: number; width: number; height: number } | null) => Promise<unknown>;
   state: () => Promise<{ ok: boolean; url?: string; canBack?: boolean; canFwd?: boolean; visible?: boolean }>;
   onNav: (handler: (s: EmbeddedNavState) => void) => () => void;
@@ -45,6 +46,8 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   const [canBack, setCanBack] = useState(false);
   const [canFwd, setCanFwd] = useState(false);
   const [ready, setReady] = useState(false);
+  // round-251: zoom the REAL view (webContents zoom factor via IPC).
+  const [zoom, setZoomState] = useState(100);
   const urlEditingRef = useRef(false);
 
   // Report the slot bounds to the main process so it can position the real
@@ -107,6 +110,12 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   const goBack = useCallback(() => { void bridge()?.back(); }, []);
   const goForward = useCallback(() => { void bridge()?.fwd(); }, []);
   const reload = useCallback(() => { void bridge()?.reload(); }, []);
+  // round-251: zoom selector → real webContents zoom factor (event-driven:
+  // only fires on user change, no polling).
+  const setZoom = useCallback((z: number) => {
+    setZoomState(z);
+    void bridge()?.zoom(z / 100);
+  }, []);
 
   return (
     <div className="browser-pane" style={{ position: "relative" }}>
@@ -133,6 +142,17 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
             spellCheck={false}
           />
           <button className="btn btn-mini browser-go" onClick={navigate}>Go</button>
+          <span className="browser-tools">
+            <select
+              className="browser-zoom"
+              value={zoom}
+              onChange={(e) => setZoom(Number(e.target.value))}
+              title="Zoom"
+              aria-label="Zoom"
+            >
+              {[75, 100, 125, 150, 200].map((z) => <option key={z} value={z}>{z}%</option>)}
+            </select>
+          </span>
         </div>
       </div>
 

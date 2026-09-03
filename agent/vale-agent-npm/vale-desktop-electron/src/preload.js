@@ -25,6 +25,7 @@ electron_1.contextBridge.exposeInMainWorld("valeEmbedded", {
     back: () => electron_1.ipcRenderer.invoke("embedded-browser:back"),
     fwd: () => electron_1.ipcRenderer.invoke("embedded-browser:fwd"),
     reload: () => electron_1.ipcRenderer.invoke("embedded-browser:reload"),
+    zoom: (factor) => electron_1.ipcRenderer.invoke("embedded-browser:zoom", factor),
     place: (bounds) => electron_1.ipcRenderer.invoke("embedded-browser:place", bounds),
     state: () => electron_1.ipcRenderer.invoke("embedded-browser:state"),
     // round-247: real-navigation pushes from the main process (URL/title/

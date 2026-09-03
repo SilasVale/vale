@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("valeEmbedded", {
   back: () => ipcRenderer.invoke("embedded-browser:back"),
   fwd: () => ipcRenderer.invoke("embedded-browser:fwd"),
   reload: () => ipcRenderer.invoke("embedded-browser:reload"),
+  zoom: (factor: number) => ipcRenderer.invoke("embedded-browser:zoom", factor),
   place: (bounds: { x: number; y: number; width: number; height: number } | null) =>
     ipcRenderer.invoke("embedded-browser:place", bounds),
   state: () => ipcRenderer.invoke("embedded-browser:state"),
