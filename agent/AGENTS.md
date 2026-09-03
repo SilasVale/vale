@@ -527,6 +527,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   main.js/preload.js). Also removed three stray config files in agent/
   (--test-threads=1, sanitize, plugins::memory::sanitize — cargo-test
   argv spills containing a device_token) that had sat untracked.
+  ROUND-279 (2026-09-04): release-chain completeness audit after the
+  round-278 url-policy.js gap — verified: every source file in the npm
+  package files list (main.js/preload.js/url-policy.js) is git-tracked;
+  the vale-desktop-electron/src copies in the npm package are byte-
+  identical to the source tree; bin/vale.js is up-to-date with tsc (and
+  carries only round-263 removal comments for 9223/bridge, no code); the
+  exe binaries are correctly untracked (CI builds them into the pack).
+  npm CLI tests 2/2 green. No further gaps found.
 
 ### Current release
 - npm **1.2.267 LIVE on d1 (round-274)** — Electron hidden-window render
