@@ -200,6 +200,11 @@ async function sectionPanel() {
 // embedded view must reach the marker URL with NO manual tab select, and
 // the SPA must stay intact. Returns the transport tag for check names.
 async function mcpAutoselectProbe(tag, connArgs) {
+  // round-306: start CLEAN — a leftover connection from a previous run
+  // makes connect return already_connected and the check fails spuriously
+  // (observed repeatedly on long-running devices).
+  await tool('mcp_client_disconnect', {}).catch(() => {});
+  await sleep(1500);
   const marker = 'mcp-autoselect-' + Date.now();
   const c = await tool('mcp_client_connect', connArgs);
   check('mcp ' + tag + ' connect', c && c.status === 'connected', (c && c.status) || JSON.stringify(c).slice(0, 60));
