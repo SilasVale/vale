@@ -473,6 +473,11 @@ Last updated: 2026-09-04 (round 271 — doc sync: build guide + route map
   "bridge 9224". Both now describe the live state (1.2.266 on d1, bridge
   tiers removed). Round-270's guide-section sync + this status sync leave
   no stale bridge-era description in the agent-facing docs.
+  ROUND-272 (2026-09-04): doc sync round 3 — CLAUDE.md's web.rs route map
+  still listed the removed frame/input proxy + ws-ticket/ws_relay
+  endpoints (round-270 only fixed AGENTS.md's copy); AGENTS.md "Last
+  updated" line sat at round 87. Both fixed. No stale bridge-era
+  description remains in either agent-facing doc's guide sections.
 
 ### Current release
 - npm **1.2.266 LIVE on d1 (round-266)** — bidirectional device file
