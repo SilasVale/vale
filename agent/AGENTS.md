@@ -739,6 +739,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   long-running devices during round-305). Each probe starts clean
   (disconnect + 1.5s settle). Device-verified: mcp e2e 8/8 TWICE in a row
   (repeated runs no longer accumulate state).
+  ROUND-307 (2026-09-04): release-chain housekeeping — v1.2.278 GitHub
+  release built GREEN by CI (round-299's tsc-compile step now proven on
+  3 real releases: 275/276/278); keep-latest deleted v1.2.275+276
+  releases AND tags; GitHub + local now hold ONLY v1.2.278. Full chain
+  (CDN manual publish -> GitHub tag API -> CI build -> keep-latest) ran
+  end-to-end for a multi-release week.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
