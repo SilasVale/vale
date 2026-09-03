@@ -235,8 +235,36 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   FIRST electron + npm-CLI test suites + auth-gate matrix; the 231
   package-files-whitelist incident (device-caught); CI release proven on
   repeat tags)
+  ROUND-245 (2026-09-26, 1.2.244 staged): "AI 操作 terminal/browser 面板不
+  显示" triage → FOUR root causes fixed (see Current release): (1) panel
+  source had been UNBUILDABLE since f89454d3 (invalid JSX in BrowserPane
+  .map + escaped backticks + drawer-tail brace rot; missing useRef/useEffect
+  import in TerminalWorkspace) — every release from then shipped the STALE
+  c00cbd2d panel.js, so the evidence-drawer animation / stable action keys /
+  zoom / banner fixes NEVER reached any device; (2) sanitize redact_line
+  INFINITE LOOP (337fb328's re-scan matched the separator it just replaced)
+  hung memory_save tool dispatch AND cargo test; (3) bridge idle-capture CDP
+  session pinned to the boot page (B3) + frame-cache reset on background-tab
+  nav (B2); (4) panel session list had no revive/retry/sweep, so AI-opened
+  terminal sessions vanished on a transient refetch failure. d1 also ran
+  1.2.241 — two bridge/agent fixes (242/243) behind. Full diagnostics from 2
+  parallel audit subagents; all fixes committed + tests green (197 rust / 80
+  panel); 1.2.244 = exe rebuild with fixed embedded panel + new bridge.
 
 ### Current release
+- npm **1.2.244 staged (round-245)** — display-path triage batch, see the
+  round-245 header above. Four fixes: (1) panel UNBUILDABLE-source fix +
+  first correct panel.js rebuild since c00cbd2d (f89454d3..HEAD UX changes
+  finally ship); (2) sanitize infinite-loop fix (memory_save hang) + test;
+  (3) bridge B3/B2 (idle capture follows selected page; frame cache resets
+  only on selected-page nav); (4) useSessions revive/retry/30s-sweep so
+  AI-opened terminal sessions always appear. Rust 197 / panel 80 green.
+  Still OPEN from the audit: ws_relay idle-cap black period (B1 — bridge
+  has no per-socket watchdog, panel has no HTTP /frame fallback), MCP
+  actions.jsonl screenshots:[] by construction (B5), ValePlaywright 9229
+  scheduled task still spawns --headless WITHOUT --cdp-endpoint (C3 —
+  external clients pointed at 9229 drive a browser the panel cannot see;
+  the 3 d1 MCP clients on 9223 are fine).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
   tests (CSRF matrix + Breaker/RouteDO fail-closed denies — shipped with
   ZERO refs), electron FIRST tests via pure src/url-policy.ts extraction
@@ -529,22 +557,15 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   previous tag ref too, not just the release object).
 
 ### Next candidates
-- M1 pair-code atomic claim across isolates + KV device-row races —
-  BOTH need a CAS primitive → the D1 migration candidate
 - gateway F3: CLIENT_KEY doubles as admin token (billing keys + /mcp RCE
   by every settings.json holder) — DESIGN decision, needs user sign-off
   (breaks existing clients if tightened)
 - npm publish (waits on user `npm login`; registry name confirmed free)
-- CI now owns the release build (new release.yml: tag → xwin exe → npm
-  pack → gh release create). Next manual release: SKIP the curl asset
-  upload — just push the tag after the version-bump commit and let CI
-  attach it; keep-latest deletion stays manual (user-approval-adjacent).
-  DONE since earlier rounds (stale entries removed): connections CRUD
-  tests (225), F8 parallel tool_calls index merge (round-116 — fixtures
-  re-verified this round), F5 DoS-by-timeout (INVESTIGATED this round —
-  already fixed at the call sites: full timeouts DO feed recordChannel-
-  Failure via detail "timeout"; the stale comment claiming otherwise was
-  corrected in reliability.ts; a RED test now proves it).
+- CI now owns the release build. Next manual release: SKIP the curl asset
+  upload — just push the tag and let CI attach it; keep-latest stays manual.
+  DONE: M1 pair-code atomic (round 63), F5 breaker (round 61), session_log
+  clock-jump safety (round 63), preload IPC (round 62), npm CLI (round 62),
+  device-fetch SSRF (round 64), body-scan DoS (round 64).
 
 ### GitHub ops
 - Code: push GitHub too — `git push https://SilasVale@github.com/SilasVale/vale.git main`
