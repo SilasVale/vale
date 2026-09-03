@@ -596,6 +596,15 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   embedded view. 204/204 tests.
   ALSO: e2e mcp section extended to cover http transport (8 checks:
   stdio 4 + http 4) — device-verified 8/8; suite is now 26 checks.
+  ROUND-286 (2026-09-04): release-CI RED caught by the round-283 gate —
+  release 1.2.272 CI failed at "Test panel SPA": vitest forks workers
+  crashed with "webidl.util.markAsUncloneable is not a function" (undici
+  needs Node >= 22) because release.yml pinned Node 20 while local/panel
+  toolchain runs Node 24 (local 82/82 passes). Fix: release.yml node 20
+  -> 24. ALSO discovered the panel tests ONLY ran in the release workflow
+  — ci.yml gained a dedicated panel (vitest, Node 24) job so every
+  main-branch CI run covers them. Tag v1.2.272 rebuilt onto the fix and
+  the release is re-running.
 
 ### Current release
 - npm **1.2.272 LIVE on d1 (round-285)** — MCP connect auto-selects the
