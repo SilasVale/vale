@@ -16,10 +16,13 @@
 //                  -> stat -> memory_save -> memory_search (round-267)
 //   4. browser   — browser_run_script drives the embedded view via CDP 9333
 //                  and the SPA address bar follows (round-268)
+//   5. panel     — AI writes a unique marker into a terminal session; the
+//                  SPA's VISIBLE xterm must show it (round-264 display
+//                  verification, now repeatable)
 //
 // Usage:
 //   node e2e.js --token <agent-token> [--base http://127.0.0.1:18080]
-//                [--only terminal,file] [--no-browser]
+//                [--only terminal,file,panel] [--no-browser]
 //
 // Requires: agent running on the device; for section 4 also the Electron
 // desktop (CDP 9333) + a playwright install at D:\Vale\playwright.
@@ -123,6 +126,63 @@ async function sectionWorkflow() {
 }
 
 // ── 4. browser: browser_run_script drives the view; SPA bar follows ────────
+// ── 4b. panel: does the desktop SPA actually SHOW what the AI wrote? ──────
+async function sectionPanel() {
+  // 1. AI opens a session and writes a unique marker into it
+  const marker = 'PANEL-VIS-' + Date.now();
+  const sid = await tool('terminal_open', { kind: 'pty' });
+  const sessionId = typeof sid === 'string' ? sid : sid.sid;
+  await sleep(2500);
+  const ex = await tool('terminal_execute', {
+    command: 'Write-Output "' + marker + '"',
+    session_id: sessionId, timeout_secs: 20,
+  });
+  check('panel ai write', !!(ex && (ex.text || '').includes(marker)), 'state=' + (ex && ex.state));
+
+  // 2. read the SPA's xterm DOM: the marker must be visible in the panel
+  await sleep(3000);
+  const list = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+  const spa = list.find((t) => t.url.includes('/desktop/'));
+  if (!spa) { check('panel xterm shows ai output', false, 'no desktop SPA target'); return; }
+  const ws = new WebSocket(spa.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  const evalInSpa = async (id, expression) => {
+    const r = await new Promise((resolve) => {
+      const t = setTimeout(() => resolve(null), 15000);
+      const onMsg = (m) => {
+        const o = JSON.parse(m.data);
+        if (o.id === id) { clearTimeout(t); ws.removeEventListener('message', onMsg); resolve(o); }
+      };
+      ws.addEventListener('message', onMsg);
+      ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
+    });
+    try {
+      const raw = r && r.result && r.result.result && r.result.result.value;
+      return raw !== undefined && raw !== null ? raw : null;
+    } catch (e) { return null; }
+  };
+  // 3. make sure the SPA is on the Terminal page (rail button)
+  const railClick = await evalInSpa(200, "(function(){ var bs = document.querySelectorAll('button, [role=button], [class*=rail] > *'); for (var i=0;i<bs.length;i++){ var el = bs[i]; var t = (el.getAttribute('aria-label')||el.title||el.textContent||'').trim(); if (t === 'Terminal' || t.indexOf('Terminal') === 0 && t.length < 12) { el.click(); return 'clicked'; } } return 'no-rail'; })()");
+  await sleep(2500);
+  // 4. read the visible xterm's text (round-264 method: visible .term-host
+  //    .xterm-rows spans — hidden hosts exist per session)
+  let found = false;
+  for (let attempt = 0; attempt < 6 && !found; attempt++) {
+    const raw = await evalInSpa(201 + attempt, "(function(){ var hosts = document.querySelectorAll('.term-host'); var vis = null; for (var i=0;i<hosts.length;i++){ var r = hosts[i].getBoundingClientRect(); if (r.width > 50 && r.height > 50) { vis = hosts[i]; break; } } if (!vis) return 'NO_VISIBLE'; var rows = vis.querySelectorAll('.xterm-rows > div'); var all = ''; for (var j=0;j<rows.length;j++){ all += rows[j].textContent + '\\n'; } return all; })()");
+    if (raw && raw !== 'NO_VISIBLE' && raw.indexOf('PANEL-VIS-') >= 0) { found = raw.indexOf(marker) >= 0; break; }
+    if (raw && raw !== 'NO_VISIBLE') { found = raw.indexOf(marker) >= 0; }
+    await sleep(2000);
+  }
+  check('panel xterm shows ai output', found, 'marker=' + marker.slice(0, 22));
+  // cleanup: close the session + the WS
+  await tool('terminal_close', { session_id: sessionId }).catch(() => {});
+  await new Promise((resolve) => {
+    ws.onclose = resolve;
+    setTimeout(() => { try { ws.close(); } catch (e) {} }, 100);
+    setTimeout(resolve, 3000);
+  });
+}
+
 async function sectionBrowser() {
   const script = [
     "const { chromium } = require('" + PW_DIR.replace(/\\/g, '/') + "/node_modules/playwright');",
@@ -209,6 +269,7 @@ async function sectionBrowser() {
     if (want('terminal')) await sectionTerminal();
     if (want('file')) await sectionFile();
     if (want('workflow')) await sectionWorkflow();
+    if (want('panel') && !NO_BROWSER) await sectionPanel();
     if (want('browser') && !NO_BROWSER) await sectionBrowser();
   } catch (e) {
     console.error('SECTION ERROR: ' + e.message);
