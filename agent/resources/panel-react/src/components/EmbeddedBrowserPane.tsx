@@ -43,6 +43,7 @@ const slotId = "vale-embedded-browser-slot";
 
 export function EmbeddedBrowserPane({ token }: { token: string }) {
   const slotRef = useRef<HTMLDivElement | null>(null);
+  const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [url, setUrl] = useState("");
   const [canBack, setCanBack] = useState(false);
   const [canFwd, setCanFwd] = useState(false);
@@ -104,12 +105,17 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
     };
   }, [reportBounds]);
 
-  const navigate = useCallback(() => {
+  const navigate = useCallback((fromSubmit?: boolean) => {
     const b = bridge();
     if (!b) return;
     const u = /^(https?|about|data):/i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
     setUrl(u);
     void b.navigate(u);
+    // round-254 (user: "回车不能代替 Go 吗"): pressing Enter in the address
+    // bar is the primary submit — release the focus so the real URL (pushed
+    // by did-navigate) updates the bar and the view is clickable right away,
+    // exactly like Chrome's address bar.
+    if (fromSubmit) urlInputRef.current?.blur();
   }, [url]);
   const goBack = useCallback(() => { void bridge()?.back(); }, []);
   const goForward = useCallback(() => { void bridge()?.fwd(); }, []);
@@ -137,15 +143,16 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
           </span>
           <input
             className="browser-url"
+            ref={urlInputRef}
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onFocus={() => { urlEditingRef.current = true; }}
             onBlur={() => { urlEditingRef.current = false; }}
-            onKeyDown={(e) => e.key === "Enter" && navigate()}
-            placeholder="Enter a URL — rendered live by the real embedded browser"
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); navigate(true); } }}
+            placeholder="Enter a URL and press Enter — rendered live by the real embedded browser"
             spellCheck={false}
           />
-          <button className="btn btn-mini browser-go" onClick={navigate}>Go</button>
+          <button className="btn btn-mini browser-go" onClick={() => navigate()}>Go</button>
           <span className="browser-tools">
             <select
               className="browser-zoom"

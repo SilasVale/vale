@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { BrowserPage } from "../BrowserPage";
 
 // round-246: the Electron shell (window.valeEmbedded) must render the REAL
@@ -51,5 +51,28 @@ describe("BrowserPage", () => {
       expect((navBtns[0] as HTMLButtonElement).disabled).toBe(false); // canBack: true
       expect((navBtns[1] as HTMLButtonElement).disabled).toBe(true);  // canFwd: false
     });
+  });
+
+  it("Enter in the address bar navigates AND blurs (Chrome-style submit, round-254)", async () => {
+    const navMock = vi.fn().mockResolvedValue({ ok: true });
+    (window as any).valeEmbedded = {
+      navigate: navMock,
+      back: vi.fn().mockResolvedValue({ ok: true }),
+      fwd: vi.fn().mockResolvedValue({ ok: true }),
+      reload: vi.fn().mockResolvedValue({ ok: true }),
+      place: vi.fn().mockResolvedValue({ ok: true }),
+      state: vi.fn().mockResolvedValue({ ok: true, url: "", canBack: false, canFwd: false, visible: true }),
+      onNav: vi.fn().mockReturnValue(() => {}),
+    };
+    render(<BrowserPage plugins={pluginsStub} token="t" />);
+    const input = screen.getByPlaceholderText(/press Enter/i) as HTMLInputElement;
+    // Focus + type a bare host (no scheme) — Enter must https-prefix it.
+    input.focus();
+    fireEvent.change(input, { target: { value: "example.com" } });
+    expect(document.activeElement).toBe(input);
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    await waitFor(() => expect(navMock).toHaveBeenCalledWith("https://example.com"));
+    // Chrome-style: the address bar releases focus after submit.
+    await waitFor(() => expect(document.activeElement).not.toBe(input));
   });
 });
