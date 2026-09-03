@@ -657,6 +657,14 @@ if (gotTheLock) {
         // stage-n preload audit LOW: defense-in-depth — the preload is
         // static/safe, but sandbox:true removes any Node escape path.
         sandbox: true,
+        // round-274 (device-caught): the window was hidden (hide-to-tray /
+        // background session) and the SPA's visibilityState flipped to
+        // "hidden" — Chromium then stops requestAnimationFrame, and xterm's
+        // DOM renderer (rAF-driven) silently stopped painting: every
+        // terminal went blank while the AI kept operating. backgroundThrottling:
+        // false keeps rAF/timers running for hidden windows, so the panel
+        // always renders regardless of window visibility.
+        backgroundThrottling: false,
       },
     });
     // review #6 (MED) TOP RISK: the main window carries the valeDesktop/
