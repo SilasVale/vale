@@ -13,6 +13,11 @@
  * bound.
  */
 
+// stage-n body-scan audit (HIGH): cap the char-by-char model scan at a
+// fixed ceiling regardless of body size. A multi-MB body walked char-by-char
+// blows the Workers Free 10ms CPU budget (Error 1102).
+const MAX_SCAN_BYTES = 2 * 1024 * 1024; // 2 MiB
+
 /**
  * Replace the top-level "model" value in a raw JSON body without parsing it.
  * Re-scans for the field's value span (cheap O(n), no object graph) and
@@ -126,7 +131,7 @@ export function scanTopLevelModel(raw: string): {
   valueEnd: number;
 } {
   let i = 0;
-  const n = raw.length;
+  const n = Math.min(raw.length, MAX_SCAN_BYTES); // stage-n: cap scan length
   let depth = 0; // {} and [] nesting — model must sit at depth 0
   let inStr = false;
   let keyStart = -1; // first char of the key text (after its opening quote)

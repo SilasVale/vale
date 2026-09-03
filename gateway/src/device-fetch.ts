@@ -58,6 +58,28 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
   if (upstream.hostname.toLowerCase() !== String(device.hostname).toLowerCase()) {
     return { status: 400, ok: false, resp: undefined, error: "invalid proxy path" };
   }
+  // stage-n SSRF audit (HIGH): reject private/link-local/internal IPs — an
+  // attacker who registers a device with hostname "169.254.169.254" (cloud
+  // metadata) or "127.0.0.1" makes the gateway dial it with the device token.
+  const hostLower = upstream.hostname.toLowerCase();
+  if (
+    hostLower === "localhost" ||
+    hostLower.startsWith("127.") ||
+    hostLower.startsWith("10.") ||
+    hostLower.startsWith("192.168.") ||
+    hostLower.startsWith("172.") ||
+    hostLower === "::1" ||
+    hostLower.startsWith("fc") ||
+    hostLower.startsWith("fd") ||
+    hostLower.startsWith("fe80")
+  ) {
+    return {
+      status: 400,
+      ok: false,
+      resp: undefined,
+      error: "device hostname resolves to a private/internal address",
+    };
+  }
   const headers = new Headers(init.headers || {});
   headers.delete("host");
   headers.delete("cookie");
@@ -66,15 +88,10 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
   try {
     // Read methods are bounded (round-55): a blackholed tunnel hung until
     // the platform's subrequest ceiling. round-56: the bound applies to
-    // EVERY non-POST method — a cross-origin Authorization fetch triggers an
-    // OPTIONS preflight, and HEAD/OPTIONS on a dead tunnel hung just like
-    // GET did. POST (terminal tools, a command) is deliberately unbounded:
-    // non-idempotent, retrying would double-execute.
-    if (init.method !== "POST") {
-      resp = await fetchWithTimeout(upstream.toString(), { ...init, headers }, 15000);
-    } else {
-      resp = await fetch(upstream.toString(), { ...init, headers });
-    }
+    // EVERY non-POST method. POST is bounded at 60 s (stage-n MEDIUM: the
+    // old unbounded POST was a slow-loris vector on blackholed tunnels;
+    // idempotency is the caller's concern — they can always retry).
+    resp = await fetchWithTimeout(upstream.toString(), { ...init, headers }, init.method === "POST" ? 60000 : 15000);
   } catch (e) {
     return { status: 502, ok: false, error: `Device unreachable: ${(e as Error).message}` };
   }
