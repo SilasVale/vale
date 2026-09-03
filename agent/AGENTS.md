@@ -733,6 +733,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   result -> heal_and_restore (re-handshake) before the next retry.
   1.2.277 shipped the raw-result diag; 1.2.278 the fix. Device-verified
   mcp 8/8 (http drives embedded view PASS again).
+  ROUND-306 (2026-09-04): e2e mcp probes now disconnect BEFORE connect —
+  a leftover connection from a previous run made connect return
+  already_connected and the check fail spuriously (observed repeatedly on
+  long-running devices during round-305). Each probe starts clean
+  (disconnect + 1.5s settle). Device-verified: mcp e2e 8/8 TWICE in a row
+  (repeated runs no longer accumulate state).
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
