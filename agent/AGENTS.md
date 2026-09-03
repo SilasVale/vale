@@ -486,6 +486,22 @@ Last updated: 2026-09-04 (round 271 — doc sync: build guide + route map
   workflow 6, browser 2) incl. browser_run_script driving the embedded
   view + SPA address-bar sync (Electron CDP evaluate quirk after nav
   handled by generous polling).
+  ROUND-274 (2026-09-04): DISPLAY REGRESSION FOUND + FIXED (device-caught
+  while adding the e2e panel section): every terminal in the Electron SPA
+  went blank (xterm rows empty) although the server buffer + SSE were
+  fine and a standalone chromium on the same agent rendered fine. Root
+  cause: the Electron window was hidden (hide-to-tray / SYSTEM-session
+  background) -> SPA visibilityState="hidden" -> Chromium STOPS
+  requestAnimationFrame for hidden pages -> xterm's rAF-driven DOM
+  renderer never paints (term.write is called, buffer advances, DOM
+  never updates). Fix: main.ts webPreferences backgroundThrottling:false
+  + app.commandLine switches --disable-renderer-backgrounding and
+  --disable-backgrounding-occluded-windows (backgroundThrottling alone
+  does NOT restore rAF for hidden pages). DEVICE-VERIFIED: vis went
+  hidden->visible, rAF OK 0ms, xterm content returned. ALSO: e2e suite
+  gained the panel section (AI marker must appear in the SPA's visible
+  xterm; needs the newest session tab activated first) — full suite now
+  16/16 on d1 (terminal 3, file 3, workflow 6, panel 2, browser 2).
 
 ### Current release
 - npm **1.2.266 LIVE on d1 (round-266)** — bidirectional device file
