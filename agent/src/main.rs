@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use vale_agent::register::self_register_plan;
 use vale_agent::state::AppState;
 use vale_agent::Config;
 
@@ -110,6 +111,8 @@ fn init_tracing() {
     }
 }
 
+/// Coverage audit row 9: the self-register decision, extracted (it was inlined
+/// in the supervisor loop) so the "never leak the token to a hardcoded
 fn main() {
     init_tracing();
 
@@ -639,23 +642,15 @@ async fn run_server(config_path: PathBuf) {
                 let hostname = std::fs::read_to_string(reg_install.join("vale-agent.hostname"))
                     .map(|x| x.trim().to_string())
                     .unwrap_or_default();
-                let ready = console.is_some() && !token.is_empty() && !hostname.is_empty();
                 let mut fast_retry = true;
-                if ready {
-                    let console = console.unwrap_or_default();
-                    let name = hostname.split('.').next().unwrap_or("device").to_string();
-                    // serde_json (audit habit): never hand-build JSON from
-                    // interpolated values.
-                    let body = serde_json::json!({
-                        "name": name, "hostname": hostname, "token": token,
-                    })
-                    .to_string();
+                if let Some((url, body)) = self_register_plan(console.as_deref(), &token, &hostname)
+                {
                     let ok = match reqwest::Client::builder()
                         .timeout(std::time::Duration::from_secs(10))
                         .build()
                     {
                         Ok(c) => c
-                            .post(format!("{}/api/devices/self-register", console.trim_end_matches('/')))
+                            .post(&url)
                             .header("content-type", "application/json")
                             .body(body)
                             .send()

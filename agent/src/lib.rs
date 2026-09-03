@@ -5,6 +5,7 @@ pub use vale_agent_core::events;
 pub use vale_agent_core::{Config, DeviceError, AgentEvent, Plugin, ToolDef, ToolHandler, NavItem, EventBus, AppEventBus};
 
 pub mod bootstrap;
+pub mod register;
 
 /// Cross-task control channel for the cloudflared tunnel supervisor
 /// (supervision audit #1): provision_tunnel (web.rs) rewrites tunnel.yml

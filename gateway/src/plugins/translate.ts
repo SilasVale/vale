@@ -146,10 +146,10 @@ async function openAIUpstreamToAnthropicResponse(
 
 /* ---------------- /v1/* gateway ---------------- */
 
-// In-memory per-token rate-limit counters (per isolate). The old KV
-// audit round F6: upstream 401 bodies often embed the offending key
-// (sk-or-…, rc-…, sc-…); scrub key-shaped tokens before echoing to clients.
-function scrubKeys(msg: string): string {
+// round-158: scrub leaked provider keys out of any surfaced 502/503 body so a
+// gateway error can never echo `sk-…` back to the caller (money).
+// Exported (coverage audit row 3) so the regex is unit-tested.
+export function scrubKeys(msg: string): string {
   return String(msg || "").replace(/\b(?:sk|rc|sc|or|xox[baprs])-[A-Za-z0-9_-]{8,}/g, "***");
 }
 
