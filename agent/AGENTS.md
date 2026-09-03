@@ -605,6 +605,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   — ci.yml gained a dedicated panel (vitest, Node 24) job so every
   main-branch CI run covers them. Tag v1.2.272 rebuilt onto the fix and
   the release is re-running.
+  ROUND-289 (2026-09-04): release v1.2.272 GREEN after the SIGPIPE gate
+  fix (4th attempt) — GitHub release created by CI with the tgz asset
+  (6.4MB); keep-latest: v1.2.271 release+tag deleted, only v1.2.272
+  remains. The round-283/287/288 gate chain (panel tests -> lock check ->
+  tgz content gate) caught three release-CI defects in a row before any
+  shipped. Release pipeline now fully verified end-to-end on CI.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
