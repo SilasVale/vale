@@ -717,16 +717,20 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
     };
     // The CallToolResult text lives at .result.content[].text (stdio) or the
     // same shape after serde; also tolerate a bare string.
-    let mut text = extract_tool_text(&list).unwrap_or_default();
     // round-281 device-caught: right after spawn, playwright-mcp may still
-    // be enumerating the attached browser and report only the SPA tab —
-    // retry for up to ~20s (the attached browser's tab list can take a few
-    // seconds to include the embedded view) before giving up.
+    // be enumerating the attached browser and report only the SPA tab.
+    // Device probes (tabpoll) show the embedded view appears by ~1.5s AFTER
+    // connect returns — i.e. the browser attach finishes around connect
+    // return. So: sleep 3s (cover the attach), then a single fresh list.
+    tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+    let mut text = extract_tool_text(&list).unwrap_or_default();
+    diag_log(&format!("[select] initial tab list text: {}", text.trim()));
     let mut embedded_idx = embedded_view_index(&text);
-    for attempt in 0..6 {
+    // Fallback retries in case the attach is slower than usual.
+    for attempt in 0..4 {
         if embedded_idx.is_some() { break; }
         tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
-        diag_log(&format!("[select] retry {}/6 — tab list not ready yet", attempt + 1));
+        diag_log(&format!("[select] retry {}/4 — tab list not ready yet", attempt + 1));
         match rpc_ref(sess, None, "tools/call", json!({
             "name": "browser_tabs",
             "arguments": { "action": "list" },
