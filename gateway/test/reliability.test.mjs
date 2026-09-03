@@ -262,6 +262,38 @@ test("BreakerDO: unknown action → 404", async () => {
   assert.equal(res.status, 404);
 });
 
+// ── F5 FIX: cumulative-fail-time trip ──────────────────────────
+// The breaker trips on ≥2 failures within BREAKER_MAX_FAIL_MS (45 s), so a
+// channel that times out twice back-to-back opens in ~half the old worst
+// case (3 × 120 s = 360 s).
+test("BreakerDO: cumulative-fail-time trips after ≥2 failures within 45s (F5 fix)", async () => {
+  const do_ = breakerDO();
+  const realNow = Date.now;
+  try {
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    assert.equal(await check(do_), "0"); // 1 failure: no trip
+    // Advance 46 s (>45s threshold) and trip again — must OPEN.
+    Date.now = () => realNow() + 46 * 1000;
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    assert.equal(await check(do_), "1", "2 failures within the fail-time window must open the circuit");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("BreakerDO: a single failure NEVER trips regardless of elapsed time", async () => {
+  const do_ = breakerDO();
+  const realNow = Date.now;
+  try {
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    // Even after a long time, 1 failure must not trip.
+    Date.now = () => realNow() + 10 * 60 * 1000;
+    assert.equal(await check(do_), "0", "a single failure must never trip the circuit");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 // ── count_tokens estimate ───────────────────────────────────────
 
 test("estimateTokens: ascii ~4 chars/token", () => {
