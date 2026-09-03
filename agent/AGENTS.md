@@ -669,6 +669,13 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   round-75; crate deleted round-330). -49 lines; bin/vale.js recompiled
   (round-298 discipline), tsc clean. taskkill lines stay as defensive
   cleanup for stale processes. Workflows verified free of retired refs.
+  ROUND-332 (2026-09-04): round-331 verified end-to-end — npm CLI tests
+  2/2 (node --test), bin/vale.js loads + syntax OK + exports intact
+  (psq/busyIsFresh via require.main guard). Retired-ref scan complete:
+  electron main/preload/url-policy clean (40 tray hits = the Electron
+  SYSTEM TRAY feature, not vale-tray), workflows/build.sh clean, only
+  historical refs remain (deploy/retired/, specs, memory client-id
+  strings). Committed bin matches working tree.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
