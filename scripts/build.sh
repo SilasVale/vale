@@ -193,9 +193,10 @@ case "$cmd" in
   proxies)  deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   vercel-proxy) deploy_vercel_proxy ;;
   studio)   build_studio ;;
-  # Order matters: vercel-proxy ships the oversized installer/bundle
-  # (v.saisi.online/dl/*) that the index worker's post-deploy sha guard
-  # downloads — so vercel must go live BEFORE the index deploy verifies.
-  deploy)   build_agent "${2:-release}" && ./scripts/build-installer.sh && deploy_worker gateway "Vale Gate" && deploy_vercel_proxy && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  # round-320: build-installer.sh retired (it staged the dead Vercel mirror
+  # + rewrote index.js + required retired Tauri exes — it always failed).
+  # Releases use scripts/publish-release.sh (CDN publish + last-5 prune);
+  # `deploy` deploys the workers only.
+  deploy)   build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
 esac
