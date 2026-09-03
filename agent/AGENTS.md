@@ -323,6 +323,13 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   panel test (SSE push -> immediate actions refetch). Rust 198 / panel 91.
   Device: SSE channel streams (epoch frame verified); playwright-changed
   (same bus) device-proven previously.
+  ROUND-253 (2026-09-26, 1.2.256 LIVE on d1): embedded-pane AI-activity
+  pulse — useAiActivityPulse hook opens the /api/events SSE reader (Bearer)
+  and lights a compact "AI operating" chip in the status bar on
+  browser-actions-changed / playwright-changed pushes, fading after 8s
+  (UI timer — no polling). Chip lives in the SPA chrome strip because the
+  native WebContentsView covers the viewport. +1 test (push lights, fade
+  clears). Panel 92/92; device-verified (panel.js markers).
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
