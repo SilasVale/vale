@@ -605,6 +605,15 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   — ci.yml gained a dedicated panel (vitest, Node 24) job so every
   main-branch CI run covers them. Tag v1.2.272 rebuilt onto the fix and
   the release is re-running.
+  ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
+  24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
+  lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
+  prior npm-11 install had regenerated the lock with only the LOCAL
+  platform's optional deps (3+2 entries); npm ci --include=optional then
+  failed everywhere (reproduced locally too). Fix: npm install
+  --include=optional restored the full platform set (12+14 entries) —
+  npm ci --dry-run clean, 82/82 tests. Tag v1.2.272 rebuilt again onto
+  the lock fix.
 
 ### Current release
 - npm **1.2.272 LIVE on d1 (round-285)** — MCP connect auto-selects the
