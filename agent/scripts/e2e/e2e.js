@@ -220,6 +220,10 @@ async function mcpAutoselectProbe(tag, connArgs) {
   // round-313: AI INTERACTION (not just navigation) must drive the view:
   // snapshot example.com, click "Learn more", the embedded view follows to
   // iana.org (playwright-mcp browser_click takes {target} = the snapshot ref).
+  // The marker URL above is example.com/<marker> (404 page, no links) —
+  // navigate to the example.com HOMEPAGE first so the snapshot has links.
+  await tool('mcp_client_call', { tool: 'browser_navigate', arguments: { url: 'https://example.com/' } });
+  await sleep(3000);
   const snap = await tool('mcp_client_call', { tool: 'browser_snapshot', arguments: {} });
   const snapTxt = JSON.stringify(snap);
   // Snapshot line: `- link "Learn more" [ref=f1e6] [cursor=pointer]:`
