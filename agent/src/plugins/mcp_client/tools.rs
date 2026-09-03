@@ -735,6 +735,11 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
     // connect returns — i.e. the browser attach finishes around connect
     // return. So: sleep 3s (cover the attach), then a single fresh list.
     tokio::time::sleep(std::time::Duration::from_millis(3000)).await;
+    // round-300b diagnostic: dump the RAW rpc result when extract fails —
+    // the http arm's shape keeps drifting across playwright-mcp versions.
+    if extract_tool_text(&list).is_none() {
+        diag_log(&format!("[select] RAW list result: {}", serde_json::to_string(&list).unwrap_or_default()));
+    }
     let mut text = extract_tool_text(&list).unwrap_or_default();
     diag_log(&format!("[select] initial tab list text: {}", text.trim()));
     let mut embedded_idx = embedded_view_index(&text);
@@ -749,6 +754,15 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
         }), 15).await {
             Ok(v) => {
                 text = extract_tool_text(&v).unwrap_or_default();
+                if text.is_empty() && matches!(sess, McpSession::Http { .. }) {
+                    // round-300b device-caught: the http arm's session gets
+                    // recycled by the server (round-137 reap); a call on the
+                    // dead session returns null/empty forever — manual
+                    // mcp_client_call works because it heals first. Heal
+                    // here too, then the NEXT retry lists on a fresh session.
+                    diag_log("[select] empty http result — re-handshaking (session recycled?)");
+                    let _ = heal_and_restore(sess).await;
+                }
                 embedded_idx = embedded_view_index(&text);
             }
             Err(e) => diag_log(&format!("[select] tab list failed on retry (ignoring): {e}")),
