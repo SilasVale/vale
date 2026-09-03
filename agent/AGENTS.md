@@ -831,6 +831,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   workflow 12, mcp stdio+http 12 incl. click interaction, panel/evidence/
   browser 6). Release chain: publish-release.sh (round-310) + GitHub tag
   API -> CI-built release; CDN pruned to last-5 (round-309).
+  ROUND-319 (2026-09-04): index download-page DEAD LINK fixed — the
+  landing page's install command pointed at the DELETED 1.2.141 tgz on
+  the Vercel mirror; every copy-paste install failed. Now uses the
+  versionless latest alias (agent.saisi.online/vale-agent/
+  vale-agent-latest.tgz, mirrored on every release). Deployed + verified
+  (page shows working command, alias 200). No other dead dl refs remain.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
