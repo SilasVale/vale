@@ -636,6 +636,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   playwright-mcp, expected resident); no stray stdio playwright children
   (each disconnect reaps its spawn); /api/sessions 327 records all
   closed (audit log, 30-day retention by design), 0 live zombies.
+  ROUND-294 (2026-09-04): e2e workflow section now self-cleans its memory
+  entry — every run memory_save'd an "E2E suite marker" and never deleted
+  it (memory_search hits grew 7 -> 10 across runs = data-layer litter).
+  memory_delete of the saved id added before the section ends. Cleaned 10
+  accumulated markers on d1; re-run verified: hits=1 during the run, live
+  markers 0 after (delete works). NOTE: memory_list returns
+  {result:{results:[...]}} — a cleanup script probing .items/.entries
+  misread 0 and found nothing; use .results.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
