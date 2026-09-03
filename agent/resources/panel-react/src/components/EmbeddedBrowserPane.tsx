@@ -57,6 +57,21 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   // round-253: event-driven "AI is operating" pulse (SSE browser-actions-
   // changed / playwright-changed — no polling).
   const aiActive = useAiActivityPulse("", token);
+  // round-260: attention flash — when the AI STARTS a new burst (idle →
+  // active transition), glow the Evidence toggle so the user notices even
+  // while not watching. Pure UI state; fades by itself.
+  const [aiFlash, setAiFlash] = useState(false);
+  const prevAiActiveRef = useRef(false);
+  useEffect(() => {
+    if (aiActive && !prevAiActiveRef.current) {
+      setAiFlash(true);
+      const t = setTimeout(() => setAiFlash(false), 4000);
+      prevAiActiveRef.current = true;
+      return () => clearTimeout(t);
+    }
+    prevAiActiveRef.current = aiActive;
+    return undefined;
+  }, [aiActive]);
   // round-255: AI evidence drawer (screenshots + action log) — on-demand.
   const [evOpen, setEvOpen] = useState(false);
   // round-256: the embedded view's renderer crashed (reason text for the
@@ -253,7 +268,7 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
               fetched on demand (open) + SSE-refreshed, no polling. */}
           <button
             type="button"
-            className={`browser-ev-toggle${evOpen ? " active" : ""}`}
+            className={`browser-ev-toggle${evOpen ? " active" : ""}${aiFlash ? " flash" : ""}`}
             onClick={() => setEvOpen((v) => !v)}
             title="AI screenshot evidence (drawer)"
           >

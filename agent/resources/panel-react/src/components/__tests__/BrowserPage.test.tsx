@@ -2,16 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { BrowserPage } from "../BrowserPage";
 
-// round-246: the Electron shell (window.valeEmbedded) must render the REAL
-// embedded-browser controller; plain browsers keep the screenshot pane.
-const pluginsStub = {
-  playwright: { running: true, healthy: true, port: 9229 },
-  playwrightRow: { state: "ongoing", stateLabel: "Running" },
-  busy: null,
-  start: vi.fn(),
-  stop: vi.fn(),
-} as any;
-
+// round-246/261: the Electron shell (window.valeEmbedded) must render the
+// REAL embedded-browser controller. Plain browsers get a "desktop required"
+// placeholder — the mode-B screenshot stream is gone (user direction).
 describe("BrowserPage", () => {
   beforeEach(() => {
     delete (window as any).valeEmbedded;
@@ -22,10 +15,11 @@ describe("BrowserPage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the screenshot BrowserPane when no embedded bridge exists (plain browser)", () => {
-    const { container } = render(<BrowserPage plugins={pluginsStub} token="t" />);
-    expect(container.querySelector(".browser-pane")).toBeTruthy();
+  it("shows the desktop-required placeholder when no embedded bridge exists (plain browser)", () => {
+    const { container } = render(<BrowserPage token="t" />);
+    expect(container.querySelector(".browser-mode-b-placeholder")).toBeTruthy();
     expect(container.querySelector("#vale-embedded-browser-slot")).toBeNull();
+    expect(screen.getByText(/needs the Vale desktop app/i)).toBeTruthy();
   });
 
   it("renders the embedded REAL-browser controller when window.valeEmbedded exists (Electron shell)", async () => {
@@ -40,7 +34,7 @@ describe("BrowserPage", () => {
       recover: vi.fn().mockResolvedValue({ ok: true }),
       onGone: vi.fn().mockReturnValue(() => {}),
     };
-    const { container } = render(<BrowserPage plugins={pluginsStub} token="t" />);
+    const { container } = render(<BrowserPage token="t" />);
     // The embedded controller mounts its slot (no screenshot <img>).
     expect(container.querySelector("#vale-embedded-browser-slot")).toBeTruthy();
     expect(container.querySelector("img.browser-frame")).toBeNull();
@@ -68,7 +62,7 @@ describe("BrowserPage", () => {
       recover: vi.fn().mockResolvedValue({ ok: true }),
       onGone: vi.fn().mockReturnValue(() => {}),
     };
-    render(<BrowserPage plugins={pluginsStub} token="t" />);
+    render(<BrowserPage token="t" />);
     const input = screen.getByPlaceholderText(/press Enter/i) as HTMLInputElement;
     // Focus + type a bare host (no scheme) — Enter must https-prefix it.
     input.focus();
@@ -97,7 +91,7 @@ describe("BrowserPage", () => {
         return () => {};
       }),
     };
-    const { container } = render(<BrowserPage plugins={pluginsStub} token="t" />);
+    const { container } = render(<BrowserPage token="t" />);
     // Simulate a renderer crash pushed from the main process.
     act(() => { goneHandler?.({ reason: "crashed", exitCode: 0 }); });
     expect(container.querySelector(".browser-crash-banner")).toBeTruthy();

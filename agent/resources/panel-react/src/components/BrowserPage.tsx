@@ -1,29 +1,18 @@
-// BrowserPage — the ONE browser entry (round-162/163). The old design had
-// two entries (an injected tab-strip session AND this page); the injected
-// row is gone — the browser is a page, not a session.
-//
-// round-163 layout fix: the LIVE VIEW is powered by the agent's bridge
-// (port 9224) and is INDEPENDENT of the playwright runner. This page used
-// to gate the whole viewport behind the runner status, which hid a working
-// stream whenever the runner was stopped. The viewport now always renders.
-//
-// round-refactor: the runner (playwright-mcp, AI automation + evidence feed)
-// no longer owns a full status bar across the top of the page — it shrinks
-// to a compact chip in BrowserPane's view-switch row, so the page reads as a
-// browser (tabs + URL + live view), not as a service dashboard.
-import BrowserPane from "./BrowserPane";
+// BrowserPage — the ONE browser entry (round-162/163; round-261 mode-B
+// removal). The JPEG screenshot stream (BrowserPane/useBrowser, the
+// plain-web fallback) is GONE: the browser is a REAL embedded WebContentsView
+// in the Electron desktop shell only. In a plain browser there is no
+// screenshot path anymore — the page explains that the browser needs the
+// desktop app.
 import { EmbeddedBrowserPane } from "./EmbeddedBrowserPane";
-import type { usePlugins } from "../hooks/usePlugins";
 
 interface Props {
-  plugins: ReturnType<typeof usePlugins>;
   token: string;
 }
 
-export function BrowserPage({ plugins, token }: Props) {
+export function BrowserPage({ token }: Props) {
   // round-246: in the Electron shell the main process embeds a REAL
-  // WebContentsView (window.valeEmbedded) — render the controller for it
-  // instead of the JPEG screencast pane. Plain browsers keep the stream.
+  // WebContentsView (window.valeEmbedded) — render the controller for it.
   const embedded = !!((window as any).valeEmbedded);
   if (embedded) {
     return (
@@ -32,25 +21,22 @@ export function BrowserPage({ plugins, token }: Props) {
       </div>
     );
   }
-  const pw = plugins.playwright;
-  const running = !!pw?.running;
-  const pending = pw === null;
-  const errored = plugins.playwrightRow?.state === "error";
-
+  // round-261 (user: "模式 B 可以删除"): no screenshot-stream fallback.
+  // The remote browser is only meaningful as the real embedded view in the
+  // Vale desktop app; a plain web page cannot show it.
   return (
     <div className="browser-page">
-      <BrowserPane
-        session={{ sid: "browser", url: "", active: true }}
-        apiBase=""
-        token={token}
-        runner={{
-          running,
-          pending,
-          errored,
-          busy: plugins.busy,
-          onToggle: () => (running ? plugins.stop() : plugins.start()),
-        }}
-      />
+      <div className="browser-mode-b-placeholder">
+        <div className="browser-placeholder">
+          <span style={{ fontSize: 40 }}>🖥</span>
+          <p><strong>The browser needs the Vale desktop app</strong></p>
+          <p className="browser-mode-b-hint">
+            This page is served by the agent. Open it inside the Vale Desktop
+            (Electron) shell to get the real embedded browser — plain web
+            browsers cannot render it.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

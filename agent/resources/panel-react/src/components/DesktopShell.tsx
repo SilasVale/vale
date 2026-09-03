@@ -239,7 +239,7 @@ export function DesktopShell({
                 onControlledViewChange={(sid, v) => changeView(sid, v)}
               />
             )}
-            {page === "browser" && <BrowserPage plugins={plugins} token={token} />}
+            {page === "browser" && <BrowserPage token={token} />}
             {page === "memory" && <MemoryPage />}
             {page === "plugins" && <PluginsPage plugins={plugins} />}
             {page === "settings" && <SettingsPage onOpenMemory={() => setPage("memory")} />}

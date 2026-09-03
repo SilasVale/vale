@@ -1271,17 +1271,6 @@
   position: relative;
   min-height: 0;
 }
-/* round-refactor: the frame used to grow to its natural 1280x800 ratio and
-   overflow the viewport (bottom clipped); contain it fully instead. */
-.browser-frame {
-  /* stage-n: width/height are set inline via zoom percentage (100%=native).
-      object-fit: contain keeps the frame crisp at any zoom. The viewport has
-      overflow:auto, so zoom>100% yields native scrollbars instead of clipping. */
-  object-fit: contain;
-  display: block;
-  cursor: text;
-  outline: none;
-}
 .browser-error {
   color: var(--danger);
   font-size: 11px;
@@ -1960,4 +1949,38 @@ button.dtab-close:hover { opacity: 1; }
 }
 .browser-crash-recover {
   margin-top: 4px;
+}
+
+/* round-260: attention flash on the Evidence toggle when the AI starts a
+   new action burst (idle -> active) — a soft glow that fades by itself. */
+.browser-ev-toggle.flash {
+  animation: browser-ev-flash 4s ease-out;
+}
+@keyframes browser-ev-flash {
+  0% { box-shadow: 0 0 0 0 var(--warn); background: var(--warn-soft); }
+  30% { box-shadow: 0 0 12px 2px var(--warn); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* round-261: mode-B removal — plain-web Browser page placeholder (the real
+   browser only exists inside the Vale desktop Electron shell). */
+.browser-mode-b-placeholder {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 240px;
+}
+.browser-mode-b-placeholder .browser-placeholder {
+  position: static;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+.browser-mode-b-hint {
+  max-width: 420px;
+  font-size: 12px;
+  opacity: 0.75;
+  line-height: 1.5;
 }

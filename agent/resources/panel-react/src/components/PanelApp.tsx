@@ -92,7 +92,7 @@ export function PanelApp(props: Props) {
                 sseState={props.sseState as "connected" | "down" | "connecting"}
               />
             )}
-            {page === "browser" && <BrowserPage plugins={props.plugins} token={props.token} />}
+            {page === "browser" && <BrowserPage token={props.token} />}
             {page === "memory" && <MemoryPage />}
             {page === "plugins" && <PluginsPage plugins={props.plugins} />}
             {page === "settings" && <SettingsPage onOpenMemory={() => setPage("memory")} />}
