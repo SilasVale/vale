@@ -19,6 +19,8 @@
 //   5. panel     — AI writes a unique marker into a terminal session; the
 //                  SPA's VISIBLE xterm must show it (round-264 display
 //                  verification, now repeatable)
+//   6. evidence  — an AI screenshot lands in pwout and /api/browser/pwshots
+//                  (the Evidence drawer data source) lists it
 //
 // Usage:
 //   node e2e.js --token <agent-token> [--base http://127.0.0.1:18080]
@@ -45,6 +47,7 @@ const PW_DIR = process.env.VALE_PW_DIR || 'D:\\Vale\\playwright';
 
 const H = { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function shotsJsonParse(resp) { try { return await resp.json(); } catch (e) { return null; } }
 
 async function tool(name, body) {
   const r = await fetch(BASE + '/api/tools/' + name, {
@@ -187,6 +190,37 @@ async function sectionPanel() {
   });
 }
 
+// ── 4c. evidence: an AI screenshot lands in pwout and shows in pwshots ────
+async function sectionEvidence() {
+  // 1. AI takes a screenshot of the embedded view (browser_run_script,
+  //    screenshot saved into the pwout dir — the round-252 evidence path)
+  const name = 'e2e_evidence_' + Date.now() + '.png';
+  const script = [
+    "const { chromium } = require('" + PW_DIR.replace(/\\/g, '/') + "/node_modules/playwright');",
+    "(async () => {",
+    "  const browser = await chromium.connectOverCDP('http://127.0.0.1:9333', { timeout: 10000 });",
+    "  const pages = browser.contexts().flatMap(c => c.pages());",
+    "  const view = pages.find(p => !p.url().includes('/desktop/'));",
+    "  if (!view) { console.log('NO_VIEW'); await browser.close(); return; }",
+    "  await view.screenshot({ path: 'D:\\\\Vale\\\\pwout\\\\" + name + "' });",
+    "  console.log('SHOT_SAVED');",
+    "  await browser.close();",
+    "})().catch(e => { console.log('FAIL:' + String(e).slice(0, 200)); process.exit(1); });",
+  ].join('\n');
+  const br = await tool('browser_run_script', { script });
+  const out = (br && br.stdout) || '';
+  check('evidence screenshot saved', br && br.exit_code === 0 && out.includes('SHOT_SAVED'),
+    out.trim().slice(0, 60));
+  // 2. the pwshots API (Evidence drawer data source) must list it
+  await sleep(2000);
+  const pwH = { Authorization: 'Bearer ' + TOKEN };
+  const shotsResp = await fetch(BASE + '/api/browser/pwshots', { headers: pwH });
+  const shotsJson = shotsResp.ok ? await shotsJsonParse(shotsResp) : null;
+  const list = (shotsJson && shotsJson.shots) || [];
+  check('evidence pwshots lists it', list.some((f) => (f.name || '').includes(name)),
+    'shots=' + list.length + ' looking=' + name.slice(0, 30));
+}
+
 async function sectionBrowser() {
   const script = [
     "const { chromium } = require('" + PW_DIR.replace(/\\/g, '/') + "/node_modules/playwright');",
@@ -274,6 +308,7 @@ async function sectionBrowser() {
     if (want('file')) await sectionFile();
     if (want('workflow')) await sectionWorkflow();
     if (want('panel') && !NO_BROWSER) await sectionPanel();
+    if (want('evidence') && !NO_BROWSER) await sectionEvidence();
     if (want('browser') && !NO_BROWSER) await sectionBrowser();
   } catch (e) {
     console.error('SECTION ERROR: ' + e.message);
