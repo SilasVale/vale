@@ -583,7 +583,8 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   the embedded-view tab (3s settle for the playwright-mcp browser attach,
   then list + select) so AI navigation drives the page the user watches.
   Earlier: 1.2.267 (round-274) hidden-window render fix; E2E suite
-  agent/scripts/e2e/e2e.js 18/18 on d1.
+  agent/scripts/e2e/e2e.js 22/22 on d1 (terminal/file/workflow/panel/
+  mcp/evidence/browser sections).
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
