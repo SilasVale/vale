@@ -382,7 +382,12 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
     const consoleUrl = (env && env.CONSOLE_URL) || "https://api.saisi.online";
-    const installerUrl = `https://v.saisi.online/dl/vale-agent-1.2.141.tgz`;
+    // round-319: the download page's install command pointed at the DELETED
+    // 1.2.141 tgz on the Vercel mirror (v.saisi.online/dl/) — every copy-
+    // paste install failed. Use the versionless latest alias on the dist
+    // worker (agent.saisi.online/vale-agent/vale-agent-latest.tgz, mirrored
+    // on every release) so the command always installs the current build.
+    const installerUrl = `https://agent.saisi.online/vale-agent/vale-agent-latest.tgz`;
 
     return new Response(PAGE(consoleUrl, installerUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
