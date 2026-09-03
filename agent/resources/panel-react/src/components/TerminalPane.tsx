@@ -231,18 +231,9 @@ export function TerminalPane({ session, registerWrite }: {
   useEffect(() => {
     const refit = () => {
       try {
-        // round-128: the admin views (trajectory/plugins) hide the active
-        // pane's container without unmounting — a window resize then runs
-        // fit() on a 0-size hidden container and pushes a garbage grid to
-        // the backend. Skip while not visible (offsetParent is null when
-        // the element or an ancestor is display:none).
         const term: any = termRef.current;
         if (term?.element && term.element.offsetParent === null) return;
         term?.fit?.();
-        // round-96: the fit() only reflows the LOCAL xterm grid — the
-        // backend PTY/SSH/serial session kept its original cols/rows, so a
-        // resize left the remote line-wrapping wrong. Push the new grid to
-        // the backend (best-effort; failure is harmless).
         if (term && session.sid) {
           callTool("terminal_resize", { session_id: session.sid, cols: term.cols, rows: term.rows }).catch(() => {});
         }
@@ -254,15 +245,22 @@ export function TerminalPane({ session, registerWrite }: {
       window.addEventListener("resize", refit);
       document.addEventListener("visibilitychange", refit);
       if (containerRef.current && typeof ResizeObserver !== "undefined") {
-        const ro = new ResizeObserver(() => refit());
+        // stage-n: throttle refits to one per frame — ResizeObserver can fire
+        // rapidly during drawer animation and flood the backend with resizes.
+        let rafId = 0;
+        const ro = new ResizeObserver(() => {
+          if (rafId) cancelAnimationFrame(rafId);
+          rafId = requestAnimationFrame(() => { rafId = 0; refit(); });
+        });
         ro.observe(containerRef.current);
         cleanupRef.push(() => ro.disconnect());
       }
-      // round-94: focus the terminal on activation — keystrokes previously
-      // landed nowhere (focus stayed on the toolbar/button that opened the
-      // session, and Enter/Space re-triggered it).
-      setTimeout(() => { try { termRef.current?.focus?.(); } catch {} }, 60);
-      return () => { clearTimeout(t); window.removeEventListener("resize", refit); document.removeEventListener("visibilitychange", refit); cleanupRef.forEach(fn => fn()); };
+      // stage-n: focus synchronously (double-rAF for paint-then-focus) instead
+      // of a 60ms setTimeout that let fast typers lose chars on tab switch.
+      const focusTimer = requestAnimationFrame(() => {
+        requestAnimationFrame(() => { try { termRef.current?.focus?.(); } catch {} });
+      });
+      return () => { clearTimeout(t); cancelAnimationFrame(focusTimer); window.removeEventListener("resize", refit); document.removeEventListener("visibilitychange", refit); cleanupRef.forEach(fn => fn()); };
     }
   }, [session.active]);
 
@@ -275,12 +273,16 @@ export function TerminalPane({ session, registerWrite }: {
     const term: any = termRef.current;
     if (!term) return;
     term.options.fontSize = clamped;
-    setTimeout(() => {
-      try {
-        term.fit?.();
-        callTool("terminal_resize", { session_id: session.sid, cols: term.cols, rows: term.rows }).catch(() => {});
-      } catch { /* hidden pane */ }
-    }, 30);
+    // stage-n: refit in same rAF cycle as fontSize set — the old 30ms
+    // setTimeout created a visible grid misalignment flash.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        try {
+          term.fit?.();
+          callTool("terminal_resize", { session_id: session.sid, cols: term.cols, rows: term.rows }).catch(() => {});
+        } catch { /* hidden pane */ }
+      });
+    });
   };
 
   // findNext/findPrevious REQUIRE the search term in this addon version —

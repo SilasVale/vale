@@ -48,11 +48,34 @@ export function TerminalWorkspace({
   const [selectedCmdId, setSelectedCmdId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
+  const detailsRef = useRef<HTMLDivElement>(null);
   const sessionView: SessionView = density === "desktop"
     ? (controlledView ?? "terminal")
     : ((activeSid && sessionViews[activeSid]) || "terminal");
   const trajOpen = !!activeSid && sessionView === "trajectory";
   const selectedCard = selectedCmdId ? cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null : null;
+
+  // stage-n: refit terminals after the drawer finishes its enter/exit
+  // transition — opening the Logs drawer changes the container size but the
+  // old code didn't trigger refit, so the grid stayed wrong until next resize.
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const t = setTimeout(() => {
+      // Dispatch a window resize event — TerminalPane listens for it and refits.
+      window.dispatchEvent(new Event("resize"));
+    }, 250); // match drawer transition duration
+    return () => clearTimeout(t);
+  }, [detailsOpen]);
+
+  // stage-n: refit on drawer CLOSE too — the container grows back and the
+  // terminal grid must expand to match.
+  const prevDetailsOpen = useRef(detailsOpen);
+  useEffect(() => {
+    if (prevDetailsOpen.current && !detailsOpen) {
+      window.dispatchEvent(new Event("resize"));
+    }
+    prevDetailsOpen.current = detailsOpen;
+  }, [detailsOpen]);
 
   const changeView = (v: SessionView) => {
     if (!activeSid) return;

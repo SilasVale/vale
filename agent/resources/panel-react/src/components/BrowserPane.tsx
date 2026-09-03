@@ -169,8 +169,8 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
           tabIndex={0}
           draggable={false}
           style={{
-            transform: `scale(${b.zoom / 100})`,
-            transformOrigin: "top left",
+            width: `${b.zoom}%`,
+            height: `${b.zoom}%`,
             display: b.hasFrame ? undefined : "none",
           }}
           onDragStart={(e) => e.preventDefault()}
@@ -180,8 +180,10 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
           onWheel={(e) => {
             const p = b.mapXY(e.currentTarget, e.clientX, e.clientY);
             if (!p.inside) return;
+            // stage-n: only preventDefault when the remote page actually
+            // consumed the scroll (zoom == 100% → native scroll works).
+            if (b.zoom > 100) e.preventDefault();
             b.send({ t: "wheel", x: p.x, y: p.y, dx: e.deltaX, dy: e.deltaY });
-            e.preventDefault();
           }}
           onKeyDown={(e) => {
             e.preventDefault();
@@ -232,12 +234,13 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
       </div>
 
       {/* ── Evidence drawer (right side, over the viewport) ── */}
-      {evOpen && (
-        <div className="browser-ev-drawer">
-          <div className="browser-ev-head">
-            AI screenshots ({b.shots.length}) — synced from the pwout dir
-            <button className="btn btn-ghost btn-mini browser-ev-close" onClick={() => setEvOpen(false)}>✕</button>
-          </div>
+      {/* stage-n: always render; toggle class for smooth open/close animation
+          instead of mount/unmount which pops. */}
+      <div className={`browser-ev-drawer${evOpen ? " open" : ""}`}>
+        <div className="browser-ev-head">
+          AI screenshots ({b.shots.length}) — synced from the pwout dir
+          <button className="btn btn-ghost btn-mini browser-ev-close" onClick={() => setEvOpen(false)}>✕</button>
+        </div>
           {b.shots.length === 0 ? (
             <div className="browser-ev-empty-mini">No screenshots yet — they appear here automatically when the AI works via browser_run_script</div>
           ) : (
@@ -276,7 +279,9 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                 ) : (
                   <div className="browser-actions-list">
                     {b.actions.map((a, ai) => (
-                      <div key={`${a.ts}:${ai}`} className={`browser-action${a.exit_code === 0 ? "" : a.exit_code === null ? " running" : " err"}`}>
+                      {/* stage-n: stable key from the action content so prepending a
+                        new action doesn't shift indices and reset scroll/expanded state. */}
+                    <div key={`${a.ts}:${a.script?.slice(0,40)}`} className={`browser-action${a.exit_code === 0 ? "" : a.exit_code === null ? " running" : " err"}`}>
                         <div className="browser-action-row">
                           <span className="browser-action-time">{new Date(a.ts).toLocaleTimeString()}</span>
                           <span className={`browser-action-badge${a.exit_code === 0 ? " ok" : a.exit_code === null ? " run" : " err"}`}>
@@ -292,9 +297,9 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                         {/* stage-n: click the script preview to expand/collapse
                             long scripts (default clamped to 40px). */}
                         <div
-                          className={`browser-action-script${expandedActions.has(`${a.ts}:${ai}`) ? " expanded" : ""}`}
+                          className={`browser-action-script${expandedActions.has(`${a.ts}:${a.script?.slice(0,40)}`) ? " expanded" : ""}`}
                           onClick={() => setExpandedActions((prev) => {
-                            const key = `${a.ts}:${ai}`;
+                            const key = \`${a.ts}:${a.script?.slice(0,40)}\`;
                             const next = new Set(prev);
                             if (next.has(key)) next.delete(key); else next.add(key);
                             return next;
