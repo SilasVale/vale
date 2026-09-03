@@ -624,6 +624,13 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   failed with "Cannot take screenshot with 0 width" — the section now
   clicks the Browser rail (SPA CDP eval, shared spaRailClick helper)
   before shooting. Device-verified: evidence 2/2 + leftover 0.
+  ROUND-292 (2026-09-04): e2e browser-class sections run IN SEQUENCE
+  14/14 on d1 (panel 2 + mcp stdio/http 8 + evidence 2 + browser 2) with
+  the round-291 rail activation — page switches between sections (Terminal
+  -> embedded nav -> Browser rail -> address bar) do not interfere; the
+  evidence screenshot succeeds right after mcp navigation. Combined with
+  the earlier terminal/file/workflow 12/12, all 26 checks are verified on
+  the current e2e.js. No pwout leftovers.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
