@@ -663,6 +663,12 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   history retains them) + their 5.7GB of xwin target caches. build.sh
   agent no longer builds either (was minutes of dead work per run; CI
   builds vale-agent only). All four agent-facing docs updated.
+  ROUND-331 (2026-09-04): vale.ts Tauri staging dead code removed —
+  setup/update still staged vale-desktop.exe (retired Tauri shell) with
+  existsSync guards that never fired (npm package stopped shipping it
+  round-75; crate deleted round-330). -49 lines; bin/vale.js recompiled
+  (round-298 discipline), tsc clean. taskkill lines stay as defensive
+  cleanup for stale processes. Workflows verified free of retired refs.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
