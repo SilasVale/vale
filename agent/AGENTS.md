@@ -750,6 +750,15 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   12 + panel/mcp/evidence 12 + browser 2). auto-select drives the
   embedded view on BOTH transports, evidence self-cleans, panel xterm
   shows AI output. All green on the current release.
+  ROUND-309 (2026-09-04): CDN asset prune — index/public/vale-agent had
+  accumulated 46+ old tgz (229-269 + 274-278; round-230's last-5 policy
+  was never enforced on manual publishes — every release only cp'd the
+  new file). Deleted 229-273 locally + wrangler deploy synced the CDN:
+  old versions now 404, only 274-278 + latest remain. LESSON: run the
+  last-5 prune on EVERY release; and shell case patterns for dotted
+  versions must be exact (*-274.tgz does NOT match 1.2.274 — dot vs
+  hyphen; 274-278 were briefly deleted locally, restored from CDN before
+  deploy).
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
