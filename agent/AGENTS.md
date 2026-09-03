@@ -577,6 +577,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   + bin/vale.js under package/) — the round-278 url-policy.js gap would
   now FAIL the release instead of silently shipping an incomplete tgz.
   Gate validated against the real 1.2.271 tgz (5/5 files OK).
+  ROUND-284 (2026-09-04): full E2E suite 22/22 on d1 against 1.2.271 —
+  first complete run since the mcp section landed (round-282). Segmented
+  runs (12 + 10) to stay under terminal timeouts: terminal/file/workflow
+  12/12; panel/mcp/evidence/browser 10/10 incl. panel xterm marker
+  (PANEL-VIS), mcp auto-select driving the embedded view
+  (mcp-autoselect URL reached), evidence pwshots, browser SPA-bar sync.
+  Evidence test shots cleaned up. All display + drive paths green on the
+  current release.
 
 ### Current release
 - npm **1.2.271 LIVE on d1 (round-281)** — MCP stdio connect auto-selects
