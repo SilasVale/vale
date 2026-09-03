@@ -42,6 +42,7 @@ import {
   passthroughTimeoutMs,
   isChannelDegraded,
   recordChannelFailure,
+  isChannelDownFailure,
   recordChannelSuccess,
 } from "../reliability.ts";
 import {
@@ -145,7 +146,13 @@ async function openAIUpstreamToAnthropicResponse(
 
 /* ---------------- /v1/* gateway ---------------- */
 
-// In-memory per-token rate-limit counters (per isolate). The old KV
+// round-158: scrub leaked provider keys out of any surfaced 502/503 body so a
+// gateway error can never echo `sk-…` back to the caller (money).
+// Exported (coverage audit row 3) so the regex is unit-tested.
+export function scrubKeys(msg: string): string {
+  return String(msg || "").replace(/\b(?:sk|rc|sc|or|xox[baprs])-[A-Za-z0-9_-]{8,}/g, "***");
+}
+
 // get-then-put counters cost 2 reads + 2 writes per /v1/messages request —
 // that alone burned the Free-plan daily KV WRITE quota (1000/day) at ~250
 // requests. Never written; each window's first request per token reads KV
@@ -204,6 +211,9 @@ async function handleGatewayImpl(
   // (the Go plan has no API access). One key for CLI and API; usage meters
   // against the plan credits.
   const cmdKey = ukeys.CMD_API_KEY || null;
+  // AMD Radeon Cloud (developer.amd.com.cn/radeon) — free BYOK pool, keys are
+  // the "rc-…" tokens from the Radeon developer console. Same BYOK blob.
+  const amdKey = ukeys.AMD_API_KEY || null;
 
   // Per-token rate limit: a valid token previously meant UNLIMITED upstream
   // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
@@ -215,7 +225,14 @@ async function handleGatewayImpl(
   // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
   // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
   // the double-count that halved the effective budget for Claude Code turns.
-  if (env.KEYS && method === "POST" && path.endsWith("/messages") && !path.endsWith(COUNT_PATH)) {
+  // audit round F1: /v1/chat/completions (OpenAI format) skipped the limiter
+  // ENTIRELY — a leaked token burned quota unthrottled on that path.
+  if (
+    env.KEYS &&
+    method === "POST" &&
+    (path.endsWith("/messages") || path.endsWith("/chat/completions")) &&
+    !path.endsWith(COUNT_PATH)
+  ) {
     const mk = `min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
     const dk = `day:${effectiveToken}:${Math.floor(Date.now() / 86400000)}`;
     const minute = __rlMin.get(mk) ?? 0;
@@ -318,17 +335,25 @@ async function handleGatewayImpl(
       // nv/gmi ride the translation branch below (toOpenAIRequest needs the
       // parsed body) — always parse, same as the og translate models.
       route.kind === "gmi" ||
+      // amd/ models are text-only (its /v1/models reports input_modalities
+      // ["text"]), so image blocks must be described by the vision model like
+      // on ds/ — but the body still goes out un-translated (native Anthropic).
+      route.kind === "amd" ||
       route.kind === "nvidia")
   ) {
     // CPU guard: parsing a multi-MB body into an object graph blows the Free
     // plan's 10ms budget (Error 1102) — but web_search detection and image
     // preprocessing NEED the object. The translate path MUST parse (it
-    // reshapes the request), so the scan-skip ONLY applies to the native
-    // opencode PASSTHROUGH (deepseek-v4-flash, route.type === "passthrough"):
+    // reshapes the request), so the scan-skip applies to the NATIVE-Anthropic
+    // passthrough channels (og/deepseek-v4-flash, ds/, amd/ — amd's upstream
+    // speaks Anthropic directly, so its body needs no reshaping):
     // scan the RAW text for the triggers ("web_search" tool, image blocks)
     // BEFORE parsing — a plain text-only request (the common case) skips the
     // parse entirely. Translate models (minimax/mimo/kimi) always parse.
-    if ((route.kind === "opencode" || route.kind === "deepseek") && route.type === "passthrough") {
+    if (
+      route.type === "passthrough" &&
+      (route.kind === "opencode" || route.kind === "deepseek" || route.kind === "amd")
+    ) {
       // Precise triggers. IMAGE: scan ONLY the LAST user message (from the
       // last '"role":"user"' to the end) — the current image's
       // "type":"image" marker always sits in the freshly-sent message,
@@ -501,9 +526,11 @@ async function handleGatewayImpl(
             ? nvKey
             : route.kind === "gmi"
               ? gmiKey
-              : route.kind === "opencode"
-                ? opencodeGoKey
-                : deepseekKey;
+              : route.kind === "amd"
+                ? amdKey
+                : route.kind === "opencode"
+                  ? opencodeGoKey
+                  : deepseekKey;
 
   // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
   // Accepts OpenAI-format requests directly and forwards to the upstream
@@ -521,6 +548,13 @@ async function handleGatewayImpl(
       return jsonError(
         502,
         "GMI_API_KEY not configured — add your GMI Cloud key in the console",
+        "config_error",
+      );
+    }
+    if (route.kind === "amd" && !amdKey) {
+      return jsonError(
+        502,
+        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
         "config_error",
       );
     }
@@ -565,13 +599,18 @@ async function handleGatewayImpl(
     // off = direct openrouter.ai/api/v1/chat/completions; on = via the US egress (target=or).
     // qwen/ is the same trap: the /apps/anthropic endpoint rejects OpenAI bodies, so chat
     // completions re-pick the compatible-mode upstream (bugfix 2026-08-30).
-    if (route.kind === "openrouter" || route.kind === "commandgoat" || route.kind === "qwen") {
-      route.upstream = pickRoute(
-        route.kind === "openrouter" ? "or" : route.kind === "commandgoat" ? "cm" : "qw",
-        env,
-        usProxy,
-        "/v1/chat/completions",
-      ).upstream;
+    // amd/ is the same shape again: pickRoute defaults to Radeon's native
+    // /v1/messages URL (Anthropic clients), an OpenAI body must go to
+    // /v1/chat/completions instead.
+    if (
+      route.kind === "openrouter" ||
+      route.kind === "commandgoat" ||
+      route.kind === "qwen" ||
+      route.kind === "amd"
+    ) {
+      // Re-pick by the REQUEST prefix (kind→prefix is 1:1 for these four);
+      // pickRoute ignores the US exit for amd — that host is CN-served.
+      route.upstream = pickRoute(prefix2, env, usProxy, "/v1/chat/completions").upstream;
     }
     // Body is already OpenAI format — forward as-is with model field swapped.
     let forwardBody = rawWithModel(rawText, upstreamModel, scanned);
@@ -638,10 +677,7 @@ async function handleGatewayImpl(
       );
     }
     if (!upstream.ok) {
-      if (
-        route.kind === "opencode" &&
-        (detail?.startsWith("network error") || detail?.startsWith("timeout"))
-      ) {
+      if (route.kind === "opencode" && isChannelDownFailure(detail)) {
         await recordChannelFailure(env);
       }
       let message = `Upstream ${upstream.status}`;
@@ -651,8 +687,15 @@ async function handleGatewayImpl(
       let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
       let extra = {};
       try {
-        const err: any = await upstream.json();
-        message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
+        const rawErr: any = await upstream.json();
+        // Radeon Cloud (FastAPI-style) nests its payload as
+        // {"detail":{"error":{…}}} — unwrap it, or AMD's concurrency 429 would
+        // surface with a stringified body and a bare api_error type.
+        const err: any =
+          rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
+        message =
+          scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) ||
+          message;
         const upType = err.error?.type || err.type;
         const KNOWN = [
           "rate_limit_error",
@@ -702,6 +745,13 @@ async function handleGatewayImpl(
       return jsonError(
         502,
         "QWEN_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
+    }
+    if (route.kind === "amd" && !amdKey) {
+      return jsonError(
+        502,
+        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
         "config_error",
       );
     }
@@ -770,7 +820,7 @@ async function handleGatewayImpl(
     return openAIUpstreamToAnthropicResponse(upstream, body, body.model, upstreamModel);
   }
 
-  // Passthrough routes (or/ds/qw): the upstream already speaks the Anthropic
+  // Passthrough routes (or/ds/qw/amd): the upstream already speaks the Anthropic
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
     if (route.kind === "deepseek" && !deepseekKey) {
@@ -784,6 +834,15 @@ async function handleGatewayImpl(
       return jsonError(
         502,
         "QWEN_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
+    }
+    // amd/ (AMD Radeon Cloud) is pure BYOK too — without the user's rc-… key
+    // the request would go out headerless and 401 at the upstream.
+    if (route.kind === "amd" && !amdKey) {
+      return jsonError(
+        502,
+        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
         "config_error",
       );
     }
@@ -811,8 +870,11 @@ async function handleGatewayImpl(
     // pre-processing) — forward THAT (images must arrive described, deepseek
     // is text-only). ds/qw/or never parse: raw text with only the top-level
     // model field swapped — no parse, no spread, no full re-stringify (Free
-    // plan 10ms CPU budget). og-native authenticates with x-api-key;
-    // every other passthrough channel uses Bearer.
+    // plan 10ms CPU budget). amd/ parses only when the raw scan finds an
+    // image (its models are text-only, so vision needs preprocessing); a plain
+    // request rides the same raw-swap path. og-native authenticates with
+    // x-api-key (amd/ too — its docs use that header, though it accepts
+    // Bearer as well); every other passthrough channel uses Bearer.
     let forwardBody =
       body !== null
         ? JSON.stringify({ ...body, model: upstreamModel })
@@ -843,7 +905,7 @@ async function handleGatewayImpl(
       {
         method: "POST",
         headers: passthroughHeaders(bearerKey, {
-          apiKeyHeader: route.kind === "opencode" ? "x-api-key" : false,
+          apiKeyHeader: route.kind === "opencode" || route.kind === "amd" ? "x-api-key" : false,
         }),
         body: forwardBody,
       },
@@ -894,8 +956,14 @@ async function handleGatewayImpl(
       let type = "api_error";
       let extra = {};
       try {
-        const err: any = await upstream.json();
-        message = err.error?.message || err.message || JSON.stringify(err).slice(0, 200) || message;
+        const rawErr: any = await upstream.json();
+        // Same unwrap as the chat/completions site: {"detail":{"error":{…}}}
+        // (AMD Radeon Cloud) must keep its message + rate_limit_error type.
+        const err: any =
+          rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
+        message =
+          scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) ||
+          message;
         // Forward the upstream's OWN error.type (Claude Code keys retry and
         // auth flows off it) — a DeepSeek 429 rate_limit_error collapsed to
         // api_error was NON-retryable for the client. Whitelist the known
@@ -1282,6 +1350,9 @@ export async function isModelUsable(env: any, model: string, uid: string): Promi
   if (prefix === "gmi/" && !userKeys.GMI_API_KEY) return false;
   // cm/ — Command Code is pure BYOK too; without a user key every request 502s.
   if (prefix === "cm/" && !(userKeys.CMD_API_KEY || env.CMD_API_KEY)) return false;
+  // amd/ — Radeon Cloud free pool, the rc-… key belongs to the user who added
+  // it (a missing key 502s; a shared-pool 429 is the upstream's, not a 502).
+  if (prefix === "amd/" && !(userKeys.AMD_API_KEY || env.AMD_API_KEY)) return false;
   if (model.startsWith("og/")) return !(await isChannelDegraded(env));
   return true;
 }

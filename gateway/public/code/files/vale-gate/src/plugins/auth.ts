@@ -32,6 +32,7 @@ import {
   globalSettingEnabled,
 } from "../store.ts";
 import {
+  safeEq,
   verifyPassword,
   issueSessionToken,
   parseCookie,
@@ -137,8 +138,16 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
     return jsonError(429, "Too many attempts — try again in ~30s", "rate_limit_error");
   }
   const user = await findUserByUsername(env, body.username);
-  if (!user || !user.enabled)
+  if (!user || !user.enabled) {
+    // Auth-core audit LOW: burn the SAME PBKDF2 work as a real attempt — the
+    // instant return was a username-enumeration timing oracle.
+    await verifyPassword(
+      body.password || "",
+      "00000000000000000000000000000000",
+      "00000000000000000000000000000000",
+    );
     return jsonError(401, "Incorrect username or password", "authentication_error");
+  }
   // eslint-disable-next-line no-useless-assignment
   let ok = false;
   if (user.id === ADMIN_ID) {
@@ -205,7 +214,7 @@ async function authResetPassword(request: Request, env: any): Promise<Response> 
   }
   // Prove possession of the admin gateway token (the console's Overview
   // shows this value; it is the same key Claude Code uses as x-api-key).
-  if (!admin.token || adminKey !== admin.token) {
+  if (!admin.token || !safeEq(adminKey, admin.token)) {
     return jsonError(403, "Invalid admin key", "authentication_error");
   }
   await setAdminPassword(env, newPassword);
@@ -368,7 +377,7 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const body = await readJson(request);
   const name = body?.name;
-  if (name !== "OPENROUTER_API_KEY" && name !== "OPENCODE_GO_API_KEY")
+  if (name !== "OPENROUTER_API_KEY" && name !== "OPENCODE_GO_API_KEY" && name !== "AMD_API_KEY")
     return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
   const ukeys = await getUserKeys(env, user.id);
   const key = ukeys[name];
@@ -403,6 +412,42 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
           rateLimit.interval = data.rate_limit.interval;
         if (typeof data.rate_limit.reset === "string") rateLimit.reset = data.rate_limit.reset;
         if (Object.keys(rateLimit).length) out.rateLimit = rateLimit;
+      }
+      return jsonOk(out);
+    } catch {
+      return jsonOk({ ok: false, name, detail: "Usage query failed" });
+    }
+  }
+
+  if (name === "AMD_API_KEY") {
+    // AMD Radeon Cloud (developer.amd.com.cn/radeon) — GET /v1/usage reports
+    // the rolling daily spend cap of the free rc-… key (verified 2026-09-02):
+    // {rpm_limit, daily_cost_limit_usd, daily_cost_used_usd, daily_reset_at,
+    //  all_time:{requests,total_tokens,cost}, by_model:[…]}. Mapped onto the
+    // generic usage shape the console already renders (USD numbers).
+    try {
+      const res = await fetchWithTimeout("https://developer.amd.com.cn/radeon/api/v1/usage", {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      if (!res.ok)
+        return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
+      const payload: any = await res.json();
+      const out: any = { ok: true, name, status: res.status };
+      if (typeof payload?.daily_cost_used_usd === "number") out.usage = payload.daily_cost_used_usd;
+      out.limit =
+        typeof payload?.daily_cost_limit_usd === "number" ? payload.daily_cost_limit_usd : null;
+      if (typeof payload?.rpm_limit === "number") {
+        out.rateLimit = { limit: payload.rpm_limit, interval: "minute" };
+        if (typeof payload.daily_reset_at === "string")
+          out.rateLimit.reset = payload.daily_reset_at;
+      }
+      const all = payload?.all_time;
+      if (all && typeof all === "object") {
+        // The account label the generic renderer shows: org + request/token
+        // totals, so the console says whose key and how much it has carried.
+        const requests = typeof all.requests === "number" ? all.requests : 0;
+        const tokens = typeof all.total_tokens === "number" ? all.total_tokens : 0;
+        out.label = `${payload.organization_id || "radeon"} · ${requests} req · ${tokens} tok`;
       }
       return jsonOk(out);
     } catch {
@@ -556,6 +601,28 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
         name,
         status: res.status,
         detail: res.ok ? "GMI Cloud auth OK" : `Upstream ${res.status}`,
+      });
+    }
+    if (name === "AMD_API_KEY") {
+      // AMD Radeon Cloud — GET /v1/models is a cheap auth check (it also tells
+      // which models this key can see; the free pool's catalog is small).
+      const res = await fetchWithTimeout("https://developer.amd.com.cn/radeon/api/v1/models", {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      let models: string[] = [];
+      try {
+        const payload: any = await res.json();
+        models = (payload?.data || []).map((m: any) => m?.id).filter(Boolean);
+      } catch {
+        /* non-JSON error body */
+      }
+      return jsonOk({
+        ok: res.ok,
+        name,
+        status: res.status,
+        detail: res.ok
+          ? `AMD Radeon Cloud auth OK (${models.length} models: ${models.join(", ")})`
+          : `Upstream ${res.status}`,
       });
     }
     if (name === "NVAPI_KEY") {

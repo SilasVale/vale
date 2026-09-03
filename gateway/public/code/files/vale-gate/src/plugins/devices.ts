@@ -56,6 +56,7 @@ import {
   consumePairCode,
   createWsTicket,
   consumeWsTicket,
+  withKeyLock,
   type Device,
 } from "../store.ts";
 import { parseCookie, randomHex } from "../auth.ts";
@@ -164,45 +165,84 @@ async function handleSelfRegister(request: Request, env: any): Promise<Response>
   if (!/^[0-9a-f]{64}$/i.test(device.token)) {
     return jsonError(403, "Invalid device token", "authorization_error");
   }
+  {
+    const hostErr = hostAllowError(device.hostname, env);
+    if (hostErr) return jsonError(400, hostErr, "invalid_request");
+  }
+  // SECURITY (round: gateway CRITICAL): the old proof fetched
+  // deviceFetch(env, device, "/api/status") using the CALLER-SUPPLIED
+  // hostname, so an attacker POSTing {name:"d1", hostname:"evil.com",
+  // token:<random>} had THEIR server answer with any 32-char proxy_secret,
+  // "proving" ownership and overwriting the real d1's record (hostname +
+  // token). Every console/proxy/MCP call then redirected to the attacker,
+  // whose responses the worker re-served AT THE CONSOLE ORIGIN. For an
+  // existing record, identity can only be proven against the STORED
+  // hostname, and only by returning the STORED proxy_secret.
   const existing = await getDevice(env, device.name);
-  // Anti-hijack: a DIFFERENT token for the same name is normally refused.
-  // BUT the device itself can prove identity by reaching its own /api/status
-  // through the tunnel (returns proxy_secret) — a reinstall/new config that
-  // rotated the token must be allowed to update its record, otherwise the
-  // device stays "offline" forever after a reinstall (round-2026-08-29).
-  let tokenChanged = existing && existing.token !== device.token;
-  try {
-    const status = await deviceFetch(env, device, "/api/status");
-    if (status && status.resp) {
-      const j: any = await status.resp.json().catch(() => null);
+  if (existing) {
+    // Refresh-only on the public endpoint: hostname is immutable here
+    // (moving a device's tunnel is an admin/console operation).
+    if (device.hostname.toLowerCase() !== existing.hostname.toLowerCase()) {
+      return jsonError(
+        409,
+        `Device '${device.name}' hostname is fixed — change it from the console (admin)`,
+        "conflict",
+      );
+    }
+    const sameToken = existing.token === device.token;
+    if (!sameToken) {
+      // Token rotation needs proof from the STORED tunnel that the caller
+      // is the same physical device: its /api/status must answer with the
+      // proxy_secret already on record.
+      let proved = false;
+      if (existing.proxySecret) {
+        try {
+          const status = await deviceFetch(env, existing, "/api/status");
+          const j: any = status?.resp ? await status.resp.json().catch(() => null) : null;
+          if (j && typeof j.proxy_secret === "string" && j.proxy_secret === existing.proxySecret) {
+            proved = true;
+          }
+        } catch {
+          /* best-effort — a dead/changed tunnel simply cannot rotate here */
+        }
+      }
+      if (!proved) {
+        return jsonError(
+          409,
+          `Device '${device.name}' already registered with a different token — use the console (admin)`,
+          "conflict",
+        );
+      }
+      device.proxySecret = existing.proxySecret;
+    } else {
+      if (!device.proxySecret && existing.proxySecret) device.proxySecret = existing.proxySecret;
+    }
+    // Idempotent refresh: keep the original registration date + hostname.
+    await upsertDevice(env, {
+      ...device,
+      hostname: existing.hostname,
+      registeredAt: existing.registeredAt ?? Date.now(),
+    });
+    return jsonOk({ ok: true, device: { name: device.name, hostname: existing.hostname } });
+  }
+  // New device: still constrained to the agent-host suffix (SSRF) and to
+  // proving it serves its claimed hostname before it can be proxied.
+  const hostErr = hostAllowError(device.hostname, env);
+  if (hostErr) return jsonError(400, hostErr, "invalid_request");
+  if (!device.proxySecret) {
+    try {
+      const status = await deviceFetch(env, device, "/api/status");
+      const j: any = status?.resp ? await status.resp.json().catch(() => null) : null;
       if (j && typeof j.proxy_secret === "string" && j.proxy_secret.length >= 32) {
         device.proxySecret = j.proxy_secret;
-        // Device proved it owns the hostname (its own /api/status answered
-        // with a fresh proxy_secret through the tunnel) — token update OK.
-        tokenChanged = false;
       }
+    } catch {
+      /* best-effort */
     }
-  } catch {
-    /* best-effort */
   }
-  if (tokenChanged) {
-    return jsonError(
-      409,
-      `Device '${device.name}' already registered with a different token — use the console (admin)`,
-      "conflict",
-    );
-  }
-  if (existing && !device.proxySecret && existing.proxySecret) {
-    device.proxySecret = existing.proxySecret;
-  }
-  if (existing) {
-    // Idempotent refresh: keep the original registration date.
-    await upsertDevice(env, { ...device, registeredAt: existing.registeredAt ?? Date.now() });
-  } else {
-    const inserted = await insertDevice(env, { ...device, registeredAt: Date.now() });
-    if (!inserted) {
-      return jsonError(409, `Device '${device.name}' already registered`, "conflict");
-    }
+  const inserted = await insertDevice(env, { ...device, registeredAt: Date.now() });
+  if (!inserted) {
+    return jsonError(409, `Device '${device.name}' already registered`, "conflict");
   }
   return jsonOk({ ok: true, device: { name: device.name, hostname: device.hostname } });
 }
@@ -248,20 +288,20 @@ async function handlePairClaim(request: Request, env: any): Promise<Response> {
   if (!c || !(await env.KEYS.get(`pair:${c}`))) {
     return jsonError(403, "Invalid or used pairing code", "authorization_error");
   }
-  // Single-flight: consumePairCode was check-then-act on eventually-
-  // consistent KV — two concurrent claims both passed and minted two
-  // 30-day device-control tokens from one code. A claim lock bounds it.
-  const claim = await env.KEYS.get(`pairclaim:${c}`);
-  if (claim) return jsonError(403, "Pairing code already in use", "authorization_error");
-  await env.KEYS.put(`pairclaim:${c}`, "1", { expirationTtl: 60 });
-  const device = await consumePairCode(env, c);
-  if (!device) {
-    await env.KEYS.delete(`pairclaim:${c}`);
-    return jsonError(403, "Invalid or used pairing code", "authorization_error");
-  }
-  const token = randomHex(16);
-  await addPluginLink(env, token, device);
-  return jsonOk({ token, device });
+  // stage-n M1 fix: wrap the entire claim under withKeyLock(\`pair:${c}\`, ...)
+  // so the get-check-then-delete is atomic across isolates. The old
+  // best-effort pairclaim: KV put had a race window between the pre-check
+  // and the put where two concurrent claims could both read the code and
+  // mint two 30-day device-control tokens from one pairing code.
+  return withKeyLock(`pair:${c}`, async () => {
+    const device = await consumePairCode(env, c);
+    if (!device) {
+      return jsonError(403, "Invalid or used pairing code", "authorization_error");
+    }
+    const token = randomHex(16);
+    await addPluginLink(env, token, device);
+    return jsonOk({ token, device });
+  });
 }
 
 // Extension unpair: revoke the plugin token server-side (local-only unpair
@@ -362,8 +402,13 @@ async function handleDeviceProxy(request: Request, env: any, url: URL): Promise<
   const deviceName = decodeDeviceName(proxyMatch[1]!);
   if (deviceName === null) return jsonError(400, "Invalid device name", "invalid_request");
   const d = await getDevice(env, deviceName);
-  if (!d) return jsonError(404, "Device not found", "not_found_error");
   const user = await requireSession(request, env);
+  if (!d) {
+    // round: the 404 here was an UNAUTHENTICATED device-name oracle (probe
+    // names → 404 vs 401). Unveil existence only to admin sessions.
+    if (user && user.role === "admin") return jsonError(404, "Device not found", "not_found_error");
+    return jsonError(401, "Not logged in or invalid plugin token", "authentication_error");
+  }
   if (user && user.role === "admin") {
     return await proxyDevice(request, env, d, proxyMatch[2] || "/");
   }
@@ -721,6 +766,20 @@ function decodeDeviceName(seg: string): string | null {
   }
 }
 
+/// Devices are always cloudflared tunnels on the agent host domain; an
+/// unvalidated hostname turns the worker into an SSRF proxy (it injects
+/// Authorization + x-vale-auth into https://<hostname>…) AND re-serves that
+/// host's responses at the console origin. Enforce a suffix allowlist,
+/// overridable per-deployment via DEVICE_HOST_SUFFIX.
+function hostAllowError(hostname: string, env: any): string | null {
+  const suffix = (env?.DEVICE_HOST_SUFFIX || ".agent.saisi.online").toLowerCase();
+  const h = hostname.toLowerCase();
+  if (!h.endsWith(suffix) || h.length <= suffix.length) {
+    return `hostname must be under ${suffix}`;
+  }
+  return null;
+}
+
 function validateDevice(body: any): Device {
   const name = String(body?.name || "").trim();
   const hostname = String(body?.hostname || "").trim();
@@ -766,6 +825,9 @@ async function proxyDevice(
   // header was client-spoofable end-to-end (a direct curl could set it and
   // read the token → /api/tools RCE). The secret is read from the device at
   // registration; only this authenticated proxy path presents it.
+  // Strip inbound FIRST: a client-sent x-vale-auth must never ride through
+  // when the record has no proxySecret (the header is ours to mint).
+  headers.delete("x-vale-auth");
   if (device.proxySecret) headers.set("x-vale-auth", device.proxySecret);
 
   // Never forward the extension's ?token= to the device — the plugin token
@@ -886,7 +948,10 @@ function rewriteDeviceBody(text: string, name: string): string {
   // a console-origin page (DOM/devtools/XSS) and keeping direct control of
   // /api/tools/* and /mcp after the plugin-link TTL or unpair — the exact
   // revocation scope the plugin token exists to enforce.
-  out = out.replace(/window\.__PANEL_TOKEN__\s*=\s*"[^"]*"/g, 'window.__PANEL_TOKEN__=""');
+  out = out.replace(
+    /window\.__PANEL_TOKEN__\s*=\s*(?:"[^"]*"|'[^']*')/g,
+    'window.__PANEL_TOKEN__=""',
+  );
   return out;
 }
 

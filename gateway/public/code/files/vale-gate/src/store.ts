@@ -72,6 +72,9 @@ export const USER_KEY_NAMES = [
   // Command Code (api.commandcode.ai/provider) — GOAT plan & up. Same key
   // works for the CLI and the Provider API (Go plan has no API access).
   "CMD_API_KEY",
+  // AMD Radeon Cloud (developer.amd.com.cn/radeon) — free BYOK pool, the key
+  // is the "rc-…" token from the Radeon developer console.
+  "AMD_API_KEY",
 ];
 
 /* ---- Per-isolate TTL cache ----
@@ -451,9 +454,17 @@ export async function deleteUserKey(
 function routeStub(env: any) {
   return env.ROUTE.get(env.ROUTE.idFromName("global"));
 }
+// Attach the DO shared secret when configured (RouteDO now enforces it).
+function routeHeaders(env: any, extra: Record<string, string> = {}): Record<string, string> {
+  const h: Record<string, string> = { ...extra };
+  if (env.DO_AUTH) h["x-do-auth"] = env.DO_AUTH;
+  return h;
+}
 
 export async function getUserRoute(env: Env, id: string): Promise<string | null> {
-  const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`);
+  const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
+    headers: routeHeaders(env),
+  });
   const data: any = await res.json();
   if (data.model != null) return data.model;
   // Legacy KV fallback (one-time migration).
@@ -474,11 +485,13 @@ export async function setUserRoute(
   if (model === null || model === undefined || model === "") {
     await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
       method: "DELETE",
+      headers: routeHeaders(env),
     });
     return;
   }
   await routeStub(env).fetch("https://route/route", {
     method: "PUT",
+    headers: routeHeaders(env, { "content-type": "application/json" }),
     body: JSON.stringify({ uid: id, model: String(model) }),
   });
 }
@@ -870,9 +883,25 @@ export async function getPluginByToken(env: Env, token: string): Promise<PluginL
   // never expiring, granting permanent browser_* control (the exact hole
   // the TTL exists to close). One-time sweep on read.
   if (!link.expiresAt || link.expiresAt < Date.now()) {
-    // Expired — drop it (lazy cleanup) and treat as unknown.
-    delete map[token];
-    await savePluginLinks(env, map);
+    // Extension audit L3: this sweep wrote WITHOUT the PLUGIN_KEY lock and
+    // from the isolate-cached map — a stale isolate could rewrite its whole
+    // outdated blob, RESURRECTING links another isolate had revoked/paired
+    // in the cache window. Sweep inside the lock against a FRESH KV read,
+    // re-checking expiry before deleting.
+    await withKeyLock(PLUGIN_KEY, async () => {
+      const raw = await env.KEYS.get(PLUGIN_KEY);
+      let fresh: Record<string, PluginLink>;
+      try {
+        fresh = raw ? JSON.parse(raw) : {};
+      } catch {
+        return;
+      }
+      const cand = fresh[token];
+      if (cand && (!cand.expiresAt || cand.expiresAt < Date.now())) {
+        delete fresh[token];
+        await env.KEYS.put(PLUGIN_KEY, JSON.stringify(fresh));
+      }
+    });
     return null;
   }
   return link;

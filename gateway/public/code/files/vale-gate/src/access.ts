@@ -73,6 +73,9 @@ export async function verifyAccessJwt(
       ? [payload.aud]
       : [];
   if (!audList.includes(env.ACCESS_AUD)) return null;
+  // audit L5: pin the issuer too (aud + team JWKS sig mostly covers it, but
+  // a token signed by ANOTHER CF team's app under the same aud was possible).
+  if (payload.iss !== `https://${env.ACCESS_TEAM_DOMAIN}`) return null;
   if (typeof payload.exp !== "number" || payload.exp * 1000 < Date.now()) return null;
 
   let keyJwk: any;
@@ -92,11 +95,19 @@ export async function verifyAccessJwt(
   );
   // base64url → base64 with the right padding (length may be %4 = 2 or 3;
   // hardcoding "==" mis-decodes signatures whose encoded length is %4 = 3).
-  const sigB64 = parts[2]!.replace(/-/g, "+").replace(/_/g, "/");
-  const sigPad = sigB64.length % 4 === 0 ? "" : "=".repeat(4 - (sigB64.length % 4));
-  const sig = Uint8Array.from(atob(sigB64 + sigPad), (c) => c.charCodeAt(0));
-  const data = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
-  const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, sig, data);
+  // audit L5: atob THROWS on garbage signature characters and subtle.verify
+  // rejects malformed key/sig input — every cookie-less request carrying a
+  // junk cf-access-jwt 500'd instead of 401. Any throw = invalid token.
+  let ok: boolean;
+  try {
+    const sigB64 = parts[2]!.replace(/-/g, "+").replace(/_/g, "/");
+    const sigPad = sigB64.length % 4 === 0 ? "" : "=".repeat(4 - (sigB64.length % 4));
+    const sig = Uint8Array.from(atob(sigB64 + sigPad), (c) => c.charCodeAt(0));
+    const data = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+    ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, sig, data);
+  } catch {
+    return null;
+  }
   if (!ok) return null;
 
   const email = String(payload.email || "")

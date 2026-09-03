@@ -45,6 +45,7 @@ import {
 import { pickRoute, passthroughHeaders, stripBracket } from "./upstream.ts";
 import { createPluginContext, registerPlugins, dispatch } from "./plugins/registry.ts";
 import authPlugin from "./plugins/auth.ts";
+import { csrfCookieViolation } from "./auth.ts";
 import devicesPlugin from "./plugins/devices.ts";
 import mcpPlugin from "./plugins/mcp.ts";
 import translatePlugin, { handleGateway as translateHandleGateway } from "./plugins/translate.ts";
@@ -134,6 +135,16 @@ export async function probeRateLimited(env: any, request: Request) {
     }
     __probeRate.set(key, cur + 1);
     if (__probeRate.size > 4096) __probeRate.delete(__probeRate.keys().next().value);
+    // audit round F2: the counter was NEVER written back to KV — every new
+    // isolate reseeded from 0, so the 60/min/IP ceiling was per-isolate
+    // (trivially multiplied across isolates/egress IPs). Persist it.
+    try {
+      await env.KEYS.put(key, String(cur + 1), {
+        expirationTtl: Math.ceil((PROBE_RATE_WINDOW_MS / 1000) * 2) + 10,
+      });
+    } catch {
+      /* KV write error: isolate-local count still better than nothing */
+    }
     return cur >= PROBE_RATE_LIMIT;
   } catch {
     return false;
@@ -142,6 +153,12 @@ export async function probeRateLimited(env: any, request: Request) {
 
 export default {
   async fetch(request: Request, env: any) {
+    // Auth-core audit MED-1: global CSRF gate for cookie-authed mutations
+    // (device panels are SAME-SITE with the console; SameSite=Lax does not
+    // help there). Bearer clients carry no cookie — untouched.
+    if (csrfCookieViolation(request)) {
+      return jsonError(403, "Cross-site request blocked", "csrf_error");
+    }
     const url = new URL(request.url);
 
     // Force HTTPS: the Secure session cookie is only stored over https; on plain http
@@ -239,7 +256,9 @@ export default {
       // ---- /v1/* gateway (both domains) ----
       return await handleGateway(request, env, url);
     } catch (error) {
-      return jsonError(500, (error as any).message || "Internal error", "api_error");
+      // Never echo raw error internals to clients (logged server-side).
+      console.error("[gateway] unhandled:", error);
+      return jsonError(500, "Internal error", "api_error");
     }
   },
 };
@@ -330,7 +349,7 @@ export async function valeProbe(env: any, model: string) {
       detail: res.ok ? "" : `upstream ${res.status}`,
     });
   }
-  // Passthrough channels (ds/qw/or/nv/gmi): reuse the exact route config of
+  // Passthrough channels (ds/qw/or/nv/gmi/amd): reuse the exact route config of
   // /v1/messages.
   const route = pickRoute(prefix, env);
   const key =
@@ -344,7 +363,9 @@ export async function valeProbe(env: any, model: string) {
             ? env.GMI_API_KEY || ""
             : prefix === "cm"
               ? env.CMD_API_KEY || ""
-              : env.DEEPSEEK_API_KEY || "";
+              : prefix === "amd"
+                ? env.AMD_API_KEY || ""
+                : env.DEEPSEEK_API_KEY || "";
   if (!key) return jsonOk({ ok: false, channel: prefix, detail: `${prefix}: key not configured` });
   const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
   let res;

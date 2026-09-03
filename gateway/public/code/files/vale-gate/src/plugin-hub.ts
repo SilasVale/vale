@@ -30,7 +30,10 @@ export class PluginHubDO {
    */
   authorized(request: Request) {
     const expected = this.env.DO_AUTH || "";
-    if (!expected) return true; // unconfigured: match legacy behavior
+    // Auth-core audit MED-2: FAIL CLOSED — a DO has its own external
+    // address; an unconfigured DO_AUTH must DENY every caller, not wave
+    // the browser hub gate open. Deploy: wrangler secret put DO_AUTH.
+    if (!expected) return false;
     const got = request.headers.get("x-do-auth") || "";
     if (got.length !== expected.length) return false;
     let diff = 0;
@@ -126,6 +129,19 @@ export class PluginHubDO {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+    // Extension audit L4: every frame did a storage write + full JSON.parse
+    // BEFORE any shape/size check — a buggy or malicious paired extension
+    // frame-flooded the per-device DO with multi-MB strings (billed CPU/mem;
+    // response frames were parsed then re-stringified). Bound the frame
+    // first; drop oversized/garbage without touching storage.
+    if (typeof message !== "string" || message.length > 262_144) {
+      try {
+        ws.close(1009, "frame too large");
+      } catch {
+        /* already closed */
+      }
+      return;
+    }
     this.state.storage.setAlarm(Date.now() + 65_000);
     let msg: any;
     try {

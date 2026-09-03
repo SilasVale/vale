@@ -10,7 +10,14 @@
  * battle-tested copy).
  */
 
-import { VERIFY_PATH, usProxyBase, CMD_CHAT, QWEN_COMPAT_CHAT } from "./channels.ts";
+import {
+  VERIFY_PATH,
+  usProxyBase,
+  CMD_CHAT,
+  QWEN_COMPAT_CHAT,
+  AMD_ANTHROPIC,
+  AMD_CHAT,
+} from "./channels.ts";
 
 export interface RouteInfo {
   type: string;
@@ -37,7 +44,10 @@ export function pickRoute(
   // per-request value — never mutate the shared env object with it.
   const via = (direct: string, path: string): string =>
     usProxy
-      ? `${usProxyBase(env)}/api/zen?target=${prefix}&path=${encodeURIComponent(path)}`
+      ? // audit round F4: prefix is model-derived ARBITRARY text — unencoded
+        // it could inject &path=… into the egress URL and re-point the proxy
+        // request. Encode (the proxy decodes) so it stays one opaque value.
+        `${usProxyBase(env)}/api/zen?target=${encodeURIComponent(prefix)}&path=${encodeURIComponent(path)}`
       : direct;
   switch (prefix) {
     case "or": {
@@ -128,6 +138,30 @@ export function pickRoute(
         stripPrefix: true,
         upstream: via(CMD_CHAT, "/v1/chat/completions"),
       };
+    case "amd":
+      // AMD Radeon Cloud (developer.amd.com.cn/radeon) — a free BYOK pool that
+      // speaks BOTH formats natively: Anthropic /v1/messages (thinking blocks,
+      // tool_use and SSE verified against the live API 2026-09-02; accepts
+      // x-api-key or Bearer) and OpenAI /v1/chat/completions (Bearer). So the
+      // route is picked by requestPath, like qw/ — but no translation anywhere.
+      //
+      // Always DIRECT, never the US exit: developer.amd.com.cn is a CN-served
+      // host (a US egress only adds a round the world), and the proxy's TARGETS
+      // map has no amd entry — an unknown target silently falls back to zen,
+      // which would answer with the wrong model AND the wrong key.
+      return requestPath === "/v1/chat/completions"
+        ? {
+            type: "passthrough",
+            kind: "amd",
+            stripPrefix: true,
+            upstream: AMD_CHAT,
+          }
+        : {
+            type: "passthrough",
+            kind: "amd",
+            stripPrefix: true,
+            upstream: AMD_ANTHROPIC,
+          };
     default:
       // No prefix / unknown prefix → DeepSeek official
       return {

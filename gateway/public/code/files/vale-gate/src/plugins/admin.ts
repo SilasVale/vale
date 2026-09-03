@@ -1,3 +1,4 @@
+import { safeEq } from "../auth.ts";
 /**
  * Vale gateway plugin: admin — /api/admin/* (console admin APIs).
  *
@@ -161,7 +162,7 @@ async function adminPutPassword(request: Request, env: Env): Promise<Response> {
     // set the console password on a fresh deployment.
     const admin = await getUser(env, ADMIN_ID);
     const adminKey = String(body?.adminKey || "").trim();
-    if (!admin?.token || adminKey !== admin.token) {
+    if (!admin?.token || !safeEq(adminKey, admin.token)) {
       return jsonError(
         403,
         "Invalid admin key — cannot set initial password",

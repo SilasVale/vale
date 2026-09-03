@@ -206,10 +206,14 @@ export function ogTimeoutMs(env: any): number {
  * max-thinking runs 40-54s to first byte — while every other passthrough
  * channel (ds/qw/or) keeps the generic 30s upstream budget. cm/ (Command Code)
  * is a third-party gateway like zen with the same long-thinking profile, so it
- * shares the og budget.
+ * shares the og budget. amd/ (Radeon Cloud) shares it too: the free pool is a
+ * cold-starting self-deploy router whose GLM backend measured >40s to first
+ * byte under load (2026-09-02), and thinking-heavy answers run long.
  */
 export function passthroughTimeoutMs(env: any, kind: string): number {
-  return kind === "opencode" || kind === "commandgoat" ? ogTimeoutMs(env) : upstreamTimeoutMs(env);
+  return kind === "opencode" || kind === "commandgoat" || kind === "amd"
+    ? ogTimeoutMs(env)
+    : upstreamTimeoutMs(env);
 }
 
 // Circuit breaker for the og channel, backed by a Durable Object so every
@@ -220,29 +224,53 @@ export function passthroughTimeoutMs(env: any, kind: string): number {
 //     the pre-write state → never trips
 //   - Cache API: put() is not available on the free plan → silently no-ops
 //
-// Semantics: only HARD network failures (channel unreachable) count toward the
-// breaker, and only BREAKER_FAIL_THRESHOLD (3) CONSECUTIVE failures open it for
-// BREAKER_DEGRADE_MS (60s) — a single network blip must not take the whole og
-// channel down. Slow responses (timeout) are zen's normal behavior (multi-second
-// latency observed routinely) and do NOT count; fast 5xx/429 stays handled by
-// fetchWithRetry's retries and does NOT trip, so zen's intermittent 500s
-// (~50% observed 2026-08-03) never cut the channel. A successful response
-// (/reset) zeroes the count. After the TTL the first request probes zen for
-// real and re-trips on failure.
+// Semantics: breaker input is exactly what translate.ts hands
+// recordChannelFailure (opencode/og route): HARD network errors AND FULL
+// TIMEOUTS (detail starts "timeout") both count — a channel that stalls and
+// times out every time must open the circuit, or every user burns the
+// 120 s timeout indefinitely (the DoS-by-timeout class). What does NOT
+// count: fast 5xx/429 (absorbed by fetchWithRetry's retries), and short
+// latency spikes, since only a COMPLETE timeout reaching this layer counts.
+// BREAKER_FAIL_THRESHOLD (3) CONSECUTIVE counted failures open for
+// BREAKER_DEGRADE_MS (60 s); /reset (two genuine successes) clears.
+// (Comment previously claimed timeouts never tripped — stale since the
+// 5a42122-era call-site change; code is the truth. F5 closed 2026-09-25.)
 const BREAKER_DEGRADE_MS = 60000;
 const BREAKER_FAIL_THRESHOLD = 3;
 // True "consecutive" with bounded memory: failures older than this window
 // don't accumulate (a stale count of 2 from yesterday + 1 today must not trip).
 const BREAKER_WINDOW_MS = 10 * 60 * 1000;
+// F5 FIX (stage-n): the breaker counted REQUESTS, not TIME — a channel that
+// times out every time at 120s each needed 3 trips = 360s (6 min) of user-facing
+// hangs before the circuit opened. Now, if the channel has been failing for at
+// least BREAKER_MAX_FAIL_MS (45 s) AND has 2+ failures, trip immediately. Two
+// 120s timeouts back-to-back trip in ~half the worst case.
+const BREAKER_MAX_FAIL_MS = 45_000;
 
 /** Durable Object holding the breaker state (single instance per channel name). */
 export class BreakerDO {
   state: any;
-  constructor(state: any, _env: any) {
+  env: any;
+  constructor(state: any, env: any) {
     this.state = state;
+    this.env = env;
+  }
+  // DO external-address defense-in-depth (see RouteDO/PluginHubDO).
+  authorized(request: Request): boolean {
+    const expected = this.env?.DO_AUTH || "";
+    // Auth-core audit MED-2: FAIL CLOSED — a DO has its own external
+    // address; an unconfigured DO_AUTH must DENY every caller, not wave
+    // the breaker gate open. Deploy: wrangler secret put DO_AUTH.
+    if (!expected) return false;
+    const got = request.headers.get("x-do-auth") || "";
+    if (got.length !== expected.length) return false;
+    let diff = 0;
+    for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+    return diff === 0;
   }
 
   async fetch(request: Request): Promise<Response> {
+    if (!this.authorized(request)) return new Response("unauthorized", { status: 401 });
     const action = new URL(request.url).pathname;
     try {
       if (action === "/trip") {
@@ -260,7 +288,11 @@ export class BreakerDO {
         // the next /trip see an expired window again, reset to 0, and the
         // circuit NEVER tripped.
         count += 1;
-        if (count >= BREAKER_FAIL_THRESHOLD) {
+        // F5 FIX: a channel that has been failing for BREAKER_MAX_FAIL_MS with
+        // ≥2 failures is effectively dead — trip without waiting for the Nth
+        // trip that may be another full timeout away.
+        const failing_for = Date.now() - firstAt;
+        if (count >= BREAKER_FAIL_THRESHOLD || (count >= 2 && failing_for >= BREAKER_MAX_FAIL_MS)) {
           await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
           // round-118: the old code DELETED 'fail' here — after the degrade
           // window the circuit closed with a zeroed count, so a dead channel
@@ -315,6 +347,9 @@ export class BreakerDO {
 function breakerStub(env: any) {
   return env.BREAKER.get(env.BREAKER.idFromName("og"));
 }
+function breakerHeaders(env: any): Record<string, string> {
+  return env.DO_AUTH ? { "x-do-auth": env.DO_AUTH } : {};
+}
 
 // In-isolate cache for the breaker check: the DO /check does a storage get
 // (~5-20ms) on EVERY og translate request, /api/health, and probe, while
@@ -330,11 +365,24 @@ export function __clearDegradedCache() {
 let degradedCache = { at: 0, value: false };
 const DEGRADED_CACHE_TTL_MS = 5000;
 
+/**
+ * F5 closure test anchor: WHICH upstream failures feed the breaker. Exactly
+ * hard network errors and FULL timeouts (the caller already filtered retry-
+ * able fast 5xx/4xx out of `detail`). Exported so the semantics that used to
+ * live inline in translate.ts are unit-testable — do NOT weaken without also
+ * reopening the DoS-by-timeout question this answers.
+ */
+export function isChannelDownFailure(detail: string | undefined | null): boolean {
+  return !!detail && (detail.startsWith("network error") || detail.startsWith("timeout"));
+}
+
 export async function isChannelDegraded(env: any): Promise<boolean> {
   const now = Date.now();
   if (now - degradedCache.at < DEGRADED_CACHE_TTL_MS) return degradedCache.value;
   try {
-    const res = await breakerStub(env).fetch("https://breaker/check");
+    const res = await breakerStub(env).fetch("https://breaker/check", {
+      headers: breakerHeaders(env),
+    });
     degradedCache = { at: now, value: (await res.text()) === "1" };
     return degradedCache.value;
   } catch (e: any) {
@@ -345,7 +393,7 @@ export async function isChannelDegraded(env: any): Promise<boolean> {
 
 export async function recordChannelFailure(env: any): Promise<void> {
   try {
-    await breakerStub(env).fetch("https://breaker/trip");
+    await breakerStub(env).fetch("https://breaker/trip", { headers: breakerHeaders(env) });
     // Invalidate the 5s stale cache immediately — otherwise this isolate's
     // health checks keep reporting ok for up to 5s after a trip.
     degradedCache = { at: 0, value: false };
@@ -357,7 +405,7 @@ export async function recordChannelFailure(env: any): Promise<void> {
 
 export async function recordChannelSuccess(env: any): Promise<void> {
   try {
-    await breakerStub(env).fetch("https://breaker/reset");
+    await breakerStub(env).fetch("https://breaker/reset", { headers: breakerHeaders(env) });
   } catch (e: any) {
     console.error("[breaker] reset failed:", e.message);
   }

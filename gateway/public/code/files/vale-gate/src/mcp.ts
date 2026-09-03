@@ -79,7 +79,10 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
     let device = deviceName ? await getDevice(env, deviceName) : null;
     if (!device) {
       const all = await listDevices(env);
-      if (all.length === 1) device = all[0]!;
+      // audit I6a: a TYPO'D device name silently executed on the one
+      // registered device when exactly one existed. Fallback applies only
+      // when the caller named NO device.
+      if (!deviceName && all.length === 1) device = all[0]!;
       else if (!deviceName)
         return mcpError(
           -32602,
@@ -129,6 +132,13 @@ async function callMcpClientBridge(name: string, _env: any, device: any, args: a
   // (target = a snapshot reference "eN" or a unique selector); the gateway's old declaration took element_ref integers.
   // We translate to target here, so callers' habits don't change; type's text passes through as-is.
   const pmArgs: any = { ...args };
+  // Extension audit M2: timeout_secs was forwarded UNCLAMPED and the fetch
+  // below had NO signal — a hung playwright-mcp (modal CDP block) pinned the
+  // worker request AND an isolate for the platform ceiling. Clamp + bound.
+  if (typeof pmArgs.timeout_secs === "number") {
+    pmArgs.timeout_secs = Math.min(Math.max(Math.trunc(pmArgs.timeout_secs) || 1, 1), 300);
+  }
+  const callBudgetMs = ((pmArgs.timeout_secs as number) || 120) * 1000 + 20_000;
   if ((name === "browser_click" || name === "browser_type") && args?.element_ref != null) {
     pmArgs.target = /^e?\d+$/.test(String(args.element_ref))
       ? String(args.element_ref).replace(/^(\d+)$/, "e$1")
@@ -141,6 +151,7 @@ async function callMcpClientBridge(name: string, _env: any, device: any, args: a
       method: "POST",
       headers,
       body: JSON.stringify({ tool: pmTool, arguments: pmArgs }),
+      signal: AbortSignal.timeout(callBudgetMs),
     });
     // The agent's tool API always returns 200 + {ok:false,error,code} (web.rs api_call_tool);
     // the failure info is in the body, so res.ok alone can't be trusted.
@@ -159,8 +170,17 @@ async function callMcpClientBridge(name: string, _env: any, device: any, args: a
     // round-132: "Session not found" is also covered by self-healing — playwright-mcp 0.0.79
     // reclaims sessions server-side after ~15s idle; resending connect restores them.
     if (/not connected|server running|refused|timed out|session not found/i.test(msg)) {
-      await fetch(`${base}/api/plugins/playwright/start`, { method: "POST", headers });
-      await fetch(`${base}/api/tools/mcp_client_connect`, { method: "POST", headers, body: "{}" });
+      await fetch(`${base}/api/plugins/playwright/start`, {
+        method: "POST",
+        headers,
+        signal: AbortSignal.timeout(callBudgetMs),
+      });
+      await fetch(`${base}/api/tools/mcp_client_connect`, {
+        method: "POST",
+        headers,
+        body: "{}",
+        signal: AbortSignal.timeout(callBudgetMs),
+      });
       out = await invoke();
     }
     if (out && out.ok === false) {

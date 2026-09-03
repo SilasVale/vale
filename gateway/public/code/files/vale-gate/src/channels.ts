@@ -23,6 +23,14 @@ export const CMD_CHAT: string = "https://api.commandcode.ai/provider/v1/chat/com
 // must ride the compatible-mode endpoint instead.
 export const QWEN_COMPAT_CHAT: string =
   "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
+// AMD Radeon Cloud (developer.amd.com.cn/radeon) — self-deploy inference pool
+// ("Dynamic sglang/vllm-router service managed by Model Ops"), free tier with
+// a per-model global concurrency cap. BOTH formats are native: /api/v1/messages
+// really speaks Anthropic (thinking blocks + tool_use + SSE, verified against
+// the live API 2026-09-02) and /api/v1/chat/completions speaks OpenAI — no
+// translation needed on either path.
+export const AMD_ANTHROPIC: string = "https://developer.amd.com.cn/radeon/api" + VERIFY_PATH;
+export const AMD_CHAT: string = "https://developer.amd.com.cn/radeon/api/v1/chat/completions";
 // Reserved for future use — currently empty. Models listed here would bypass
 // the OpenAI translate path and use native Anthropic /v1/messages passthrough.
 export const OG_NATIVE_ANTHROPIC: Set<string> = new Set();
@@ -65,7 +73,21 @@ export const MODELS: { id: string; owned_by: string }[] = [
   // /v1/messages endpoint serves claude-* only — cm/ rides chat/completions
   // (translated for /v1/messages, direct for /v1/chat/completions). Model id
   // is the provider-catalog slug verbatim (any catalog model works as cm/<id>).
+  // 2026-09-03: Command Code now advertises two :free models — Meituan's
+  // LongCat-2.0 (1M ctx) and Poolside's Laguna S 2.1 (256K ctx) — metered
+  // against the same plan quota as the paid catalog.
   { id: "cm/deepseek/deepseek-v4-flash", owned_by: "command-code" },
+  { id: "cm/meituan/LongCat-2.0:free", owned_by: "command-code" },
+  { id: "cm/poolside/laguna-s-2.1-free", owned_by: "command-code" },
+  // amd/ — AMD Radeon Cloud (developer.amd.com.cn/radeon), free BYOK pool. The
+  // catalog is GET /v1/models; any catalog slug is reachable as amd/<id> (case
+  // matters: DeepSeek-V4-Flash, not deepseek-v4-flash). Two live warnings from
+  // the 2026-09-02 sweep: reasoning_effort IS validated upstream (absent param
+  // = thinking OFF, so clients must declare it), and GLM-5.3-Flash /
+  // Qwen3.8-Flash-Next were pulled from /v1/models / stuck at 503
+  // no_available_workers — not advertised here until they serve again.
+  { id: "amd/DeepSeek-V4-Flash", owned_by: "amd-radeon" },
+  { id: "amd/DeepSeek-V4-Flash-Vision-Exp", owned_by: "amd-radeon" },
 ];
 
 // Route info shown in the console ("model routing" section). Public, no keys.
@@ -116,7 +138,17 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "cm/",
     backend: "Command Code (GOAT)",
     desc: "api.commandcode.ai/provider — GOAT plan & up get Provider API access (Go plan excluded); Anthropic /v1/messages translated to chat/completions (the Anthropic endpoint only serves claude-*), OpenAI format passes through; any catalog model reachable as cm/<id>",
-    models: ["deepseek/deepseek-v4-flash"],
+    models: [
+      "deepseek/deepseek-v4-flash",
+      "meituan/LongCat-2.0:free",
+      "poolside/laguna-s-2.1-free",
+    ],
+  },
+  {
+    prefix: "amd/",
+    backend: "AMD Radeon Cloud",
+    desc: "developer.amd.com.cn/radeon — free BYOK pool (user's own rc- key); native Anthropic /v1/messages AND OpenAI /v1/chat/completions, no translation; reasoning_effort is validated upstream (absent = thinking off); per-model global concurrency cap (429 model_concurrency_rate_limit_exceeded); always direct — the US exit has no amd target",
+    models: ["DeepSeek-V4-Flash", "DeepSeek-V4-Flash-Vision-Exp"],
   },
   {
     prefix: "none",
@@ -149,5 +181,17 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M3" },
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M2.7" },
   { id: "cm", model: "cm/deepseek/deepseek-v4-flash" },
+  { id: "cm", model: "cm/meituan/LongCat-2.0:free" },
+  { id: "cm", model: "cm/poolside/laguna-s-2.1-free" },
+  // amd/ — Radeon Cloud free pool. One card per SERVING model so the console
+  // switchboard lists them and `vale use amd/...` can probe. GLM-5.3-Flash and
+  // Qwen3.8-Flash-Next were pulled (503 no_available_workers / GLM left the
+  // upstream catalog on 2026-09-02) but stay reachable by exact name — the
+  // route only strips the prefix, MODELS is an advertising/auto-routing
+  // whitelist, not a gate. NOT in HEALTH_PRIORITY: buildHealth reports ok for
+  // everything but og's breaker, and a global "recommended" must not point
+  // users at a BYOK pool that 502s without their own key.
+  { id: "amd", model: "amd/DeepSeek-V4-Flash" },
+  { id: "amd", model: "amd/DeepSeek-V4-Flash-Vision-Exp" },
 ];
 export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];

@@ -36,6 +36,39 @@ export async function verifyPassword(
   return timingSafeEqual(h, expectedHash);
 }
 
+/// Constant-time string compare for credential-shaped values (auth-core
+/// audit LOW: plain !== on the admin token leaked timing, and the compare
+/// itself must not early-exit).
+export function safeEq(a: string, b: string): boolean {
+  return timingSafeEqual(a, b);
+}
+
+/// Auth-core audit MED-1: SameSite=Lax only blocks CROSS-SITE sends — but
+/// every device panel (*.agent.saisi.online) is SAME-SITE with the console,
+/// so rogue/XSS JS there could POST cookie-authed mutations (regenerate
+/// token, toggle users, unpair…) with SameSite not saving us. Gate every
+/// cookie-carrying mutation on Sec-Fetch-Site (browser-managed, unforgeable
+/// via fetch): same-origin (our SPA) or none (direct/user-initiated) pass;
+/// same-site/cross-site are rejected. Bearer-token clients carry no cookie
+/// and are untouched.
+export const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+export function csrfCookieViolation(request: Request): boolean {
+  const method = request.method.toUpperCase();
+  if (!MUTATING_METHODS.has(method)) return false;
+  const cookie = request.headers.get("cookie") || "";
+  if (!cookie.includes(SESSION_COOKIE + "=")) return false; // bearer path
+  // Browsers attach Sec-Fetch-Site to EVERY request (forbidden header — a
+  // cross-site page cannot forge it), so a DRIVE-BY from a device panel or
+  // any foreign page carries same-site/cross-site and is rejected. A MISSING
+  // header means a non-browser client: browsers never omit it, and raw HTTP
+  // has no ambient cookie to ride — nothing to defend against there, so
+  // absent = allowed (test suites + CLI session probes keep working).
+  const site = request.headers.get("sec-fetch-site");
+  if (site == null) return false;
+  const v = site.toLowerCase();
+  return v !== "same-origin" && v !== "none";
+}
+
 function timingSafeEqual(a: string, b: string): boolean {
   if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
   let diff = 0;

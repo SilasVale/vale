@@ -62,6 +62,18 @@ deploy_worker() {
     return 1
   fi
   echo "=== [deploy] ${name} (${dir}/) ==="
+  # round-324: the gateway's public /code/ viewer mirrors gateway/src —
+  # build-installer.sh used to sync it (round-320 deleted that script).
+  # Sync before deploy so the served sources never drift from live.
+  if [[ "$dir" == "gateway" ]]; then
+    local code_dir="$ROOT/gateway/public/code/files/vale-gate/src"
+    if [ -d "$code_dir" ]; then
+      mkdir -p "$code_dir"
+      cp "$ROOT"/gateway/src/*.ts "$code_dir/"
+      cp -r "$ROOT"/gateway/src/plugins/. "$code_dir/plugins/" 2>/dev/null || true
+      echo "  synced code viewer mirror ($code_dir)"
+    fi
+  fi
   ( cd "$ROOT/$dir" \
       && CLOUDFLARE_API_TOKEN="$token" wrangler deploy )
   # Post-publish smoke (round-58, reworked round-324): /api/version derives
