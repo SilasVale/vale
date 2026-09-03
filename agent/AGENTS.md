@@ -837,6 +837,15 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   versionless latest alias (agent.saisi.online/vale-agent/
   vale-agent-latest.tgz, mirrored on every release). Deployed + verified
   (page shows working command, alias 200). No other dead dl refs remain.
+  ROUND-320 (2026-09-04): build-installer.sh RETIRED (round-318 audit
+  follow-up) — it always FAILED on the current architecture: required the
+  retired Tauri vale-desktop.exe + vale-tray.exe, rewrote index/src/
+  index.js (version constant / static sha256 / URL sed — obsolete since
+  round-297's version.json manifest), staged to the dead Vercel mirror.
+  build.sh deploy now deploys workers only (vercel-proxy kept: its
+  /api/git mirror is LIVE; its dead dl/ staging of retired installers
+  removed). All doc refs repointed at publish-release.sh; index/README
+  rewritten for the npm-only architecture. -261 lines dead code.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
