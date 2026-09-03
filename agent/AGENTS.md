@@ -870,6 +870,16 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   freshness (3 IDENTICAL), npm pack, tgz 5/5 content gate — all PASS.
   Device health: release 1.2.278, cpu 1.3%, mem 67.6%, uptime 3974s.
   CI 9262ae6a GREEN. NOTE: /api/status fields are cpu_pct/mem_pct.
+  ROUND-324 (2026-09-04): two build.sh deploy bugs found + fixed —
+  (1) the index post-publish smoke grepped static version/sha256
+  constants out of index/src/index.js that round-297 removed — EVERY
+  build.sh index/deploy failed at the smoke (empty want_sha). Now reads
+  index/public/vale-agent/version.json (the served source of truth);
+  verified version+sha match live /api/version. (2) the gateway /code/
+  source-viewer mirror drifted 17/17 files stale after round-320 deleted
+  build-installer.sh (its only sync path). deploy_worker now syncs
+  gateway/src into public/code/files/vale-gate before deploy; mirror
+  synced to current immediately.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
