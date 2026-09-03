@@ -61,12 +61,18 @@ jobs:
           # device update flow swaps (a missing file silently keeps the stale
           # one on devices). Fail the release if any is absent.
           TGZ="vale-agent-${VER}.tgz"
-          for F in "package/vale-agent.exe" \
-                   "package/vale-desktop-electron/src/main.js" \
-                   "package/vale-desktop-electron/src/preload.js" \
-                   "package/vale-desktop-electron/src/url-policy.js" \
-                   "package/bin/vale.js"; do
-            if ! tar tzf "$TGZ" | grep -qx "$F"; then
+          # Paths inside npm-packed tgzs carry a "package/" prefix on some
+          # npm versions and not others — match by basename instead.
+          # NOTE: pipefail + grep -q = SIGPIPE kills tar mid-stream and the
+          # pipeline FAILS even when the file IS present (device-caught on
+          # release 1.2.272) — list to a temp file first, then grep.
+          tar tzf "$TGZ" > "/tmp/tgz-list-${VER}.txt"
+          for F in "vale-agent.exe" \
+                   "vale-desktop-electron/src/main.js" \
+                   "vale-desktop-electron/src/preload.js" \
+                   "vale-desktop-electron/src/url-policy.js" \
+                   "bin/vale.js"; do
+            if ! grep -qE "(^|/)${F}$" "/tmp/tgz-list-${VER}.txt"; then
               echo "::error::tgz missing required file: $F"
               exit 1
             fi
