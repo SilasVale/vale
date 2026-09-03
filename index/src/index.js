@@ -303,30 +303,42 @@ function toggleTheme() {
 
 export default {
   async fetch(request, env) {
-    // Version endpoint for the vale-tray "check for updates" menu item.
-    // Bump VERSION alongside agent/Cargo.toml when a new installer is shipped.
-    // sha256: the agent's agent_update tool verifies the downloaded installer
-    // against this hash before spawning it (integrity anchor for an
-    // AI-triggerable RCE path). Re-generated automatically by
-    // scripts/build-installer.sh — do not edit by hand.
+    // Version endpoint for the agent_update MCP tool (and legacy tray
+    // check). ROUND-297: this was hard-coded to v1.2.141/1.0.145 and rotted
+    // (the 141 tgz was deleted from assets long ago — an update check that
+    // ever fired would 404). The manifest is now derived from the version
+    // discovery asset (/vale-agent/version.json, written by the release
+    // flow) so it tracks every release automatically. The sha256 field is
+    // REQUIRED by agent_update (round-119: unverifiable installs refused)
+    // and is published into version.json by the release flow.
     if (new URL(request.url).pathname === "/api/version") {
-      // The npm tgz (~40MB — embeds the playwright bundle, over the Workers
-      // Assets 25MiB per-file cap), so it lives outside this worker: the
-      // Vercel static hosting mirror (v.saisi.online/dl/), staged by
-      // scripts/build-installer.sh. Device code consumes `download` as-is
-      // (npm i -g <download>, vale update).
-      // The npm tgz (~12MB — agent + desktop + playwright node_modules, no
-      // bundled node/cloudflared) fits the Workers Assets 25MiB cap and is
-      // served fast from this worker; the Vercel mirror stays as fallback.
-      const download = `https://v.saisi.online/dl/vale-agent-1.2.141.tgz`;
-      return new Response(
-        JSON.stringify({
-          version: "1.0.145",
-          download,
-          sha256: "dcaca77109a3bb860e2dd10ecf8c17260949bc90e3e8929e85ccc40f92486049",
-        }),
-        { headers: { "content-type": "application/json", "cache-control": "no-store" } }
-      );
+      try {
+        const vresp = await env.ASSETS.fetch(
+          new Request("https://worker.local/vale-agent/version.json")
+        );
+        if (vresp.ok) {
+          const vj = await vresp.json();
+          const ver = vj && vj.version;
+          const sha = vj && vj.sha256;
+          if (ver && sha) {
+            const base = new URL(request.url).origin;
+            return new Response(
+              JSON.stringify({
+                version: ver,
+                download: `${base}/vale-agent/vale-agent-${ver}.tgz`,
+                sha256: sha,
+              }),
+              { headers: { "content-type": "application/json", "cache-control": "no-store" } }
+            );
+          }
+        }
+      } catch (e) {
+        // fall through to the static fallback below
+      }
+      // Static fallback (assets unavailable): never serve a fabricated
+      // manifest — agent_update refuses invalid sha256 anyway (round-119),
+      // so an explicit error is the honest answer.
+      return new Response("release manifest unavailable", { status: 503 });
     }
     const pathname = new URL(request.url).pathname;
     // Keep the old installer URL usable for links/bookmarks — the NSIS
