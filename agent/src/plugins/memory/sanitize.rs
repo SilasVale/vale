@@ -104,26 +104,40 @@ fn redact_line(line: &str) -> String {
         return "Bearer <redacted>".to_string();
     }
     // key=value / key: value with secret-shaped key.
-    // LOW fix: redact EVERY secret-shaped key=value, not just the first — the
-    // old code returned on the first separator match, so a line like
-    // "foo=bar password=secret" left "password=secret" raw.
+    // The key is the line prefix before the separator (whole-prefix
+    // semantics — key_is_secret's compact-ends-with rule catches
+    // "authtoken abc123" and "x-api-key: abc" alike). A secret-shaped key
+    // redacts from the separator to end of line (safe over-redaction —
+    // sanitizers must err on the side of removing too much).
+    // round-245 fix: the 337fb328 "redact EVERY key" loop RESTARTED its scan
+    // from position 0 after each replacement and re-matched the SAME
+    // separator it had just replaced ("password=…" → "password=<redacted>"
+    // still contains "password=") — an infinite loop that hung the agent's
+    // tool dispatch on ANY secret key=value line (and hung cargo test).
+    // Single left-to-right pass: consume the separator either way, so the
+    // scan always advances and terminates. The whole-prefix key model means
+    // one redaction ends the line's meaningful key=value content anyway.
     let mut result = line.to_string();
+    let mut scan_from = 0;
     loop {
-        let mut changed = false;
-        for sep in ["=", ": "] {
-            if let Some(idx) = result.find(sep) {
-                let key = result[..idx].trim().trim_matches('"');
-                if key_is_secret(&key.to_lowercase()) {
-                    let (head, _) = result.split_at(idx + sep.len());
-                    result = format!("{head}<redacted>");
-                    changed = true;
-                    break; // restart scan after modification
-                }
-            }
+        // Earliest = or ": " at/after scan_from.
+        let eq = result[scan_from..].find('=').map(|i| (scan_from + i, 1usize));
+        let col = result[scan_from..].find(": ").map(|i| (scan_from + i, 2usize));
+        let next = match (eq, col) {
+            (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        let Some((sep_at, sep_len)) = next else { break };
+        let key = result[..sep_at].trim().trim_matches('"');
+        let after = sep_at + sep_len;
+        if key_is_secret(&key.to_lowercase()) {
+            let (head, _) = result.split_at(after);
+            result = format!("{head}<redacted>");
+            break; // whole rest of line consumed — done
         }
-        if !changed {
-            break;
-        }
+        scan_from = after;
     }
     result
 }
@@ -216,6 +230,31 @@ mod tests {
         assert!(!out.contains("supersecret1"));
         assert!(!out.contains("abc"));
         assert!(out.contains("<redacted>"));
+    }
+
+    // round-245 regression: the redact_line re-scan loop matched the same
+    // separator it had just replaced and spun FOREVER on any secret key=value
+    // line (agent tool dispatch hung; the sanitize tests hung >60s). This
+    // test would never have returned before the fix.
+    #[test]
+    fn redact_line_terminates_on_secret_pairs() {
+        // Plain secret pair — the old loop's infinite case.
+        let out = sanitize("password=supersecret1");
+        assert!(!out.contains("supersecret1"));
+        assert!(out.contains("<redacted>"));
+        // Prefix-key semantics: a later pair's key subsumes the earlier
+        // non-secret pair ("foo=bar password=…" → prefix "foo=bar password"
+        // ends with "password" → secret). Value redacted to end of line.
+        let out2 = sanitize("foo=bar password=secret keep=this");
+        assert!(!out2.contains("secret"));
+        assert!(out2.contains("<redacted>"));
+        // Colon form (whole prefix is the key).
+        let out3 = sanitize("api_key: abc123def456");
+        assert!(!out3.contains("abc123def456"));
+        assert!(out3.contains("<redacted>"));
+        // Non-secret line untouched, terminates.
+        let out4 = sanitize("foo=bar keep=this");
+        assert_eq!(out4, "foo=bar keep=this");
     }
 
     #[test]
