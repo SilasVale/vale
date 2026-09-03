@@ -73,7 +73,12 @@ export const MODELS: { id: string; owned_by: string }[] = [
   // /v1/messages endpoint serves claude-* only — cm/ rides chat/completions
   // (translated for /v1/messages, direct for /v1/chat/completions). Model id
   // is the provider-catalog slug verbatim (any catalog model works as cm/<id>).
+  // 2026-09-03: Command Code now advertises two :free models — Meituan's
+  // LongCat-2.0 (1M ctx) and Poolside's Laguna S 2.1 (256K ctx) — metered
+  // against the same plan quota as the paid catalog.
   { id: "cm/deepseek/deepseek-v4-flash", owned_by: "command-code" },
+  { id: "cm/meituan/LongCat-2.0:free", owned_by: "command-code" },
+  { id: "cm/poolside/laguna-s-2.1-free", owned_by: "command-code" },
   // amd/ — AMD Radeon Cloud (developer.amd.com.cn/radeon), free BYOK pool. The
   // catalog is GET /v1/models; any catalog slug is reachable as amd/<id> (case
   // matters: DeepSeek-V4-Flash, not deepseek-v4-flash). Two live warnings from
@@ -133,7 +138,11 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     prefix: "cm/",
     backend: "Command Code (GOAT)",
     desc: "api.commandcode.ai/provider — GOAT plan & up get Provider API access (Go plan excluded); Anthropic /v1/messages translated to chat/completions (the Anthropic endpoint only serves claude-*), OpenAI format passes through; any catalog model reachable as cm/<id>",
-    models: ["deepseek/deepseek-v4-flash"],
+    models: [
+      "deepseek/deepseek-v4-flash",
+      "meituan/LongCat-2.0:free",
+      "poolside/laguna-s-2.1-free",
+    ],
   },
   {
     prefix: "amd/",
@@ -172,6 +181,8 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M3" },
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M2.7" },
   { id: "cm", model: "cm/deepseek/deepseek-v4-flash" },
+  { id: "cm", model: "cm/meituan/LongCat-2.0:free" },
+  { id: "cm", model: "cm/poolside/laguna-s-2.1-free" },
   // amd/ — Radeon Cloud free pool. One card per SERVING model so the console
   // switchboard lists them and `vale use amd/...` can probe. GLM-5.3-Flash and
   // Qwen3.8-Flash-Next were pulled (503 no_available_workers / GLM left the

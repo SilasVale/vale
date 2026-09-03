@@ -423,6 +423,41 @@ test("cm /v1/chat/completions is a direct OpenAI passthrough with CMD_API_KEY", 
   assert.equal(body.choices[0].message.content, "ok");
 });
 
+// cm/ free catalog models (2026-09-03): Meituan LongCat-2.0:free and Poolside
+// Laguna S 2.1 -free are OpenAI passthroughs like deepseek — prefix stripped,
+// CMD_API_KEY bearer, any model id accepted.
+
+for (const freeModel of ["meituan/LongCat-2.0:free", "poolside/laguna-s-2.1-free"]) {
+  test(`cm/${freeModel} /v1/chat/completions is a direct OpenAI passthrough with CMD_API_KEY`, async () => {
+    __clearCaches();
+    const { env, token } = gwEnv({ keys: { CMD_API_KEY: "sk-cm" } });
+    let seen;
+    const res = await withFetch(async (url, init) => {
+      seen = { url, init };
+      return new Response(JSON.stringify({
+        id: "gen_cm_free", object: "chat.completion",
+        choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }, () => post(env, token, {
+      model: `cm/${freeModel}`,
+      max_tokens: 8,
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    }, "/v1/chat/completions"));
+    assert.equal(seen.url, "https://api.commandcode.ai/provider/v1/chat/completions");
+    const auth = seen.init.headers.get
+      ? seen.init.headers.get("authorization")
+      : seen.init.headers.Authorization;
+    assert.equal(auth, "Bearer sk-cm");
+    assert.equal(JSON.parse(seen.init.body).model, freeModel);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.object, "chat.completion");
+    assert.equal(body.choices[0].message.content, "ok");
+  });
+}
+
 test("cm /v1/messages without CMD_API_KEY → 502 config error", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ keys: { CMD_API_KEY: undefined } });
