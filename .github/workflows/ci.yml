@@ -55,6 +55,25 @@ jobs:
           node render-smoke.mjs "../public/assets/$JS"
         working-directory: gateway/ui
 
+  # panel-react SPA tests — previously only ran in the release workflow
+  # (added round-283); every main-branch CI run must cover them too.
+  panel:
+    name: panel (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: agent/resources/panel-react/package-lock.json
+      - name: Install deps
+        run: npm ci --include=optional
+        working-directory: agent/resources/panel-react
+      - name: Test
+        run: npm test
+        working-directory: agent/resources/panel-react
+
   agent:
     name: agent (cargo test + clippy)
     runs-on: ubuntu-latest
