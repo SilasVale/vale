@@ -863,6 +863,13 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   tsconfig.json --typeRoots ./node_modules/@types) like the bin/vale.js
   compile. Full CI-equivalent simulation (typescript@5 @types/node@22
   installed): tsc exit 0, 3 artifacts IDENTICAL; stale artifact caught.
+  ROUND-323 (2026-09-04): release.yml full-chain audit + pack simulation —
+  walked every step's cwd assumptions (no further bugs; 85's bare `cd`
+  is the only cwd change and everything after is npm-relative). Simulated
+  the WHOLE pack chain locally: bin/vale.js compile+marker, electron
+  freshness (3 IDENTICAL), npm pack, tgz 5/5 content gate — all PASS.
+  Device health: release 1.2.278, cpu 1.3%, mem 67.6%, uptime 3974s.
+  CI 9262ae6a GREEN. NOTE: /api/status fields are cpu_pct/mem_pct.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
