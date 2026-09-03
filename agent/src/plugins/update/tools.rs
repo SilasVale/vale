@@ -178,7 +178,7 @@ Remove-Item -Force -ErrorAction SilentlyContinue "$env:ProgramData\ValeAgent\upd
     }
     #[cfg(not(windows))]
     {
-        let _ = (installer, bytes);
+        let _ = (installer, bytes, release_version);
         false
     }
 }
