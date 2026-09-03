@@ -147,17 +147,44 @@ async function sectionBrowser() {
   if (!spa) { check('browser SPA bar sync', false, 'no desktop SPA target'); return; }
   const ws = new WebSocket(spa.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-  const url = await new Promise((resolve) => {
-    const t = setTimeout(() => resolve(''), 15000);
-    ws.onmessage = (m) => {
-      const o = JSON.parse(m.data);
-      if (o.id === 1) { clearTimeout(t); resolve((o.result && o.result.value) || ''); }
-    };
-    ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate',
-      params: { expression: "(document.querySelector('.browser-url')||{}).value || ''", returnByValue: true } }));
+  // read the bar; if the SPA is not on the Browser page, click the rail first
+  const evalUrl = async () => {
+    const r = await new Promise((resolve) => {
+      const t = setTimeout(() => resolve(''), 15000);
+      const onMsg = (m) => {
+        const o = JSON.parse(m.data);
+        if (o.id === 100) { clearTimeout(t); ws.removeEventListener('message', onMsg); resolve((o.result && o.result.value) || ''); }
+      };
+      ws.addEventListener('message', onMsg);
+      ws.send(JSON.stringify({ id: 100, method: 'Runtime.evaluate',
+        params: { expression: "JSON.stringify({ onBrowser: !!document.querySelector('.browser-url'), url: (document.querySelector('.browser-url')||{}).value || '' })", returnByValue: true } }));
+    });
+    return r;
+  };
+  let s1 = await evalUrl();
+  let state = s1 ? JSON.parse(s1) : { onBrowser: false, url: '' };
+  if (!state.onBrowser) {
+    await new Promise((resolve) => {
+      const t = setTimeout(() => resolve(''), 10000);
+      const onMsg = (m) => {
+        const o = JSON.parse(m.data);
+        if (o.id === 101) { clearTimeout(t); ws.removeEventListener('message', onMsg); resolve(''); }
+      };
+      ws.addEventListener('message', onMsg);
+      ws.send(JSON.stringify({ id: 101, method: 'Runtime.evaluate',
+        params: { expression: "var bs = document.querySelectorAll('button'); for (var i=0;i<bs.length;i++){ if (bs[i].getAttribute('aria-label')==='Browser' || bs[i].textContent.trim()==='Browser') { bs[i].click(); break; } } 'ok'", returnByValue: true } }));
+    });
+    await sleep(3000);
+    const s2 = await evalUrl();
+    state = s2 ? JSON.parse(s2) : state;
+  }
+  // wait for the close handshake so Node doesn't hit the UV_HANDLE_CLOSING assert
+  await new Promise((resolve) => {
+    ws.onclose = resolve;
+    setTimeout(() => { try { ws.close(); } catch (e) {} }, 100);
+    setTimeout(resolve, 3000);
   });
-  ws.close();
-  check('browser SPA bar sync', url.includes('example.com'), 'bar=' + url.slice(0, 60));
+  check('browser SPA bar sync', (state.url || '').includes('example.com'), 'bar=' + (state.url || '').slice(0, 60));
 }
 
 (async () => {
