@@ -650,6 +650,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   round-283 panel (vitest) job actually executing in CI (all 5 jobs:
   agent test/clippy, xwin check, gateway, ui, panel). Matrix verified
   end-to-end after the recent e2e-only rounds.
+  ROUND-296 (2026-09-04): local tag hygiene — 10 stale local tags
+  (v1.2.230..243, all long-deleted on GitHub by keep-latest) removed;
+  local repo had ZERO release tags (they were only ever created via the
+  GitHub API). Backed up v1.2.272 locally (-> 2199b327, matches GitHub)
+  so a GitHub loss/rebuild can't strand the release chain. Local refs now
+  mirror GitHub (only v1.2.272).
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
