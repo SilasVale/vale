@@ -14,6 +14,7 @@ agent/target-staging.exe
 studio/node_modules/
 studio/test/artifacts/
 .vale-tmp-*
+.dsh-tmp-*
 studio/vendor/
 
 # build artifacts — never commit
