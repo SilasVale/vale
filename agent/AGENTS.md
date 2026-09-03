@@ -514,6 +514,10 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   xterm DOM (live SSE -> render path works end-to-end). Also confirmed
   the electron renderer inherits the disable-renderer-backgrounding
   switches (round-274's appendSwitch calls are in the running main.js).
+  ROUND-277 (2026-09-04): e2e evidence section — round-264's manual
+  Evidence-drawer check is now repeatable: the AI saves a screenshot into
+  pwout via browser_run_script and GET /api/browser/pwshots (the drawer's
+  data source) must list it. Full suite now 18/18 on d1 (added evidence 2).
 
 ### Current release
 - npm **1.2.267 LIVE on d1 (round-274)** — Electron hidden-window render
