@@ -717,8 +717,26 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
     };
     // The CallToolResult text lives at .result.content[].text (stdio) or the
     // same shape after serde; also tolerate a bare string.
-    let text = extract_tool_text(&list).unwrap_or_default();
-    let embedded_idx = embedded_view_index(&text);
+    let mut text = extract_tool_text(&list).unwrap_or_default();
+    // round-281 device-caught: right after spawn, playwright-mcp may still
+    // be enumerating the attached browser and report only the SPA tab —
+    // retry a few times (1s apart) before giving up.
+    let mut embedded_idx = embedded_view_index(&text);
+    for attempt in 0..5 {
+        if embedded_idx.is_some() { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        diag_log(&format!("[select] retry {}/5 — tab list not ready yet", attempt + 1));
+        match rpc_ref(sess, None, "tools/call", json!({
+            "name": "browser_tabs",
+            "arguments": { "action": "list" },
+        }), 15).await {
+            Ok(v) => {
+                text = extract_tool_text(&v).unwrap_or_default();
+                embedded_idx = embedded_view_index(&text);
+            }
+            Err(e) => diag_log(&format!("[select] tab list failed on retry (ignoring): {e}")),
+        }
+    }
     if let Some(idx) = embedded_idx {
         diag_log(&format!("[select] selecting embedded-view tab {idx}"));
         let _ = rpc_ref(sess, None, "tools/call", json!({
@@ -726,7 +744,7 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
             "arguments": { "action": "select", "index": idx },
         }), 15).await;
     } else {
-        diag_log("[select] no embedded-view tab found in tab list — leaving default selection");
+        diag_log("[select] no embedded-view tab found after retries — leaving default selection");
     }
     Ok(())
 }
