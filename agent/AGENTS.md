@@ -702,6 +702,13 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   mcp_client_call handles). +1 test (top-level content). Device-verified:
   connect -> tabs show embedded view (current) -> navigate reaches marker
   URL on BOTH transports; full suite 26/26 on 1.2.275.
+  ROUND-301 (2026-09-04): CI RED -> GREEN — 6ff55ab1's agent job failed
+  at "Clippy (zero warnings)" while local clippy passed: my local check
+  greps ^error but CI promotes EVERY warning (-D warnings). round-298's
+  update_from_tgz release_version param was unused in the cfg(not(windows))
+  arm. Fixed (let _ = ...); CI 739d4913 green. LESSON: local clippy MUST
+  mirror CI exactly (cargo clippy -- -D warnings) — grep ^error misses
+  warnings CI fails on.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
