@@ -365,6 +365,24 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   — ci.yml gained a dedicated panel (vitest, Node 24) job so every
   main-branch CI run covers them. Tag v1.2.272 rebuilt onto the fix and
   the release is re-running.
+  ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
+  24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
+  lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
+  prior npm-11 install had regenerated the lock with only the LOCAL
+  platform's optional deps (3+2 entries); npm ci --include=optional then
+  failed everywhere (reproduced locally too). Fix: npm install
+  --include=optional restored the full platform set (12+14 entries) —
+  npm ci --dry-run clean, 82/82 tests. Tag v1.2.272 rebuilt again onto
+  the lock fix.
+  ROUND-288 (2026-09-04): release 1.2.272 CI failed a THIRD time — the
+  round-283 tgz content gate itself was broken under `set -o pipefail`:
+  `tar tzf | grep -q` made grep exit after the first match, SIGPIPE killed
+  tar mid-stream ("tar: stdout: write error"), and pipefail turned the
+  pipeline into a failure EVEN THOUGH every required file was present.
+  Fix: list the tgz to a temp file first, then grep it (SIGPIPE-safe);
+  prefix-agnostic basename matching kept. Gate verified locally. The
+  round-283/287 gates keep earning their keep — three release-CI defects
+  caught before shipping.
   ROUND-289 (2026-09-04): release v1.2.272 GREEN after the SIGPIPE gate
   fix (4th attempt) — GitHub release created by CI with the tgz asset
   (6.4MB); keep-latest: v1.2.271 release+tag deleted, only v1.2.272
@@ -562,25 +580,6 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   ROUND-317 (2026-09-04): CI 9d096d53 GREEN — round-316's gateway click
   conversion tests pass on CI (all 5 jobs incl. gateway test/typecheck).
   Local tsc --noEmit clean too.
-  ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
-  24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
-  lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
-  prior npm-11 install had regenerated the lock with only the LOCAL
-  platform's optional deps (3+2 entries); npm ci --include=optional then
-  failed everywhere (reproduced locally too). Fix: npm install
-  --include=optional restored the full platform set (12+14 entries) —
-  npm ci --dry-run clean, 82/82 tests. Tag v1.2.272 rebuilt again onto
-  the lock fix.
-  ROUND-288 (2026-09-04): release 1.2.272 CI failed a THIRD time — the
-  round-283 tgz content gate itself was broken under `set -o pipefail`:
-  `tar tzf | grep -q` made grep exit after the first match, SIGPIPE killed
-  tar mid-stream ("tar: stdout: write error"), and pipefail turned the
-  pipeline into a failure EVEN THOUGH every required file was present.
-  Fix: list the tgz to a temp file first, then grep it (SIGPIPE-safe);
-  prefix-agnostic basename matching kept. Gate verified locally. The
-  round-283/287 gates keep earning their keep — three release-CI defects
-  caught before shipping.
-
 ### Current release
 - npm **1.2.278 LIVE on d1 (round-308+)** — MCP connect auto-selects the
   embedded-view tab on BOTH transports (stdio 1.2.271 + http 1.2.278:
@@ -658,6 +657,10 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   the round-315 e2e browser_run_script with stdout TITLE=Example Domain);
   CI fc4e24d2 GREEN. No product regressions from the round-318..326
   release-chain cleanup.
+  ROUND-329 (2026-09-04): iteration-log ORDER fixed — ROUND-287/288
+  (release 1.2.272 CI fixes) sat after ROUND-299 (misplaced by an old
+  edit); moved between 286 and 289. Live log now runs 273..317 in exact
+  chronological order.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
