@@ -470,19 +470,13 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   only). Round-history entries untouched (they record what was true then).
 
 ### Current release
-- npm **1.2.244 staged (round-245)** — display-path triage batch, see the
-  round-245 header above. Four fixes: (1) panel UNBUILDABLE-source fix +
-  first correct panel.js rebuild since c00cbd2d (f89454d3..HEAD UX changes
-  finally ship); (2) sanitize infinite-loop fix (memory_save hang) + test;
-  (3) bridge B3/B2 (idle capture follows selected page; frame cache resets
-  only on selected-page nav); (4) useSessions revive/retry/30s-sweep so
-  AI-opened terminal sessions always appear. Rust 197 / panel 80 green.
-  Still OPEN from the audit: ws_relay idle-cap black period (B1 — bridge
-  has no per-socket watchdog, panel has no HTTP /frame fallback), MCP
-  actions.jsonl screenshots:[] by construction (B5), ValePlaywright 9229
-  scheduled task still spawns --headless WITHOUT --cdp-endpoint (C3 —
-  external clients pointed at 9229 drive a browser the panel cannot see;
-  the 3 d1 MCP clients on 9223 are fine).
+- npm **1.2.266 LIVE on d1 (round-266)** — bidirectional device file
+  transfer for AI: system_file_stat (size/kind/modified_ms) + raw read
+  cap 1 MiB. Rust 196 / clippy clean. Device-verified: 300KB transfer
+  end-to-end (round-266), AI drive paths clean (round-268), bridge fully
+  removed (round-263/265/269), docs synced (round-270).
+- Release history below is chronological; older entries record the state
+  at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
   tests (CSRF matrix + Breaker/RouteDO fail-closed denies — shipped with
   ZERO refs), electron FIRST tests via pure src/url-policy.ts extraction
@@ -830,7 +824,8 @@ propagated the deletions (verified: 1.2.151 now 404, 1.2.208 200).
 tgz files are gitignored — cleanup is deploy-side only, no commit.
 
 ### Device facts (d1)
-- agent token `abacd520...97`, port 18080, CDP 9333 (Electron), bridge 9224
+- agent token `abacd520...97`, port 18080, CDP 9333 (Electron desktop view);
+  playwright-mcp 9229 (external); bridge/9223/9224 REMOVED (round-262/263)
 - pwsh 7.6.5 at `C:\Program Files\PowerShell\7\pwsh.exe`; ValeAgent +
   ValeDesktop scheduled tasks; install dir `D:\Vale`
 - npm broken on device → use `node "D:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js"`
