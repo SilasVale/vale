@@ -823,13 +823,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   caught before shipping.
 
 ### Current release
-- npm **1.2.272 LIVE on d1 (round-285)** — MCP connect auto-selects the
-  embedded-view tab on BOTH transports (stdio 1.2.271 + http 1.2.272:
-  desktop-CDP + browser_tabs guard) so AI navigation drives the page the
-  user watches.
-  Earlier: 1.2.267 (round-274) hidden-window render fix; E2E suite
-  agent/scripts/e2e/e2e.js 26/26 on d1 (terminal/file/workflow/panel/
-  mcp stdio+http/evidence/browser sections).
+- npm **1.2.278 LIVE on d1 (round-308+)** — MCP connect auto-selects the
+  embedded-view tab on BOTH transports (stdio 1.2.271 + http 1.2.278:
+  desktop-CDP + browser_tabs guard, http arm heals recycled sessions
+  round-305); /api/status reports the npm release (round-304). E2E suite
+  agent/scripts/e2e/e2e.js 30 checks on d1 (round-315: terminal/file/
+  workflow 12, mcp stdio+http 12 incl. click interaction, panel/evidence/
+  browser 6). Release chain: publish-release.sh (round-310) + GitHub tag
+  API -> CI-built release; CDN pruned to last-5 (round-309).
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
