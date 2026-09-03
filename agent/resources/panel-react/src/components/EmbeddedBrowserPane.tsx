@@ -144,7 +144,7 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
           className="browser-webview"
           src="https://www.wikipedia.org"
           partition="persist:vale-embedded"
-          allowpopups={false as any}
+          allowpopups
           style={{ width: "100%", height: "100%", display: "flex" }}
         />
         {!ready && (
