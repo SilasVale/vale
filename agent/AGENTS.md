@@ -776,6 +776,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   CF runtime), wrangler dry-run compiles, live /api/health all 20 channels
   ok. Device: 1 node proc only (9229 resident playwright), /api/sessions
   344 records 0 live zombies, agent 1.2.278 stable.
+  ROUND-313 (2026-09-04): e2e mcp section now proves AI CLICK interaction
+  drives the embedded view — not just navigation: each probe navigates to
+  the example.com homepage, snapshots, clicks "Learn more" (browser_click
+  {target}=snapshot ref) and verifies the view follows to iana.org. Suite
+  26 -> 30 checks (mcp stdio 6 + http 6). Device-verified 12/12. Iteration
+  lessons: marker URLs (example.com/<marker>) are 404 pages with no links
+  — navigate home first; JSON.stringify double-escapes quotes (match the
+  ref after the text, not the quoted literal).
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
