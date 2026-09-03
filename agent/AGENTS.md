@@ -880,6 +880,11 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   build-installer.sh (its only sync path). deploy_worker now syncs
   gateway/src into public/code/files/vale-gate before deploy; mirror
   synced to current immediately.
+  ROUND-325 (2026-09-04): round-324 fixes DEVICE/DEPLOY-VERIFIED — real
+  `build.sh gateway` run: code-viewer sync + wrangler deploy succeeded
+  (7.47s, Version c07a2225). Live /code/ viewer on api.saisi.online now
+  serves the CURRENT sources — sha256 of live mcp.ts and plugins/admin.ts
+  IDENTICAL to the repo files (was 17/17 stale before round-324).
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
