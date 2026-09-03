@@ -27,7 +27,11 @@ node e2e.js --token <token> --no-browser           # agent-only, no CDP
 Env: `VALE_AGENT_TOKEN` also works; `--base` overrides the agent URL;
 `VALE_PW_DIR` overrides the playwright dir (default `D:\Vale\playwright`).
 
-Exit code 0 = all selected sections passed. Full run: 26 checks
+Exit code 0 = all selected sections passed. Full run: 30 checks
+(mcp section covers stdio+http auto-select AND AI click interaction —
+round-313: snapshot -> browser_click {target} on "Learn more" must drive
+the embedded view to iana.org, proving interactions beyond navigation
+reach the page the user watches).
 (terminal 3, file 3, workflow 6, panel 2, mcp 8, evidence 2, browser 2).
 
 ## Known device quirks (handled by the suite)

@@ -217,6 +217,24 @@ async function mcpAutoselectProbe(tag, connArgs) {
   const spaOk = list.some((t) => t.url.includes('/desktop/'));
   check('mcp ' + tag + ' drives embedded view', embedded && embedded.url.includes(marker), (embedded && embedded.url.slice(0, 60)) || 'NO VIEW');
   check('mcp ' + tag + ' SPA intact', spaOk, 'targets=' + list.length);
+  // round-313: AI INTERACTION (not just navigation) must drive the view:
+  // snapshot example.com, click "Learn more", the embedded view follows to
+  // iana.org (playwright-mcp browser_click takes {target} = the snapshot ref).
+  const snap = await tool('mcp_client_call', { tool: 'browser_snapshot', arguments: {} });
+  const snapTxt = JSON.stringify(snap);
+  // Snapshot line: `- link "Learn more" [ref=f1e6] [cursor=pointer]:`
+  const refMatch = /link "Learn more" \[ref=(\w+)\]/.exec(snapTxt);
+  const clickRef = refMatch && refMatch[1];
+  let clickOk = false;
+  if (clickRef) {
+    const cl = await tool('mcp_client_call', { tool: 'browser_click', arguments: { target: clickRef } });
+    clickOk = !!(cl && cl.ok);
+  }
+  check('mcp ' + tag + ' click learn-more', clickOk, 'ref=' + clickRef);
+  await sleep(5000);
+  const list2 = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+  const emb2 = list2.find((t) => !t.url.includes('/desktop/'));
+  check('mcp ' + tag + ' click drives embedded view', emb2 && emb2.url.includes('iana.org'), (emb2 && emb2.url.slice(0, 60)) || 'NO VIEW');
   await tool('mcp_client_disconnect', {}).catch(() => {});
 }
 
