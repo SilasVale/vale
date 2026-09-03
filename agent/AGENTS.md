@@ -506,6 +506,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   ROUND-275 (2026-09-04): doc sync — CLAUDE.md desktop-shell bullet now
   documents the round-274 hidden-window rAF freeze + fix; e2e README
   updated to 16 checks incl. the panel section (was 14, no panel).
+  ROUND-276 (2026-09-04): round-274 fix LIVE-UPDATE verification — the
+  hidden-window render fix keeps the SPA visibilityState "visible" even
+  with the window in the background SYSTEM session (was "hidden" before
+  the fix, which froze rAF). Device-verified: AI wrote a marker to a
+  fresh session, the tab was activated, and the marker appeared in the
+  xterm DOM (live SSE -> render path works end-to-end). Also confirmed
+  the electron renderer inherits the disable-renderer-backgrounding
+  switches (round-274's appendSwitch calls are in the running main.js).
 
 ### Current release
 - npm **1.2.267 LIVE on d1 (round-274)** — Electron hidden-window render
