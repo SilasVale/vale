@@ -64,16 +64,17 @@ deploy_worker() {
   echo "=== [deploy] ${name} (${dir}/) ==="
   ( cd "$ROOT/$dir" \
       && CLOUDFLARE_API_TOKEN="$token" wrangler deploy )
-  # Post-publish smoke (round-58): a stale/placeholder sha256 in index.js
-  # ships silently and locks EVERY device's agent_update (integrity check
-  # fails) until someone notices. Assert the live /api/version matches the
-  # source constants right after deploy — fail loudly at publish time.
+  # Post-publish smoke (round-58, reworked round-324): /api/version derives
+  # from the version.json asset (round-297) — the OLD smoke grepped static
+  # version/sha256 constants out of index.js that no longer exist, so every
+  # index deploy failed at this step. Expectation now comes from
+  # index/public/vale-agent/version.json (the file the worker serves).
   if [[ "$dir" == "index" ]]; then
     local want_version want_sha
-    want_version="$(grep -oP 'version: "\K[0-9.]+' "$ROOT/index/src/index.js" | head -1)"
-    want_sha="$(grep -oP 'sha256: "\K[0-9a-f]{64}' "$ROOT/index/src/index.js" | head -1)"
+    want_version="$(python3 -c "import json;print(json.load(open('$ROOT/index/public/vale-agent/version.json'))['version'])")"
+    want_sha="$(python3 -c "import json;print(json.load(open('$ROOT/index/public/vale-agent/version.json'))['sha256'])")"
     if [[ -z "$want_sha" || "$want_sha" == *placeholder* || "$want_sha" =~ ^0+$ ]]; then
-      echo "  !! index/src/index.js sha256 is missing/all-zero/placeholder — devices would be locked out of updates"
+      echo "  !! version.json sha256 is missing/all-zero/placeholder — devices would be locked out of updates"
       exit 1
     fi
     local live
