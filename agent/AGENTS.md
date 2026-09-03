@@ -502,6 +502,9 @@ Last updated: 2026-09-04 (round 271 — doc sync: build guide + route map
   gained the panel section (AI marker must appear in the SPA's visible
   xterm; needs the newest session tab activated first) — full suite now
   16/16 on d1 (terminal 3, file 3, workflow 6, panel 2, browser 2).
+  ROUND-275 (2026-09-04): doc sync — CLAUDE.md desktop-shell bullet now
+  documents the round-274 hidden-window rAF freeze + fix; e2e README
+  updated to 16 checks incl. the panel section (was 14, no panel).
 
 ### Current release
 - npm **1.2.267 LIVE on d1 (round-274)** — Electron hidden-window render
