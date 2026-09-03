@@ -349,6 +349,19 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   sits under the SPA drawer. DEVICE-VERIFIED: drawer open=true, slot
   753px vs pane 1093px (=340px drawer), 27 shots + 50 actions loaded
   from real pwout. +1 test. Panel 94/94.
+  ROUND-256 (2026-09-26, 1.2.259/1.2.260 LIVE on d1): embedded-browser
+  RENDERER-CRASH recovery. Before: a crashed renderer left the pane stuck
+  on "Starting embedded browser…" forever. Now: main-process
+  render-process-gone pushes embedded-browser:gone {reason,exitCode} and
+  hides the dead view; embedded-browser:recover force-re-creates the view
+  (close + remove + ensure fresh), re-applies the last bounds, navigates
+  to the last URL. Pane shows a crash banner ("The embedded browser
+  crashed — Reload browser"); recover re-queries state() so the toolbar
+  flips back to live. DEVICE-VERIFIED end-to-end: real Page.crash on the
+  cn.bing.com view -> banner appeared (reason: crashed) + ready=0;
+  clicked Reload -> view recreated at cn.bing.com, banner cleared.
+  1.2.260 = ready-state requery fix after recovery. +1 test.
+  Panel 95/95.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
