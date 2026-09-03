@@ -518,6 +518,15 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   Evidence-drawer check is now repeatable: the AI saves a screenshot into
   pwout via browser_run_script and GET /api/browser/pwshots (the drawer's
   data source) must list it. Full suite now 18/18 on d1 (added evidence 2).
+  ROUND-278 (2026-09-04): url-policy.js TRACKING GAP FIXED — the compiled
+  security-critical origin-policy file (shipped alongside main.js in the
+  npm package + swapped by vale update) was never tracked in git, and the
+  CI release flow does NOT run tsc before npm pack — every CI-built tgz
+  silently lacked url-policy.js (device kept the stale copy; harmless so
+  far, fatal once the policy changes). Committed it (same convention as
+  main.js/preload.js). Also removed three stray config files in agent/
+  (--test-threads=1, sanitize, plugins::memory::sanitize — cargo-test
+  argv spills containing a device_token) that had sat untracked.
 
 ### Current release
 - npm **1.2.267 LIVE on d1 (round-274)** — Electron hidden-window render
