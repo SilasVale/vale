@@ -77,7 +77,15 @@ pub fn sanitize(content: &str) -> String {
         out.push_str(&redact_line(line));
         out.push('\n');
     }
-    out.trim_end().to_string()
+    // LOW fix: preserve trailing newline to match JSON-path behavior. The
+    // old trim_end() stripped it, diverging from the JSON path which
+    // returns content byte-for-byte — export then re-import lost the
+    // newline. Only strip if the ORIGINAL content had no trailing newline.
+    if content.ends_with('\n') {
+        out
+    } else {
+        out.trim_end().to_string()
+    }
 }
 
 /// Redact one text line (no newline).
