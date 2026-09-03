@@ -59,7 +59,7 @@ fn install_dir() -> PathBuf {
 /// with the agent mid-copy and leaves the device half-updated.
 /// Returns false on failure (busy marker + temp files are cleaned by the
 /// caller).
-async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8]) -> bool {
+async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_version: &str) -> bool {
     #[cfg(windows)]
     {
         use std::io::Write;
@@ -115,6 +115,7 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8]) -> bool {
         }
 
         let q = dir.to_string_lossy().replace('\'', "''");
+        let ver = release_version.replace('\'', "''");
         let script = format!(
             r#""[$(Get-Date -Format o)] update start" | Out-File '{q}\vale-update.log' -Append;
 try {{ Stop-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{}};
@@ -126,6 +127,7 @@ if (Test-Path '{q}\vale-agent.exe') {{ try {{ Copy-Item -Force '{q}\vale-agent.e
 foreach($i in 1..12){{ try {{ Copy-Item -Force -ErrorAction Stop '{q}\vale-agent.new.exe' '{q}\vale-agent.exe'; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 800 }} }};
 "[$(Get-Date -Format o)] copy ok=$ok" | Out-File '{q}\vale-update.log' -Append;
 if ($ok) {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe' }};
+if ($ok) {{ Set-Content -Path '{q}\.vale-release' -Value '{ver}' -NoNewline -ErrorAction SilentlyContinue }};
 if (Test-Path '{q}\vale-desktop.new.exe') {{ Copy-Item -Force '{q}\vale-desktop.new.exe' '{q}\vale-desktop.exe'; Remove-Item -Force '{q}\vale-desktop.new.exe' }};
 try {{ Start-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{ schtasks /Run /TN ValeAgent }};
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '{q}\.vale-update';
@@ -215,7 +217,19 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
             let dl_site = download_url.clone();
             async move {
             let force = params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
-            let local = env!("CARGO_PKG_VERSION").to_string();
+            // round-298: the Cargo version (1.0.x) never changes between
+            // releases, so comparing it against the release-server version
+            // (1.2.x) ALWAYS looked newer — every agent_update call re-
+            // downloaded + swapped, even when the device was current. The
+            // release version is now recorded next to the install dir at
+            // swap time (.vale-release); read it as the local version when
+            // present, falling back to the Cargo version (fresh installs /
+            // non-Windows test environments).
+            let local = std::fs::read_to_string(install_dir().join(".vale-release"))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
             // saisi decouple: no download_url configured → explicit error
             // instead of a hardcoded host.
@@ -358,6 +372,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
             let installer = dir.join("vale-agent-update.tgz");
             let dl_url = download.clone();
             let busy_bg = busy.clone();
+            let remote_resp = remote.clone();
             tokio::spawn(async move {
                 // Download (300s: a slow release server / bandwidth-limited
                 // device shouldn't fail a real update, but must terminate).
@@ -420,7 +435,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 //    marker is dropped so the next attempt re-downloads.
                 //    round-87: non-Windows (dev/test) has no exe to swap —
                 //    clean up so the marker does not lock updates.
-                let ok = update_from_tgz(&installer, &bytes).await;
+                let ok = update_from_tgz(&installer, &bytes, &remote).await;
                 if !ok {
                     let _ = std::fs::remove_file(&busy_bg);
                     let _ = std::fs::remove_file(&installer);
@@ -442,7 +457,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
             Ok(json!({
                 "status": "upgrading",
                 "current": local,
-                "remote": remote,
+                "remote": remote_resp,
                 "message": "downloading + installing in the background — vale-agent restarts automatically, MCP reconnects in ~1 minute"
             }))
             }
