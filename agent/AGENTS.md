@@ -705,6 +705,11 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   guide/README (remaining vale-agent-1.2.179 mentions are round-336's
   own history log). Live download paths all 200 (/, version.json,
   latest.tgz). CI 01f16da1 GREEN.
+  ROUND-338 (2026-09-04): README tool-count drift fixed — claimed "37
+  MCP tools" but the registry test (mcp_integration.rs) asserts 47 since
+  round-266/282. Updated with the exact breakdown (terminal 26 + memory
+  6 + system 7 + mcp-client 4 + playwright 2 + update 2 + design 1);
+  no other numeric claims drift in README.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
