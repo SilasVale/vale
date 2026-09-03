@@ -720,12 +720,13 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
     let mut text = extract_tool_text(&list).unwrap_or_default();
     // round-281 device-caught: right after spawn, playwright-mcp may still
     // be enumerating the attached browser and report only the SPA tab —
-    // retry a few times (1s apart) before giving up.
+    // retry for up to ~20s (the attached browser's tab list can take a few
+    // seconds to include the embedded view) before giving up.
     let mut embedded_idx = embedded_view_index(&text);
-    for attempt in 0..5 {
+    for attempt in 0..6 {
         if embedded_idx.is_some() { break; }
-        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-        diag_log(&format!("[select] retry {}/5 — tab list not ready yet", attempt + 1));
+        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+        diag_log(&format!("[select] retry {}/6 — tab list not ready yet", attempt + 1));
         match rpc_ref(sess, None, "tools/call", json!({
             "name": "browser_tabs",
             "arguments": { "action": "list" },
