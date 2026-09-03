@@ -281,6 +281,21 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   Remaining OPEN: SPA-side polish for the embedded pane (nav buttons/zoom/
   evidence drawer parity with the screenshot pane), AI drive-path default
   to the embedded target, and the fullscreen/zoom UX on the real view.
+  ROUND-248 (2026-09-26, 1.2.247 LIVE on d1): user report "浏览器超链接
+  跳转不了" — real sites open external links in NEW windows (target=_blank);
+  the embedded WebContentsView DENIED window.open, so clicks did nothing
+  (CDP-reproduced on baidu: click hao123 -> URL unchanged). Fixed: window.
+  open is intercepted and the SAME view navigates to the sanitized URL
+  (http/https/data/about only; 4a701ecc). Released 1.2.247 + staged on d1
+  (main.js round-248 marker x2 verified). Also: embedded pane nav buttons
+  (back/fwd/reload) + real URL/history tracking via main-process
+  did-navigate events (2e0e6470); AI playwright attach preference desktop
+  9333 > bridge 9223 > headless (a8629812). NOTE: device CDP browser-WS
+  endpoint became unresponsive to repeated playwright connectOverCDP from
+  verification scripts (page-level /json/list works; browser-level WS times
+  out) — a test-harness artifact; a clean electron restart resets it. Live
+  click-through verification of the target=_blank fix pending a human click
+  on the desktop Browser page.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
