@@ -25,6 +25,7 @@ use bytes::Bytes;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::mpsc;
@@ -551,12 +552,34 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // SSE event stream — streaming, handled before body parsing
     if method == Method::GET && path == "/api/events" {
         if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        // stage-n SSE audit LOW: bound concurrent SSE connections so a flood
+        // of viewers can't exhaust tasks/memory. Reserve a slot; if full, 503.
+        let _guard = match SseConnectionGuard::acquire() {
+            Some(g) => g,
+            None => {
+                return built_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "text/plain",
+                    Body::from("too many SSE viewers (max 64)"),
+                )
+            }
+        };
         return sse_stream(state).await;
     }
 
     // SSE terminal byte stream — streamed TermOutput JSON frames.
     if method == Method::GET && path == "/api/events/term" {
         if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        let _guard = match SseConnectionGuard::acquire() {
+            Some(g) => g,
+            None => {
+                return built_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "text/plain",
+                    Body::from("too many SSE viewers (max 64)"),
+                )
+            }
+        };
         return sse_term_stream(state).await;
     }
 
@@ -1216,6 +1239,29 @@ async fn api_call_tool(state: &AppState, tool_name: &str, body: &str) -> serde_j
 
 // ── SSE event stream ─────────────────────────────────────────
 
+/// stage-n SSE audit LOW: bound concurrent SSE connections so a flood of
+/// viewers can't exhaust tasks/memory. 64 slots shared across /api/events
+/// and /api/events/term; each slot is a permit that releases on drop.
+static SSE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+const SSE_MAX_CONNECTIONS: usize = 64;
+struct SseConnectionGuard;
+impl SseConnectionGuard {
+    fn acquire() -> Option<Self> {
+        let prev = SSE_CONNECTIONS.fetch_add(1, Ordering::SeqCst);
+        if prev < SSE_MAX_CONNECTIONS {
+            Some(SseConnectionGuard)
+        } else {
+            SSE_CONNECTIONS.fetch_sub(1, Ordering::SeqCst);
+            None
+        }
+    }
+}
+impl Drop for SseConnectionGuard {
+    fn drop(&mut self) {
+        SSE_CONNECTIONS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Adapter: tokio mpsc::Receiver → futures::Stream for axum Body::from_stream
 struct MpscStream {
     rx: mpsc::Receiver<Result<Bytes, Infallible>>,
@@ -1237,6 +1283,7 @@ async fn sse_response<T>(
     mut rx: tokio::sync::broadcast::Receiver<T>,
     encode: impl Fn(&T) -> String + Send + 'static,
     lagged: impl Fn(u64) -> String + Send + 'static,
+    initial: Option<String>,
 ) -> Response
 where
     T: Clone + Send + 'static,
@@ -1245,6 +1292,12 @@ where
 
     tokio::spawn(async move {
         use tokio::sync::broadcast::error::RecvError;
+        // stage-n: emit an epoch marker as the FIRST frame so SSE clients can
+        // distinguish a fresh agent boot from a quiet stream (the epoch nonce
+        // is otherwise only in /api/events/poll).
+        if let Some(init) = &initial {
+            let _ = tx.send(Ok(Bytes::from(init.clone()))).await;
+        }
         loop {
             // Heartbeat: an idle stream emitted zero bytes while declaring
             // keep-alive, so a silently-dropped connection was never detected
@@ -1296,8 +1349,7 @@ async fn sse_stream(state: Arc<AppState>) -> Response {
     let rx = state.event_bus.subscribe();
     // SeqEvent serializes as {"seq":n,"event":{...}}. The `v` field is a
     // protocol version anchor (round-54): clients ignore unknown fields, so
-    // this is purely a diagnostic marker — a future agent/client that needs
-    // to detect version drift can do so instead of silently mis-parsing.
+    // this is purely a diagnostic marker.
     let encode = |event: &vale_agent_core::events::SeqEvent| {
         let mut obj = serde_json::to_value(event).unwrap_or_default();
         if let Some(o) = obj.as_object_mut() { o.insert("v".into(), serde_json::json!(1)); }
@@ -1306,7 +1358,11 @@ async fn sse_stream(state: Arc<AppState>) -> Response {
     // Plain data frame so EventSource.onmessage fires; the client responds by
     // polling once from its last seq to catch up.
     let lagged = |n: u64| format!("data: {{\"v\":1,\"lagged\":{n}}}\n\n");
-    sse_response(rx, encode, lagged).await
+    // stage-n: emit the epoch nonce as the initial frame so SSE clients can
+    // distinguish a fresh boot from a quiet stream.
+    let epoch = state.event_bus.epoch();
+    let initial = Some(format!("data: {{\"v\":1,\"epoch\":{epoch}}}\n\n"));
+    sse_response(rx, encode, lagged, initial).await
 }
 
 /// SSE stream of raw terminal output (TermOutput JSON frames).
