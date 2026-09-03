@@ -181,11 +181,15 @@ interface Msg {
       selPage = p; void attachSel();
     }
     scheduleTabsPush();
-    p.on("framenavigated", () => { resetFrameCache(); scheduleTabsPush(); });
+    // round-245 (B2): only the SELECTED page's navigation may reset the
+    // frame cache — a background tab's framenavigated used to blank the
+    // selected page's last frame (lastJpeg=null;lastAck=0), freezing WS
+    // viewers until the next capture.
+    p.on("framenavigated", () => { if (p === selPage || p === page) resetFrameCache(); scheduleTabsPush(); });
     p.on("close", () => onPageClosed(p));
   });
   for (const p of ctx!.pages()) {
-    p.on("framenavigated", () => { resetFrameCache(); scheduleTabsPush(); });
+    p.on("framenavigated", () => { if (p === selPage || p === page) resetFrameCache(); scheduleTabsPush(); });
     p.on("close", () => onPageClosed(p));
   }
   // Multi-tab (M2): selPage tracked by object identity; refresh() re-syncs
@@ -215,6 +219,14 @@ interface Msg {
   // same cdp, both opened a new session, the first leaked a LIVE screencast
   // → viewers saw frames alternating between two tabs and bandwidth doubled.
   let attachChain: Promise<void> = Promise.resolve();
+  // round-245 fix (browser-display audit B3): the 10fps idle-capture CDP
+  // session must follow the SELECTED page. It used to be created once at
+  // boot bound to the initial page; when the AI opened a new tab and the
+  // bridge auto-followed it, the idle capture kept targeting the OLD (or
+  // closed) page — the idle-frame guarantee silently died on the very page
+  // the AI operates, and the panel froze on quiet pages. attachSel now
+  // rebinds it alongside the screencast session.
+  let idleCaptureCdp: import("playwright-core").CDPSession | null = null;
   function attachSel(): Promise<void> {
     const run = async (): Promise<void> => {
       try { await cdp.detach(); } catch {}
@@ -226,6 +238,9 @@ interface Msg {
       if (selPage !== target || target.isClosed()) { try { await c.detach(); } catch {} return; }
       cdp = c;
       bindScreencast(c);
+      // Rebind the idle-capture session to the same selected page (B3).
+      try { await idleCaptureCdp?.detach(); } catch {}
+      try { idleCaptureCdp = await ctx!.newCDPSession(target); } catch { idleCaptureCdp = null; }
     // maxFrameRate exists in newer playwright-core (1.63+); 1.62's types
     // lack it — cast the call to keep the runtime value (device bundle has it).
     // stage-n: quality 60 + resolution follows the panel viewport (streamW/
@@ -595,12 +610,15 @@ interface Msg {
   // when no screencast frame has arrived recently. Capturing runs
   // CONCURRENTLY with screencast (no `capturing` lock) — both push to the
   // ring buffer; slow-path CDPs don't block the fast path.
-  const idleCaptureCdp = await ctx!.newCDPSession(page);
+  // round-245 (B3): the capture session is attached to the SELECTED page by
+  // attachSel — never captured against a stale/closed page after a tab
+  // switch or an AI-opened tab.
   setInterval(() => {
     if (sockets.size === 0) return;
     if (Date.now() - lastAck < 800) return; // screencast is active — skip
     const target = selPage || page;
     if (!target || target.isClosed()) return;
+    if (!idleCaptureCdp) return;
     // CDP captureScreenshot is faster than PW screenshot (no full render pass).
     // quality 50 keeps text legible at ≤15 KB/frame vs the old q90 ≤45 KB.
     idleCaptureCdp.send("Page.captureScreenshot", {
@@ -615,6 +633,13 @@ interface Msg {
 
   await new Promise<void>((r) => srv.listen(PORT, "127.0.0.1", () => r()));
   console.log(`bridge listening on 127.0.0.1:${PORT} profile=${USER_DATA_DIR}`);
+
+  // round-245 (B3): boot the idle-capture CDP session for the initial page —
+  // attachSel (which rebinds it on tab changes) only runs on tab events, so
+  // without this the first page would have no idle-frame guarantee.
+  try {
+    idleCaptureCdp = await ctx!.newCDPSession(selPage || page);
+  } catch { idleCaptureCdp = null; }
 
   // Start streaming + keepalive
   await (cdp.send as (m: string, p?: unknown) => Promise<unknown>)("Page.startScreencast", { format: "jpeg", quality: 60, everyNthFrame: 1, maxWidth: streamW, maxHeight: streamH, maxFrameRate: 15 });
