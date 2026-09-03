@@ -778,14 +778,24 @@ fn extract_tool_text(v: &serde_json::Value) -> Option<String> {
     if let Some(s) = v.as_str() {
         return Some(s.to_string());
     }
-    // Structured content array (http arm / other servers).
-    let content = v.pointer("/result/content")?;
-    let arr = content.as_array()?;
+    // Structured content array — under /result/content (http arm / other
+    // servers) OR at the TOP level: rmcp 2.x CallToolResult serializes as
+    // { content: [...] } with no "result" wrapper, so the round-281/285
+    // auto-select (which runs inside connect, before any mcp_client_call
+    // path can re-parse) silently saw empty text and left the desktop SPA
+    // as the current tab (device-caught round-300: mcp e2e "drives
+    // embedded view" FAIL while manual browser_tabs worked).
     let mut out = String::new();
-    for item in arr {
-        if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
-            out.push_str(t);
-            out.push('\n');
+    for path in ["/result/content", "/content"] {
+        if let Some(content) = v.pointer(path) {
+            if let Some(arr) = content.as_array() {
+                for item in arr {
+                    if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
+                        out.push_str(t);
+                        out.push('\n');
+                    }
+                }
+            }
         }
     }
     if out.is_empty() { None } else { Some(out) }
@@ -1262,7 +1272,13 @@ mod one_browser_tests {
         // http: nested content array.
         let http = serde_json::json!({ "result": { "content": [ { "type": "text", "text": "hello" } ] } });
         assert_eq!(extract_tool_text(&http).unwrap().trim(), "hello");
+        // rmcp 2.x CallToolResult: TOP-LEVEL content, no result wrapper
+        // (round-300 device-caught: auto-select saw empty text without this).
+        let top = serde_json::json!({ "content": [ { "type": "text", "text": "- 0: (current) [Vale Agent](http://127.0.0.1:18080/desktop/)\n- 1: [X](https://x.com/)" } ] });
+        let t = extract_tool_text(&top).unwrap();
+        assert!(t.contains("https://x.com"), "top-level content must parse: {t:?}");
         // Empty -> None.
         assert!(extract_tool_text(&serde_json::json!({})).is_none());
+        assert!(extract_tool_text(&serde_json::json!({ "content": [] })).is_none());
     }
 }
