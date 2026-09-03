@@ -312,6 +312,17 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   webContents.setZoomFactor via embedded-browser:zoom IPC (0.5-3.0,
   frameOk-gated), with a 75-200% toolbar selector (event-driven).
   DEVICE-VERIFIED: select 150% -> view devicePixelRatio 1.5 on baidu.
+  ROUND-252 (2026-09-26, 1.2.255): event-driven AI-actions feed — the
+  agent emits `browser-actions-changed` on /api/events when an MCP browser
+  action/screenshot is recorded (record_mcp_action / record_mcp_screenshot;
+  McpClientPlugin now takes the shared event bus via a module OnceLock
+  set_actions_bus). The panel's evidence feed (useBrowser) opens a
+  fetch+ReadableStream SSE reader on /api/events (Bearer — EventSource
+  can't) and refetches pwshots+actions on the push — AI activity appears
+  INSTANTLY; the 3s interval stays only as an SSE-down safety net. +1
+  panel test (SSE push -> immediate actions refetch). Rust 198 / panel 91.
+  Device: SSE channel streams (epoch frame verified); playwright-changed
+  (same bus) device-proven previously.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
