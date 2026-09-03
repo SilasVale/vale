@@ -307,6 +307,11 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   qq.com CHANGED; target=_blank link -> sina.com.cn CHANGED. LESSON:
   use raw page-level CDP WS for device verification; playwright
   connectOverCDP wedges Electron 33's browser WS after repeated connects.
+  ROUND-251 (2026-09-26, 1.2.254 LIVE on d1): embedded pane zoom
+  control — the WebContentsView is a REAL browser, so zoom uses the native
+  webContents.setZoomFactor via embedded-browser:zoom IPC (0.5-3.0,
+  frameOk-gated), with a 75-200% toolbar selector (event-driven).
+  DEVICE-VERIFIED: select 150% -> view devicePixelRatio 1.5 on baidu.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
