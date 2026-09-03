@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { BrowserPage } from "../BrowserPage";
 
 // round-246: the Electron shell (window.valeEmbedded) must render the REAL
@@ -25,31 +25,24 @@ describe("BrowserPage", () => {
   it("renders the screenshot BrowserPane when no embedded bridge exists (plain browser)", () => {
     const { container } = render(<BrowserPage plugins={pluginsStub} token="t" />);
     expect(container.querySelector(".browser-pane")).toBeTruthy();
-    expect(container.querySelector("#vale-embedded-browser-slot")).toBeNull();
+    // No embedded real-browser slot in plain-browser mode.
+    expect(container.querySelector(".browser-embedded-slot")).toBeNull();
   });
 
   it("renders the embedded REAL-browser controller when window.valeEmbedded exists (Electron shell)", async () => {
     (window as any).valeEmbedded = {
-      navigate: vi.fn().mockResolvedValue({ ok: true }),
-      back: vi.fn().mockResolvedValue({ ok: true }),
-      fwd: vi.fn().mockResolvedValue({ ok: true }),
-      reload: vi.fn().mockResolvedValue({ ok: true }),
-      place: vi.fn().mockResolvedValue({ ok: true }),
-      state: vi.fn().mockResolvedValue({ ok: true, url: "https://example.com", canBack: true, canFwd: false, visible: true }),
-      onNav: vi.fn().mockReturnValue(() => {}),
+      announceGuest: vi.fn().mockResolvedValue({ ok: true }),
+      state: vi.fn().mockResolvedValue({ ok: true, url: "https://example.com", hasGuest: true, canBack: true, canFwd: false }),
     };
     const { container } = render(<BrowserPage plugins={pluginsStub} token="t" />);
-    // The embedded controller mounts its slot (no screenshot <img>).
-    expect(container.querySelector("#vale-embedded-browser-slot")).toBeTruthy();
+    // The embedded controller mounts its real-browser slot (no screenshot
+    // <img>; the <webview> element is Electron-only and inert in jsdom).
+    expect(container.querySelector(".browser-embedded-slot")).toBeTruthy();
     expect(container.querySelector("img.browser-frame")).toBeNull();
     // Address input drives the embedded view.
     expect(screen.getByPlaceholderText(/rendered live by the real embedded browser/i)).toBeTruthy();
-    // Nav buttons reflect the REAL page history state from the bridge.
-    const navBtns = container.querySelectorAll("button.browser-nav");
-    expect(navBtns.length).toBe(3); // back / fwd / reload
-    await waitFor(() => {
-      expect((navBtns[0] as HTMLButtonElement).disabled).toBe(false); // canBack: true
-      expect((navBtns[1] as HTMLButtonElement).disabled).toBe(true);  // canFwd: false
-    });
+    // Nav buttons render (their enabled state is driven by the live webview
+    // element's events, which jsdom cannot fire — asserted in device tests).
+    expect(container.querySelectorAll("button.browser-nav").length).toBe(3);
   });
 });
