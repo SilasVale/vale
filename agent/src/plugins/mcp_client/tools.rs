@@ -480,6 +480,42 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
     }
 }
 
+/// round-246 (B5 part 2): append an action-timeline line that LINKS a real
+/// MCP screenshot file copied into pwout. The blanket record_mcp_action at
+/// the dispatch head always writes `screenshots: []` (the copy happens
+/// after), so without this the Evidence drawer's action row would show
+/// "0 shots" even when the AI's screenshot reached pwout. The line mirrors
+/// the shape BrowserPane parses: `screenshots` carries the pwout basename
+/// (the panel resolves it via /api/browser/pwshot?name=).
+fn record_mcp_screenshot(dst: &std::path::Path) {
+    let Some(name) = dst.file_name().map(|f| f.to_string_lossy().to_string()) else {
+        return;
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let line = serde_json::json!({
+        "ts": ts,
+        "duration_ms": 0,
+        "exit_code": 0,
+        "timed_out": false,
+        "script": format!("mcp: screenshot -> {name}"),
+        "screenshots": [name],
+        "stdout_tail": "",
+        "stderr_tail": "",
+    });
+    use std::io::Write;
+    let pwout = crate::paths::install_dir().join("pwout");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(pwout.join("actions.jsonl"))
+    {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), DeviceError> {
     // Test override: the stdio integration test points at a minimal node MCP
     // server (no device bundle in CI). Production uses the bundled playwright.
@@ -896,6 +932,14 @@ pub fn mcp_client_call() -> ToolDef {
                                     // Evidence drawer's name:mtime cache
                                     // showed the FIRST image forever.
                                     let _ = std::fs::write(&dst, &bytes);
+                                    // round-246 (B5 part 2): record an action
+                                    // line that LINKS the real screenshot so
+                                    // the Evidence timeline's action row shows
+                                    // the shot (the blanket record_mcp_action
+                                    // at the dispatch head always writes
+                                    // screenshots:[] because the copy happens
+                                    // after it).
+                                    record_mcp_screenshot(&dst);
                                 }
                             }
                             use base64::Engine as _;
