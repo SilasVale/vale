@@ -45,19 +45,47 @@ export function useSessions(connected: boolean) {
   useEffect(() => {
     if (!connected) return;
     const tick = async () => {
-      try {
-        // round-113: a FAILED poll (tunnel blip, agent restarting) used to
-        // return [] and tombstone EVERY open session — the heartbeat then
-        // skipped them and the agent's 15-min sweeper reaped them while the
-        // user watched. Only a SUCCESSFUL list may mark sessions gone.
-        const list = await callTool("terminal_list");
-        if (!Array.isArray(list)) return;
+      // round-245 (terminal-display audit HIGH-1): the refresh contract was
+      // ONE fire-and-forget terminal_list after each sessions-changed event.
+      // A transient failure (tunnel blip, agent mid-restart) swallowed the
+      // event and the AI-opened session NEVER appeared — no later event
+      // exists to retry it (the agent emits sessions-changed only on
+      // open/close/death). Retry the list once after a short delay.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let list: any = null;
+        try {
+          // round-113: a FAILED poll (tunnel blip, agent restarting) used to
+          // return [] and tombstone EVERY open session — the heartbeat then
+          // skipped them and the agent's 15-min sweeper reaped them while the
+          // user watched. Only a SUCCESSFUL list may mark sessions gone.
+          list = await callTool("terminal_list");
+          if (!Array.isArray(list)) return; // tool error surfaced as non-array → give up
+        } catch {
+          // Transient failure — retry once, then give up (the background
+          // sweep below still covers the gap).
+          if (attempt === 0) {
+            await new Promise((r) => setTimeout(r, 1200));
+            continue;
+          }
+          return;
+        }
         const seen = new Set(list.map((s: any) => s.id));
         setSessions((prev) => {
           const next = [...prev];
           for (const s of list as any[]) {
             const existing = next.find((x) => x.sid === s.id);
-            if (!existing) next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null });
+            if (!existing) {
+              next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null });
+            } else if (existing.closed) {
+              // round-245 (terminal-display audit HIGH-1): REVIVE a tombstone
+              // whose sid reappears live. A fast AI session (open → one
+              // command → exit) used to be tombstoned by a list that raced
+              // the agent's close emit, and NOTHING ever revived it — the tab
+              // sat dead forever (activate() refuses closed entries). A live
+              // reappearance means the session is real: un-tombstone it.
+              const revived = { ...existing, closed: false, closedAt: null };
+              next[next.indexOf(existing)] = revived;
+            }
           }
           // Mark gone sessions closed (retained history shows as tombstone).
           // round-88: a session that died server-side (PTY exit, SSH drop,
@@ -95,15 +123,47 @@ export function useSessions(connected: boolean) {
           }
           return out;
         });
-      } catch { /* transient — next poll retries */ }
+        return; // success — done
+      }
     };
     tick();
     const onChange = () => { tick(); };
     window.addEventListener("vale-sessions-changed", onChange);
     document.addEventListener("visibilitychange", onChange);
+    // round-245 (HIGH-1): a slow background sweep (30 s) that ONLY ADDS live
+    // sessions the panel has never seen — the safety net when both the
+    // event-driven refetch AND its retry failed. It must never tombstone
+    // (tombstoning is the event path's job, where the agent's close emit
+    // proves the session died).
+    const sweep = window.setInterval(async () => {
+      try {
+        const list = await callTool("terminal_list");
+        if (!Array.isArray(list)) return;
+        setSessions((prev) => {
+          // Only add never-seen live sessions + auto-activate the newest when
+          // nothing is active — never tombstone here (that is the event
+          // path's job, where the agent's close emit proves death).
+          const missing = (list as any[]).filter((s) => !prev.some((x) => x.sid === s.id));
+          const next = [...prev];
+          for (const s of missing) {
+            next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null });
+          }
+          if (!prev.some((x) => x.active) && next.some((x) => !x.closed && x.active === false)) {
+            const liveTail = next.filter((x) => !x.closed);
+            const target = liveTail[liveTail.length - 1];
+            if (target) {
+              setActiveSid(target.sid);
+              return next.map((x) => (x.sid === target.sid ? { ...x, active: true } : x));
+            }
+          }
+          return next;
+        });
+      } catch { /* transient — next sweep */ }
+    }, 30_000);
     return () => {
       window.removeEventListener("vale-sessions-changed", onChange);
       document.removeEventListener("visibilitychange", onChange);
+      window.clearInterval(sweep);
     };
   }, [connected]);
 
