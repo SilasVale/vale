@@ -759,6 +759,13 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   versions must be exact (*-274.tgz does NOT match 1.2.274 — dot vs
   hyphen; 274-278 were briefly deleted locally, restored from CDN before
   deploy).
+  ROUND-310 (2026-09-04): publish-release.sh — the round-309 prune lesson
+  is now FORCED by tooling: scripts/publish-release.sh <ver> wraps the
+  whole CDN publish (npm pack -> stage + latest alias -> version.json with
+  sha256 -> last-5 prune -> commit -> wrangler deploy) with guards
+  (package version match, staged exe). Prune uses a mapfile array — a
+  space-padded string match fails on newline-separated items (caught the
+  bug in verification before it could delete the wrong files).
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
