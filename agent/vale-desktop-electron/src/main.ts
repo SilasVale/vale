@@ -672,6 +672,24 @@ if (gotTheLock) {
       // will-navigate) and only widened the hole.
       if (!isBaseOrigin(url)) e.preventDefault();
     });
+    // round-258 (device-caught): CDP-driven navigation (an attached
+    // playwright/AI) BYPASSES will-navigate — a browser_navigate call
+    // hijacked the main window to qq.com and the panel vanished. Tripwire:
+    // the moment the MAIN window lands anywhere that is not the base origin
+    // or the wait page, snap it straight back to the desktop SPA. The SPA's
+    // own in-page router never fires did-navigate to a different origin, so
+    // this cannot fight legitimate panel use.
+    let snappingBack = false;
+    win.webContents.on("did-navigate", (_e, url) => {
+      if (snappingBack) return;
+      if (url.startsWith(`${BASE}/desktop`) || url.startsWith("data:")) return;
+      if (url === "about:blank") return;
+      console.log(`[vale] main-window tripwire: blocked stray navigation to ${url.slice(0, 80)}`);
+      snappingBack = true;
+      win?.loadURL(`${BASE}/desktop/`).catch(() => { /* retry below */ }).finally(() => {
+        setTimeout(() => { snappingBack = false; }, 2000);
+      });
+    });
     // review #7: a target=_blank from the SPA must NOT get a preload-bearing
     // window; route it to a sandboxed browser session instead.
     win.webContents.setWindowOpenHandler(({ url }) => {
