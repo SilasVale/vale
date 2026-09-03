@@ -1912,12 +1912,3 @@ input::placeholder, textarea::placeholder { color: var(--faint, #999); }
 /* button reset for the tab close affordance (was a span) */
 button.dtab-close { background: none; border: 0; padding: 0; margin-left: 6px; cursor: pointer; color: inherit; display: inline-flex; align-items: center; opacity: .6; }
 button.dtab-close:hover { opacity: 1; }
-
-/* round-249: the embedded <webview> fills the browser slot (Electron only —
-   absent in plain browsers where this pane never mounts). */
-.browser-webview {
-  border: 0;
-  flex: 1;
-  min-height: 0;
-  background: var(--browser-stage-bg, #111);
-}

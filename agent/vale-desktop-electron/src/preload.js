@@ -1,14 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 // Vale Desktop preload — exposes the native menu command bridge,
-// browser-session control, embedded <webview> browser, and desktop-app
+// browser-session control, embedded real-render browser, and desktop-app
 // settings to the SPA via contextBridge (Electron-native, no HTTP/CORS).
 //
 // The SPA (agent /desktop/ page) uses:
 //   window.valeBrowser.*   — browser-session windows (driven via CDP :9333)
-//   window.valeEmbedded.*  — embedded REAL browser (round-249: a <webview>
-//                            tag inside the SPA; the guest webContents is a
-//                            CDP target on :9333 that AI drives)
+//   window.valeEmbedded.*  — embedded REAL browser view (round-246: replaces
+//                            the JPEG screencast inside the SPA Browser page)
 //   window.valeDesktop.*   — auto-launch settings + menu command bridge
 const electron_1 = require("electron");
 electron_1.contextBridge.exposeInMainWorld("valeBrowser", {
@@ -16,17 +15,30 @@ electron_1.contextBridge.exposeInMainWorld("valeBrowser", {
     close: (id) => electron_1.ipcRenderer.invoke("browser-session:close", id),
     list: () => electron_1.ipcRenderer.invoke("browser-session:list"),
 });
-// round-249: the embedded <webview> browser. Navigation, back/fwd/reload,
-// URL/history tracking all happen on the <webview> ELEMENT itself (its DOM
-// API + events) — no per-nav IPC. The bridge only:
-//   * announceGuest(webContentsId) — pins the guest so the main process can
-//     route its window.open in-view and expose it for AI (CDP :9333)
-//   * state() — reads the guest's url/title/history for the toolbar
-// Absent from plain-browser (non-Electron) contexts — the SPA falls back to
-// the screenshot stream there.
+// round-246: the embedded real-render browser view. The SPA Browser page
+// reports its placeholder bounds (via place) and the main process positions
+// the WebContentsView over them; navigate() drives the same view the AI sees
+// over CDP :9333. Absent from plain-browser (non-Electron) contexts — the
+// SPA falls back to the screenshot stream there.
 electron_1.contextBridge.exposeInMainWorld("valeEmbedded", {
-    announceGuest: (webContentsId) => electron_1.ipcRenderer.invoke("embedded-browser:guest-attached", webContentsId),
+    navigate: (url) => electron_1.ipcRenderer.invoke("embedded-browser:navigate", url),
+    back: () => electron_1.ipcRenderer.invoke("embedded-browser:back"),
+    fwd: () => electron_1.ipcRenderer.invoke("embedded-browser:fwd"),
+    reload: () => electron_1.ipcRenderer.invoke("embedded-browser:reload"),
+    place: (bounds) => electron_1.ipcRenderer.invoke("embedded-browser:place", bounds),
     state: () => electron_1.ipcRenderer.invoke("embedded-browser:state"),
+    // round-247: real-navigation pushes from the main process (URL/title/
+    // history state after every actual navigation). Returns an unsubscribe fn.
+    onNav: (handler) => {
+        const listener = (_e, s) => {
+            try {
+                handler(s);
+            }
+            catch { /* SPA-side */ }
+        };
+        electron_1.ipcRenderer.on("embedded-browser:nav", listener);
+        return () => electron_1.ipcRenderer.removeListener("embedded-browser:nav", listener);
+    },
 });
 // Desktop-app settings + menu bridge (Electron-specific — hidden when running
 // in a plain browser; the SPA detects the bridge and shows the card only when

@@ -1,12 +1,11 @@
 // Vale Desktop preload — exposes the native menu command bridge,
-// browser-session control, embedded <webview> browser, and desktop-app
+// browser-session control, embedded real-render browser, and desktop-app
 // settings to the SPA via contextBridge (Electron-native, no HTTP/CORS).
 //
 // The SPA (agent /desktop/ page) uses:
 //   window.valeBrowser.*   — browser-session windows (driven via CDP :9333)
-//   window.valeEmbedded.*  — embedded REAL browser (round-249: a <webview>
-//                            tag inside the SPA; the guest webContents is a
-//                            CDP target on :9333 that AI drives)
+//   window.valeEmbedded.*  — embedded REAL browser view (round-246: replaces
+//                            the JPEG screencast inside the SPA Browser page)
 //   window.valeDesktop.*   — auto-launch settings + menu command bridge
 import { contextBridge, ipcRenderer } from "electron";
 
@@ -16,18 +15,28 @@ contextBridge.exposeInMainWorld("valeBrowser", {
   list: () => ipcRenderer.invoke("browser-session:list"),
 });
 
-// round-249: the embedded <webview> browser. Navigation, back/fwd/reload,
-// URL/history tracking all happen on the <webview> ELEMENT itself (its DOM
-// API + events) — no per-nav IPC. The bridge only:
-//   * announceGuest(webContentsId) — pins the guest so the main process can
-//     route its window.open in-view and expose it for AI (CDP :9333)
-//   * state() — reads the guest's url/title/history for the toolbar
-// Absent from plain-browser (non-Electron) contexts — the SPA falls back to
-// the screenshot stream there.
+// round-246: the embedded real-render browser view. The SPA Browser page
+// reports its placeholder bounds (via place) and the main process positions
+// the WebContentsView over them; navigate() drives the same view the AI sees
+// over CDP :9333. Absent from plain-browser (non-Electron) contexts — the
+// SPA falls back to the screenshot stream there.
 contextBridge.exposeInMainWorld("valeEmbedded", {
-  announceGuest: (webContentsId: number) =>
-    ipcRenderer.invoke("embedded-browser:guest-attached", webContentsId),
+  navigate: (url: string) => ipcRenderer.invoke("embedded-browser:navigate", url),
+  back: () => ipcRenderer.invoke("embedded-browser:back"),
+  fwd: () => ipcRenderer.invoke("embedded-browser:fwd"),
+  reload: () => ipcRenderer.invoke("embedded-browser:reload"),
+  place: (bounds: { x: number; y: number; width: number; height: number } | null) =>
+    ipcRenderer.invoke("embedded-browser:place", bounds),
   state: () => ipcRenderer.invoke("embedded-browser:state"),
+  // round-247: real-navigation pushes from the main process (URL/title/
+  // history state after every actual navigation). Returns an unsubscribe fn.
+  onNav: (handler: (s: { url: string; canBack: boolean; canFwd: boolean; title: string }) => void) => {
+    const listener = (_e: unknown, s: { url: string; canBack: boolean; canFwd: boolean; title: string }) => {
+      try { handler(s); } catch { /* SPA-side */ }
+    };
+    ipcRenderer.on("embedded-browser:nav", listener as never);
+    return () => ipcRenderer.removeListener("embedded-browser:nav", listener as never);
+  },
 });
 
 // Desktop-app settings + menu bridge (Electron-specific — hidden when running

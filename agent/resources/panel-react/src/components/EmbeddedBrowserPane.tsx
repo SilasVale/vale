@@ -1,120 +1,117 @@
-// EmbeddedBrowserPane — the Electron-shell REAL browser via <webview> (round-249).
+// EmbeddedBrowserPane — the Electron-shell REAL browser (round-246).
 //
-// round-246-248 embedded a WebContentsView over the SPA slot; on d1 its
-// renderer became unresponsive to CDP (Page.enable hangs on about:blank).
-// Pivot (user direction): the SPA renders an Electron <webview> element —
-// a REAL Chromium view inside the DOM (independent renderer, GPU
-// compositing, native layout). The guest webContents is a CDP target on
-// :9333, so AI drives EXACTLY the page the user sees.
-//
-// The <webview> exposes its own DOM API + events, so this pane is thin:
-//   - renders <webview> with a start URL
-//   - announces the guest (webContents id) to the main process so it can
-//     route window.open in-view and pin the AI target
-//   - the address bar / back/fwd/reload drive the element directly
-//   - did-navigate / page-title-updated events keep the toolbar in sync
-//     (event-driven — no polling)
+// The classic BrowserPane shows the bridge's headless chromium as a JPEG
+// screencast (lossy, never as sharp as a real browser). In the Vale Desktop
+// shell the main process owns a REAL WebContentsView (window.valeEmbedded
+// bridge) whose webContents is a CDP target on :9333 — the SAME endpoint AI
+// drives. This pane is the SPA-side controller for that view:
+//   - renders an empty slot the main process overlays the view onto
+//   - reports the slot's bounds (position:relative to the window content)
+//     on mount / resize / page switch, so the view tracks the layout
+//   - routes the address bar + back/fwd/reload to the embedded view (IPC)
+//   - the address bar + button disabled-states FOLLOW the real page via
+//     main-process navigation events (round-247) — event-driven, no polling
 //
 // Plain-browser contexts (no window.valeEmbedded) never mount this — they
 // keep the screenshot BrowserPane.
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Icon } from "../ui/Icon";
 
+interface EmbeddedNavState {
+  url: string;
+  canBack: boolean;
+  canFwd: boolean;
+  title: string;
+}
 interface EmbeddedBridge {
-  announceGuest: (webContentsId: number) => Promise<unknown>;
-  state: () => Promise<{ ok: boolean; hasGuest?: boolean; url?: string; title?: string; canBack?: boolean; canFwd?: boolean }>;
+  navigate: (url: string) => Promise<unknown>;
+  back: () => Promise<unknown>;
+  fwd: () => Promise<unknown>;
+  reload: () => Promise<unknown>;
+  place: (bounds: { x: number; y: number; width: number; height: number } | null) => Promise<unknown>;
+  state: () => Promise<{ ok: boolean; url?: string; canBack?: boolean; canFwd?: boolean; visible?: boolean }>;
+  onNav: (handler: (s: EmbeddedNavState) => void) => () => void;
 }
 
 function bridge(): EmbeddedBridge | null {
   return (window as any).valeEmbedded as EmbeddedBridge | null || null;
 }
 
-/** The Electron <webview> element surface we use (typed loosely — the
- *  element exists only in Electron's renderer, not in plain browsers/jsdom). */
-interface WebviewElement extends HTMLElement {
-  loadURL: (url: string) => Promise<void>;
-  getURL: () => string;
-  canGoBack: () => boolean;
-  canGoForward: () => boolean;
-  goBack: () => void;
-  goForward: () => void;
-  reload: () => void;
-  getWebContentsId: () => number;
-  addEventListener: (type: string, fn: (e: any) => void) => void;
-  removeEventListener: (type: string, fn: (e: any) => void) => void;
-  src: string;
-}
+const slotId = "vale-embedded-browser-slot";
 
 export function EmbeddedBrowserPane({ token }: { token: string }) {
-  const wvRef = useRef<WebviewElement | null>(null);
+  const slotRef = useRef<HTMLDivElement | null>(null);
   const [url, setUrl] = useState("");
   const [canBack, setCanBack] = useState(false);
   const [canFwd, setCanFwd] = useState(false);
   const [ready, setReady] = useState(false);
   const urlEditingRef = useRef(false);
 
-  const syncState = useCallback(() => {
-    const wv = wvRef.current;
-    if (!wv) return;
-    try {
-      const u = wv.getURL();
-      if (u && !urlEditingRef.current) setUrl(u);
-      setCanBack(wv.canGoBack());
-      setCanFwd(wv.canGoForward());
-      setReady(true);
-    } catch { /* not attached yet */ }
+  // Report the slot bounds to the main process so it can position the real
+  // WebContentsView over it. Bounds are relative to the window content — the
+  // slot's getBoundingClientRect IS that space (the SPA fills the window).
+  const reportBounds = useCallback(() => {
+    const el = slotRef.current;
+    const b = bridge();
+    if (!el || !b) return;
+    const r = el.getBoundingClientRect();
+    if (r.width < 50 || r.height < 50) { void b.place(null); return; }
+    void b.place({ x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) });
   }, []);
 
-  // Attach once the <webview> element mounts: wire its events + announce the
-  // guest to the main process. (Event-driven: no polling.)
+  // Register the slot once; a ResizeObserver keeps the view glued to the
+  // layout when the panel resizes. (Event-driven: no polling — the observer
+  // fires only on actual layout changes.)
   useEffect(() => {
-    const wv = wvRef.current;
     const b = bridge();
-    if (!wv || !b) return;
-    const onNav = () => syncState();
-    const onTitle = () => syncState();
-    // round-248 parity: target=_blank inside the guest must open in the SAME
-    // webview (single-tab browser) — the main process routes window.open
-    // in-view; the new-window event here is a belt-and-braces same-view nav.
-    const onNewWindow = (e: any) => {
-      try {
-        if (e && e.url) { wv.loadURL(String(e.url)).catch(() => {}); }
-      } catch { /* ignore */ }
-    };
-    wv.addEventListener("did-navigate", onNav);
-    wv.addEventListener("did-navigate-in-page", onNav);
-    wv.addEventListener("page-title-updated", onTitle);
-    wv.addEventListener("new-window", onNewWindow);
-    // round-249: allowpopups MUST be set as a real attribute for Electron to
-    // let target=_blank fire new-window (React drops bare boolean attrs on
-    // custom elements). With it, the new-window handler navigates in-view.
-    try { wv.setAttribute("allowpopups", ""); } catch { /* not a webview env */ }
-    // Announce the guest (its webContents id) once it exists.
-    try { void b.announceGuest(wv.getWebContentsId()); } catch { /* pre-attach */ }
-    try { const u = wv.getURL(); if (u) setUrl(u); } catch { /* not ready */ }
+    if (!b) return;
+    // Initial state + real-navigation subscription (round-247): the main
+    // process pushes url/canBack/canFwd/title after EVERY actual navigation,
+    // so the address bar and button states mirror the real page.
+    void b.state().then((s) => {
+      if (s?.ok) {
+        setReady(true);
+        if (s.url) setUrl(s.url);
+        if (typeof s.canBack === "boolean") setCanBack(s.canBack);
+        if (typeof s.canFwd === "boolean") setCanFwd(s.canFwd);
+      }
+    });
+    const offNav = b.onNav((s) => {
+      if (!urlEditingRef.current && s.url) setUrl(s.url);
+      setCanBack(s.canBack);
+      setCanFwd(s.canFwd);
+    });
+    reportBounds();
+    const el = slotRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => reportBounds());
+    ro.observe(el);
+    window.addEventListener("resize", reportBounds);
     return () => {
-      wv.removeEventListener("did-navigate", onNav);
-      wv.removeEventListener("did-navigate-in-page", onNav);
-      wv.removeEventListener("page-title-updated", onTitle);
-      wv.removeEventListener("new-window", onNewWindow);
+      ro.disconnect();
+      window.removeEventListener("resize", reportBounds);
+      offNav();
+      // Leaving the page: hide the embedded view so it does not linger over
+      // other SPA pages.
+      void b.place(null);
     };
-  }, [syncState]);
+  }, [reportBounds]);
 
   const navigate = useCallback(() => {
-    const wv = wvRef.current;
-    if (!wv) return;
+    const b = bridge();
+    if (!b) return;
     const u = /^(https?|about|data):/i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
     setUrl(u);
-    wv.loadURL(u).catch(() => { /* did-fail-load surfaces via did-navigate */ });
+    void b.navigate(u);
   }, [url]);
-  const goBack = useCallback(() => { try { wvRef.current?.goBack(); } catch { /* noop */ } }, []);
-  const goForward = useCallback(() => { try { wvRef.current?.goForward(); } catch { /* noop */ } }, []);
-  const reload = useCallback(() => { try { wvRef.current?.reload(); } catch { /* noop */ } }, []);
+  const goBack = useCallback(() => { void bridge()?.back(); }, []);
+  const goForward = useCallback(() => { void bridge()?.fwd(); }, []);
+  const reload = useCallback(() => { void bridge()?.reload(); }, []);
 
   return (
-    <div className="browser-pane" style={{ position: "relative", display: "flex", flexDirection: "column" }}>
+    <div className="browser-pane" style={{ position: "relative" }}>
       {/* Chrome-style toolbar: nav buttons + address row. Back/fwd disabled
-          states mirror the REAL page history (webview events). */}
+          states mirror the REAL page history (main-process pushes). */}
       <div className="browser-toolbar">
         <div className="browser-urlbar">
           <span className="browser-navbtns">
@@ -139,19 +136,15 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
         </div>
       </div>
 
-      {/* The REAL browser: an Electron <webview>. In plain browsers this
-          element is inert/absent and this pane never mounts. */}
-      <div className="browser-viewport browser-embedded-slot">
-        {/* allowpopups is set imperatively in the mount effect (React's
-            boolean-attribute handling drops it from custom elements). */}
-        <webview
-          ref={wvRef as any}
-          id="vale-embedded-webview"
-          className="browser-webview"
-          src="https://www.wikipedia.org"
-          partition="persist:vale-embedded"
-          style={{ width: "100%", height: "100%", display: "flex" }}
-        />
+      {/* The slot the main process overlays its WebContentsView onto. The
+          img-free real browser lives above this div (native window child);
+          this div only reserves the space and reports bounds. */}
+      <div
+        id={slotId}
+        ref={slotRef}
+        className="browser-viewport browser-embedded-slot"
+        data-ready={ready ? "1" : "0"}
+      >
         {!ready && (
           <div className="browser-placeholder">
             <Icon name="browser" size={30} />
