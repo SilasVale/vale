@@ -611,6 +611,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   remains. The round-283/287/288 gate chain (panel tests -> lock check ->
   tgz content gate) caught three release-CI defects in a row before any
   shipped. Release pipeline now fully verified end-to-end on CI.
+  ROUND-290 (2026-09-04): device 1.2.272 consistency check — npm pkg
+  1.2.272, installed exe hash-identical to the pkg exe, mcp e2e 8/8
+  (stdio + http auto-select both drive the embedded view). NOTE: binary
+  string probes must use CODE strings, not comments (Rust comments never
+  reach the exe — "exposes browser_tabs" was a comment and correctly
+  absent). Device fully consistent with the CI-built release.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
