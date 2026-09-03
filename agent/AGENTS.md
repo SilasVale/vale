@@ -362,6 +362,18 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   clicked Reload -> view recreated at cn.bing.com, banner cleared.
   1.2.260 = ready-state requery fix after recovery. +1 test.
   Panel 95/95.
+  ROUND-257 (2026-09-26, 1.2.261 LIVE on d1): ONE-BROWSER completion —
+  the ValePlaywright task probe (round-246 C3) only attached playwright-mcp
+  to the BRIDGE (9223), so on the desktop the AI drove a chromium the user
+  was NOT watching (embedded view on 9333) — or worse, a private --headless
+  when the bridge was down. Probe now matches the agent's
+  preferred_cdp_endpoint() order: 9333 (Electron desktop embedded view) >
+  9223 (bridge) > headless fallback. DEVICE-PROVEN: playwright 1.63
+  connectOverCDP attaches to Electron 9333 cleanly (41ms) and DRIVES the
+  embedded view (goto example.com OK); earlier connectOverCDP timeouts were
+  test-script residuals. After regen + task rerun, playwright-mcp runs with
+  --cdp-endpoint http://127.0.0.1:9333 (PID check). Round-246's "AI drives
+  what the user sees" architecture now holds end-to-end.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
