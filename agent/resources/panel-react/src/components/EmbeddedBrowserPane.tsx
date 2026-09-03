@@ -122,11 +122,22 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   }, [reportBounds]);
 
   // round-256: user taps the recovery button → main process force-recreates
-  // the view and navigates to the last URL.
+  // the view and navigates to the last URL. After recovery, re-query state
+  // so the toolbar flips back to live (a fresh view's nav push may race the
+  // recovery; state() is authoritative and idempotent).
   const recover = useCallback(() => {
     setGoneReason(null);
     setReady(false);
-    void bridge()?.recover();
+    const b = bridge();
+    if (!b) return;
+    void b.recover().then(() => b.state()).then((s) => {
+      if (s?.ok) {
+        setReady(true);
+        if (s.url) setUrl(s.url);
+        if (typeof s.canBack === "boolean") setCanBack(s.canBack);
+        if (typeof s.canFwd === "boolean") setCanFwd(s.canFwd);
+      }
+    }).catch(() => { /* state() rejects only on frame loss */ });
   }, []);
 
   const navigate = useCallback((fromSubmit?: boolean) => {
