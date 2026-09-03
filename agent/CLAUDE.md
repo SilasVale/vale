@@ -108,10 +108,9 @@ src/
                    GET / (minimal status page), /api/status, /api/spec,
                    /api/events (SSE), /api/events/poll, /api/events/term (SSE),
                    POST /api/tools/{name}, GET /api/plugins/status,
-                   GET/POST /api/browser/{frame,input} + /api/browser/{pwshots,
-                   pwshot,actions} (bridge proxy), POST /api/browser/ws-ticket
-                   + GET /api/browser/ws (ws_relay ticketed WS), GET
-                   /api/sessions (audit list)
+                   GET /api/browser/{pwshots,pwshot,actions} (AI evidence —
+                   the pwout screenshots/action feed), GET /api/sessions
+                   (audit list)
   plugins/         PluginRegistry (tools cached once at register); terminal/
                    mod.rs (plugin struct + shared helpers) + tools.rs (one
                    builder fn per tool)

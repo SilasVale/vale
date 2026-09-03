@@ -232,10 +232,10 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
-  FIRST electron + npm-CLI test suites + auth-gate matrix; the 231
-  package-files-whitelist incident (device-caught); CI release proven on
-  repeat tags)
+Last updated: 2026-09-04 (round 271 — doc sync: build guide + route map
+  + Current release + device facts describe the post-bridge architecture;
+  1.2.266 LIVE on d1. Recent verified rounds: 264 display E2E, 266 file
+  transfer, 267-268 AI drive paths, 269 bridge removal verified)
   ROUND-245 (2026-09-26, 1.2.244 staged): "AI 操作 terminal/browser 面板不
   显示" triage → FOUR root causes fixed (see Current release): (1) panel
   source had been UNBUILDABLE since f89454d3 (invalid JSX in BrowserPane
