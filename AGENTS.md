@@ -13,7 +13,7 @@ Vale = one repo + one front door: `gateway/` (Vale Gate worker), `agent/` (Vale 
 Unified entry `scripts/build.sh`:
 
 ```bash
-./scripts/build.sh agent             # Windows cross-compile vale-agent + vale-tray (needs cargo-xwin)
+./scripts/build.sh agent             # Windows cross-compile vale-agent (tray/Tauri retired; needs cargo-xwin)
 ./scripts/build.sh gateway|index     # wrangler deploy the worker (needs CLOUDFLARE_API_TOKEN)
 ./scripts/build.sh deploy            # build + deploy everything
 ```
@@ -75,3 +75,10 @@ This repository uses a single-context domain layout with a root `CONTEXT.md` and
 ## dsh (DeepSeek Harness) upgrades
 
 Upgrading the locally running dsh must go through `/home/zhengsaisi/dsh-upgrade/upgrade-dsh.sh` — it applies the local `enableBrowserAuth` patch (this deployment authenticates via Cloudflare Access, so the built-in token/cookie auth stays off), then builds, deploys, and restarts. Any other upgrade path silently drops that patch. The patch itself lives at `/home/zhengsaisi/dsh-upgrade/0001-enable-browser-auth-toggle.patch`; if it no longer applies to a new upstream version, stop and hand the conflict back to the human instead of working around it.
+
+Notes from the 2026-08-31 upgrade (0.1.2-alpha.2 → 0.1.2-alpha.3):
+
+- `upgrade-dsh.sh` first runs `git apply --check` on the patch; if that fails it falls back to `git apply --reverse --check` and **skips applying when the patch is already in the worktree** (checkout to a new tag preserves previously-applied local changes when upstream didn't touch those files). Only when both checks fail does it abort and hand the conflict to a human. This is the expected flow, not an error.
+- `--check` compares the deployed version against the remote's newest `dsh-v*` tag and prints the upgrade command; it no longer misreads `--check` as a tag name.
+- Backups of each deployed version live at `~/dsh-backup-<version>` (e.g. `~/dsh-backup-0.1.2-alpha.2`); rollback = copy back to the global pkg dir and `pm2 restart dsh`.
+- Deployment layout: dsh source at `~/dsh-src`, mirror at `https://v.saisi.online/api/git/deepseek-ai/deepseek-harness.git`, pm2 app name `dsh`, web port 7738, profile patch at `~/.dsh/profiles/web/cordis.patch.yml` (holds `enableBrowserAuth: false`).

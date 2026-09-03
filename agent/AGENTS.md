@@ -26,7 +26,7 @@ Output binaries:
 - `target/x86_64-pc-windows-msvc/debug/vale-agent.exe` (debug)
 - `target/x86_64-pc-windows-msvc/release/vale-agent.exe` (release)
 
-`scripts/build.sh agent` builds vale-agent + the vale-tray app in one go.
+`scripts/build.sh agent` cross-compiles vale-agent (the retired tray/Tauri desktop builds were removed round-330).
 
 ## Install / update — npm is THE single channel
 
@@ -147,11 +147,9 @@ src/
                    ssh.rs, serial.rs, secrets.rs, stub.rs), serial.rs, ssh.rs
 vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_token via
                    getrandom), DeviceError (typed variants), EventBus/AppEventBus
-vale-tray/         standalone crate (own workspace, Windows-only deps): tray
-                   icon + menu — status (running/subdomain/token mask),
-                   start/stop/restart the ValeCommand scheduled task,
-                   copy MCP config, open console, open local terminal
-```
+(vale-tray/ and vale-desktop/ Tauri source deleted round-330 — both
+ retired; the npm CLI + Electron shell replaced them. Git history has
+ the old crates.)
 
 ## Conventions
 
@@ -209,14 +207,13 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   `vale-desktop/` Tauri shell is retired. `/desktop/` reuses `/panel/` assets +
   loopback token injection (web.rs).
 
-## vale-tray (Windows, legacy)
+## vale-tray / vale-desktop (Tauri) — DELETED (round-330)
 
-The tray was retired — the npm CLI (`vale` from `vale-agent-npm/bin/vale.js`)
-replaced it for management. The crate still builds for reference:
-
-```bash
-cd vale-tray && cargo xwin build --target x86_64-pc-windows-msvc --release
-```
+Both crates were retired long ago (npm CLI replaced the tray; the
+Electron shell replaced the Tauri desktop) but their source + build
+steps lingered. Round-330 removed the source trees and their builds
+from build.sh (git history retains them). The npm CLI
+(`vale` from `vale-agent-npm/bin/vale.js`) is the management surface.
 
 ## Windows smoke checklist (manual)
 
@@ -661,6 +658,11 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   (release 1.2.272 CI fixes) sat after ROUND-299 (misplaced by an old
   edit); moved between 286 and 289. Live log now runs 273..317 in exact
   chronological order.
+  ROUND-330 (2026-09-04): RETIRED CRATES DELETED — vale-tray/ and
+  vale-desktop/ (Tauri) source trees removed (19 tracked files; git
+  history retains them) + their 5.7GB of xwin target caches. build.sh
+  agent no longer builds either (was minutes of dead work per run; CI
+  builds vale-agent only). All four agent-facing docs updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent

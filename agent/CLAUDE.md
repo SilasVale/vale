@@ -22,7 +22,8 @@ Output binaries:
 - `target/x86_64-pc-windows-msvc/debug/vale-agent.exe` (debug)
 - `target/x86_64-pc-windows-msvc/release/vale-agent.exe` (release)
 
-`scripts/build.sh agent` builds vale-agent + the vale-tray app in one go.
+`scripts/build.sh agent` cross-compiles vale-agent (the retired tray/Tauri
+desktop builds were removed round-330).
 
 ## Device update — npm one-click update (THE ONLY sanctioned rollout path)
 
@@ -118,11 +119,8 @@ src/
                    ssh.rs, serial.rs, secrets.rs, stub.rs), serial.rs, ssh.rs
 vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_token via
                    getrandom), DeviceError (typed variants), EventBus/AppEventBus
-vale-tray/         standalone crate (own workspace, Windows-only deps): tray
-                   icon + menu — status (running/subdomain/token mask),
-                   start/stop/restart the ValeCommand scheduled task,
-                   copy MCP config, open console, open local terminal
-```
+(vale-tray/ and vale-desktop/ Tauri source deleted round-330 — both
+ retired; the npm CLI + Electron shell replaced them.)
 
 ## Conventions
 
@@ -185,20 +183,12 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   requestAnimationFrame, and xterm's rAF-driven DOM renderer silently
   stops painting (blank terminals while the AI keeps operating).
 
-## vale-tray (Windows)
+## vale-tray / vale-desktop (Tauri) — DELETED (round-330)
 
-Standalone crate (kept out of the main workspace so its Windows-only tray
-dependencies don't affect the Linux build):
-
-```bash
-cd vale-tray && cargo xwin build --target x86_64-pc-windows-msvc --release
-```
-
-Installed by `deploy/vale-agent-setup.ps1` as the `ValeCommandTray` at-logon
-scheduled task. Reads `vale-agent.hostname` (device subdomain),
-`vale-agent.console` (console URL, optional) and `config.yaml`
-(port + auth token) from the install dir. Controls the `ValeCommand` scheduled
-task via schtasks.
+Both crates retired (npm CLI replaced the tray; Electron shell replaced
+the Tauri desktop); source + builds removed round-330 — git history
+retains them. The npm CLI (`vale` from `vale-agent-npm/bin/vale.js`) is
+the management surface.
 
 ## Windows smoke checklist (manual)
 

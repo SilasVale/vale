@@ -2,7 +2,7 @@
 # Vale unified build script (agent / gateway / index from the monorepo root)
 #
 #   ./scripts/build.sh                 # build agent (Windows cross-compile, release)
-#   ./scripts/build.sh agent [debug]   # build vale-agent + vale-tray
+#   ./scripts/build.sh agent [debug]   # build vale-agent (tray/Tauri desktop retired)
 #   ./scripts/build.sh command [debug] # legacy alias for `agent`
 #   ./scripts/build.sh gateway         # deploy the Vale Gate worker
 #   ./scripts/build.sh index           # deploy the Vale Index worker
@@ -39,16 +39,10 @@ build_agent() {
       && cargo xwin build --target "$TARGET" $flags --features "$FEATURES" --bin vale-agent )
   echo "    ok: agent/target/$TARGET/${profile}/vale-agent.exe"
 
-  echo "=== [agent] vale-tray (release) ==="
-  ( cd "$ROOT/agent/vale-tray" \
-      && cargo xwin build --target "$TARGET" --release )
-  echo "    ok: agent/vale-tray/target/$TARGET/release/vale-tray.exe"
-
-  echo "=== [agent] vale-desktop (release) ==="
-  ( cd "$ROOT/agent/vale-desktop/src-tauri" \
-      && cargo xwin build --target "$TARGET" --release )
-  echo "    ok: agent/vale-desktop/src-tauri/target/$TARGET/release/vale-desktop.exe"
-
+  # round-330: vale-tray + vale-desktop (Tauri) builds removed — both are
+  # RETIRED (npm CLI replaced the tray; the Electron shell replaced the
+  # Tauri desktop). They cost minutes per build_agent run and never enter
+  # the npm tgz (CI builds vale-agent only).
   # npm-only packaging (2026-08-28): the NSIS installer is retired — the
   # npm tgz (vale-agent-npm/) is the single install/update channel, packed
   # by scripts/publish-release.sh (round-320).
