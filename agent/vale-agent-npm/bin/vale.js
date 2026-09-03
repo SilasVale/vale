@@ -524,6 +524,14 @@ const commands = {
                 "}",
             ].join("\r\n"));
         }
+        // round-298: record the release version on a PROVABLY successful swap
+        // so agent_update (which reads <install>/.vale-release as its local
+        // version) reports up_to_date instead of re-swapping every call.
+        let relVer = "";
+        try {
+            relVer = String(require("../package.json").version || "");
+        }
+        catch { /* best-effort */ }
         const script = [
             `"[$(Get-Date -Format o)] update start" | ${log}`,
             // A running exe cannot be overwritten on Windows — stop the service
@@ -534,6 +542,10 @@ const commands = {
             "$ok=$false",
             `foreach($i in 1..12){ try { Copy-Item -Force -ErrorAction Stop '${q}\\vale-agent.new.exe' '${q}\\vale-agent.exe'; $ok=$true; break } catch { Start-Sleep -Milliseconds 800 } }`,
             `"[$(Get-Date -Format o)] copy ok=$ok" | ${log}`,
+            // round-298: .vale-release is only written when the copy provably
+            // completed (a failed swap keeps the device on the OLD exe — the
+            // marker must not lie). The marker is what agent_update compares.
+            `if ($ok -and '${relVer}') { Set-Content -Path '${q}\\.vale-release' -Value '${relVer}' -NoNewline -ErrorAction SilentlyContinue }`,
             `Remove-Item -Force -ErrorAction SilentlyContinue '${q}\\vale-agent.new.exe'`,
             // stage-l: swap the desktop shell sources (main/preload) with retry —
             // the running Electron may hold them briefly.
