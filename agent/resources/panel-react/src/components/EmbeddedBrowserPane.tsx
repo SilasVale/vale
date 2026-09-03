@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Icon } from "../ui/Icon";
 import { useAiActivityPulse } from "../hooks/useAiActivityPulse";
+import { EvidenceDrawer } from "./EvidenceDrawer";
 
 interface EmbeddedNavState {
   url: string;
@@ -54,6 +55,8 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   // round-253: event-driven "AI is operating" pulse (SSE browser-actions-
   // changed / playwright-changed — no polling).
   const aiActive = useAiActivityPulse("", token);
+  // round-255: AI evidence drawer (screenshots + action log) — on-demand.
+  const [evOpen, setEvOpen] = useState(false);
 
   // Report the slot bounds to the main process so it can position the real
   // WebContentsView over it. Bounds are relative to the window content — the
@@ -169,11 +172,14 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
 
       {/* The slot the main process overlays its WebContentsView onto. The
           img-free real browser lives above this div (native window child);
-          this div only reserves the space and reports bounds. */}
+          this div only reserves the space and reports bounds. When the
+          evidence drawer opens we SHRINK the slot (width -= 340px) so the
+          native view never extends underneath the SPA drawer (which always
+          paints above the web content). */}
       <div
         id={slotId}
         ref={slotRef}
-        className="browser-viewport browser-embedded-slot"
+        className={`browser-viewport browser-embedded-slot${evOpen ? " drawer-open" : ""}`}
         data-ready={ready ? "1" : "0"}
       >
         {!ready && (
@@ -199,6 +205,17 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
               AI operating
             </span>
           )}
+          {/* round-255: Evidence drawer toggle — AI screenshots + action log,
+              fetched on demand (open) + SSE-refreshed, no polling. */}
+          <button
+            type="button"
+            className={`browser-ev-toggle${evOpen ? " active" : ""}`}
+            onClick={() => setEvOpen((v) => !v)}
+            title="AI screenshot evidence (drawer)"
+          >
+            🖼 Evidence
+            {aiActive && <span className="browser-ev-live" aria-hidden />}
+          </button>
         </div>
         <div className="browser-status-right">
           <span className="browser-embedded-badge" title="This page is the real Chromium view — text is rendered natively, not screenshotted">
@@ -206,6 +223,10 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
           </span>
         </div>
       </div>
+
+      {/* round-255: AI evidence drawer (right side) — event-driven parity with
+          the screenshot pane's Evidence drawer. */}
+      <EvidenceDrawer apiBase="" token={token} open={evOpen} onClose={() => setEvOpen(false)} />
     </div>
   );
 }

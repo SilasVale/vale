@@ -1928,3 +1928,12 @@ input::placeholder, textarea::placeholder { color: var(--faint, #999); }
 /* button reset for the tab close affordance (was a span) */
 button.dtab-close { background: none; border: 0; padding: 0; margin-left: 6px; cursor: pointer; color: inherit; display: inline-flex; align-items: center; opacity: .6; }
 button.dtab-close:hover { opacity: 1; }
+
+/* round-255: when the evidence drawer is open the EMBEDDED native view
+   shrinks by the drawer width (340px) so the SPA drawer (which always
+   paints above the WebContentsView) has its own right-hand column. The
+   ResizeObserver reports the new bounds to the main process. */
+.browser-embedded-slot.drawer-open {
+  width: calc(100% - 340px) !important;
+  transition: width 0.2s ease;
+}
