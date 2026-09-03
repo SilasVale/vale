@@ -140,8 +140,10 @@ async function sectionBrowser() {
   const out = (br && br.stdout) || '';
   check('browser_run_script drives view', br && br.exit_code === 0 && out.includes('TITLE=Example Domain'),
     out.trim().slice(0, 80));
-  // SPA address bar should now show example.com (did-navigate push)
-  await sleep(1500);
+  // SPA address bar should now show example.com (did-navigate push).
+  // Give the did-navigate IPC a beat; then poll the bar a few times (the
+  // SPA may be mid-render right after the view navigated).
+  await sleep(2500);
   const list = await (await fetch('http://127.0.0.1:9333/json/list')).json();
   const spa = list.find((t) => t.url.includes('/desktop/'));
   if (!spa) { check('browser SPA bar sync', false, 'no desktop SPA target'); return; }
@@ -161,8 +163,15 @@ async function sectionBrowser() {
     });
     return r;
   };
-  let s1 = await evalUrl();
-  let state = s1 ? JSON.parse(s1) : { onBrowser: false, url: '' };
+  let state = { onBrowser: false, url: '' };
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const s1 = await evalUrl();
+    const parsed = s1 ? JSON.parse(s1) : null;
+    if (parsed && parsed.url && parsed.url.includes('example.com')) { state = parsed; break; }
+    if (parsed) state = parsed;
+    if (parsed && !parsed.onBrowser) { state = parsed; break; } // need rail click below
+    await sleep(1500);
+  }
   if (!state.onBrowser) {
     await new Promise((resolve) => {
       const t = setTimeout(() => resolve(''), 10000);
