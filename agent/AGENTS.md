@@ -676,6 +676,11 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   SYSTEM TRAY feature, not vale-tray), workflows/build.sh clean, only
   historical refs remain (deploy/retired/, specs, memory client-id
   strings). Committed bin matches working tree.
+  ROUND-333 (2026-09-04): repo hygiene — committed docs/agents/
+  dsh-ops-troubleshooting.md (2026-08-27 dsh Web stability record: Node
+  22 zstd leak, cloudflared pm2 recovery, CORS, anycast latency) and
+  added .gitignore rules (.dsh-tmp-*, .zcode/, cloudflared-run.sh local
+  pm2 launcher). Untracked files now ZERO.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
