@@ -97,6 +97,52 @@ test("self-heal: not connected → playwright/start + mcp_client_connect → ret
   ]);
 });
 
+test("browser_click element_ref integer 7 → playwright target e7", async () => {
+  const { calls, impl } = makeFetch((url) => {
+    assert.equal(url, "https://d1.example.com/api/tools/mcp_client_call");
+    return okJson({ ok: true });
+  });
+  const res = await withFetch(impl, () =>
+    callTool({ name: "browser_click" }, {}, DEVICE, { device: "d1", element_ref: 7 }),
+  );
+  assert.equal(res.ok, true);
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.tool, "browser_click");
+  assert.equal(body.arguments.target, "e7"); // round-138 conversion
+  assert.equal(body.arguments.element_ref, undefined);
+});
+
+test("browser_click element_ref e7 passes through as target", async () => {
+  const { calls, impl } = makeFetch(() => okJson({ ok: true }));
+  await withFetch(impl, () =>
+    callTool({ name: "browser_click" }, {}, DEVICE, { device: "d1", element_ref: "e7" }),
+  );
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.arguments.target, "e7");
+});
+
+test("browser_click without element_ref forwards args unchanged", async () => {
+  const { calls, impl } = makeFetch(() => okJson({ ok: true }));
+  await withFetch(impl, () =>
+    callTool({ name: "browser_click" }, {}, DEVICE, { device: "d1", target: "f1e6" }),
+  );
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.arguments.target, "f1e6");
+  assert.equal(body.arguments.element_ref, undefined);
+});
+
+test("browser_type element_ref converts to target and keeps text", async () => {
+  const { calls, impl } = makeFetch(() => okJson({ ok: true }));
+  await withFetch(impl, () =>
+    callTool({ name: "browser_type" }, {}, DEVICE, { device: "d1", element_ref: 3, text: "hello" }),
+  );
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.tool, "browser_type");
+  assert.equal(body.arguments.target, "e3");
+  assert.equal(body.arguments.text, "hello");
+  assert.equal(body.arguments.element_ref, undefined);
+});
+
 test("persistent failure after heal → rejects with the device error", async () => {
   const { impl } = makeFetch(() => ({
     status: 200,
