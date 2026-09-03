@@ -1333,6 +1333,16 @@ async fn api_status(state: &AppState) -> serde_json::Value {
         "live_sessions": live_sessions,
         "serial_ports": serial,
     });
+    // round-304: report the npm RELEASE version (written by the swap
+    // scripts, agent_update + vale.js) alongside the Cargo protocol
+    // version — /api/status consumers otherwise see 1.0.145 forever
+    // while the device runs 1.2.x. Omitted when absent (fresh installs).
+    if let Ok(rel) = std::fs::read_to_string(crate::paths::install_dir().join(".vale-release")) {
+        let rel = rel.trim();
+        if !rel.is_empty() {
+            out["release"] = serde_json::json!(rel);
+        }
+    }
     if let Some(cpu) = vitals.cpu_pct {
         out["cpu_pct"] = serde_json::json!(cpu);
     }
