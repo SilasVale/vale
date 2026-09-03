@@ -721,7 +721,30 @@ async fn run_server(config_path: PathBuf) {
             // made the supervisor RETURN FOREVER — a renamed/stale bridge
             // (exactly the update-delta case) silently never got replaced.
             // Re-probe every 60 s until the port is ours again.
-            let kill_ours = || -> bool {
+            // stage-n: helper — does a node.exe running OUR bridge.js own
+            // a given port? Runs synchronously (spawn_blocking from callers).
+            let probe_bridge_owner = || -> bool {
+                let out = std::process::Command::new("powershell")
+                    .args([
+                        "-NoProfile", "-Command",
+                        &format!(
+                            "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'node.exe' -and $_.CommandLine -like '*{}*bridge.js*' }} | Select-Object -ExpandProperty ProcessId",
+                            install_dir.to_string_lossy().replace('\\', "\\\\")
+                        ),
+                    ])
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        let s = String::from_utf8_lossy(&o.stdout);
+                        s.split_whitespace().next().is_some()
+                    }
+                    _ => false,
+                }
+            };
+            // stage-n: helper — kill any node.exe running OUR bridge.js so a
+            // stale holder releases the port. Returns true (always) so it can
+            // be used in boolean contexts.
+            let kill_bridge_owner = || -> bool {
                 let id = install_dir.clone();
                 std::thread::spawn(move || {
                     let _ = std::process::Command::new("powershell")
@@ -736,50 +759,31 @@ async fn run_server(config_path: PathBuf) {
                 });
                 true
             };
-            if std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
-                let probe_factory = {
-                    let id = install_dir.clone();
-                    move || {
-                        let id = id.clone();
-                        let probe = move || {
-                        let out = std::process::Command::new("powershell")
-                            .args([
-                                "-NoProfile", "-Command",
-                                &format!(
-                                    "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -eq 'node.exe' -and $_.CommandLine -like '*{}*bridge.js*' }} | Select-Object -ExpandProperty ProcessId",
-                                    id.to_string_lossy().replace('\\', "\\\\")
-                                ),
-                            ])
-                            .output();
-                        match out {
-                            Ok(o) if o.status.success() => {
-                                let s = String::from_utf8_lossy(&o.stdout);
-                                s.split_whitespace().next().is_some()
-                            }
-                            _ => false,
-                        }
-                    };
-                        probe
-                    }
-                };
-                loop {
-                    let ours = tokio::task::spawn_blocking(probe_factory()).await.unwrap_or(false);
-                    if ours {
-                        log_line("browser bridge: stale bridge owns 9224 — killing for respawn");
-                        let _ = kill_ours();
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        if std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
-                            continue; // still held; re-probe
-                        }
-                        break; // port free — spawn loop below
-                    }
-                    log_line("browser bridge: foreign process owns 9224 — re-probing every 60s");
-                    // Never assume permanence: wait until SOMETHING frees it.
-                    while std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
-                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                    }
-                    break;
+            // stage-n: pre-spawn reclaim loop — if 9224 is held by a stale
+            // bridge (TIME_WAIT or orphaned node from a previous agent
+            // generation), kill it BEFORE the spawn loop tries to bind.
+            // Without this the supervisor backs off 2→30 s forever but the
+            // port stays occupied and the panel's live view is frozen.
+            loop {
+                if std::net::TcpStream::connect("127.0.0.1:9224").is_err() {
+                    break; // port free — proceed to spawn
                 }
+                let ours = probe_bridge_owner();
+                if ours {
+                    log_line("browser bridge: stale bridge owns 9224 — killing for respawn");
+                    let _ = kill_bridge_owner();
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    if std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
+                        continue; // still held; re-probe
+                    }
+                    break; // port free — spawn loop below
+                }
+                log_line("browser bridge: foreign process owns 9224 — re-probing every 60s");
+                // Never assume permanence: wait until SOMETHING frees it.
+                while std::net::TcpStream::connect("127.0.0.1:9224").is_ok() {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                }
+                break;
             }
             let mut backoff: u64 = 2;
             loop {
