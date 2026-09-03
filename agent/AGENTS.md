@@ -58,8 +58,8 @@ cargo xwin build --target x86_64-pc-windows-msvc --release --features terminal,k
 
 # 2. Stage artifacts into the npm package and bump its version:
 cp target/x86_64-pc-windows-msvc/release/vale-agent.exe vale-agent-npm/vale-agent.exe
-# bridge.js changes: cp resources/browser-bridge/bridge.js vale-agent-npm/
 # then bump "version" in vale-agent-npm/package.json (1.2.x)
+# (bridge.js was removed in round-263 — the npm package ships no bridge)
 cd vale-agent-npm && npm pack          # → vale-agent-1.2.N.tgz
 
 # 3. Publish: stage the tgz into the dist worker assets (ALSO the
@@ -84,8 +84,9 @@ vale update
 # the previous release AND older tag refs manually (API, /git/refs/tags/
 # <tag> — the URL needs the full refs path, not just the name).
 
-What `vale update` does (bin/vale.js): stages exe + bridge.js next to the
-install dir, hands a PS swap script to WMI Win32_Process.Create (parented by
+What `vale update` does (bin/vale.js): stages the exe (and desktop shell
+sources) next to the install dir, hands a PS swap script to WMI
+Win32_Process.Create (parented by
 WmiPrvSE so it survives the CLI AND the agent dying; plain `-NoProfile -File`
 only — `-ExecutionPolicy Bypass` / `-EncodedCommand` die silently on d1),
 then: stop ValeAgent task → kill agent + bridge node tree → copy with retry →
@@ -97,9 +98,10 @@ Gateway (`gateway/`) deploys separately: `cd gateway && wrangler deploy`.
 ## Architecture
 
 vale-agent is a pure service — MCP server + terminal backends + SSE endpoints
-+ the remote browser (bridge 9224). The Tauri desktop (`vale-desktop/`), the
-standalone `vale-tray/`, and the NSIS-era installers are RETIRED; the Electron
-shell (`vale-desktop-electron/`) and the gateway device app replaced them. The
++ the Electron desktop shell (embedded real browser on CDP 9333). The Tauri
+desktop (`vale-desktop/`), the standalone `vale-tray/`, and the NSIS-era
+installers are RETIRED; the Electron shell (`vale-desktop-electron/`) and the
+gateway device app replaced them. The
 web panel (`/panel`, Apple-style terminal) is served by `src/web.rs` — token
 entered in the browser, kept in localStorage (no server-side injection since
 1.0.5).
@@ -135,10 +137,9 @@ src/
                    persist console_url, reg-key → CF token exchange, optional
                    free tunnel via provision_tunnel),
                    POST /api/tools/{name}, GET /api/plugins/status,
-                   GET/POST /api/browser/{frame,input} + /api/browser/{pwshots,
-                   pwshot,actions} (bridge proxy), POST /api/browser/ws-ticket
-                   + GET /api/browser/ws (ws_relay ticketed WS), GET
-                   /api/sessions (audit list)
+                   GET /api/browser/{pwshots,pwshot,actions} (AI evidence —
+                   the pwout screenshots/action feed), GET /api/sessions
+                   (audit list)
   plugins/         PluginRegistry (tools cached once at register); terminal/
                    mod.rs (plugin struct + shared helpers) + tools.rs (one
                    builder fn per tool)
