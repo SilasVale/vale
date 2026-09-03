@@ -177,6 +177,12 @@ vale-tray/         standalone crate (own workspace, Windows-only deps): tray
   with health + vitals, a 60 s AGENT WATCHDOG (`schtasks /run ValeAgent`), and
   a wait page that reappears when the agent dies mid-session. `/desktop/`
   reuses `/panel/` assets + loopback token injection (web.rs).
+  round-274: main.ts sets backgroundThrottling:false + the
+  --disable-renderer-backgrounding / --disable-backgrounding-occluded-
+  windows switches — a hidden window (hide-to-tray / background session)
+  otherwise flips the SPA to visibilityState=hidden, Chromium stops
+  requestAnimationFrame, and xterm's rAF-driven DOM renderer silently
+  stops painting (blank terminals while the AI keeps operating).
 
 ## vale-tray (Windows)
 

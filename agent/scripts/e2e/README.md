@@ -12,6 +12,7 @@ pwout" gap — every round-264..268 verification now runs from one file.
 | `file` | 266 | stat → 2-page append upload (300KB) → single raw read download (1MiB cap) |
 | `workflow` | 267 | process_list → local execute → file_write → stat → memory_save → memory_search |
 | `browser` | 268 | browser_run_script drives the embedded view via CDP 9333 → SPA address bar follows |
+| `panel` | 274 | AI writes a unique marker into a terminal session → the SPA's VISIBLE xterm must show it (display verification) |
 
 ## Usage (on the device)
 
@@ -24,8 +25,8 @@ node e2e.js --token <token> --no-browser           # agent-only, no CDP
 Env: `VALE_AGENT_TOKEN` also works; `--base` overrides the agent URL;
 `VALE_PW_DIR` overrides the playwright dir (default `D:\Vale\playwright`).
 
-Exit code 0 = all selected sections passed. Full run: 14 checks
-(terminal 3, file 3, workflow 6, browser 2).
+Exit code 0 = all selected sections passed. Full run: 16 checks
+(terminal 3, file 3, workflow 6, panel 2, browser 2).
 
 ## Known device quirks (handled by the suite)
 
