@@ -249,6 +249,9 @@ async function sectionEvidence() {
   const list = (shotsJson && shotsJson.shots) || [];
   check('evidence pwshots lists it', list.some((f) => (f.name || '').includes(name)),
     'shots=' + list.length + ' looking=' + name.slice(0, 30));
+  // 3. self-clean the test screenshot (same policy as the file/terminal
+  //    sections — the suite must not litter pwout)
+  try { require('fs').unlinkSync('D:\\Vale\\pwout\\' + name); } catch (e) { /* best-effort */ }
 }
 
 async function sectionBrowser() {
