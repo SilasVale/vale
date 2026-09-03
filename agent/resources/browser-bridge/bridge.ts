@@ -87,7 +87,7 @@ function encodeFrame(opcode: number, payload: Buffer): Buffer {
   return Buffer.concat([head, payload]);
 }
 
-function decodeClientFrames(buf: Buffer, onMessage: (msg: string) => void): Buffer {
+function decodeClientFrames(buf: Buffer, onMessage: (msg: string) => void, onControl?: (op: number, data: Buffer) => void): Buffer {
   let off = 0;
   while (off + 2 <= buf.length) {
     const fin = buf[off] & 0x80, op = buf[off] & 0x0f;
@@ -100,7 +100,12 @@ function decodeClientFrames(buf: Buffer, onMessage: (msg: string) => void): Buff
     if (mask) { const m = buf.slice(pos - 4, pos); for (let i = 0; i < data.length; i++) data[i] ^= m[i % 4]; }
     off = pos + len;
     if (op === 1 && fin) onMessage(data.toString("utf8"));
-    // op 8 = close, 9 = ping (client pings are rare; we ignore, rely on TCP)
+    // op 8 = close, 9 = ping, 10 = pong. B1 (per-socket liveness watchdog):
+    // the data handler refreshes lastRecvAt on ANY byte, so a peer's pong
+    // (auto-reply to our 30 s pings, RFC 6455 §5.5) already keeps it alive
+    // with no bookkeeping here. A client ping (op 9, rare) is surfaced to the
+    // socket owner, which answers with a pong echoing the payload.
+    else if (op === 9 && onControl) onControl(9, data);
   }
   return buf.slice(off); // remainder
 }
@@ -457,6 +462,21 @@ interface Msg {
 
   // --- Minimal WebSocket server (no dependencies) ---
   const sockets = new Set<Duplex>();
+  // B1 watchdog (per-socket liveness): the agent's ws_relay tears down a dead
+  // relay after 150 s of silence (agent/src/ws_relay.rs pump), but that death
+  // does not reliably surface as a bridge-side 'close' — a zombie used to stay
+  // in `sockets` forever: sockets.size > 0 kept the idle-capture interval
+  // running for nobody, and the panel's reconnect stacked a NEW socket beside
+  // the zombie. Every peer gets a WS ping every 30 s; a live browser's WS
+  // stack auto-answers with a pong (RFC 6455 §5.5), and ANY received byte
+  // (pong, command, stray frame) refreshes lastRecvAt. A peer silent for more
+  // than one missed ping cycle is genuinely dead → destroy + drop. State lives
+  // in a WeakMap keyed by the socket, so the 'close'/'error' handlers need no
+  // per-socket cleanup — entries vanish with the socket.
+  const lastRecvAt = new WeakMap<Duplex, number>();
+  const WS_PING_INTERVAL_MS = 30_000;   // ping cadence — live browsers auto-pong
+  const WS_SWEEP_INTERVAL_MS = 10_000;  // watchdog sweep cadence
+  const WS_PONG_TIMEOUT_MS = 60_000;    // no byte in 60 s = dead peer (was: forever)
   let lastCmd: string | null = null, lastErr: string | null = null;
   const isLoop = (rq: http.IncomingMessage): boolean => { const a = (rq.socket && rq.socket.remoteAddress) || ""; return a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1"; };
   const authed = (u: URL, rq: http.IncomingMessage): boolean => !TOKEN || u.searchParams.get("t") === TOKEN || isLoop(rq);
@@ -521,8 +541,15 @@ interface Msg {
     if (!key) { sock.destroy(); return; }
     sock.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + wsAccept(key) + "\r\n\r\n");
     sockets.add(sock);
+    // B1: watchdog clock starts at CONNECT, not at first data — a fresh
+    // socket must survive the first sweep (at ~10 s) until its first
+    // ping/pong cycle (30 s) proves the peer alive.
+    lastRecvAt.set(sock, Date.now());
     let rem: Buffer = Buffer.alloc(0);
     sock.on("data", (d: Buffer) => {
+      // B1: ANY byte from the peer (ping/pong, resize/tabs command, stray
+      // frame) proves the pipe is alive — refresh the watchdog timestamp.
+      lastRecvAt.set(sock, Date.now());
       rem = Buffer.concat([rem, d]);
       // stage-n (bridge review): client frames are tiny JSON commands — a
       // huge declared length used to grow the remainder buffer forever.
@@ -554,6 +581,14 @@ interface Msg {
         // direct-connect testing).
         if (typeof m.id !== "undefined" && sock.writable) {
           try { sock.write(encodeFrame(1, Buffer.from(JSON.stringify(Object.assign({ id: m.id }, out || {}))))); } catch {}
+        }
+      }, (op, data) => {
+        // B1: client control frames. op 9 (client ping, rare) — answer with a
+        // pong echoing the payload per RFC 6455 §5.5.3, if the socket is still
+        // writable; op 10 (their pong to our ping) needs nothing here — any
+        // received byte already refreshed lastRecvAt in the data handler.
+        if (op === 9 && sock.writable) {
+          try { sock.write(encodeFrame(10, data)); } catch {}
         }
       });
     });
@@ -633,6 +668,41 @@ interface Msg {
 
   await new Promise<void>((r) => srv.listen(PORT, "127.0.0.1", () => r()));
   console.log(`bridge listening on 127.0.0.1:${PORT} profile=${USER_DATA_DIR}`);
+
+  // B1 (per-socket liveness watchdog): started only after srv.listen — pings
+  // go out on the wire only once viewers can actually connect. Ping every
+  // socket every 30 s; a live browser WS stack auto-answers with a pong
+  // (RFC 6455 §5.5), and the sweep below reaps peers silent for 60 s. Writes
+  // to a socket that died mid-write are guarded: Node emits 'error' (handled
+  // on the socket) instead of throwing, and the write try/catch mirrors the
+  // broadcast() pattern.
+  setInterval(() => {
+    const ping = encodeFrame(9, Buffer.alloc(0));
+    for (const s of sockets) {
+      try { s.write(ping); } catch { /* close/error handlers drop the socket */ }
+    }
+  }, WS_PING_INTERVAL_MS);
+  // Sweep: reap sockets whose peer has sent NOTHING (no pong, no command, no
+  // stray byte) for more than one ping cycle. This is what actually closes
+  // the zombies the agent-side ws_relay 150 s idle cap strands — a dead relay
+  // never delivers the panel's pongs, so its socket is destroyed here instead
+  // of lingering in `sockets` forever (which kept the 150 ms idle-capture
+  // interval running for nobody and stacked a new socket on every reconnect).
+  setInterval(() => {
+    const now = Date.now();
+    for (const s of sockets) {
+      const last = lastRecvAt.get(s) ?? 0;
+      if (now - last > WS_PONG_TIMEOUT_MS) {
+        try { s.destroy(); } catch { /* already gone */ }
+        // Belt-and-braces: remove eagerly so a socket that dies WITHOUT
+        // firing 'close'/'error' (destroy can be asynchronous) cannot linger
+        // in the sets or get double-reaped. The 'close'/'error' handlers'
+        // delete is a harmless no-op afterwards.
+        sockets.delete(s);
+        slowSockets.delete(s);
+      }
+    }
+  }, WS_SWEEP_INTERVAL_MS);
 
   // round-245 (B3): boot the idle-capture CDP session for the initial page —
   // attachSel (which rebinds it on tab changes) only runs on tab events, so
