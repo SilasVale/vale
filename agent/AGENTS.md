@@ -330,6 +330,14 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   (UI timer — no polling). Chip lives in the SPA chrome strip because the
   native WebContentsView covers the viewport. +1 test (push lights, fade
   clears). Panel 92/92; device-verified (panel.js markers).
+  ROUND-254 (2026-09-26, 1.2.257 LIVE on d1): user report "Go 不能用
+  回车代替吗" — address-bar Enter now = Chrome-style submit: preventDefault
+  + navigate + blur the input, so the real URL (did-navigate push) repaints
+  the bar and the view is clickable immediately. Go button remains as the
+  mouse path. DEVICE-VERIFIED with real CDP key events (dispatchKeyEvent
+  needs text: for char insertion): focus bar -> type bing.com -> Enter ->
+  view at https://cn.bing.com/, focus released to BODY, bar shows the real
+  URL. +1 test (bare host Enter -> https navigate + blur). Panel 93/93.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
