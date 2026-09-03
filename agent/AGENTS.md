@@ -771,6 +771,11 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   prune 0 false-deletes) + device consistency: electron main.js on d1
   (sha 4168c9e5, 54143B) byte-identical to the repo npm-package copy —
   no desktop-source drift after the 272->278 release week.
+  ROUND-312 (2026-09-04): gateway + device hygiene sweep — gateway
+  unchanged since 7f35c95b (no unpushed commits), tests 250/251 (1 skip =
+  CF runtime), wrangler dry-run compiles, live /api/health all 20 channels
+  ok. Device: 1 node proc only (9229 resident playwright), /api/sessions
+  344 records 0 live zombies, agent 1.2.278 stable.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
