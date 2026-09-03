@@ -296,6 +296,17 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   out) — a test-harness artifact; a clean electron restart resets it. Live
   click-through verification of the target=_blank fix pending a human click
   on the desktop Browser page.
+  ROUND-250 (2026-09-26, 1.2.253 LIVE on d1): REVERTED the <webview>
+  pivot (1.2.248-252). The pivot was a WRONG call: webview target=_blank
+  never worked (allowpopups/attach-timing rabbit hole, 4 releases), while
+  WebContentsView had already verified real rendering (round-247) and the
+  _blank fix (round-248). The round-248 "instability" was verification
+  scripts wedging CDP browser-WS (playwright connectOverCDP), not a
+  product defect. Back on WebContentsView (1.2.253) and DEVICE-VERIFIED
+  with raw page-level WS (no playwright browser connect): normal link ->
+  qq.com CHANGED; target=_blank link -> sina.com.cn CHANGED. LESSON:
+  use raw page-level CDP WS for device verification; playwright
+  connectOverCDP wedges Electron 33's browser WS after repeated connects.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
