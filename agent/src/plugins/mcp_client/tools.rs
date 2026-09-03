@@ -652,12 +652,108 @@ async fn connect_stdio() -> Result<serde_json::Value, DeviceError> {
         *guard = Some(sess);
     }
 
+    // round-281 (device-caught in round-280): playwright-mcp attached to the
+    // desktop CDP default-selects TAB 0 — the desktop SPA main window. AI
+    // navigation then hits the panel itself (the round-258 tripwire snaps it
+    // back, so no damage, but the user never sees what the AI drives). When
+    // attached to the Electron desktop, auto-select the EMBEDDED-VIEW tab
+    // (the target whose URL is not the desktop SPA) so the very first
+    // browser_navigate drives the page the user watches. Best-effort: a
+    // failure (no Electron, tabs not ready yet, odd layout) only logs.
+    if desktop_cdp_up() {
+        let mut guard = SESSION.lock().await;
+        if let Some(sess) = guard.as_mut() {
+            let _ = select_embedded_view_tab(sess).await;
+        }
+        drop(guard);
+    }
+
     Ok(json!({
         "status": "connected",
         "transport": "stdio",
         "tool_count": tools.len(),
         "tools": tools.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
     }))
+}
+
+/// Best-effort: list the attached browser's tabs and select the embedded
+/// view (the tab whose URL is NOT the desktop SPA). playwright-mcp's
+/// browser_tabs action=list returns text like "- 0: (current) [Vale
+/// Agent](http://127.0.0.1:18080/desktop/)\n- 1: [Example
+/// Domain](https://www.example.com/)" — parse the index of the first line
+/// whose URL does not contain "/desktop/".
+/// Pure: find the index of the embedded-view tab in a browser_tabs list
+/// text (the tab whose URL is NOT the desktop SPA). Returns None when only
+/// the SPA (or nothing) is listed.
+fn embedded_view_index(text: &str) -> Option<usize> {
+    for line in text.lines() {
+        // "- N: (current) [Title](url)" or "- N: [Title](url)"
+        let trimmed = line.trim();
+        if !trimmed.starts_with('-') { continue; }
+        let rest = &trimmed[1..];
+        let idx_part = rest.trim_start().split(':').next().unwrap_or("").trim();
+        let idx: usize = match idx_part.parse() { Ok(i) => i, Err(_) => continue };
+        // The desktop SPA is the tab we must NOT drive; anything else with a
+        // URL is the embedded view (or a stray page — still better than the
+        // SPA itself).
+        if !line.contains("/desktop/") && line.contains("http") {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceError> {
+    diag_log("[select] auto-selecting the embedded-view tab (desktop CDP attached)");
+    let list = match rpc_ref(sess, None, "tools/call", json!({
+        "name": "browser_tabs",
+        "arguments": { "action": "list" },
+    }), 15).await {
+        Ok(v) => v,
+        Err(e) => {
+            diag_log(&format!("[select] tab list failed (best-effort, ignoring): {e}"));
+            return Ok(());
+        }
+    };
+    // The CallToolResult text lives at .result.content[].text (stdio) or the
+    // same shape after serde; also tolerate a bare string.
+    let text = extract_tool_text(&list).unwrap_or_default();
+    let embedded_idx = embedded_view_index(&text);
+    if let Some(idx) = embedded_idx {
+        diag_log(&format!("[select] selecting embedded-view tab {idx}"));
+        let _ = rpc_ref(sess, None, "tools/call", json!({
+            "name": "browser_tabs",
+            "arguments": { "action": "select", "index": idx },
+        }), 15).await;
+    } else {
+        diag_log("[select] no embedded-view tab found in tab list — leaving default selection");
+    }
+    Ok(())
+}
+
+/// Pull the human-readable text out of a tools/call result. The stdio arm
+/// serializes rmcp's CallToolResult as { result: "..." } (a plain string for
+/// text content — device-verified), while the http arm nests under
+/// .result.content[].text. Handle both.
+fn extract_tool_text(v: &serde_json::Value) -> Option<String> {
+    // Plain string result (stdio, device-verified in round-280).
+    if let Some(s) = v.get("result").and_then(|r| r.as_str()) {
+        return Some(s.to_string());
+    }
+    if let Some(s) = v.as_str() {
+        return Some(s.to_string());
+    }
+    // Structured content array (http arm / other servers).
+    let content = v.pointer("/result/content")?;
+    let arr = content.as_array()?;
+    let mut out = String::new();
+    for item in arr {
+        if let Some(t) = item.get("text").and_then(|t| t.as_str()) {
+            out.push_str(t);
+            out.push('\n');
+        }
+    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 /// Judge whether a failure is "the session was reaped by the server"
@@ -1105,5 +1201,33 @@ mod one_browser_tests {
         assert!(sum.is_char_boundary(sum.len()), "truncated string must END on a char boundary");
         let short = mcp_action_summary("browser_click", &serde_json::json!({ "ref": "e12" }));
         assert_eq!(short, "browser_click ref=e12");
+    }
+
+    #[test]
+    fn embedded_view_index_skips_the_desktop_spa() {
+        // Device-verified format (round-280): "- N: (current) [Title](url)".
+        let tabs = "- 0: (current) [Vale Agent](http://127.0.0.1:18080/desktop/)\n- 1: [Example Domain](https://www.example.com/)";
+        assert_eq!(embedded_view_index(tabs), Some(1));
+        // SPA-only (no embedded view yet) -> None.
+        let only_spa = "- 0: (current) [Vale Agent](http://127.0.0.1:18080/desktop/)";
+        assert_eq!(embedded_view_index(only_spa), None);
+        // Embedded view first, SPA second -> picks the embedded one.
+        let reversed = "- 0: [Example Domain](https://www.example.com/)\n- 1: (current) [Vale Agent](http://127.0.0.1:18080/desktop/)";
+        assert_eq!(embedded_view_index(reversed), Some(0));
+        // Garbage lines are skipped.
+        assert_eq!(embedded_view_index("nothing here"), None);
+    }
+
+    #[test]
+    fn extract_tool_text_handles_stdio_and_http_shapes() {
+        // stdio: { result: "..." } plain string (device-verified).
+        let stdio = serde_json::json!({ "result": "- 0: [Vale Agent](http://127.0.0.1:18080/desktop/)\n- 1: [X](https://x.com/)" });
+        let t = extract_tool_text(&stdio).unwrap();
+        assert!(t.contains("https://x.com"));
+        // http: nested content array.
+        let http = serde_json::json!({ "result": { "content": [ { "type": "text", "text": "hello" } ] } });
+        assert_eq!(extract_tool_text(&http).unwrap().trim(), "hello");
+        // Empty -> None.
+        assert!(extract_tool_text(&serde_json::json!({})).is_none());
     }
 }
