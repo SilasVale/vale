@@ -462,6 +462,12 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   '127.0.0.1:9223' string (9333 present); the live playwright-mcp attaches
   --cdp-endpoint http://127.0.0.1:9333 (not headless). The 9223 tier is
   fully gone on the device — attach chain is 9333 -> headless only.
+  ROUND-270 (2026-09-04): doc sync — AGENTS.md/CLAUDE.md build-guide
+  sections still described the REMOVED bridge stack (npm bridge.js staging,
+  "remote browser (bridge 9224)" summary, ws-ticket/ws_relay + frame/input
+  proxy route map). Guide sections now describe the current reality
+  (Electron desktop shell on CDP 9333, pwshots/pwshot/actions evidence feed
+  only). Round-history entries untouched (they record what was true then).
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
