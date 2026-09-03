@@ -232,10 +232,11 @@ config pastes the JSON snippet, console opens, local terminal opens.
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-04 (round 271 — doc sync: build guide + route map
-  + Current release + device facts describe the post-bridge architecture;
-  1.2.266 LIVE on d1. Recent verified rounds: 264 display E2E, 266 file
-  transfer, 267-268 AI drive paths, 269 bridge removal verified)
+Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
+  hidden-window render fix; E2E suite agent/scripts/e2e/e2e.js 16/16
+  incl. panel display verification. Highlights: 266 file transfer, 268
+  AI drive paths, 273 repeatable E2E suite, 274 render-freeze root cause
+  + fix, 275 doc sync)
   ROUND-245 (2026-09-26, 1.2.244 staged): "AI 操作 terminal/browser 面板不
   显示" triage → FOUR root causes fixed (see Current release): (1) panel
   source had been UNBUILDABLE since f89454d3 (invalid JSX in BrowserPane
