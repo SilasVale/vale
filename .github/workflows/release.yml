@@ -66,6 +66,21 @@ jobs:
           (cd vale-agent-npm && ./node_modules/.bin/tsc -p tsconfig.json)
           cp vale-agent-npm/dist/vale.js vale-agent-npm/bin/vale.js
           grep -q "vale-release" vale-agent-npm/bin/vale.js || { echo "::error::compiled bin/vale.js missing round-298 marker"; exit 1; }
+          # round-321: electron main/preload/url-policy .js are COMMITTED tsc
+          # artifacts (tsc outDir is dist/, the npm package ships src/*.js) —
+          # a stale copy ships silently. Compile the electron TS fresh and
+          # fail if the committed src/*.js differ from the fresh output.
+          # typeRoots points at vale-agent-npm's own @types (electron's
+          # node_modules is not installed in CI).
+          ./node_modules/.bin/tsc -p ../vale-desktop-electron/tsconfig.json \
+            --typeRoots ./node_modules/@types --outDir /tmp/electron-fresh
+          for F in main.js preload.js url-policy.js; do
+            if ! cmp -s "/tmp/electron-fresh/${F}" "vale-desktop-electron/src/${F}"; then
+              echo "::error::vale-desktop-electron/src/${F} is stale (ts source changed without recompiling) — run tsc and commit the fresh output"
+              exit 1
+            fi
+          done
+          echo "electron src freshness check OK"
           cd vale-agent-npm && npm pack
           # round-278/282 lesson: verify the packed tgz ships every file the
           # device update flow swaps (a missing file silently keeps the stale
