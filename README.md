@@ -28,10 +28,10 @@ Vale Index (Cloudflare Worker) — npm tgz / download distribution
 ## Quick start (Windows)
 
 ```powershell
-npm.cmd i -g https://<distribution-host>/vale-agent/vale-agent-1.2.179.tgz   # replace <distribution-host> with your tgz host
+npm.cmd i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   # or pin an exact version
 vale setup                 # pure local install (registry-first, no cloud needed)
 vale setup --reg-key <key> # optional: register the device with a Vale Gate console
-vale update                # later: one-command update (exe + bridge + electron)
+vale update                # later: one-command update (exe + electron shell)
 ```
 
 The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all path resolution goes through `src/paths.rs`. The terminal panel is served by the agent at `/panel` (token entered once in the browser), and the Electron desktop shell loads `/desktop/`.
@@ -43,7 +43,7 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 | `gateway/` | **Vale Gate** | Cloudflare Worker | console (login/roles), BYOK AI gateway, `/mcp` proxy to devices, device registry |
 | `agent/` | **Vale Agent** | Windows (Rust) | headless MCP server + `/api/tools` + panel + Electron desktop shell (`vale-desktop-electron/`) + npm distribution (`vale-agent-npm/`) |
 | `index/` | **Vale Index** | Cloudflare Worker | download distribution (`vale-dist`; hosts the npm tgz, see Quick start) |
-| `extension/` | **Vale Browser Control** | Chrome/Edge (MV3) | legacy browser drive via `chrome.debugger` (superseded by the mcp-client plugin) |
+| `extension/` | **Vale Studio Links** | Chrome/Edge (MV3) | rewrites DSH panel file paths into Vale Studio deep links (unpacked; no build) |
 | `docs/` | docs | — | design decisions (`docs/adr/`), agent build guide (`agent/AGENTS.md`) |
 
 ## Build & deploy
@@ -61,7 +61,7 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 ./scripts/build.sh index
 ```
 
-See `agent/AGENTS.md` (Rust build guide) and `gateway/DEVICE-INTEGRATION.md` (device integration).
+See `agent/AGENTS.md` (Rust build guide) and `docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md` (desktop/core; `gateway/DEVICE-INTEGRATION.md` is a superseded 2026-08 design).
 
 ## Core design
 
