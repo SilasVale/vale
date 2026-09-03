@@ -631,6 +631,11 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   evidence screenshot succeeds right after mcp navigation. Combined with
   the earlier terminal/file/workflow 12/12, all 26 checks are verified on
   the current e2e.js. No pwout leftovers.
+  ROUND-293 (2026-09-04): device process/session hygiene check after the
+  heavy e2e rounds — zero leaks: only 1 node.exe (the external 9229
+  playwright-mcp, expected resident); no stray stdio playwright children
+  (each disconnect reaps its spawn); /api/sessions 327 records all
+  closed (audit log, 30-day retention by design), 0 live zombies.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
