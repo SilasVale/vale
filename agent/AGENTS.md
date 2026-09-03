@@ -594,6 +594,8 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   DEVICE-VERIFIED on d1: connect transport=http (9229) -> immediate
   browser_navigate reached example.com/http-autoselect-test on the
   embedded view. 204/204 tests.
+  ALSO: e2e mcp section extended to cover http transport (8 checks:
+  stdio 4 + http 4) — device-verified 8/8; suite is now 26 checks.
 
 ### Current release
 - npm **1.2.272 LIVE on d1 (round-285)** — MCP connect auto-selects the
@@ -601,8 +603,8 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   desktop-CDP + browser_tabs guard) so AI navigation drives the page the
   user watches.
   Earlier: 1.2.267 (round-274) hidden-window render fix; E2E suite
-  agent/scripts/e2e/e2e.js 22/22 on d1 (terminal/file/workflow/panel/
-  mcp/evidence/browser sections).
+  agent/scripts/e2e/e2e.js 26/26 on d1 (terminal/file/workflow/panel/
+  mcp stdio+http/evidence/browser sections).
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates

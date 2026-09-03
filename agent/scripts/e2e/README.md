@@ -14,7 +14,7 @@ pwout" gap — every round-264..268 verification now runs from one file.
 | `browser` | 268 | browser_run_script drives the embedded view via CDP 9333 → SPA address bar follows |
 | `panel` | 274 | AI writes a unique marker into a terminal session → the SPA's VISIBLE xterm must show it (display verification) |
 | `evidence` | 277 | AI screenshot into pwout → GET /api/browser/pwshots (Evidence drawer data) lists it |
-| `mcp` | 281 | stdio connect auto-selects the embedded view; first browser_navigate drives it (regression) |
+| `mcp` | 281/285 | stdio + http connect auto-select the embedded view; first browser_navigate drives it (regression) |
 
 ## Usage (on the device)
 
@@ -27,8 +27,8 @@ node e2e.js --token <token> --no-browser           # agent-only, no CDP
 Env: `VALE_AGENT_TOKEN` also works; `--base` overrides the agent URL;
 `VALE_PW_DIR` overrides the playwright dir (default `D:\Vale\playwright`).
 
-Exit code 0 = all selected sections passed. Full run: 22 checks
-(terminal 3, file 3, workflow 6, panel 2, mcp 4, evidence 2, browser 2).
+Exit code 0 = all selected sections passed. Full run: 26 checks
+(terminal 3, file 3, workflow 6, panel 2, mcp 8, evidence 2, browser 2).
 
 ## Known device quirks (handled by the suite)
 
