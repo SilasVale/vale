@@ -240,6 +240,12 @@ const BREAKER_FAIL_THRESHOLD = 3;
 // True "consecutive" with bounded memory: failures older than this window
 // don't accumulate (a stale count of 2 from yesterday + 1 today must not trip).
 const BREAKER_WINDOW_MS = 10 * 60 * 1000;
+// F5 FIX (stage-n): the breaker counted REQUESTS, not TIME — a channel that
+// times out every time at 120s each needed 3 trips = 360s (6 min) of user-facing
+// hangs before the circuit opened. Now, if the channel has been failing for at
+// least BREAKER_MAX_FAIL_MS (45 s) AND has 2+ failures, trip immediately. Two
+// 120s timeouts back-to-back trip in ~half the worst case.
+const BREAKER_MAX_FAIL_MS = 45_000;
 
 /** Durable Object holding the breaker state (single instance per channel name). */
 export class BreakerDO {
@@ -282,7 +288,11 @@ export class BreakerDO {
         // the next /trip see an expired window again, reset to 0, and the
         // circuit NEVER tripped.
         count += 1;
-        if (count >= BREAKER_FAIL_THRESHOLD) {
+        // F5 FIX: a channel that has been failing for BREAKER_MAX_FAIL_MS with
+        // ≥2 failures is effectively dead — trip without waiting for the Nth
+        // trip that may be another full timeout away.
+        const failing_for = Date.now() - firstAt;
+        if (count >= BREAKER_FAIL_THRESHOLD || (count >= 2 && failing_for >= BREAKER_MAX_FAIL_MS)) {
           await this.state.storage.put("degradedUntil", Date.now() + BREAKER_DEGRADE_MS);
           // round-118: the old code DELETED 'fail' here — after the degrade
           // window the circuit closed with a zeroed count, so a dead channel
