@@ -347,7 +347,23 @@ function embeddedViewEnsure() {
     });
     view.setVisible(false);
     embeddedVisible = false;
-    view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    // round-248 (user report "浏览器超链接跳转不了"): `target=_blank` links
+    // (the norm on real sites — Baidu's every external link opens a new
+    // window) were DENIED, so clicking them did nothing. The embedded view is
+    // a single-tab browser: intercept window.open and navigate the SAME view
+    // to the requested URL instead (the address bar follows via the nav
+    // events). Only http/https/data/about are honored — anything else
+    // (javascript:, file:, chrome:) is dropped like the url-policy requires.
+    view.webContents.setWindowOpenHandler(({ url }) => {
+        const safe = (0, url_policy_1.sanitizeBrowserUrl)(url);
+        if (safe && safe !== "about:blank") {
+            embeddedNavigate(safe);
+        }
+        return { action: "deny" };
+    });
+    // round-248: same-view navigation for window.name/target=_top style links
+    // that Chromium routes as renderer-initiated top navigations is already
+    // handled natively; this handler only covers the window.open path above.
     // round-247: real-navigation events → SPA (URL/title/history tracking).
     embeddedWireNavEvents(view);
     try {
