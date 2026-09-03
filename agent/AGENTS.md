@@ -546,14 +546,24 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   synced to that URL. NOTE for future rounds: consider auto-selecting the
   embedded-view tab on connect, or documenting the select step for AI
   clients.
+  ROUND-281 (2026-09-04, 1.2.271 LIVE on d1): auto-select the embedded-view
+  tab on MCP stdio connect. Iteration: (a) initial single list raced the
+  playwright-mcp browser attach (connect-internal lists saw only the SPA
+  tab while post-connect lists had both — tabpoll probe: embedded view
+  appears ~1.5s AFTER connect returns); (b) retry 6x2s still raced it;
+  (c) FIX: sleep 3s once (covers the attach) then list + select — VERIFIED:
+  connect -> immediate browser_navigate drives the embedded view
+  (autoselect-v2 reached) with no manual tab select. Unit tests:
+  embedded_view_index (SPA-skip) + extract_tool_text (stdio plain-string
+  vs http content-array). Rust 198 / clippy clean. Also released 1.2.268
+  (initial) / 269 (retry) / 270 (6x2s) / 271 (3s settle) along the way.
 
 ### Current release
-- npm **1.2.267 LIVE on d1 (round-274)** — Electron hidden-window render
-  fix: backgroundThrottling:false + --disable-renderer-backgrounding +
-  --disable-backgrounding-occluded-windows keep the SPA painting (xterm
-  rAF) when the window is hidden. E2E suite (agent/scripts/e2e/e2e.js)
-  18/18 on d1: terminal/file/workflow/panel/evidence/browser sections
-  (display + evidence + drive paths all repeatable).
+- npm **1.2.271 LIVE on d1 (round-281)** — MCP stdio connect auto-selects
+  the embedded-view tab (3s settle for the playwright-mcp browser attach,
+  then list + select) so AI navigation drives the page the user watches.
+  Earlier: 1.2.267 (round-274) hidden-window render fix; E2E suite
+  agent/scripts/e2e/e2e.js 18/18 on d1.
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
