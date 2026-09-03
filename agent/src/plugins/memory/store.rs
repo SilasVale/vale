@@ -517,10 +517,12 @@ impl MemoryStore {
     }
 
     /// Export all records (including soft-deleted, flagged) as JSONL text.
+    /// Streams to avoid buffering max-capacity entries in memory (the old
+    /// Vec<String> + join could OOM at 10K × 32KB = 320MB).
     pub fn export(&self, namespace: Option<&str>) -> String {
         self.rebuild_order();
         let guard = recover_guard(&self.inner);
-        let mut lines = Vec::new();
+        let mut out = String::new();
         for id in &guard.order {
             let rec = &guard.by_id[id];
             if let Some(ns) = namespace {
@@ -529,10 +531,11 @@ impl MemoryStore {
                 }
             }
             if let Ok(line) = serde_json::to_string(rec) {
-                lines.push(line);
+                out.push_str(&line);
+                out.push('\n');
             }
         }
-        lines.join("\n")
+        out
     }
 
     /// Count records (non-deleted).
