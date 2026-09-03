@@ -557,6 +557,17 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   embedded_view_index (SPA-skip) + extract_tool_text (stdio plain-string
   vs http content-array). Rust 198 / clippy clean. Also released 1.2.268
   (initial) / 269 (retry) / 270 (6x2s) / 271 (3s settle) along the way.
+  ROUND-282 (2026-09-04): CI RED -> GREEN + e2e mcp regression. Found the
+  main-branch CI failing on EVERY release since 1.2.266: mcp_integration
+  list_tools_via_http asserted 46 tools but round-266's system_file_stat
+  made system 7 (47 total) — the 46-tool count (427730bd) was never bumped.
+  Local `cargo test` had masked it (lib-only tally missed integration
+  tests). Fixed 46->47 (200/200 full suite); CI green again (d433f8e8).
+  ALSO: e2e suite gained the mcp section (4 checks: stdio connect ->
+  immediate browser_navigate drives the embedded view to a marker URL,
+  SPA intact — the round-281 auto-select regression). Device-verified
+  4/4 + file/workflow/evidence 11/11. GitHub release v1.2.271 CI-built
+  (asset 6.4MB tgz); keep-latest: v1.2.267 release+tag deleted.
 
 ### Current release
 - npm **1.2.271 LIVE on d1 (round-281)** — MCP stdio connect auto-selects
