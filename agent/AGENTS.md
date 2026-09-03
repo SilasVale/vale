@@ -468,6 +468,11 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   proxy route map). Guide sections now describe the current reality
   (Electron desktop shell on CDP 9333, pwshots/pwshot/actions evidence feed
   only). Round-history entries untouched (they record what was true then).
+  ROUND-271 (2026-09-04): doc sync round 2 — "Current release" still said
+  "1.2.244 staged" with bridge-era OPEN items; Device facts listed
+  "bridge 9224". Both now describe the live state (1.2.266 on d1, bridge
+  tiers removed). Round-270's guide-section sync + this status sync leave
+  no stale bridge-era description in the agent-facing docs.
 
 ### Current release
 - npm **1.2.266 LIVE on d1 (round-266)** — bidirectional device file
