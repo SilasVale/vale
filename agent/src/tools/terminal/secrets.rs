@@ -128,6 +128,18 @@ pub(crate) mod file_impl {
     static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn write_all(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), DeviceError> {
+        write_all_with(map, &crate::paths::harden_file)
+    }
+
+    /// Seam (coverage audit row 7): the FAIL-CLOSED contract — if the ACL
+    /// hardener errors, the plaintext store must NOT be renamed into place
+    /// (every local account could read SSH passwords through the inherited
+    /// ACLs). Extracted so the refuse-path is unit-testable without making
+    /// icacls fail on demand.
+    pub(crate) fn write_all_with(
+        map: &serde_json::Map<String, serde_json::Value>,
+        harden: &dyn Fn(&std::path::Path) -> Result<(), std::io::Error>,
+    ) -> Result<(), DeviceError> {
         let p = store_path();
         // round-101: temp + atomic rename — a crash/power loss mid-write
         // previously left a partial file that read_all() parsed to an EMPTY
@@ -145,7 +157,7 @@ pub(crate) mod file_impl {
         // password store — if the ACL cannot be restricted, the plaintext
         // file would sit under inherited Users:RX ACLs (every local account
         // could read SSH passwords), so refuse the write instead.
-        if let Err(e) = crate::paths::harden_file(&tmp) {
+        if let Err(e) = harden(&tmp) {
             let _ = std::fs::remove_file(&tmp);
             return Err(DeviceError::Keychain {
                 reason: format!("refusing to persist secrets unprotected ({e})"),
@@ -322,7 +334,7 @@ mod file_store_tests {
     //! Credential audit follow-up: file_impl had ZERO coverage (the
     //! keyring-branch compile-miss proved why this matters). TEST_DIR
     //! isolates each test thread's store file.
-    use super::file_impl::{self, TEST_DIR};
+    use super::file_impl::{self, TEST_DIR, write_all_with};
 
     fn isolated(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("vale-sec-test-{name}-{}", std::process::id()));
@@ -370,6 +382,25 @@ mod file_store_tests {
         file_impl::delete("z@y:22").unwrap();
         assert_eq!(file_impl::get("z@y").unwrap(), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fail_closed_refuses_write_when_harden_errors() {
+        // row 7: harden failure => Err, no tmp left behind, ORIGINAL file
+        // untouched (a half-trustworthy store beats a world-readable one).
+        let dir = isolated("failclosed");
+        let store = dir.join("vale-secrets.json");
+        std::fs::write(&store, b"{\"keep\":\"me\"}").unwrap();
+        let mut map = serde_json::Map::new();
+        map.insert("ssh:x".into(), serde_json::json!("secret"));
+        let err = write_all_with(&map, &|_| Err(std::io::Error::other("no icacls here")))
+            .expect_err("must refuse");
+        assert!(err.to_string().contains("refusing to persist secrets"), "{err}");
+        assert!(!dir.join("vale-secrets.json.tmp").exists(), "tmp must be cleaned");
+        assert_eq!(std::fs::read(&store).unwrap(), b"{\"keep\":\"me\"}", "original intact");
+        // and the happy path still lands through the same seam
+        write_all_with(&map, &|_| Ok(())).unwrap();
+        assert!(std::fs::read_to_string(&store).unwrap().contains("ssh:x"));
     }
 
     #[test]
