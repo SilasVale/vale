@@ -793,6 +793,13 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   terminal/file/workflow 12 + mcp 12 (incl. the round-313 click
   interaction) + panel/evidence/browser 6. All green; the expanded suite
   runs clean end-to-end on the current release.
+  ROUND-316 (2026-09-04): gateway browser-click tests — round-138's
+  element_ref->target conversion (old callers pass integer refs,
+  playwright-mcp wants "eN" snapshot refs) had ZERO test coverage.
+  Added 4: click int 7 -> target e7, click "e7" passthrough, click no
+  element_ref forwards unchanged, type converts + keeps text. Gateway
+  255 tests / 254 pass. (Real AI clients reach the device THROUGH this
+  gateway path — the round-313 e2e click checks the direct path.)
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
