@@ -304,12 +304,13 @@ impl PlaywrightManager {
             .arg(&entry)
             .arg("--port").arg(port.to_string());
         // ONE-BROWSER FIX: same attach-or-fork decision as the stdio spawn —
-        // when the bridge's chromium exposes CDP (loopback 9223), drive THAT
-        // browser so the panel's screencast follows every AI action. Only
-        // fall back to a private headless chromium (round-142: session 0
-        // cannot run headed; Edge 151 crash → bundled chromium).
-        if crate::plugins::mcp_client::tools::bridge_cdp_up() {
-            child.arg("--cdp-endpoint").arg("http://127.0.0.1:9223");
+        // desktop Electron CDP (9333) wins when the user watches the embedded
+        // real-browser view (round-247); else the bridge's chromium (9223)
+        // so the panel's screencast follows every AI action; only fall back
+        // to a private headless chromium (round-142: session 0 cannot run
+        // headed; Edge 151 crash → bundled chromium).
+        if let Some(ep) = crate::plugins::mcp_client::tools::preferred_cdp_endpoint() {
+            child.arg("--cdp-endpoint").arg(ep);
         } else {
             child.arg("--headless").arg("--browser").arg("chromium");
         }

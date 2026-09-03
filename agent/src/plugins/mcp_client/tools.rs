@@ -395,14 +395,15 @@ fn bundled_playwright() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
 /// MCP client. Returns the connected session + tool list.
 /// The ONE-BROWSER arg decision for every playwright-mcp spawn, extracted
 /// (coverage audit row 11) so the attach-vs-fork contract is unit-tested:
-/// bridge CDP up ⇒ ATTACH (panel sees everything); down ⇒ private headless
+/// desktop Electron CDP up (9333) ⇒ ATTACH there (the user watches the
+/// embedded real-browser view — round-247); else bridge CDP up (9223) ⇒
+/// ATTACH (panel screenshot sees everything); else private headless
 /// fallback (AI still works, evidence still lands in pwout via
 /// --output-dir — the default was CWD-relative and invisible).
-pub(crate) fn mcp_browser_args(cdp_up: bool, pwout: &std::path::Path) -> Vec<String> {
-    let mut args: Vec<String> = if cdp_up {
-        vec!["--cdp-endpoint".into(), "http://127.0.0.1:9223".into()]
-    } else {
-        vec!["--headless".into(), "--browser".into(), "chromium".into()]
+pub(crate) fn mcp_browser_args(cdp_endpoint: Option<&str>, pwout: &std::path::Path) -> Vec<String> {
+    let mut args: Vec<String> = match cdp_endpoint {
+        Some(ep) => vec!["--cdp-endpoint".into(), ep.to_string()],
+        None => vec!["--headless".into(), "--browser".into(), "chromium".into()],
     };
     args.push("--ignore-https-errors".into());
     args.push("--output-dir".into());
@@ -412,8 +413,32 @@ pub(crate) fn mcp_browser_args(cdp_up: bool, pwout: &std::path::Path) -> Vec<Str
 
 /// True when the bridge's chromium exposes its CDP endpoint (loopback 9223).
 pub(crate) fn bridge_cdp_up() -> bool {
+    tcp_probe_up(9223)
+}
+
+/// True when the Vale Desktop Electron shell exposes its CDP endpoint
+/// (loopback 9333) — i.e. the user is in the desktop app watching the
+/// EMBEDDED real-browser view (round-247). When both are up the desktop
+/// wins: AI should drive the page the user actually sees.
+pub(crate) fn desktop_cdp_up() -> bool {
+    tcp_probe_up(9333)
+}
+
+/// Best CDP endpoint for a playwright-mcp spawn: desktop (9333) > bridge
+/// (9223) > none (headless fork). Event-driven probe, 300 ms budget each.
+pub(crate) fn preferred_cdp_endpoint() -> Option<String> {
+    if desktop_cdp_up() {
+        Some("http://127.0.0.1:9333".to_string())
+    } else if bridge_cdp_up() {
+        Some("http://127.0.0.1:9223".to_string())
+    } else {
+        None
+    }
+}
+
+fn tcp_probe_up(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(
-        &"127.0.0.1:9223".parse().unwrap(),
+        &format!("127.0.0.1:{port}").parse().unwrap(),
         std::time::Duration::from_millis(300),
     )
     .is_ok()
@@ -554,7 +579,7 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
         // drawer with zero copying.
         let pwout = crate::paths::install_dir().join("pwout");
         let _ = std::fs::create_dir_all(&pwout);
-        for a in mcp_browser_args(bridge_cdp_up(), &pwout) {
+        for a in mcp_browser_args(preferred_cdp_endpoint().as_deref(), &pwout) {
             cmd.arg(a);
         }
     }
@@ -1031,7 +1056,7 @@ mod one_browser_tests {
 
     #[test]
     fn mcp_browser_args_attach_arm_carries_cdp_and_output_dir() {
-        let args = mcp_browser_args(true, std::path::Path::new("D:\\Vale\\pwout"));
+        let args = mcp_browser_args(Some("http://127.0.0.1:9223"), std::path::Path::new("D:\\Vale\\pwout"));
         assert_eq!(args[0], "--cdp-endpoint");
         assert_eq!(args[1], "http://127.0.0.1:9223");
         assert!(!args.iter().any(|a| a == "--headless"), "attach mode must not fork a private browser");
@@ -1040,11 +1065,20 @@ mod one_browser_tests {
     }
 
     #[test]
+    fn mcp_browser_args_desktop_attach_carries_9333() {
+        // round-247: in the Electron shell the AI must drive the EMBEDDED
+        // view (9333), not the bridge's headless (9223).
+        let args = mcp_browser_args(Some("http://127.0.0.1:9333"), std::path::Path::new("/tmp/pwout"));
+        assert_eq!(args[1], "http://127.0.0.1:9333");
+        assert!(!args.iter().any(|a| a == "--headless"));
+    }
+
+    #[test]
     fn mcp_browser_args_fallback_arm_is_headless_but_still_pinned_output() {
-        let args = mcp_browser_args(false, std::path::Path::new("/tmp/pwout"));
+        let args = mcp_browser_args(None, std::path::Path::new("/tmp/pwout"));
         assert!(args.contains(&"--headless".to_string()));
         assert!(args.contains(&"chromium".to_string()));
-        assert!(!args.iter().any(|a| a.contains("9223")));
+        assert!(!args.iter().any(|a| a.contains("9223") || a.contains("9333")));
         assert_eq!(args.last().unwrap(), "/tmp/pwout", "evidence must land in pwout either way");
     }
 
