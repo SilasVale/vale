@@ -669,6 +669,18 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   wins, so a real agent_update call performs a tgz swap (device restart);
   the local version it compares is the Cargo crate version, not the npm
   release number.
+  ROUND-298 (2026-09-04, 1.2.274 LIVE on d1): agent_update version-gates on
+  the INSTALLED release. Cargo version (1.0.145) never changes -> every
+  agent_update call looked "newer" and re-downloaded + swapped. Fix: the
+  swap script writes <install>/.vale-release = remote version on PROVABLE
+  success; subsequent checks read it as local (fallback Cargo). BOTH
+  channels write it: agent_update's WMI swap (agent side) AND vale.js
+  update (npm side, round-298b). Device-verified end-to-end: vale update
+  to 1.2.274 -> agent_update returns up_to_date (current==remote).
+  LESSON: "tsc compiled" was a LIE — dist/vale.js timestamp was stale
+  (the earlier bin-vs-dist diff compared two OLD files); the first 1.2.274
+  tgz shipped a stale bin/vale.js. ALWAYS rm dist output + verify marker
+  presence in the packed artifact, not a diff of possibly-stale files.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
