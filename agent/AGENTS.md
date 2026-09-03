@@ -441,6 +441,13 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   read cap 256KiB -> 1MiB (fewer pull round-trips). DEVICE-VERIFIED:
   300KB upload via 2 append pages, stat size=307200, single-read download
   complete (allA). Rust 196 / clippy clean.
+  ROUND-267 (2026-09-04): AI tool-chain workflow E2E — simulated an AI
+  completing a real multi-step task across plugins: system_process_list
+  (electron 5 procs) -> terminal_execute (local mode, exit 0) ->
+  system_file_write (config JSON) -> system_file_stat (59 bytes) ->
+  memory_save -> memory_search (retrieved). All tools chained cleanly
+  with consistent {ok, result} envelopes — MCP design is AI-friendly
+  (execute's NEVER-rerun guidance, read's cursor model).
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
