@@ -644,6 +644,12 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   markers 0 after (delete works). NOTE: memory_list returns
   {result:{results:[...]}} — a cleanup script probing .items/.entries
   misread 0 and found nothing; use .results.
+  ROUND-295 (2026-09-04): full test-matrix green check — Rust
+  --features terminal,keyring 204/204 + clippy clean (our code), panel
+  vitest 82/82 local, and GitHub CI run 923a7785 SUCCESS with the
+  round-283 panel (vitest) job actually executing in CI (all 5 jobs:
+  agent test/clippy, xwin check, gateway, ui, panel). Matrix verified
+  end-to-end after the recent e2e-only rounds.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
