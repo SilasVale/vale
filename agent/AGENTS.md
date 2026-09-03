@@ -745,6 +745,11 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   releases AND tags; GitHub + local now hold ONLY v1.2.278. Full chain
   (CDN manual publish -> GitHub tag API -> CI build -> keep-latest) ran
   end-to-end for a multi-release week.
+  ROUND-308 (2026-09-04): full e2e suite 26/26 on 1.2.278 — first
+  complete run after the round-305/306 mcp fixes (terminal/file/workflow
+  12 + panel/mcp/evidence 12 + browser 2). auto-select drives the
+  embedded view on BOTH transports, evidence self-cleans, panel xterm
+  shows AI output. All green on the current release.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
