@@ -887,9 +887,15 @@ pub fn mcp_client_call() -> ToolDef {
                                 let pwout = crate::paths::install_dir().join("pwout");
                                 if std::fs::create_dir_all(&pwout).is_ok() {
                                     let dst = pwout.join(format!("mcp-{name}"));
-                                    if !dst.exists() {
-                                        let _ = std::fs::write(&dst, &bytes);
-                                    }
+                                    // round-245 (browser-display audit B5):
+                                    // write UNCONDITIONALLY — the old
+                                    // !dst.exists() guard meant a second
+                                    // screenshot under the SAME name (very
+                                    // common: repeated screenshots of one
+                                    // page) was never re-copied, so the
+                                    // Evidence drawer's name:mtime cache
+                                    // showed the FIRST image forever.
+                                    let _ = std::fs::write(&dst, &bytes);
                                 }
                             }
                             use base64::Engine as _;
