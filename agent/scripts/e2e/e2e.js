@@ -161,14 +161,18 @@ async function sectionPanel() {
       return raw !== undefined && raw !== null ? raw : null;
     } catch (e) { return null; }
   };
-  // 3. make sure the SPA is on the Terminal page (rail button)
+  // 3. make sure the SPA is on the Terminal page (rail button), then click
+  //    the LAST session tab — the session we just opened is the newest, and
+  //    the visible xterm follows the ACTIVE tab
   const railClick = await evalInSpa(200, "(function(){ var bs = document.querySelectorAll('button, [role=button], [class*=rail] > *'); for (var i=0;i<bs.length;i++){ var el = bs[i]; var t = (el.getAttribute('aria-label')||el.title||el.textContent||'').trim(); if (t === 'Terminal' || t.indexOf('Terminal') === 0 && t.length < 12) { el.click(); return 'clicked'; } } return 'no-rail'; })()");
+  await sleep(1500);
+  const tabClick = await evalInSpa(205, "(function(){ var ts = document.querySelectorAll('[role=tab]'); if (!ts.length) return 'no-tabs'; ts[ts.length - 1].click(); return 'clicked-last'; })()");
   await sleep(2500);
   // 4. read the visible xterm's text (round-264 method: visible .term-host
   //    .xterm-rows spans — hidden hosts exist per session)
   let found = false;
   for (let attempt = 0; attempt < 6 && !found; attempt++) {
-    const raw = await evalInSpa(201 + attempt, "(function(){ var hosts = document.querySelectorAll('.term-host'); var vis = null; for (var i=0;i<hosts.length;i++){ var r = hosts[i].getBoundingClientRect(); if (r.width > 50 && r.height > 50) { vis = hosts[i]; break; } } if (!vis) return 'NO_VISIBLE'; var rows = vis.querySelectorAll('.xterm-rows > div'); var all = ''; for (var j=0;j<rows.length;j++){ all += rows[j].textContent + '\\n'; } return all; })()");
+    const raw = await evalInSpa(201 + attempt, "(function(){ var hosts = document.querySelectorAll('.term-host'); var vis = null; for (var i=0;i<hosts.length;i++){ var r = hosts[i].getBoundingClientRect(); if (r.width > 50 && r.height > 50) { vis = hosts[i]; break; } } if (!vis) return 'NO_VISIBLE'; var rows = vis.querySelectorAll('.xterm-rows > div'); var all = ''; for (var j=0;j<rows.length;j++){ all += rows[j].textContent + String.fromCharCode(10); } return all; })()");
     if (raw && raw !== 'NO_VISIBLE' && raw.indexOf('PANEL-VIS-') >= 0) { found = raw.indexOf(marker) >= 0; break; }
     if (raw && raw !== 'NO_VISIBLE') { found = raw.indexOf(marker) >= 0; }
     await sleep(2000);
