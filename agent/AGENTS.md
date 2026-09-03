@@ -269,6 +269,18 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   VERIFIED on d1 (WebContentsView overlaying the SPA slot, AI driving the
   same target); AI drive-path switch (playwright target = embedded view);
   ValePlaywright task re-register on d1 via next `vale update`.
+  ROUND-247 (2026-09-26, 1.2.245 LIVE on d1): embedded real browser
+  DEVICE-VERIFIED end-to-end on d1 — SPA Browser page mounts
+  EmbeddedBrowserPane (slot ready=1, "native render" badge), main process
+  creates the WebContentsView (a first-class CDP target on :9333 alongside
+  the desktop SPA), Page.navigate drove it to https://example.com, and the
+  view's DOM reads "Example Domain ~ Example Domain" + a 1093x517 PNG
+  capture confirms real GPU rendering. AI can attach to the view target on
+  the SAME :9333 endpoint it already drives. ValePlaywright task verified
+  re-registered with the probe launcher (9223 attach when bridge up).
+  Remaining OPEN: SPA-side polish for the embedded pane (nav buttons/zoom/
+  evidence drawer parity with the screenshot pane), AI drive-path default
+  to the embedded target, and the fullscreen/zoom UX on the real view.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
