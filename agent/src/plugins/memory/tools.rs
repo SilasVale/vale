@@ -210,7 +210,7 @@ fn tool_update(store: Arc<MemoryStore>) -> ToolDef {
                     .get("tags")
                     .and_then(|v| v.as_array())
                     .map(|a| a.iter().filter_map(|t| t.as_str().map(|s| sanitize(s.to_string().as_str()))).collect());
-                let namespace = params.get("namespace").and_then(|v| v.as_str()).map(|s| sanitize(s));
+                let namespace = params.get("namespace").and_then(|v| v.as_str()).map(sanitize);
                 let deleted = params.get("deleted").and_then(|v| v.as_bool());
                 let ok = store.update(&id, title, content, tags, namespace, deleted);
                 if ok {

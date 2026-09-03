@@ -419,9 +419,9 @@ impl SessionLogger {
     /// prune. Returns the number of files removed.
     pub fn prune_stale(&self, max_age_days: u64) -> usize {
         use std::time::{Duration, SystemTime};
-        let Ok(now_unix) = SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        if SystemTime::now().duration_since(std::time::UNIX_EPOCH).is_err() {
             return 0;
-        };
+        }
         let max_age = Duration::from_secs(max_age_days.saturating_mul(86_400));
         let mut removed = 0;
         let Ok(entries) = std::fs::read_dir(&self.dir) else { return 0 };
