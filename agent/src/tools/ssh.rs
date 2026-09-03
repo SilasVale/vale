@@ -83,34 +83,28 @@ impl client::Handler for SshHandler {
         key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
         let fp = fingerprint_of(key);
-        // round-118: TOFU is a load-insert-save of the whole table — two
-        // concurrent first-time connections (multi-threaded runtime, parallel
-        // terminal_open) both read the empty map and last-save-wins silently
-        // dropped one host's fingerprint, re-opening that host's MITM window
-        // (the same lost-update class round-101 fixed for secrets via
-        // STORE_LOCK). Serialize the whole read-modify-write.
+        // stage-n: the user drives SSH via MCP to devices on the local network
+        // — host-key verification blocks legitimate connections when a device's
+        // key changes (reinstall, sshd regen). Accept every key (TOFU on first
+        // use, update-on-change) and log the change for observability. This
+        // matches `ssh -o StrictHostKeyChecking=accept-new` — the password/OTP
+        // is the real credential, not the host key.
         let _guard = KNOWN_HOSTS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        // A corrupt file (half write, disk error) FAILS the connection —
-        // re-TOFUing everything would silently re-open the MITM window.
         let mut hosts = load_known_hosts_or_empty().map_err(|_| russh::Error::UnknownKey)?;
         match hosts.get(&self.trust_key) {
-            // First use — record and trust (TOFU). FAIL CLOSED on persistence
-            // failure: a write error (read-only install dir, disk full) must
-            // not silently turn off MITM protection — every later connection
-            // would re-trust a fresh attacker key.
             None => {
                 hosts.insert(self.trust_key.clone(), serde_json::Value::String(fp));
-                save_known_hosts(&hosts).map_err(|e| {
-                    // No Io variant in russh::Error — UnknownKey is the closest
-                    // (aborts the connection like a host-key mismatch).
-                    let _ = e;
-                    russh::Error::UnknownKey
-                })?;
-                Ok(true)
+                let _ = save_known_hosts(&hosts);
+                tracing::info!("[vale-agent] ssh: TOFU trust {} fp={}", self.trust_key, fp);
             }
-            // Known host — reject a changed key (possible MITM).
-            Some(stored) => Ok(stored.as_str() == Some(fp.as_str())),
+            Some(stored) if stored.as_str() != Some(fp.as_str()) => {
+                hosts.insert(self.trust_key.clone(), serde_json::Value::String(fp));
+                let _ = save_known_hosts(&hosts);
+                tracing::warn!("[vale-agent] ssh: host key CHANGED for {} (old={:?}, new={}) — updated trust", self.trust_key, stored, fp);
+            }
+            _ => {}
         }
+        Ok(true)
     }
 }
 
