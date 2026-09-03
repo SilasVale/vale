@@ -398,6 +398,22 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   (cn.bing.com view + desktop SPA); playwright drives the dedicated view
   (goto example.com) while the main window stays on /desktop/ untouched
   (DEDICATED_VIEW_DRIVEN_MAIN_SAFE).
+  ROUND-260..262 (2026-09-04, 1.2.264/1.2.265 LIVE on d1): dead-code
+  sweep per user direction ("不用的代码就删除"):
+  - ROUND-260: Evidence-toggle attention flash when AI starts a burst.
+  - ROUND-261 (1.2.264): mode-B JPEG screenshot stream removed — the
+    plain-web BrowserPage fallback (BrowserPane/useBrowser: WS screencast,
+    HTTP frame proxy) is gone; plain web shows "browser needs the Vale
+    desktop app". Panel 82 tests; -16KB panel.js. DEVICE-VERIFIED.
+  - ROUND-262 (1.2.265): agent-side bridge screenshot service removed —
+    ws_relay.rs module, /api/browser/frame+input proxy, /api/browser/ws +
+    ws-ticket, main.rs bridge autostart+supervision (169 lines), bridge.js
+    staging in update flow. pwshots/pwshot/actions KEPT (AI evidence).
+    Extension slimmed to studio-links only (browser-control pairing/popup/
+    lib/terminal deleted; manifest studio-only). design plugin PAGES no
+    longer embeds extension pages. Rust 194 / clippy clean.
+    DEVICE-VERIFIED: exe has no ws_relay/ws-ticket strings; ws-ticket ->
+    generic not-found; pwshots 200.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
