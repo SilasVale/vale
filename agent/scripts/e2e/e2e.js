@@ -141,9 +141,11 @@ async function sectionBrowser() {
   check('browser_run_script drives view', br && br.exit_code === 0 && out.includes('TITLE=Example Domain'),
     out.trim().slice(0, 80));
   // SPA address bar should now show example.com (did-navigate push).
-  // Give the did-navigate IPC a beat; then poll the bar a few times (the
-  // SPA may be mid-render right after the view navigated).
-  await sleep(2500);
+  // NOTE: right after a playwright-driven navigation the SPA can take
+  // several seconds to respond to Runtime.evaluate (observed undefined
+  // result.value ~3s after nav, fine at ~8s — Electron CDP quirk), so
+  // poll generously and tolerate malformed/empty responses.
+  await sleep(4000);
   const list = await (await fetch('http://127.0.0.1:9333/json/list')).json();
   const spa = list.find((t) => t.url.includes('/desktop/'));
   if (!spa) { check('browser SPA bar sync', false, 'no desktop SPA target'); return; }
@@ -152,25 +154,29 @@ async function sectionBrowser() {
   // read the bar; if the SPA is not on the Browser page, click the rail first
   const evalUrl = async () => {
     const r = await new Promise((resolve) => {
-      const t = setTimeout(() => resolve(''), 15000);
+      const t = setTimeout(() => resolve(null), 15000);
       const onMsg = (m) => {
         const o = JSON.parse(m.data);
-        if (o.id === 100) { clearTimeout(t); ws.removeEventListener('message', onMsg); resolve((o.result && o.result.value) || ''); }
+        if (o.id === 100) { clearTimeout(t); ws.removeEventListener('message', onMsg); resolve(o); }
       };
       ws.addEventListener('message', onMsg);
       ws.send(JSON.stringify({ id: 100, method: 'Runtime.evaluate',
         params: { expression: "JSON.stringify({ onBrowser: !!document.querySelector('.browser-url'), url: (document.querySelector('.browser-url')||{}).value || '' })", returnByValue: true } }));
     });
-    return r;
+    // tolerate the Electron quirk where result.value is missing on the
+    // first evaluates after a nav
+    try {
+      const raw = r && r.result && r.result.result && r.result.result.value;
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
   };
   let state = { onBrowser: false, url: '' };
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const s1 = await evalUrl();
-    const parsed = s1 ? JSON.parse(s1) : null;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const parsed = await evalUrl();
     if (parsed && parsed.url && parsed.url.includes('example.com')) { state = parsed; break; }
     if (parsed) state = parsed;
     if (parsed && !parsed.onBrowser) { state = parsed; break; } // need rail click below
-    await sleep(1500);
+    await sleep(2000);
   }
   if (!state.onBrowser) {
     await new Promise((resolve) => {
