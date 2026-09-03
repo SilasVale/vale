@@ -56,6 +56,16 @@ jobs:
             exit 1
           fi
           cp target/x86_64-pc-windows-msvc/release/vale-agent.exe vale-agent-npm/vale-agent.exe
+          # round-298 lesson: bin/vale.js is a COMMITTED tsc artifact; a
+          # stale copy (source changed, build not re-run) would ship the
+          # old CLI. Compile it fresh — typescript + @types/node only (the
+          # electron postinstall download is not needed for tsc).
+          # vale-agent-npm package.json is os:win32 — --force skips the
+          # platform check on the Linux runner.
+          (cd vale-agent-npm && npm install --no-save --ignore-scripts --force typescript@5 @types/node@22)
+          (cd vale-agent-npm && ./node_modules/.bin/tsc -p tsconfig.json)
+          cp vale-agent-npm/dist/vale.js vale-agent-npm/bin/vale.js
+          grep -q "vale-release" vale-agent-npm/bin/vale.js || { echo "::error::compiled bin/vale.js missing round-298 marker"; exit 1; }
           cd vale-agent-npm && npm pack
           # round-278/282 lesson: verify the packed tgz ships every file the
           # device update flow swaps (a missing file silently keeps the stale
