@@ -21,6 +21,8 @@
 //                  verification, now repeatable)
 //   6. evidence  — an AI screenshot lands in pwout and /api/browser/pwshots
 //                  (the Evidence drawer data source) lists it
+//   7. mcp       — stdio connect auto-selects the embedded view; the first
+//                  browser_navigate drives it (round-281 regression)
 //
 // Usage:
 //   node e2e.js --token <agent-token> [--base http://127.0.0.1:18080]
@@ -190,6 +192,27 @@ async function sectionPanel() {
   });
 }
 
+// ── 4c2. mcp: stdio connect auto-selects the embedded view (round-281) ──
+async function sectionMcp() {
+  // Regression for round-281: mcp_client_connect (stdio -> bundled
+  // playwright-mcp) must auto-select the EMBEDDED-VIEW tab so the first
+  // browser_navigate drives the page the user watches (not the desktop SPA).
+  const marker = 'mcp-autoselect-' + Date.now();
+  const c = await tool('mcp_client_connect', { name: 'pw', transport: 'stdio' });
+  check('mcp connect', c && c.status === 'connected', (c && c.status) || JSON.stringify(c).slice(0, 60));
+  // NO manual tab select — the auto-select must have happened inside connect
+  const nav = await tool('mcp_client_call', { tool: 'browser_navigate', arguments: { url: 'https://example.com/' + marker } });
+  check('mcp navigate ok', nav && nav.ok, (nav && JSON.stringify(nav).slice(0, 60)) || 'no result');
+  await sleep(6000);
+  // the embedded view target must be AT the marker URL; the SPA must be intact
+  const list = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+  const embedded = list.find((t) => !t.url.includes('/desktop/'));
+  const spaOk = list.some((t) => t.url.includes('/desktop/'));
+  check('mcp drives embedded view', embedded && embedded.url.includes(marker), (embedded && embedded.url.slice(0, 60)) || 'NO VIEW');
+  check('mcp SPA intact', spaOk, 'targets=' + list.length);
+  await tool('mcp_client_disconnect', {}).catch(() => {});
+}
+
 // ── 4c. evidence: an AI screenshot lands in pwout and shows in pwshots ────
 async function sectionEvidence() {
   // 1. AI takes a screenshot of the embedded view (browser_run_script,
@@ -308,6 +331,7 @@ async function sectionBrowser() {
     if (want('file')) await sectionFile();
     if (want('workflow')) await sectionWorkflow();
     if (want('panel') && !NO_BROWSER) await sectionPanel();
+    if (want('mcp') && !NO_BROWSER) await sectionMcp();
     if (want('evidence') && !NO_BROWSER) await sectionEvidence();
     if (want('browser') && !NO_BROWSER) await sectionBrowser();
   } catch (e) {
