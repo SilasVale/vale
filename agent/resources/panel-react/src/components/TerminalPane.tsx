@@ -6,6 +6,7 @@ import { callTool } from "../lib/api";
 import { getTheme, onThemeChange } from "../lib/theme";
 import { Icon } from "../ui/Icon";
 import type { Session } from "../hooks/useSessions";
+import { adoptNeedsAnotherPage } from "../lib/terminalAdopt";
 
 // TerminalPane owns one xterm instance per session (imperative — xterm is
 // DOM-heavy and must NOT re-render on React state changes). It registers a
@@ -191,28 +192,55 @@ export function TerminalPane({ session, registerWrite }: {
     // the duplicate). Read INCREMENTALLY from the current rendered offset
     // (the same dedup the 5s sync loop uses): bytes SSE already delivered
     // are skipped, nothing is re-written.
-    callTool("terminal_read", { session_id: session.sid, offset: renderedRef.current, clean: false })
-      .then((r: any) => {
-        if (r?.evicted) { renderedRef.current = 0; return; }
-        if (!r || (!r.text && !r.raw)) return;
-        const skip = Math.max(0, renderedRef.current - Number(r.start));
-        if (r.raw) {
-          const bin = atob(r.raw);
-          const bytes = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-          if (skip < bytes.length) {
-            term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
-            renderedRef.current = Math.max(renderedRef.current, Number(r.start) + bytes.length);
+    // round-246 (terminal-display audit HIGH-3): ONE read is capped at 1 MiB
+    // server-side (read_spill), so a chatty AI session (>1 MiB before a human
+    // opens its tab) had its HEAD silently dropped — renderedRef jumped to
+    // the tail and the skipped bytes were never re-read. Adopt now PAGES:
+    // each response carries the absolute `end` cursor; while it is ahead of
+    // what we have rendered, chain the next read. Event-driven (a read only
+    // fires when the previous one returned more data) — no timers, no polls.
+    // The dedup below (skip = rendered - start) keeps SSE frames that arrive
+    // DURING the chain from being duplicated, exactly as the single-read
+    // version did.
+    const MAX_ADOPT_PAGES = 64; // hard bound — a wedged server cannot loop us
+    const adoptPage = (attempt: number): void => {
+      if (attempt > MAX_ADOPT_PAGES) return;
+      callTool("terminal_read", { session_id: session.sid, offset: renderedRef.current, clean: false })
+        .then((r: any) => {
+          if (r?.evicted) { renderedRef.current = 0; return; }
+          if (!r || (!r.text && !r.raw)) return; // end of buffer
+          const skip = Math.max(0, renderedRef.current - Number(r.start));
+          let advanced = false;
+          if (r.raw) {
+            const bin = atob(r.raw);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            if (skip < bytes.length) {
+              term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
+              renderedRef.current = Math.max(renderedRef.current, Number(r.start) + bytes.length);
+              advanced = true;
+            }
+          } else if (skip >= 0 && r.text) {
+            const bytes = new TextEncoder().encode(r.text);
+            if (skip < bytes.length) {
+              term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
+              renderedRef.current = Math.max(renderedRef.current, Number(r.start) + bytes.length);
+              advanced = true;
+            }
           }
-        } else if (skip >= 0 && r.text) {
-          const bytes = new TextEncoder().encode(r.text);
-          if (skip < bytes.length) {
-            term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
-            renderedRef.current = Math.max(renderedRef.current, Number(r.start) + bytes.length);
+          // round-246: page while the server says more exists. `end` is the
+          // absolute cursor just past the returned bytes; a response that
+          // advanced rendered but whose end is STILL ahead means the 1 MiB
+          // cap truncated us — read on. If nothing advanced (SSE already
+          // delivered everything, or end <= rendered), we are caught up.
+          // Pure decision lives in lib/terminalAdopt (unit-tested).
+          if (adoptNeedsAnotherPage(r, renderedRef.current, advanced)) {
+            adoptPage(attempt + 1);
           }
-        }
-      })
-      .catch(() => {});
+        })
+        .catch(() => {});
+    };
+    adoptPage(0);
 
     return () => {
       offTheme();
