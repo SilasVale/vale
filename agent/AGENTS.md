@@ -724,6 +724,15 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   while the device ran 1.2.x. status adds "release" = <install>/.vale-
   release (written by BOTH swap paths, round-298/298b), omitted when
   absent. Device-verified: version=1.0.145 release=1.2.276.
+  ROUND-305 (2026-09-04, 1.2.278 LIVE on d1): http auto-select session-
+  recycle fix — 1.2.276's mcp e2e was 7/8 (http "drives embedded view"
+  FAIL, stdio PASS). Diag ([select] RAW list result: null) showed the
+  http arm's browser_tabs returned NULL on a recycled session (round-137
+  reap) — auto-select lacked mcp_client_call's heal-first behavior, so
+  every retry listed on the DEAD session forever. Fix: empty http list
+  result -> heal_and_restore (re-handshake) before the next retry.
+  1.2.277 shipped the raw-result diag; 1.2.278 the fix. Device-verified
+  mcp 8/8 (http drives embedded view PASS again).
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
