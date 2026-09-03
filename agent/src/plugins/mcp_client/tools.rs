@@ -366,6 +366,18 @@ async fn connect_http(url: String) -> Result<serde_json::Value, DeviceError> {
         *guard = Some(sess);
     }
 
+    // round-281d: same embedded-view auto-select as the stdio arm. Only
+    // when the desktop CDP is up AND the connected server exposes
+    // browser_tabs (i.e. it IS a playwright-mcp driving the desktop) —
+    // foreign MCP servers must never receive this call.
+    if desktop_cdp_up() && tools.iter().any(|(n, _)| n == "browser_tabs") {
+        let mut guard = SESSION.lock().await;
+        if let Some(sess) = guard.as_mut() {
+            let _ = select_embedded_view_tab(sess).await;
+        }
+        drop(guard);
+    }
+
     Ok(json!({
         "status": "connected",
         "url": url,
