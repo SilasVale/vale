@@ -700,6 +700,11 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   extension row → Vale Studio Links (round-262); design-doc pointer →
   current desktop-core spec. "bridges to playwright" in the mcp-client
   description is the LIVE architecture (verb, not the bridge component).
+  ROUND-337 (2026-09-04): doc-link integrity check — extension/README +
+  index/README verified current (both clean); no dead cross-refs in any
+  guide/README (remaining vale-agent-1.2.179 mentions are round-336's
+  own history log). Live download paths all 200 (/, version.json,
+  latest.tgz). CI 01f16da1 GREEN.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
