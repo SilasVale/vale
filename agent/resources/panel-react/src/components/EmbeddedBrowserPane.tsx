@@ -85,6 +85,10 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
     wv.addEventListener("did-navigate-in-page", onNav);
     wv.addEventListener("page-title-updated", onTitle);
     wv.addEventListener("new-window", onNewWindow);
+    // round-249: allowpopups MUST be set as a real attribute for Electron to
+    // let target=_blank fire new-window (React drops bare boolean attrs on
+    // custom elements). With it, the new-window handler navigates in-view.
+    try { wv.setAttribute("allowpopups", ""); } catch { /* not a webview env */ }
     // Announce the guest (its webContents id) once it exists.
     try { void b.announceGuest(wv.getWebContentsId()); } catch { /* pre-attach */ }
     try { const u = wv.getURL(); if (u) setUrl(u); } catch { /* not ready */ }
@@ -138,13 +142,14 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
       {/* The REAL browser: an Electron <webview>. In plain browsers this
           element is inert/absent and this pane never mounts. */}
       <div className="browser-viewport browser-embedded-slot">
+        {/* allowpopups is set imperatively in the mount effect (React's
+            boolean-attribute handling drops it from custom elements). */}
         <webview
           ref={wvRef as any}
           id="vale-embedded-webview"
           className="browser-webview"
           src="https://www.wikipedia.org"
           partition="persist:vale-embedded"
-          allowpopups
           style={{ width: "100%", height: "100%", display: "flex" }}
         />
         {!ready && (
