@@ -33,7 +33,9 @@ interface EmbeddedBridge {
   zoom: (factor: number) => Promise<unknown>;
   place: (bounds: { x: number; y: number; width: number; height: number } | null) => Promise<unknown>;
   state: () => Promise<{ ok: boolean; url?: string; canBack?: boolean; canFwd?: boolean; visible?: boolean }>;
+  recover: () => Promise<unknown>;
   onNav: (handler: (s: EmbeddedNavState) => void) => () => void;
+  onGone: (handler: (d: { reason: string; exitCode: number }) => void) => () => void;
 }
 
 function bridge(): EmbeddedBridge | null {
@@ -57,6 +59,9 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   const aiActive = useAiActivityPulse("", token);
   // round-255: AI evidence drawer (screenshots + action log) — on-demand.
   const [evOpen, setEvOpen] = useState(false);
+  // round-256: the embedded view's renderer crashed (reason text for the
+  // recovery banner).
+  const [goneReason, setGoneReason] = useState<string | null>(null);
 
   // Report the slot bounds to the main process so it can position the real
   // WebContentsView over it. Bounds are relative to the window content — the
@@ -91,6 +96,13 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
       if (!urlEditingRef.current && s.url) setUrl(s.url);
       setCanBack(s.canBack);
       setCanFwd(s.canFwd);
+      // A nav event after a crash means the view recovered — clear the banner.
+      setGoneReason(null);
+    });
+    // round-256: renderer crash → show the recovery banner.
+    const offGone = b.onGone((d) => {
+      setGoneReason(d.reason || `exit ${d.exitCode}`);
+      setReady(false);
     });
     reportBounds();
     const el = slotRef.current;
@@ -102,11 +114,20 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
       ro.disconnect();
       window.removeEventListener("resize", reportBounds);
       offNav();
+      offGone();
       // Leaving the page: hide the embedded view so it does not linger over
       // other SPA pages.
       void b.place(null);
     };
   }, [reportBounds]);
+
+  // round-256: user taps the recovery button → main process force-recreates
+  // the view and navigates to the last URL.
+  const recover = useCallback(() => {
+    setGoneReason(null);
+    setReady(false);
+    void bridge()?.recover();
+  }, []);
 
   const navigate = useCallback((fromSubmit?: boolean) => {
     const b = bridge();
@@ -182,10 +203,22 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
         className={`browser-viewport browser-embedded-slot${evOpen ? " drawer-open" : ""}`}
         data-ready={ready ? "1" : "0"}
       >
-        {!ready && (
+        {!ready && !goneReason && (
           <div className="browser-placeholder">
             <Icon name="browser" size={30} />
             <p>Starting embedded browser…</p>
+          </div>
+        )}
+        {/* round-256: renderer crash — recovery banner (the main process
+            hides the dead native view so this SPA overlay shows through). */}
+        {goneReason && (
+          <div className="browser-crash-banner">
+            <Icon name="browser" size={24} />
+            <div>
+              <strong>The embedded browser crashed</strong>
+              <span className="browser-crash-reason">reason: {goneReason}</span>
+            </div>
+            <button className="btn btn-mini browser-crash-recover" onClick={recover}>Reload browser</button>
           </div>
         )}
       </div>

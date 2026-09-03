@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { BrowserPage } from "../BrowserPage";
 
 // round-246: the Electron shell (window.valeEmbedded) must render the REAL
@@ -37,6 +37,8 @@ describe("BrowserPage", () => {
       place: vi.fn().mockResolvedValue({ ok: true }),
       state: vi.fn().mockResolvedValue({ ok: true, url: "https://example.com", canBack: true, canFwd: false, visible: true }),
       onNav: vi.fn().mockReturnValue(() => {}),
+      recover: vi.fn().mockResolvedValue({ ok: true }),
+      onGone: vi.fn().mockReturnValue(() => {}),
     };
     const { container } = render(<BrowserPage plugins={pluginsStub} token="t" />);
     // The embedded controller mounts its slot (no screenshot <img>).
@@ -63,6 +65,8 @@ describe("BrowserPage", () => {
       place: vi.fn().mockResolvedValue({ ok: true }),
       state: vi.fn().mockResolvedValue({ ok: true, url: "", canBack: false, canFwd: false, visible: true }),
       onNav: vi.fn().mockReturnValue(() => {}),
+      recover: vi.fn().mockResolvedValue({ ok: true }),
+      onGone: vi.fn().mockReturnValue(() => {}),
     };
     render(<BrowserPage plugins={pluginsStub} token="t" />);
     const input = screen.getByPlaceholderText(/press Enter/i) as HTMLInputElement;
@@ -74,5 +78,32 @@ describe("BrowserPage", () => {
     await waitFor(() => expect(navMock).toHaveBeenCalledWith("https://example.com"));
     // Chrome-style: the address bar releases focus after submit.
     await waitFor(() => expect(document.activeElement).not.toBe(input));
+  });
+
+  it("shows a crash banner on renderer-gone and recovers on click (round-256)", async () => {
+    let goneHandler: ((d: { reason: string; exitCode: number }) => void) | null = null;
+    const recoverMock = vi.fn().mockResolvedValue({ ok: true });
+    (window as any).valeEmbedded = {
+      navigate: vi.fn().mockResolvedValue({ ok: true }),
+      back: vi.fn().mockResolvedValue({ ok: true }),
+      fwd: vi.fn().mockResolvedValue({ ok: true }),
+      reload: vi.fn().mockResolvedValue({ ok: true }),
+      place: vi.fn().mockResolvedValue({ ok: true }),
+      state: vi.fn().mockResolvedValue({ ok: true, url: "https://example.com", canBack: false, canFwd: false, visible: true }),
+      onNav: vi.fn().mockReturnValue(() => {}),
+      recover: recoverMock,
+      onGone: vi.fn().mockImplementation((h: (d: { reason: string; exitCode: number }) => void) => {
+        goneHandler = h;
+        return () => {};
+      }),
+    };
+    const { container } = render(<BrowserPage plugins={pluginsStub} token="t" />);
+    // Simulate a renderer crash pushed from the main process.
+    act(() => { goneHandler?.({ reason: "crashed", exitCode: 0 }); });
+    expect(container.querySelector(".browser-crash-banner")).toBeTruthy();
+    expect(screen.getByText(/The embedded browser crashed/)).toBeTruthy();
+    // Click Reload browser → main-process recover.
+    fireEvent.click(container.querySelector(".browser-crash-recover")!);
+    await waitFor(() => expect(recoverMock).toHaveBeenCalled());
   });
 });

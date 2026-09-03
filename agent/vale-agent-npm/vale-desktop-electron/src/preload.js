@@ -28,6 +28,9 @@ electron_1.contextBridge.exposeInMainWorld("valeEmbedded", {
     zoom: (factor) => electron_1.ipcRenderer.invoke("embedded-browser:zoom", factor),
     place: (bounds) => electron_1.ipcRenderer.invoke("embedded-browser:place", bounds),
     state: () => electron_1.ipcRenderer.invoke("embedded-browser:state"),
+    // round-256: recovery after a renderer crash — the main process force-
+    // re-creates the view and navigates to the last URL.
+    recover: () => electron_1.ipcRenderer.invoke("embedded-browser:recover"),
     // round-247: real-navigation pushes from the main process (URL/title/
     // history state after every actual navigation). Returns an unsubscribe fn.
     onNav: (handler) => {
@@ -39,6 +42,18 @@ electron_1.contextBridge.exposeInMainWorld("valeEmbedded", {
         };
         electron_1.ipcRenderer.on("embedded-browser:nav", listener);
         return () => electron_1.ipcRenderer.removeListener("embedded-browser:nav", listener);
+    },
+    // round-256: the embedded view's renderer crashed (reason + exitCode).
+    // Returns an unsubscribe fn.
+    onGone: (handler) => {
+        const listener = (_e, d) => {
+            try {
+                handler(d);
+            }
+            catch { /* SPA-side */ }
+        };
+        electron_1.ipcRenderer.on("embedded-browser:gone", listener);
+        return () => electron_1.ipcRenderer.removeListener("embedded-browser:gone", listener);
     },
 });
 // Desktop-app settings + menu bridge (Electron-specific — hidden when running

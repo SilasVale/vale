@@ -334,6 +334,9 @@ electron_1.ipcMain.handle("browser-session:list", (e) => frameOk(e) ? browserLis
 let embeddedView = null;
 let embeddedVisible = false;
 let embeddedUrl = "about:blank";
+// round-256: last placed bounds — kept so a renderer-crash recovery can
+// re-show the fresh view at the same spot without waiting for the SPA.
+let embeddedBounds = null;
 function embeddedViewEnsure() {
     if (embeddedView && !embeddedView.webContents.isDestroyed())
         return embeddedView;
@@ -390,6 +393,7 @@ function embeddedViewPlace(bounds) {
         embeddedVisible = false;
         return;
     }
+    embeddedBounds = bounds;
     view.setBounds(bounds);
     view.setVisible(true);
     embeddedVisible = true;
@@ -458,7 +462,58 @@ function embeddedWireNavEvents(view) {
     wc.on("did-navigate", push);
     wc.on("did-navigate-in-page", push);
     wc.on("page-title-updated", push);
+    // round-256: the embedded view's RENDERER can crash (process-gone) or hang
+    // mid-load (did-fail-load). Push a `gone` event so the SPA shows a recovery
+    // state instead of "Starting…" forever; the SPA then offers a reload.
+    wc.on("render-process-gone", (_e, details) => {
+        if (!win || win.isDestroyed())
+            return;
+        // Hide the dead view so the SPA's recovery banner (which paints under
+        // the native view) becomes visible in the slot.
+        try {
+            view.setVisible(false);
+        }
+        catch { /* already gone */ }
+        embeddedVisible = false;
+        win.webContents.send("embedded-browser:gone", {
+            reason: details.reason,
+            exitCode: details.exitCode,
+        });
+    });
 }
+/** round-256: recover the embedded view after a RENDERER CRASH. A
+ *  process-gone renderer usually leaves the webContents object alive but
+ *  dead — loadURL on it never recovers, so force a full re-create: drop the
+ *  old view (destroy + remove) and build a fresh one via embeddedViewEnsure,
+ *  then navigate to the last URL (or a default). */
+function embeddedRecover() {
+    try {
+        if (embeddedView && !embeddedView.webContents.isDestroyed()) {
+            embeddedView.webContents.close({ waitForBeforeUnload: false });
+        }
+        if (embeddedView) {
+            try {
+                win?.contentView.removeChildView(embeddedView);
+            }
+            catch { /* already gone */ }
+            embeddedView = null;
+        }
+    }
+    catch { /* fall through to ensure() */ }
+    const view = embeddedViewEnsure();
+    if (!view || view.webContents.isDestroyed())
+        return { ok: false };
+    const url = embeddedUrl && embeddedUrl !== "about:blank" ? embeddedUrl : "https://www.bing.com";
+    view.webContents.loadURL(url).catch(() => { });
+    // Re-show if the SPA slot is live (bounds were placed before the crash).
+    if (embeddedVisible && win && embeddedBounds) {
+        view.setBounds(embeddedBounds);
+        view.setVisible(true);
+        win.contentView.addChildView(view);
+    }
+    return { ok: true };
+}
+electron_1.ipcMain.handle("embedded-browser:recover", (e) => frameOk(e) ? embeddedRecover() : { ok: false });
 electron_1.ipcMain.handle("embedded-browser:navigate", (e, url) => frameOk(e) ? embeddedNavigate(String(url || "")) : { ok: false, error: "forbidden frame" });
 electron_1.ipcMain.handle("embedded-browser:back", (e) => frameOk(e) ? embeddedGo(-1) : { ok: false });
 electron_1.ipcMain.handle("embedded-browser:fwd", (e) => frameOk(e) ? embeddedGo(1) : { ok: false });

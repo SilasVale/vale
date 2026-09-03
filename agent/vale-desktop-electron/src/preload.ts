@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("valeEmbedded", {
   place: (bounds: { x: number; y: number; width: number; height: number } | null) =>
     ipcRenderer.invoke("embedded-browser:place", bounds),
   state: () => ipcRenderer.invoke("embedded-browser:state"),
+  // round-256: recovery after a renderer crash — the main process force-
+  // re-creates the view and navigates to the last URL.
+  recover: () => ipcRenderer.invoke("embedded-browser:recover"),
   // round-247: real-navigation pushes from the main process (URL/title/
   // history state after every actual navigation). Returns an unsubscribe fn.
   onNav: (handler: (s: { url: string; canBack: boolean; canFwd: boolean; title: string }) => void) => {
@@ -37,6 +40,15 @@ contextBridge.exposeInMainWorld("valeEmbedded", {
     };
     ipcRenderer.on("embedded-browser:nav", listener as never);
     return () => ipcRenderer.removeListener("embedded-browser:nav", listener as never);
+  },
+  // round-256: the embedded view's renderer crashed (reason + exitCode).
+  // Returns an unsubscribe fn.
+  onGone: (handler: (d: { reason: string; exitCode: number }) => void) => {
+    const listener = (_e: unknown, d: { reason: string; exitCode: number }) => {
+      try { handler(d); } catch { /* SPA-side */ }
+    };
+    ipcRenderer.on("embedded-browser:gone", listener as never);
+    return () => ipcRenderer.removeListener("embedded-browser:gone", listener as never);
   },
 });
 
