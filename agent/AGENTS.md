@@ -435,6 +435,12 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   vale.ts no longer stages/compiles bridge.js; npm package no longer ships
   it; browser-bridge/ source deleted (1647 lines). Non-Electron installs
   fall back to playwright --headless. Rust 194 / clippy clean.
+  ROUND-266 (2026-09-04, 1.2.266 LIVE on d1): bidirectional device file
+  transfer for AI (user: "传文件到 d1 双向都要"). Added system_file_stat
+  (size/kind/modified_ms — call before a transfer to plan paging); raw
+  read cap 256KiB -> 1MiB (fewer pull round-trips). DEVICE-VERIFIED:
+  300KB upload via 2 append pages, stat size=307200, single-read download
+  complete (allA). Rust 196 / clippy clean.
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
