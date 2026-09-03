@@ -535,6 +535,17 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   carries only round-263 removal comments for 9223/bridge, no code); the
   exe binaries are correctly untracked (CI builds them into the pack).
   npm CLI tests 2/2 green. No further gaps found.
+  ROUND-280 (2026-09-04): REAL MCP CHANNEL verified on d1 — the path real
+  AI clients use (NOT the E2E suite's HTTP /api/tools): mcp_client_connect
+  (stdio transport -> bundled playwright-mcp, 24 tools) -> mcp_client_call
+  browser_tabs action=select index=1 (the embedded view; playwright-mcp
+  DEFAULT-SELECTS TAB 0 = the desktop SPA — the round-258 tripwire
+  protects the main window from stray navigation, but AI must select the
+  embedded-view tab before driving or the panel never shows it) ->
+  browser_navigate https://example.com/mcp-view-test -> SPA address bar
+  synced to that URL. NOTE for future rounds: consider auto-selecting the
+  embedded-view tab on connect, or documenting the select step for AI
+  clients.
 
 ### Current release
 - npm **1.2.267 LIVE on d1 (round-274)** — Electron hidden-window render
