@@ -84,7 +84,15 @@ fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
                     .and_then(|v| v.as_array())
                     .map(|a| a.iter().filter_map(|t| t.as_str().map(|s| s.to_string())).collect())
                     .unwrap_or_default();
-                let namespace = params.get("namespace").and_then(|v| v.as_str()).unwrap_or("shared").to_string();
+                let namespace = params
+                    .get("namespace")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("shared")
+                    .to_string();
+                // Memory audit MEDIUM: namespace was NEVER sanitized — a secret
+                // in namespace (password=secret) persisted raw and rode out
+                // through search/list/export. Sanitize like title/content/tags.
+                let namespace = sanitize(&namespace);
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
@@ -202,7 +210,7 @@ fn tool_update(store: Arc<MemoryStore>) -> ToolDef {
                     .get("tags")
                     .and_then(|v| v.as_array())
                     .map(|a| a.iter().filter_map(|t| t.as_str().map(|s| sanitize(s.to_string().as_str()))).collect());
-                let namespace = params.get("namespace").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let namespace = params.get("namespace").and_then(|v| v.as_str()).map(|s| sanitize(s));
                 let deleted = params.get("deleted").and_then(|v| v.as_bool());
                 let ok = store.update(&id, title, content, tags, namespace, deleted);
                 if ok {

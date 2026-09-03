@@ -435,6 +435,9 @@ impl MemoryStore {
     pub fn search(&self, query: &str, namespace: Option<&str>, limit: usize) -> Vec<MemoryRecord> {
         // limit=0 must return 0 hits, not the first match (the old
         // check-AFTER-push semantics pushed one before comparing).
+        if limit == 0 {
+            return Vec::new();
+        }
         let limit = limit.max(1);
         self.rebuild_order();
         // Multi-word AND matching: the query is split on whitespace and EVERY

@@ -91,24 +91,33 @@ fn redact_line(line: &str) -> String {
         let (head, _) = line.split_at(idx + 1);
         return format!("{head} <redacted>");
     }
-    // Bearer <long-token> on its own. Slice the TRIMMED line ("Bearer " is
-    // 7 ASCII bytes) — the old &line[..7] could panic mid-multibyte when the
-    // raw line carried non-ASCII indentation before "bearer".
+    // Bearer <long-token> on its own.
     if trimmed.to_lowercase().starts_with("bearer ") && trimmed.len() > 12 {
         return "Bearer <redacted>".to_string();
     }
     // key=value / key: value with secret-shaped key.
-    for sep in ["=", ": "] {
-        if let Some(idx) = line.find(sep) {
-            let key = line[..idx].trim().trim_matches('"');
-            let key_lower = key.to_lowercase();
-            if key_is_secret(&key_lower) {
-                let (head, _) = line.split_at(idx + sep.len());
-                return format!("{head}<redacted>");
+    // LOW fix: redact EVERY secret-shaped key=value, not just the first — the
+    // old code returned on the first separator match, so a line like
+    // "foo=bar password=secret" left "password=secret" raw.
+    let mut result = line.to_string();
+    loop {
+        let mut changed = false;
+        for sep in ["=", ": "] {
+            if let Some(idx) = result.find(sep) {
+                let key = result[..idx].trim().trim_matches('"');
+                if key_is_secret(&key.to_lowercase()) {
+                    let (head, _) = result.split_at(idx + sep.len());
+                    result = format!("{head}<redacted>");
+                    changed = true;
+                    break; // restart scan after modification
+                }
             }
         }
+        if !changed {
+            break;
+        }
     }
-    line.to_string()
+    result
 }
 
 /// Recursively redact a JSON value; returns (value, changed).
