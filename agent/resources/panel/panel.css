@@ -1458,8 +1458,9 @@ code {
 /* round-refactor: the frame used to grow to its natural 1280x800 ratio and
    overflow the viewport (bottom clipped); contain it fully instead. */
 .browser-frame {
-  width: 100%;
-  height: 100%;
+  /* stage-n: width/height are set inline via zoom percentage (100%=native).
+      object-fit: contain keeps the frame crisp at any zoom. The viewport has
+      overflow:auto, so zoom>100% yields native scrollbars instead of clipping. */
   object-fit: contain;
   display: block;
   cursor: text;
@@ -1702,6 +1703,7 @@ code {
   color: var(--faint, #666);
 }
 /* Evidence drawer — right-side panel over the viewport. */
+.browser-pane { position: relative; }
 .browser-ev-drawer {
   position: absolute;
   top: 0;
@@ -1718,8 +1720,17 @@ code {
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
   overflow-y: auto;
   z-index: 30;
+  /* stage-n: smooth open/close animation — always rendered, toggled via class. */
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.2s ease, opacity 0.2s ease;
 }
-.browser-pane { position: relative; }
+.browser-ev-drawer.open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
 .browser-ev-drawer .browser-ev-head {
   display: flex;
   align-items: center;
@@ -1849,6 +1860,13 @@ code {
 }
 .term-fontbar:hover { opacity: 1; }
 .term-reconnect {
+  /* stage-n: absolute overlay at the top of the terminal area — the old
+      in-flow banner pushed the whole terminal down on disconnect (layout shift). */
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1857,6 +1875,8 @@ code {
   font-weight: 600;
   color: var(--warn-ink);
   background: var(--warn-soft);
+  backdrop-filter: blur(2px);
+}
   border-bottom: 1px solid var(--line);
 }
 

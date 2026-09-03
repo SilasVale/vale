@@ -2,7 +2,7 @@
 // densities. Owns per-session view (terminal|trajectory), the Logs command
 // drawer, and the active session's command stream. The old App-level
 // detailsOpen/selectedCmdId state lives HERE now (design doc §5).
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Session } from "../hooks/useSessions";
 import { TabBar, type SessionView } from "./TabBar";
 import { Icon } from "../ui/Icon";
@@ -48,7 +48,6 @@ export function TerminalWorkspace({
   const [selectedCmdId, setSelectedCmdId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
-  const detailsRef = useRef<HTMLDivElement>(null);
   const sessionView: SessionView = density === "desktop"
     ? (controlledView ?? "terminal")
     : ((activeSid && sessionViews[activeSid]) || "terminal");

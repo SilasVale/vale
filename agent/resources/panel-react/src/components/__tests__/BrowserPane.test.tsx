@@ -175,8 +175,12 @@ describe("BrowserPane", () => {
       ],
       actions: [{ ts: 1700000000000, exit_code: 0, duration_ms: 42, script: "console.log(1)" }],
     });
-    // Drawer closed by default — the live viewport stays dominant.
-    expect(container.querySelector(".browser-ev-drawer")).toBeNull();
+    // Drawer is always rendered (round-fix: CSS class toggles open/close for
+    // the animation instead of mount/unmount which pops); closed by default —
+    // the live viewport stays dominant.
+    let drawer = container.querySelector(".browser-ev-drawer");
+    expect(drawer).toBeTruthy();
+    expect(drawer!.className).not.toContain("open");
 
     const toggle = container.querySelector<HTMLButtonElement>(".browser-ev-toggle")!;
     // Evidence poll (first tick fires on mount) feeds the counts into the toggle.
@@ -185,15 +189,18 @@ describe("BrowserPane", () => {
 
     fireEvent.click(toggle);
     expect(toggle.className).toContain("active");
-    const drawer = container.querySelector(".browser-ev-drawer");
+    drawer = container.querySelector(".browser-ev-drawer");
     expect(drawer).toBeTruthy();
+    expect(drawer!.className).toContain("open");
     expect(drawer!.textContent).toContain("AI screenshots (2)");
     expect(drawer!.textContent).toContain("AI actions (1)");
     expect(drawer!.querySelectorAll(".browser-ev-thumb").length).toBe(2);
 
-    // Close button collapses the drawer again.
+    // Close button collapses the drawer again (class-based, still mounted).
     fireEvent.click(drawer!.querySelector(".browser-ev-close")!);
-    expect(container.querySelector(".browser-ev-drawer")).toBeNull();
+    drawer = container.querySelector(".browser-ev-drawer");
+    expect(drawer).toBeTruthy();
+    expect(drawer!.className).not.toContain("open");
     expect(toggle.className).not.toContain("active");
   });
 

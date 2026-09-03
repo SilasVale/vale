@@ -279,8 +279,8 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                 ) : (
                   <div className="browser-actions-list">
                     {b.actions.map((a, ai) => (
-                      {/* stage-n: stable key from the action content so prepending a
-                        new action doesn't shift indices and reset scroll/expanded state. */}
+                    // stage-n: stable key from the action content so prepending a
+                    // new action doesn't shift indices and reset scroll/expanded state.
                     <div key={`${a.ts}:${a.script?.slice(0,40)}`} className={`browser-action${a.exit_code === 0 ? "" : a.exit_code === null ? " running" : " err"}`}>
                         <div className="browser-action-row">
                           <span className="browser-action-time">{new Date(a.ts).toLocaleTimeString()}</span>
@@ -299,7 +299,7 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
                         <div
                           className={`browser-action-script${expandedActions.has(`${a.ts}:${a.script?.slice(0,40)}`) ? " expanded" : ""}`}
                           onClick={() => setExpandedActions((prev) => {
-                            const key = \`${a.ts}:${a.script?.slice(0,40)}\`;
+                            const key = `${a.ts}:${a.script?.slice(0,40)}`;
                             const next = new Set(prev);
                             if (next.has(key)) next.delete(key); else next.add(key);
                             return next;
@@ -317,7 +317,6 @@ export default function BrowserPane({ apiBase, token, runner }: BrowserPaneProps
             </>
           )}
         </div>
-      )}
-    </div>
-  );
-}
+      </div>
+    );
+  }
