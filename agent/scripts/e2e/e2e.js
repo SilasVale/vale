@@ -255,7 +255,7 @@ async function sectionBrowser() {
     });
     await sleep(3000);
     const s2 = await evalUrl();
-    state = s2 ? JSON.parse(s2) : state;
+    state = s2 || state; // evalUrl already returns the parsed object or null
   }
   // wait for the close handshake so Node doesn't hit the UV_HANDLE_CLOSING assert
   await new Promise((resolve) => {
