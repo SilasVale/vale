@@ -227,7 +227,11 @@ async function mcpAutoselectProbe(tag, connArgs) {
   const snap = await tool('mcp_client_call', { tool: 'browser_snapshot', arguments: {} });
   const snapTxt = JSON.stringify(snap);
   // Snapshot line: `- link "Learn more" [ref=f1e6] [cursor=pointer]:`
-  const refMatch = /link "Learn more" \[ref=(\w+)\]/.exec(snapTxt);
+  // NOTE: snapTxt is JSON.stringify'd, so inner quotes are escaped \" and
+  // the text is double-escaped (\\") — match the ref after "Learn more"
+  // without depending on the exact quote escaping.
+  const lmIdx = snapTxt.indexOf('Learn more');
+  const refMatch = lmIdx >= 0 ? /\[ref=(\w+)\]/.exec(snapTxt.slice(lmIdx, lmIdx + 200)) : null;
   const clickRef = refMatch && refMatch[1];
   let clickOk = false;
   if (clickRef) {
