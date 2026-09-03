@@ -25,7 +25,9 @@ export function frameUrlOk(url: string): boolean {
 // AI-opened browser windows must never reach file://, javascript: or
 // arbitrary schemes through the CDP-driven session windows.
 export function sanitizeBrowserUrl(url?: string): string {
-  const t = (url || "about:blank").trim();
+  // stage-n preload audit LOW: coerce to string BEFORE trim() — a renderer
+  // passing a number/object would throw TypeError in the main process (DoS).
+  const t = String(url || "about:blank").trim();
   if (t === "about:blank") return t;
   try {
     const u = new URL(t);

@@ -176,8 +176,8 @@ const commands = {
     //    node.exe holds its image file locked, the Remove-Item/Expand-Archive
     //    pair silently skipped it, and the device was left with a playwright
     //    dir WITHOUT node.exe (bridge could never spawn again; observed d1).
-    sh(`powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*${DIR}*playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`);
-    sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${DIR}\\playwright'"`);
+    sh(`powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*${psq(DIR)}*playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`);
+    sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${psq(DIR)}\\playwright'"`);
     // 6. Legacy install dirs from retired installers (C:\vale-agent /
     //    D:\vale-agent). If the registry now points at a DIFFERENT dir and a
     //    legacy dir exists, it is a residue of the old channel — remove it
@@ -354,18 +354,34 @@ const commands = {
     // swap) interleave Copy-Item on *.new, leaving a half-written exe "ok".
     // setup REMOVES the marker; update now CREATES it (refuse if <10 min
     // old); the swap script clears it after restart.
+    // MEDIUM npm audit: use 'wx' exclusive-create so two racing updaters
+    // cannot BOTH pass the freshness check — the second openSync throws
+    // EEXIST and the WMI swap is never launched concurrently.
     const BUSYM = path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
     try {
-      const st = fs.statSync(BUSYM);
-      if (busyIsFresh(st.mtimeMs, Date.now())) {
-        console.error("update: another update looks in progress (" + BUSYM + " <10 min old) — wait, or delete the marker after a mid-swap reboot");
-        process.exit(1);
-      }
-    } catch { /* absent = free */ }
-    try {
       fs.mkdirSync(path.dirname(BUSYM), { recursive: true });
-      fs.writeFileSync(BUSYM, String(Date.now()));
-    } catch { /* best-effort guard */ }
+      const fd = fs.openSync(BUSYM, "wx");
+      fs.writeSync(fd, String(Date.now()));
+      fs.closeSync(fd);
+    } catch (e: any) {
+      if (e?.code === "EEXIST") {
+        // Exists → check freshness (the owner may have died mid-swap).
+        try {
+          const st = fs.statSync(BUSYM);
+          if (busyIsFresh(st.mtimeMs, Date.now())) {
+            console.error("update: another update looks in progress (" + BUSYM + " <10 min old) — wait, or delete the marker after a mid-swap reboot");
+            process.exit(1);
+          }
+          // Stale marker — overwrite it.
+          fs.writeFileSync(BUSYM, String(Date.now()));
+        } catch {
+          console.error("update: another update looks in progress (cannot stat " + BUSYM + ")");
+          process.exit(1);
+        }
+      } else {
+        throw e; // a real FS error — do not proceed
+      }
+    }
     // Swap the exe in-place: stop -> replace (with retry; the running agent
     // locks its own file) -> start.
     if (!fs.existsSync(EXE_SRC)) {
@@ -541,7 +557,11 @@ const commands = {
       { stdio: "ignore", timeout: 30000 },
     );
     const ps1 = path.join(DIR, "vale-update.ps1");
-    const inner = `powershell -NoProfile -File "${ps1}"`;
+    // stage-n npm audit LOW: DIR can contain characters that break the
+    // inner PS double-quote literal (backslash, quote). Escape for the
+    // inner -File arg; the outer WMI literal is already escaped on L562.
+    const ps1Safe = ps1.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const inner = `powershell -NoProfile -File "${ps1Safe}"`;
     const wmi = `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='${inner.replace(/'/g, "''")}'} | ConvertTo-Json -Compress`;
     const r = spawnSync("powershell", ["-NoProfile", "-Command", wmi], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -576,6 +596,18 @@ const commands = {
   uninstall(args) {
     const purge = args.includes("--purge-data");
     const DATA = path.join(process.env.ProgramData || "C:\\ProgramData", "Vale");
+    // HIGH npm audit: verify DIR is actually a Vale install dir before
+    // recursively deleting — an attacker who controls VALE_AGENT_DIR (env
+    // var) or the registry key could point it at D:\Windows or C:\.
+    if (
+      !fs.existsSync(path.join(DIR, "vale-agent.exe")) &&
+      !fs.existsSync(path.join(DIR, "vale-agent.hostname"))
+    ) {
+      console.error(
+        "uninstall: REFUSE — " + DIR + " does not look like a Vale install dir (no vale-agent.exe/hostname). Set VALE_AGENT_DIR to the correct path.",
+      );
+      process.exit(1);
+    }
     console.log("uninstall: stopping ValeAgent...");
     sh("cmd /c schtasks /End /TN ValeAgent 2>NUL");
     sh("taskkill /F /IM vale-agent.exe 2>NUL");

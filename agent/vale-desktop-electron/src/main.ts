@@ -458,6 +458,9 @@ if (gotTheLock) {
         preload: path.join(__dirname, "preload.js"),
         contextIsolation: true,
         nodeIntegration: false,
+        // stage-n preload audit LOW: defense-in-depth — the preload is
+        // static/safe, but sandbox:true removes any Node escape path.
+        sandbox: true,
       },
     });
     // review #6 (MED) TOP RISK: the main window carries the valeDesktop/
