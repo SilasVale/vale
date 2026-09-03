@@ -1924,6 +1924,22 @@ code {
   background: var(--warn);
   animation: browser-ai-pulse 1.2s infinite;
 }
+/* round-253: compact "AI operating" chip for the embedded-pane status bar
+   (the native WebContentsView covers the viewport, so the indicator lives
+   in the SPA chrome strip). */
+.browser-ai-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--warn-ink);
+  background: var(--warn-soft);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
 @keyframes browser-ai-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .browser-urlbar .browser-zoom {
   border: 1px solid var(--chrome-line);

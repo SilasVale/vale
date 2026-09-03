@@ -16,6 +16,7 @@
 // keep the screenshot BrowserPane.
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Icon } from "../ui/Icon";
+import { useAiActivityPulse } from "../hooks/useAiActivityPulse";
 
 interface EmbeddedNavState {
   url: string;
@@ -49,6 +50,9 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   // round-251: zoom the REAL view (webContents zoom factor via IPC).
   const [zoom, setZoomState] = useState(100);
   const urlEditingRef = useRef(false);
+  // round-253: event-driven "AI is operating" pulse (SSE browser-actions-
+  // changed / playwright-changed — no polling).
+  const aiActive = useAiActivityPulse("", token);
 
   // Report the slot bounds to the main process so it can position the real
   // WebContentsView over it. Bounds are relative to the window content — the
@@ -178,6 +182,16 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
           <span className="browser-fps" title="Real browser view (no screenshot stream)">
             ● {ready ? "live (native render)" : "waiting"}
           </span>
+          {/* round-253: event-driven AI-activity pulse — lights while the
+              agent pushes browser-actions-changed (no polling), fades after
+              a few seconds. Lives in the SPA chrome (the native view covers
+              the viewport, so the indicator sits in the status strip). */}
+          {aiActive && (
+            <span className="browser-ai-chip" title="AI is operating this browser">
+              <span className="browser-ai-dot" />
+              AI operating
+            </span>
+          )}
         </div>
         <div className="browser-status-right">
           <span className="browser-embedded-badge" title="This page is the real Chromium view — text is rendered natively, not screenshotted">
