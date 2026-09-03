@@ -681,6 +681,14 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   (the earlier bin-vs-dist diff compared two OLD files); the first 1.2.274
   tgz shipped a stale bin/vale.js. ALWAYS rm dist output + verify marker
   presence in the packed artifact, not a diff of possibly-stale files.
+  ROUND-299 (2026-09-04): release.yml now COMPILES bin/vale.js from
+  src/vale.ts before npm pack — the stale-bin failure mode (1.2.274)
+  cannot recur: pack installs typescript+@types/node (--force skips the
+  os:win32 platform check on Linux runners), runs tsc, syncs bin, and
+  fails if the compiled output lacks the round-298 marker. tsconfig
+  typeRoots now points at the package's OWN node_modules/@types (was
+  hard-coded to the desktop shell's node_modules, which CI never
+  installs). CI-compile simulated clean in a scratch dir.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
