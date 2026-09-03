@@ -504,11 +504,11 @@ Last updated: 2026-09-04 (round 271 — doc sync: build guide + route map
   16/16 on d1 (terminal 3, file 3, workflow 6, panel 2, browser 2).
 
 ### Current release
-- npm **1.2.266 LIVE on d1 (round-266)** — bidirectional device file
-  transfer for AI: system_file_stat (size/kind/modified_ms) + raw read
-  cap 1 MiB. Rust 196 / clippy clean. Device-verified: 300KB transfer
-  end-to-end (round-266), AI drive paths clean (round-268), bridge fully
-  removed (round-263/265/269), docs synced (round-270).
+- npm **1.2.267 LIVE on d1 (round-274)** — Electron hidden-window render
+  fix: backgroundThrottling:false + --disable-renderer-backgrounding +
+  --disable-backgrounding-occluded-windows keep the SPA painting (xterm
+  rAF) when the window is hidden. E2E suite (agent/scripts/e2e/e2e.js)
+  16/16 on d1 incl. panel section (AI marker visible in the SPA xterm).
 - Release history below is chronological; older entries record the state
   at the time (bridge-era notes included for context).
 - npm **1.2.232 LIVE on d1** — coverage-audit round: gateway auth-gates
