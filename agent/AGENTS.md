@@ -766,6 +766,11 @@ Last updated: 2026-09-04 (round 275 — 1.2.267 LIVE on d1 with the
   (package version match, staged exe). Prune uses a mapfile array — a
   space-padded string match fails on newline-separated items (caught the
   bug in verification before it could delete the wrong files).
+  ROUND-311 (2026-09-04): publish-release.sh component-verified (guard
+  rejects version mismatch exit 1; pack+stage+version.json update works;
+  prune 0 false-deletes) + device consistency: electron main.js on d1
+  (sha 4168c9e5, 54143B) byte-identical to the repo npm-package copy —
+  no desktop-source drift after the 272->278 release week.
   ROUND-287 (2026-09-04): release 1.2.272 CI failed AGAIN after the Node
   24 fix — this time at "Build panel SPA": npm ci EUSAGE "Missing:
   lightningcss-android-arm64 / @rolldown/binding-* from lock file". A
