@@ -388,6 +388,16 @@ Last updated: 2026-09-26 (round 87 — 1.2.232 LIVE; coverage-audit harvest:
   playwright connectOverCDP drives the embedded view (goto example.com) —
   the round-246 one-browser architecture is real, now with the main window
   protected from AI hijack.
+  ROUND-259 (2026-09-26, 1.2.263 LIVE on d1): AI DEDICATED PAGE — the
+  embedded WebContentsView was created lazily (only when the user opened
+  the Browser page), so an attached playwright had no safe page to drive
+  (it grabbed the main window — round-258 tripwired). The view is now
+  created EAGERLY at startup, hidden, loaded to a neutral page; it shows
+  only when the SPA Browser page reports bounds. DEVICE-VERIFIED: after a
+  fresh electron start (Browser page never opened) CDP lists TWO targets
+  (cn.bing.com view + desktop SPA); playwright drives the dedicated view
+  (goto example.com) while the main window stays on /desktop/ untouched
+  (DEDICATED_VIEW_DRIVEN_MAIN_SAFE).
 
 ### Current release
 - npm **1.2.244 staged (round-245)** — display-path triage batch, see the
