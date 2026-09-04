@@ -965,7 +965,9 @@ if (gotTheLock) {
                 }
             }
         });
-        const iconPath = path.join(__dirname, "..", "icon.png");
+        // Windows requires .ico for tray; macOS/Linux accept .png.
+        const iconName = process.platform === "win32" ? "icon.ico" : "icon.png";
+        const iconPath = path.join(__dirname, "..", iconName);
         tray = new electron_1.Tray(fs.existsSync(iconPath) ? iconPath : electron_1.nativeImage.createEmpty());
         // review #f: single/double-click on the tray icon did nothing (only the
         // context-menu "Open" worked).

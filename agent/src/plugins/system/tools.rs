@@ -683,7 +683,8 @@ mod file_tool_tests {
     fn file_build_includes_stat() {
         let names: Vec<String> = build().iter().map(|t| t.name.clone()).collect();
         assert!(names.contains(&"system_file_stat".to_string()));
-        assert_eq!(names.len(), 8);
+        assert!(names.contains(&"system_file_upload".to_string()));
+        assert_eq!(names.len(), 9);
     }
 
     #[tokio::test]

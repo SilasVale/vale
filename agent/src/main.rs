@@ -577,6 +577,12 @@ async fn run_server(config_path: PathBuf) {
     tracing::info!("Config loaded from {}", config_path.display());
     out!("  Server: {}:{}", config.server.host, config.server.port);
     out!("  Name:   {}", config.server.name);
+    // system_file_upload posts to the gateway /api/upload with the device
+    // token — tools are stateless, so publish the token where they can read
+    // it (process env, never logged).
+    if let Some(t) = config.server.device_token.clone() {
+        std::env::set_var("VALE_DEVICE_TOKEN", t);
+    }
 
     let host = config.server.host.clone();
     let port = config.server.port;

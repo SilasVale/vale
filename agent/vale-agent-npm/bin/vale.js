@@ -325,6 +325,10 @@ const commands = {
             const iconSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.png");
             if (fs.existsSync(iconSrc))
                 fs.copyFileSync(iconSrc, path.join(DIR, "vale-desktop-electron", "icon.png"));
+            // icon.ico goes next to src/ too (Windows Tray requires .ico)
+            const icoSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.ico");
+            if (fs.existsSync(icoSrc))
+                fs.copyFileSync(icoSrc, path.join(DIR, "vale-desktop-electron", "icon.ico"));
             console.log("setup: vale-desktop-electron sources staged");
         }
         // Register boot-start task (SYSTEM) and kick it once; the agent's own
@@ -446,6 +450,10 @@ const commands = {
             const iconSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.png");
             if (fs.existsSync(iconSrc))
                 fs.copyFileSync(iconSrc, path.join(DIR, "vale-desktop-electron", "icon.png"));
+            // icon.ico goes next to src/ too (Windows Tray requires .ico)
+            const icoSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.ico");
+            if (fs.existsSync(icoSrc))
+                fs.copyFileSync(icoSrc, path.join(DIR, "vale-desktop-electron", "icon.ico"));
         }
         const q = DIR.replace(/'/g, "''");
         const log = `Out-File '${q}\\vale-update.log' -Append`;
