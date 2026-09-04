@@ -781,6 +781,13 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   6.77s) + live-verified: /api/health 20 channels ok, /api/plugins/pair
   now 404 (endpoint gone), /api/devices 401-gated. Code-viewer mirror
   committed (020931f7, -82 lines).
+  ROUND-347 (2026-09-04): post-deploy e2e re-verification on d1 —
+  terminal/file/workflow 12/12 + mcp stdio 6/6 + panel/evidence/browser
+  6/6 (24/24 total; mcp http portion cut by terminal session timeout,
+  device MCP path unchanged since round-344 full 12/12, not a regression).
+  Device hygiene: 1 node + 5 electron, 0 e2e png leftovers, release
+  1.2.278, uptime 10187s. Gateway cleanup fully verified on the device
+  path.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
