@@ -777,6 +777,10 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   cache clears (11). 241 gateway tests pass, tsc clean. OPEN
   (conservative): proxy plugin-token auth branch stays until 30-day
   link TTLs expire.
+  ROUND-346 (2026-09-04): round-345 gateway DEPLOYED (Version 52cd0dbc,
+  6.77s) + live-verified: /api/health 20 channels ok, /api/plugins/pair
+  now 404 (endpoint gone), /api/devices 401-gated. Code-viewer mirror
+  committed (020931f7, -82 lines).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
