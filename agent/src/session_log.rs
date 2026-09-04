@@ -189,6 +189,22 @@ impl SessionLogger {
         // flushes on flush() (called at command/status boundaries by
         // log_command_end/log_status) or when the buffer fills.
         let mut f = self.files.lock().unwrap_or_else(|p| p.into_inner());
+        // FD cap: only the explicit terminal_close path calls
+        // close_session — the idle sweeper and MAX_SESSIONS eviction drop
+        // sessions without closing their audit writers, so dead writers
+        // would pile up here forever. Bound open writers: evict (flush +
+        // drop) a stale entry when over budget. A live sid evicted early
+        // transparently reopens in append mode below — no data loss, and
+        // the map can never outgrow live sessions by more than the budget.
+        const MAX_OPEN_WRITERS: usize = 64;
+        if f.len() >= MAX_OPEN_WRITERS && !f.contains_key(sid) {
+            if let Some(old) = f.keys().next().cloned() {
+                if let Some(mut w) = f.remove(&old) {
+                    let _ = std::io::Write::flush(&mut w);
+                    tracing::warn!("[vale-agent] audit writer cap: evicted {old}");
+                }
+            }
+        }
         let writer = f.entry(sid.to_string()).or_insert_with(|| {
             let path = self.dir.join(format!("{sid}.jsonl"));
             match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
@@ -244,7 +260,7 @@ impl SessionLogger {
                     // independent filesystems are all unwritable at once.
                     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
                     let fall = |p: &std::path::Path| {
-                        std::fs::OpenOptions::new().write(true).create(true).open(p)
+                        std::fs::OpenOptions::new().create(true).append(true).open(p)
                     };
                     let f = fall(std::path::Path::new(null)).or_else(|_| {
                         tracing::error!(
@@ -658,6 +674,22 @@ mod tests {
         logger.log_command_end("s1", Some(0), Some("marker"), None);
         logger.log_command_start("s1", "b");
         assert_eq!(logger.recover_interrupted(), vec!["s1"]);
+    }
+
+    #[test]
+    fn open_writer_cap_evicts_stale_entries() {
+        // Swept/evicted terminal sessions never call close_session — the
+        // open-writer map must bound itself. 80 distinct sids, cap 64.
+        let dir = temp_dir("cap-writers");
+        let logger = SessionLogger::new(dir.clone());
+        for i in 0..80 {
+            logger.log_output(&format!("s{i}"), "x".to_string());
+        }
+        let n = logger.files.lock().unwrap_or_else(|p| p.into_inner()).len();
+        assert!(n <= 64, "open writers unbounded: {n}");
+        // No data loss: every sid's file exists on disk after flush.
+        logger.flush_all();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 80);
     }
 
     #[test]
