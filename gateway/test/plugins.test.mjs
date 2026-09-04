@@ -1,7 +1,8 @@
-// Plugin pairing/ticket store helpers + the public pair/claim and ws-ticket
-// routes. The plugin registry lives in a single KV JSON map (plugins:v1);
-// pair codes and WS tickets are one-time KV values with TTLs. A Map-backed KV
-// stub stands in for the Workers binding.
+// Plugin pairing/ticket STORE helpers (round-340: the public pair/claim +
+// ws-ticket routes were removed with the browser extension; these helpers
+// still back the admin handlePair flow). The plugin registry lives in a
+// single KV JSON map (plugins:v1); pair codes and WS tickets are one-time KV
+// values with TTLs. A Map-backed KV stub stands in for the Workers binding.
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
@@ -64,57 +65,10 @@ test("ws ticket: one-time", async () => {
   assert.equal(await consumeWsTicket(e, t), null);
 });
 
-// Behavior tests: pair/claim and ws-ticket are PUBLIC (the extension has no
-// session cookie) — a valid code/ticket returns 200, invalid ones 403/401.
-
-test("pair/claim: valid code → 200 with token, invalid code → 403", async () => {
-  const env = makeEnv();
-  // Store a real pair code for device d1 (value is the device name string).
-  const kv = env.KEYS;
-  const code = "PAIRCODE123";
-  await kv.put(`pair:${code}`, "d1");
-  const ok = await apiFetch(env, "/api/plugins/pair/claim", { body: JSON.stringify({ code }) });
-  assert.equal(ok.status, 200);
-  const j = await ok.json();
-  assert.equal(j.device, "d1");
-  assert.ok(j.token.length >= 8);
-  // One-time: consuming again fails (the code was deleted).
-  const again = await apiFetch(env, "/api/plugins/pair/claim", { body: JSON.stringify({ code }) });
-  assert.equal(again.status, 403);
-  // Unknown code → 403.
-  const bad = await apiFetch(env, "/api/plugins/pair/claim", { body: JSON.stringify({ code: "NOPE" }) });
-  assert.equal(bad.status, 403);
-});
-
-test("pair/claim: no admin session required (public route)", async () => {
-  const env = makeEnv();
-  const kv = env.KEYS;
-  await kv.put("pair:CODE2", "d1");
-  // No cookie, no Authorization header — must still reach the handler.
-  const res = await apiFetch(env, "/api/plugins/pair/claim", { body: JSON.stringify({ code: "CODE2" }) });
-  assert.equal(res.status, 200);
-});
-
-test("ws-ticket: valid plugin token → 200, unknown token → 401 (public route)", async () => {
-  const env = makeEnv();
-  const kv = env.KEYS;
-  // round-55: the plugin map is write-through cached now — a direct KV put
-  // must clear the cache or the earlier add/remove tests' cached (empty) map
-  // wins and the valid token 401s.
-  __clearCaches();
-  await kv.put("plugins:v1", JSON.stringify({ "tok-d1": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 * 30 } }));
-  const ok = await apiFetch(env, "/api/plugins/ws-ticket", {
-    headers: { authorization: "Bearer tok-d1", "content-type": "application/json" },
-    body: "{}",
-  });
-  assert.equal(ok.status, 200);
-  const bad = await apiFetch(env, "/api/plugins/ws-ticket", {
-    headers: { authorization: "Bearer tok-nope", "content-type": "application/json" },
-    body: "{}",
-  });
-  assert.equal(bad.status, 401);
-});
-
+// round-340: the public pair/claim + ws-ticket endpoint tests were
+// removed with the extension pairing endpoints (browser extension deleted
+// round-262). Store-helper tests below stay — handlePair (admin) still uses
+// createPairCode / plugin links.
 test("plugin link: expires after 30 days, getPluginByToken drops it", async () => {
   const e = env();
   await addPluginLink(e, "tok-exp", "d1");
