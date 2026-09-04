@@ -97,6 +97,7 @@ jobs:
                    "vale-desktop-electron/src/main.js" \
                    "vale-desktop-electron/src/preload.js" \
                    "vale-desktop-electron/src/url-policy.js" \
+                   "vale-desktop-electron/icon.png" \
                    "bin/vale.js"; do
             if ! grep -qE "(^|/)${F}$" "/tmp/tgz-list-${VER}.txt"; then
               echo "::error::tgz missing required file: $F"

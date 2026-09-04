@@ -257,7 +257,7 @@ const commands = {
     if (fs.existsSync(DESK_SRC)) {
       const desDst = path.join(DIR, "vale-desktop-electron", "src");
       fs.mkdirSync(desDst, { recursive: true });
-      for (const f of ["main.js", "preload.js", "url-policy.js"]) {
+      for (const f of ["main.js", "preload.js", "url-policy.js", "icon.png"]) {
         const s = path.join(DESK_SRC, f);
         if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f));
       }
@@ -378,7 +378,7 @@ const commands = {
     if (fs.existsSync(DESK_SRC)) {
       const desDst = path.join(DIR, "vale-desktop-electron", "src");
       fs.mkdirSync(desDst, { recursive: true });
-      for (const f of ["main.js", "preload.js", "url-policy.js"]) {
+      for (const f of ["main.js", "preload.js", "url-policy.js", "icon.png"]) {
         const s = path.join(DESK_SRC, f);
         if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f + ".new"));
       }
