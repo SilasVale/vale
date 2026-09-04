@@ -31,7 +31,7 @@
  */
 
 import { seedAdmin } from "./store.ts";
-import { jsonOk, jsonError, readJson, CORS_HEADERS } from "./http.ts";
+import { jsonOk, jsonError, readJson, CORS_HEADERS, corsHeadersFor, withCors } from "./http.ts";
 import { fetchWithTimeout, upstreamTimeoutMs, isChannelDegraded } from "./reliability.ts";
 import {
   HEALTH_CHANNELS,
@@ -94,11 +94,13 @@ export async function handleGateway(request: Request, env: any, url: URL) {
       url,
       url.protocol === "https:",
     );
-    if (hit !== null) return hit;
+    if (hit !== null) return withCors(request, await hit);
   }
   // No plugin matched (e.g. /v1/<unknown>) — the translate impl owns the
   // same 404/405 semantics the inline dispatcher had.
-  return translateHandleGateway(request, env, url);
+  // withCors: per-request reflect-if-allowlisted (default-closed otherwise).
+  const res = await translateHandleGateway(request, env, url);
+  return withCors(request, res);
 }
 
 // Public /api/vale-probe rate limit: each probe costs a real upstream call
@@ -155,7 +157,7 @@ export default {
     // (device panels are SAME-SITE with the console; SameSite=Lax does not
     // help there). Bearer clients carry no cookie — untouched.
     if (csrfCookieViolation(request)) {
-      return jsonError(403, "Cross-site request blocked", "csrf_error");
+      return withCors(request, jsonError(403, "Cross-site request blocked", "csrf_error"));
     }
     const url = new URL(request.url);
 
@@ -171,7 +173,8 @@ export default {
     }
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: CORS_HEADERS });
+      // Global preflight: reflect-if-allowlisted + Vary, NO ACAO otherwise.
+      return new Response(null, { headers: corsHeadersFor(request) });
     }
 
     try {
@@ -189,14 +192,14 @@ export default {
 
       // ---- Public tooling endpoints (any host) ----
       if (path === "/api/health") {
-        return jsonOk(await buildHealth(env));
+        return withCors(request, jsonOk(await buildHealth(env)));
       }
       if (request.method === "POST" && path === "/api/vale-probe") {
         if (await probeRateLimited(env, request)) {
-          return jsonError(429, "probe rate limit exceeded", "rate_limit_error");
+          return withCors(request, jsonError(429, "probe rate limit exceeded", "rate_limit_error"));
         }
         const body = await readJson(request);
-        return await valeProbe(env, String(body.model || ""));
+        return withCors(request, await valeProbe(env, String(body.model || "")));
       }
       if (
         path === "/api/vale-cli" ||
@@ -204,16 +207,21 @@ export default {
         path === "/api/vale-install.ps1"
       ) {
         const cli = await serveAssetText(env, "/vale");
-        if (cli === null) return jsonError(404, "vale CLI not found", "not_found_error");
+        if (cli === null)
+          return withCors(request, jsonError(404, "vale CLI not found", "not_found_error"));
+        // Genuinely-public installer payloads (curl|sh / irm|iex — CORS-
+        // irrelevant non-browser clients): KEEP the ACAO:* wildcard so any
+        // browser-hosted install helper keeps working. No session, no secret.
+        const publicCors = { "Access-Control-Allow-Origin": "*" };
         if (path === "/api/vale-cli") {
           return new Response(cli, {
-            headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS },
+            headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS, ...publicCors },
           });
         }
         const b64 = encodeBase64Utf8(cli);
         const body = path === "/api/vale-install" ? posixInstaller(b64) : psInstaller(b64);
         return new Response(body, {
-          headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS },
+          headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS, ...publicCors },
         });
       }
 
@@ -231,8 +239,8 @@ export default {
           url,
           url.protocol === "https:",
         );
-        if (hit !== null) return hit;
-        return jsonError(404, "Not Found", "not_found_error");
+        if (hit !== null) return withCors(request, await hit);
+        return withCors(request, jsonError(404, "Not Found", "not_found_error"));
       }
 
       // ---- OpenAI-compatible alias: /models → /v1/models, /chat/completions → /v1/chat/completions ----
@@ -244,19 +252,21 @@ export default {
 
       // ---- Static page (Workers Assets): non-/v1/ paths → ai domain only ----
       if (!path.startsWith("/v1/")) {
-        if (!isPageHost) return jsonError(404, "Not Found", "not_found_error");
+        if (!isPageHost)
+          return withCors(request, jsonError(404, "Not Found", "not_found_error"));
         if (env.ASSETS && typeof env.ASSETS.fetch === "function") {
-          return env.ASSETS.fetch(request);
+          return withCors(request, await env.ASSETS.fetch(request));
         }
-        return jsonError(404, "Not Found", "not_found_error");
+        return withCors(request, jsonError(404, "Not Found", "not_found_error"));
       }
 
       // ---- /v1/* gateway (both domains) ----
+      // (handleGateway already applies withCors; re-stamping is idempotent.)
       return await handleGateway(request, env, url);
     } catch (error) {
       // Never echo raw error internals to clients (logged server-side).
       console.error("[gateway] unhandled:", error);
-      return jsonError(500, "Internal error", "api_error");
+      return withCors(request, jsonError(500, "Internal error", "api_error"));
     }
   },
 };

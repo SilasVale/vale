@@ -52,7 +52,7 @@ import {
   scanTopLevelModel,
   estimateTokens,
 } from "../body-scan.ts";
-import { jsonOk, jsonError, CORS_HEADERS } from "../http.ts";
+import { jsonOk, jsonError, CORS_HEADERS, stampCors } from "../http.ts";
 import {
   MODELS,
   OG_FORCE_US_PROXY,
@@ -728,7 +728,7 @@ async function handleGatewayImpl(
     if (route.kind === "opencode") await recordChannelSuccess(env);
     // Direct passthrough — upstream returns OpenAI format, return it as-is.
     const headers = new Headers(upstream.headers);
-    headers.set("Access-Control-Allow-Origin", "*");
+    stampCors(request, headers);
     // OpenRouter's per-generation id — the correlation key for the upstream
     // dashboard when a client reports EMPTY_RESPONSE (a 200 stream that ended
     // with no content, typically an in-stream upstream error pi-ai skips).
@@ -852,7 +852,7 @@ async function handleGatewayImpl(
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
-    headers.set("Access-Control-Allow-Origin", "*");
+    stampCors(request, headers);
     ctx.generationId = upstream.headers.get("x-generation-id") || undefined;
     return new Response(upstream.body, { status: upstream.status, headers });
   }
@@ -1124,7 +1124,7 @@ async function handleGatewayImpl(
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
-    headers.set("Access-Control-Allow-Origin", "*");
+    stampCors(request, headers);
     // Idle watchdog REMOVED (round-61): it aborted legitimate slow streams
     // (>60s without bytes during model thinking) with an api_error frame.
     // The relay is untimed again — dead streams are the client's problem.
