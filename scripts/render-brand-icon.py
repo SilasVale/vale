@@ -88,7 +88,15 @@ def render(size):
         b = 2 * (y1 - y0)
         c = y0
         alpha = int(255 * opacity)
-        for yv in range(int(min(y0, y1, y2)), 48):
+        # Sample EVERY device row: the old per-integer-unit sampling filled
+        # one device row per unit and left 1-2px gaps at 128px (striped
+        # hills vs the SOLID-hill SVG favicon — user-rejected). The SVG
+        # path is a filled shape; the raster must be too.
+        ymin = min(y0, y1, y2)
+        for py in range(size):
+            yv = (py + 0.5) / sc
+            if yv < ymin or yv >= 48:
+                continue
             ts = []
             if abs(a) < 1e-9:
                 if abs(b) > 1e-9:
@@ -106,7 +114,6 @@ def render(size):
                 continue
             xs = [quad_pt(p0, p1, p2, t)[0] for t in ts]
             xmin, xmax = min(xs), max(xs)
-            py = int(yv * sc)
             x0 = max(0, int(xmin * sc))
             x1 = min(size - 1, int(xmax * sc))
             for x in range(x0, x1 + 1):
