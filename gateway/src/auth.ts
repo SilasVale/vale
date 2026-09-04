@@ -101,7 +101,7 @@ function b64urlEncodeStr(str: string): string {
   return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function b64urlDecodeStr(s: string): string {
+export function b64urlDecodeStr(s: string): string {
   // issueSessionToken/b64urlEncodeStr strip the '=' padding — restore it
   // before atob (same as access.ts b64urlToJson): without it, payloads whose
   // stripped length is not a multiple of 4 fail to decode and every such
