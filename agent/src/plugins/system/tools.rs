@@ -147,7 +147,7 @@ fn tool_file_stat() -> ToolDef {
 fn tool_file_read() -> ToolDef {
     ToolDef::new(
         "system_file_read",
-        "Read a file on THIS device (the agent host). Returns the content as UTF-8 text (binary files return an error — use a terminal session for binary inspection), capped at 1 MiB. `raw: true` returns base64 for binary-safe reads.",
+        "Read a file on THIS device (the agent host). Returns the content as UTF-8 text (binary files return an error — use a terminal session for binary inspection), capped at 1 MiB. `raw: true` returns base64 for binary-safe reads. Content passes through the AI context (costs tokens) — to move a large file from this device outward WITHOUT context cost, use system_file_upload and read the returned R2 URL instead.",
         json!({
             "type": "object",
             "properties": {
@@ -210,7 +210,7 @@ fn tool_file_read() -> ToolDef {
 fn tool_file_write() -> ToolDef {
     ToolDef::new(
         "system_file_write",
-        "Write text or base64 data to a file on THIS device (the agent host). Creates the file if missing, overwrites by default; set `append: true` to append instead. Capped at 4 MiB per call. Returns bytes written.",
+        "Write text or base64 data to a file on THIS device (the agent host). Creates the file if missing, overwrites by default; set `append: true` to append instead. Capped at 4 MiB per call. Returns bytes written. Content passes through the AI context (costs tokens) — to place a large file here WITHOUT context cost, upload it to R2 first and then use system_file_download with the URL.",
         json!({
             "type": "object",
             "properties": {
