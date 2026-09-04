@@ -249,15 +249,22 @@ export function estimateTokens(jsonStr: any): number {
   const s = String(jsonStr);
   const len = s.length;
 
-  // Image scan over the WHOLE body (round-57): counting `"data":"` fields
-  // with indexOf jumps is O(n) but far cheaper than the old full-string
+  // Bound the scan to the last user message (round-340): images only appear
+  // in the last user message, so scanning the whole body wastes CPU on
+  // multi-MB histories. Find the last "role":"user" and scan from there.
+  const USER_ROLE = '"role":"user"';
+  const lastUserRole = s.lastIndexOf(USER_ROLE);
+  const scanStart = lastUserRole >= 0 ? lastUserRole : 0;
+
+  // Image scan over the bounded region (round-57): counting `"data":"`
+  // fields with indexOf jumps is O(n) but far cheaper than the old full-string
   // regex + match passes (a few dozen indexOf hops for real bodies), and it
   // is the ONLY way to see images BEYOND a 2MB sampling window — windowed
   // bodies' tail images were previously charged as text (~280x over the
   // real vision cost) or silently missed.
   let images = 0;
   let removedChars = 0; // ALL base64 chars (the scan sees the whole body)
-  let searchFrom = 0;
+  let searchFrom = scanStart;
   let idx: number;
   const DATA_KEY = '"data":"';
   // Base64 charset via charCode ranges (round-58): the old per-char regex
