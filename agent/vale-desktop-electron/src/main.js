@@ -119,6 +119,21 @@ function windowIcon() {
     iconReport["window"] = { path: p, size: statSize(p), used: out !== "" };
     return out;
 }
+// Native-decode probe: file-exists is NOT proof Electron can use the
+// image (a corrupt/undecodable file falls back silently). Report what
+// nativeImage itself says, so /api/shell/icon-status is ground truth.
+function probeImage(p) {
+    try {
+        if (!p)
+            return { empty: true, reason: "no-path" };
+        const img = electron_1.nativeImage.createFromPath(p);
+        const sz = img.getSize();
+        return { empty: img.isEmpty(), width: sz.width, height: sz.height };
+    }
+    catch (e) {
+        return { empty: true, reason: String(e).slice(0, 120) };
+    }
+}
 // IPC audit #2: preload runs in EVERY frame; will-navigate never gated
 // iframes. Handlers must reject anything not sourced from the pinned panel.
 function frameOk(e) {
@@ -762,7 +777,11 @@ const httpServer = http.createServer((req, res) => {
         if (u.pathname === "/api/shell/agent-status")
             return (async () => send({ ok: true, running: await agentResponds(1000) }))();
         if (u.pathname === "/api/shell/icon-status")
-            return send({ ok: true, icons: iconReport });
+            return send({ ok: true, icons: iconReport,
+                native: {
+                    tray: probeImage(String(iconReport["tray"]?.path || "")),
+                    window: probeImage(String(iconReport["window"]?.path || "")),
+                } });
         send({ ok: false, error: "not found" }, 404);
     }
     catch (e) {
