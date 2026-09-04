@@ -61,6 +61,10 @@ function nodePtySession({ pty, shell, args, cwd, cols, rows, env }) {
 
 // script(1) fallback: allocates a pty for us; window size is fixed at spawn
 // time — resize() compensates via stty inside the session.
+// INVARIANT (security): `shell` comes only from the operator-owned server
+// config and `args` are fixed internally (tmux subcommand + server-generated
+// session id) — never client input. So the string-join below is latent only;
+// do NOT route client-controlled words through this path without argv quoting.
 function scriptSession({ shell, args, cwd, cols, rows, env }) {
   const child = spawn("script", ["-qfc", [shell, ...args].join(" "), "/dev/null"], {
     cwd,

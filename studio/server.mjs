@@ -74,11 +74,24 @@ async function loadConfig() {
       maxFileSizeMB: 8,
       roots: [path.join(os.homedir(), "vale")],
     };
-    await fsp.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
-    await fsp.writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+    await fsp.mkdir(path.dirname(CONFIG_PATH), { recursive: true, mode: 0o700 });
+    // Mode 0600: the token grants full file/shell access. `mode` applies only
+    // on creation, so chmod explicitly too (pre-existing world-readable file).
+    // Best-effort: never fail boot on chmod errors (Windows ACLs etc.).
+    // Parent dir: mode set only at creation above — existing parent perms are
+    // left alone (may be intentionally group-accessible; file mode 0600 alone
+    // protects the token since the kernel enforces file perms on open).
+    await fsp.writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+    try {
+      await fsp.chmod(CONFIG_PATH, 0o600);
+    } catch {}
     console.log(`[studio] wrote default config to ${CONFIG_PATH}`);
     return cfg;
   }
+  // Harden a config written by an older version (typically 0644): best-effort.
+  try {
+    await fsp.chmod(CONFIG_PATH, 0o600);
+  } catch {}
   const cfg = JSON.parse(raw);
   cfg.port = Number(arg("--port")) || cfg.port || 7780;
   cfg.bind = cfg.bind || "127.0.0.1";
@@ -104,13 +117,21 @@ const ROOTS = CONFIG.roots.filter((r) => {
 // ── auth ─────────────────────────────────────────────────────────────────────
 
 const TOKEN_HASH = sha256(Buffer.from(CONFIG.token));
-const failLog = new Map(); // ip -> {count, resetAt}
+// Wrong-guess budget: global sliding window. NOTE (auth design): the correct
+// token is ALWAYS accepted regardless of limiter state (checked first below).
+// Per-IP blocking is wrong here — behind the cloudflared tunnel every remote
+// client shares one loopback remoteAddress, so >=10 bad guesses/min from a
+// scanner would lock out the legitimate owner. The 256-bit bearer makes online
+// guessing infeasible; this budget only bounds log/CPU burn from scanners and
+// can never deny the true owner.
+const WRONG_BUDGET_MAX = 100; // wrong guesses per window, server-wide
+const WRONG_BUDGET_WINDOW_MS = 60_000;
+const wrongBudget = { count: 0, resetAt: Date.now() + WRONG_BUDGET_WINDOW_MS };
+const failLog = new Map(); // ip -> {count, resetAt}: diagnostics only, never blocks
 
 function tokenOk(token, ip) {
   const now = Date.now();
-  const rec = failLog.get(ip);
-  if (rec && rec.count >= 10 && now < rec.resetAt) return false;
-  if (rec && now >= rec.resetAt) failLog.delete(ip);
+  // 1) Correct token always wins — checked BEFORE any limiter state.
   let ok = false;
   if (typeof token === "string" && token.length > 0) {
     // constant-time compare over equal-length digests
@@ -119,12 +140,26 @@ function tokenOk(token, ip) {
       crypto.createHash("sha256").update(CONFIG.token).digest(),
     );
   }
-  if (!ok) {
-    const r = failLog.get(ip) || { count: 0, resetAt: now + 60_000 };
-    r.count++;
-    failLog.set(ip, r);
+  if (ok) return true;
+  // 2) Wrong guess: account it (global budget + per-IP diagnostics).
+  if (now >= wrongBudget.resetAt) {
+    wrongBudget.count = 0;
+    wrongBudget.resetAt = now + WRONG_BUDGET_WINDOW_MS;
   }
-  return ok;
+  wrongBudget.count++;
+  if (wrongBudget.count === WRONG_BUDGET_MAX + 1) {
+    console.warn(
+      `[studio] auth: wrong-guess budget exceeded (${WRONG_BUDGET_MAX}/${WRONG_BUDGET_WINDOW_MS}ms) — still accepting correct token`,
+    );
+  }
+  const r = failLog.get(ip) || { count: 0, resetAt: now + WRONG_BUDGET_WINDOW_MS };
+  if (now >= r.resetAt) {
+    r.count = 0;
+    r.resetAt = now + WRONG_BUDGET_WINDOW_MS;
+  }
+  r.count++;
+  failLog.set(ip, r);
+  return false;
 }
 
 function bearerOf(req, url) {
@@ -233,7 +268,17 @@ function serveStatic(req, res, pathname) {
       "cache-control": m.cache,
       "x-content-type-options": "nosniff",
     });
-    fs.createReadStream(file).pipe(res);
+    const stream = fs.createReadStream(file);
+    stream.on("error", () => {
+      // e.g. vanished mid-send: headers already sent, so just tear down
+      if (!res.headersSent) send(res, 404, { error: "not_found" });
+      else {
+        try {
+          res.destroy();
+        } catch {}
+      }
+    });
+    stream.pipe(res);
     return true;
   }
   return false;
@@ -333,8 +378,12 @@ route("POST", "/api/mkdir", async (req) => {
 route("DELETE", "/api/file", async (req, url) => {
   assertWritable();
   const p = safeResolve(url.searchParams.get("p"), ROOTS);
-  const root = ROOTS.map((r) => fs.realpathSync(r)).find((r) => p.startsWith(r.endsWith("/") ? r : r + "/"));
-  const out = await trashFile(p, root || ROOTS[0]);
+  // Equality matters: p may BE a root (startsWith(r + "/") is false then).
+  const root = ROOTS.map((r) => fs.realpathSync(r)).find(
+    (r) => p === r || p.startsWith(r.endsWith("/") ? r : r + "/"),
+  );
+  if (!root) throw new ApiError(403, "outside_roots", "path outside allowed workspace roots");
+  const out = await trashFile(p, root);
   watchers.broadcast(p, "delete");
   return out;
 });
@@ -389,6 +438,12 @@ route("GET", "/api/stat", async (req, url) => {
 // ── terminals ────────────────────────────────────────────────────────────────
 
 const RING_MAX = 64 * 1024;
+// Cap live sessions: each spawns a real shell process and ids carry only
+// 24-bit entropy, so unbounded creation is a fork bomb via one API call.
+// 16 is generous for a single-owner studio (typical use: a handful of
+// shells). Shared-token architecture is by design (loopback + tunnel +
+// bearer — any token holder IS the owner), so per-user ACLs are out of scope.
+const MAX_TERMINALS = 16;
 const terminals = new Map(); // id -> {id,name,cwd,backend,ring,viewers:Set,session,exitCode,deadAt}
 let termSeq = 0;
 
@@ -402,6 +457,13 @@ function termBroadcast(t, data) {
 route("POST", "/api/term", async (req) => {
   if (CONFIG.readOnly || !CONFIG.terminal.enabled) {
     throw new ApiError(403, "terminal_disabled", "terminal is disabled on this server");
+  }
+  if (terminals.size >= MAX_TERMINALS) {
+    throw new ApiError(
+      429,
+      "too_many_terminals",
+      `terminal session limit (${MAX_TERMINALS}) reached — close one first`,
+    );
   }
   const body = await readJson(req, 4096);
   let cwd = ROOTS[0];
@@ -486,6 +548,9 @@ route("DELETE", "/api/term/:id", async (req, url, params) => {
 // whole workspace — which exhausts inotify limits on big trees and crashes the
 // process — the client tells us which files are OPEN, and we watch only those
 // directories non-recursively. Events are filtered back to tracked paths.
+// Max dirs/files one watch client may track: open-file sets are small
+// (dozens); this caps inotify watches from a misbehaving client.
+const MAX_WATCH_PER_CLIENT = 128;
 const watchers = (() => {
   const clients = new Set();          // watch-WS set
   const tracked = new Map();          // absPath -> refCount
@@ -551,9 +616,13 @@ const watchers = (() => {
     }
     // GC dirs with no remaining tracked files
     for (const [dirReal, s] of dirs) {
-      const stillNeeded = [...tracked.keys()].some(
-        (f) => fs.realpathSync(path.dirname(f)) === dirReal,
-      );
+      const stillNeeded = [...tracked.keys()].some((f) => {
+        try {
+          return fs.realpathSync(path.dirname(f)) === dirReal;
+        } catch {
+          return false; // dir deleted mid-iteration (WS close path) — not pinning
+        }
+      });
       if (!stillNeeded) {
         try { s.watcher.close(); } catch {}
         dirs.delete(dirReal);
@@ -574,8 +643,12 @@ const watchers = (() => {
       if (ws._tracked) untrackAllFor(ws._tracked);
       ws._tracked = [];
       for (const p of paths || []) {
+        // Bound per-client watches: open-file sets are small; this caps
+        // inotify usage from a compromised/malicious client.
+        if (ws._tracked.length >= MAX_WATCH_PER_CLIENT) break;
         try {
-          const real = fs.realpathSync(p);
+          // Same confinement as the file APIs — never trust client paths.
+          const real = safeResolve(p, ROOTS);
           ws._tracked.push(real);
           trackFile(real);
         } catch {}
@@ -599,24 +672,26 @@ export const __test = { tokenOk, TOKEN_HASH };
 // ── server wiring ────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://x");
-  const pathname = decodeURIComponent(url.pathname);
-
-  // CORS for the DSH-side content script (read-only endpoints).
-  const origin = req.headers.origin;
-  if (origin && CONFIG.corsOrigins.includes(origin)) {
-    res.setHeader("access-control-allow-origin", origin);
-    res.setHeader("vary", "origin");
-    res.setHeader("access-control-allow-headers", "authorization, content-type");
-    res.setHeader("access-control-allow-methods", "GET, OPTIONS");
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-  }
-
   try {
+    // Inside try: malformed percent-encoding must be a 400, not an
+    // unhandled rejection with the socket never answered.
+    const url = new URL(req.url, "http://x");
+    const pathname = decodeURIComponent(url.pathname);
+
+    // CORS for the DSH-side content script (read-only endpoints).
+    const origin = req.headers.origin;
+    if (origin && CONFIG.corsOrigins.includes(origin)) {
+      res.setHeader("access-control-allow-origin", origin);
+      res.setHeader("vary", "origin");
+      res.setHeader("access-control-allow-headers", "authorization, content-type");
+      res.setHeader("access-control-allow-methods", "GET, OPTIONS");
+      if (req.method === "OPTIONS") {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+    }
+
     if (pathname.startsWith("/api/")) {
       const match = routes.find((r) => r.rx.test(pathname) && (r.method === req.method));
       if (!match) return send(res, 404, { error: "not_found", code: "no_route" });
@@ -633,6 +708,9 @@ const server = http.createServer(async (req, res) => {
     if (serveStatic(req, res, pathname)) return;
     return send(res, 404, { error: "not_found" });
   } catch (err) {
+    if (err instanceof URIError) {
+      return send(res, 400, { error: "bad_path", message: "malformed URL encoding" });
+    }
     if (err instanceof ApiError) {
       const body = { error: err.code, message: err.message };
       if (err.currentSha256) body.currentSha256 = err.currentSha256;

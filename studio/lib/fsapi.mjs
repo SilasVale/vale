@@ -213,11 +213,39 @@ export async function makeDir(p) {
 export async function trashFile(p, root) {
   let stat = await fsp.stat(p).catch(() => null);
   if (!stat) throw new ApiError(404, "not_found", "already gone");
-  const trashRoot = path.join(root, TRASH_DIR);
+  let realRoot;
+  try {
+    realRoot = fs.realpathSync(root);
+  } catch {
+    throw new ApiError(404, "not_found", "workspace root not found");
+  }
+  if (p === realRoot) throw new ApiError(400, "is_root", "refusing to trash a workspace root");
+  const trashRoot = path.join(realRoot, TRASH_DIR);
+  if (p === trashRoot || p.startsWith(trashRoot + path.sep)) {
+    throw new ApiError(400, "is_trash", "refusing to trash the trash directory");
+  }
   await fsp.mkdir(trashRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dest = path.join(trashRoot, `${stamp}-${path.basename(p)}`);
-  await fsp.rename(p, dest);
+  const base = path.basename(p);
+  // Unique-ify: same-stamp same-basename renames must not overwrite each other.
+  let dest = null;
+  for (let i = 0; i < 10; i++) {
+    const suffix = crypto.randomBytes(3).toString("hex") + (i === 0 ? "" : `-${i}`);
+    const candidate = path.join(trashRoot, `${stamp}-${base}-${suffix}`);
+    try {
+      await fsp.stat(candidate);
+      continue; // improbable collision — retry
+    } catch {
+      dest = candidate;
+      break;
+    }
+  }
+  if (!dest) throw new ApiError(500, "trash_failed", "could not allocate trash name");
+  try {
+    await fsp.rename(p, dest);
+  } catch (e) {
+    throw new ApiError(500, "trash_failed", `trash rename failed: ${e.code || e.message}`);
+  }
   return { trashedTo: dest };
 }
 
@@ -323,7 +351,13 @@ async function searchJs({ root, q, regex, ignoreCase }) {
 // ── git ──────────────────────────────────────────────────────────────────────
 
 function gitTop(fileOrDir) {
-  const start = fs.statSync(fileOrDir).isDirectory() ? fileOrDir : path.dirname(fileOrDir);
+  let start;
+  try {
+    start = fs.statSync(fileOrDir).isDirectory() ? fileOrDir : path.dirname(fileOrDir);
+  } catch {
+    // Raced deletion between safeResolve and here — report 404, not 500.
+    throw new ApiError(404, "not_found", "path not found");
+  }
   try {
     return execFileSync("git", ["rev-parse", "--show-toplevel"], {
       cwd: start,
