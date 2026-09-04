@@ -322,6 +322,14 @@ export default {
     // Download: GET /files/<token>  ->  file bytes (one-time, then deleted)
     if (url.pathname === "/api/upload" && request.method === "POST") {
       try {
+        // Auth: require a bearer token matching the shared secret (set via
+        // `wrangler secret put UPLOAD_KEY`). Without this, anyone can upload
+        // 100 MiB files to R2 (abuse + cost).
+        const auth = request.headers.get("authorization") || "";
+        const expected = `Bearer ${env.UPLOAD_KEY || ""}`;
+        if (!env.UPLOAD_KEY || !auth || auth !== expected) {
+          return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+        }
         const ct = request.headers.get("content-type") || "";
         if (!ct.includes("multipart/form-data")) {
           return new Response(JSON.stringify({ error: "expected multipart/form-data" }), { status: 400 });
