@@ -130,6 +130,70 @@ test("og/minimax-m3 also goes to chat/completions (translate path)", async () =>
   assert.equal(res.status, 200);
 });
 
+// ── og/muse-spark-*: /v1/responses (OpenAI Responses API) ──
+// Muse Spark Contributor is responses-only on zen/go (chat/completions 500s)
+// and is forced through the US exit (Meta Geographic Use Policy). The
+// /v1/responses entry forwards the OpenAI Responses body verbatim with the
+// model prefix stripped, via the US proxy.
+
+test("og/muse-spark-1.3-contributor on /v1/responses forces the US exit", async () => {
+  const { env, token } = gwEnv();
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url: String(url), init };
+    return new Response(JSON.stringify({
+      id: "resp_1", object: "response", created_at: 1, status: "completed",
+      model: "muse-spark-1.3-contributor", output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] }],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi", max_output_tokens: 10 }, "/v1/responses"),
+  );
+  // US exit forced even with the global switch OFF (Meta region policy).
+  assert.ok(seen.url.startsWith("https://v.saisi.online/api/zen?target=og&path="));
+  assert.ok(decodeURIComponent(seen.url).includes("/v1/responses"));
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-og");
+  // No anthropic-version header on the OpenAI-native responses wire.
+  const av = seen.init.headers.get ? seen.init.headers.get("anthropic-version") : seen.init.headers["anthropic-version"];
+  assert.equal(av, null);
+  const sent = JSON.parse(seen.init.body);
+  assert.equal(sent.model, "muse-spark-1.3-contributor"); // og/ prefix stripped
+  assert.equal(sent.input, "hi");
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.object, "response"); // passthrough, not translated
+});
+
+test("og/muse-spark-1.2-contributor on /v1/responses works (US exit, Bearer)", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv();
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url: String(url), init };
+    return new Response(JSON.stringify({ object: "response", output: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, { model: "og/muse-spark-1.2-contributor", input: "hi" }, "/v1/responses"),
+  );
+  assert.ok(seen.url.startsWith("https://v.saisi.online/api/zen?target=og&path="));
+  assert.equal(JSON.parse(seen.init.body).model, "muse-spark-1.2-contributor");
+  assert.equal(res.status, 200);
+});
+
+test("/v1/responses rejects non-muse og models", async () => {
+  const { env, token } = gwEnv();
+  const res = await post(env, token, { model: "og/deepseek-v4-flash", input: "hi" }, "/v1/responses");
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(body.error.message, /muse-spark/);
+});
+
+test("/v1/responses rejects unknown models (not in MODELS whitelist)", async () => {
+  const { env, token } = gwEnv();
+  const res = await post(env, token, { model: "og/muse-spark-9.9-contributor", input: "hi" }, "/v1/responses");
+  assert.equal(res.status, 400);
+});
+
 test("gmi/MiniMaxAI/MiniMax-M3 uses GMI BYOK passthrough on chat/completions", async () => {
   __clearCaches();
   const { env, token } = gwEnv({

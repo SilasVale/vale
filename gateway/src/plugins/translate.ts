@@ -55,6 +55,7 @@ import {
 import { jsonOk, jsonError, CORS_HEADERS } from "../http.ts";
 import {
   MODELS,
+  OG_FORCE_US_PROXY,
   OG_NATIVE_ANTHROPIC,
   OG_ZEN_ANTHROPIC,
   VERIFY_PATH,
@@ -230,7 +231,7 @@ async function handleGatewayImpl(
   if (
     env.KEYS &&
     method === "POST" &&
-    (path.endsWith("/messages") || path.endsWith("/chat/completions")) &&
+    (path.endsWith("/messages") || path.endsWith("/chat/completions") || path.endsWith("/responses")) &&
     !path.endsWith(COUNT_PATH)
   ) {
     const mk = `min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
@@ -252,7 +253,11 @@ async function handleGatewayImpl(
   const isCount = method === "POST" && path.endsWith(COUNT_PATH);
   const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);
   const isChatCompletions = method === "POST" && path.endsWith("/v1/chat/completions");
-  if (!(isCount || isMessages || isChatCompletions)) {
+  // OpenAI Responses API entry (/v1/responses) — serves og/muse-spark-*
+  // Contributor models ONLY (they are responses-only upstream; chat/completions
+  // 500s on zen). See the isResponses branch below.
+  const isResponses = method === "POST" && path.endsWith("/v1/responses");
+  if (!(isCount || isMessages || isChatCompletions || isResponses)) {
     return jsonError(404, "Not Found", "not_found_error");
   }
 
@@ -278,11 +283,12 @@ async function handleGatewayImpl(
     // Claude Code fixed model name auto: route by the user's web selection
     model = await resolveAutoModel(env, user.id);
   }
-  // gpt-5.6-luna belongs to OpenCode Go. It is region-blocked when zen is
-  // reached directly from some clients, so keep the og/ identity and force
-  // this model through the Vercel US exit instead of changing it to an or/
-  // route (which would incorrectly consume OPENROUTER_API_KEY).
-  const lunaModel = model === "og/gpt-5.6-luna" || model === "og/openai/gpt-5.6-luna:floor[1m]";
+  // Model-level forced US egress (see OG_FORCE_US_PROXY in channels.ts):
+  // gpt-5.6-luna (zen region-blocks it for CN) and muse-spark Contributor
+  // (Meta Geographic Use Policy) always ride the Vercel US exit, regardless
+  // of the global US_PROXY switch. Kept as a set lookup so each model keeps
+  // its og/ identity without consuming OPENROUTER_API_KEY.
+  const forceUsProxy = OG_FORCE_US_PROXY.has(model);
   let effectiveModel = model;
   const prefix2 = effectiveModel.split("/")[0] || "";
   // US egress switch: the console KV setting takes precedence, falling back to the Worker secret (env.US_PROXY).
@@ -290,7 +296,7 @@ async function handleGatewayImpl(
   const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
   // round-94: normalize — an explicit OFF is persisted as "0" (truthy as a
   // string); raw truthiness would treat it as ON.
-  const usProxy = lunaModel || globalSettingEnabled(usProxyRaw) ? "1" : null;
+  const usProxy = forceUsProxy || globalSettingEnabled(usProxyRaw) ? "1" : null;
   const baseRoute = pickRoute(prefix2, env, usProxy);
   let upstreamModel = stripBracket(
     baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel,
@@ -724,6 +730,125 @@ async function handleGatewayImpl(
     // OpenRouter's per-generation id — the correlation key for the upstream
     // dashboard when a client reports EMPTY_RESPONSE (a 200 stream that ended
     // with no content, typically an in-stream upstream error pi-ai skips).
+    ctx.generationId = upstream.headers.get("x-generation-id") || undefined;
+    return new Response(upstream.body, { status: upstream.status, headers });
+  }
+
+  // ---- POST /v1/responses (OpenAI Responses API) ----
+  // Serves og/muse-spark-1.2/1.3-contributor ONLY. Those models are
+  // responses-only on zen/go — chat/completions 500s upstream (verified
+  // 2026-09-04) — and are forced through the US exit (Meta Geographic Use
+  // Policy; see OG_FORCE_US_PROXY). The request body is already Responses
+  // format; forward it as-is with only the model field swapped.
+  if (isResponses) {
+    // Only registered og/muse-spark-* Contributor models ride this endpoint.
+    // Responses requests naming anything else are client bugs (other og/
+    // models speak chat/completions; nothing else here is responses-native;
+    // unregistered muse-spark versions must not reach the upstream).
+    if (
+      !MODELS.some((m) => m.id === model) ||
+      !upstreamModel.startsWith("muse-spark-") ||
+      prefix2 !== "og"
+    ) {
+      return jsonError(
+        400,
+        `Model ${model} is not served via /v1/responses — only og/muse-spark-* Contributor models use this endpoint`,
+        "invalid_request",
+      );
+    }
+    if (route.kind !== "opencode") {
+      return jsonError(
+        400,
+        `/v1/responses only serves og/ models (requested ${model})`,
+        "invalid_request",
+      );
+    }
+    if (route.kind === "opencode" && !opencodeGoKey) {
+      return jsonError(
+        502,
+        "OPENCODE_GO_API_KEY not configured — add your own key in the console",
+        "config_error",
+      );
+    }
+    if (route.kind === "opencode" && (await isChannelDegraded(env))) {
+      return jsonError(
+        502,
+        "og: circuit open (recent upstream failures, try again in ~1 min)",
+        "api_error",
+      );
+    }
+    // Model is og/muse-spark-*: force the US exit (Meta region policy). The
+    // route picked above already rode via() when forceUsProxy was true — but
+    // pickRoute's og branch hardcodes /v1/chat/completions as the path, so
+    // rebuild the upstream for the responses path explicitly.
+    const responsesUpstream = forceUsProxy
+      ? `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/responses")}`
+      : `${OG_ZEN_ANTHROPIC.replace("/v1/messages", "")}/v1/responses`;
+    const forwardBody = rawWithModel(rawText, upstreamModel, scanned);
+    // zen's responses endpoint is OpenAI-native: Bearer auth, no
+    // anthropic-version header (passthroughHeaders would add one; zen ignores
+    // it on chat/completions but keep the responses wire clean).
+    const responsesHeaders = new Headers();
+    responsesHeaders.set("Content-Type", "application/json");
+    if (bearerKey) responsesHeaders.set("Authorization", `Bearer ${bearerKey}`);
+    const {
+      response: upstream,
+      detail,
+      inspectFailure,
+    } = await fetchWithRetry(
+      responsesUpstream,
+      {
+        method: "POST",
+        headers: responsesHeaders,
+        body: forwardBody,
+      },
+      { timeoutMs: ogTimeoutMs(env) },
+    );
+    if (!upstream) {
+      if (route.kind === "opencode") await recordChannelFailure(env);
+      const failStatus =
+        typeof inspectFailure?.status === "number" &&
+        inspectFailure.status >= 400 &&
+        inspectFailure.status <= 599
+          ? inspectFailure.status
+          : 502;
+      return jsonError(
+        failStatus,
+        `upstream ${failStatus} (${route.kind}): ${detail}`,
+        failStatus === 429 ? "rate_limit_error" : "api_error",
+      );
+    }
+    if (!upstream.ok) {
+      if (route.kind === "opencode" && isChannelDownFailure(detail)) {
+        await recordChannelFailure(env);
+      }
+      let message = `Upstream ${upstream.status}`;
+      let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
+      try {
+        const rawErr: any = await upstream.json();
+        const err: any =
+          rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
+        message = scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) || message;
+        const upType = err.error?.type || err.type;
+        const KNOWN = [
+          "rate_limit_error",
+          "overloaded_error",
+          "authentication_error",
+          "invalid_request_error",
+          "permission_error",
+          "not_found_error",
+          "request_too_large",
+          "api_error",
+        ];
+        if (upType && KNOWN.includes(upType)) type = upType;
+      } catch {
+        /* non-JSON error body */
+      }
+      return jsonError(upstream.status, message, type);
+    }
+    if (route.kind === "opencode") await recordChannelSuccess(env);
+    const headers = new Headers(upstream.headers);
+    headers.set("Access-Control-Allow-Origin", "*");
     ctx.generationId = upstream.headers.get("x-generation-id") || undefined;
     return new Response(upstream.body, { status: upstream.status, headers });
   }

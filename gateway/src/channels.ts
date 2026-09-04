@@ -35,6 +35,22 @@ export const AMD_CHAT: string = "https://developer.amd.com.cn/radeon/api/v1/chat
 // the OpenAI translate path and use native Anthropic /v1/messages passthrough.
 export const OG_NATIVE_ANTHROPIC: Set<string> = new Set();
 
+// Model-level forced US egress. These og/ models are region-blocked when zen
+// is reached directly from CN clients, so requests ALWAYS ride the Vercel US
+// exit regardless of the global US_PROXY switch:
+//   - og/gpt-5.6-luna — zen region-blocks it for CN (translate.ts remaps the
+//     og/ spellings to the or/ route via OpenRouter's US exit).
+//   - og/muse-spark-1.2/1.3-contributor — Meta Geographic Use Policy blocks
+//     the contributor tier outside permitted regions; the US exit clears the
+//     RegionError (verified 2026-09-04: direct = 403 RegionError, via US exit
+//     = 200).
+export const OG_FORCE_US_PROXY: Set<string> = new Set([
+  "og/gpt-5.6-luna",
+  "og/openai/gpt-5.6-luna:floor[1m]",
+  "og/muse-spark-1.2-contributor",
+  "og/muse-spark-1.3-contributor",
+]);
+
 export function usProxyBase(env: any): string {
   return env?.US_PROXY_BASE || "https://v.saisi.online";
 }
@@ -45,6 +61,13 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "og/minimax-m3", owned_by: "opencode" },
   { id: "og/mimo-v2.5", owned_by: "opencode" },
   { id: "og/ox-alpha-free", owned_by: "opencode" },
+  // Meta Muse Spark Contributor tier — data-for-discount coding model on zen/go.
+  // Served via /v1/responses ONLY (chat/completions 500s — verified 2026-09-04),
+  // forced through the US exit (Meta Geographic Use Policy), and requires the
+  // workspace-level data-collection opt-in ("allow data-training models").
+  // reasoning.effort accepts off/minimal/low/medium/high (max rejected).
+  { id: "og/muse-spark-1.3-contributor", owned_by: "opencode" },
+  { id: "og/muse-spark-1.2-contributor", owned_by: "opencode" },
   // og/ spellings of luna are accepted here and remapped to the or/ channel
   // (translate.ts): zen region-blocks gpt-5.6-luna for CN, OpenRouter's US
   // exit works. Both og/ variants resolve to the same working route.
@@ -95,8 +118,16 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
   {
     prefix: "og/",
     backend: "OpenCode Go",
-    desc: "opencode.ai/zen/go — all models via chat/completions (OpenAI format); gpt-5.6-luna auto-routes via OpenRouter US exit (zen region-blocks it)",
-    models: ["deepseek-v4-flash", "minimax-m3", "mimo-v2.5", "ox-alpha-free", "gpt-5.6-luna"],
+    desc: "opencode.ai/zen/go — all models via chat/completions (OpenAI format); gpt-5.6-luna auto-routes via OpenRouter US exit (zen region-blocks it); muse-spark-* via /v1/responses forced through the US exit (Meta region policy)",
+    models: [
+      "deepseek-v4-flash",
+      "minimax-m3",
+      "mimo-v2.5",
+      "ox-alpha-free",
+      "gpt-5.6-luna",
+      "muse-spark-1.3-contributor",
+      "muse-spark-1.2-contributor",
+    ],
   },
   {
     prefix: "ds/",
@@ -171,6 +202,9 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "og", model: "og/gpt-5.6-luna" },
   { id: "og", model: "og/mimo-v2.5" },
   { id: "og", model: "og/ox-alpha-free" },
+  // muse-spark Contributor — /v1/responses model; health probe must ride the
+  // responses endpoint through the US exit (see translate.ts).
+  { id: "og", model: "og/muse-spark-1.3-contributor" },
   { id: "or", model: "or/openai/gpt-5.6-luna:floor[1m]" },
   { id: "or", model: "or/z-ai/glm-5.2:free" },
   { id: "or", model: "or/nvidia/nemotron-3-ultra-550b-a55b:free" },
