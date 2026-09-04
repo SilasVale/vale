@@ -1,8 +1,9 @@
 /**
  * MCP tool registry for the gateway (vale-gate /mcp endpoint).
- * All tools take a `device` name; terminal tools proxy the device's existing
- * /api/tools endpoints; browser tools route via PluginHubDO → WS → the browser
- * extension, which drives the device's Chrome over CDP.
+ * All tools take a `device` name; terminal/secret tools proxy the device's
+ * existing /api/tools endpoints; browser tools route through the device's
+ * playwright-mcp bridge (mcp_client), which drives the embedded Electron
+ * view over CDP 9333 (round-262 removed the browser-extension path).
  *
  * The terminal tools mirror the agent's /api/spec (single source of truth).
  * If the agent gains/loses a tool, update BOTH this list and the toolPath map
