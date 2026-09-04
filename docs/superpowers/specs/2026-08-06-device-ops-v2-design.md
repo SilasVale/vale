@@ -1,3 +1,11 @@
+> **SUPERSEDED (2026-09-04, round-343)** — this extension-based design
+> (browser extension + chrome.debugger + PluginHubDO) was fully retired:
+> the browser extension was deleted round-262 and the last of its
+> gateway surface (pairing endpoints, PluginHubDO, console UI) was
+> removed round-339..342. Browser control today = playwright-mcp driving
+> the Electron embedded view on CDP 9333. See `agent/AGENTS.md` and
+> `docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md`.
+
 # Device Operations Redesign v2: Browser Extension + AI-First MCP
 
 Date: 2026-08-06
