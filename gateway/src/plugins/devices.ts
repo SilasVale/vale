@@ -45,9 +45,8 @@ import {
   maskKey,
   listDevices,
   getPluginByToken,
-  removePluginLink,
-  listPluginLinks,
-  savePluginLinks,
+  migratePluginLinks,
+  removePluginLinksForDevice,
   type Device,
 } from "../store.ts";
 import { parseCookie } from "../auth.ts";
@@ -510,9 +509,7 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
   // and its live hub socket alive — a same-name re-registration resurrected
   // the old pairing's browser_* control (round-84's revocation hole). Revoke
   // every link for this device and close the hub socket.
-  const links = await listPluginLinks(env);
-  const stale = Object.entries(links).filter(([, l]) => l.device === delName);
-  for (const [token] of stale) await removePluginLink(env, token);
+  await removePluginLinksForDevice(env, delName);
   await deleteDevice(env, delName);
   return jsonOk({ ok: true });
 }
@@ -546,15 +543,9 @@ async function handleDeviceRename(request: Request, env: any, url: URL): Promise
   if (updated === "not_found") return jsonError(404, "Device not found", "not_found_error");
   if (updated === "name_taken")
     return jsonError(409, `Device '${newName}' already registered`, "conflict");
-  const links = await listPluginLinks(env);
-  let migrated = false;
-  for (const l of Object.values(links)) {
-    if (l.device === oldName) {
-      l.device = newName;
-      migrated = true;
-    }
-  }
-  if (migrated) await savePluginLinks(env, links);
+  // Lock + fresh-read migration (store helper): the old inline code read
+  // the isolate-cached map with no lock and wrote it back whole.
+  await migratePluginLinks(env, oldName, newName);
   return jsonOk({
     ok: true,
     device: { name: updated.name, hostname: updated.hostname, token: maskKey(updated.token) },

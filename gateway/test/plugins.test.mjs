@@ -227,3 +227,32 @@ test("OpenRouter usage: missing key and upstream failure are safe", async () => 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("plugin link: revoke never resurrects or wipes fresh-KV links (stale-cache guard)", async () => {
+  const { migratePluginLinks, removePluginLinksForDevice, listPluginLinks } =
+    await import("../src/store.ts");
+  const e = env();
+  __clearCaches();
+  // Prime the isolate cache with only tokA ...
+  await e.KEYS.put("plugins:v1", JSON.stringify({
+    "tokA": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 * 30 },
+  }));
+  assert.equal((await getPluginByToken(e, "tokA")).device, "d1");
+  // ... then another isolate pairs tokB straight to KV (cache now stale).
+  await e.KEYS.put("plugins:v1", JSON.stringify({
+    "tokA": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 * 30 },
+    "tokB": { device: "d2", createdAt: 2, expiresAt: Date.now() + 86400000 * 30 },
+  }));
+  // Revoking tokA must NOT wipe tokB (old code rewrote the cached blob).
+  await removePluginLink(e, "tokA");
+  assert.equal(await getPluginByToken(e, "tokA"), null);
+  assert.equal((await getPluginByToken(e, "tokB")).device, "d2");
+  // Rename migrates from fresh KV too.
+  assert.equal(await migratePluginLinks(e, "d2", "d3"), true);
+  assert.equal((await getPluginByToken(e, "tokB")).device, "d3");
+  assert.equal(await migratePluginLinks(e, "ghost", "d4"), false);
+  // Device delete revokes exactly that device's links.
+  assert.equal(await removePluginLinksForDevice(e, "d3"), 1);
+  assert.equal(await getPluginByToken(e, "tokB"), null);
+  assert.deepEqual(await listPluginLinks(e), {});
+});
