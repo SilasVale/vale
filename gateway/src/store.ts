@@ -908,7 +908,6 @@ export async function removePluginLink(env: Env, token: string): Promise<void> {
   });
 }
 
-
 /* ---- Cloudflare tunnel API token (account-level, admin-managed) ----
  *
  * cf:api_token — the API token used by the Windows install to set up the
