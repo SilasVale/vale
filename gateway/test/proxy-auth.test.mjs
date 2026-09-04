@@ -199,3 +199,41 @@ test("plugins/status: agent_up reflects the device /api/status probe", async () 
     globalThis.fetch = real;
   }
 });
+
+test("proxy: metadata/unspec/mapped hostnames refused without dialing (SSRF gate)", async () => {
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  const evil = ["169.254.169.254", "0.0.0.0", "[::ffff:127.0.0.1]", "2130706433"];
+  const devs = Object.fromEntries(
+    evil.map((h, i) => [`evil${i}`, { name: `evil${i}`, hostname: h, token: "tok" }]),
+  );
+  const kv = new Map([
+    ["devices:v1", JSON.stringify(Object.values(devs))],
+    ["plugins:v1", JSON.stringify({})],
+    ["auth:admin_password", ADMIN_PW],
+    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "" })],
+    ["_admin_seeded", "1"],
+  ]);
+  const env = { CONSOLE_HOST: "x", KEYS: {
+    async get(k) { return kv.has(k) ? kv.get(k) : null; },
+    async put(k, v) { kv.set(k, v); },
+    async delete(k) { kv.delete(k); },
+  } };
+  const adminCookie = await issueSessionToken(ADMIN_PW, "admin", "admin");
+  const { SESSION_COOKIE } = await import("../src/auth.ts");
+  await withDeviceFetch(async (calls) => {
+    for (const name of Object.keys(devs)) {
+      const res = await worker.fetch(
+        new Request(`https://x/api/devices/${name}/proxy/api/status`,
+          { headers: { cookie: `${SESSION_COOKIE}=${adminCookie}` } }), env);
+      // The fetch gate refuses with its message; the proxy surfaces it as
+      // 502 proxy_error. [::ffff:..] dies even earlier at the hostname
+      // equality check (parser normalizes it away from the stored name).
+      // What matters: refused + never dialed.
+      assert.equal(res.status, 502, `${name} must be refused`);
+      const body = await res.json();
+      assert.match(body.error.message, /private\/internal|invalid proxy path/, `${name} must cite a gate`);
+    }
+    assert.equal(calls.length, 0, "no upstream dial for blocked hosts");
+  });
+});
