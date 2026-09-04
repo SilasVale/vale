@@ -72,9 +72,13 @@ jobs:
           # fail if the committed src/*.js differ from the fresh output.
           # Runs inside vale-agent-npm (its node_modules holds tsc; typeRoots
           # points at its own @types — electron's node_modules is not
-          # installed in CI).
+          # installed in CI, so full typecheck CANNOT pass here (electron
+          # module + Electron namespace unresolvable). --noCheck emits
+          # without typechecking: the gate compares EMIT output, which is
+          # exactly what ships. (Device-caught on 1.2.286: without it the
+          # gate failed every release on missing electron types.)
           (cd vale-agent-npm && ./node_modules/.bin/tsc -p ../vale-desktop-electron/tsconfig.json \
-            --typeRoots ./node_modules/@types --outDir /tmp/electron-fresh)
+            --typeRoots ./node_modules/@types --outDir /tmp/electron-fresh --noCheck)
           for F in main.js preload.js url-policy.js; do
             if ! cmp -s "/tmp/electron-fresh/${F}" "vale-desktop-electron/src/${F}"; then
               echo "::error::vale-desktop-electron/src/${F} is stale (ts source changed without recompiling) — run tsc and commit the fresh output"
