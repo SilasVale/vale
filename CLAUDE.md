@@ -16,6 +16,25 @@ Subprojects have their own build docs:
 - **agent**: `agent/CLAUDE.md` (cargo-xwin cross-compile, feature gating, MCP tool additions, Windows smoke checklist)
 - **gateway / index**: wrangler deploy per their `wrangler.jsonc`
 
+## Install / update channel (2026-08-28: npm is THE single channel)
+
+The NSIS installer, `setup.ps1` and `run-setup.bat` are RETIRED
+(`agent/deploy/retired/`). Install and update are npm only:
+
+```bash
+npm i -g https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz   # install the CLI
+vale setup                        # PURE LOCAL install — no key, no tunnel, no cloud
+vale update                       # update (same channel)
+vale uninstall [--purge-data]     # remove (data kept unless --purge-data)
+```
+
+- Install layout is registry-first: `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}`
+  is the single source of truth (`agent/src/paths.rs`). No legacy-directory probing.
+- Boxed components (playwright, cloudflared) are version-locked by the
+  release flow and agent-supervised (no Windows service).
+- The Gateway is an OPTIONAL card in the device Settings page
+  (`POST /api/gateway/connect`); pure local mode needs none of it.
+
 ## Conventions
 
 - **Commits**: conventional commits with stage tags (`fix(stage-x)`, `feat(stage-x)`, …); each commit leaves the tree green.
