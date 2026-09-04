@@ -1,8 +1,8 @@
 //! System Plugin — device-local OS tools for AI agents.
 //!
-//! Tools: system_file_list, system_file_read, system_file_write,
-//!        system_file_download, system_file_upload, system_process_list,
-//!        system_process_kill, system_net_test.
+//! Tools: system_file_list, system_file_stat, system_file_read,
+//!        system_file_write, system_file_download, system_file_upload,
+//!        system_process_list, system_process_kill, system_net_test.
 //!
 //! These fill the gap between terminal sessions (interactive shells) and
 //! the rest of the MCP toolset: one-shot, structured, non-interactive OS
@@ -27,7 +27,7 @@ impl Plugin for SystemPlugin {
         "System"
     }
     fn description(&self) -> &'static str {
-        "Device-local OS tools for AI agents (system_file_list/read/write, system_process_list/kill, system_net_test)"
+        "Device-local OS tools for AI agents (system_file_list/stat/read/write/download/upload, system_process_list/kill, system_net_test)"
     }
     fn tools(&self) -> Vec<ToolDef> {
         tools::build()

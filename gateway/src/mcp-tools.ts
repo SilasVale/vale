@@ -7,7 +7,7 @@
  *
  * The terminal tools mirror the agent's /api/spec (single source of truth).
  * If the agent gains/loses a tool, update BOTH this list and the toolPath map
- * in mcp.js, and refresh the spec snapshot in test/mcp-handler.test.mjs
+ * in mcp.ts, and refresh the spec snapshot in test/mcp-handler.test.mjs
  * (round-54: 11 tools were missing here — terminal_read/write/resize/select/
  * history, list_ports, diag_*, secret_* — invisible to console MCP clients).
  */

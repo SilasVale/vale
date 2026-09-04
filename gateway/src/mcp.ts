@@ -272,7 +272,7 @@ async function callTerminalToolOnce(name: string, env: any, device: any, args: a
   // Every terminal tool on the device is reachable here (round-54: only 5 of
   // 16 were mapped — write/read/resize/select/history/list_ports/diag/secret
   // were invisible to MCP clients through the console). Keep in sync with
-  // TERMINAL_TOOLS in mcp-tools.js.
+  // TERMINAL_TOOLS in mcp-tools.ts.
   const toolPath: string | undefined = {
     terminal_open: "/api/tools/terminal_open",
     terminal_screen: "/api/tools/terminal_screen",

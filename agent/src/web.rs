@@ -651,7 +651,7 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     // Terminal panel + desktop shell (static SPA, public like the status page
     // — it shows no data until the user enters the device token). Assets are
     // embedded at compile time from resources/panel/. /desktop/ is the
-    // vale-desktop (Tauri/WebView2) full-screen shell; the SPA switches on
+    // vale-desktop-electron (Electron) full-screen shell; the SPA switches on
     // the path.
     //
     // SECURITY (2026-08-12): the panel previously embedded the device token as
