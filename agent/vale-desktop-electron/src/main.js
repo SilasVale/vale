@@ -77,6 +77,20 @@ function authHeaders() {
     const t = agentToken();
     return t ? { authorization: `Bearer ${t}` } : {};
 }
+// Brand icon for every native surface (tray + taskbar/window). Windows
+// needs .ico (Tray AND BrowserWindow fall back to the stock electron.exe
+// icon otherwise); macOS/Linux take .png. Empty string when absent —
+// callers fall back to Electron defaults.
+function appIcon() {
+    const name = process.platform === "win32" ? "icon.ico" : "icon.png";
+    const p = path.join(__dirname, "..", name);
+    try {
+        return fs.existsSync(p) ? p : "";
+    }
+    catch {
+        return "";
+    }
+}
 // IPC audit #2: preload runs in EVERY frame; will-navigate never gated
 // iframes. Handlers must reject anything not sourced from the pinned panel.
 function frameOk(e) {
@@ -289,6 +303,7 @@ function browserOpen(url) {
     const id = `browser-${Date.now()}`;
     const bw = new electron_1.BrowserWindow({
         width: 1100, height: 750, title: `Vale Browser — ${target}`,
+        ...(appIcon() ? { icon: appIcon() } : {}),
         // review #6/#7: these windows load ARBITRARY internet pages. contextIsolation
         // on + nodeIntegration off + NO preload = zero Node/bridge surface (the
         // default; made explicit). Popups are denied (they would otherwise spawn
@@ -725,6 +740,13 @@ const httpServer = http.createServer((req, res) => {
     }
 });
 if (gotTheLock) {
+    // Taskbar grouping/identity on Windows (taskbar button + jump list group
+    // under Vale instead of Electron). Must be set before ready.
+    try {
+        if (process.platform === "win32")
+            electron_1.app.setAppUserModelId("online.saisi.vale.agent");
+    }
+    catch { /* non-fatal */ }
     electron_1.app.whenReady().then(async () => {
         // review #7: with no handler Electron AUTO-GRANTS every permission
         // request (media/geolocation/clipboard) — deny by default for all
@@ -740,6 +762,9 @@ if (gotTheLock) {
         electron_1.Menu.setApplicationMenu(buildMenu());
         win = new electron_1.BrowserWindow({
             width: 1200, height: 800, title: "Vale",
+            // Taskbar + title-bar icon: without this Windows shows the stock
+            // electron.exe icon (the running binary is stock Electron).
+            ...(appIcon() ? { icon: appIcon() } : {}),
             webPreferences: {
                 preload: path.join(__dirname, "preload.js"),
                 contextIsolation: true,
@@ -966,9 +991,8 @@ if (gotTheLock) {
             }
         });
         // Windows requires .ico for tray; macOS/Linux accept .png.
-        const iconName = process.platform === "win32" ? "icon.ico" : "icon.png";
-        const iconPath = path.join(__dirname, "..", iconName);
-        tray = new electron_1.Tray(fs.existsSync(iconPath) ? iconPath : electron_1.nativeImage.createEmpty());
+        const iconPath = appIcon();
+        tray = new electron_1.Tray(iconPath ? iconPath : electron_1.nativeImage.createEmpty());
         // review #f: single/double-click on the tray icon did nothing (only the
         // context-menu "Open" worked).
         tray.on("click", () => focusMain());
