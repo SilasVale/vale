@@ -231,7 +231,9 @@ async function handleGatewayImpl(
   if (
     env.KEYS &&
     method === "POST" &&
-    (path.endsWith("/messages") || path.endsWith("/chat/completions") || path.endsWith("/responses")) &&
+    (path.endsWith("/messages") ||
+      path.endsWith("/chat/completions") ||
+      path.endsWith("/responses")) &&
     !path.endsWith(COUNT_PATH)
   ) {
     const mk = `min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
@@ -828,7 +830,9 @@ async function handleGatewayImpl(
         const rawErr: any = await upstream.json();
         const err: any =
           rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
-        message = scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) || message;
+        message =
+          scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) ||
+          message;
         const upType = err.error?.type || err.type;
         const KNOWN = [
           "rate_limit_error",
