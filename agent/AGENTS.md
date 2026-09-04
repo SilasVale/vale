@@ -236,11 +236,12 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
-  65536-byte workspace budget: bridge-era release history moved to
-  agent/RELEASE-HISTORY.md (1.2.232 and earlier) + early iteration
-  rounds ROUND-245..272 archived there too; live log keeps ROUND-273+.
-  Current release: 1.2.278 on d1; e2e suite 30 checks; all matrices
+Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
+  47 + 24 findings; wave-1 fixes landed — agent fail-loud staging, panel/
+  extension hardening, index latest-alias route + R2 24h expiry + shared
+  publish smoke, gateway allowlist/bridge-guard/session/admin/logout;
+  brand unified on the sunrise favicon; device on 1.2.296).
+  Current release: 1.2.296 on d1; e2e suite 30 checks; all matrices
   green.)
   ROUND-273 (2026-09-04): REPEATABLE E2E SUITE in the repo — the round-
   264..268 device verifications were one-off scripts in D:\Vale\pwout.
