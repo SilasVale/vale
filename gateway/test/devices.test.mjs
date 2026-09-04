@@ -278,3 +278,12 @@ test("plugins/status: ?fresh=1 bypasses the 30s probe cache; cached call does no
     assert.equal(calls.filter((u) => u.includes("/api/status")).length, probesAfterFirst + 1);
   } finally { restore(); }
 });
+
+test("upload proxy: 401 unauth / 401 bad device token (no network on reject)", async () => {
+  const env = makeEnv({ d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "a".repeat(64), proxySecret: "s" } });
+  const noAuth = await worker.fetch(req("POST", "/api/upload"), env);
+  assert.equal(noAuth.status, 401);
+  const bad = await worker.fetch(
+    req("POST", "/api/upload", { auth: `Bearer ${"b".repeat(64)}` }), env);
+  assert.equal(bad.status, 401);
+});
