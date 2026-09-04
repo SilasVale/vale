@@ -28,6 +28,7 @@ pub fn build() -> Vec<ToolDef> {
         tool_file_stat(),
         tool_file_read(),
         tool_file_write(),
+        tool_file_download(),
         tool_process_list(),
         tool_process_kill(),
         tool_net_test(),
@@ -253,6 +254,67 @@ fn tool_file_write() -> ToolDef {
                 }
                 let _ = f.flush().await;
                 Ok(to_value_or_empty(json!({"ok": true, "path": path, "bytes": bytes.len(), "append": append})))
+            }
+        },
+    )
+}
+
+fn tool_file_download() -> ToolDef {
+    ToolDef::new(
+        "system_file_download",
+        "Download a URL to a file on THIS device (the agent host). The device fetches the URL directly — content does NOT pass through the AI context, so large files (100MB+) work fine. The URL must be reachable from the device (public IP or same tailnet). Returns {ok, path, bytes}.",
+        json!({
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "HTTP or HTTPS URL to download. Must be reachable from the device."},
+                "path": {"type": "string", "description": "Destination path on the device (absolute recommended, e.g. D:\\Vale\\downloads\\file.zip)."}
+            },
+            "required": ["url", "path"]
+        }),
+        move |params: Value| {
+            async move {
+                let url = require_str(&params, "url")?;
+                let path = require_str(&params, "path")?;
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": "url must start with http:// or https://"})));
+                }
+                // Plugin audit: cap at 100 MiB to prevent disk fill.
+                const MAX_BYTES: u64 = 100 * 1024 * 1024;
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(120))
+                    .build();
+                let client = match client {
+                    Ok(c) => c,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("reqwest build: {e}")}))),
+                };
+                let resp = match client.get(&url).send().await {
+                    Ok(r) => r,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("download failed: {e}")}))),
+                };
+                if !resp.status().is_success() {
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("upstream returned {}", resp.status())})));
+                }
+                let bytes = match resp.bytes().await {
+                    Ok(b) => b,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read body: {e}")}))),
+                };
+                if bytes.len() as u64 > MAX_BYTES {
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("file too large ({} bytes, max {MAX_BYTES})", bytes.len())})));
+                }
+                use tokio::io::AsyncWriteExt;
+                let f = tokio::fs::OpenOptions::new()
+                    .write(true).create(true).truncate(true)
+                    .open(&path).await;
+                let mut f = match f {
+                    Ok(f) => f,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("open {path}: {e}")}))),
+                };
+                match f.write_all(&bytes).await {
+                    Ok(()) => {}
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("write: {e}")}))),
+                }
+                let _ = f.flush().await;
+                Ok(to_value_or_empty(json!({"ok": true, "path": path, "bytes": bytes.len()})))
             }
         },
     )

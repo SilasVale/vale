@@ -301,8 +301,85 @@ function toggleTheme() {
 </body>
 </html>`;
 
+// In-memory token set (per-isolate; survives across requests until restart).
+// For multi-edge durability, swap to KV later. Tokens are 22 chars URL-safe.
+const TOKEN_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+function genToken(len = 22) {
+  let s = "";
+  const buf = new Uint8Array(len);
+  crypto.getRandomValues(buf);
+  for (let i = 0; i < len; i++) s += TOKEN_CHARS[buf[i] % TOKEN_CHARS.length];
+  return s;
+}
+
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+
+    // ── Temporary file hosting ──────────────────────────────────────────
+    // Upload: POST /api/upload  ->  { token, url, size, expiresIn }
+    // Download: GET /files/<token>  ->  file bytes (one-time, then deleted)
+    if (url.pathname === "/api/upload" && request.method === "POST") {
+      try {
+        const ct = request.headers.get("content-type") || "";
+        if (!ct.includes("multipart/form-data")) {
+          return new Response(JSON.stringify({ error: "expected multipart/form-data" }), { status: 400 });
+        }
+        const form = await request.formData();
+        const file = form.get("file");
+        if (!file || typeof file === "string") {
+          return new Response(JSON.stringify({ error: "no file field" }), { status: 400 });
+        }
+        // Cap at 100 MiB (Cloudflare Workers limit ~10 MiB for free plan,
+        // 100 MiB for paid; adjust as needed).
+        const MAX_BYTES = 100 * 1024 * 1024;
+        const buf = await file.arrayBuffer();
+        if (buf.byteLength > MAX_BYTES) {
+          return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), { status: 413 });
+        }
+        const token = genToken(22);
+        const key = `files/${token}`;
+        await env.TEMP_FILES.put(key, buf, {
+          httpMetadata: {
+            contentType: file.type || "application/octet-stream",
+            contentDisposition: `attachment; filename="${file.name || 'file'}"`,
+          },
+        });
+        const downloadUrl = `${url.origin}/files/${token}`;
+        return new Response(JSON.stringify({
+          token,
+          url: downloadUrl,
+          size: buf.byteLength,
+          filename: file.name || "file",
+          // Tokens auto-delete on first download; also set a TTL hint.
+          note: "one-time download: file is deleted after first access",
+        }), { headers: { "content-type": "application/json" } });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+      }
+    }
+
+    // Download: GET /files/<token>  ->  stream file + delete (one-time)
+    const fileMatch = /^\/files\/([A-Za-z0-9_-]{16,64})$/.exec(url.pathname);
+    if (fileMatch && request.method === "GET") {
+      const token = fileMatch[1];
+      const key = `files/${token}`;
+      const obj = await env.TEMP_FILES.get(key);
+      if (!obj) {
+        return new Response(JSON.stringify({ error: "file not found or already downloaded" }), { status: 404 });
+      }
+      // One-time: delete BEFORE streaming so a retry can't re-download.
+      await env.TEMP_FILES.delete(key);
+      return new Response(obj.body, {
+        headers: {
+          "content-type": obj.httpMetadata?.contentType || "application/octet-stream",
+          "content-disposition": obj.httpMetadata?.contentDisposition || 'attachment',
+          "cache-control": "no-store",
+        },
+      });
+    }
+
     // Version endpoint for the agent_update MCP tool (and legacy tray
     // check). ROUND-297: this was hard-coded to v1.2.141/1.0.145 and rotted
     // (the 141 tgz was deleted from assets long ago — an update check that

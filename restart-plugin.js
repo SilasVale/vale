@@ -8,7 +8,7 @@ function hostPlugin() {
       var shell = ctx.get('shell')
       var subprocess = ctx.get('subprocess')
 
-      var DSH_BIN = '/home/zhengsaisi/.nvm/versions/node/v22.22.3/bin/dsh'
+      var DSH_BIN = '/home/zhengsaisi/.nvm/versions/node/v24.20.0/bin/dsh'
       var DSH_ARGS = 'web --port 7738 --trusted-host dsh.saisi.online'
 
       function doRestart(reason) {

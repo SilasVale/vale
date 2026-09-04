@@ -3,7 +3,7 @@
 # Usage: ./dsh-wrapper.sh
 # Stop: Ctrl+C or kill this script's PID
 
-DSH_BIN="/home/zhengsaisi/.nvm/versions/node/v22.22.3/bin/dsh"
+DSH_BIN="/home/zhengsaisi/.nvm/versions/node/v24.20.0/bin/dsh"
 DSH_ARGS="web --port 7738 --trusted-host dsh.saisi.online"
 
 echo "[wrapper] DSH wrapper started (PID: $$)"

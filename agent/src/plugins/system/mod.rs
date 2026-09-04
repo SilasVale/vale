@@ -1,7 +1,8 @@
 //! System Plugin — device-local OS tools for AI agents.
 //!
 //! Tools: system_file_list, system_file_read, system_file_write,
-//!        system_process_list, system_process_kill, system_net_test.
+//!        system_file_download, system_process_list, system_process_kill,
+//!        system_net_test.
 //!
 //! These fill the gap between terminal sessions (interactive shells) and
 //! the rest of the MCP toolset: one-shot, structured, non-interactive OS
