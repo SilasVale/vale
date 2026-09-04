@@ -766,6 +766,17 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   cleanup zero regression on the device path; live console UI assets
   byte-identical to repo + 0 pair code (new UI shipped with the
   round-342 deploy).
+  ROUND-345 (2026-09-04): gateway dead pair/unpair + pair-code store
+  functions REMOVED — handlePair/handleUnpair (admin /api/plugins/pair +
+  /unpair) survived round-341's UI removal with no callers; store.ts
+  addPluginLink/createPairCode/consumePairCode/createWsTicket/
+  consumeWsTicket had zero src callers (links were only ever created by
+  extension pairing). Link map (list/get/remove/save) stays — device
+  delete/rename revocation + proxy getPluginByToken auth still use it.
+  plugins.test.mjs: pair/ticket tests removed, link tests KV-seed with
+  cache clears (11). 241 gateway tests pass, tsc clean. OPEN
+  (conservative): proxy plugin-token auth branch stays until 30-day
+  link TTLs expire.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
