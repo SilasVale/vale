@@ -28,9 +28,9 @@ async fn start_server(auth_token: Option<&str>) -> String {
 
 #[tokio::test]
 async fn list_tools_via_http() {
-    let url = start_server(None).await;
+    let url = start_server(Some("sekret")).await;
     let transport = StreamableHttpClientTransport::from_config(
-        StreamableHttpClientTransportConfig::with_uri(url),
+        StreamableHttpClientTransportConfig::with_uri(url).auth_header("sekret"),
     );
     let client = ().serve(transport).await.expect("connect client");
 
@@ -41,9 +41,9 @@ async fn list_tools_via_http() {
 
 #[tokio::test]
 async fn call_tool_roundtrip() {
-    let url = start_server(None).await;
+    let url = start_server(Some("sekret")).await;
     let transport = StreamableHttpClientTransport::from_config(
-        StreamableHttpClientTransportConfig::with_uri(url),
+        StreamableHttpClientTransportConfig::with_uri(url).auth_header("sekret"),
     );
     let client = ().serve(transport).await.expect("connect client");
 
@@ -61,9 +61,9 @@ async fn call_tool_roundtrip() {
 
 #[tokio::test]
 async fn unknown_tool_returns_error() {
-    let url = start_server(None).await;
+    let url = start_server(Some("sekret")).await;
     let transport = StreamableHttpClientTransport::from_config(
-        StreamableHttpClientTransportConfig::with_uri(url),
+        StreamableHttpClientTransportConfig::with_uri(url).auth_header("sekret"),
     );
     let client = ().serve(transport).await.expect("connect client");
 
@@ -71,6 +71,19 @@ async fn unknown_tool_returns_error() {
     let err = client.call_tool(params).await.expect_err("unknown tool must fail");
     assert!(!err.to_string().is_empty());
     let _ = client.cancel().await;
+}
+
+#[tokio::test]
+async fn missing_token_config_denies_everything() {
+    // Fail-closed: a server built without a device token rejects even the
+    // handshake (bootstrap guarantees production always has a token, so
+    // None must never mean open).
+    let url = start_server(None).await;
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(url),
+    );
+    let err = ().serve(transport).await.expect_err("tokenless server must refuse");
+    assert!(err.to_string().contains("401"), "unexpected error: {err}");
 }
 
 #[tokio::test]

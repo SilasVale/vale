@@ -12,11 +12,12 @@ use tokio_util::sync::CancellationToken;
 use vale_agent::state::AppState;
 use vale_agent_core::{Config, ToolDef};
 
-/// Start a real MCP server on an ephemeral port; returns the MCP URL.
+/// Start a real token-gated MCP server on an ephemeral port; returns the MCP URL.
 async fn start_server() -> String {
     let mut cfg = Config::default();
     cfg.server.host = "127.0.0.1".into();
     cfg.server.port = 0; // ephemeral — bind() reports the actual port
+    cfg.server.device_token = Some("sekret".into());
     let state = Arc::new(AppState::new(cfg.clone()));
     let (addr, _handle) = vale_agent::mcp::bind(cfg, state, CancellationToken::new())
         .await
@@ -48,7 +49,9 @@ async fn mcp_client_bridge_roundtrip() {
     assert!(err.contains("not connected"), "call before connect: {err}");
 
     // Connect to the fake browser server and verify the tool list came back.
-    let r: Value = connect.handler.call(json!({ "transport": "http", "url": url })).await.expect("connect");
+    // The server is token-gated (fail-closed auth) — pass the bearer via
+    // the connect headers param.
+    let r: Value = connect.handler.call(json!({ "transport": "http", "url": url, "headers": { "authorization": "Bearer sekret" } })).await.expect("connect");
     assert_eq!(r["status"], "connected");
     let count = r["tool_count"].as_u64().expect("tool_count");
     assert!(count >= 20, "expected the agent's full tool surface, got {count}");

@@ -57,6 +57,11 @@ enum McpSession {
         last_url: Option<String>,
         next_id: AtomicU64,
         http: reqwest::Client,
+        /// Extra request headers (fail-closed auth follow-up): servers
+        /// behind a Bearer gate need Authorization and friends on every
+        /// request. Applied in rpc_ref_http; protocol-managed names
+        /// (mcp-session-id/content-type/accept/...) cannot be overridden.
+        headers: Vec<(String, String)>,
     },
     /// stdio transport (no listening port): the child is spawned with piped
     /// stdin/stdout; rmcp drives the MCP framing. `client` is the connected
@@ -155,7 +160,7 @@ async fn rpc_ref_http(
     params: Value,
     timeout_secs: u64,
 ) -> Result<Value, DeviceError> {
-    let McpSession::Http { url, session_id, http, .. } = sess else {
+    let McpSession::Http { url, session_id, http, headers, .. } = sess else {
         return Err(DeviceError::Internal { message: "not an http session".into() });
     };
     let mut envelope = json!({"jsonrpc": "2.0", "method": method});
@@ -171,6 +176,15 @@ async fn rpc_ref_http(
         .header("accept", "application/json, text/event-stream")
         .timeout(Duration::from_secs(timeout_secs))
         .json(&envelope);
+    for (k, v) in headers.iter() {
+        let kl = k.to_ascii_lowercase();
+        if ["mcp-session-id", "content-type", "accept", "content-length", "host", "connection"]
+            .contains(&kl.as_str())
+        {
+            continue; // protocol-managed — never caller-overridable
+        }
+        req = req.header(k.as_str(), v.as_str());
+    }
     if let Some(sid) = session_id {
         req = req.header("mcp-session-id", sid.as_str());
     }
@@ -296,6 +310,11 @@ pub fn mcp_client_connect() -> ToolDef {
                 "url": {
                     "type": "string",
                     "description": "MCP server URL for transport=http (default http://localhost:9229/mcp)"
+                },
+                "headers": {
+                    "type": "object",
+                    "description": "Extra HTTP headers for transport=http (e.g. {\"authorization\": \"Bearer <token>\"} for gated servers). Protocol-managed names are ignored.",
+                    "additionalProperties": { "type": "string" }
                 }
             }
         }),
@@ -306,9 +325,15 @@ pub fn mcp_client_connect() -> ToolDef {
                 .filter(|s| !s.is_empty())
                 .unwrap_or(DEFAULT_URL)
                 .to_string();
+            let headers: Vec<(String, String)> = params.get("headers")
+                .and_then(|v| v.as_object())
+                .map(|m| m.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect())
+                .unwrap_or_default();
 
             if transport == "http" {
-                return connect_http(url).await;
+                return connect_http(url, headers).await;
             }
             connect_stdio().await
         },
@@ -316,7 +341,7 @@ pub fn mcp_client_connect() -> ToolDef {
 }
 
 /// Connect over Streamable HTTP (legacy 9229 / any URL).
-async fn connect_http(url: String) -> Result<serde_json::Value, DeviceError> {
+async fn connect_http(url: String, headers: Vec<(String, String)>) -> Result<serde_json::Value, DeviceError> {
     // Plugin audit MED: connect took ANY caller URL — plain http to internal
     // hosts was an SSRF + sniffable. Policy: https anywhere; http ONLY for
     // the loopback bundled server (9229).
@@ -345,6 +370,7 @@ async fn connect_http(url: String) -> Result<serde_json::Value, DeviceError> {
         last_url: None,
         next_id: AtomicU64::new(1),
         http: reqwest::Client::new(),
+        headers,
     };
 
     // initialize: the response header delivers mcp-session-id; the

@@ -441,7 +441,16 @@ fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
 /// query param).
 fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>> {
     let Some(ref token) = state.config.server.device_token else {
-        return Ok(()); // no auth configured
+        // Fail CLOSED: bootstrap guarantees a token on every serving boot
+        // (generates + persists fresh installs, recovers quarantined ones,
+        // exits when randomness is unavailable) — a missing token here can
+        // only come from a hand-built Config, which must never serve
+        // unauthenticated RCE routes to the network.
+        return Err(Box::new(built_response(
+            StatusCode::UNAUTHORIZED,
+            "application/json",
+            Body::from(r#"{"ok":false,"error":"unauthorized"}"#),
+        )));
     };
     let from_header = req.headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -473,8 +482,8 @@ fn timing_safe_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Wraps any Tower service with the same bearer-token check as the API.
 /// The MCP endpoint is as sensitive as the API (it drives terminals), so it
-/// must not be reachable without the token when one is configured. rmcp has
-/// no server-side auth hook, so the check happens here.
+/// is never reachable without the token. rmcp has no server-side auth hook,
+/// so the check happens here.
 #[derive(Clone)]
 pub struct TokenGate<S> {
     inner: S,
@@ -522,7 +531,8 @@ where
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
         let Some(token) = self.token.clone() else {
-            return Box::pin(self.inner.call(req));
+            // Fail closed, mirroring check_auth above.
+            return Box::pin(async { Ok(unauthorized_mcp_response()) });
         };
         let authorized = req.headers()
             .get(axum::http::header::AUTHORIZATION)
@@ -1409,12 +1419,20 @@ mod tests {
     use vale_agent_core::Config;
     use axum::http::Request;
 
+    const TEST_TOKEN: &str = "test-token";
+
     fn state() -> Arc<AppState> {
-        Arc::new(AppState::new(Config::default()))
+        // Fail-closed auth (round-3xx): the default test state carries a
+        // token like production always does — tests exercise the gated
+        // paths, and the 401 cases build their own tokenless/mismatched
+        // configs explicitly.
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some(TEST_TOKEN.into());
+        Arc::new(AppState::new(cfg))
     }
 
     fn req(method: &str, path: &str) -> Request<Body> {
-        Request::builder().method(method).uri(path).body(Body::empty()).unwrap()
+        req_with_token(method, path, TEST_TOKEN)
     }
 
     fn req_with_token(method: &str, path: &str, token: &str) -> Request<Body> {
@@ -1554,7 +1572,7 @@ mod tests {
     async fn tool_dispatch_headless() {
         // terminal_list through the registry → headless stub → empty array
         let resp = handle_request(
-            req_with_token("POST", "/api/tools/terminal_list", ""),
+            req_with_token("POST", "/api/tools/terminal_list", TEST_TOKEN),
             state(),
         ).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -1566,7 +1584,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_tool_reports_error() {
         let resp = handle_request(
-            req_with_token("POST", "/api/tools/does_not_exist", ""),
+            req_with_token("POST", "/api/tools/does_not_exist", TEST_TOKEN),
             state(),
         ).await;
         let v = json_body(resp).await;
