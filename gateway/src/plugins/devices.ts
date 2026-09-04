@@ -52,7 +52,7 @@ import {
 import { parseCookie } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { fetchWithTimeout } from "../reliability.ts";
-import { jsonOk, jsonError, readJson } from "../http.ts";
+import { jsonOk, jsonError, readJson, stampCors } from "../http.ts";
 import { requireSession } from "../session.ts";
 import { route, type Plugin, type PluginContext } from "./registry.ts";
 
@@ -726,7 +726,11 @@ async function proxyDevice(
   if (!resp) return jsonError(502, error || "Device unreachable", "proxy_error");
 
   const outHeaders = new Headers(resp.headers);
-  outHeaders.set("Access-Control-Allow-Origin", "*");
+  // CORS: reflect-if-allowlisted (console origins + loopback) with Vary —
+  // NO wildcard. The proxied panel runs at the console origin and can read
+  // console APIs (accepted trust limitation, round-133/134 note below), so
+  // an arbitrary cross-origin reader must not be invited in on top of that.
+  stampCors(request, outHeaders);
   const ct = String(outHeaders.get("content-type") || "").toLowerCase();
 
   if (resp.status === 101) {

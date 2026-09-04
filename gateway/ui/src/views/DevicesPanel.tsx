@@ -216,7 +216,11 @@ export default function DevicesPanel() {
       const auth = cfg.mcpServers["vale-agent"].headers.Authorization; // "Bearer <device_token>"
       const tok = auth.replace("Bearer ", "");
       const host = new URL(cfg.mcpServers["vale-agent"].url).hostname;
-      window.open(`https://${host}/panel/?token=${tok}`, "_blank");
+      // Cheap hardening: encode the token (a future non-hex charset must not
+      // break the URL) + noopener so the panel cannot reach window.opener.
+      // The token still rides in ?token= (history/address-bar/logs) — the
+      // real fix (gateway-issued one-time grant) is tracked separately.
+      window.open(`https://${host}/panel/?token=${encodeURIComponent(tok)}`, "_blank", "noopener");
     } catch (err) {
       toast(err instanceof ApiError ? err.message : t("devices.saveFail"), true);
     }

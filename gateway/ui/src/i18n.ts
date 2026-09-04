@@ -553,13 +553,6 @@ export function t(key: TranslationKey, vars?: Record<string, string>): string {
   return s;
 }
 
-/** Escape HTML special chars — returns a string safe for JSX dangerouslySetInnerHTML. */
-export function esc(s: string | null | undefined): string {
-  return String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as Record<string, string>)[c],
-  );
-}
-
 /**
  * React hook: re-renders when language changes.
  */
@@ -573,5 +566,5 @@ export function useTranslation() {
 
   useSyncExternalStore(subscribe, getSnapshot);
 
-  return { t, lang, setLang, esc };
+  return { t, lang, setLang };
 }

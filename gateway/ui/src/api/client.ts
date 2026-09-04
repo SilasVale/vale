@@ -97,7 +97,6 @@ export interface Device {
 
 export interface DeviceStatus {
   agent_up?: boolean;
-  online?: boolean;
   tunnel_up?: boolean;
   version?: string;
   checked_at?: number;

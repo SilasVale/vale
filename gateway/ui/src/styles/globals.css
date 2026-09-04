@@ -1443,21 +1443,6 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
   color: var(--accent);
 }
 
-.pair-code { /* legacy alias */
-  font-family: var(--ds-font-family-code);
-  font-size: 26px;
-  font-weight: 600;
-  text-align: center;
-  padding: 22px;
-  background: var(--bg-secondary);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-lg);
-  margin-bottom: 14px;
-  word-break: break-all;
-  letter-spacing: 3px;
-  color: var(--accent);
-}
-
 .modal-actions {
   display: flex;
   gap: 8px;
