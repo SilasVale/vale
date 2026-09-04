@@ -35,7 +35,7 @@ async fn list_tools_via_http() {
     let client = ().serve(transport).await.expect("connect client");
 
     let tools = client.list_tools(None).await.expect("list_tools");
-    assert_eq!(tools.tools.len(), 47, "26 terminal (incl. terminal_env + terminal_jobs + terminal_sftp + terminal_forget_saved + terminal_secret_* aliases) + agent_update + page_view + 4 mcp_client_* + 2 playwright + 6 memory_* + 7 system_* (round-266 added system_file_stat)");
+    assert_eq!(tools.tools.len(), 48, "26 terminal (incl. terminal_env + terminal_jobs + terminal_sftp + terminal_forget_saved + terminal_secret_* aliases) + agent_update + page_view + 4 mcp_client_* + 2 playwright + 6 memory_* + 8 system_* (round-266 added system_file_stat, round-340 added system_file_download)");
     let _ = client.cancel().await;
 }
 
