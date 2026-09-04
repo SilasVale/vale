@@ -112,7 +112,7 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
 }
 
 /** Browser tools → agent's mcp_client_call → playwright-mcp.
- *   Replaces the old PluginHubDO/extension path. playwright-mcp must run on the device. */
+ *   (The extension/PluginHubDO path was deleted round-341.) */
 async function callMcpClientBridge(name: string, _env: any, device: any, args: any): Promise<any> {
   const token = device.token || "";
   const base = `https://${device.hostname}`;
@@ -210,49 +210,11 @@ export async function callTool(tool: any, env: any, device: any, args: any): Pro
   if (tool.name.startsWith("browser_")) {
     return callMcpClientBridge(tool.name, env, device, args);
   }
-  // Browser tools route via PluginHubDO → WS → extension (chrome.debugger) on
-  // the device's browser. The DO resolves with the extension's response frame
-  // {id, type:"response", ok, result|error}; unwrap to the inner result so
-  // formatResult turns {image:...} into an MCP image block.
-  const id = env.PLUGIN_HUB.idFromName(device.name);
-  const hub = env.PLUGIN_HUB.get(id);
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  // DO_AUTH gate: the DO 401s any request without x-do-auth when configured —
-  // WITHOUT this header the call failed silently (empty success result, no
-  // error) and browser tools appeared to do nothing.
-  if (env.DO_AUTH) headers["x-do-auth"] = env.DO_AUTH;
-  const res = await hub.fetch("https://hub/call", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ tool: tool.name, params: args, requestId: crypto.randomUUID() }),
-  });
-  // Never let a failure masquerade as success. Round-115: the DO returns a
-  // 500 (plain-text body) when the extension socket closed between the
-  // socket check and ws.send — res.json() fails, j={}, and j.result was
-  // undefined → a JSON-RPC SUCCESS with no text told the model the browser
-  // action ran when nothing executed. Treat every non-2xx as an extension
-  // failure.
-  if (res.status === 401) throw new Error("hub auth misconfigured (x-do-auth)");
-  const j = await res.json().catch(() => ({}));
-  if (res.status === 503)
-    throw ToolErr(
-      EXTENSION_OFFLINE,
-      "extension_offline — is the Vale extension running on the device browser?",
-    );
-  if (res.status < 200 || res.status >= 300) {
-    throw ToolErr(
-      EXTENSION_OFFLINE,
-      `extension unavailable (hub ${res.status}) — is the Vale extension running on the device browser?`,
-    );
-  }
-  if (j.error) throw new Error(`extension error: ${j.error}`);
-  return j.result;
 }
 
 // Stable error codes (round-55) — carried in the JSON-RPC error data so MCP
 // clients can distinguish failure classes and retry smartly.
 export const DEVICE_UNREACHABLE = "DEVICE_UNREACHABLE";
-export const EXTENSION_OFFLINE = "EXTENSION_OFFLINE";
 export const TIMEOUT = "TIMEOUT";
 export const SESSION_NOT_FOUND = "SESSION_NOT_FOUND";
 export const SESSION_BUSY = "SESSION_BUSY";

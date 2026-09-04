@@ -1,6 +1,7 @@
 /**
  * devices plugin (round-73 migration) — Vale Agent device registry, reverse
- * proxy, registration keys flow, and extension pairing.
+ * proxy, registration keys flow. (Extension pairing endpoints removed
+ * round-340 — the browser extension was deleted round-262.)
  *
  * Extracted VERBATIM from gateway/src/index.js (handleConsole) — the bodies
  * of every handler and helper below are byte-for-byte the inline blocks that
@@ -12,11 +13,7 @@
  * Routes (same method + path as index.js had):
  *   POST /api/register                      (public — one-time reg key)
  *   POST /api/install/tunnel-token          (public — reg key gated CF token)
- *   POST /api/plugins/pair/claim            (public — pairing code → plugin token)
- *   POST /api/plugins/revoke                (public — plugin token revocation)
- *   POST /api/plugins/ws-ticket             (public — plugin token → WS ticket)
- *   GET  /api/plugins/ws                    (public — ticket-gated WS upgrade)
- *   <any> /api/devices/<name>/proxy/<rest>  (admin session OR paired token)
+ *   <any> /api/devices/<name>/proxy/<rest>  (admin session OR device token)
  *   GET  /api/devices                       (admin session)
  *   POST /api/devices                       (admin session — add/update)
  *   GET  /api/devices/<name>/mcp            (admin session)
@@ -48,18 +45,13 @@ import {
   getCfToken,
   maskKey,
   listDevices,
-  addPluginLink,
   getPluginByToken,
   removePluginLink,
   listPluginLinks,
   savePluginLinks,
-  consumePairCode,
-  createWsTicket,
-  consumeWsTicket,
-  withKeyLock,
   type Device,
 } from "../store.ts";
-import { parseCookie, randomHex } from "../auth.ts";
+import { parseCookie } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
@@ -277,113 +269,6 @@ async function handleTunnelToken(request: Request, env: any): Promise<Response> 
   return jsonOk({ ok: true, apiToken: await getCfToken(env) });
 }
 
-// Public: browser-extension pairing — the extension has no admin session, the
-// pairing code is the credential (same pattern as /api/register above).
-async function handlePairClaim(request: Request, env: any): Promise<Response> {
-  const { code } = ((await request.json().catch(() => ({}))) || {}) as any;
-  const c = String(code || "");
-  // round-115: reject garbage codes BEFORE the claim lock — same KV
-  // write-quota exhaustion path as /api/register (claim put + finally
-  // delete on every attempt). Invalid codes are now zero-write.
-  if (!c || !(await env.KEYS.get(`pair:${c}`))) {
-    return jsonError(403, "Invalid or used pairing code", "authorization_error");
-  }
-  // stage-n M1 fix: wrap the entire claim under withKeyLock(\`pair:${c}\`, ...)
-  // so the get-check-then-delete is atomic across isolates. The old
-  // best-effort pairclaim: KV put had a race window between the pre-check
-  // and the put where two concurrent claims could both read the code and
-  // mint two 30-day device-control tokens from one pairing code.
-  return withKeyLock(`pair:${c}`, async () => {
-    const device = await consumePairCode(env, c);
-    if (!device) {
-      return jsonError(403, "Invalid or used pairing code", "authorization_error");
-    }
-    const token = randomHex(16);
-    await addPluginLink(env, token, device);
-    return jsonOk({ token, device });
-  });
-}
-
-// Extension unpair: revoke the plugin token server-side (local-only unpair
-// left a 30-day device-control credential valid after the user unpaired).
-async function handleRevoke(request: Request, env: any): Promise<Response> {
-  const auth = String(request.headers.get("authorization") || "");
-  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (!token) return jsonError(401, "Missing plugin token", "authentication_error");
-  // round-84: a revoked link must not keep browser_* control over a LIVE WS —
-  // the hub never re-validated the token after handshake, so a revoked/
-  // expired link kept executing commands indefinitely. Find the device the
-  // link belonged to and close its hub socket.
-  const link = await getPluginByToken(env, token);
-  await removePluginLink(env, token);
-  if (link && env.PLUGIN_HUB) {
-    try {
-      const id = env.PLUGIN_HUB.idFromName(link.device);
-      const hub = env.PLUGIN_HUB.get(id);
-      const req = new Request("https://hub/close-all", { method: "POST" });
-      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
-      await hub.fetch(req).catch(() => {});
-    } catch {
-      /* best-effort */
-    }
-  }
-  return jsonOk({ ok: true });
-}
-
-// Public: the extension trades its plugin token for a one-time WS ticket
-// here (no admin session — the plugin token is the credential). The ticket
-// keeps the long-lived token out of the /ws URL and is consumed once.
-async function handleWsTicket(request: Request, env: any): Promise<Response> {
-  const auth = String(request.headers.get("authorization") || "");
-  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  const link = token ? await getPluginByToken(env, token) : null;
-  if (!link) return jsonError(401, "Invalid plugin token", "authorization_error");
-  const ticket = await createWsTicket(env, link.device);
-  return jsonOk({ ticket, device: link.device });
-}
-
-// Public: the browser extension opens its WebSocket here, trading a one-time
-// ticket (fetched via /api/plugins/ws-ticket with the plugin token) for the
-// connection. Ticket consumption keeps the long-lived token out of the URL
-// and gates the hub by knowledge of a valid ticket, not just the device name.
-async function handleWs(request: Request, env: any, url: URL): Promise<Response> {
-  const device = url.searchParams.get("device") || "";
-  const ticket = url.searchParams.get("ticket") || "";
-  // round-115: reject garbage tickets BEFORE the claim lock — same KV
-  // write-quota exhaustion path as /api/register. Invalid tickets are
-  // now zero-write.
-  if (!ticket || !(await env.KEYS.get(`plg-ticket:${ticket}`))) {
-    return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
-  }
-  // round-92: consumeWsTicket was check-then-delete on eventually-consistent
-  // KV — two concurrent /ws handshakes with the SAME ticket both passed and
-  // opened two sockets, one of which the hub then replaced (churn + a second
-  // socket that was briefly live). Same single-flight claim lock the pair/
-  // claim and reg-key routes already use.
-  const claim = await env.KEYS.get(`plgclaim:${ticket}`);
-  if (claim) return jsonError(403, "WS ticket already in use", "authorization_error");
-  await env.KEYS.put(`plgclaim:${ticket}`, "1", { expirationTtl: 60 });
-  const ok = await consumeWsTicket(env, ticket);
-  if (!ok || ok !== device) {
-    await env.KEYS.delete(`plgclaim:${ticket}`);
-    return jsonError(403, "Invalid or expired WS ticket", "authorization_error");
-  }
-  const d = await getDevice(env, device);
-  if (!d) return jsonError(404, "Device not found", "not_found_error");
-  const id = env.PLUGIN_HUB.idFromName(device);
-  const hub = env.PLUGIN_HUB.get(id);
-  // The DO dispatches on its own /ws path — rewrite the URL path so the
-  // upgrade request lands on the DO's handler (the raw request path is
-  // /api/plugins/ws, which the DO would 404).
-  const wsUrl = new URL(request.url);
-  wsUrl.pathname = "/ws";
-  // Internal auth for the DO (it has its own external address) — the shared
-  // secret header is set by the main worker only.
-  const wsReq = new Request(wsUrl.toString(), request);
-  if (env.DO_AUTH) wsReq.headers.set("x-do-auth", env.DO_AUTH);
-  return hub.fetch(wsReq);
-}
-
 // ---- Device reverse-proxy: admin session cookie OR paired plugin token ----
 // <any> /api/devices/<name>/proxy/<rest> → reverse-proxy to the device panel.
 // The console admin browses the panel with the session cookie; the browser
@@ -562,21 +447,10 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
   // round-115: deleteDevice alone left the device's plugin links (30-day TTL)
   // and its live hub socket alive — a same-name re-registration resurrected
   // the old pairing's browser_* control (round-84's revocation hole). Revoke
-  // every link for this device and close the hub socket, like handleRevoke.
+  // every link for this device and close the hub socket.
   const links = await listPluginLinks(env);
   const stale = Object.entries(links).filter(([, l]) => l.device === delName);
   for (const [token] of stale) await removePluginLink(env, token);
-  if (stale.length > 0 && env.PLUGIN_HUB) {
-    try {
-      const id = env.PLUGIN_HUB.idFromName(delName);
-      const hub = env.PLUGIN_HUB.get(id);
-      const req = new Request("https://hub/close-all", { method: "POST" });
-      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
-      await hub.fetch(req).catch(() => {});
-    } catch {
-      /* best-effort */
-    }
-  }
   await deleteDevice(env, delName);
   return jsonOk({ ok: true });
 }
@@ -619,17 +493,6 @@ async function handleDeviceRename(request: Request, env: any, url: URL): Promise
     }
   }
   if (migrated) await savePluginLinks(env, links);
-  if (env.PLUGIN_HUB) {
-    try {
-      const id = env.PLUGIN_HUB.idFromName(oldName);
-      const hub = env.PLUGIN_HUB.get(id);
-      const req = new Request("https://hub/close-all", { method: "POST" });
-      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
-      await hub.fetch(req).catch(() => {});
-    } catch {
-      /* best-effort */
-    }
-  }
   return jsonOk({
     ok: true,
     device: { name: updated.name, hostname: updated.hostname, token: maskKey(updated.token) },
@@ -740,17 +603,6 @@ async function handleUnpair(request: Request, env: any): Promise<Response> {
   // so alarm()'s token re-validation never runs either). revoke() (round-84)
   // already knew this and calls /close-all; unpair is the same revocation
   // contract and must do the same.
-  if (env.PLUGIN_HUB) {
-    try {
-      const id = env.PLUGIN_HUB.idFromName(device);
-      const hub = env.PLUGIN_HUB.get(id);
-      const req = new Request("https://hub/close-all", { method: "POST" });
-      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
-      await hub.fetch(req).catch(() => {});
-    } catch {
-      /* best-effort */
-    }
-  }
   return jsonOk({ ok: true });
 }
 
@@ -961,8 +813,8 @@ export default {
   name: "devices",
   deps: [],
   setup(ctx: PluginContext) {
-    // round-102: every public one-shot endpoint (register, tunnel-token,
-    // pair/claim, ws-ticket, ws handshake) costs KV WRITES — an attacker
+    // round-102: every public one-shot endpoint (register, tunnel-token —
+    // extension pair/claim removed round-340) costs KV WRITES — an attacker
     // firing random codes can exhaust the Free-plan daily KV write quota
     // (the same reason login and probe are gated). Per-IP gate, in-memory
     // like probeRateLimited (no per-request KV writes).
@@ -996,16 +848,6 @@ export default {
     route(ctx, "POST", "/api/register", gate(handleRegister));
     route(ctx, "POST", "/api/devices/self-register", gate(handleSelfRegister));
     route(ctx, "POST", "/api/install/tunnel-token", gate(handleTunnelToken));
-    route(ctx, "POST", `${PLUGIN_BASE}/pair/claim`, gate(handlePairClaim));
-    route(ctx, "POST", `${PLUGIN_BASE}/revoke`, handleRevoke);
-    route(ctx, "POST", `${PLUGIN_BASE}/ws-ticket`, gate(handleWsTicket));
-    // index.js compared the ws path with === — register an exact match
-    // (a prefix match would also swallow GET /api/plugins/ws-ticket).
-    ctx.routes.push({
-      match: (m, p) => m === "GET" && p === `${PLUGIN_BASE}/ws`,
-      handler: gate(handleWs),
-    });
-
     // Device reverse-proxy — checked BEFORE the admin-gated device routes,
     // exactly like index.js (it also authenticates with the paired plugin
     // token, so it lives above the session gate).
@@ -1055,7 +897,7 @@ export default {
     // Admin-gated pairing/install flows (the last routes index.ts still
     // served inline — moved here to complete the plugin migration). Exact
     // matches: a prefix match on /api/plugins/pair would swallow the public
-    // /api/plugins/pair/claim registered above.
+    // (admin pairing flow — the extension-era public pair/claim was removed round-340.)
     ctx.routes.push({
       match: (m, p) => m === "POST" && p === `${DEVICE_BASE}/register-key`,
       handler: handleRegisterKey,
