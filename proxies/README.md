@@ -4,9 +4,9 @@ Independently deployed small proxy Workers / Vercel projects, invoked by the Val
 
 | Directory | Worker name | Purpose | Secrets |
 |---|---|---|---|
-| `zen-go-proxy/` | `opencode-go-proxy` | Dedicated direct entry for <opencode-host> (og transcoding merged into the gateway) | `OPENCODE_GO_API_KEY`, optional `CLIENT_KEY` |
-| `zen-us-proxy/` | `zen-us-proxy` | US egress proxy (D1 binding forces US-region edge → opencode zen) | `OPENCODE_GO_API_KEY` |
-| `my-openrouter-proxy/` | `openrouter-proxy` | OpenRouter BYOK passthrough (user brings their own key, falls back to the built-in one if absent) | `OPENROUTER_API_KEY` |
+| `zen-go-proxy/` | `opencode-go-proxy` | Dedicated direct entry for <opencode-host> (og transcoding merged into the gateway) | `OPENCODE_GO_API_KEY`, `CLIENT_KEY` (required — default-closed when unset) |
+| `zen-us-proxy/` | `zen-us-proxy` | US egress proxy (D1 binding forces US-region edge → opencode zen) | `OPENCODE_GO_API_KEY`, `CLIENT_KEY` (required — default-closed when unset) |
+| `my-openrouter-proxy/` | `openrouter-proxy` | OpenRouter BYOK passthrough (BYOK-only: anonymous callers get 401, the built-in key is never spent anonymously) | `OPENROUTER_API_KEY` |
 | `vercel-proxy/` | Vercel project | `<mirror-host>/api/zen` + `/api/proxy` AI egress, controlled `/api/github/{web|raw|api|release}/...` GitHub HTTP reverse proxy, plus `/api/gform/{gle|docs|...}/...` Google Forms reverse proxy (body rewriting, anonymous public forms) (Vercel platform, not a Worker) | `OPENROUTER_API_KEY` (Vercel env) |
 
 ## Deployment

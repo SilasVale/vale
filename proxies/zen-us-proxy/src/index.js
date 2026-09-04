@@ -22,6 +22,14 @@ export default {
       return new Response(null, { headers: CORS_HEADERS });
     }
 
+    // Caller gate: x-api-key must match env.CLIENT_KEY (same style as
+    // zen-go-proxy). Default-CLOSED — when CLIENT_KEY is unset every request
+    // is refused; never fall through to the paid OPENCODE_GO_API_KEY.
+    const clientKey = request.headers.get("x-api-key") || "";
+    if (!env.CLIENT_KEY || clientKey !== env.CLIENT_KEY) {
+      return jsonError(401, "Missing or invalid x-api-key", "authentication_error");
+    }
+
     const url = new URL(request.url);
 
     // GET /v1/models — passthrough upstream model list

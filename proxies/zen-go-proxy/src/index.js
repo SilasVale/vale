@@ -13,24 +13,58 @@
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers": "*",
-};
+// CORS allowlist: the console origins used in this repo —
+//   https://ai.saisi.online + https://api.saisi.online (gateway CONSOLE_HOST),
+//   https://dsh.saisi.online (extension/manifest.json host_permissions),
+// plus loopback for local `wrangler dev`. Any other Origin gets NO
+// Access-Control-Allow-* headers (default-closed). Non-browser clients
+// (Claude Code, gateway server-side) are unaffected by CORS.
+const ALLOWED_ORIGINS = new Set([
+  "https://ai.saisi.online",
+  "https://api.saisi.online",
+  "https://dsh.saisi.online",
+]);
+
+function isLoopbackOrigin(origin) {
+  try {
+    const u = new URL(origin);
+    return (
+      (u.protocol === "http:" || u.protocol === "https:") &&
+      (u.hostname === "localhost" || u.hostname === "127.0.0.1")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function corsHeaders(request) {
+  const origin = request.headers.get("origin") || "";
+  const headers = {
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+  };
+  if (ALLOWED_ORIGINS.has(origin) || isLoopbackOrigin(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers["Vary"] = "Origin";
+  }
+  return headers;
+}
 
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: CORS_HEADERS });
+      return new Response(null, { headers: corsHeaders(request) });
     }
 
     const url = new URL(request.url);
+    const cors = corsHeaders(request);
 
     try {
+      // Default-CLOSED: when CLIENT_KEY is unset every request is refused —
+      // a missing gate secret must never pass callers through to the paid key.
       const clientKey = request.headers.get("x-api-key") || "";
-      if (!clientKey || (env.CLIENT_KEY && clientKey !== env.CLIENT_KEY)) {
-        return jsonError(401, "Missing or invalid x-api-key", "authentication_error");
+      if (!env.CLIENT_KEY || clientKey !== env.CLIENT_KEY) {
+        return jsonError(401, "Missing or invalid x-api-key", "authentication_error", cors);
       }
 
       // GET /v1/models — passthrough upstream model list
@@ -40,18 +74,18 @@ export default {
         });
         return new Response(up.body, {
           status: up.status,
-          headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+          headers: { "Content-Type": "application/json", ...cors },
         });
       }
 
       // POST /v1/messages/count_tokens — estimate
       if (request.method === "POST" && url.pathname.endsWith(COUNT_PATH)) {
         const body = await request.json();
-        return jsonOk({ input_tokens: Math.ceil(JSON.stringify(body.messages || []).length / 4) });
+        return jsonOk({ input_tokens: Math.ceil(JSON.stringify(body.messages || []).length / 4) }, cors);
       }
 
       if (!(request.method === "POST" && url.pathname.endsWith(VERIFY_PATH))) {
-        return jsonError(404, "Not Found", "not_found_error");
+        return jsonError(404, "Not Found", "not_found_error", cors);
       }
 
       const anthropicReq = await request.json();
@@ -77,29 +111,29 @@ export default {
           const err = await upstream.json();
           message = err.error?.message || message;
         } catch {}
-        return jsonError(upstream.status, message, "api_error");
+        return jsonError(upstream.status, message, "api_error", cors);
       }
 
       // Native passthrough: stream the upstream body straight through.
       if (native) {
         if (anthropicReq.stream) {
           return new Response(upstream.body, {
-            headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+            headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...cors },
           });
         }
         return new Response(upstream.body, {
-          headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+          headers: { "Content-Type": "application/json", ...cors },
         });
       }
       const anthropicRes = toAnthropicResponse(await upstream.json(), model);
       if (anthropicReq.stream) {
         return new Response(toSSE(anthropicRes), {
-          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...CORS_HEADERS },
+          headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache", ...cors },
         });
       }
-      return jsonOk(anthropicRes);
+      return jsonOk(anthropicRes, cors);
     } catch (error) {
-      return jsonError(500, error.message || "Internal error", "api_error");
+      return jsonError(500, error.message || "Internal error", "api_error", cors);
     }
   },
 };
@@ -225,13 +259,13 @@ function toSSE(res) {
 
 /* ---------------- Utilities ---------------- */
 
-function jsonOk(data) {
-  return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+function jsonOk(data, cors = {}) {
+  return new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json", ...cors } });
 }
 
-function jsonError(status, message, type) {
+function jsonError(status, message, type, cors = {}) {
   return new Response(JSON.stringify({ type: "error", error: { type, message } }), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    headers: { "Content-Type": "application/json", ...cors },
   });
 }

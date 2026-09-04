@@ -22,9 +22,11 @@ import {
 // Fallback npm install URL when /api/devices/install-cmd cannot reach the
 // download host. The agent version used for the "update available" badge is
 // NOT fallback — it is only compared against live data from /api/version
-// (agent/Cargo scheme, same as the device's /api/status version). Keep the
-// URL in sync with /api/version in index/src/index.js.
-const FALLBACK_DOWNLOAD = `https://agent.saisi.online/vale-agent/vale-agent-1.2.113.tgz`;
+// (agent/Cargo scheme, same as the device's /api/status version). The
+// fallback tracks the versionless latest alias served by the index worker
+// (same URL as the landing page's primary install command), so it can never
+// rot on a deleted pinned version.
+const FALLBACK_DOWNLOAD = `https://agent.saisi.online/vale-agent/vale-agent-latest.tgz`;
 
 type ModalState =
   | null
