@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: CI only reads the repo (no release asset uploads here).
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -111,3 +115,58 @@ jobs:
       - name: Xwin check
         run: cargo xwin check -p vale-agent --target x86_64-pc-windows-msvc --features terminal,keyring
         working-directory: agent
+
+  # Pack-chain gates WITHOUT the exe/xwin (fast, well under 3 min) — the
+  # release-only gates (round-298 marker, round-321 electron freshness, the
+  # npm CLI tests) never ran on PRs, so a stale artifact broke the release
+  # instead of the PR. Commands mirror release.yml's pack step (copy, don't
+  # reinvent — working-directory agent keeps the paths identical).
+  pack-chain:
+    name: pack-chain (npm artifact gates, no exe)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # (a) round-298 marker in the COMMITTED bin/vale.js — the same grep
+      # release.yml runs post-compile. Here it guards the committed file
+      # itself: a src/vale.ts change without recompiling fails the PR, not
+      # the release.
+      - name: bin/vale.js round-298 marker
+        working-directory: agent
+        run: grep -q "vale-release" vale-agent-npm/bin/vale.js || { echo "::error::compiled bin/vale.js missing round-298 marker — recompile src/vale.ts and commit bin/vale.js"; exit 1; }
+      # (b) the SAME electron freshness gate as release.yml (the
+      # typescript@5 install is ~15s) — FAIL on mismatch. typeRoots points
+      # at vale-agent-npm's own @types and --noCheck skips typechecking
+      # (electron's node_modules is not installed in CI) — see release.yml.
+      - name: Electron src freshness (same gate as release)
+        working-directory: agent
+        run: |
+          (cd vale-agent-npm && npm install --no-save --ignore-scripts --force typescript@5 @types/node@22)
+          (cd vale-agent-npm && ./node_modules/.bin/tsc -p ../vale-desktop-electron/tsconfig.json \
+            --typeRoots ./node_modules/@types --outDir /tmp/electron-fresh --noCheck)
+          for F in main.js preload.js url-policy.js; do
+            if ! cmp -s "/tmp/electron-fresh/${F}" "vale-desktop-electron/src/${F}"; then
+              echo "::error::vale-desktop-electron/src/${F} is stale (ts source changed without recompiling) — run tsc and commit the fresh output"
+              exit 1
+            fi
+          done
+          echo "electron src freshness check OK"
+          # (b2) the tsc INPUT tree holds its own committed main.js copy
+          # (agent/vale-desktop-electron/src/) that the freshness gate above
+          # never compares — the two copies drifted silently once. Pin them.
+          for F in main.js preload.js url-policy.js; do
+            if ! cmp -s "../vale-desktop-electron/src/${F}" "vale-desktop-electron/src/${F}"; then
+              echo "::error::electron src copy drift: agent/vale-desktop-electron/src/${F} != agent/vale-agent-npm/vale-desktop-electron/src/${F} — sync (tsc emit) and commit both"
+              exit 1
+            fi
+          done
+          echo "electron src copies in sync OK"
+      # (c) vale-agent-npm CLI tests — deliberately NO npm ci first: the
+      # package has zero dependencies and no lockfile, so npm ci would
+      # fail with EUSAGE. `npm test` (node --test over node builtins) runs
+      # against the committed bin/vale.js with nothing installed.
+      - name: npm CLI tests
+        run: npm test
+        working-directory: agent/vale-agent-npm

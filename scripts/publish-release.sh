@@ -44,10 +44,69 @@ if [ ! -f "$NPM_DIR/vale-agent.exe" ]; then
   exit 1
 fi
 
+# CHEAP artifact gates replicated from release.yml (a bare `npm pack` here
+# used to bypass all three CI gates and ship stale files to the CDN).
+# No network, no tsc install — pure local checks, fail fast before packing.
+# (a) round-298 marker presence in bin/vale.js — the exact grep the CI step
+# runs post-compile. A missing marker means src/vale.ts changed without
+# recompiling (the 1.2.274 stale-bin lesson).
+if ! grep -q "vale-release" "$NPM_DIR/bin/vale.js"; then
+  echo "::error::$NPM_DIR/bin/vale.js missing round-298 marker — recompile src/vale.ts first:" >&2
+  echo "  (cd $NPM_DIR && npm install --no-save --ignore-scripts --force typescript@5 @types/node@22 && ./node_modules/.bin/tsc -p tsconfig.json && cp dist/vale.js bin/vale.js)" >&2
+  exit 1
+fi
+echo "bin/vale.js marker check OK"
+# (c) electron freshness CANNOT be checked here — the tsc emit comparison
+# needs typescript + @types/node (a network install CI does in ~15s), and
+# an mtime comparison is NOT a substitute (checkout/cp preserve nothing: a
+# fresh copy bumps mtime without changing content, while a stale file can
+# carry a new mtime). Instead assert the electron src tree is COMMITTED
+# clean: CI compiles the committed state, so any local modification (or
+# untracked file) means this pack may not match what CI builds.
+if [ -n "$(git status --porcelain -- agent/vale-desktop-electron/src/)" ]; then
+  echo "::error::agent/vale-desktop-electron/src/ has uncommitted changes — commit (or stash) them first so this pack matches what CI will compile:" >&2
+  git status --porcelain -- agent/vale-desktop-electron/src/ >&2
+  exit 1
+fi
+echo "electron src committed-clean OK"
+# (d) source-tree copy vs npm-packaged copy: release.yml's freshness gate
+# compiles the TS and cmps ONLY the npm copy (vale-agent-npm/.../src/),
+# while tsc's input tree (agent/vale-desktop-electron/src/) holds its OWN
+# committed main.js that nothing pins — the two drifted silently once
+# already (hand-edit reached only the npm copy). cmp all three shipped
+# files; pure local, no toolchain needed.
+for F in main.js preload.js url-policy.js; do
+  if ! cmp -s "agent/vale-desktop-electron/src/${F}" "agent/vale-agent-npm/vale-desktop-electron/src/${F}"; then
+    echo "::error::electron src copy drift: agent/vale-desktop-electron/src/${F} != agent/vale-agent-npm/vale-desktop-electron/src/${F} — sync them (tsc emit) and commit both" >&2
+    exit 1
+  fi
+done
+echo "electron src copies in sync OK"
+
 echo "== pack =="
 (cd "$NPM_DIR" && npm pack >/dev/null)
 TGZ="$NPM_DIR/vale-agent-$VER.tgz"
 [ -f "$TGZ" ] || { echo "::error::pack did not produce $TGZ" >&2; exit 1; }
+
+# (b) packed-tgz content gate — mirror release.yml's list exactly (a
+# missing file silently keeps the stale one on devices, round-278/282
+# lesson). Same SIGPIPE-safe pattern as release.yml (round-288 lesson:
+# never `tar tzf | grep -q` under pipefail — list to a temp file first,
+# then grep with basename-tolerant anchors).
+tar tzf "$TGZ" > "/tmp/tgz-list-${VER}.txt"
+for F in "vale-agent.exe" \
+         "vale-desktop-electron/src/main.js" \
+         "vale-desktop-electron/src/preload.js" \
+         "vale-desktop-electron/src/url-policy.js" \
+         "vale-desktop-electron/icon.png" \
+         "vale-desktop-electron/icon.ico" \
+         "bin/vale.js"; do
+  if ! grep -qE "(^|/)${F}$" "/tmp/tgz-list-${VER}.txt"; then
+    echo "::error::tgz missing required file: $F" >&2
+    exit 1
+  fi
+done
+echo "tgz content check OK ($TGZ)"
 
 echo "== stage =="
 cp "$TGZ" "$ASSET_DIR/"

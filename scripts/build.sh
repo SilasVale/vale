@@ -35,6 +35,19 @@ build_agent() {
     *) echo "usage: $0 agent [release|debug]"; exit 1 ;;
   esac
   echo "=== [agent] vale-agent (${profile}) ==="
+  # panel.js is include_str!-embedded at compile time (agent/src/web.rs
+  # reads ../resources/panel/panel.js; panel-react vite outDir is ../panel)
+  # — building the exe without rebuilding the SPA bakes a STALE UI into the
+  # binary. Build + test the panel FIRST (mirror release.yml's Build/Test
+  # panel SPA steps). A missing node_modules fails LOUDLY with the install
+  # command — silently skipping would recreate the stale-UI bug.
+  if [ ! -d "$ROOT/agent/resources/panel-react/node_modules" ]; then
+    echo "  !! agent/resources/panel-react/node_modules missing — install first:" >&2
+    echo "     (cd agent/resources/panel-react && npm ci --include=optional)" >&2
+    exit 1
+  fi
+  ( cd "$ROOT/agent/resources/panel-react" && npm run build )
+  ( cd "$ROOT/agent/resources/panel-react" && npm test )
   ( cd "$ROOT/agent" \
       && cargo xwin build --target "$TARGET" $flags --features "$FEATURES" --bin vale-agent )
   echo "    ok: agent/target/$TARGET/${profile}/vale-agent.exe"

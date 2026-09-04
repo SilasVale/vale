@@ -15,6 +15,18 @@ on:
 
 permissions:
   contents: write
+  # The tag-commit CI gate below polls check-runs + commit statuses via
+  # gh api — those endpoints need these read scopes (unspecified scopes
+  # default to none once `permissions:` is set).
+  actions: read
+  checks: read
+  statuses: read
+
+# Tag rebuilds must SERIALIZE: two runs for the same tag racing
+# `gh release create` collide (one wins, one fails) — queue, never cancel.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   agent:
@@ -22,6 +34,69 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # A tag cut from red/stale main used to build + `gh release create`
+      # anyway — the package.json-vs-tag compare below only checks the
+      # version STRING. Gate on the tag commit's combined check status
+      # first (Actions check-runs + external commit statuses): fail fast
+      # on any failure/cancelled, wait bounded (~10 min: 30x20s) while
+      # checks are still running. gh is preinstalled on ubuntu-latest; the
+      # two --jq filters are elementary jq (@tsv shaping only — no jq
+      # variables, no extra dependencies). The run's OWN check-run
+      # (in_progress while this step runs) is excluded by its /runs/<id>/
+      # job URL, matched on the URL field only (never the job name).
+      # Fail-CLOSED: any gh api error (set -euo pipefail) fails the
+      # release, never passes it; total silence (no checks reported at
+      # all) waits, never passes.
+      # Bypass: once CI is green on the tag commit, re-run this workflow
+      # (Re-run jobs) — no code change needed.
+      - name: Gate on tag-commit CI status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse HEAD)
+          echo "tag ${GITHUB_REF_NAME} -> commit ${SHA} (self run ${GITHUB_RUN_ID} excluded)"
+          PASS=0
+          for i in $(seq 1 30); do
+            gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" \
+              --jq '.check_runs[] | [.status, (.conclusion // "-"), .name, (.html_url // "")] | @tsv' \
+              > /tmp/ci-gate-runs-all.tsv
+            awk -F'\t' -v self="/runs/${GITHUB_RUN_ID}/" '$4 !~ self' \
+              /tmp/ci-gate-runs-all.tsv > /tmp/ci-gate-runs.tsv
+            read -r EXT_STATE EXT_N <<< "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/status" --jq '"\(.state) \(.total_count)"')"
+            BAD=""; PENDING=""
+            while IFS="$(printf '\t')" read -r ST CO NM _URL; do
+              [ -z "$ST" ] && continue
+              case "${ST}:${CO}" in
+                completed:failure|completed:cancelled|completed:timed_out|completed:action_required)
+                  BAD="${BAD}${BAD:+, }${NM}" ;;
+                completed:*) ;;
+                *) PENDING="${PENDING}${PENDING:+, }${NM}" ;;
+              esac
+            done < /tmp/ci-gate-runs.tsv
+            if [ -n "$BAD" ]; then
+              echo "::error::tag commit ${SHA} has FAILED checks: ${BAD} — not releasing a red commit (bypass: fix CI on main, move the tag, re-run this workflow)"
+              exit 1
+            fi
+            if [ "$EXT_N" -gt 0 ] && { [ "$EXT_STATE" = "failure" ] || [ "$EXT_STATE" = "error" ]; }; then
+              echo "::error::tag commit ${SHA} has FAILED external statuses (state=${EXT_STATE}) — not releasing a red commit (bypass: fix CI on main, move the tag, re-run this workflow)"
+              exit 1
+            fi
+            # Fail-CLOSED on silence: zero check-runs + zero statuses means
+            # CI has not reported yet (or never will) — WAIT, never pass.
+            N_ALL=$(grep -c . /tmp/ci-gate-runs.tsv || true)
+            if [ -z "$PENDING" ] && [ "$N_ALL" -gt 0 ] && { [ "$EXT_N" -eq 0 ] || [ "$EXT_STATE" = "success" ]; }; then
+              echo "CI green on ${SHA} (${N_ALL} check-runs + external state=${EXT_STATE},n=${EXT_N}) — proceeding"
+              PASS=1
+              break
+            fi
+            echo "attempt ${i}/30: waiting on checks [${PENDING:-none}] external=${EXT_STATE},n=${EXT_N} — sleeping 20s"
+            sleep 20
+          done
+          if [ "$PASS" != "1" ]; then
+            echo "::error::timed out (~10 min) waiting for CI on tag commit ${SHA} — not releasing blind (bypass: wait for CI to go green, then Re-run jobs)"
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
