@@ -77,6 +77,18 @@ function authHeaders() {
     const t = agentToken();
     return t ? { authorization: `Bearer ${t}` } : {};
 }
+// Remote-verifiable icon facts (GET /api/shell/icon-status on the 9444
+// loopback control server): file blind-flying on icon issues ended here —
+// every surface records what it resolved so the console can read it back.
+const iconReport = { platform: process.platform };
+function statSize(p) {
+    try {
+        return fs.existsSync(p) ? fs.statSync(p).size : -1;
+    }
+    catch {
+        return -1;
+    }
+}
 // Brand icon for every native surface. Tray on Windows needs .ico;
 // BrowserWindow takes .png on ALL platforms (Skia-decodes reliably —
 // Chromium's ICO parser has choked on PNG-compressed 256px entries,
@@ -85,21 +97,27 @@ function authHeaders() {
 function appIcon() {
     const name = process.platform === "win32" ? "icon.ico" : "icon.png";
     const p = path.join(__dirname, "..", name);
+    let out = "";
     try {
-        return fs.existsSync(p) ? p : "";
+        out = fs.existsSync(p) ? p : "";
     }
     catch {
-        return "";
+        out = "";
     }
+    iconReport["tray"] = { path: p, size: statSize(p), used: out !== "" };
+    return out;
 }
 function windowIcon() {
     const p = path.join(__dirname, "..", "icon.png");
+    let out = "";
     try {
-        return fs.existsSync(p) ? p : "";
+        out = fs.existsSync(p) ? p : "";
     }
     catch {
-        return "";
+        out = "";
     }
+    iconReport["window"] = { path: p, size: statSize(p), used: out !== "" };
+    return out;
 }
 // IPC audit #2: preload runs in EVERY frame; will-navigate never gated
 // iframes. Handlers must reject anything not sourced from the pinned panel.
@@ -743,6 +761,8 @@ const httpServer = http.createServer((req, res) => {
             return (async () => send(await startAgentTask()))();
         if (u.pathname === "/api/shell/agent-status")
             return (async () => send({ ok: true, running: await agentResponds(1000) }))();
+        if (u.pathname === "/api/shell/icon-status")
+            return send({ ok: true, icons: iconReport });
         send({ ok: false, error: "not found" }, 404);
     }
     catch (e) {
@@ -755,8 +775,11 @@ if (gotTheLock) {
     try {
         if (process.platform === "win32")
             electron_1.app.setAppUserModelId("online.saisi.vale.agent");
+        iconReport["appUserModelId"] = process.platform === "win32" ? "online.saisi.vale.agent" : "(non-windows)";
     }
-    catch { /* non-fatal */ }
+    catch {
+        iconReport["appUserModelId"] = "(set-failed)";
+    }
     electron_1.app.whenReady().then(async () => {
         // review #7: with no handler Electron AUTO-GRANTS every permission
         // request (media/geolocation/clipboard) — deny by default for all
@@ -1004,6 +1027,7 @@ if (gotTheLock) {
         // Windows requires .ico for tray; macOS/Linux accept .png.
         const iconPath = appIcon();
         tray = new electron_1.Tray(iconPath ? iconPath : electron_1.nativeImage.createEmpty());
+        console.log(`[vale] icons ${JSON.stringify(iconReport)}`);
         // review #f: single/double-click on the tray icon did nothing (only the
         // context-menu "Open" worked).
         tray.on("click", () => focusMain());
