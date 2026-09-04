@@ -293,7 +293,9 @@ async function handleFileUpload(request: Request, env: any, _url: URL): Promise<
   if (!ok) {
     try {
       const devices = await listDevices(env);
-      ok = devices.some((d: any) => typeof d.token === "string" && d.token.length >= 32 && d.token === token);
+      ok = devices.some(
+        (d: any) => typeof d.token === "string" && d.token.length >= 32 && d.token === token,
+      );
     } catch {
       ok = false;
     }
@@ -313,11 +315,15 @@ async function proxyUploadToWorker(request: Request, env: any): Promise<Response
   const headers = new Headers(request.headers);
   headers.set("Authorization", `Bearer ${env.UPLOAD_KEY || ""}`);
 
-  const resp = await fetchWithTimeout(uploadUrl, {
-    method: "POST",
-    headers,
-    body: request.body,
-  }, 60000);
+  const resp = await fetchWithTimeout(
+    uploadUrl,
+    {
+      method: "POST",
+      headers,
+      body: request.body,
+    },
+    60000,
+  );
 
   return new Response(resp.body, {
     status: resp.status,
