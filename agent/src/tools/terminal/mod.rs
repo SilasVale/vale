@@ -219,6 +219,11 @@ pub fn parse_serial_config(target: &str) -> SerialTargetConfig {
 /// Common backend interface — one call site for write/resize/close no matter
 /// which kind of session (PTY/SSH/Serial) a session is.
 pub trait TermBackend: Send + Sync {
+    /// Fire-and-forget keystroke path (never blocks; drop-on-full by
+    /// design). NOT the reporting path — every backend overrides
+    /// write_async below with error propagation, and the only caller of
+    /// this method is the trait default itself. Do not "fix" the silence
+    /// here; fix write_async if delivery reporting regresses.
     fn write(&self, data: &[u8]);
     /// Reliable write (round-103): waits for the transport instead of
     /// drop-on-full — used by terminal_execute, where a dropped command
