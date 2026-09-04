@@ -344,12 +344,59 @@ fn self_heal() {
     //    exe itself is needed. Idempotent, same naming as the NSIS swap.
     let bak = install_dir.join("vale-agent.exe.bak");
     let new = install_dir.join("vale-agent.exe.new");
+    // Half-swap failures must be LOUD and recoverable: every rename result
+    // is checked, failures land in startup.log as CRITICAL (not hidden
+    // behind a blanket 'self-heal: complete'), stale backups are never
+    // deleted on a failed swap, and a copy fallback is attempted when a
+    // rename fails (transient AV/lock races).
+    let mut heal_failed = false;
     if !exe.exists() && bak.exists() {
-        let _ = std::fs::rename(&bak, &exe);
+        match std::fs::rename(&bak, &exe) {
+            Ok(()) => log_line("self-heal: half-swap recovery: restored exe from .bak"),
+            Err(e) => {
+                log_line(&format!(
+                    "self-heal: CRITICAL half-swap recovery FAILED: cannot restore {} -> {}: {e} — attempting copy fallback (.bak preserved for manual recovery)",
+                    bak.display(),
+                    exe.display()
+                ));
+                match std::fs::copy(&bak, &exe) {
+                    Ok(_) => {
+                        log_line("self-heal: copy fallback restored the exe from .bak");
+                        if let Err(rm_e) = std::fs::remove_file(&bak) {
+                            log_line(&format!("self-heal: warning: cannot remove stale .bak: {rm_e}"));
+                        }
+                    }
+                    Err(ce) => {
+                        log_line(&format!(
+                            "self-heal: CRITICAL copy fallback FAILED too: {ce} — device may be unbootable; .bak preserved, NOT claiming success"
+                        ));
+                        heal_failed = true;
+                    }
+                }
+            }
+        }
     }
     if exe.exists() && new.exists() {
-        let _ = std::fs::rename(&new, &exe);
-        let _ = std::fs::remove_file(&bak); // stale copy now
+        match std::fs::rename(&new, &exe) {
+            Ok(()) => {
+                log_line("self-heal: half-swap recovery: applied pending .new over exe");
+                if let Err(rm_e) = std::fs::remove_file(&bak) {
+                    // Stale-copy cleanup only — not fatal if it fails.
+                    log_line(&format!("self-heal: warning: cannot remove stale .bak: {rm_e}"));
+                }
+            }
+            Err(e) => {
+                // Fallback posture = revert: the current exe is untouched
+                // (still bootable on the previous build), .bak is KEPT as
+                // the rollback, and .new is KEPT for next-boot retry.
+                log_line(&format!(
+                    "self-heal: CRITICAL half-swap recovery FAILED: cannot apply {} -> {}: {e} — keeping current exe (revert posture), .bak + .new preserved for retry",
+                    new.display(),
+                    exe.display()
+                ));
+                heal_failed = true;
+            }
+        }
     }
     let cfg_str = install_dir.join("config.yaml").to_string_lossy().into_owned();
 
@@ -409,7 +456,11 @@ fn self_heal() {
         c
     });
 
-    log_line("self-heal: complete");
+    if heal_failed {
+        log_line("self-heal: complete WITH ERRORS — see CRITICAL lines above");
+    } else {
+        log_line("self-heal: complete");
+    }
 }
 
 /// Put this process into a kill-on-close Job Object: every child we spawn

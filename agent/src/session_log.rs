@@ -205,7 +205,10 @@ impl SessionLogger {
                 }
             }
         }
-        let writer = f.entry(sid.to_string()).or_insert_with(|| {
+        // Fast path: a writer for this sid is already open. Otherwise open
+        // (or fall back) and insert explicitly — or_insert_with cannot
+        // degrade gracefully because its closure must return a writer.
+        if !f.contains_key(sid) {
             let path = self.dir.join(format!("{sid}.jsonl"));
             match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
                 Ok(file) => {
@@ -247,34 +250,44 @@ impl SessionLogger {
                                 .map(|d| d.as_secs()).unwrap_or(0),
                         }));
                     }
-                    w
+                    f.insert(sid.to_string(), w);
                 }
                 Err(_) => {
                     tracing::warn!("[vale-agent] session log open failed: {sid}");
-                    // Unwritable fallback: keep the session alive, drop the
-                    // audit trail for it (same best-effort stance as before).
-                    // /dev/null on Unix, NUL on Windows — a File that discards.
-                    // The old code unwrapped the null-device open, violating
-                    // log()'s never-surface contract on the fallback path
-                    // itself: park in temp first, and only panic when three
-                    // independent filesystems are all unwritable at once.
+                    // Unwritable fallback chain — best-effort by design (see
+                    // log()'s never-surface contract): /dev/null on Unix, NUL
+                    // on Windows (a File that discards), then a temp-dir
+                    // parking file. If every filesystem is unwritable, DROP
+                    // the event with a loud error + best-effort stderr —
+                    // never panic: a log() call must not abort the agent.
                     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
                     let fall = |p: &std::path::Path| {
                         std::fs::OpenOptions::new().create(true).append(true).open(p)
                     };
-                    let f = fall(std::path::Path::new(null)).or_else(|_| {
+                    let fb = fall(std::path::Path::new(null)).or_else(|_| {
                         tracing::error!(
                             "[vale-agent] null-device fallback failed, parking audit in temp"
                         );
                         fall(&std::env::temp_dir().join(format!("vale-audit-fallback-{sid}.log")))
                     });
-                    match f {
-                        Ok(nf) => std::io::BufWriter::new(nf),
-                        Err(e) => panic!("[vale-agent] session audit has nowhere to write: {e}"),
+                    match fb {
+                        Ok(nf) => {
+                            f.insert(sid.to_string(), std::io::BufWriter::new(nf));
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "[vale-agent] session audit has nowhere to write, dropping event for {sid}: {e}"
+                            );
+                            // Best-effort stderr: tracing alone may go
+                            // nowhere in service context (no console/file).
+                            eprintln!("[vale-agent] session audit has nowhere to write, dropping event for {sid}: {e}");
+                            return;
+                        }
                     }
                 }
             }
-        });
+        }
+        let Some(writer) = f.get_mut(sid) else { return };
         use std::io::Write;
         let _ = writeln!(writer, "{line}");
         // Flush eagerly on command boundaries (command/end, status) so the

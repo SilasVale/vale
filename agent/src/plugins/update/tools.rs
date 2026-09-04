@@ -99,19 +99,38 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
             return false;
         }
         // Also stage the desktop shell if present (keep in sync).
+        // Staging failures FAIL the update loudly (return false): the swap
+        // script writes .vale-release on main-exe success alone, so a
+        // silently-skipped boxed component would leave the device REPORTING
+        // the new release with STALE components. Failing keeps the old
+        // (consistent) version — safe and retryable (the caller drops the
+        // busy marker + installer), never a brick. A degraded-component
+        // status surface would be a larger change for no extra safety.
         let pkg_desktop = extract.join("package").join("vale-desktop.exe");
         if pkg_desktop.exists() {
-            let _ = std::fs::copy(&pkg_desktop, dir.join("vale-desktop.new.exe"));
+            if let Err(e) = std::fs::copy(&pkg_desktop, dir.join("vale-desktop.new.exe")) {
+                tracing::error!("[vale-agent] agent_update: desktop stage failed: {e}");
+                return false;
+            }
         }
-        // Boxed playwright + cloudflared refresh.
+        // Boxed playwright + cloudflared refresh (same fail-loud rule).
         let pkg_pw = extract.join("package").join("vale-playwright.zip");
         if pkg_pw.exists() {
-            let _ = std::fs::copy(&pkg_pw, dir.join("vale-playwright.zip"));
+            if let Err(e) = std::fs::copy(&pkg_pw, dir.join("vale-playwright.zip")) {
+                tracing::error!("[vale-agent] agent_update: playwright stage failed: {e}");
+                return false;
+            }
         }
         let pkg_cf = extract.join("package").join("cloudflared.exe");
         if pkg_cf.exists() {
-            let _ = std::fs::create_dir_all(dir.join("tools"));
-            let _ = std::fs::copy(&pkg_cf, dir.join("tools").join("cloudflared.exe"));
+            if let Err(e) = std::fs::create_dir_all(dir.join("tools")) {
+                tracing::error!("[vale-agent] agent_update: tools dir create failed: {e}");
+                return false;
+            }
+            if let Err(e) = std::fs::copy(&pkg_cf, dir.join("tools").join("cloudflared.exe")) {
+                tracing::error!("[vale-agent] agent_update: cloudflared stage failed: {e}");
+                return false;
+            }
         }
 
         let q = dir.to_string_lossy().replace('\'', "''");
