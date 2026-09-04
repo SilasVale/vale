@@ -619,7 +619,7 @@ mod file_tool_tests {
     fn file_build_includes_stat() {
         let names: Vec<String> = build().iter().map(|t| t.name.clone()).collect();
         assert!(names.contains(&"system_file_stat".to_string()));
-        assert_eq!(names.len(), 7);
+        assert_eq!(names.len(), 8);
     }
 
     #[tokio::test]
@@ -637,5 +637,58 @@ mod file_tool_tests {
         assert_eq!(r2["ok"], true);
         assert_eq!(r2["bytes"], 200000 - 131072);
         std::fs::remove_file(&tmp).ok();
+    }
+
+    #[tokio::test]
+    async fn file_list_returns_entries() {
+        let tmp = std::env::temp_dir().join(format!("vale-list-test-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("a.txt"), b"hello").unwrap();
+        std::fs::write(tmp.join("b.txt"), b"world").unwrap();
+        let out = run(&tool_file_list(), json!({ "path": tmp.to_string_lossy() })).await;
+        assert_eq!(out["ok"], true);
+        let entries = out["entries"].as_array().unwrap();
+        assert!(entries.len() >= 2);
+        let names: Vec<&str> = entries.iter().filter_map(|e| e["name"].as_str()).collect();
+        assert!(names.contains(&"a.txt"));
+        assert!(names.contains(&"b.txt"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[tokio::test]
+    async fn file_download_rejects_non_http() {
+        let out = run(&tool_file_download(), json!({ "url": "ftp://example.com/file.txt", "path": "/tmp/test.txt" })).await;
+        assert_eq!(out["ok"], false);
+        assert!(out["error"].as_str().unwrap().contains("http"));
+    }
+
+    #[tokio::test]
+    async fn file_download_rejects_ip_url() {
+        let out = run(&tool_file_download(), json!({ "url": "http://127.0.0.1/secret", "path": "/tmp/test.txt" })).await;
+        assert_eq!(out["ok"], false);
+        assert!(out["error"].as_str().unwrap().contains("IP"));
+    }
+
+    #[tokio::test]
+    async fn file_download_rejects_path_traversal() {
+        let out = run(&tool_file_download(), json!({ "url": "https://example.com/file.txt", "path": "/etc/passwd" })).await;
+        assert_eq!(out["ok"], false);
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("data dir") || err.contains("invalid path"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn process_list_returns_entries() {
+        let out = run(&tool_process_list(), json!({})).await;
+        assert_eq!(out["ok"], true);
+        let procs = out["processes"].as_array().unwrap();
+        assert!(!procs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn net_test_tcp_reachable() {
+        let out = run(&tool_net_test(), json!({ "host": "127.0.0.1", "port": 1, "timeout_secs": 2 })).await;
+        assert_eq!(out["ok"], true);
+        assert_eq!(out["tcp_reachable"], false);
     }
 }
