@@ -41,7 +41,6 @@ import {
   consumeRegKey,
   createRegKey,
   listRegKeys,
-  createPairCode,
   getCfToken,
   maskKey,
   listDevices,
@@ -59,7 +58,6 @@ import { requireSession } from "../session.ts";
 import { route, type Plugin, type PluginContext } from "./registry.ts";
 
 const DEVICE_BASE = "/api/devices";
-const PLUGIN_BASE = "/api/plugins";
 
 /* ---------------- Route handlers (bodies copied verbatim from index.js) ---------------- */
 
@@ -574,38 +572,6 @@ async function handleRegisterKey(request: Request, env: any): Promise<Response> 
   return jsonOk({ ok: true, key });
 }
 
-// POST /api/plugins/pair — mint a one-time pairing code for a device (admin).
-async function handlePair(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
-  const { device }: any = (await request.json().catch(() => ({}))) || {};
-  const d = device ? await getDevice(env, String(device)) : null;
-  if (!d) return jsonError(404, "Device not found", "not_found_error");
-  const code = await createPairCode(env, d.name);
-  return jsonOk({ code });
-}
-
-// POST /api/plugins/unpair — drop all plugin links for a device (admin).
-async function handleUnpair(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
-  const { device }: any = (await request.json().catch(() => ({}))) || {};
-  const links = await listPluginLinks(env);
-  for (const [t, l] of Object.entries(links))
-    if (l.device === device) await removePluginLink(env, t);
-  // round-92: removing the KV links was not enough — the extension's LIVE
-  // hub socket kept relaying browser_* commands past the unpair (the socket
-  // stays in the DO and its 20s pings keep the idle alarm from ever firing,
-  // so alarm()'s token re-validation never runs either). revoke() (round-84)
-  // already knew this and calls /close-all; unpair is the same revocation
-  // contract and must do the same.
-  return jsonOk({ ok: true });
-}
-
 /* ---------------- Device module helpers (copied verbatim from index.js) ---------------- */
 
 // round-107: decode a URL-encoded device name, null on malformed escapes
@@ -894,21 +860,11 @@ export default {
       match: (m, p) => m === "DELETE" && /^\/api\/devices\/[^/]+$/.test(p),
       handler: handleDeviceDelete,
     });
-    // Admin-gated pairing/install flows (the last routes index.ts still
-    // served inline — moved here to complete the plugin migration). Exact
-    // matches: a prefix match on /api/plugins/pair would swallow the public
-    // (admin pairing flow — the extension-era public pair/claim was removed round-340.)
+    // Admin-gated install flows (the last routes index.ts still served
+    // inline — moved here to complete the plugin migration).
     ctx.routes.push({
       match: (m, p) => m === "POST" && p === `${DEVICE_BASE}/register-key`,
       handler: handleRegisterKey,
-    });
-    ctx.routes.push({
-      match: (m, p) => m === "POST" && p === `${PLUGIN_BASE}/pair`,
-      handler: handlePair,
-    });
-    ctx.routes.push({
-      match: (m, p) => m === "POST" && p === `${PLUGIN_BASE}/unpair`,
-      handler: handleUnpair,
     });
   },
 } satisfies Plugin;

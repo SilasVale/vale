@@ -832,10 +832,9 @@ export async function listRegKeys(env: Env): Promise<{ code: string; expiresAt: 
 
 /* ---------------- Plugin (extension) registry ----------------
  *
- * plugins:v1 → JSON map token → { device, createdAt }. The browser extension
- * on a device's Chrome pairs via a one-time code (pair:<code>, 10min TTL),
- * receives a plugin token, and trades it for one-time WS tickets
- * (plg-ticket:<t>, 60s TTL) when connecting to the PluginHubDO.
+ * plugins:v1 → JSON map token → { device, createdAt }. Device links are
+ * revoked on device delete/rename (extension-era pairing removed
+ * round-340/345); getPluginByToken still guards the device reverse proxy.
  */
 
 const PLUGIN_KEY = "plugins:v1";
@@ -867,13 +866,6 @@ export async function savePluginLinks(env: Env, map: Record<string, PluginLink>)
 // (chrome.debugger can read/write/click/type on any tab).
 export const PLUGIN_LINK_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-export async function addPluginLink(env: Env, token: string, device: string): Promise<void> {
-  return withKeyLock(PLUGIN_KEY, async () => {
-    const map = await listPluginLinks(env);
-    map[token] = { device, createdAt: Date.now(), expiresAt: Date.now() + PLUGIN_LINK_TTL_MS };
-    await savePluginLinks(env, map);
-  });
-}
 export async function getPluginByToken(env: Env, token: string): Promise<PluginLink | null> {
   const map = await listPluginLinks(env);
   const link = map[token] || null;
@@ -916,31 +908,6 @@ export async function removePluginLink(env: Env, token: string): Promise<void> {
   });
 }
 
-// One-time pairing code (console admin generates; extension claims).
-export async function createPairCode(env: Env, device: string): Promise<string> {
-  const code = randomHex(6).toUpperCase();
-  await env.KEYS.put(`pair:${code}`, device, { expirationTtl: 600 });
-  return code;
-}
-export async function consumePairCode(env: Env, code: string): Promise<string | null> {
-  const device = await env.KEYS.get(`pair:${code}`);
-  if (!device) return null;
-  await env.KEYS.delete(`pair:${code}`);
-  return device;
-}
-
-// One-time short-lived WS ticket (extension trades its plugin token for this).
-export async function createWsTicket(env: Env, device: string): Promise<string> {
-  const ticket = randomHex(16);
-  await env.KEYS.put(`plg-ticket:${ticket}`, device, { expirationTtl: 60 });
-  return ticket;
-}
-export async function consumeWsTicket(env: Env, ticket: string): Promise<string | null> {
-  const device = await env.KEYS.get(`plg-ticket:${ticket}`);
-  if (!device) return null;
-  await env.KEYS.delete(`plg-ticket:${ticket}`);
-  return device;
-}
 
 /* ---- Cloudflare tunnel API token (account-level, admin-managed) ----
  *
