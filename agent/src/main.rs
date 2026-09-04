@@ -694,7 +694,9 @@ async fn run_server(config_path: PathBuf) {
             Ok(()) => return,
             Err(e) => {
                 last_err = Some(e);
-                eout!("  Server bind attempt {attempt} failed: {}", last_err.as_ref().unwrap());
+                if let Some(ref err) = last_err {
+                    eout!("  Server bind attempt {attempt} failed: {err}");
+                }
                 eout!("  retrying in 3s...");
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             }
