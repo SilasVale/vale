@@ -74,7 +74,9 @@ deploy_worker() {
   # from the version.json asset (round-297) — the OLD smoke grepped static
   # version/sha256 constants out of index.js that no longer exist, so every
   # index deploy failed at this step. Expectation now comes from
-  # index/public/vale-agent/version.json (the file the worker serves).
+  # index/public/vale-agent/version.json (the file the worker serves); the
+  # checks themselves live in scripts/smoke-index.sh, shared with
+  # publish-release.sh so the two publish paths cannot drift apart again.
   if [[ "$dir" == "index" ]]; then
     local want_version want_sha
     want_version="$(python3 -c "import json;print(json.load(open('$ROOT/index/public/vale-agent/version.json'))['version'])")"
@@ -83,52 +85,9 @@ deploy_worker() {
       echo "  !! version.json sha256 is missing/all-zero/placeholder — devices would be locked out of updates"
       exit 1
     fi
-    local live
-    # Edge propagation has a few seconds' delay after wrangler returns — a
-    # single curl could hit a stale POP and false-fail the deploy. Retry
-    # briefly before giving up (round-59).
-    live=""
-    for _ in 1 2 3 4 5; do
-      live="$(curl -s -m 30 https://agent.saisi.online/api/version)"
-      echo "$live" | grep -q "\"version\":\"$want_version\"" && break
-      sleep 3
-    done
-    if ! echo "$live" | grep -q "\"version\":\"$want_version\""; then
-      echo "  !! live version mismatch: want $want_version, got: $live"
-      exit 1
-    fi
-    if ! echo "$live" | grep -q "\"sha256\":\"$want_sha\""; then
-      echo "  !! live sha256 mismatch: want $want_sha, got: $live"
-      exit 1
-    fi
-    # round-132/133: the manifest check alone never touched the served BINARY —
-    # a missing (fresh-clone deploy without the exe in git) or mismatched
-    # (interrupt between the index.js sha write and the exe copy) installer
-    # shipped with a green smoke, and round-119 made every device refuse the
-    # install permanently. Hash the live download against the manifest. The
-    # download URL comes from the manifest (retry like the version check —
-    # asset propagation lags a few seconds after wrangler returns).
-    local dl_url live_sha
-    dl_url="$(echo "$live" | grep -oP '"download":"\K[^"]+' | head -1)"
-    [ -n "$dl_url" ] || { echo "  !! manifest has no download URL"; exit 1; }
-    live_sha=""
-    for _ in 1 2 3 4 5; do
-      # round-134: curl -f fails fast on 4xx/5xx (a 404 error body would
-      # otherwise be hashed and burn all retries); `|| live_sha=""` keeps a
-      # TRANSPORT failure (timeout/reset during the post-deploy propagation
-      # window) inside the retry loop instead of aborting the whole deploy
-      # under set -e. -L keeps following any redirect (the download URL
-      # serves from the Vercel mirror; mirrors may redirect); without it the
-      # hash could come out as the empty string's.
-      live_sha="$(curl -fsSL -m 120 "$dl_url" 2>/dev/null | sha256sum | cut -d' ' -f1)" || live_sha=""
-      [ "$live_sha" = "$want_sha" ] && break
-      sleep 3
-    done
-    if [ "$live_sha" != "$want_sha" ]; then
-      echo "  !! live binary sha256 mismatch: manifest $want_sha, downloaded $live_sha ($dl_url)"
-      exit 1
-    fi
-    echo "  ok: /api/version smoke passed (v$want_version, binary sha verified)"
+    # shellcheck source=smoke-index.sh
+    source "$ROOT/scripts/smoke-index.sh"
+    smoke_index_release "$want_version" "$want_sha" || exit 1
   fi
 }
 

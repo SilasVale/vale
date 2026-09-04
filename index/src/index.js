@@ -97,11 +97,8 @@ const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
   /* ── Brand ──────────────────────────────────────── */
   .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
   .brand-mark {
-    display: inline-flex; align-items: center; justify-content: center;
+    display: block;
     width: 40px; height: 40px; border-radius: 10px;
-    background: var(--dsw-alias-button-primary-fill);
-    color: var(--dsw-alias-button-primary-foreground);
-    font: 600 18px/1 var(--ds-font-family);
     box-shadow: var(--dsw-shadow-lv1);
   }
   .brand-text { display: flex; flex-direction: column; gap: 2px; }
@@ -247,7 +244,7 @@ const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
   <main class="main">
     <div class="card">
       <div class="brand">
-        <span class="brand-mark">V</span>
+        <img class="brand-mark" src="${FAVICON}" alt="Vale">
         <div class="brand-text">
           <div class="brand-name">Vale Agent</div>
           <div class="brand-tag">device agent</div>
@@ -348,11 +345,18 @@ export default {
         }
         const token = genToken(22);
         const key = `files/${token}`;
+        // R2's Workers put() has NO expirationTtl option (that is KV-only;
+        // R2PutOptions = httpMetadata/customMetadata/checksums/onlyIf/
+        // storageClass). The 24h claim window is recorded in customMetadata
+        // and enforced lazily on GET below — abandoned files are deleted on
+        // first access after expiry instead of accumulating forever.
+        const expiresAt = Date.now() + 24 * 3600 * 1000;
         await env.TEMP_FILES.put(key, buf, {
           httpMetadata: {
             contentType: file.type || "application/octet-stream",
             contentDisposition: `attachment; filename="${file.name || 'file'}"`,
           },
+          customMetadata: { expiresAt: String(expiresAt) },
         });
         const downloadUrl = `${url.origin}/files/${token}`;
         return new Response(JSON.stringify({
@@ -360,8 +364,10 @@ export default {
           url: downloadUrl,
           size: buf.byteLength,
           filename: file.name || "file",
-          // Tokens auto-delete on first download; also set a TTL hint.
-          note: "one-time download: file is deleted after first access",
+          expiresAt: new Date(expiresAt).toISOString(),
+          // Tokens auto-delete on first download; unclaimed files expire
+          // 24h after upload (enforced on access).
+          note: "one-time download: file is deleted after first access or 24h",
         }), { headers: { "content-type": "application/json" } });
       } catch (err) {
         return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
@@ -376,6 +382,14 @@ export default {
       const obj = await env.TEMP_FILES.get(key);
       if (!obj) {
         return new Response(JSON.stringify({ error: "file not found or already downloaded" }), { status: 404 });
+      }
+      // Lazy expiry (see the put above): an unclaimed file past its 24h
+      // window is deleted on access and reported as gone. Uploads predating
+      // the expiresAt field have no deadline and are served as before.
+      const expRaw = obj.customMetadata && obj.customMetadata.expiresAt;
+      if (expRaw && Number(expRaw) < Date.now()) {
+        await env.TEMP_FILES.delete(key);
+        return new Response(JSON.stringify({ error: "file expired" }), { status: 410 });
       }
       // One-time: delete BEFORE streaming so a retry can't re-download.
       await env.TEMP_FILES.delete(key);
@@ -434,8 +448,11 @@ export default {
     }
     // npm tgz download path (the documented `npm i -g
     // https://agent.saisi.online/vale-agent/vale-agent-<v>.tgz` command).
+    // The versionless latest alias (the landing page's install command)
+    // is matched EXACTLY here — the versioned regex is intentionally NOT
+    // loosened to cover it (exact-pattern discipline on download paths).
     const tgzMatch = /^\/vale-agent\/vale-agent-[0-9]+\.[0-9]+\.[0-9]+\.tgz$/.exec(pathname);
-    if (tgzMatch) {
+    if (tgzMatch || pathname === "/vale-agent/vale-agent-latest.tgz") {
       // The tgz (~12MB) fits Workers Assets and is served fast from here.
       return env.ASSETS.fetch(request);
     }

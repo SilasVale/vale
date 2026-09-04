@@ -11,7 +11,7 @@
 #   2. stage tgz + versionless latest alias into index/public/vale-agent
 #   3. write version.json {version, tarball, updated, sha256} (sha256 of the
 #      packed tgz — agent_update REQUIRES it, round-119)
-#   4. LAST-5 PRUNE (round-309 lesson): delete every vale-agent-1.2.*.tgz
+#   4. LAST-5 PRUNE (round-309 lesson): delete every vale-agent-1.*.*.tgz
 #      older than the newest 5, so defective releases are not downloadable
 #      (this policy was never enforced on manual publishes and 46 old tgz
 #      accumulated on the CDN)
@@ -58,15 +58,18 @@ echo "sha256: $SHA"
 echo "== last-5 prune (round-309) =="
 # Keep the newest 5 versioned tgz + the latest alias. Exact pattern match —
 # dotted versions: 1.2.274 is NOT matched by *-274.tgz (dot vs hyphen).
+# The 1.*.* glob covers any 1.x minor line; it can never match the latest
+# alias (requires a literal "1." after the prefix — "latest" has none), and
+# `grep -v latest` stays as belt-and-braces.
 # Use a NEWLINE-SPLIT array — a space-padded string match fails on the
 # inner items (newline-separated, not space-separated).
-mapfile -t KEEP < <(ls "$ASSET_DIR"/vale-agent-1.2.*.tgz 2>/dev/null | grep -v latest | sort -V | tail -5)
-for f in "$ASSET_DIR"/vale-agent-1.2.*.tgz; do
+mapfile -t KEEP < <(ls "$ASSET_DIR"/vale-agent-1.*.*.tgz 2>/dev/null | grep -v latest | sort -V | tail -5)
+for f in "$ASSET_DIR"/vale-agent-1.*.*.tgz; do
   keep=0
   for k in "${KEEP[@]}"; do [ "$k" = "$f" ] && keep=1 && break; done
   if [ "$keep" -eq 0 ]; then rm -f "$f"; echo "pruned $(basename "$f")"; fi
 done
-echo "remaining: $(ls "$ASSET_DIR"/vale-agent-1.2.*.tgz 2>/dev/null | wc -l) versioned + latest"
+echo "remaining: $(ls "$ASSET_DIR"/vale-agent-1.*.*.tgz 2>/dev/null | wc -l) versioned + latest"
 
 echo "== commit =="
 git add "$PKG" "$ASSET_DIR/version.json"
@@ -76,6 +79,13 @@ EOF
 
 echo "== deploy =="
 (cd index && CLOUDFLARE_API_TOKEN="$(cat ~/.cloudflare-token)" npx wrangler deploy)
+
+echo "== post-publish smoke =="
+# Shared with build.sh's index deploy — a bad manifest or mismatched binary
+# (versioned OR latest alias) must fail the release, not ship green.
+# shellcheck source=smoke-index.sh
+source "scripts/smoke-index.sh"
+smoke_index_release "$VER" "$SHA" || exit 1
 
 echo "== done. Next: push main, then create the GitHub tag v$VER via the API"
 echo "  (release.yml builds the GitHub asset; keep-latest stays manual)."

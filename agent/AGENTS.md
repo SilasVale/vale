@@ -67,7 +67,10 @@ cd vale-agent-npm && npm pack          # → vale-agent-1.2.N.tgz
 #    and deploy them:
 cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/
 cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/vale-agent-latest.tgz
-printf '{"version":"1.2.N","tarball":"vale-agent-latest.tgz","updated":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ../../index/public/vale-agent/version.json
+# version.json MUST carry the tgz sha256 — /api/version requires ver && sha
+# (else it answers 503 and agent_update refuses the install, round-119):
+SHA=$(sha256sum vale-agent-1.2.N.tgz | cut -d' ' -f1)
+printf '{"version":"1.2.N","tarball":"vale-agent-latest.tgz","updated":"%s","sha256":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SHA" > ../../index/public/vale-agent/version.json
 cd ../../index && CLOUDFLARE_API_TOKEN=$(cat ~/.cloudflare-token) npx wrangler deploy
 
 # 4. On the device (PowerShell), exactly two commands:
