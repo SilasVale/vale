@@ -137,8 +137,10 @@ export async function readFileEntry(p) {
     binary,
   };
   if (binary && IMAGE_EXT.has(ext)) {
+    // ext→subtype: .jpg→jpeg, .ico→x-icon (legacy registered type browsers
+    // sniff reliably), everything else 1:1 minus the dot.
     entry.imageMime =
-      ext === ".jpg" ? "image/jpeg" : ext === ".ico" ? "image/x-icon" : `image${ext}`;
+      ext === ".jpg" ? "image/jpeg" : ext === ".ico" ? "image/x-icon" : `image/${ext.slice(1)}`;
     entry.dataUrl = `data:${entry.imageMime};base64,${buf.toString("base64")}`;
   } else if (!binary) {
     entry.content = buf.toString("utf8");

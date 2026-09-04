@@ -41,17 +41,6 @@ VS.tree = (() => {
     return p.slice(0, p.replace(/\/$/, "").lastIndexOf("/")) || "/";
   }
 
-  async function removePath(p) {
-    if (!confirm("把 " + p + " 移入回收站？")) return;
-    try {
-      await VS.api(`/api/file?p=${encodeURIComponent(p)}`, { method: "DELETE" });
-      await refreshDir(parentOf(p));
-      afterMutation();
-    } catch (e) {
-      VS.toast(e.message, "error");
-    }
-  }
-
   async function renamePath(p) {
     const oldName = p.replace(/\/$/, "").slice(p.replace(/\/$/, "").lastIndexOf("/") + 1);
     const newName = prompt("重命名为:", oldName);
@@ -112,7 +101,7 @@ VS.tree = (() => {
       }
       for (const entry of data.entries) renderEntry(entry, dir, container);
     } catch (e) {
-      container.innerHTML = `<div class="tree-empty">加载失败: ${e.message}</div>`;
+      container.innerHTML = `<div class="tree-empty">加载失败: ${VS.escapeHtml(e.message)}</div>`;
     }
   }
 

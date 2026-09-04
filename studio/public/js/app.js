@@ -99,10 +99,19 @@
     const q = new URLSearchParams(m[1]);
     const p = q.get("p");
     if (!p) return;
+    // Deep-link params are attacker-influenced: coerce line/col to integers
+    // (invalid → 1, absent → undefined = no jump) and accept sel only in
+    // strict "l.c-l.c" shape — reject → undefined, file still opens.
+    const toLineCol = (v) => {
+      if (v == null || v === "") return undefined;
+      const n = Number(v);
+      return Number.isInteger(n) ? n : 1;
+    };
+    const rawSel = q.get("sel");
     VS.editor.openFile(p, {
-      line: q.get("l") ? Number(q.get("l")) : undefined,
-      col: q.get("c") ? Number(q.get("c")) : undefined,
-      sel: q.get("sel") || undefined,
+      line: toLineCol(q.get("l")),
+      col: toLineCol(q.get("c")),
+      sel: rawSel && /^\d+\.\d+-\d+\.\d+$/.test(rawSel) ? rawSel : undefined,
     });
   }
   window.addEventListener("hashchange", handleHash);
@@ -164,11 +173,9 @@
   // ── search view ────────────────────────────────────────────────────────────
   let searchSeq = 0;
 
-  function escapeHtml(s) {
-    return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  }
   // Escape-then-wrap: matches are wrapped in <mark> on the RAW text so the
   // output stays injection-safe even for regex queries.
+  // (escaping via the shared VS.escapeHtml from api.js)
   function highlightLine(text, q, regex, ignoreCase) {
     const flags = "g" + (ignoreCase ? "i" : "");
     let re;
@@ -177,17 +184,17 @@
         ? new RegExp(q, flags)
         : new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
     } catch {
-      return escapeHtml(text);
+      return VS.escapeHtml(text);
     }
     let out = "";
     let last = 0;
     for (let m; (m = re.exec(text)); ) {
       if (!m[0].length) { re.lastIndex++; continue; } // zero-width guard
-      out += escapeHtml(text.slice(last, m.index)) + "<mark>" + escapeHtml(m[0]) + "</mark>";
+      out += VS.escapeHtml(text.slice(last, m.index)) + "<mark>" + VS.escapeHtml(m[0]) + "</mark>";
       last = m.index + m[0].length;
       if (out.length > 4000) break;
     }
-    return out + escapeHtml(text.slice(last));
+    return out + VS.escapeHtml(text.slice(last));
   }
 
   async function runSearch() {
@@ -242,7 +249,7 @@
         }
       }
     } catch (e) {
-      if (seq === searchSeq) box.innerHTML = `<div class="tree-empty">搜索失败: ${e.message}</div>`;
+      if (seq === searchSeq) box.innerHTML = `<div class="tree-empty">搜索失败: ${VS.escapeHtml(e.message)}</div>`;
     }
   }
 
@@ -318,7 +325,7 @@
       await allFiles();
       renderQO(qoInput.value); // honor anything typed while the list was loading
     } catch (e) {
-      qoList.innerHTML = `<div class="tree-empty">${e.message}</div>`;
+      qoList.innerHTML = `<div class="tree-empty">${VS.escapeHtml(e.message)}</div>`;
     }
     qoInput.focus();
   }

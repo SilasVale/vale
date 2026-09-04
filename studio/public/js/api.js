@@ -4,6 +4,15 @@ window.VS = window.VS || {};
 
 VS.token = localStorage.getItem("vale-studio-token") || "";
 
+// Single shared HTML escaper — the ONLY way server/attacker-influenced
+// strings (e.g. VS.api error `message`, which echoes paths) may enter
+// innerHTML. All error-surface interpolations must go through this.
+VS.escapeHtml = function (s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+};
+
 VS.api = async function (path, opts = {}) {
   const headers = Object.assign({}, opts.headers);
   if (VS.token) headers["authorization"] = "Bearer " + VS.token;

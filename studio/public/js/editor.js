@@ -408,10 +408,17 @@ VS.editor = (() => {
   }
 
   // ── navigation / deep links ────────────────────────────────────────────────
+  // line/col/sel arrive from hash URLs (attacker-influenced): coerce to
+  // integers (fallback 1) and accept sel only in strict "l.c-l.c" shape.
+  // Invalid values are ignored (file still opens) — valid links behave as before.
+  const SEL_RE = /^\d+\.\d+-\d+\.\d+$/;
   function gotoPosition(tab, line, col, sel) {
     if (tab !== active || tab.kind !== "text") activate(tab);
+    line = Number.isInteger(line) ? line : 1;
+    col = Number.isInteger(col) ? col : 1;
+    if (typeof sel !== "string" || !SEL_RE.test(sel)) sel = undefined;
     ed.revealLineInCenter(line);
-    const pos = { lineNumber: Math.min(line, tab.model.getLineCount()), column: Math.max(1, col || 1) };
+    const pos = { lineNumber: Math.min(Math.max(1, line), tab.model.getLineCount()), column: Math.max(1, col || 1) };
     ed.setPosition(pos);
     ed.focus();
     // flash highlight

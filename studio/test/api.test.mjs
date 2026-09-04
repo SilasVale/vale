@@ -89,6 +89,8 @@ test("boot reports roots and capabilities", async () => {
   assert.equal(data.terminalEnabled, true);
   assert.equal(data.roots.length, 1);
   assert.equal(data.roots[0].path, fs.realpathSync(rootDir));
+  // frontend builds `r.name + " — " + r.path`: name must match /api/roots shape
+  assert.equal(data.roots[0].name, path.basename(data.roots[0].path));
 });
 
 test("tree lists entries sorted dirs-first", async () => {
@@ -297,4 +299,22 @@ test("static frontend serves index and vendored monaco", async () => {
   assert.equal(loader.status, 200);
   const xt = await fetch(`${BASE}/vendor/xterm/xterm.js`);
   assert.equal(xt.status, 200);
+});
+
+test("image read returns proper image/* dataUrl MIME", async () => {
+  // NUL byte in the first bytes => detected binary => image branch
+  const bytes = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00,
+  ]);
+  const pngPath = path.join(rootDir, "img-mime-test.png");
+  const jpgPath = path.join(rootDir, "img-mime-test.jpg");
+  await fsp.writeFile(pngPath, bytes);
+  await fsp.writeFile(jpgPath, bytes);
+  const png = await (await api(`/api/file?p=${encodeURIComponent(pngPath)}`)).json();
+  assert.equal(png.imageMime, "image/png");
+  assert.ok(png.dataUrl.startsWith("data:image/png;base64,"));
+  const jpg = await (await api(`/api/file?p=${encodeURIComponent(jpgPath)}`)).json();
+  assert.equal(jpg.imageMime, "image/jpeg");
+  assert.ok(jpg.dataUrl.startsWith("data:image/jpeg;base64,"));
 });

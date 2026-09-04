@@ -305,7 +305,9 @@ route("GET", "/api/boot", async () => ({
   ok: true,
   readOnly: CONFIG.readOnly,
   terminalEnabled: !CONFIG.readOnly && CONFIG.terminal.enabled,
-  roots: ROOTS.map((r) => ({ path: r, ...gitInfo(r) })),
+  // Shape matches /api/roots ({path, name, ...gitInfo}) — the frontend
+  // builds `r.name + " — " + r.path` from boot roots directly.
+  roots: ROOTS.map((r) => ({ path: r, name: path.basename(r), ...gitInfo(r) })),
 }));
 
 route("GET", "/api/roots", async () => ({

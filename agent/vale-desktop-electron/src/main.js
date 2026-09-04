@@ -681,13 +681,13 @@ async function autoLaunchTaskSet(enabled) {
             if (!r.ok)
                 return r;
         }
-        return { ok: true };
+        return { ok: true, enabled };
     }
     catch (e) {
         return { ok: false, error: String(e) };
     }
 }
-electron_1.ipcMain.handle("desktop:get-auto-launch", async (e) => frameOk(e) ? { enabled: await autoLaunchTaskExists() } : { ok: false, error: "forbidden frame" });
+electron_1.ipcMain.handle("desktop:get-auto-launch", async (e) => frameOk(e) ? { ok: true, enabled: await autoLaunchTaskExists() } : { ok: false, error: "forbidden frame" });
 // The auto-launch pair is the PERSISTENCE primitive (onlogon schtasks in an
 // admin context) — it absolutely cannot be reachable from a foreign frame.
 electron_1.ipcMain.handle("desktop:set-auto-launch", async (e, enabled) => frameOk(e) ? autoLaunchTaskSet(!!enabled) : { ok: false, error: "forbidden frame" });
@@ -746,8 +746,9 @@ const httpServer = http.createServer((req, res) => {
         // review #8: was ACAO:* with no origin check — ANY web page open in ANY
         // local browser could POST /api/shell/start-agent or spam
         // /api/browser-session/open (loopback is exempt from mixed-content
-        // blocking). Reflect the origin, and reject state-changing requests
-        // from foreign origins. "null" (our data: wait page) and absent
+        // blocking). Reflect the origin, and reject requests from foreign
+        // origins (reads included — the GET routes expose session URLs and
+        // device facts). "null" (our data: wait page) and absent
         // (native tooling/curl) stay allowed.
         res.setHeader("access-control-allow-origin", req.headers.origin || "*");
         res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
@@ -758,7 +759,17 @@ const httpServer = http.createServer((req, res) => {
     };
     if (req.method === "OPTIONS")
         return send({ ok: true });
-    if (req.method === "POST") {
+    // Foreign-origin veto applies to READS too: the GET routes
+    // (/api/browser-session/list, /api/shell/agent-status,
+    // /api/shell/icon-status) expose session URLs and device facts to any
+    // local-browser page (loopback is exempt from mixed-content blocking).
+    // Intentionally-allowed origin set: the desktop SPA
+    // (127.0.0.1/localhost), file://, "null" (our data: wait page), and
+    // absent (native tooling/curl). NOTE: chrome-extension:// is NOT in
+    // this set — no live extension caller exists (the extension only talks
+    // to its configured gateway origin, never to 127.0.0.1:9444), so the
+    // veto stays as-is; an extension caller needs an explicit entry here.
+    {
         const origin = req.headers.origin;
         if (origin && origin !== "null"
             && !/^(https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?|file:\/\/)/i.test(origin)) {
