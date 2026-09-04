@@ -62,6 +62,11 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
   // attacker who registers a device with hostname "169.254.169.254" (cloud
   // metadata) or "127.0.0.1" makes the gateway dial it with the device token.
   const hostLower = upstream.hostname.toLowerCase();
+  // Decimal/hex/octal IPv4 need no extra rules — the WHATWG parser above
+  // already normalizes them (2130706433/0x7f.0.0.1/0177.0.0.1 all parse to
+  // 127.0.0.1 and hit the 127. block). What it does NOT normalize away:
+  // 0.0.0.0, the cloud metadata IP, and IPv4-mapped IPv6 (::ffff:/96 can
+  // smuggle 127.0.0.1 past every v4 rule — bracketed or bare).
   if (
     hostLower === "localhost" ||
     hostLower.startsWith("127.") ||
@@ -69,9 +74,15 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
     hostLower.startsWith("192.168.") ||
     hostLower.startsWith("172.") ||
     hostLower === "::1" ||
+    hostLower === "[::1]" ||
     hostLower.startsWith("fc") ||
     hostLower.startsWith("fd") ||
-    hostLower.startsWith("fe80")
+    hostLower.startsWith("fe80") ||
+    hostLower === "0.0.0.0" ||
+    hostLower === "[::]" ||
+    hostLower === "169.254.169.254" ||
+    hostLower.startsWith("::ffff:") ||
+    hostLower.startsWith("[::ffff:")
   ) {
     return {
       status: 400,
