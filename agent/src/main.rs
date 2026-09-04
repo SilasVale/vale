@@ -296,7 +296,13 @@ fn main() {
         });
     }
 
-    let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("FATAL: cannot create tokio runtime: {e}");
+            std::process::exit(1);
+        }
+    };
     rt.block_on(run_server(config_path));
 }
 
@@ -314,9 +320,7 @@ fn main() {
 ///      port at every boot),
 ///   3. re-register the `ValeAgent` boot task pointing at this exe + config
 ///      (fixes a manual file-copy update into a different dir; keeps the
-///      unlimited ExecutionTimeLimit so the server never dies after 72h),
-///   4. point the `ValeAgentTray` logon task at this install dir's tray and
-///      start it, so the tray icon always comes back.
+///      unlimited ExecutionTimeLimit so the server never dies after 72h).
 ///
 /// CRITICAL: every child process runs with a hard timeout (run_bounded).
 /// An unbounded status() wait here dead-locked the agent on d1 — startup.log
@@ -347,8 +351,6 @@ fn self_heal() {
         let _ = std::fs::rename(&new, &exe);
         let _ = std::fs::remove_file(&bak); // stale copy now
     }
-    let tray = install_dir.join("vale-tray.exe");
-    let tray_str = tray.to_string_lossy().into_owned();
     let cfg_str = install_dir.join("config.yaml").to_string_lossy().into_owned();
 
     // 1. Stale binaries from other installs (they lock the exe AND hold the
@@ -358,8 +360,8 @@ fn self_heal() {
     //    miss an 8.3 short path / empty Path and kill ourselves.
     let self_pid = std::process::id();
     let ps = format!(
-        "Get-Process vale-agent,vale-command,vale-tray -ErrorAction SilentlyContinue \
-         | Where-Object {{ $_.Id -ne {self_pid} -and $_.Path -ne '{exe_str}' -and $_.Path -ne '{tray_str}' }} \
+        "Get-Process vale-agent,vale-command -ErrorAction SilentlyContinue \
+         | Where-Object {{ $_.Id -ne {self_pid} -and $_.Path -ne '{exe_str}' }} \
          | Stop-Process -Force"
     );
     run_bounded("self-heal: kill stale procs", {
@@ -559,7 +561,13 @@ fn load_config(config_path: &Path) -> Config {
         // silently 401s every remote client until they update; warn loudly.
         eout!("  WARNING: no valid device_token in config — generated a NEW token.");
         eout!("  Every client using the OLD token (console, MCP, panel) will 401 until updated.");
-        let yaml = serde_yaml::to_string(&config).expect("serialize config");
+        let yaml = match serde_yaml::to_string(&config) {
+            Ok(y) => y,
+            Err(e) => {
+                eprintln!("FATAL: serialize config: {e}");
+                std::process::exit(1);
+            }
+        };
         // Atomic write (round-57): a half-written config on power loss would
         // quarantine on next boot and rotate the token again.
         let _ = vale_agent::bootstrap::atomic_write(config_path, yaml.as_bytes());
