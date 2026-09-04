@@ -19,7 +19,7 @@ Unified entry `scripts/build.sh`:
 ```
 
 Subprojects have their own build docs:
-- **agent**: `agent/AGENTS.md` (cargo-xwin cross-compile, feature gating, MCP tool additions, Windows smoke checklist)
+- **agent**: `agent/AGENTS.md` (cargo-xwin cross-compile, feature gating, MCP tool additions, Windows smoke checklist; mirrored by `agent/CLAUDE.md` — keep both in sync)
 - **gateway / index**: wrangler deploy per their `wrangler.jsonc`
 
 ## Conventions
@@ -70,7 +70,7 @@ Triage uses `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, 
 
 ### Domain docs
 
-This repository uses a single-context domain layout with a root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+This repository uses a single-context domain layout expecting a root `CONTEXT.md` and `docs/adr/`; the root `CONTEXT.md` is created lazily per `docs/agents/domain.md`.
 
 ## dsh (DeepSeek Harness) upgrades
 

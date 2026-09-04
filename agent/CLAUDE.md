@@ -1,5 +1,8 @@
 # Vale Agent Build Guide
 
+> Mirrors agent/AGENTS.md (keep in sync). agent/AGENTS.md additionally
+> carries the stage-n iteration log maintained by the DSH loop.
+
 ## Cross-compilation to Windows (MSVC)
 
 Requires `cargo-xwin` for cross-compiling from Linux:
@@ -24,6 +27,19 @@ Output binaries:
 
 `scripts/build.sh agent` cross-compiles vale-agent (the retired tray/Tauri
 desktop builds were removed round-330).
+
+## Install / update — npm is THE single channel
+
+- `vale setup` = PURE LOCAL install (no key/tunnel/cloud). `--reg-key <key>`
+  and `--tunnel <host>` are OPTIONAL extras; the Settings page Gateway card
+  (`POST /api/gateway/connect`) is the GUI way to configure them.
+- Install layout is registry-first: `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}`
+  — all path resolution goes through `src/paths.rs` (`install_dir()`/`data_dir()`);
+  zero `current_exe()` guesses outside it, zero legacy-directory probing.
+- Boxed components: `vale-playwright.zip` → `InstallDir\playwright\`,
+  `cloudflared.exe` → `InstallDir\tools\` (agent-supervised, no Windows service).
+- The NSIS installer / setup.ps1 / run-setup.bat are RETIRED
+  (`deploy/retired/`).
 
 ## Device update — npm one-click update (THE ONLY sanctioned rollout path)
 
@@ -63,12 +79,14 @@ npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   (or pin t
 vale update
 ```
 
-# 5. GitHub Release = CI: after the version-bump commit is pushed, create
-# the tag ON GITHUB VIA THE API (direct git push of tags is intermittently
-# network-blocked here; the API is reliable and the tag-push event triggers
-# release.yml: panel SPA build → xwin exe → npm pack → gh release create
-# --verify-tag). package.json version MUST equal the tag. keep-latest:
-# delete the previous release AND older tag refs via the API.
+# 5. GitHub Release = CI (release.yml rewrite): after the version-bump
+# commit is pushed, create the tag ON GITHUB VIA THE API — direct git
+# push of tags intermittently times out on this network; the API is
+# reliable, and the tag-push event triggers the workflow (panel build →
+# xwin exe → npm pack → gh release create --verify-tag). package.json
+# version MUST equal the tag; mismatch fails fast. keep-latest: delete
+# the previous release AND older tag refs manually (API, /git/refs/tags/
+# <tag> — the URL needs the full refs path, not just the name).
 
 What `vale update` does (bin/vale.js): stages the exe (and desktop shell
 sources) next to the install dir, hands a PS swap script to WMI
@@ -91,8 +109,9 @@ web panel (`/panel`, Apple-style terminal) is served by `src/web.rs` — token
 entered in the browser, kept in localStorage (no server-side injection since
 1.0.5).
 
-- **MCP** (rmcp): served at `/mcp` ON THE MAIN AGENT PORT (default 18080) —
-  token-gated via `TokenGate` in `src/web.rs` (rmcp has no server-side auth hook)
+- **MCP** (rmcp): served at `/mcp` ON THE MAIN AGENT PORT (default 18080,
+  same HTTP surface) — token-gated via `TokenGate` in `src/web.rs` (rmcp has
+  no server-side auth hook). There is no separate port 3000 any more.
 
 ### Module map
 
@@ -118,7 +137,9 @@ src/
                    /api/events (SSE), /api/events/poll, /api/events/term (SSE),
                    POST /api/tools/{name}, GET /api/plugins/status,
                    GET/PUT /api/settings (buffer_mb + console_url),
-                   POST /api/gateway/connect (Settings-page Gateway card),
+                   POST /api/gateway/connect (Settings-page Gateway card:
+                   persist console_url, reg-key → CF token exchange, optional
+                   free tunnel via provision_tunnel),
                    GET /api/browser/{pwshots,pwshot,actions} (AI evidence —
                    the pwout screenshots/action feed), GET /api/sessions
                    (audit list)

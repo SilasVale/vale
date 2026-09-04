@@ -6,7 +6,11 @@
 > the live view, no screenshot stream; round-330: the Tauri shell
 > (`vale-desktop/`) was DELETED (Electron shell only); round-341/342:
 > the gateway browser-extension + PluginHubDO path was removed
-> (playwright bridge only). `agent/AGENTS.md` is the current
+> (playwright bridge only). INSTALL: the installer entry points this
+> spec describes (NSIS installer, setup.ps1, run-setup.bat) were
+> RETIRED to `agent/deploy/retired/` after this spec was written —
+> npm is now THE single install/update channel (root `AGENTS.md`).
+> `agent/AGENTS.md` is the current
 > architecture source of truth; this spec records the approved design
 > decisions (UI structure, dependency containment, install layout) that
 > still hold.**

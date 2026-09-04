@@ -64,7 +64,8 @@ cd vale-agent-npm && npm pack          # → vale-agent-1.2.N.tgz
 
 # 3. Publish: stage the tgz into the dist worker assets (ALSO the
 #    versionless latest alias + the version.json discovery manifest)
-#    and deploy them:
+#    and deploy them (or run scripts/publish-release.sh <ver>, which wraps
+#    pack + stage + alias + manifest + last-5 prune + commit + deploy):
 cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/
 cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/vale-agent-latest.tgz
 # version.json MUST carry the tgz sha256 — /api/version requires ver && sha
@@ -92,7 +93,7 @@ sources) next to the install dir, hands a PS swap script to WMI
 Win32_Process.Create (parented by
 WmiPrvSE so it survives the CLI AND the agent dying; plain `-NoProfile -File`
 only — `-ExecutionPolicy Bypass` / `-EncodedCommand` die silently on d1),
-then: stop ValeAgent task → kill agent + bridge node tree → copy with retry →
+then: stop ValeAgent task → kill agent tree → copy with retry →
 restart task. The terminal connection DROPS for ~10 s mid-update; reconnect
 and verify via `/api/status` → `version`.
 
@@ -208,7 +209,13 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
   with health + vitals, a 60 s AGENT WATCHDOG (`schtasks /run ValeAgent`), and
   a wait page that reappears when the agent dies mid-session. The
   `vale-desktop/` Tauri shell is retired. `/desktop/` reuses `/panel/` assets +
-  loopback token injection (web.rs).
+  loopback token injection (web.rs). round-274: main.ts sets
+  backgroundThrottling:false + the --disable-renderer-backgrounding /
+  --disable-backgrounding-occluded-windows switches — a hidden window
+  (hide-to-tray / background session) otherwise flips the SPA to
+  visibilityState=hidden, Chromium stops requestAnimationFrame, and xterm's
+  rAF-driven DOM renderer silently stops painting (blank terminals while the
+  AI keeps operating).
 
 ## vale-tray / vale-desktop (Tauri) — DELETED (round-330)
 
@@ -240,8 +247,8 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   47 + 24 findings; wave-1 fixes landed — agent fail-loud staging, panel/
   extension hardening, index latest-alias route + R2 24h expiry + shared
   publish smoke, gateway allowlist/bridge-guard/session/admin/logout;
-  brand unified on the sunrise favicon; device on 1.2.296).
-  Current release: 1.2.296 on d1; e2e suite 30 checks; all matrices
+  brand unified on the sunrise favicon; device on 1.2.297).
+  Current release: 1.2.297 on d1; e2e suite 30 checks; all matrices
   green.)
   ROUND-273 (2026-09-04): REPEATABLE E2E SUITE in the repo — the round-
   264..268 device verifications were one-off scripts in D:\Vale\pwout.
@@ -585,7 +592,7 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   conversion tests pass on CI (all 5 jobs incl. gateway test/typecheck).
   Local tsc --noEmit clean too.
 ### Current release
-- npm **1.2.278 LIVE on d1 (round-308+)** — MCP connect auto-selects the
+- npm **1.2.297 LIVE on d1 (round-308+; package.json)** — MCP connect auto-selects the
   embedded-view tab on BOTH transports (stdio 1.2.271 + http 1.2.278:
   desktop-CDP + browser_tabs guard, http arm heals recycled sessions
   round-305); /api/status reports the npm release (round-304). E2E suite
@@ -713,10 +720,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   own history log). Live download paths all 200 (/, version.json,
   latest.tgz). CI 01f16da1 GREEN.
   ROUND-338 (2026-09-04): README tool-count drift fixed — claimed "37
-  MCP tools" but the registry test (mcp_integration.rs) asserts 47 since
-  round-266/282. Updated with the exact breakdown (terminal 26 + memory
-  6 + system 7 + mcp-client 4 + playwright 2 + update 2 + design 1);
-  no other numeric claims drift in README.
+  MCP tools"; the registry test (mcp_integration.rs) asserts 49 (system
+  grew to 9 in round-340/341). Breakdown: terminal 26 + memory 6 +
+  system 9 + mcp-client 4 + playwright 2 + update 1 + design 1; no
+  other numeric claims drift in README.
   ROUND-339 (2026-09-04): gateway dead extension path removed from
   mcp.ts — callTool already returned for every tool name (round-161
   browser_* → playwright bridge); the trailing PluginHubDO → WS →

@@ -13,7 +13,7 @@ Unified entry `scripts/build.sh`:
 ```
 
 Subprojects have their own build docs:
-- **agent**: `agent/CLAUDE.md` (cargo-xwin cross-compile, feature gating, MCP tool additions, Windows smoke checklist)
+- **agent**: `agent/CLAUDE.md` (cargo-xwin cross-compile, feature gating, MCP tool additions, Windows smoke checklist; mirrors `agent/AGENTS.md` — keep both in sync)
 - **gateway / index**: wrangler deploy per their `wrangler.jsonc`
 
 ## Install / update channel (2026-08-28: npm is THE single channel)
@@ -24,8 +24,11 @@ The NSIS installer, `setup.ps1` and `run-setup.bat` are RETIRED
 ```bash
 npm i -g https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz   # install the CLI
 vale setup                        # PURE LOCAL install — no key, no tunnel, no cloud
+vale setup --reg-key <key>        # optional: also register the device with the gateway
+vale setup --tunnel d1            # optional: also provision the free cloudflared tunnel
 vale update                       # update (same channel)
 vale uninstall [--purge-data]     # remove (data kept unless --purge-data)
+vale tunnel status|install|start|stop|update   # tunnel management (boxed component)
 ```
 
 - Install layout is registry-first: `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}`
@@ -34,6 +37,9 @@ vale uninstall [--purge-data]     # remove (data kept unless --purge-data)
   release flow and agent-supervised (no Windows service).
 - The Gateway is an OPTIONAL card in the device Settings page
   (`POST /api/gateway/connect`); pure local mode needs none of it.
+- Cost rule: keep the free path (cloudflared tunnel is free). The reverse
+  channel (device → gateway persistent WS / DeviceLinkDO) was evaluated and
+  REJECTED — Cloudflare DO duration billing makes it ~$36/device/month.
 
 ## Conventions
 
@@ -54,7 +60,7 @@ Triage uses `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, 
 
 ### Domain docs
 
-This repository uses a single-context domain layout with a root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+This repository uses a single-context domain layout expecting a root `CONTEXT.md` and `docs/adr/`; the root `CONTEXT.md` is created lazily per `docs/agents/domain.md`.
 
 ## dsh (DeepSeek Harness) upgrades
 
