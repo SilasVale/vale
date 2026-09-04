@@ -316,11 +316,15 @@ const commands = {
         if (fs.existsSync(DESK_SRC)) {
             const desDst = path.join(DIR, "vale-desktop-electron", "src");
             fs.mkdirSync(desDst, { recursive: true });
-            for (const f of ["main.js", "preload.js", "url-policy.js", "icon.png"]) {
+            for (const f of ["main.js", "preload.js", "url-policy.js"]) {
                 const s = path.join(DESK_SRC, f);
                 if (fs.existsSync(s))
                     fs.copyFileSync(s, path.join(desDst, f));
             }
+            // icon.png goes next to src/ (Electron loads from ../icon.png)
+            const iconSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.png");
+            if (fs.existsSync(iconSrc))
+                fs.copyFileSync(iconSrc, path.join(DIR, "vale-desktop-electron", "icon.png"));
             console.log("setup: vale-desktop-electron sources staged");
         }
         // Register boot-start task (SYSTEM) and kick it once; the agent's own
@@ -433,11 +437,15 @@ const commands = {
         if (fs.existsSync(DESK_SRC)) {
             const desDst = path.join(DIR, "vale-desktop-electron", "src");
             fs.mkdirSync(desDst, { recursive: true });
-            for (const f of ["main.js", "preload.js", "url-policy.js", "icon.png"]) {
+            for (const f of ["main.js", "preload.js", "url-policy.js"]) {
                 const s = path.join(DESK_SRC, f);
                 if (fs.existsSync(s))
                     fs.copyFileSync(s, path.join(desDst, f + ".new"));
             }
+            // icon.png goes next to src/ (Electron loads from ../icon.png)
+            const iconSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.png");
+            if (fs.existsSync(iconSrc))
+                fs.copyFileSync(iconSrc, path.join(DIR, "vale-desktop-electron", "icon.png"));
         }
         const q = DIR.replace(/'/g, "''");
         const log = `Out-File '${q}\\vale-update.log' -Append`;
