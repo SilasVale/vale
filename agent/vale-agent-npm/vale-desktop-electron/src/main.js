@@ -763,8 +763,12 @@ const httpServer = http.createServer((req, res) => {
     // (/api/browser-session/list, /api/shell/agent-status,
     // /api/shell/icon-status) expose session URLs and device facts to any
     // local-browser page (loopback is exempt from mixed-content blocking).
-    // Allowed: the desktop SPA (127.0.0.1/localhost), file://, "null" (our
-    // data: wait page), and absent (native tooling/curl).
+    // Intentionally-allowed origin set: the desktop SPA
+    // (127.0.0.1/localhost), file://, "null" (our data: wait page), and
+    // absent (native tooling/curl). NOTE: chrome-extension:// is NOT in
+    // this set — no live extension caller exists (the extension only talks
+    // to its configured gateway origin, never to 127.0.0.1:9444), so the
+    // veto stays as-is; an extension caller needs an explicit entry here.
     {
         const origin = req.headers.origin;
         if (origin && origin !== "null"

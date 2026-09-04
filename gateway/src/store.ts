@@ -180,6 +180,12 @@ async function getJSON(env: Env, key: string): Promise<any> {
 
 /* ---- Admin seeding ---- */
 let seeded = false;
+/** Test hook: reset the process-once seed flag so a second seedAdmin call in
+ *  the same process really runs (the backfill test heals one env, then must
+ *  prove a healthy env is untouched). Never called in production. */
+export function __resetSeedForTests(): void {
+  seeded = false;
+}
 export async function seedAdmin(env: Env): Promise<void> {
   if (!env.KEYS || seeded) return;
   seeded = true;
@@ -216,9 +222,35 @@ export async function seedAdmin(env: Env): Promise<void> {
     }
   }
 
-  if (await env.KEYS.get("_admin_seeded")) return;
-
   const legacyToken = (await env.KEYS.get("CLIENT_KEY")) || env.CLIENT_KEY || "";
+
+  // Empty-token backfill (bricked-deploy migration): deployments seeded
+  // BEFORE the mint fix have user:admin with token:"" + _admin_seeded="1" —
+  // the early-return below then locks them out FOREVER (bootstrap and
+  // reset-password 403 on `!admin?.token`, register/login 500). Heal exactly
+  // like fresh: mint + remap. This state is unreachable in healthy
+  // deployments (no valid session could ever have existed with an empty
+  // token — findUserByToken("") is always null), so no hijack is possible.
+  // A record with a NON-empty token is left completely untouched.
+  try {
+    const existingRaw = await env.KEYS.get(`user:${ADMIN_ID}`);
+    if (existingRaw) {
+      const existing = JSON.parse(existingRaw);
+      if (existing && !existing.token) {
+        const adminToken = legacyToken || generateGatewayToken();
+        existing.token = adminToken;
+        await env.KEYS.put(`user:${ADMIN_ID}`, JSON.stringify(existing));
+        cset(`user:${ADMIN_ID}`, existing);
+        await env.KEYS.put(`token:${adminToken}`, ADMIN_ID);
+        cset(`token:${adminToken}`, ADMIN_ID);
+        await env.KEYS.put("_admin_seeded", "1");
+      }
+    }
+  } catch {
+    /* a failed backfill must not block startup */
+  }
+
+  if (await env.KEYS.get("_admin_seeded")) return;
   // Fresh deploy with no CLIENT_KEY anywhere: mint a random gateway token
   // instead of seeding token:"". An empty token made the admin account
   // unusable — the initial-password bootstrap (PUT /api/admin/password) and

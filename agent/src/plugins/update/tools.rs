@@ -50,6 +50,19 @@ fn install_dir() -> PathBuf {
     crate::paths::install_dir()
 }
 
+/// Best-effort removal of staged `.new` files after a FAILED update.
+/// A failed staging must leave zero appliable leftovers: the swap script
+/// applies staged `.new` files, so a failure that kept them would let a
+/// later boot/swap apply a MIX of the failed release's components under
+/// the old (consistent) version marker. Never touches live files.
+fn cleanup_staged(dir: &std::path::Path) {
+    let _ = std::fs::remove_file(dir.join("vale-agent.new.exe"));
+    let _ = std::fs::remove_file(dir.join("vale-desktop.new.exe"));
+    let _ = std::fs::remove_file(dir.join("vale-playwright.new.zip"));
+    let _ = std::fs::remove_file(dir.join("tools").join("cloudflared.new.exe"));
+    let _ = std::fs::remove_dir_all(dir.join(".vale-update"));
+}
+
 /// Install from the downloaded npm tgz (the single update artifact).
 /// Extracts the package (vale-agent.exe + vale-desktop.exe + bridge.js +
 /// boxed playwright + cloudflared) into a temp dir, then swaps the exe in
@@ -57,8 +70,8 @@ fn install_dir() -> PathBuf {
 /// PowerShell swap script is handed to Win32_Process.Create (parented by
 /// WmiPrvSE) so it survives THIS process dying — a plain child spawn dies
 /// with the agent mid-copy and leaves the device half-updated.
-/// Returns false on failure (busy marker + temp files are cleaned by the
-/// caller).
+/// Returns false on failure (busy marker + installer + staged .new files
+/// are cleaned by the caller / staging paths).
 async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_version: &str) -> bool {
     #[cfg(windows)]
     {
@@ -100,24 +113,33 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
         }
         // Also stage the desktop shell if present (keep in sync).
         // Staging failures FAIL the update loudly (return false): the swap
-        // script writes .vale-release on main-exe success alone, so a
-        // silently-skipped boxed component would leave the device REPORTING
-        // the new release with STALE components. Failing keeps the old
-        // (consistent) version — safe and retryable (the caller drops the
-        // busy marker + installer), never a brick. A degraded-component
-        // status surface would be a larger change for no extra safety.
+        // script writes .vale-release only after ALL staged swaps succeed,
+        // so a silently-skipped boxed component would leave the device
+        // REPORTING the new release with STALE components. Failing keeps
+        // the old (consistent) version — safe and retryable (the caller
+        // drops the busy marker + installer and removes staged .new files),
+        // never a brick. A degraded-component status surface would be a
+        // larger change for no extra safety.
         let pkg_desktop = extract.join("package").join("vale-desktop.exe");
         if pkg_desktop.exists() {
             if let Err(e) = std::fs::copy(&pkg_desktop, dir.join("vale-desktop.new.exe")) {
                 tracing::error!("[vale-agent] agent_update: desktop stage failed: {e}");
+                cleanup_staged(&dir);
                 return false;
             }
         }
         // Boxed playwright + cloudflared refresh (same fail-loud rule).
+        // Staged to .new names — NEVER over the live files pre-verdict: a
+        // staging failure AFTER a live overwrite left the device RUNNING a
+        // mix of new + stale components while still REPORTING the old
+        // version (and a retry could never restore the overwritten live
+        // file). The $ok-gated swap script moves them into place only when
+        // the main-exe copy succeeded.
         let pkg_pw = extract.join("package").join("vale-playwright.zip");
         if pkg_pw.exists() {
-            if let Err(e) = std::fs::copy(&pkg_pw, dir.join("vale-playwright.zip")) {
+            if let Err(e) = std::fs::copy(&pkg_pw, dir.join("vale-playwright.new.zip")) {
                 tracing::error!("[vale-agent] agent_update: playwright stage failed: {e}");
+                cleanup_staged(&dir);
                 return false;
             }
         }
@@ -125,10 +147,12 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
         if pkg_cf.exists() {
             if let Err(e) = std::fs::create_dir_all(dir.join("tools")) {
                 tracing::error!("[vale-agent] agent_update: tools dir create failed: {e}");
+                cleanup_staged(&dir);
                 return false;
             }
-            if let Err(e) = std::fs::copy(&pkg_cf, dir.join("tools").join("cloudflared.exe")) {
+            if let Err(e) = std::fs::copy(&pkg_cf, dir.join("tools").join("cloudflared.new.exe")) {
                 tracing::error!("[vale-agent] agent_update: cloudflared stage failed: {e}");
+                cleanup_staged(&dir);
                 return false;
             }
         }
@@ -146,8 +170,11 @@ if (Test-Path '{q}\vale-agent.exe') {{ try {{ Copy-Item -Force '{q}\vale-agent.e
 foreach($i in 1..12){{ try {{ Copy-Item -Force -ErrorAction Stop '{q}\vale-agent.new.exe' '{q}\vale-agent.exe'; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 800 }} }};
 "[$(Get-Date -Format o)] copy ok=$ok" | Out-File '{q}\vale-update.log' -Append;
 if ($ok) {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe' }};
-if ($ok) {{ Set-Content -Path '{q}\.vale-release' -Value '{ver}' -NoNewline -ErrorAction SilentlyContinue }};
-if (Test-Path '{q}\vale-desktop.new.exe') {{ Copy-Item -Force '{q}\vale-desktop.new.exe' '{q}\vale-desktop.exe'; Remove-Item -Force '{q}\vale-desktop.new.exe' }};
+if ($ok) {{ if (Test-Path '{q}\vale-desktop.new.exe') {{ Copy-Item -Force '{q}\vale-desktop.new.exe' '{q}\vale-desktop.exe'; Remove-Item -Force '{q}\vale-desktop.new.exe' }} }};
+if ($ok) {{ if (Test-Path '{q}\vale-playwright.new.zip') {{ Copy-Item -Force '{q}\vale-playwright.new.zip' '{q}\vale-playwright.zip'; Remove-Item -Force '{q}\vale-playwright.new.zip' }} }};
+if ($ok) {{ if (Test-Path '{q}\tools\cloudflared.new.exe') {{ Copy-Item -Force '{q}\tools\cloudflared.new.exe' '{q}\tools\cloudflared.exe'; Remove-Item -Force '{q}\tools\cloudflared.new.exe' }} }};
+if ($ok) {{ Set-Content -Path '{q}\.vale-release' -Value '{ver}' -NoNewline -ErrorAction SilentlyContinue }}
+else {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe','{q}\vale-desktop.new.exe','{q}\vale-playwright.new.zip','{q}\tools\cloudflared.new.exe' }};
 try {{ Start-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{ schtasks /Run /TN ValeAgent }};
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '{q}\.vale-update';
 Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-update.ps1';
@@ -456,6 +483,12 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 //    clean up so the marker does not lock updates.
                 let ok = update_from_tgz(&installer, &bytes, &remote).await;
                 if !ok {
+                    // Post-staging failure (swap-script write / WMI handoff
+                    // rejected): no swap will ever run, so drop the staged
+                    // .new files best-effort — a reboot must not find a
+                    // failed update's leftovers to apply. Retry re-stages
+                    // from scratch (safe, same as a staging failure above).
+                    cleanup_staged(&install_dir());
                     let _ = std::fs::remove_file(&busy_bg);
                     let _ = std::fs::remove_file(&installer);
                 }

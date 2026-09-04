@@ -11,10 +11,12 @@
 #   2. stage tgz + versionless latest alias into index/public/vale-agent
 #   3. write version.json {version, tarball, updated, sha256} (sha256 of the
 #      packed tgz — agent_update REQUIRES it, round-119)
-#   4. LAST-5 PRUNE (round-309 lesson): delete every vale-agent-1.*.*.tgz
-#      older than the newest 5, so defective releases are not downloadable
-#      (this policy was never enforced on manual publishes and 46 old tgz
-#      accumulated on the CDN)
+#   4. LAST-5-PER-MINOR PRUNE (round-309 lesson): delete every
+#      vale-agent-1.*.*.tgz older than the newest 5 OF ITS minor line, so
+#      defective releases are not downloadable (this policy was never
+#      enforced on manual publishes and 46 old tgz accumulated on the CDN)
+#      without evicting the previous minor line (pinned installs keep
+#      working while the new line ramps)
 #   5. commit the tracked files (package.json bump + version.json)
 #   6. wrangler deploy (CDN sync — deletes pruned assets too)
 #
@@ -55,15 +57,23 @@ printf '{"version":"%s","tarball":"vale-agent-latest.tgz","updated":"%s","sha256
   "$VER" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SHA" > "$ASSET_DIR/version.json"
 echo "sha256: $SHA"
 
-echo "== last-5 prune (round-309) =="
-# Keep the newest 5 versioned tgz + the latest alias. Exact pattern match —
-# dotted versions: 1.2.274 is NOT matched by *-274.tgz (dot vs hyphen).
+echo "== last-5-per-minor prune (round-309) =="
+# Keep the newest 5 of EACH major.minor line + the latest alias. A flat
+# last-5 across ALL 1.x evicts the previous minor line the moment the new
+# line ships 5 releases (shipping 1.3.0 would drop the 1.2 line and break
+# pinned installs). Exact pattern match — dotted versions: 1.2.274 is NOT
+# matched by *-274.tgz (dot vs hyphen).
 # The 1.*.* glob covers any 1.x minor line; it can never match the latest
 # alias (requires a literal "1." after the prefix — "latest" has none), and
 # `grep -v latest` stays as belt-and-braces.
 # Use a NEWLINE-SPLIT array — a space-padded string match fails on the
-# inner items (newline-separated, not space-separated).
-mapfile -t KEEP < <(ls "$ASSET_DIR"/vale-agent-1.*.*.tgz 2>/dev/null | grep -v latest | sort -V | tail -5)
+# inner items (newline-separated, not space-separated). Input is sort -V
+# ascending, so each major.minor group's TAIL is its newest 5 (sort -V
+# aware grouping via awk).
+mapfile -t KEEP < <(ls "$ASSET_DIR"/vale-agent-1.*.*.tgz 2>/dev/null | grep -v latest | sort -V | awk '
+  { ver = $0; sub(/.*vale-agent-/, "", ver); sub(/\.tgz$/, "", ver); n = split(ver, a, "."); key = a[1] "." a[2]; c[key]++; line[key, c[key]] = $0 }
+  END { for (k in c) { from = (c[k] > 5 ? c[k] - 4 : 1); for (i = from; i <= c[k]; i++) print line[k, i] } }
+')
 for f in "$ASSET_DIR"/vale-agent-1.*.*.tgz; do
   keep=0
   for k in "${KEEP[@]}"; do [ "$k" = "$f" ] && keep=1 && break; done
@@ -74,7 +84,7 @@ echo "remaining: $(ls "$ASSET_DIR"/vale-agent-1.*.*.tgz 2>/dev/null | wc -l) ver
 echo "== commit =="
 git add "$PKG" "$ASSET_DIR/version.json"
 git commit -q -F - <<EOF
-chore(stage-n): release $VER — CDN publish (sha256 + last-5 prune)
+chore(stage-n): release $VER — CDN publish (sha256 + last-5-per-minor prune)
 EOF
 
 echo "== deploy =="
