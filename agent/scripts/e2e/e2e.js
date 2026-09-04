@@ -239,11 +239,68 @@ async function mcpAutoselectProbe(tag, connArgs) {
     clickOk = !!(cl && cl.ok);
   }
   check('mcp ' + tag + ' click learn-more', clickOk, 'ref=' + clickRef);
-  await sleep(5000);
-  const list2 = await (await fetch('http://127.0.0.1:9333/json/list')).json();
-  const emb2 = list2.find((t) => !t.url.includes('/desktop/'));
+  // Poll for the navigation (slow iana.org loads committed after the old
+  // fixed 5s sleep flaked 16/18 on 1.2.297 — same predicate, more time).
+  let emb2 = null;
+  for (let i = 0; i < 15; i++) {
+    await sleep(1000);
+    try {
+      const list2 = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+      emb2 = list2.find((t) => !t.url.includes('/desktop/'));
+      if (emb2 && emb2.url.includes('iana.org')) break;
+    } catch {}
+  }
+  if (!(emb2 && emb2.url.includes('iana.org'))) {
+    // Geometry triage (diagnostic only, not a check): a physical click
+    // that misses for viewport reasons looks identical to a broken click
+    // path — log viewport + link rect so the next failure is instantly
+    // triaged instead of needing a CDP probe round-trip.
+    console.log('  [triage] click missed; geometry:', await clickGeom());
+  }
   check('mcp ' + tag + ' click drives embedded view', emb2 && emb2.url.includes('iana.org'), (emb2 && emb2.url.slice(0, 60)) || 'NO VIEW');
   await tool('mcp_client_disconnect', {}).catch(() => {});
+}
+
+// Best-effort CDP geometry snapshot for click-miss triage (see above).
+// Never throws, never affects check counts — returns a log string.
+async function clickGeom() {
+  if (typeof WebSocket === "undefined") return "no-websocket (node < 22)";
+  let ws = null;
+  try {
+    const l = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+    const t = l.find((x) => !x.url.includes('/desktop/'));
+    if (!t) return "no-view";
+    ws = new WebSocket(t.webSocketDebuggerUrl);
+    await Promise.race([
+      new Promise((res, rej) => {
+        ws.addEventListener("open", res, { once: true });
+        ws.addEventListener("error", rej, { once: true });
+      }),
+      sleep(10000).then(() => { throw new Error("ws-timeout"); }),
+    ]);
+    let seq = 0;
+    const pend = new Map();
+    ws.addEventListener("message", (ev) => {
+      const m = JSON.parse(String(ev.data));
+      if (m.id && pend.has(m.id)) { pend.get(m.id)(m); pend.delete(m.id); }
+    });
+    const send = (method, params) => new Promise((res, rej) => {
+      seq += 1;
+      pend.set(seq, res);
+      ws.send(JSON.stringify({ id: seq, method, params }));
+      sleep(10000).then(() => { if (pend.has(seq)) { pend.delete(seq); rej(new Error("cdp-timeout")); } });
+    });
+    const r = await send("Runtime.evaluate", {
+      expression: "JSON.stringify((() => { const a = [...document.querySelectorAll('a')].find((x) => x.textContent.trim() === 'Learn more'); if (!a) return null; const b = a.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), vw: window.innerWidth, vh: window.innerHeight }; })())",
+      returnByValue: true,
+    });
+    ws.close();
+    ws = null;
+    return (r.result && r.result.result && r.result.result.value) || "no-link";
+  } catch (e) {
+    try { ws && ws.close(); } catch {}
+    return "geom-error:" + String((e && e.message) || e).slice(0, 80);
+  }
 }
 
 async function sectionMcp() {
