@@ -30,3 +30,12 @@ agent/vale-desktop/src-tauri/target/
 # local tooling
 .zcode/
 cloudflared-run.sh
+
+# personal dsh infra (machine-local, untracked; working copies stay on disk)
+/dsh-wrapper.sh
+/restart-plugin.js
+/restart-plugin-client.js
+/restart-plugin-host.js
+/patch-dsh-trusted-host.sh
+/scripts/restart-dsh.sh
+/ecosystem.config.js

@@ -73,12 +73,22 @@ deploy_worker() {
   # build-installer.sh used to sync it (round-320 deleted that script).
   # Sync before deploy so the served sources never drift from live.
   if [[ "$dir" == "gateway" ]]; then
-    local code_dir="$ROOT/gateway/public/code/files/vale-gate/src"
-    if [ -d "$code_dir" ]; then
+    local mirror_root="$ROOT/gateway/public/code/files/vale-gate"
+    local code_dir="$mirror_root/src"
+    if [ ! -d "$ROOT/gateway/src" ]; then
+      echo "  !! gateway/src missing — skipping code viewer mirror sync" >&2
+    elif [ ! -d "$mirror_root" ]; then
+      echo "  !! code viewer mirror root missing: $mirror_root" >&2
+    else
+      # rm -rf + re-copy: plain cp never deletes, so files removed from
+      # gateway/src (e.g. plugin-hub.ts) kept being served by the Source
+      # Viewer. wrangler.jsonc is refreshed too — the mirror copy drifts.
+      rm -rf "$code_dir"
       mkdir -p "$code_dir"
       cp "$ROOT"/gateway/src/*.ts "$code_dir/"
       cp -r "$ROOT"/gateway/src/plugins/. "$code_dir/plugins/" 2>/dev/null || true
-      echo "  synced code viewer mirror ($code_dir)"
+      cp "$ROOT/gateway/wrangler.jsonc" "$mirror_root/wrangler.jsonc"
+      echo "  synced code viewer mirror ($mirror_root)"
     fi
   fi
   ( cd "$ROOT/$dir" \
@@ -154,7 +164,7 @@ build_studio() {
   echo "=== [studio] API contract tests ==="
   ( cd "$ROOT/studio" && npm test )
   echo "=== [studio] pm2 restart ==="
-  pm2 start "$ROOT/ecosystem.config.js" --only vale-studio >/dev/null 2>&1 || true
+  pm2 start "$ROOT/studio/ecosystem.config.js" --only vale-studio >/dev/null 2>&1 || true
   pm2 restart vale-studio >/dev/null
   sleep 1
   local code
@@ -177,5 +187,5 @@ case "$cmd" in
   # Releases use scripts/publish-release.sh (CDN publish + last-5 prune);
   # `deploy` deploys the workers only.
   deploy)   build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
-  *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
+  *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|studio|deploy]"; exit 1 ;;
 esac
