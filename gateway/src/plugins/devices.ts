@@ -93,6 +93,14 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
     } catch (e) {
       return jsonError(400, (e as Error).message, "invalid_request");
     }
+    // A one-time-key holder is untrusted: constrain the claimed hostname to
+    // the agent-host suffix (same gate as handleSelfRegister) — validateDevice
+    // alone accepts any RFC domain, so hostname=evil.com would register and
+    // the proxy/deviceFetch path would then dial it with the device token.
+    {
+      const hostErr = hostAllowError(device.hostname, env);
+      if (hostErr) return jsonError(400, hostErr, "invalid_request");
+    }
     // round-68: a one-time-key holder could upsert an EXISTING device name —
     // the register endpoint silently replaced a production device's
     // hostname/token, redirecting console terminal tools + the proxy to the
