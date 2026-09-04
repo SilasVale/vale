@@ -161,19 +161,24 @@ def main():
     os.makedirs(out, exist_ok=True)
     png128 = render(128)
     png128.save(os.path.join(out, "icon.png"))
+    # No 256px entry on purpose: Pillow PNG-compresses it and Chromium's
+    # ICO parser has choked on PNG-compressed frames (device-caught —
+    # window fell back to the stock Electron icon). 48px covers every
+    # live surface (tray 16, taskbar 32, alt-tab 48); all entries BMP.
     frames = {
-        256: render(256),
-        48: render_aa(48),
+        48: render(48),
         32: render_aa(32),
+        24: render_aa(24, ss=8),
         16: render_aa(16),
     }
-    base = frames[256]
+    base = frames[48]
     base.save(
         os.path.join(out, "icon.ico"),
         format="ICO",
-        append_images=[frames[16], frames[32], frames[48]],
+        append_images=[frames[16], frames[24], frames[32]],
+        bitmap_format="bmp",
     )
-    print(f"rendered {out}/icon.png (128) + {out}/icon.ico (256/48/32/16, small entries AA)")
+    print(f"rendered {out}/icon.png (128) + {out}/icon.ico (48/32/24/16 BMP, small entries AA)")
 
 
 if __name__ == "__main__":

@@ -44,13 +44,22 @@ function authHeaders(): Record<string, string> {
   const t = agentToken();
   return t ? { authorization: `Bearer ${t}` } : {};
 }
-// Brand icon for every native surface (tray + taskbar/window). Windows
-// needs .ico (Tray AND BrowserWindow fall back to the stock electron.exe
-// icon otherwise); macOS/Linux take .png. Empty string when absent —
-// callers fall back to Electron defaults.
+// Brand icon for every native surface. Tray on Windows needs .ico;
+// BrowserWindow takes .png on ALL platforms (Skia-decodes reliably —
+// Chromium's ICO parser has choked on PNG-compressed 256px entries,
+// silently falling back to the stock electron.exe icon, device-caught).
+// Empty string when absent — callers fall back to Electron defaults.
 function appIcon(): string {
   const name = process.platform === "win32" ? "icon.ico" : "icon.png";
   const p = path.join(__dirname, "..", name);
+  try {
+    return fs.existsSync(p) ? p : "";
+  } catch {
+    return "";
+  }
+}
+function windowIcon(): string {
+  const p = path.join(__dirname, "..", "icon.png");
   try {
     return fs.existsSync(p) ? p : "";
   } catch {
@@ -263,7 +272,7 @@ function browserOpen(url?: string): { ok: true; id: string; url: string; cdp: st
   const id = `browser-${Date.now()}`;
   const bw = new BrowserWindow({
     width: 1100, height: 750, title: `Vale Browser — ${target}`,
-    ...(appIcon() ? { icon: appIcon() } : {}),
+    ...(windowIcon() ? { icon: windowIcon() } : {}),
     // review #6/#7: these windows load ARBITRARY internet pages. contextIsolation
     // on + nodeIntegration off + NO preload = zero Node/bridge surface (the
     // default; made explicit). Popups are denied (they would otherwise spawn
@@ -681,8 +690,9 @@ if (gotTheLock) {
     win = new BrowserWindow({
       width: 1200, height: 800, title: "Vale",
       // Taskbar + title-bar icon: without this Windows shows the stock
-      // electron.exe icon (the running binary is stock Electron).
-      ...(appIcon() ? { icon: appIcon() } : {}),
+      // electron.exe icon (the running binary is stock Electron). PNG —
+      // see windowIcon() on why not .ico here.
+      ...(windowIcon() ? { icon: windowIcon() } : {}),
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
         contextIsolation: true,
