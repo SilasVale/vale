@@ -1,3 +1,16 @@
+> **POST-APPROVAL ARCHITECTURE CHANGES (read before relying on this spec):
+> the approved design below is the 2026-08-28 baseline. Since then:
+> round-264 (2026-09): the browser stream (`/api/browser/ws-ticket` + WS
+> JPEG) was REPLACED by a real embedded browser (Electron
+> WebContentsView on CDP 9333, playwright-mcp driven) — the SPA shows
+> the live view, no screenshot stream; round-330: the Tauri shell
+> (`vale-desktop/`) was DELETED (Electron shell only); round-341/342:
+> the gateway browser-extension + PluginHubDO path was removed
+> (playwright bridge only). `agent/AGENTS.md` is the current
+> architecture source of truth; this spec records the approved design
+> decisions (UI structure, dependency containment, install layout) that
+> still hold.**
+
 # Vale Desktop — Core Architecture & Dependency Containment Design
 
 Date: 2026-08-28
