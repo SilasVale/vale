@@ -8,7 +8,7 @@
  */
 import { getDevice, findUserByToken, listDevices } from "./store.ts";
 import { allMcpTools } from "./mcp-tools.ts";
-import { deviceFetch } from "./device-fetch.ts";
+import { deviceFetch, deviceHostError } from "./device-fetch.ts";
 
 export async function handleMcp(request: Request, env: any): Promise<Response> {
   const auth = String(request.headers.get("authorization") || "");
@@ -114,8 +114,28 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
 /** Browser tools → agent's mcp_client_call → playwright-mcp.
  *   (The extension/PluginHubDO path was deleted round-341.) */
 async function callMcpClientBridge(name: string, _env: any, device: any, args: any): Promise<any> {
+  // SSRF guard (same checks as deviceFetch): the device record's hostname is
+  // dialed here with the device Bearer token, and these raw fetches bypass
+  // deviceFetch's private-IP/userinfo guards. deviceFetch
+  // itself can't be used: its POST bound is 60s while browser waits
+  // legitimately run up to ~320s (timeout_secs clamp 300 + 20s headroom) —
+  // so apply the identical hostname checks up front instead.
+  const hostErr = deviceHostError(device.hostname);
+  if (hostErr) throw ToolErr(DEVICE_UNREACHABLE, hostErr);
+  let base: string;
+  try {
+    const u = new URL(`https://${device.hostname}/`);
+    // Belt-and-suspenders (mirrors deviceFetch): URL-significant characters
+    // smuggled in the hostname field must not redirect the dial elsewhere.
+    if (u.hostname.toLowerCase() !== String(device.hostname).toLowerCase()) {
+      throw new Error("host mismatch");
+    }
+    base = `https://${device.hostname}`;
+  } catch (e: any) {
+    if (e?.code) throw e;
+    throw ToolErr(DEVICE_UNREACHABLE, "invalid device hostname");
+  }
   const token = device.token || "";
-  const base = `https://${device.hostname}`;
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
   // Tool name mapping: gateway name → playwright-mcp name
   const toolMap: Record<string, string> = {

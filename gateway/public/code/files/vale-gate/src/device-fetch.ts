@@ -58,38 +58,9 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
   if (upstream.hostname.toLowerCase() !== String(device.hostname).toLowerCase()) {
     return { status: 400, ok: false, resp: undefined, error: "invalid proxy path" };
   }
-  // stage-n SSRF audit (HIGH): reject private/link-local/internal IPs — an
-  // attacker who registers a device with hostname "169.254.169.254" (cloud
-  // metadata) or "127.0.0.1" makes the gateway dial it with the device token.
-  const hostLower = upstream.hostname.toLowerCase();
-  // Decimal/hex/octal IPv4 need no extra rules — the WHATWG parser above
-  // already normalizes them (2130706433/0x7f.0.0.1/0177.0.0.1 all parse to
-  // 127.0.0.1 and hit the 127. block). What it does NOT normalize away:
-  // 0.0.0.0, the cloud metadata IP, and IPv4-mapped IPv6 (::ffff:/96 can
-  // smuggle 127.0.0.1 past every v4 rule — bracketed or bare).
-  if (
-    hostLower === "localhost" ||
-    hostLower.startsWith("127.") ||
-    hostLower.startsWith("10.") ||
-    hostLower.startsWith("192.168.") ||
-    hostLower.startsWith("172.") ||
-    hostLower === "::1" ||
-    hostLower === "[::1]" ||
-    hostLower.startsWith("fc") ||
-    hostLower.startsWith("fd") ||
-    hostLower.startsWith("fe80") ||
-    hostLower === "0.0.0.0" ||
-    hostLower === "[::]" ||
-    hostLower === "169.254.169.254" ||
-    hostLower.startsWith("::ffff:") ||
-    hostLower.startsWith("[::ffff:")
-  ) {
-    return {
-      status: 400,
-      ok: false,
-      resp: undefined,
-      error: "device hostname resolves to a private/internal address",
-    };
+  const hostErr = deviceHostError(upstream.hostname);
+  if (hostErr) {
+    return { status: 400, ok: false, resp: undefined, error: hostErr };
   }
   const headers = new Headers(init.headers || {});
   headers.delete("host");
@@ -111,4 +82,42 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
     return { status: 502, ok: false, error: `Device unreachable: ${(e as Error).message}` };
   }
   return { status: resp.status, ok: resp.ok, resp };
+}
+
+/**
+ * SSRF hostname guard shared by deviceFetch and the MCP browser bridge
+ * (mcp.ts keeps its own long-timeout raw fetch, so it calls this directly
+ * instead of routing through deviceFetch). Returns an error string when the
+ * hostname must not be dialed with device credentials, else null.
+ */
+export function deviceHostError(hostname: string): string | null {
+  // stage-n SSRF audit (HIGH): reject private/link-local/internal IPs — an
+  // attacker who registers a device with hostname "169.254.169.254" (cloud
+  // metadata) or "127.0.0.1" makes the gateway dial it with the device token.
+  const hostLower = String(hostname).toLowerCase();
+  // Decimal/hex/octal IPv4 need no extra rules — the WHATWG parser in
+  // deviceFetch already normalizes them (2130706433/0x7f.0.0.1/0177.0.0.1 all
+  // parse to 127.0.0.1 and hit the 127. block). What it does NOT normalize
+  // away: 0.0.0.0, the cloud metadata IP, and IPv4-mapped IPv6 (::ffff:/96
+  // can smuggle 127.0.0.1 past every v4 rule — bracketed or bare).
+  if (
+    hostLower === "localhost" ||
+    hostLower.startsWith("127.") ||
+    hostLower.startsWith("10.") ||
+    hostLower.startsWith("192.168.") ||
+    hostLower.startsWith("172.") ||
+    hostLower === "::1" ||
+    hostLower === "[::1]" ||
+    hostLower.startsWith("fc") ||
+    hostLower.startsWith("fd") ||
+    hostLower.startsWith("fe80") ||
+    hostLower === "0.0.0.0" ||
+    hostLower === "[::]" ||
+    hostLower === "169.254.169.254" ||
+    hostLower.startsWith("::ffff:") ||
+    hostLower.startsWith("[::ffff:")
+  ) {
+    return "device hostname resolves to a private/internal address";
+  }
+  return null;
 }

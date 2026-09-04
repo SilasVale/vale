@@ -102,7 +102,12 @@ function b64urlEncodeStr(str: string): string {
 }
 
 function b64urlDecodeStr(s: string): string {
-  return atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+  // issueSessionToken/b64urlEncodeStr strip the '=' padding — restore it
+  // before atob (same as access.ts b64urlToJson): without it, payloads whose
+  // stripped length is not a multiple of 4 fail to decode and every such
+  // valid session 401s in verifySessionToken's catch.
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  return atob(s.replace(/-/g, "+").replace(/_/g, "/") + pad);
 }
 
 /** Issue a session token: `b64url(payload).hmac`, payload = { uid, role, exp } */

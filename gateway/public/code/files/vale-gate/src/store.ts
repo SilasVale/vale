@@ -219,20 +219,28 @@ export async function seedAdmin(env: Env): Promise<void> {
   if (await env.KEYS.get("_admin_seeded")) return;
 
   const legacyToken = (await env.KEYS.get("CLIENT_KEY")) || env.CLIENT_KEY || "";
+  // Fresh deploy with no CLIENT_KEY anywhere: mint a random gateway token
+  // instead of seeding token:"". An empty token made the admin account
+  // unusable — the initial-password bootstrap (PUT /api/admin/password) and
+  // POST /api/auth/reset-password both 403 on `!admin?.token`, while
+  // register/login 500 with "Admin password not configured": a fresh console
+  // with no secrets had NO path to a first session (fresh-deploy lockout).
+  // The deployer reads the minted value from KV (`user:admin`) and uses it
+  // as the bootstrap adminKey. Existing deployments are untouched (they
+  // return early on _admin_seeded above).
+  const adminToken = legacyToken || generateGatewayToken();
   const admin = {
     id: ADMIN_ID,
     username: ADMIN_USERNAME,
     role: "admin",
     enabled: true,
     createdAt: Date.now(),
-    token: legacyToken,
+    token: adminToken,
   };
   await env.KEYS.put(`user:${ADMIN_ID}`, JSON.stringify(admin));
   cset(`user:${ADMIN_ID}`, admin);
-  if (legacyToken) {
-    await env.KEYS.put(`token:${legacyToken}`, ADMIN_ID);
-    cset(`token:${legacyToken}`, ADMIN_ID);
-  }
+  await env.KEYS.put(`token:${adminToken}`, ADMIN_ID);
+  cset(`token:${adminToken}`, ADMIN_ID);
 
   const ukeys: Record<string, string> = {};
   for (const n of USER_KEY_NAMES) {

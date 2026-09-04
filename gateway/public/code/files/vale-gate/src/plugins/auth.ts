@@ -244,8 +244,12 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
   const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
   if (cookie && env.KEYS) {
     try {
+      // Token format is payload.sig (see issueSessionToken) — decode
+      // segment [0]. [1] is the binary HMAC signature: parsing it as JSON
+      // always throws, which silently disabled this whole server-side
+      // blacklist (logout cleared only the client cookie).
       const payload = JSON.parse(
-        atob(cookie.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") || "{}") || "{}",
+        atob(cookie.split(".")[0]?.replace(/-/g, "+").replace(/_/g, "/") || "{}") || "{}",
       );
       if (payload.exp) {
         // round-122: exp is stored in MS (issueSessionToken uses Date.now() + SESSION_TTL_MS) — the old *1000 treated it as seconds, overstating the remaining life ~1000x (every logout wrote a 2-day entry).
