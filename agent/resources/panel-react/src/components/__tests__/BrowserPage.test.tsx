@@ -74,6 +74,39 @@ describe("BrowserPage", () => {
     await waitFor(() => expect(document.activeElement).not.toBe(input));
   });
 
+  it("rejects data:/about: URLs with a visible error instead of a silent blank (validator parity)", async () => {
+    const navMock = vi.fn().mockResolvedValue({ ok: true });
+    (window as any).valeEmbedded = {
+      navigate: navMock,
+      back: vi.fn().mockResolvedValue({ ok: true }),
+      fwd: vi.fn().mockResolvedValue({ ok: true }),
+      reload: vi.fn().mockResolvedValue({ ok: true }),
+      place: vi.fn().mockResolvedValue({ ok: true }),
+      state: vi.fn().mockResolvedValue({ ok: true, url: "", canBack: false, canFwd: false, visible: true }),
+      onNav: vi.fn().mockReturnValue(() => {}),
+      recover: vi.fn().mockResolvedValue({ ok: true }),
+      onGone: vi.fn().mockReturnValue(() => {}),
+    };
+    render(<BrowserPage token="t" />);
+    const input = screen.getByPlaceholderText(/press Enter/i) as HTMLInputElement;
+    // data: URLs are rejected by the main-process validator (silent blank
+    // before) — the SPA must refuse with a visible error and NOT navigate.
+    fireEvent.change(input, { target: { value: "data:text/html,hi" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    expect(screen.getByText(/Cannot open this address/)).toBeTruthy();
+    expect(navMock).not.toHaveBeenCalled();
+    // about: URLs (other than about:blank) are rejected the same way.
+    fireEvent.change(input, { target: { value: "about:config" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    expect(screen.getByText(/Cannot open this address/)).toBeTruthy();
+    expect(navMock).not.toHaveBeenCalled();
+    // A valid URL clears the error and navigates normally.
+    fireEvent.change(input, { target: { value: "https://example.com" } });
+    expect(screen.queryByText(/Cannot open this address/)).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    await waitFor(() => expect(navMock).toHaveBeenCalledWith("https://example.com"));
+  });
+
   it("shows a crash banner on renderer-gone and recovers on click (round-256)", async () => {
     let goneHandler: ((d: { reason: string; exitCode: number }) => void) | null = null;
     const recoverMock = vi.fn().mockResolvedValue({ ok: true });

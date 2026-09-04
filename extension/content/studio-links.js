@@ -22,8 +22,10 @@
   /** path candidate -> { abs: string|null, at: number } */
   const resolvedCache = new Map();
 
+  // A trailing :NN line number is part of the match (split off by the
+  // caller into bare + lineNo for the deep link).
   const PATH_RX =
-    /(?:\/[A-Za-z0-9_.~-]+)+|(?:[A-Za-z0-9_.~-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.(?:tsx?|mjs|cjs|jsx|rs|c|h|cpp|hpp|json|ya?ml|toml|md|sh|py|css|scss|html|sql|ini|conf|lock)/g;
+    /(?:(?:\/[A-Za-z0-9_.~-]+)+|(?:[A-Za-z0-9_.~-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.(?:tsx?|mjs|cjs|jsx|rs|c|h|cpp|hpp|json|ya?ml|toml|md|sh|py|css|scss|html|sql|ini|conf|lock))(?::\d+)?/g;
 
   async function loadCfg() {
     try {
@@ -37,8 +39,16 @@
     return cfg.enabled;
   }
 
+  // Defensive: never attach the Bearer token to a non-https origin — a
+  // stale/synced stored value could predate the options-page https check.
   function authHeaders() {
-    return cfg.token ? { authorization: "Bearer " + cfg.token } : {};
+    if (!cfg.token) return {};
+    try {
+      if (new URL(cfg.origin).protocol !== "https:") return {};
+    } catch {
+      return {};
+    }
+    return { authorization: "Bearer " + cfg.token };
   }
 
   async function getRoots() {

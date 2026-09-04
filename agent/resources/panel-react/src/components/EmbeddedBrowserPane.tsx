@@ -77,6 +77,10 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   // round-256: the embedded view's renderer crashed (reason text for the
   // recovery banner).
   const [goneReason, setGoneReason] = useState<string | null>(null);
+  // Rejected-scheme notice: the main-process validator (sanitizeBrowserUrl)
+  // only honors http/https — navigating anywhere else would load
+  // about:blank with no error, so reject here with a visible error instead.
+  const [navError, setNavError] = useState<string | null>(null);
 
   // Report the slot bounds to the main process so it can position the real
   // WebContentsView over it. Bounds are relative to the window content — the
@@ -158,7 +162,16 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   const navigate = useCallback((fromSubmit?: boolean) => {
     const b = bridge();
     if (!b) return;
-    const u = /^(https?|about|data):/i.test(url.trim()) ? url.trim() : `https://${url.trim()}`;
+    const raw = url.trim();
+    if (/^(about|data):/i.test(raw) && raw.toLowerCase() !== "about:blank") {
+      setNavError("Only http(s) URLs are supported in the embedded browser");
+      if (fromSubmit) urlInputRef.current?.blur();
+      return;
+    }
+    setNavError(null);
+    // about:blank is the one non-http(s) target the main-process validator
+    // honors — pass it through untouched.
+    const u = /^https?:/i.test(raw) || raw.toLowerCase() === "about:blank" ? raw : `https://${raw}`;
     setUrl(u);
     void b.navigate(u);
     // round-254 (user: "回车不能代替 Go 吗"): pressing Enter in the address
@@ -195,7 +208,7 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
             className="browser-url"
             ref={urlInputRef}
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
+            onChange={(e) => { setUrl(e.target.value); setNavError(null); }}
             onFocus={() => { urlEditingRef.current = true; }}
             onBlur={() => { urlEditingRef.current = false; }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); navigate(true); } }}
@@ -216,6 +229,16 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
           </span>
         </div>
       </div>
+
+      {/* Rejected-scheme notice (reuses the crash-banner styling — no new CSS). */}
+      {navError && (
+        <div className="browser-crash-banner" role="alert">
+          <div>
+            <strong>Cannot open this address</strong>
+            <span className="browser-crash-reason">{navError}</span>
+          </div>
+        </div>
+      )}
 
       {/* The slot the main process overlays its WebContentsView onto. The
           img-free real browser lives above this div (native window child);
