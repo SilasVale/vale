@@ -728,6 +728,18 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   tsc clean. OPEN: console UI (DevicesPanel/app.js) still renders the
   Pair-extension button + download hint — user-visible dead feature,
   next round.
+  ROUND-341 (2026-09-04): extension-era UI + PluginHubDO REMOVED — the
+  round-262 extension deletion's last gateway surface: DevicesPanel Pair
+  button/modal/Extension signal row, client.ts pairDevice, i18n pair/ext
+  keys; /api/plugins/status dropped the PluginHubDO `online` field
+  (agent_up/tunnel_up stay); devices.ts hub close-all calls; PluginHubDO
+  class + wrangler binding/migration + tests deleted (BreakerDO/RouteDO
+  stay); public/ pruned to the 2 referenced assets (17 stale bundles +
+  dead app.js removed). -1831 lines. 243 gateway tests pass, tsc clean,
+  render smokes OK. NOTE: gateway deploy needed for the binding removal
+  to take effect (build.sh gateway). Round-340's proxy plugin-token auth
+  path stays (defensive; device-token links still meaningful for delete/
+  rename revocation).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
