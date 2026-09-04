@@ -788,6 +788,13 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   Device hygiene: 1 node + 5 electron, 0 e2e png leftovers, release
   1.2.278, uptime 10187s. Gateway cleanup fully verified on the device
   path.
+  ROUND-348 (2026-09-04): FINAL dead-code scan — all gateway
+  extension/pair/plugin-hub references are historical comments (round-340/
+  341 deletion records, defense-in-depth notes); no live dead code remains.
+  Proxy plugin-token auth branch (devices.ts:270-330) stays as conservative
+  defense; no new links can be created (addPluginLink/handlePair deleted),
+  existing links expire via 30-day TTL. OPEN item closed as "intended
+  natural expiration".
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
