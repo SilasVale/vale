@@ -215,7 +215,11 @@ export default {
         const publicCors = { "Access-Control-Allow-Origin": "*" };
         if (path === "/api/vale-cli") {
           return new Response(cli, {
-            headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS, ...publicCors },
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8",
+              ...CORS_HEADERS,
+              ...publicCors,
+            },
           });
         }
         const b64 = encodeBase64Utf8(cli);
@@ -252,8 +256,7 @@ export default {
 
       // ---- Static page (Workers Assets): non-/v1/ paths → ai domain only ----
       if (!path.startsWith("/v1/")) {
-        if (!isPageHost)
-          return withCors(request, jsonError(404, "Not Found", "not_found_error"));
+        if (!isPageHost) return withCors(request, jsonError(404, "Not Found", "not_found_error"));
         if (env.ASSETS && typeof env.ASSETS.fetch === "function") {
           return withCors(request, await env.ASSETS.fetch(request));
         }

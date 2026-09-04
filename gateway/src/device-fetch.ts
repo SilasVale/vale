@@ -113,10 +113,9 @@ export function deviceHostError(hostname: string): string | null {
     const second = Number(hostLower.split(".")[1]);
     is172Private = Number.isInteger(second) && second >= 16 && second <= 31;
   }
-  const isV6Private = hostLower.includes(":") &&
-    (hostLower.startsWith("fc") ||
-      hostLower.startsWith("fd") ||
-      hostLower.startsWith("fe80"));
+  const isV6Private =
+    hostLower.includes(":") &&
+    (hostLower.startsWith("fc") || hostLower.startsWith("fd") || hostLower.startsWith("fe80"));
   if (
     hostLower === "localhost" ||
     hostLower.startsWith("127.") ||
