@@ -1,12 +1,11 @@
-// Plugin pairing/ticket STORE helpers (round-340: the public pair/claim +
-// ws-ticket routes were removed with the browser extension; these helpers
-// still back the admin handlePair flow). The plugin registry lives in a
-// single KV JSON map (plugins:v1); pair codes and WS tickets are one-time KV
-// values with TTLs. A Map-backed KV stub stands in for the Workers binding.
+// Plugin-link STORE helpers (round-345: pair codes + WS tickets removed
+// with the extension; links still guard the device reverse proxy and are
+// revoked on device delete/rename). The plugin registry lives in a single KV
+// JSON map (plugins:v1). A Map-backed KV stub stands in for the binding.
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
-import { createPairCode, consumePairCode, addPluginLink, getPluginByToken, removePluginLink, createWsTicket, consumeWsTicket, __clearCaches } from "../src/store.ts";
+import { getPluginByToken, removePluginLink, __clearCaches } from "../src/store.ts";
 
 // Full worker fetch: pair/claim + ws-ticket are public (no admin session) —
 // the extension has no session cookie. Asserted by behavior, not source order.
@@ -40,29 +39,17 @@ function env() {
   } };
 }
 
-test("pair code: create then consume (one-time)", async () => {
+test("plugin link: get/remove (KV-seeded)", async () => {
   const e = env();
-  const code = await createPairCode(e, "d1");
-  assert.ok(code);
-  assert.equal(await consumePairCode(e, code), "d1");
-  assert.equal(await consumePairCode(e, code), null);
-});
-
-test("plugin link: add/get/remove", async () => {
-  const e = env();
-  await addPluginLink(e, "tok", "d1");
+  __clearCaches();
+  await e.KEYS.put("plugins:v1", JSON.stringify({
+    "tok": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 * 30 },
+  }));
   const link = await getPluginByToken(e, "tok");
   assert.equal(link.device, "d1");
   assert.ok(link.createdAt);
   await removePluginLink(e, "tok");
   assert.equal(await getPluginByToken(e, "tok"), null);
-});
-
-test("ws ticket: one-time", async () => {
-  const e = env();
-  const t = await createWsTicket(e, "d1");
-  assert.equal(await consumeWsTicket(e, t), "d1");
-  assert.equal(await consumeWsTicket(e, t), null);
 });
 
 // round-340: the public pair/claim + ws-ticket endpoint tests were
@@ -71,7 +58,10 @@ test("ws ticket: one-time", async () => {
 // createPairCode / plugin links.
 test("plugin link: expires after 30 days, getPluginByToken drops it", async () => {
   const e = env();
-  await addPluginLink(e, "tok-exp", "d1");
+  __clearCaches();
+  await e.KEYS.put("plugins:v1", JSON.stringify({
+    "tok-exp": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 * 30 },
+  }));
   const realNow = Date.now;
   try {
     assert.equal((await getPluginByToken(e, "tok-exp")).device, "d1");
