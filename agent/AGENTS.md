@@ -750,6 +750,15 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   byte-identical to repo (devices.ts/mcp.ts), routes normal. LESSON:
   removing a DO class requires a deleted_classes migration step in the
   SAME deploy — code-only removal fails upload.
+  ROUND-343 (2026-09-04): spec currency pass — the two design specs
+  still cited as current postdated the architecture: 2026-08-28-vale-
+  desktop-core-design (Approved) gained a POST-APPROVAL CHANGES banner
+  (round-264 real-browser replaced the ws-ticket JPEG stream; round-330
+  Tauri shell deleted; round-341/342 gateway extension removed — the
+  UI/dependency/install decisions still hold, agent/AGENTS.md is the
+  current truth); 2026-08-06-device-ops-v2 (extension era) marked
+  SUPERSEDED. Code-viewer mirror committed after round-341/342
+  (4c5c25a6).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
