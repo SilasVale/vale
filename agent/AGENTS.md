@@ -759,6 +759,13 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   current truth); 2026-08-06-device-ops-v2 (extension era) marked
   SUPERSEDED. Code-viewer mirror committed after round-341/342
   (4c5c25a6).
+  ROUND-344 (2026-09-04): post-round-341/342 LIVE CHAIN VERIFICATION —
+  console 302 (login), gateway /api/health 200 all channels, /mcp 401
+  gate, d1 agent healthy (release 1.2.278, cpu 0.5%, mem 68.9%);
+  device mcp e2e 12/12 (stdio+http auto-select + click) — gateway
+  cleanup zero regression on the device path; live console UI assets
+  byte-identical to repo + 0 pair code (new UI shipped with the
+  round-342 deploy).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
