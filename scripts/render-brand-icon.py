@@ -144,14 +144,36 @@ def render(size):
     return img
 
 
+def render_aa(size, ss=4):
+    """Supersampled render: draw at size*ss then downscale (LANCZOS).
+
+    The base render() sets hard pixels (no AA) — fine at 128+, but at
+    16/32/48 the thin white ridges collapse into mush while the in-app
+    SVG (browser-rasterized, anti-aliased) stays crisp. Supersampling
+    approximates the browser look so the .ico small entries read as the
+    same mark (device-caught: 16px entry was an unreadable blob)."""
+    big = render(size * ss)
+    return big.resize((size, size), Image.LANCZOS)
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "."
     os.makedirs(out, exist_ok=True)
     png128 = render(128)
     png128.save(os.path.join(out, "icon.png"))
-    ico256 = render(256)
-    ico256.save(os.path.join(out, "icon.ico"), format="ICO", sizes=[(256, 256), (48, 48), (32, 32), (16, 16)])
-    print(f"rendered {out}/icon.png (128) + {out}/icon.ico (256/48/32/16)")
+    frames = {
+        256: render(256),
+        48: render_aa(48),
+        32: render_aa(32),
+        16: render_aa(16),
+    }
+    base = frames[256]
+    base.save(
+        os.path.join(out, "icon.ico"),
+        format="ICO",
+        append_images=[frames[16], frames[32], frames[48]],
+    )
+    print(f"rendered {out}/icon.png (128) + {out}/icon.ico (256/48/32/16, small entries AA)")
 
 
 if __name__ == "__main__":
