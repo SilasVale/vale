@@ -79,6 +79,7 @@ export function TerminalPane({ session, registerWrite }: {
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const renderedRef = useRef(0);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -113,6 +114,10 @@ export function TerminalPane({ session, registerWrite }: {
     const search = new SearchAddon();
     term.loadAddon(fit);
     term.loadAddon(search);
+    // review #3b: FitAddon must be reachable outside this effect — every
+    // refit path called the non-existent `term.fit()` (loadAddon does NOT
+    // patch it on), so all activate/resize/font refits were silent no-ops.
+    fitRef.current = fit;
     searchRef.current = search;
     term.open(containerRef.current);
     // round-161: WebGL renderer REMOVED — on some GPUs/WebView2 the context
@@ -246,6 +251,7 @@ export function TerminalPane({ session, registerWrite }: {
       offTheme();
       sub.dispose();
       searchRef.current = null;
+      fitRef.current = null;
       term.dispose();
       termRef.current = null;
       containerRef.current?.removeEventListener("contextmenu", onContext);
@@ -261,7 +267,7 @@ export function TerminalPane({ session, registerWrite }: {
       try {
         const term: any = termRef.current;
         if (term?.element && term.element.offsetParent === null) return;
-        term?.fit?.();
+        fitRef.current?.fit();
         if (term && session.sid) {
           callTool("terminal_resize", { session_id: session.sid, cols: term.cols, rows: term.rows }).catch(() => {});
         }
@@ -311,7 +317,7 @@ export function TerminalPane({ session, registerWrite }: {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         try {
-          term.fit?.();
+          fitRef.current?.fit();
           callTool("terminal_resize", { session_id: session.sid, cols: term.cols, rows: term.rows }).catch(() => {});
         } catch { /* hidden pane */ }
       });
