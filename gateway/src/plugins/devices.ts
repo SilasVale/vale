@@ -49,7 +49,7 @@ import {
   removePluginLinksForDevice,
   type Device,
 } from "../store.ts";
-import { parseCookie } from "../auth.ts";
+import { parseCookie, safeEq } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { jsonOk, jsonError, readJson, stampCors } from "../http.ts";
@@ -186,7 +186,7 @@ async function handleSelfRegister(request: Request, env: any): Promise<Response>
         "conflict",
       );
     }
-    const sameToken = existing.token === device.token;
+    const sameToken = safeEq(existing.token, device.token);
     if (!sameToken) {
       // Token rotation needs proof from the STORED tunnel that the caller
       // is the same physical device: its /api/status must answer with the
@@ -301,7 +301,7 @@ async function handleFileUpload(request: Request, env: any, _url: URL): Promise<
     try {
       const devices = await listDevices(env);
       ok = devices.some(
-        (d: any) => typeof d.token === "string" && d.token.length >= 32 && d.token === token,
+        (d: any) => typeof d.token === "string" && d.token.length >= 32 && safeEq(d.token, token),
       );
     } catch {
       ok = false;
@@ -319,8 +319,18 @@ async function proxyUploadToWorker(request: Request, env: any): Promise<Response
   const uploadUrl = `${indexWorkerUrl}/api/upload`;
 
   // Rebuild the request with the UPLOAD_KEY header for the index worker.
-  const headers = new Headers(request.headers);
+  // Forward a MINIMAL header set: Authorization is the only credential the
+  // index worker needs, Content-Type must survive verbatim (the multipart
+  // boundary in it is how the worker's formData() splits parts), and
+  // Content-Length keeps the upstream body framing honest. Everything else
+  // — notably the client's Cookie header — stays on this side: the index
+  // worker is a separate origin and must never see console cookies.
+  const headers = new Headers();
   headers.set("Authorization", `Bearer ${env.UPLOAD_KEY || ""}`);
+  const contentType = request.headers.get("content-type");
+  if (contentType) headers.set("Content-Type", contentType);
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) headers.set("Content-Length", contentLength);
 
   const resp = await fetchWithTimeout(
     uploadUrl,

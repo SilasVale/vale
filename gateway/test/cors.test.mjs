@@ -67,7 +67,7 @@ test("CORS_HEADERS carries no wildcard (origin reflected per request)", () => {
   assert.ok(!("Access-Control-Allow-Origin" in CORS_HEADERS));
 });
 
-test("isAllowedOrigin: console origins + loopback pass, others fail", () => {
+test("isAllowedOrigin: console origins pass; loopback only with a loopback request host", () => {
   assert.equal(isAllowedOrigin(AI), true);
   assert.equal(isAllowedOrigin(API), true);
   assert.equal(isAllowedOrigin(DSH), true);
@@ -77,16 +77,28 @@ test("isAllowedOrigin: console origins + loopback pass, others fail", () => {
   assert.equal(isLoopbackOrigin(LOOPBACK), true);
   assert.equal(isLoopbackOrigin("https://127.0.0.1:8787"), true);
   assert.equal(isLoopbackOrigin("ftp://localhost/x"), false);
-  assert.equal(isAllowedOrigin(LOOPBACK), true);
+  // Loopback origins are a wrangler-dev affordance: allowed only when the
+  // request itself targets a loopback host (audit P2 — production used to
+  // reflect ANY localhost origin).
+  assert.equal(isAllowedOrigin(LOOPBACK), false, "no request host → production default: closed");
+  assert.equal(isAllowedOrigin(LOOPBACK, "ai.saisi.online"), false);
+  assert.equal(isAllowedOrigin(LOOPBACK, "localhost"), true);
+  assert.equal(isAllowedOrigin(LOOPBACK, "127.0.0.1"), true);
 });
 
 test("corsHeadersFor: reflect + Vary when allowed, no ACAO otherwise", () => {
-  const mk = (origin) => new Request("https://ai.saisi.online/api/health", origin ? { headers: { origin } } : {});
+  const mk = (origin, host = "https://ai.saisi.online") =>
+    new Request(host + "/api/health", origin ? { headers: { origin } } : {});
   const ok = corsHeadersFor(mk(AI));
   assert.equal(ok["Access-Control-Allow-Origin"], AI);
   assert.equal(ok["Vary"], "Origin");
-  const loop = corsHeadersFor(mk(LOOPBACK));
-  assert.equal(loop["Access-Control-Allow-Origin"], LOOPBACK);
+  // A loopback Origin at the deployed console host is a foreign local page:
+  // no reflection.
+  assert.equal(corsHeadersFor(mk(LOOPBACK))["Access-Control-Allow-Origin"], undefined);
+  // The same loopback Origin at a loopback host is local wrangler dev:
+  // reflected.
+  const dev = corsHeadersFor(mk(LOOPBACK, "http://localhost:8787"));
+  assert.equal(dev["Access-Control-Allow-Origin"], LOOPBACK);
   assert.equal(corsHeadersFor(mk(EVIL))["Access-Control-Allow-Origin"], undefined);
   assert.equal(corsHeadersFor(mk(null))["Access-Control-Allow-Origin"], undefined);
   assert.equal(corsHeadersFor()["Access-Control-Allow-Origin"], undefined);
@@ -115,9 +127,9 @@ test("stampCors/withCors: set-or-strip on live headers, upgrades untouched", asy
 
 test("OPTIONS preflight: allowed origin reflected, disallowed gets no ACAO", async () => {
   const env = corsEnv();
-  const preflight = (origin) =>
+  const preflight = (origin, host = "https://ai.saisi.online") =>
     worker.fetch(
-      new Request("https://ai.saisi.online/api/me", {
+      new Request(host + "/api/me", {
         method: "OPTIONS",
         headers: { origin, "access-control-request-method": "GET" },
       }),
@@ -126,22 +138,34 @@ test("OPTIONS preflight: allowed origin reflected, disallowed gets no ACAO", asy
   const ok = await preflight(AI);
   assert.equal(ok.headers.get("Access-Control-Allow-Origin"), AI);
   assert.equal(ok.headers.get("Vary"), "Origin");
-  const loop = await preflight(LOOPBACK);
-  assert.equal(loop.headers.get("Access-Control-Allow-Origin"), LOOPBACK);
+  // Loopback Origin at the console host: NOT reflected (production gate).
+  const deniedLoop = await preflight(LOOPBACK);
+  assert.equal(deniedLoop.headers.get("Access-Control-Allow-Origin"), null);
+  // The same Origin at a loopback host (wrangler dev): reflected.
+  const devLoop = await preflight(LOOPBACK, "http://localhost:8787");
+  assert.equal(devLoop.headers.get("Access-Control-Allow-Origin"), LOOPBACK);
   const denied = await preflight(EVIL);
   assert.equal(denied.headers.get("Access-Control-Allow-Origin"), null);
 });
 
 /* ---- integration: jsonOk/jsonError helpers via /api/health ---- */
 
-test("/api/health: ACAO reflected for console origin + loopback, absent otherwise", async () => {
+test("/api/health: ACAO reflected for console origin + loopback dev host, absent otherwise", async () => {
   const env = corsEnv();
   const ok = await worker.fetch(get("/api/health", AI), env);
   assert.equal(ok.status, 200);
   assert.equal(ok.headers.get("Access-Control-Allow-Origin"), AI);
   assert.equal(ok.headers.get("Vary"), "Origin");
-  const loop = await worker.fetch(get("/api/health", LOOPBACK), env);
-  assert.equal(loop.headers.get("Access-Control-Allow-Origin"), LOOPBACK);
+  // Loopback Origin at the console host: no ACAO (production gate)…
+  const consoleLoop = await worker.fetch(get("/api/health", LOOPBACK), env);
+  assert.equal(consoleLoop.status, 200); // narrowing never breaks the payload
+  assert.equal(consoleLoop.headers.get("Access-Control-Allow-Origin"), null);
+  // …but a loopback request URL (wrangler dev) reflects it.
+  const devReq = new Request("http://localhost:8787/api/health", {
+    headers: { origin: LOOPBACK },
+  });
+  const devLoop = await worker.fetch(devReq, env);
+  assert.equal(devLoop.headers.get("Access-Control-Allow-Origin"), LOOPBACK);
   const denied = await worker.fetch(get("/api/health", EVIL), env);
   assert.equal(denied.status, 200); // narrowing never breaks the payload
   assert.equal(denied.headers.get("Access-Control-Allow-Origin"), null);

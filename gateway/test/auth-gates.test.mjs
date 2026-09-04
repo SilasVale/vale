@@ -29,6 +29,33 @@ test("csrfCookieViolation: drive-by matrix (cookie + mutating method)", () => {
   }
 });
 
+test("csrfCookieViolation: per-device vale_pt_* cookies are gated too (audit P1)", () => {
+  // The device proxy mints vale_pt_<device> cookies that authenticate
+  // mutations on /api/devices/<name>/proxy/* — every cookie-carrying
+  // mutation means BOTH credential families, so the gate must fire on them
+  // exactly as it does on ag_session.
+  const PT = { cookie: "vale_pt_d1=tok123" };
+  assert.equal(csrfCookieViolation(req("POST", { ...PT, "sec-fetch-site": "cross-site" })), true);
+  assert.equal(csrfCookieViolation(req("POST", { ...PT, "sec-fetch-site": "same-site" })), true);
+  // The proxied panel's own same-origin fetches pass; non-browser clients
+  // (no Sec-Fetch-Site) ride free, as with sessions.
+  assert.equal(csrfCookieViolation(req("POST", { ...PT, "sec-fetch-site": "same-origin" })), false);
+  assert.equal(csrfCookieViolation(req("POST", { ...PT, "sec-fetch-site": "none" })), false);
+  assert.equal(csrfCookieViolation(req("POST", { ...PT })), false);
+  // Non-mutating subresource loads with the pair cookie are never blocked.
+  assert.equal(csrfCookieViolation(req("GET", { ...PT, "sec-fetch-site": "same-site" })), false);
+  // A device cookie next to an unrelated session-less cookie set still trips
+  // the gate on a cross-site mutation…
+  const MIXED = { cookie: "theme=dark; vale_pt_d1=tok123" };
+  assert.equal(csrfCookieViolation(req("POST", { ...MIXED, "sec-fetch-site": "same-site" })), true);
+  // …and the gate still keys on cookie PRESENCE: no cookie of either family
+  // (bearer path) is untouched even cross-site.
+  assert.equal(
+    csrfCookieViolation(req("POST", { cookie: "theme=dark", "sec-fetch-site": "same-site" })),
+    false,
+  );
+});
+
 // ── DO fail-closed denies (BreakerDO / RouteDO) ───────────────────────────
 const storage = { get: async () => null, put: async () => {}, delete: async () => {} };
 

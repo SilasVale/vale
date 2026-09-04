@@ -17,5 +17,35 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
-  { ignores: ["dist/", "node_modules/", "test/"] }
+  {
+    // ui/*.mjs smoke scripts run under node + jsdom (see each file's header):
+    // node runtime globals plus the DOM/whatwg names the jsdom harness
+    // provides. Enumerated here so `eslint .` covers them without new deps.
+    files: ["ui/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        setTimeout: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+        fetch: "readonly",
+        Headers: "readonly",
+        Request: "readonly",
+        Response: "readonly",
+        window: "readonly",
+        document: "readonly",
+        localStorage: "readonly",
+        navigator: "readonly",
+        location: "readonly",
+      },
+    },
+  },
+  {
+    // public/ is all generated/served content: vite build output (assets/),
+    // the Source Viewer's src mirrors (code/), and installer payloads —
+    // nothing hand-written to lint. ui/*.mjs smoke scripts ARE linted (see
+    // the globals block above).
+    ignores: ["dist/", "node_modules/", "test/", "public/"],
+  }
 );

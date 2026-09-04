@@ -296,3 +296,57 @@ test("upload proxy: device config token accepted (no network on reject paths onl
   const bad = await worker.fetch(req("POST", "/api/upload", { auth: `Bearer ${"d".repeat(64)}` }), env);
   assert.equal(bad.status, 401);
 });
+
+test("upload proxy: forwards a MINIMAL header set — UPLOAD_KEY + multipart framing, never client cookies", async () => {
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  const env = {
+    // ARRAY seed: the accept path iterates listDevices() (Device[]) — the
+    // object-shaped seeds above only exercise reject paths.
+    ...makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" }]),
+    UPLOAD_KEY: "test-upload-key",
+    INDEX_WORKER_URL: "https://idx.example",
+  };
+  const seen = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), headers: init.headers });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    // Device-token accept path (safeEq compare) carrying ambient headers a
+    // browser or extension page might have attached.
+    const upstreamReq = new Request("https://x/api/upload", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${"c".repeat(64)}`,
+        "content-type": "multipart/form-data; boundary=----valeboundary",
+        cookie: "ag_session=stolen; theme=dark; vale_pt_d1=also-stolen",
+        "user-agent": "evil-client/1.0",
+        "x-custom-leak": "nope",
+      },
+      body: "pretend-file-bytes",
+    });
+    const upstream = await worker.fetch(upstreamReq, env);
+    assert.equal(upstream.status, 200);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, "https://idx.example/api/upload");
+    const h = seen[0].headers;
+    // The injected credential + the multipart framing survive verbatim…
+    assert.equal(h.get("authorization"), "Bearer test-upload-key");
+    assert.equal(h.get("content-type"), "multipart/form-data; boundary=----valeboundary");
+    // …content-length is mirrored when the inbound request exposes it
+    // (workerd does for real uploads; undici-built Requests don't).
+    assert.equal(h.get("content-length"), upstreamReq.headers.get("content-length"));
+    // …and NOTHING else does: the index worker is a separate origin and must
+    // never see console cookies or ambient client headers.
+    assert.equal(h.get("cookie"), null);
+    assert.equal(h.get("user-agent"), null);
+    assert.equal(h.get("x-custom-leak"), null);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
