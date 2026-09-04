@@ -59,6 +59,34 @@ function ps(script) {
 // PARSE-failed invisibly. Shared doubling helper.
 // exported: unit-tested in test/cli.test.mjs (SYSTEM-context PS quoting = injection surface)
 export const psq = (x: string) => String(x).replace(/'/g, "''");
+// stage-brand: healed desktop shortcut. A 2026-09-01 Vale.lnk on devices
+// points at the RETIRED Tauri vale-desktop.exe (embedded stale icon) —
+// double-clicking it launches the dead app instead of the Electron shell.
+// Repair (only if the link already exists — headless installs must not
+// sprout desktop icons): repoint at start-desktop.ps1 (the ValeDesktop
+// onlogon path) with IconLocation pinned to the sunrise icon.ico, and
+// remove the retired Tauri/tray orphans nothing ships anymore.
+// Best-effort + logged, never fatal. `sink` is a PS output pipe
+// (e.g. Write-Host, or the update log pipe). Single-quoted PS literals
+// only (npm audit #6) except the double quotes the .lnk Arguments path
+// needs — callers passing through -Command "..." must backslash-escape
+// them (see setup step 7); the update swap script runs from a file.
+// exported: unit-tested in test/cli.test.mjs.
+export function deskShortcutRepairPs(qq: string, sink: string): string[] {
+  return [
+    `$dLnk = Join-Path $env:PUBLIC 'Desktop\\Vale.lnk'`,
+    `$dIco = '${qq}\\vale-desktop-electron\\icon.ico'`,
+    `$dPs1 = '${qq}\\start-desktop.ps1'`,
+    `$dNeed = $false`,
+    `if (Test-Path $dLnk) {`,
+    `  try { $dEx = (New-Object -ComObject WScript.Shell).CreateShortcut($dLnk); if (($dEx.TargetPath -like '*vale-desktop.exe') -or ($dEx.TargetPath -like '*vale-tray.exe') -or (-not (Test-Path $dEx.TargetPath))) { $dNeed = $true } } catch { $dNeed = $true }`,
+    `}`,
+    `if ($dNeed -and (Test-Path $dIco) -and (Test-Path $dPs1)) {`,
+    `  try { $dWs = New-Object -ComObject WScript.Shell; $dSc = $dWs.CreateShortcut($dLnk); $dSc.TargetPath = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $dSc.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $dPs1 + '"'; $dSc.WorkingDirectory = '${qq}\\vale-desktop-electron'; $dSc.IconLocation = $dIco + ',0'; $dSc.Save(); 'desk: Vale.lnk repointed to electron shell' | ${sink} } catch { ('desk: Vale.lnk repair failed: ' + $_.Exception.Message) | ${sink} }`,
+    `}`,
+    `foreach ($dRx in @('vale-desktop.exe','vale-tray.exe')) { $dRp = '${qq}\\' + $dRx; if (Test-Path $dRp) { try { Remove-Item -Force -ErrorAction Stop $dRp; ('desk: removed retired ' + $dRx) | ${sink} } catch { ('desk: retired ' + $dRx + ' locked, kept') | ${sink} } } }`,
+  ];
+}
 // exported: the update mutual-exclusion window (npm audit #10 seam), unit-tested.
 export function busyIsFresh(mtimeMs: number, nowMs: number): boolean {
   return nowMs - mtimeMs < 10 * 60 * 1000;
@@ -189,6 +217,12 @@ const commands = {
         sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${psq(legacy)}'"`);
       }
     }
+    // 7. stage-brand: heal a stale desktop shortcut (a 2026-09-01 Vale.lnk
+    //    launches the RETIRED Tauri exe with the old embedded icon) + drop
+    //    the retired orphans. Repair-only (helper checks link existence).
+    //    Backslash-escape the .lnk Arguments double quotes for -Command.
+    console.log("setup: reconciling desktop shortcut (retired-exe repair)...");
+    sh(`powershell -NoProfile -Command "${deskShortcutRepairPs(psq(DIR), "Write-Host").join("; ").replace(/"/g, '\\"')}"`);
     // C1: write the registry single source of truth (InstallDir; DataDir
     // defaults to %ProgramData%\Vale). Everything else reads it back.
     try {
@@ -539,6 +573,9 @@ const commands = {
       `  else { & cmd /c start /min "" powershell -NoProfile -ExecutionPolicy Bypass -File "$deskStart" }`,
       `  "[$(Get-Date -Format o)] desk: electron restart initiated" | ${log}`,
       `} else { "[$(Get-Date -Format o)] desk: no electron shell (skipped)" | ${log} }`,
+      // stage-brand: heal a stale desktop shortcut (Vale.lnk -> retired
+      // Tauri exe) + drop the retired orphans. Repair-only, best-effort.
+      ...deskShortcutRepairPs(q, log),
       // round-143: re-register ValePlaywright via the wscript/VBS wrapper so
       // node.exe no longer allocates a visible console. Idempotent — task may
       // not exist (older install paths), so wrap in try/catch.

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -24,4 +24,16 @@ test("busyIsFresh: the 10-minute update-exclusion window", () => {
   assert.equal(busyIsFresh(now - 11 * MIN, now), false, "11 min old = stale marker after reboot, proceed");
   assert.equal(busyIsFresh(now, now), true, "brand-new = fresh");
   assert.equal(busyIsFresh(now - 10 * MIN - 1, now), false, "just past the window");
+});
+
+test("deskShortcutRepairPs: stale-shortcut repair is repair-only + sunrise-pinned", () => {
+  const lines = deskShortcutRepairPs("D:\\Vale", "Write-Host");
+  const body = lines.join("\n");
+  assert.match(body, /Vale\.lnk/, "touches the desktop Vale link");
+  assert.match(body, /vale-desktop\.exe/, "detects the retired Tauri target");
+  assert.match(body, /vale-tray\.exe/, "detects the retired tray target");
+  assert.match(body, /icon\.ico/, "pins IconLocation to the sunrise ico");
+  assert.match(body, /start-desktop\.ps1/, "repoints at the Electron onlogon path");
+  assert.match(body, /Write-Host/, "uses the caller sink for logging");
+  assert.ok(!body.includes("Remove-Item -Recurse"), "never deletes directories, files only");
 });
