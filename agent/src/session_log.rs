@@ -238,8 +238,24 @@ impl SessionLogger {
                     // Unwritable fallback: keep the session alive, drop the
                     // audit trail for it (same best-effort stance as before).
                     // /dev/null on Unix, NUL on Windows — a File that discards.
+                    // The old code unwrapped the null-device open, violating
+                    // log()'s never-surface contract on the fallback path
+                    // itself: park in temp first, and only panic when three
+                    // independent filesystems are all unwritable at once.
                     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
-                    std::io::BufWriter::new(std::fs::OpenOptions::new().write(true).open(null).unwrap())
+                    let fall = |p: &std::path::Path| {
+                        std::fs::OpenOptions::new().write(true).create(true).open(p)
+                    };
+                    let f = fall(std::path::Path::new(null)).or_else(|_| {
+                        tracing::error!(
+                            "[vale-agent] null-device fallback failed, parking audit in temp"
+                        );
+                        fall(&std::env::temp_dir().join(format!("vale-audit-fallback-{sid}.log")))
+                    });
+                    match f {
+                        Ok(nf) => std::io::BufWriter::new(nf),
+                        Err(e) => panic!("[vale-agent] session audit has nowhere to write: {e}"),
+                    }
                 }
             }
         });
