@@ -46,12 +46,20 @@ cp target/x86_64-pc-windows-msvc/release/vale-agent.exe vale-agent-npm/vale-agen
 # (bridge.js was removed in round-263 — the npm package ships no bridge)
 cd vale-agent-npm && npm pack          # → vale-agent-1.2.N.tgz
 
-# 3. Publish: stage the tgz into the dist worker assets and deploy them:
+# 3. Publish: stage the tgz into the dist worker assets (ALSO the
+#    versionless latest alias + the version.json discovery manifest)
+#    and deploy them (or run scripts/publish-release.sh <ver>, which wraps
+#    pack + stage + alias + manifest + last-5 prune + commit + deploy):
 cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/
+cp vale-agent-1.2.N.tgz ../../index/public/vale-agent/vale-agent-latest.tgz
+# version.json MUST carry the tgz sha256 — /api/version requires ver && sha
+# (else it answers 503 and agent_update refuses the install, round-119):
+SHA=$(sha256sum vale-agent-1.2.N.tgz | cut -d' ' -f1)
+printf '{"version":"1.2.N","tarball":"vale-agent-latest.tgz","updated":"%s","sha256":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SHA" > ../../index/public/vale-agent/version.json
 cd ../../index && CLOUDFLARE_API_TOKEN=$(cat ~/.cloudflare-token) npx wrangler deploy
 
 # 4. On the device (PowerShell), exactly two commands:
-npm i -g https://agent.saisi.online/vale-agent/vale-agent-1.2.N.tgz
+npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   (or pin the version)
 vale update
 ```
 
@@ -67,8 +75,8 @@ sources) next to the install dir, hands a PS swap script to WMI
 Win32_Process.Create (parented by
 WmiPrvSE so it survives the CLI AND the agent dying; plain `-NoProfile -File`
 only — `-ExecutionPolicy Bypass` / `-EncodedCommand` die silently on d1),
-then: stop ValeAgent task → kill agent + bridge node tree → copy with retry →
-restart task. The terminal connection DROPS for ~10 s mid-update; reconnect
+then: stop ValeAgent task → kill agent
+tree → copy with retry → restart task. The terminal connection DROPS for ~10 s mid-update; reconnect
 and verify via `/api/status` → `version`.
 
 Gateway (`gateway/`) deploys separately: `cd gateway && wrangler deploy`.
@@ -109,6 +117,8 @@ src/
                    GET / (minimal status page), /api/status, /api/spec,
                    /api/events (SSE), /api/events/poll, /api/events/term (SSE),
                    POST /api/tools/{name}, GET /api/plugins/status,
+                   GET/PUT /api/settings (buffer_mb + console_url),
+                   POST /api/gateway/connect (Settings-page Gateway card),
                    GET /api/browser/{pwshots,pwshot,actions} (AI evidence —
                    the pwout screenshots/action feed), GET /api/sessions
                    (audit list)
@@ -195,6 +205,9 @@ the management surface.
 Terminal: open pty (PowerShell), type + resize, ssh + serial sessions, saved
 connections + keychain password. MCP: `claude` direct device MCP
 (`https://dN.../mcp`) and `/api/tools/terminal_list` with the Bearer token.
-Events: `/api/events` SSE + `/api/events/term` stream. Tray: status lines
-(running/subdomain/token mask) refresh, start/stop/restart work, copy MCP
-config pastes the JSON snippet, console opens, local terminal opens.
+Events: `/api/events` SSE + `/api/events/term` stream. Electron shell:
+tray shows health + vitals, 60 s watchdog recovers a dead agent, wait page
+reappears when the agent dies; desktop SPA mirrors the panel (CDP :9333
+drives the same view). Gateway card: `POST /api/gateway/connect` registers
+console URL + key from the Settings page. `/api/status` reports the npm
+release (not the Cargo version).
