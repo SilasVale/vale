@@ -795,6 +795,11 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   defense; no new links can be created (addPluginLink/handlePair deleted),
   existing links expire via 30-day TTL. OPEN item closed as "intended
   natural expiration".
+  ROUND-349 (2026-09-04): full-repo stale-ref sweep — all Tauri/bridge/
+  extension/vale-tray references are in historical docs (.superpowers/sdd/
+  task reports, superseded DEVICE-INTEGRATION.md) or gitignored build
+  artifacts; zero live code references. Cleanup marathon (round-318..349)
+  VERIFIED COMPLETE.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
