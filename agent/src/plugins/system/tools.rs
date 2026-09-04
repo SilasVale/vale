@@ -30,6 +30,7 @@ pub fn build() -> Vec<ToolDef> {
         tool_file_read(),
         tool_file_write(),
         tool_file_download(),
+        tool_file_upload(),
         tool_process_list(),
         tool_process_kill(),
         tool_net_test(),
@@ -354,6 +355,69 @@ fn tool_file_download() -> ToolDef {
                 }
                 let _ = f.flush().await;
                 Ok(to_value_or_empty(json!({"ok": true, "path": canonical.to_string_lossy(), "bytes": total})))
+            }
+        },
+    )
+}
+
+fn tool_file_upload() -> ToolDef {
+    ToolDef::new(
+        "system_file_upload",
+        "Upload a local file to temporary hosting and return a one-time download URL. The file is read from disk and sent to the Vale CDN via the gateway — content does NOT pass through the AI context, so large files (100MB+) work fine. The file is deleted from hosting after first download. Returns {ok, url, bytes}.",
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute path of the local file to upload."}
+            },
+            "required": ["path"]
+        }),
+        move |params: Value| {
+            async move {
+                let path_str = require_str(&params, "path")?;
+                let path = std::path::Path::new(&path_str);
+                if !path.exists() {
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("file not found: {path_str}")})));
+                }
+                let meta = match std::fs::metadata(path) {
+                    Ok(m) => m,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("metadata: {e}")}))),
+                };
+                if !meta.is_file() {
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": "not a file"})));
+                }
+                const MAX_BYTES: u64 = 100 * 1024 * 1024;
+                if meta.len() > MAX_BYTES {
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("file too large ({} bytes, max {MAX_BYTES})", meta.len())})));
+                }
+                let bytes = match std::fs::read(path) {
+                    Ok(b) => b,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read: {e}")}))),
+                };
+                let gateway_url = std::env::var("VALE_GATEWAY_URL")
+                    .unwrap_or_else(|_| "https://api.saisi.online".to_string());
+                let upload_url = format!("{gateway_url}/api/upload");
+                let device_token = std::env::var("VALE_DEVICE_TOKEN").unwrap_or_default();
+                let mut req = reqwest::Client::new()
+                    .post(&upload_url)
+                    .header("Authorization", format!("Bearer {device_token}"));
+                let form = reqwest::multipart::Form::new()
+                    .part("file", reqwest::multipart::Part::bytes(bytes)
+                        .file_name(path.file_name().unwrap_or_default().to_string_lossy().to_string()));
+                req = req.multipart(form);
+                let resp = match req.send().await {
+                    Ok(r) => r,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("upload failed: {e}")}))),
+                };
+                if !resp.status().is_success() {
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("upload returned {}", resp.status())})));
+                }
+                let body: serde_json::Value = match resp.json().await {
+                    Ok(b) => b,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("parse response: {e}")}))),
+                };
+                let url = body["url"].as_str().unwrap_or("").to_string();
+                let size = body["size"].as_u64().unwrap_or(0);
+                Ok(to_value_or_empty(json!({"ok": true, "url": url, "bytes": size})))
             }
         },
     )

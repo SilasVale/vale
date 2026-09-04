@@ -267,6 +267,53 @@ async function handleTunnelToken(request: Request, env: any): Promise<Response> 
   return jsonOk({ ok: true, apiToken: await getCfToken(env) });
 }
 
+// ---- File upload proxy ----
+// POST /api/upload — device token or admin session → proxy to index worker
+// (which holds the R2 UPLOAD_KEY). Device uses its existing Bearer token —
+// no new credential to deploy. This enables the device → AI file transfer
+// path: device uploads to R2 → returns URL → AI reads URL directly.
+async function handleFileUpload(request: Request, env: any, _url: URL): Promise<Response> {
+  const user = await requireSession(request, env);
+  const auth = String(request.headers.get("authorization") || "");
+
+  // Admin session: allow
+  if (user && user.role === "admin") {
+    return await proxyUploadToWorker(request, env);
+  }
+
+  // Device token: validate against plugin links
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (!token) {
+    return jsonError(401, "Not logged in or missing device token", "authentication_error");
+  }
+  const link = await getPluginByToken(env, token);
+  if (!link) {
+    return jsonError(401, "Invalid device token", "authentication_error");
+  }
+  return await proxyUploadToWorker(request, env);
+}
+
+// Proxy the multipart upload to the index worker, injecting the UPLOAD_KEY.
+async function proxyUploadToWorker(request: Request, env: any): Promise<Response> {
+  const indexWorkerUrl = env.INDEX_WORKER_URL || "https://agent.saisi.online";
+  const uploadUrl = `${indexWorkerUrl}/api/upload`;
+
+  // Rebuild the request with the UPLOAD_KEY header for the index worker.
+  const headers = new Headers(request.headers);
+  headers.set("Authorization", `Bearer ${env.UPLOAD_KEY || ""}`);
+
+  const resp = await fetchWithTimeout(uploadUrl, {
+    method: "POST",
+    headers,
+    body: request.body,
+  }, 60000);
+
+  return new Response(resp.body, {
+    status: resp.status,
+    headers: resp.headers,
+  });
+}
+
 // ---- Device reverse-proxy: admin session cookie OR paired plugin token ----
 // <any> /api/devices/<name>/proxy/<rest> → reverse-proxy to the device panel.
 // The console admin browses the panel with the session cookie; the browser
@@ -820,6 +867,14 @@ export default {
     ctx.routes.push({
       match: (_m, p) => /^\/api\/devices\/[^/]+\/proxy/.test(p),
       handler: handleDeviceProxy,
+    });
+
+    // File upload: device token or admin session → proxy to index worker
+    // (which holds the R2 UPLOAD_KEY). Device uses its existing Bearer
+    // token — no new credential to deploy.
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === "/api/upload",
+      handler: handleFileUpload,
     });
 
     // Admin-gated device module. Exact matches: index.js compared these
