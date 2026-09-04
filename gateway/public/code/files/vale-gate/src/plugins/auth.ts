@@ -35,6 +35,7 @@ import {
   safeEq,
   verifyPassword,
   issueSessionToken,
+  b64urlDecodeStr,
   parseCookie,
   sessionCookieHeader,
   clearSessionCookieHeader,
@@ -248,8 +249,10 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
       // segment [0]. [1] is the binary HMAC signature: parsing it as JSON
       // always throws, which silently disabled this whole server-side
       // blacklist (logout cleared only the client cookie).
+      // b64urlDecodeStr restores the stripped '=' padding (workerd's
+      // atob is strict, unlike Node's) — same helper as verifySessionToken.
       const payload = JSON.parse(
-        atob(cookie.split(".")[0]?.replace(/-/g, "+").replace(/_/g, "/") || "{}") || "{}",
+        b64urlDecodeStr(cookie.split(".")[0] || ""),
       );
       if (payload.exp) {
         // round-122: exp is stored in MS (issueSessionToken uses Date.now() + SESSION_TTL_MS) — the old *1000 treated it as seconds, overstating the remaining life ~1000x (every logout wrote a 2-day entry).
