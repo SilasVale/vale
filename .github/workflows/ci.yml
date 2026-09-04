@@ -156,8 +156,11 @@ jobs:
           # (b2) the tsc INPUT tree holds its own committed main.js copy
           # (agent/vale-desktop-electron/src/) that the freshness gate above
           # never compares — the two copies drifted silently once. Pin them.
+          # NOTE: step working-directory is agent/, so both paths are
+          # agent-relative (a ../ prefix here escapes the repo and
+          # false-fails on a missing file — caught live on first run).
           for F in main.js preload.js url-policy.js; do
-            if ! cmp -s "../vale-desktop-electron/src/${F}" "vale-desktop-electron/src/${F}"; then
+            if ! cmp -s "vale-desktop-electron/src/${F}" "vale-agent-npm/vale-desktop-electron/src/${F}"; then
               echo "::error::electron src copy drift: agent/vale-desktop-electron/src/${F} != agent/vale-agent-npm/vale-desktop-electron/src/${F} — sync (tsc emit) and commit both"
               exit 1
             fi
