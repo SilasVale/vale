@@ -719,6 +719,15 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   OPEN: devices.ts still hosts extension-era pairing endpoints
   (pair/claim, ws-ticket, /ws, revoke, proxy plugin-token auth) — dead
   surface, larger removal, separate round.
+  ROUND-340 (2026-09-04): gateway extension pairing endpoints REMOVED
+  from devices.ts — handlePairClaim/handleRevoke/handleWsTicket/handleWs
+  (public pair/claim, ws-ticket, ticket-gated /ws) + routes, all
+  unreachable since round-262 deleted the extension. -107 handler lines
+  + -188 total. Store helpers stay (admin handlePair + proxy
+  getPluginByToken); plugins.test.mjs trimmed (13 remain, 251 pass);
+  tsc clean. OPEN: console UI (DevicesPanel/app.js) still renders the
+  Pair-extension button + download hint — user-visible dead feature,
+  next round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
