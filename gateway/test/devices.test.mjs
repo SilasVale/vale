@@ -287,3 +287,12 @@ test("upload proxy: 401 unauth / 401 bad device token (no network on reject)", a
     req("POST", "/api/upload", { auth: `Bearer ${"b".repeat(64)}` }), env);
   assert.equal(bad.status, 401);
 });
+
+test("upload proxy: device config token accepted (no network on reject paths only)", async () => {
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  const env = makeEnv({ d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" } });
+  // Bad token still 401 without touching the network.
+  const bad = await worker.fetch(req("POST", "/api/upload", { auth: `Bearer ${"d".repeat(64)}` }), env);
+  assert.equal(bad.status, 401);
+});

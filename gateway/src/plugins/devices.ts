@@ -281,13 +281,24 @@ async function handleFileUpload(request: Request, env: any, _url: URL): Promise<
     return await proxyUploadToWorker(request, env);
   }
 
-  // Device token: validate against plugin links
+  // Device token: accept a paired plugin-link token OR the device's own
+  // config token (possession of the token IS the device identity —
+  // same rule as self-register). Scan the small device registry.
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!token) {
     return jsonError(401, "Not logged in or missing device token", "authentication_error");
   }
   const link = await getPluginByToken(env, token);
-  if (!link) {
+  let ok = !!link;
+  if (!ok) {
+    try {
+      const devices = await listDevices(env);
+      ok = devices.some((d: any) => typeof d.token === "string" && d.token.length >= 32 && d.token === token);
+    } catch {
+      ok = false;
+    }
+  }
+  if (!ok) {
     return jsonError(401, "Invalid device token", "authentication_error");
   }
   return await proxyUploadToWorker(request, env);
