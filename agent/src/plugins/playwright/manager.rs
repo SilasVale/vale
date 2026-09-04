@@ -187,11 +187,12 @@ impl PlaywrightManager {
     /// exist). Emits go out on runner start/stop regardless of WHO started
     /// it (panel button, MCP self-heal, AI client).
     pub fn set_bus(&self, bus: std::sync::Arc<dyn vale_agent_core::EventBus>) {
-        *self.bus.lock().unwrap() = Some(bus);
+        *recover_guard(&self.bus) = Some(bus);
     }
 
     fn notify_changed(&self) {
-        if let Some(bus) = self.bus.lock().unwrap().as_ref() {
+        let guard = recover_guard(&self.bus);
+        if let Some(bus) = guard.as_ref() {
             bus.emit_term_output(serde_json::json!({ "ev": "playwright-changed" }));
         }
     }

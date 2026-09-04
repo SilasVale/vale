@@ -15,6 +15,18 @@
 //! See docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md §9.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+/// Boot-invariant directory cache. The registry InstallDir/DataDir values are
+/// written ONLY at install/setup time (`vale setup`, the installer, vale.js) —
+/// never mutated while the agent runs; the npm update flow swaps the exe and
+/// RESTARTS the process, so a fresh process re-resolves. The first resolution
+/// therefore wins for the process lifetime, and caching it keeps the
+/// registry-backed path helpers free of a synchronous `reg query` subprocess
+/// on every call (they run inside the async HTTP handler — /api/status polls
+/// every 15 s).
+static INSTALL_DIR: OnceLock<PathBuf> = OnceLock::new();
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 #[cfg(windows)]
 fn registry_value(name: &str) -> Option<String> {
@@ -53,7 +65,13 @@ pub fn exe_dir() -> PathBuf {
 /// probing: a fresh install always writes the registry (NSIS/setup.ps1/
 /// vale.js), and self-contained/dev installs are exe-relative. The exe dir
 /// is the ONLY fallback so there is exactly one resolution path.
+///
+/// Cached (see the static above): boot-invariant for a running process.
 pub fn install_dir() -> PathBuf {
+    INSTALL_DIR.get_or_init(compute_install_dir).clone()
+}
+
+fn compute_install_dir() -> PathBuf {
     if let Some(v) = registry_value("InstallDir") {
         return PathBuf::from(v);
     }
@@ -72,7 +90,12 @@ pub fn install_dir() -> PathBuf {
 }
 
 /// The data dir (sessions/memory/logs) — registry DataDir, else install dir.
+/// Cached (see the static above): boot-invariant for a running process.
 pub fn data_dir() -> PathBuf {
+    DATA_DIR.get_or_init(compute_data_dir).clone()
+}
+
+fn compute_data_dir() -> PathBuf {
     if let Some(v) = registry_value("DataDir") {
         return PathBuf::from(v);
     }

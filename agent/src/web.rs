@@ -881,10 +881,9 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         // but never implemented) — lets a remote client see auto-update
         // failures instead of asking the user to open files.
         ("GET", "/api/logs") => {
-            let dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_default();
+            // Zero current_exe() guessing outside paths.rs — exe_dir() is the
+            // same resolution, centralized.
+            let dir = crate::paths::exe_dir();
             let log = dir.join("vale-update.log");
             let text = std::fs::read_to_string(&log).unwrap_or_else(|_| String::new());
             serde_json::json!({"ok": true, "log": text.chars().rev().take(64 * 1024).collect::<String>().chars().rev().collect::<String>()})
@@ -909,11 +908,20 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             // Gateway card must not blank out once connected).
             let install_dir = crate::paths::install_dir();
             let tunnel_configured = install_dir.join("tunnel.yml").exists();
-            let tunnel_running = std::process::Command::new("tasklist")
-                .args(["/FI", "IMAGENAME eq cloudflared.exe"])
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("cloudflared"))
-                .unwrap_or(false);
+            // Blocking-subprocess audit: tasklist is a synchronous child
+            // process — run it on the blocking pool so the polled-every-15s
+            // /api/status sibling handler never stalls the async runtime
+            // workers. On non-Windows (dev/CI) tasklist doesn't exist and
+            // this degrades to false, as before.
+            let tunnel_running = tokio::task::spawn_blocking(|| {
+                std::process::Command::new("tasklist")
+                    .args(["/FI", "IMAGENAME eq cloudflared.exe"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("cloudflared"))
+                    .unwrap_or(false)
+            })
+            .await
+            .unwrap_or(false);
             serde_json::json!({
                 "ok": true,
                 "buffer_mb": state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024),
@@ -948,11 +956,9 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             // read-only install dir must not fail the PUT — the runtime
             // value already took effect.
             let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_else(|| {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                    .unwrap_or_default()
-                    .join("config.yaml")
+                // Zero current_exe() guessing outside paths.rs — exe_dir() is
+                // the same resolution (empty on failure), centralized.
+                crate::paths::exe_dir().join("config.yaml")
             });
             if mb.is_some() || console_url.is_some() {
                 if let Ok(mut cfg) = Config::load(&cfg_path) {
@@ -1689,5 +1695,148 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes);
         assert!(text.contains("term-0"), "SSE frame missing session id: {text}");
         assert!(text.starts_with("data: "));
+    }
+
+    // ── Settings + Gateway-card endpoints (persist paths) ────────────────
+    //
+    // Offline coverage for GET/PUT /api/settings and the POST
+    // /api/gateway/connect persist-only arm. The reg-key exchange and the
+    // tunnel provisioning arms need the network and are deliberately NOT
+    // tested here.
+
+    const CFG_TOKEN: &str = "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233";
+    const CFG_URL: &str = "https://gw.example";
+
+    /// A config with a 64-hex device_token and no console binding.
+    const CFG_YAML_TOKEN_ONLY: &str = "server:\n  device_token: aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233\nterminal:\n  buffer_mb: 8\nplatform:\n  console_url: null\n";
+    /// A config with a device_token, a bound console_url and buffer_mb 8.
+    const CFG_YAML_TOKEN_AND_URL: &str = "server:\n  device_token: aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233\nterminal:\n  buffer_mb: 8\nplatform:\n  console_url: https://gw.example\n";
+
+    /// State whose config_path points at a per-test tempdir config.yaml —
+    /// mirrors main.rs round-101 (persist to the ACTUALLY-LOADED path).
+    /// No global state: every test owns its directory and removes it.
+    fn state_with_cfg(tag: &str, yaml: &str) -> (Arc<AppState>, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("vale-web-cfg-{}-{tag}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let cfg_path = dir.join("config.yaml");
+        std::fs::write(&cfg_path, yaml).unwrap();
+        let st = state();
+        *st.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(cfg_path.clone());
+        (st, cfg_path)
+    }
+
+    fn req_with_json(method: &str, path: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Authorization", format!("Bearer {TEST_TOKEN}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn settings_get_shape() {
+        let (st, cfg_path) = state_with_cfg("get-shape", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(req("GET", "/api/settings"), st).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], true);
+        assert!(v["buffer_mb"].is_u64(), "buffer_mb must be a number: {v}");
+        assert!(v["tunnel_configured"].is_boolean(), "tunnel_configured shape: {v}");
+        assert!(v["tunnel_running"].is_boolean(), "tunnel_running shape: {v}");
+        assert!(v["console_url"].is_null(), "unbound config must read back null: {v}");
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn settings_put_persists_and_preserves_token() {
+        let (st, cfg_path) = state_with_cfg("put-token", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(
+            req_with_json("PUT", "/api/settings", r#"{"buffer_mb": 32}"#),
+            st.clone(),
+        ).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["buffer_mb"].as_u64(), Some(32));
+        // The runtime cap took effect immediately (panel hint: applies to NEW
+        // output), and the file now carries 8 → 32.
+        assert_eq!(st.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed), 32 * 1024 * 1024);
+        let cfg = Config::load(&cfg_path).unwrap();
+        assert_eq!(cfg.terminal.buffer_mb, 32, "PUT must persist to config.yaml");
+        // HIGH(audit): a settings write must NEVER drop the device_token —
+        // a token-less rewrite makes the next boot mint a NEW token and 401
+        // every client (the recorded rotation incident).
+        assert_eq!(cfg.server.device_token.as_deref(), Some(CFG_TOKEN), "device_token must survive PUT /api/settings");
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn settings_put_partial_leaves_omitted_keys() {
+        let (st, cfg_path) = state_with_cfg("put-partial", CFG_YAML_TOKEN_AND_URL);
+        // 1. buffer-only PUT: the bound console_url must survive.
+        let resp = handle_request(
+            req_with_json("PUT", "/api/settings", r#"{"buffer_mb": 16}"#),
+            st.clone(),
+        ).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cfg = Config::load(&cfg_path).unwrap();
+        assert_eq!(cfg.terminal.buffer_mb, 16);
+        assert_eq!(cfg.platform.console_url.as_deref(), Some(CFG_URL), "buffer-only PUT must not clear console_url");
+        // 2. console_url-only PUT: buffer_mb stays 16 (the stage-n settings
+        //    audit: the old code reset an ABSENT buffer_mb to 8).
+        let resp = handle_request(
+            req_with_json("PUT", "/api/settings", r#"{"console_url": "https://other.example"}"#),
+            st.clone(),
+        ).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cfg = Config::load(&cfg_path).unwrap();
+        assert_eq!(cfg.platform.console_url.as_deref(), Some("https://other.example"));
+        assert_eq!(cfg.terminal.buffer_mb, 16, "console_url-only PUT must not reset buffer_mb");
+        assert_eq!(cfg.server.device_token.as_deref(), Some(CFG_TOKEN));
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn gateway_connect_persist_only_arm() {
+        // No reg_key → the config is persisted and the reg-key exchange +
+        // tunnel provisioning are SKIPPED (no outbound HTTP on this arm).
+        let (st, cfg_path) = state_with_cfg("gw-persist", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(
+            req_with_json("POST", "/api/gateway/connect", r#"{"console_url": "https://conn.example"}"#),
+            st,
+        ).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["registered"], false, "no reg_key → no registration");
+        assert_eq!(v["tunnel"], "skipped");
+        assert_eq!(v["console_url"], "https://conn.example");
+        let cfg = Config::load(&cfg_path).unwrap();
+        assert_eq!(cfg.platform.console_url.as_deref(), Some("https://conn.example"), "connect must persist the binding");
+        assert_eq!(cfg.server.device_token.as_deref(), Some(CFG_TOKEN), "device_token must survive the gateway-card write too");
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn gateway_connect_reg_key_only_keeps_binding() {
+        // reg_key WITHOUT console_url: absent = keep the existing binding
+        // (the partial-PUT audit flagged a reg-key-only request silently
+        // UNBINDING the gateway). With no console_url the reg-key exchange
+        // has nowhere to POST, so this arm stays offline.
+        let (st, cfg_path) = state_with_cfg("gw-regkey", CFG_YAML_TOKEN_AND_URL);
+        let resp = handle_request(
+            req_with_json("POST", "/api/gateway/connect", r#"{"reg_key": "some-key"}"#),
+            st,
+        ).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["registered"], false);
+        assert!(v["console_url"].is_null(), "reg-key-only request reports no binding change: {v}");
+        let cfg = Config::load(&cfg_path).unwrap();
+        assert_eq!(cfg.platform.console_url.as_deref(), Some(CFG_URL), "reg-key-only request must keep the existing binding");
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 }

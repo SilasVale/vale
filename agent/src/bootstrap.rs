@@ -1,6 +1,5 @@
 //! Config bootstrap for the `src/main.rs` binary: create a default config if
-//! missing, load it (with an optional fallback path), and ensure an auth token
-//! exists.
+//! missing, load it, and ensure an auth token exists.
 
 use vale_agent_core::Config;
 use std::io::Write;
@@ -30,7 +29,8 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 }
 
 /// Load the config at `path`, creating a default file first if it doesn't
-/// exist; if the primary file fails to parse, try `fallback`.
+/// exist; an unparseable primary file is quarantined as `config.yaml.bad` and
+/// replaced with a fresh default (token recovered when possible).
 ///
 /// Ensures an auth token is present. Returns `(config, Some(token))` when a
 /// new token was generated — callers persist the config and print the token.
@@ -40,7 +40,6 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 /// go through the injected `log` callback, which callers may discard.
 pub fn load_or_create(
     path: &Path,
-    _fallback: Option<&Path>,
     log: &dyn Fn(&str),
 ) -> anyhow::Result<(Config, Option<String>)> {
     if !path.exists() {

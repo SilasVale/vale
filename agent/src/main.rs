@@ -92,12 +92,16 @@ fn init_tracing() {
     // (recovery notices, bridge supervision…) were invisible on the device.
     #[cfg(windows)]
     {
-        let file_layer = std::env::current_exe().ok().and_then(|p| {
-            let dir = p.parent()?.to_path_buf();
+        // Zero current_exe() guessing outside paths.rs — exe_dir() is the
+        // same resolution, centralized.
+        let dir = vale_agent::paths::exe_dir();
+        let file_layer = if dir.as_os_str().is_empty() {
+            None
+        } else {
             vale_agent::filelog::RotatingFile::new(dir.join("agent.log"))
                 .ok()
                 .map(|w| tracing_subscriber::fmt::layer().with_ansi(false).with_writer(w))
-        });
+        };
         tracing_subscriber::Registry::default()
             .with(env)
             .with(stdout_layer)
@@ -120,7 +124,10 @@ fn main() {
     // boot-task run (no console) is diagnosable after the fact.
     #[cfg(windows)]
     {
-        if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+        // Zero current_exe() guessing outside paths.rs — exe_dir() is the
+        // same resolution, centralized.
+        let dir = vale_agent::paths::exe_dir();
+        if !dir.as_os_str().is_empty() {
             let _ = LOG_FILE.set(dir.join("startup.log"));
             log_line(&format!("=== vale-agent {} starting ===", env!("CARGO_PKG_VERSION")));
         }
@@ -155,7 +162,13 @@ fn main() {
     // process CWD (C:\Windows\System32 for shell/SYSTEM contexts), where
     // bootstrap CREATED a phantom default config with a fresh unknown token
     // and every client 401'd. Fall back to the exe's own directory.
-    let exe_dir_cfg = || std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("config.yaml")));
+    // zero current_exe() guessing outside paths.rs — exe_dir() is the same
+    // resolution (empty PathBuf when the exe path is unavailable), so the
+    // closure degrades to None exactly when the old one did.
+    let exe_dir_cfg = || {
+        let dir = vale_agent::paths::exe_dir();
+        (!dir.as_os_str().is_empty()).then(|| dir.join("config.yaml"))
+    };
     let init_mode = args.get(1).map(String::as_str) == Some("--init");
     let config_path = if init_mode {
         args.get(2).map(PathBuf::from).or_else(exe_dir_cfg).unwrap_or_else(|| PathBuf::from("config.yaml"))
@@ -609,7 +622,7 @@ fn load_config(config_path: &Path) -> Config {
             tracing::warn!("config.yaml ACL hardening unavailable: {e}");
         }
     }
-    let (config, token) = match vale_agent::bootstrap::load_or_create(config_path, None, &|msg| eout!("{msg}")) {
+    let (config, token) = match vale_agent::bootstrap::load_or_create(config_path, &|msg| eout!("{msg}")) {
         Ok(v) => v,
         Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
     };
@@ -857,7 +870,12 @@ fn run_service(_args: Vec<std::ffi::OsString>) {
     // back to the exe's own directory (never a relative path).
     let config_path = std::env::args().nth(1)
         .map(PathBuf::from)
-        .or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("config.yaml"))))
+        .or_else(|| {
+            // Zero current_exe() guessing outside paths.rs — exe_dir() is the
+            // same resolution, centralized.
+            let dir = vale_agent::paths::exe_dir();
+            (!dir.as_os_str().is_empty()).then(|| dir.join("config.yaml"))
+        })
         .unwrap_or_else(|| PathBuf::from("config.yaml"));
 
     // Run the async server on its own tokio runtime — this thread must stay free
