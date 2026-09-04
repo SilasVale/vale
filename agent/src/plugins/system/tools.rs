@@ -14,6 +14,7 @@
 
 use serde_json::{json, Value};
 use vale_agent_core::ToolDef;
+use futures::StreamExt;
 
 use crate::plugins::{require_str, to_value_or_empty};
 
@@ -273,48 +274,86 @@ fn tool_file_download() -> ToolDef {
         }),
         move |params: Value| {
             async move {
-                let url = require_str(&params, "url")?;
-                let path = require_str(&params, "path")?;
-                if !url.starts_with("http://") && !url.starts_with("https://") {
+                let url_str = require_str(&params, "url")?;
+                let path_str = require_str(&params, "path")?;
+                if !url_str.starts_with("http://") && !url_str.starts_with("https://") {
                     return Ok(to_value_or_empty(json!({"ok": false, "error": "url must start with http:// or https://"})));
                 }
-                // Plugin audit: cap at 100 MiB to prevent disk fill.
+                let url = match reqwest::Url::parse(&url_str) {
+                    Ok(u) => u,
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("invalid url: {e}")}))),
+                };
+                let host = match url.host_str() {
+                    Some(h) => h.to_string(),
+                    None => return Ok(to_value_or_empty(json!({"ok": false, "error": "url has no host"}))),
+                };
+                if host.parse::<std::net::IpAddr>().is_ok() {
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": "IP-based URLs are blocked (SSRF protection)"})));
+                }
+                let data_dir = crate::paths::data_dir();
+                let dest = std::path::Path::new(&path_str);
+                let canonical = match dest.canonicalize() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        let parent = dest.parent().unwrap_or(std::path::Path::new("."));
+                        match parent.canonicalize() {
+                            Ok(p) => p.join(dest.file_name().unwrap_or_default()),
+                            Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("invalid path: {e}")}))),
+                        }
+                    }
+                };
+                if !canonical.starts_with(&data_dir) {
+                    let msg = format!("path must be under data dir: {}", data_dir.display());
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                }
                 const MAX_BYTES: u64 = 100 * 1024 * 1024;
-                let client = reqwest::Client::builder()
+                let client = match reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(120))
-                    .build();
-                let client = match client {
+                    .build()
+                {
                     Ok(c) => c,
                     Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("reqwest build: {e}")}))),
                 };
-                let resp = match client.get(&url).send().await {
+                let resp = match client.get(&url_str).send().await {
                     Ok(r) => r,
                     Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("download failed: {e}")}))),
                 };
                 if !resp.status().is_success() {
                     return Ok(to_value_or_empty(json!({"ok": false, "error": format!("upstream returned {}", resp.status())})));
                 }
-                let bytes = match resp.bytes().await {
-                    Ok(b) => b,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read body: {e}")}))),
-                };
-                if bytes.len() as u64 > MAX_BYTES {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("file too large ({} bytes, max {MAX_BYTES})", bytes.len())})));
-                }
+                let mut stream = resp.bytes_stream();
+                let mut total: u64 = 0;
                 use tokio::io::AsyncWriteExt;
-                let f = tokio::fs::OpenOptions::new()
+                let mut f = match tokio::fs::OpenOptions::new()
                     .write(true).create(true).truncate(true)
-                    .open(&path).await;
-                let mut f = match f {
+                    .open(&canonical).await
+                {
                     Ok(f) => f,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("open {path}: {e}")}))),
+                    Err(e) => {
+                        let msg = format!("open {}: {}", canonical.display(), e);
+                        return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                    }
                 };
-                match f.write_all(&bytes).await {
-                    Ok(()) => {}
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("write: {e}")}))),
+                while let Some(chunk) = stream.next().await {
+                    let chunk = match chunk {
+                        Ok(c) => c,
+                        Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read chunk: {e}")}))),
+                    };
+                    total += chunk.len() as u64;
+                    if total > MAX_BYTES {
+                        let msg = format!("file too large (>{MAX_BYTES} bytes)");
+                        return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                    }
+                    match f.write_all(&chunk).await {
+                        Ok(()) => {}
+                        Err(e) => {
+                            let msg = format!("write: {e}");
+                            return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                        }
+                    }
                 }
                 let _ = f.flush().await;
-                Ok(to_value_or_empty(json!({"ok": true, "path": path, "bytes": bytes.len()})))
+                Ok(to_value_or_empty(json!({"ok": true, "path": canonical.to_string_lossy(), "bytes": total})))
             }
         },
     )
