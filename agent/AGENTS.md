@@ -220,9 +220,12 @@ from build.sh (git history retains them). The npm CLI
 Terminal: open pty (PowerShell), type + resize, ssh + serial sessions, saved
 connections + keychain password. MCP: `claude` direct device MCP
 (`https://dN.../mcp`) and `/api/tools/terminal_list` with the Bearer token.
-Events: `/api/events` SSE + `/api/events/term` stream. Tray: status lines
-(running/subdomain/token mask) refresh, start/stop/restart work, copy MCP
-config pastes the JSON snippet, console opens, local terminal opens.
+Events: `/api/events` SSE + `/api/events/term` stream. Electron shell:
+tray shows health + vitals, 60 s watchdog recovers a dead agent, wait page
+reappears when the agent dies; desktop SPA mirrors the panel (CDP :9333
+drives the same view). Gateway card: `POST /api/gateway/connect` registers
+console URL + key from the Settings page. `/api/status` reports the npm
+release (not the Cargo version).
 
 ## Iteration status (stage-n) — UPDATE THIS ON EVERY ROUND
 

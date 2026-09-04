@@ -21,7 +21,7 @@ Vale Index (Cloudflare Worker) — npm tgz / download distribution
 - **OSC 633 shell integration** (the VS Code approach): PowerShell prompts and command boundaries arrive as invisible sequences — clean terminal display, accurate exit codes, no wrapper text, no front-end filters.
 - **Electron desktop shell** (TypeScript): live agent status in the tray, native menu (sessions + page navigation), CDP :9333 so AI can drive the same window the user watches, browser-window reuse + cap, hide-to-tray with a one-time notification.
 - **Memory plugin**: device-local knowledge base shared across AI clients — 6 MCP tools (`memory_save/search/list/update/delete/export`), multi-word AND search, eager tombstone compaction.
-- **47 MCP tools** on the device: terminal (26: PTY/SSH/serial open/write/close/execute/read/screen/history/background jobs/saved connections/secrets/env + legacy aliases), memory (6), system (7: file list/read/write/stat, process list/kill, net test), mcp-client (4), playwright (2), update (2), design (1).
+- **49 MCP tools** on the device: terminal (26: PTY/SSH/serial open/write/close/execute/read/screen/history/background jobs/saved connections/secrets/env + legacy aliases), memory (6), system (9: file list/read/write/stat/download/upload, process list/kill, net test), mcp-client (4), playwright (2), update (1: agent_update), design (1: page_view).
 - **Health endpoint**: `/api/status` reports version, uptime and live session count — consumed by the tray, the SPA status strip and AI health checks.
 - **npm-only distribution**: one-command install/update, WMI-survives-the-kill swap, electron auto-restart on update.
 

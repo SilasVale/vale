@@ -32,7 +32,7 @@ Exit code 0 = all selected sections passed. Full run: 30 checks
 round-313: snapshot -> browser_click {target} on "Learn more" must drive
 the embedded view to iana.org, proving interactions beyond navigation
 reach the page the user watches).
-(terminal 3, file 3, workflow 6, panel 2, mcp 8, evidence 2, browser 2).
+(terminal 3, file 3, workflow 6, panel 2, mcp 12 [stdio 6 + http 6], evidence 2, browser 2).
 
 ## Known device quirks (handled by the suite)
 
