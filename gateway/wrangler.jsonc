@@ -30,6 +30,10 @@
     {
       "tag": "v3-route",
       "new_sqlite_classes": ["RouteDO"]
+    },
+    {
+      "tag": "v4-delete-plugin-hub",
+      "deleted_classes": ["PluginHubDO"]
     }
   ],
   "assets": {

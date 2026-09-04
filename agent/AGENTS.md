@@ -740,6 +740,16 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   to take effect (build.sh gateway). Round-340's proxy plugin-token auth
   path stays (defensive; device-token links still meaningful for delete/
   rename revocation).
+  ROUND-342 (2026-09-04): round-341 gateway deploy — the first deploy
+  FAILED: Cloudflare rejected the upload because the code no longer
+  exports PluginHubDO while the DO class still exists remotely
+  (code 10064 — needs an explicit delete-class migration). Added
+  migration tag v4-delete-plugin-hub (deleted_classes) → deploy
+  succeeded (Version ced6e1c7, 4.07s). Live verified: /api/health all
+  channels ok, plugins/status 401-gated, /code/ viewer mirror 3/3
+  byte-identical to repo (devices.ts/mcp.ts), routes normal. LESSON:
+  removing a DO class requires a deleted_classes migration step in the
+  SAME deploy — code-only removal fails upload.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
