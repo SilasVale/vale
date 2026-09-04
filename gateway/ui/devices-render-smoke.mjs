@@ -54,14 +54,14 @@ const checks = [
   ["stats strip renders", doc.querySelector(".dev-stats") !== null && text.includes("台设备") && text.includes("在线")],
   ["stat numbers (2 devices, 1 online, 1 tunnel, 1 key)", doc.querySelectorAll(".dev-stat").length === 4],
   ["card grid with 2 cards", doc.querySelectorAll(".dev-card").length === 2],
-  ["signal rows per card (3 × 2)", doc.querySelectorAll(".dev-sig").length === 6],
+  ["signal rows per card (2 × 2)", doc.querySelectorAll(".dev-sig").length === 4],
   ["d1 online LED + d2 offline LED", doc.querySelector(".dev-led.on") !== null && doc.querySelector(".dev-led.off") !== null],
   ["tunnel down state text", text.includes("隧道断开")],
   ["outdated badge on d2 (1.0.100 → 1.0.106)", text.includes("可更新到 1.0.106")],
   ["relative last-seen on d1", text.includes("最近在线") && /最近在线 (刚刚|\d+ 分钟前)/.test(text)],
   ["ssh quick-copy on cards", doc.querySelectorAll('.dev-host .btn').length >= 2],
   ["reg key listed", text.includes("abcd1234")],
-  ["row actions", text.includes("打开面板") && text.includes("配对扩展") && text.includes("编辑")],
+  ["row actions", text.includes("打开面板") && text.includes("复制 MCP") && text.includes("编辑")],
   ["advanced collapsed block", text.includes("网关 MCP 配置")],
 ];
 let fail = 0;

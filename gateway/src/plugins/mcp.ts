@@ -4,7 +4,7 @@
  * Routes:
  *   /mcp                      (any method, page host) → handleMcp(request, env)
  *                             GET = SSE stream, POST = JSON-RPC (Claude Code)
- *   GET /api/plugins/status   → online/offline per device (via PluginHubDO)
+ *   GET /api/plugins/status   → agent/tunnel health per device (probe)
  *
  * NOTE: the original index.js guarded /mcp with isPageHost and
  * /api/plugins/status with the admin session (inside handleConsole). Those
@@ -86,7 +86,7 @@ async function cachedDeviceProbe(
 
 /* ---------------- Routes ---------------- */
 
-// GET /api/plugins/status — online/offline per device (via PluginHubDO)
+// GET /api/plugins/status — agent/tunnel health per device (probe, 30s cache)
 // (handler body copied verbatim from index.js handleConsole). round-159:
 // adds the agent version + probe timestamp from the /api/status probe and a
 // `?fresh=1` cache bypass for the console's "check now" button; successful
@@ -96,21 +96,9 @@ async function pluginStatus(request: Request, env: any): Promise<Response> {
   const devices = await listDevices(env);
   const out: Record<
     string,
-    { online: boolean; agent_up: boolean; tunnel_up: boolean; version?: string; checked_at: number }
+    { agent_up: boolean; tunnel_up: boolean; version?: string; checked_at: number }
   > = {};
   for (const d of devices) {
-    // Extension WS (chrome.debugger hub) — reflects the browser extension.
-    let extOnline = false;
-    try {
-      const id = env.PLUGIN_HUB.idFromName(d.name);
-      const hub = env.PLUGIN_HUB.get(id);
-      const statusReq = new Request("https://hub/status");
-      if (env.DO_AUTH) statusReq.headers.set("x-do-auth", env.DO_AUTH);
-      const res = await hub.fetch(statusReq);
-      extOnline = !!(await res.json()).online;
-    } catch {
-      /* hub unreachable */
-    }
     // Agent + tunnel health: probe the device's own /api/status through its
     // tunnel (cached 30s — the console polls every 30s already).
     const probe = await cachedDeviceProbe(env, d, fresh);
@@ -120,7 +108,6 @@ async function pluginStatus(request: Request, env: any): Promise<Response> {
       await touchDeviceSeen(env, d.name, probe.version).catch(() => {});
     }
     out[d.name] = {
-      online: extOnline,
       agent_up: probe.agent,
       tunnel_up: probe.tunnel,
       ...(probe.version ? { version: probe.version } : {}),

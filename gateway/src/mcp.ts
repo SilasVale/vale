@@ -112,7 +112,7 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
 }
 
 /** Browser tools → agent's mcp_client_call → playwright-mcp.
- *   Replaces the old PluginHubDO/extension path. playwright-mcp must run on the device. */
+ *   (The extension/PluginHubDO path was deleted round-341.) */
 async function callMcpClientBridge(name: string, _env: any, device: any, args: any): Promise<any> {
   const token = device.token || "";
   const base = `https://${device.hostname}`;

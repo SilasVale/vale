@@ -451,17 +451,6 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
   const links = await listPluginLinks(env);
   const stale = Object.entries(links).filter(([, l]) => l.device === delName);
   for (const [token] of stale) await removePluginLink(env, token);
-  if (stale.length > 0 && env.PLUGIN_HUB) {
-    try {
-      const id = env.PLUGIN_HUB.idFromName(delName);
-      const hub = env.PLUGIN_HUB.get(id);
-      const req = new Request("https://hub/close-all", { method: "POST" });
-      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
-      await hub.fetch(req).catch(() => {});
-    } catch {
-      /* best-effort */
-    }
-  }
   await deleteDevice(env, delName);
   return jsonOk({ ok: true });
 }
@@ -504,17 +493,6 @@ async function handleDeviceRename(request: Request, env: any, url: URL): Promise
     }
   }
   if (migrated) await savePluginLinks(env, links);
-  if (env.PLUGIN_HUB) {
-    try {
-      const id = env.PLUGIN_HUB.idFromName(oldName);
-      const hub = env.PLUGIN_HUB.get(id);
-      const req = new Request("https://hub/close-all", { method: "POST" });
-      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
-      await hub.fetch(req).catch(() => {});
-    } catch {
-      /* best-effort */
-    }
-  }
   return jsonOk({
     ok: true,
     device: { name: updated.name, hostname: updated.hostname, token: maskKey(updated.token) },
@@ -625,17 +603,6 @@ async function handleUnpair(request: Request, env: any): Promise<Response> {
   // so alarm()'s token re-validation never runs either). revoke() (round-84)
   // already knew this and calls /close-all; unpair is the same revocation
   // contract and must do the same.
-  if (env.PLUGIN_HUB) {
-    try {
-      const id = env.PLUGIN_HUB.idFromName(device);
-      const hub = env.PLUGIN_HUB.get(id);
-      const req = new Request("https://hub/close-all", { method: "POST" });
-      if (env.DO_AUTH) req.headers.set("x-do-auth", env.DO_AUTH);
-      await hub.fetch(req).catch(() => {});
-    } catch {
-      /* best-effort */
-    }
-  }
   return jsonOk({ ok: true });
 }
 

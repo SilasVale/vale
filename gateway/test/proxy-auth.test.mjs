@@ -194,7 +194,7 @@ test("plugins/status: agent_up reflects the device /api/status probe", async () 
     const j = await res.json();
     assert.equal(j.devices.d1.agent_up, true);
     assert.equal(j.devices.d1.tunnel_up, true);
-    assert.ok("online" in j.devices.d1); // extension WS state
+    assert.equal("online" in j.devices.d1, false); // extension WS state removed (round-341)
   } finally {
     globalThis.fetch = real;
   }

@@ -245,13 +245,6 @@ export const api = {
       "/api/devices/install-cmd",
     ),
 
-  // Plugins: pair
-  pairDevice: (device: string) =>
-    request<{ code: string }>("/api/plugins/pair", {
-      method: "POST",
-      body: JSON.stringify({ device }),
-    }),
-
   // Plugins: status (fresh=1 bypasses the gateway's 30s probe cache)
   getPluginStatus: (fresh?: boolean) =>
     request<{ devices: Record<string, DeviceStatus> }>(

@@ -26,7 +26,6 @@
  *   session.ts           requireSession/sessionSecret (single copy)
  *   http.ts              jsonOk/jsonError/readJson/CORS
  *   store.ts             KV persistence (users/tokens/devices/plugin links)
- *   plugin-hub.ts        PluginHubDO (extension WebSocket hub)
  *   mcp.ts               MCP endpoint handler (Claude Code)
  *   plugins/*            DSH-style route plugins (auth/devices/mcp/translate/admin)
  */
@@ -52,10 +51,9 @@ import translatePlugin, { handleGateway as translateHandleGateway } from "./plug
 import adminPlugin from "./plugins/admin.ts";
 
 // Re-exported for tooling/tests that target the front door surface.
-// BreakerDO/PluginHubDO/RouteDO must be exported from the entrypoint —
+// BreakerDO/RouteDO must be exported from the entrypoint —
 // wrangler binds the Durable Object classes from here.
 export { BreakerDO } from "./reliability.ts";
-export { PluginHubDO } from "./plugin-hub.ts";
 export { RouteDO } from "./route-do.ts";
 export { resolveAutoModel, isModelUsable } from "./plugins/translate.ts";
 

@@ -29,7 +29,6 @@ const FALLBACK_DOWNLOAD = `https://agent.saisi.online/vale-agent/vale-agent-1.2.
 type ModalState =
   | null
   | { kind: "form"; device: Device | null }
-  | { kind: "pair"; device: string; code: string }
   | { kind: "delete"; device: string }
   | { kind: "tunnelDown"; device: string };
 
@@ -160,15 +159,6 @@ export default function DevicesPanel() {
       }
     } catch (err) {
       toast(err instanceof ApiError ? err.message : t("devices.saveFail"), true);
-    }
-  };
-
-  const handlePair = async (name: string) => {
-    try {
-      const data = await api.pairDevice(name);
-      if (data.code) setModal({ kind: "pair", device: name, code: data.code });
-    } catch (err) {
-      toast(err instanceof ApiError ? err.message : t("devices.pairFail"), true);
     }
   };
 
@@ -332,12 +322,10 @@ export default function DevicesPanel() {
               const st = deviceStatuses[d.name];
               const agentUp = !!st?.agent_up;
               const tunnelUp = !!st?.tunnel_up;
-              const extUp = !!st?.online;
               const outdated = !!d.lastVersion && !!install?.version && d.lastVersion !== install.version;
               const signals = [
                 { label: t("devices.statusAgent"), ok: agentUp, err: !agentUp, state: agentUp ? t("devices.online") : t("devices.offline") },
                 { label: t("devices.statusTunnel"), ok: tunnelUp, err: !tunnelUp, state: tunnelUp ? t("devices.tunnelUp") : t("devices.tunnelDown") },
-                { label: t("devices.statusExt"), ok: extUp, off: !extUp, state: extUp ? t("devices.extUp") : t("devices.extDown") },
               ];
 
               return (
@@ -379,9 +367,6 @@ export default function DevicesPanel() {
                     </button>
                     <button className="btn btn-ghost btn-mini" onClick={() => handleCopyMcp(d.name)}>
                       {t("devices.copyMcp")}
-                    </button>
-                    <button className="btn btn-ghost btn-mini" onClick={() => handlePair(d.name)}>
-                      {t("devices.pair")}
                     </button>
                     <button
                       className="btn btn-ghost btn-mini"
@@ -505,22 +490,6 @@ export default function DevicesPanel() {
           onClose={() => setModal(null)}
           onSave={handleFormSave}
         />
-      )}
-
-      {/* Extension pairing code */}
-      {modal?.kind === "pair" && (
-        <Modal title={t("devices.pairTitle", { name: modal.device })} onClose={() => setModal(null)}>
-          <div className="modal-code">{modal.code}</div>
-          <p className="muted">{t("devices.pairHint")}</p>
-          <div className="modal-actions">
-            <CopyButton
-              text={modal.code}
-              label={t("btn.copy")}
-              tone="primary"
-              onCopied={() => toast(t("devices.pairCopied"))}
-            />
-          </div>
-        </Modal>
       )}
 
       {/* Delete confirmation (replaces the native confirm()) */}

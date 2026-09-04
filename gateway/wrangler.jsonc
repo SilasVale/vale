@@ -17,10 +17,6 @@
         "class_name": "BreakerDO"
       },
       {
-        "name": "PLUGIN_HUB",
-        "class_name": "PluginHubDO"
-      },
-      {
         "name": "ROUTE",
         "class_name": "RouteDO"
       }
@@ -30,10 +26,6 @@
     {
       "tag": "v1-breaker",
       "new_sqlite_classes": ["BreakerDO"]
-    },
-    {
-      "tag": "v2-plugin-hub",
-      "new_sqlite_classes": ["PluginHubDO"]
     },
     {
       "tag": "v3-route",
