@@ -42,4 +42,5 @@ vale update           # same channel
 
 ## Legacy redirects
 
-- `/vale-agent/ValeAgent-Setup.exe` → the download page (NSIS retired).
+- `/vale-agent/ValeAgent-Setup.exe` → the console URL (CONSOLE_URL var; this
+  site's root when unset) — NSIS retired.

@@ -310,9 +310,30 @@ function genToken(len = 22) {
   return s;
 }
 
+// Constant-time string equality for credential-shaped values (same intent
+// as gateway/src/auth.ts safeEq/timingSafeEqual, but hardened: SHA-256 both
+// sides to fixed 32-byte digests first, so there is no length early-exit
+// to leak on, then fold XOR across every byte without short-circuiting).
+async function safeEq(a, b) {
+  const enc = new TextEncoder();
+  const [da, db] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(String(a))),
+    crypto.subtle.digest("SHA-256", enc.encode(String(b))),
+  ]);
+  const a8 = new Uint8Array(da);
+  const b8 = new Uint8Array(db);
+  let diff = 0;
+  for (let i = 0; i < a8.length; i++) diff |= a8[i] ^ b8[i];
+  return diff === 0;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    // Console URL is per-deployment (CONSOLE_URL var, see the header
+    // contract above); fall back to this worker's own origin — no
+    // production domain is hardcoded.
+    const consoleUrl = (env && env.CONSOLE_URL) || url.origin;
 
     // ── Temporary file hosting ──────────────────────────────────────────
     // Upload: POST /api/upload  ->  { token, url, size, expiresIn }
@@ -320,27 +341,36 @@ export default {
     if (url.pathname === "/api/upload" && request.method === "POST") {
       try {
         // Auth: require a bearer token matching the shared secret (set via
-        // `wrangler secret put UPLOAD_KEY`). Without this, anyone can upload
-        // 100 MiB files to R2 (abuse + cost).
+        // `wrangler secret put UPLOAD_KEY`). Compared via safeEq (hash both
+        // sides, constant-time fold — a plain !== leaks timing on the key).
+        // Without this, anyone can upload 100 MiB files to R2 (abuse + cost).
         const auth = request.headers.get("authorization") || "";
         const expected = `Bearer ${env.UPLOAD_KEY || ""}`;
-        if (!env.UPLOAD_KEY || !auth || auth !== expected) {
+        if (!env.UPLOAD_KEY || !auth || !(await safeEq(auth, expected))) {
           return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
         }
         const ct = request.headers.get("content-type") || "";
         if (!ct.includes("multipart/form-data")) {
           return new Response(JSON.stringify({ error: "expected multipart/form-data" }), { status: 400 });
         }
+        // Cap at 100 MiB (Cloudflare Workers limit ~10 MiB for free plan,
+        // 100 MiB for paid; adjust as needed). Screen the declared
+        // Content-Length BEFORE formData() materializes the whole body in
+        // memory — the multipart framing (boundary + part headers) adds a
+        // little on top of the file bytes, hence the margin. The
+        // authoritative check is file.size below.
+        const MAX_BYTES = 100 * 1024 * 1024;
+        const CL_MARGIN = 64 * 1024;
+        const declared = Number(request.headers.get("content-length") || "0");
+        if (declared > MAX_BYTES + CL_MARGIN) {
+          return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), { status: 413 });
+        }
         const form = await request.formData();
         const file = form.get("file");
         if (!file || typeof file === "string") {
           return new Response(JSON.stringify({ error: "no file field" }), { status: 400 });
         }
-        // Cap at 100 MiB (Cloudflare Workers limit ~10 MiB for free plan,
-        // 100 MiB for paid; adjust as needed).
-        const MAX_BYTES = 100 * 1024 * 1024;
-        const buf = await file.arrayBuffer();
-        if (buf.byteLength > MAX_BYTES) {
+        if (file.size > MAX_BYTES) {
           return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), { status: 413 });
         }
         const token = genToken(22);
@@ -351,10 +381,18 @@ export default {
         // and enforced lazily on GET below — abandoned files are deleted on
         // first access after expiry instead of accumulating forever.
         const expiresAt = Date.now() + 24 * 3600 * 1000;
-        await env.TEMP_FILES.put(key, buf, {
+        // Pass the File/Blob itself — R2 put() accepts Blob values, so no
+        // second full copy (arrayBuffer()) of the file is needed.
+        await env.TEMP_FILES.put(key, file, {
           httpMetadata: {
             contentType: file.type || "application/octet-stream",
-            contentDisposition: `attachment; filename="${file.name || 'file'}"`,
+            // The multipart filename lands in a response header: strip
+            // quotes, backslashes, CR/LF and other control chars so a
+            // crafted name can't split or forge headers. Empty result ->
+            // generic name.
+            contentDisposition: `attachment; filename="${
+              String(file.name || "").replace(/["\\\u0000-\u001f\u007f]/g, "").trim() || "download.bin"
+            }"`,
           },
           customMetadata: { expiresAt: String(expiresAt) },
         });
@@ -362,7 +400,7 @@ export default {
         return new Response(JSON.stringify({
           token,
           url: downloadUrl,
-          size: buf.byteLength,
+          size: file.size,
           filename: file.name || "file",
           expiresAt: new Date(expiresAt).toISOString(),
           // Tokens auto-delete on first download; unclaimed files expire
@@ -391,7 +429,10 @@ export default {
         await env.TEMP_FILES.delete(key);
         return new Response(JSON.stringify({ error: "file expired" }), { status: 410 });
       }
-      // One-time: delete BEFORE streaming so a retry can't re-download.
+      // One-time (sequential retry protection ONLY): the object is deleted
+      // BEFORE the body streams, so a retry after a completed download 404s.
+      // This is not a once-only lock — concurrent GETs can all pass the
+      // get() above before any delete lands, and each receives the bytes.
       await env.TEMP_FILES.delete(key);
       return new Response(obj.body, {
         headers: {
@@ -442,9 +483,10 @@ export default {
     const pathname = new URL(request.url).pathname;
     // Keep the old installer URL usable for links/bookmarks — the NSIS
     // installer is retired (npm is the single channel); redirect to the
-    // download page so stale links land somewhere useful.
+    // console URL (CONSOLE_URL var, or this site's root when unset) so
+    // stale links land somewhere useful.
     if (pathname === "/vale-agent/ValeAgent-Setup.exe") {
-      return Response.redirect(`https://agent.saisi.online/`, 302);
+      return Response.redirect(consoleUrl, 302);
     }
     // npm tgz download path (the documented `npm i -g
     // https://agent.saisi.online/vale-agent/vale-agent-<v>.tgz` command).
@@ -483,13 +525,14 @@ export default {
     if (pathname !== "/" && pathname !== "/index.html") {
       return new Response("Not Found", { status: 404 });
     }
-    const consoleUrl = (env && env.CONSOLE_URL) || "https://api.saisi.online";
     // round-319: the download page's install command pointed at the DELETED
     // 1.2.141 tgz on the Vercel mirror (v.saisi.online/dl/) — every copy-
-    // paste install failed. Use the versionless latest alias on the dist
-    // worker (agent.saisi.online/vale-agent/vale-agent-latest.tgz, mirrored
-    // on every release) so the command always installs the current build.
-    const installerUrl = `https://agent.saisi.online/vale-agent/vale-agent-latest.tgz`;
+    // paste install failed. Use the versionless latest alias served by this
+    // worker itself (mirrored on every release) so the command always
+    // installs the current build. The base is the request's own origin —
+    // npm must hit the host that actually serves the tgz, and no production
+    // domain is hardcoded.
+    const installerUrl = `${url.origin}/vale-agent/vale-agent-latest.tgz`;
 
     return new Response(PAGE(consoleUrl, installerUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
