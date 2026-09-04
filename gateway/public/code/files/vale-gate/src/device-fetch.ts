@@ -100,17 +100,32 @@ export function deviceHostError(hostname: string): string | null {
   // parse to 127.0.0.1 and hit the 127. block). What it does NOT normalize
   // away: 0.0.0.0, the cloud metadata IP, and IPv4-mapped IPv6 (::ffff:/96
   // can smuggle 127.0.0.1 past every v4 rule — bracketed or bare).
+  // 172.16/12 is ONLY second-octet 16-31 (numeric) — a blanket
+  // startsWith("172.") also blocked public 172.15.x.x / 172.32+.x.x.
+  // The fc/fd/fe80 unique-local/link-local prefixes must be actual address
+  // forms (contain ':': hostnames never do) — otherwise a hostname STRING
+  // like 'fc.example.com' false-positives. Bracketed/bare loopback +
+  // mapped forms below are unreachable with brackets anyway (WHATWG
+  // hostname strips them and the equality gate above rejects the mismatch),
+  // but stay as belt-and-suspenders.
+  let is172Private = false;
+  if (hostLower.startsWith("172.")) {
+    const second = Number(hostLower.split(".")[1]);
+    is172Private = Number.isInteger(second) && second >= 16 && second <= 31;
+  }
+  const isV6Private = hostLower.includes(":") &&
+    (hostLower.startsWith("fc") ||
+      hostLower.startsWith("fd") ||
+      hostLower.startsWith("fe80"));
   if (
     hostLower === "localhost" ||
     hostLower.startsWith("127.") ||
     hostLower.startsWith("10.") ||
     hostLower.startsWith("192.168.") ||
-    hostLower.startsWith("172.") ||
+    is172Private ||
     hostLower === "::1" ||
     hostLower === "[::1]" ||
-    hostLower.startsWith("fc") ||
-    hostLower.startsWith("fd") ||
-    hostLower.startsWith("fe80") ||
+    isV6Private ||
     hostLower === "0.0.0.0" ||
     hostLower === "[::]" ||
     hostLower === "169.254.169.254" ||
