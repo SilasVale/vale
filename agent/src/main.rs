@@ -409,20 +409,6 @@ fn self_heal() {
         c
     });
 
-    // 4. Tray logon task — point at this install dir (keeps the registered
-    //    user principal on /Change) and start it so the icon comes back now.
-    if tray.exists() {
-        run_bounded("self-heal: schtasks /Change ValeAgentTray", {
-            let mut c = std::process::Command::new("schtasks");
-            c.args(["/Change", "/TN", "ValeAgentTray", "/TR", &format!("\"{tray_str}\"")]);
-            c
-        });
-        run_bounded("self-heal: schtasks /Run ValeAgentTray", {
-            let mut c = std::process::Command::new("schtasks");
-            c.args(["/Run", "/TN", "ValeAgentTray"]);
-            c
-        });
-    }
     log_line("self-heal: complete");
 }
 

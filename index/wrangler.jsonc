@@ -15,7 +15,6 @@
   // R2 bucket: `wrangler r2 bucket create vale-temp-files`.
   // KV namespace: `wrangler kv namespace create TEMP_TOKENS`.
   "r2_buckets": [{ "binding": "TEMP_FILES", "bucket_name": "vale-temp-files" }],
-  "kv_namespaces": [{ "binding": "TEMP_TOKENS", "id": "REPLACE_WITH_KV_ID" }],
   // Custom domain (added in the Cloudflare dashboard, like the other Vale
   // workers — wrangler 4.x ignores the custom_domains field): <download-host>
   // Vars (set via `wrangler var put`, NOT committed): CONSOLE_URL (the Vale
