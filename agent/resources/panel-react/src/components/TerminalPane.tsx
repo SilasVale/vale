@@ -269,7 +269,12 @@ export function TerminalPane({ session, registerWrite }: {
     };
     if (session.active) {
       const cleanupRef: (() => void)[] = [];
-      const t = setTimeout(refit, 50);
+      // Settle sequence, not a single shot: one 50ms refit can land
+      // mid-transition (tab-switch animation, webfont swap) and freeze a
+      // narrow grid with no later trigger — device-caught on AI-created
+      // serial sessions stuck at 80 cols in a 115-col box. Later passes
+      // are no-ops once the grid matches the container.
+      const timers = [50, 250, 600].map((ms) => setTimeout(refit, ms));
       window.addEventListener("resize", refit);
       document.addEventListener("visibilitychange", refit);
       if (containerRef.current && typeof ResizeObserver !== "undefined") {
@@ -288,7 +293,7 @@ export function TerminalPane({ session, registerWrite }: {
       const focusTimer = requestAnimationFrame(() => {
         requestAnimationFrame(() => { try { termRef.current?.focus?.(); } catch {} });
       });
-      return () => { clearTimeout(t); cancelAnimationFrame(focusTimer); window.removeEventListener("resize", refit); document.removeEventListener("visibilitychange", refit); cleanupRef.forEach(fn => fn()); };
+      return () => { timers.forEach(clearTimeout); cancelAnimationFrame(focusTimer); window.removeEventListener("resize", refit); document.removeEventListener("visibilitychange", refit); cleanupRef.forEach(fn => fn()); };
     }
   }, [session.active]);
 
