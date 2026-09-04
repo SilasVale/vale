@@ -710,6 +710,15 @@ Last updated: 2026-09-04 (round 328 — AGENTS.md compacted under the
   round-266/282. Updated with the exact breakdown (terminal 26 + memory
   6 + system 7 + mcp-client 4 + playwright 2 + update 2 + design 1);
   no other numeric claims drift in README.
+  ROUND-339 (2026-09-04): gateway dead extension path removed from
+  mcp.ts — callTool already returned for every tool name (round-161
+  browser_* → playwright bridge); the trailing PluginHubDO → WS →
+  browser-extension block was UNREACHABLE since round-262 deleted the
+  extension. -38 lines + EXTENSION_OFFLINE constant. mcp-tools.ts head
+  comment now describes the real path. Gateway 254 pass + tsc clean.
+  OPEN: devices.ts still hosts extension-era pairing endpoints
+  (pair/claim, ws-ticket, /ws, revoke, proxy plugin-token auth) — dead
+  surface, larger removal, separate round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
