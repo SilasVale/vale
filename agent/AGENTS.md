@@ -1,6 +1,8 @@
 # Vale Agent Build Guide
 
-> Mirrors agent/CLAUDE.md (keep in sync). Post-2026-08-28 additions: registry-
+> Mirrors agent/CLAUDE.md (build/verify/architecture semantics must stay
+> identical; the stage-n living log at the end of THIS file is AGENTS-only —
+> CLAUDE.md never mirrors it). Post-2026-08-28 additions: registry-
 > first path resolution (src/paths.rs), npm-only install channel, Gateway
 > Settings card + POST /api/gateway/connect.
 
@@ -128,7 +130,8 @@ src/
   session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
-                   no locks in AppState
+                   managers own their locks internally (only config_path
+                   carries a small std Mutex inside AppState)
   mcp/server.rs    DeviceServer (rmcp ServerHandler), bind() -> (addr, handle)
                    (port 0 = ephemeral, used by tests), serve_with_token
   web.rs           HTTP surface — hand-rolled Tower service (NOT axum route

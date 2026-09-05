@@ -17,6 +17,9 @@ studio/test/artifacts/
 .dsh-tmp-*
 studio/vendor/
 
+# fallback: any nested node_modules (explicit per-dir rules above stay authoritative)
+**/node_modules/
+
 # build artifacts — never commit
 agent/deploy/cloudflared.exe
 agent/deploy/vale-playwright*.zip

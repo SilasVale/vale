@@ -173,3 +173,62 @@ jobs:
       - name: npm CLI tests
         run: npm test
         working-directory: agent/vale-agent-npm
+
+  # index worker unit tests — pure node:test, zero deps, no lockfile, so
+  # NO install step (like the npm CLI tests above). Well under 2 min.
+  index:
+    name: index (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        run: npm test
+        working-directory: index
+
+  # studio API contract tests — black-box spawn of the real server
+  # (test/api.test.mjs). Runtime-only install: devDeps (monaco/xterm vendor
+  # assets) are unneeded for the contract tests, and --ignore-scripts skips
+  # the node-pty native build (server falls back to script(1)). Well under 2 min.
+  studio:
+    name: studio (api contract tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - name: Install deps (runtime only)
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+        working-directory: studio
+      - name: API contract tests
+        run: npm test
+        working-directory: studio
+
+  # satellite proxies have NO unit tests — compile + config check without
+  # uploading (wrangler v4 supports --dry-run; verified locally). Needs no
+  # secrets: dry-run never uploads. vercel-proxy is a Vercel project, not a
+  # Worker — no dry-run exists for it; smoke it before deploy instead.
+  proxies:
+    name: proxies (wrangler dry-run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install wrangler
+        run: npm install -g wrangler@4
+      - name: Dry-run zen-go
+        run: wrangler deploy --dry-run
+        working-directory: proxies/zen-go-proxy
+      - name: Dry-run zen-us
+        run: wrangler deploy --dry-run
+        working-directory: proxies/zen-us-proxy
+      - name: Dry-run openrouter
+        run: wrangler deploy --dry-run
+        working-directory: proxies/my-openrouter-proxy

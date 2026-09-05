@@ -14,3 +14,5 @@ file here is not an error.
 
 Note: the number **0002 is intentionally unused** — no record was ever made
 under it. Do not renumber existing records to close the gap.
+
+Note: a missing root `CONTEXT.md` is expected (lazy — see `docs/agents/domain.md`).

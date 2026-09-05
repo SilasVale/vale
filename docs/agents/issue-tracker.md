@@ -13,6 +13,23 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 The repository is `SilasVale/vale`; `gh` infers it from `git remote -v` when run inside this clone.
 
+## No `gh` on this machine (fallback — do NOT retry `gh`)
+
+If `gh` is missing or unauthenticated here, do NOT retry the `gh` command
+in a loop. Pick one of:
+
+1. Install + auth `gh` on a machine you control (`gh auth login`), and do
+   the write operations there.
+2. `curl` + token equivalent against the GitHub REST API (`Authorization:
+   Bearer <token>`, token from `~/.git-credentials`).
+3. (Recommended default, coexists with 1) Treat triage WRITE operations
+   (create / comment / label / close) as allowed ONLY in environments with
+   `gh`; on a machine without `gh`, stay read-only (local analysis + report
+   back what WOULD be filed) and hand the writes to a `gh`-capable session.
+
+Default posture is 3 + 1: read-only here, writes where `gh` exists. Never
+block a round retrying a missing `gh`.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_

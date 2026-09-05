@@ -1,6 +1,8 @@
 # Vale Agent Build Guide
 
-> Mirrors agent/AGENTS.md (keep in sync). agent/AGENTS.md additionally
+> Mirrors agent/AGENTS.md (build/verify/architecture semantics must stay
+> identical; the stage-n living log lives ONLY in agent/AGENTS.md — this
+> file never mirrors it). agent/AGENTS.md additionally
 > carries the stage-n iteration log maintained by the DSH loop.
 
 ## Cross-compilation to Windows (MSVC)
@@ -127,7 +129,8 @@ src/
   session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
-                   no locks in AppState
+                   managers own their locks internally (only config_path
+                   carries a small std Mutex inside AppState)
   mcp/server.rs    DeviceServer (rmcp ServerHandler), bind() -> (addr, handle)
                    (port 0 = ephemeral, used by tests), serve_with_token
   web.rs           HTTP surface — hand-rolled Tower service (NOT axum route

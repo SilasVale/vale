@@ -1,6 +1,6 @@
 # Vale — monorepo guide
 
-Vale = one repo + one front door: `gateway/` (Vale Gate worker), `agent/` (Vale Agent, Windows), `index/` (Vale Index worker), `docs/`.
+Vale = one repo + one front door — core: `gateway/` (Vale Gate worker), `agent/` (Vale Agent, Windows), `index/` (Vale Index worker), `docs/`; satellites: `proxies/`, `studio/`, `extension/`, `brand/` (see README layout table). (Header difference vs AGENTS.md is by design: AGENTS.md carries the DSH paragraph + extra architecture facts; this file stays shorter.)
 
 ## Build
 
@@ -9,7 +9,10 @@ Unified entry `scripts/build.sh`:
 ```bash
 ./scripts/build.sh agent             # Windows cross-compile vale-agent (tray/Tauri retired; needs cargo-xwin)
 ./scripts/build.sh gateway|index     # wrangler deploy the worker (needs CLOUDFLARE_API_TOKEN)
-./scripts/build.sh deploy            # build + deploy everything
+./scripts/build.sh proxies           # deploy satellite proxy workers (zen-go / zen-us / openrouter; needs CLOUDFLARE_API_TOKEN)
+./scripts/build.sh vercel-proxy      # deploy the Vercel exit proxy (v.saisi.online; needs vercel CLI)
+./scripts/build.sh studio            # build + test + restart vale-studio (code.saisi.online; see studio/README.md)
+./scripts/build.sh deploy            # build agent + deploy gateway/index + 3 CF proxies (not studio/vercel-proxy)
 ```
 
 Subprojects have their own build docs:
@@ -43,7 +46,7 @@ vale tunnel status|install|start|stop|update   # tunnel management (boxed compon
 
 ## Conventions
 
-- **Commits**: conventional commits with stage tags (`fix(stage-x)`, `feat(stage-x)`, …); each commit leaves the tree green.
+- **Commits**: conventional commits with stage tags (`fix(stage-x)`, `feat(stage-x)`, …); each commit leaves the tree green. Before committing, run the subproject's `format:check` (e.g. gateway: `npm run format:check`) — no husky hooks (deliberately heavy; manual until a later round).
 - **Subproject changes**: verify inside that subdir (agent: cargo test/clippy/xwin check; gateway/index: wrangler deploy).
 - **Worker name**: the gateway worker is `vale-gate`. If the Cloudflare dashboard still binds the console domain to an old-named worker, rebind it to `vale-gate`.
 - **Design docs**: `docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md` (desktop/core); `gateway/DEVICE-INTEGRATION.md` is SUPERSEDED (2026-08 extension era, history only).
@@ -72,3 +75,9 @@ Notes from the 2026-08-31 upgrade (0.1.2-alpha.2 → 0.1.2-alpha.3):
 - `--check` compares the deployed version against the remote's newest `dsh-v*` tag and prints the upgrade command; it no longer misreads `--check` as a tag name.
 - Backups of each deployed version live at `~/dsh-backup-<version>` (e.g. `~/dsh-backup-0.1.2-alpha.2`); rollback = copy back to the global pkg dir and `pm2 restart dsh`.
 - Deployment layout: dsh source at `~/dsh-src`, mirror at `https://v.saisi.online/api/git/deepseek-ai/deepseek-harness.git`, pm2 app name `dsh`, web port 7738, profile patch at `~/.dsh/profiles/web/cordis.patch.yml` (holds `enableBrowserAuth: false`).
+
+Notes from the 2026-09-05 upgrade (0.1.2-alpha.5 → 0.1.3-alpha.1):
+
+- The script does NOT tolerate a dirty worktree: when upstream touched the same files as the local patch, `git checkout --detach <tag>` aborts (`local changes would be overwritten`). Recovery is `git stash push` in `~/dsh-src`, then re-run the script (it re-applies the patch itself). First verify the patch still applies on the clean new tag with `git apply --check`; if it doesn't, stop and hand the conflict to a human.
+- The box's system g++ is 9.4 (Ubuntu 20.04, no sudo), but the new `fs-ext` dependency (session write-lease `flock`, Node 24 node-gyp) requires C++20. A userspace g++-10 lives at `~/gcc10-root` (extracted from apt `.deb`s via `apt-get download` + `dpkg-deb -x`, no sudo needed). Every upgrade that compiles native modules must run with `CXX=$HOME/gcc10-root/usr/bin/g++-10 CC=$HOME/gcc10-root/usr/bin/gcc-10` exported, otherwise `pnpm install` fails on `fs-ext`.
+- Upstream sometimes deletes packages (this time `session-persistence-sqlite`, plus older leftovers `tool-subagent-report`, `code-runtime-python`, `agent-spine-demo`). Their `lib/` + `node_modules/` are git-ignored, so neither `git checkout` nor the script's `git clean -fdq` removes them, and the stale `lib/` can break the next build (here: removed `PersistenceCoordinator` exports). Before building a new tag, delete any `packages/*/*/ ` dir that has `lib/` but no `package.json` and is absent from the new tag (`git ls-tree --name-only <tag> <dir>` empty).
