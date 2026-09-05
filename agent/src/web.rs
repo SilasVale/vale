@@ -57,272 +57,6 @@ const STATUS_PAGE: &str = concat!(
 
 // ── Terminal panel static assets (embedded, public) ──────────
 
-/// Provision the free cloudflared tunnel from the Settings-page Gateway card:
-/// login with the token, create the tunnel, route DNS, write tunnel.yml, and
-/// spawn cloudflared (agent-owned, spawn-if-absent model). Returns a status
-/// string for the API response. Best-effort — failures are reported, not fatal.
-/// Make sure the SYSTEM agent's cloudflared credentials exist. `tunnel
-/// login --token` under SYSTEM writes to systemprofile\.cloudflared — if
-/// that failed, copy cert.pem + tunnel credentials from a real user profile
-/// (Administrator runs the console/install flows and already has them).
-async fn ensure_cf_credentials() {
-    let sys_cf = std::env::var("USERPROFILE")
-        .map(|u| std::path::PathBuf::from(u).join(".cloudflared"))
-        .unwrap_or_default();
-    if sys_cf.join("cert.pem").exists() {
-        return; // already authenticated
-    }
-    // Candidate user profiles to copy from.
-    for user in ["Administrator", "admin", "user"] {
-        let src = std::path::PathBuf::from(r"C:\Users").join(user).join(".cloudflared");
-        let cert = src.join("cert.pem");
-        if cert.exists() {
-            let _ = std::fs::create_dir_all(&sys_cf);
-            if std::fs::copy(&cert, sys_cf.join("cert.pem")).is_ok() {
-                // Copy all *.<uuid>.json credentials too.
-                if let Ok(rd) = std::fs::read_dir(&src) {
-                    for e in rd.flatten() {
-                        let name = e.file_name().to_string_lossy().to_string();
-                        if name.ends_with(".json") && e.path().is_file() {
-                            let _ = std::fs::copy(e.path(), sys_cf.join(&name));
-                        }
-                    }
-                }
-                tracing::info!("[vale-agent] provision_tunnel: copied cloudflared credentials from {user}");
-                return;
-            }
-        }
-    }
-    tracing::warn!("[vale-agent] provision_tunnel: no cert.pem found in any user profile — tunnel auth may fail");
-}
-
-/// Update a tunnel's REMOTE config (Cloudflare API) so its ingress points at
-/// 127.0.0.1:18080. cloudflared prefers the remote config over the local file
-/// when one exists; a stale remote (e.g. an old 127.0.0.2 ingress) would keep
-/// proxying to a dead address (502) no matter what tunnel.yml says.
-async fn update_remote_config(cf_token: &str, tunnel_id: &str, hostname: &str) {
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    // 1. Resolve the account id from the token.
-    let acc = match client
-        .get("https://api.cloudflare.com/client/v4/accounts")
-        .header("authorization", format!("Bearer {cf_token}"))
-        .send().await
-    {
-        Ok(r) => match r.json::<serde_json::Value>().await { Ok(j) => j, Err(_) => return },
-        Err(_) => return,
-    };
-    let account_id = match acc["result"].as_array().and_then(|a| a.first()).and_then(|x| x["id"].as_str()) {
-        Some(v) => v.to_string(),
-        None => return,
-    };
-    // 2. PUT the ingress config.
-    let body = serde_json::json!({
-        "config": {
-            "ingress": [
-                { "hostname": hostname, "service": "http://127.0.0.1:18080" },
-                { "service": "http_status:404" }
-            ]
-        }
-    });
-    let url = format!(
-        "https://api.cloudflare.com/client/v4/accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations"
-    );
-    match client
-        .put(&url)
-        .header("authorization", format!("Bearer {cf_token}"))
-        .header("content-type", "application/json")
-        .body(body.to_string())
-        .send().await
-    {
-        Ok(r) => {
-            let ok = r.status().is_success();
-            tracing::info!("[vale-agent] provision_tunnel: remote config update ok={ok}");
-        }
-        Err(_) => tracing::warn!("[vale-agent] provision_tunnel: remote config update failed (network)"),
-    }
-}
-
-async fn provision_tunnel(cf_token: &str) -> String {
-    let install_dir = crate::paths::install_dir();
-    let cf = install_dir.join("tools").join("cloudflared.exe");
-    if !cf.exists() {
-        // cloudflared is NOT bundled (the npm package stays small) — download
-        // the official Windows binary on demand (same source the installer
-        // used; ~54MB, one-time).
-        tracing::info!("[vale-agent] provision_tunnel: downloading cloudflared via the gateway proxy");
-        // Download through the vale-gate proxy (agent.saisi.online) — the
-        // device can reach our worker even when GitHub is blocked (GFW etc.).
-        // The worker streams the official GitHub release back to us.
-        let url = "https://agent.saisi.online/vale-agent/cloudflared.exe";
-        let client = match reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
-            .build()
-        {
-            Ok(c) => c,
-            Err(_) => return "cloudflared download client build failed".to_string(),
-        };
-        let resp = match client.get(url).send().await {
-            Ok(r) => r,
-            Err(_) => return "cloudflared download failed (official GitHub release unreachable)".to_string(),
-        };
-        let bytes = match resp.bytes().await {
-            Ok(b) => b,
-            Err(_) => return "cloudflared download failed (read error)".to_string(),
-        };
-        if bytes.len() <= 1_000_000 {
-            return "cloudflared download failed (unexpected small payload)".to_string();
-        }
-        let _ = std::fs::create_dir_all(install_dir.join("tools"));
-        if std::fs::write(&cf, &bytes).is_err() {
-            return "cloudflared download write failed".to_string();
-        }
-        tracing::info!("[vale-agent] provision_tunnel: cloudflared downloaded ({} bytes)", bytes.len());
-    }
-    let hostname = std::fs::read_to_string(install_dir.join("vale-agent.hostname"))
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    // Supervision audit #5: hostname flows into cloudflared ARGV and an
-    // unquoted YAML line. A value starting with '-' becomes a FLAG, an
-    // embedded newline injects keys (e.g. a different `service:` target).
-    // Validate to bare subdomain charset before anything else touches it.
-    let host_ok = |v: &str| -> bool {
-        !v.is_empty()
-            && v.len() <= 253
-            && !v.starts_with('-')
-            && v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
-    };
-    if !host_ok(&hostname) {
-        return "cannot provision: vale-agent.hostname missing or invalid (set it via `vale setup --hostname <sub>` first)".to_string();
-    }
-    if !host_ok(cf_token) {
-        return "cannot provision: gateway returned a malformed API token".to_string();
-    }
-    let tunnel_name = format!("vale-agent-{}", hostname.split('.').next().unwrap_or("device"));
-    // 1. login with token. cloudflared writes cert.pem to %USERPROFILE%\.cloudflared\
-    //    — under the SYSTEM service that is systemprofile, and `tunnel login
-    //    --token` may not write it there reliably. After login, ensure the
-    //    credentials exist: copy from a real user profile if missing.
-    let login = tokio::process::Command::new(&cf)
-        .args(["tunnel", "login", "--token", cf_token])
-        .output().await;
-    let login_ok = login.map(|o| o.status.success()).unwrap_or(false);
-    if !login_ok {
-        return "cloudflared login failed".to_string();
-    }
-    ensure_cf_credentials().await;
-    // 2. create tunnel (idempotent-ish: list first). The tunnel ID is a
-    //    canonical UUID — parse it with the dash-delimited regex from the
-    //    `tunnel list` output; `tunnel create` prints the full ID on success,
-    //    so if the list parse fails (table truncation etc.) grab it from the
-    //    create output directly.
-    fn parse_tunnel_id(text: &str) -> Option<String> {
-        // Canonical UUID with dashes: 8-4-4-4-12 hex. Scan char windows to
-        // avoid pulling in the regex crate (cargo-xwin build stays lean).
-        let bytes = text.as_bytes();
-        let is_hex = |c: u8| c.is_ascii_hexdigit();
-        let mut i = 0;
-        while i + 36 <= bytes.len() {
-            let seg = [8usize, 4, 4, 4, 12];
-            let mut ok = true;
-            let mut pos = i;
-            for (si, len) in seg.iter().enumerate() {
-                for _ in 0..*len {
-                    if !is_hex(bytes[pos]) { ok = false; break; }
-                    pos += 1;
-                }
-                if !ok { break; }
-                if si < seg.len() - 1 {
-                    if bytes[pos] != b'-' { ok = false; break; }
-                    pos += 1;
-                }
-            }
-            if ok {
-                return Some(text[i..i + 36].to_string());
-            }
-            i += 1;
-        }
-        None
-    }
-    // `tunnel list` WITHOUT --name: the --name filter behaves differently
-    // across cloudflared versions and can return empty — match the NAME
-    // column ourselves (ID is col 1, NAME is col 2 in the table).
-    fn find_tunnel_id_by_name(text: &str, name: &str) -> Option<String> {
-        for line in text.lines() {
-            let toks: Vec<&str> = line.split_whitespace().collect();
-            if toks.len() >= 2 && toks[1] == name {
-                if let Some(id) = parse_tunnel_id(toks[0]) {
-                    return Some(id);
-                }
-            }
-        }
-        None
-    }
-    let list = tokio::process::Command::new(&cf)
-        .args(["tunnel", "list"])
-        .output().await;
-    let list_text = list.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
-    let mut tunnel_id = find_tunnel_id_by_name(&list_text, &tunnel_name);
-    if tunnel_id.is_none() {
-        let created = tokio::process::Command::new(&cf)
-            .args(["tunnel", "create", &tunnel_name])
-            .output().await;
-        let (created_text, created_err) = match created {
-            Ok(o) => (
-                String::from_utf8_lossy(&o.stdout).to_string(),
-                String::from_utf8_lossy(&o.stderr).to_string(),
-            ),
-            Err(_) => (String::new(), String::new()),
-        };
-        tunnel_id = parse_tunnel_id(&created_text).or_else(|| parse_tunnel_id(&created_err));
-        if tunnel_id.is_none() {
-            let list2 = tokio::process::Command::new(&cf)
-                .args(["tunnel", "list"])
-                .output().await;
-            let list2_text = list2.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
-            tunnel_id = find_tunnel_id_by_name(&list2_text, &tunnel_name);
-        }
-    }
-    let Some(id) = tunnel_id else {
-        // Include the raw list output in the error so a device report
-        // pinpoints WHY parsing failed (auth? empty list? different format?).
-        let diag = format!(
-            "could not determine tunnel id for '{tunnel_name}'. login_ok={} list_out={:?}",
-            login_ok,
-            &list_text[..list_text.len().min(400)],
-        );
-        return diag;
-    };
-    // 3. DNS route (best-effort)
-    let _ = tokio::process::Command::new(&cf)
-        .args(["tunnel", "route", "dns", &tunnel_name, &hostname])
-        .output().await;
-    // 3b. Update the tunnel's REMOTE config via the Cloudflare API — cloudflared
-    //     prefers the remote config when one exists, and a stale remote (old
-    //     127.0.0.2 ingress) would override the local tunnel.yml. Point the
-    //     remote ingress at 127.0.0.1 so both agree.
-    update_remote_config(cf_token, &id, &hostname).await;
-    // 4. write tunnel.yml (single location, agent spawns it on boot)
-    let cred = std::env::var("USERPROFILE")
-        .map(|u| format!(r"{u}\.cloudflared\{id}.json"))
-        .unwrap_or_else(|_| format!(".cloudflared/{id}.json"));
-    let yml = format!(
-        "tunnel: {id}\ncredentials-file: {cred}\nallow-remote-config: false\ningress:\n  - hostname: {hostname}\n    service: http://127.0.0.1:18080\n  - service: http_status:404\n"
-    );
-    let cfg_path = install_dir.join("tunnel.yml");
-    // Supervision audit #5: atomic (the boot-spawned cloudflared may be
-    // mid-read) — and #1: DO NOT spawn a second tunnel here; the supervisor
-    // task owns the single child and restarts on the generation bump.
-    let _ = crate::bootstrap::atomic_write(&cfg_path, yml.as_bytes());
-    crate::tunnel_ctl::request_restart();
-    format!("ok ({hostname})")
-}
-
 /// Serve a file from the embedded panel assets. Whitelist by name — no path
 /// traversal, no directory listing.
 fn serve_panel_file(file: &str, content_type: &'static str) -> Response {
@@ -428,6 +162,16 @@ fn built_response(status: StatusCode, content_type: &'static str, body: Body) ->
 /// when the param came first).
 fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
     query?.split('&').find_map(|pair| pair.strip_prefix(key).and_then(|rest| rest.strip_prefix('=')))
+}
+
+/// Host header value without its `:port` suffix (trimmed) — shared by the
+/// token-injection host allowlist and the loopback check below (the same
+/// trim + strip-:port dance was duplicated at both sites).
+fn host_no_port(headers: &axum::http::HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.trim().split(':').next().unwrap_or(h.trim())) // strip :port
 }
 
 /// Check the Bearer token (Authorization header only). Static (non-async) so
@@ -637,10 +381,7 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             return built_response(StatusCode::OK, "application/json", Body::from(serde_json::json!({"shots": shots}).to_string()));
         }
         // /api/browser/pwshot?name=xxx — serve one screenshot (basename only)
-        let name = req.uri().query().unwrap_or("")
-            .split('&')
-            .find_map(|kv| kv.strip_prefix("name="))
-            .unwrap_or("");
+        let name = query_param(req.uri().query(), "name").unwrap_or("");
         if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
             return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("bad name"));
         }
@@ -695,12 +436,8 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 .headers()
                 .get("x-vale-auth")
                 .and_then(|v| v.to_str().ok())
-                .map(|v| {
-                    // Constant-time compare (timing-safe for a 64-hex secret).
-                    let a = v.as_bytes();
-                    let b = secret.as_bytes();
-                    a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-                })
+                // Constant-time compare (timing-safe for a 64-hex secret).
+                .map(|v| timing_safe_eq(v.as_bytes(), secret.as_bytes()))
                 .unwrap_or(false);
         if let Some(ref token) = state.config.server.device_token {
             // EXACT host allowlist. A substring/prefix match here was
@@ -712,13 +449,8 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             // NOTE: d1.agent.saisi.online has THREE dots — an earlier
             // "count() == 2" check made the subdomain branch unsatisfiable and
             // silently killed token injection for real devices (round-19).
-            let host_ok = req
-                .headers()
-                .get(axum::http::header::HOST)
-                .and_then(|h| h.to_str().ok())
-                .map(|h| {
-                    let h = h.trim();
-                    let host = h.split(':').next().unwrap_or(h); // strip :port
+            let host_ok = host_no_port(req.headers())
+                .map(|host| {
                     host == "127.0.0.1" || host == "localhost"
                         || host == "agent.saisi.online"
                         || (host.ends_with(".agent.saisi.online")
@@ -728,14 +460,8 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 .unwrap_or(false);
             // round-102: token injection only via the gateway proxy OR
             // loopback — a public direct request must NOT receive the token.
-            let loopback = req
-                .headers()
-                .get(axum::http::header::HOST)
-                .and_then(|h| h.to_str().ok())
-                .map(|h| {
-                    let host = h.trim().split(':').next().unwrap_or(h.trim());
-                    host == "127.0.0.1" || host == "localhost"
-                })
+            let loopback = host_no_port(req.headers())
+                .map(|host| host == "127.0.0.1" || host == "localhost")
                 .unwrap_or(false);
             if host_ok && (via_proxy || loopback) {
                 // serde_json escapes quotes but NOT < > (no escape_html
@@ -827,67 +553,17 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let result: serde_json::Value = match (method.as_str(), path.as_str()) {
         ("GET", "/api/spec") => api_spec(&state),
         ("GET", "/api/status") => api_status(&state).await,
-        // Audit trail: session list with terminal state (round-56). The
-        // logger lives in the terminal plugin's private field — read the
-        // same directory directly (cheap: one file per session).
-        ("GET", "/api/sessions") => {
-            // HIGH(audit round): the WRITER (terminal plugin) logs to
-                // paths::data_dir()/sessions — on registry-first installs the
-                // exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
-                // Vale), and these endpoints scanned an empty dir: the audit
-                // panel was permanently blind. Read the same dir; also honors
-                // the "zero current_exe() guessing outside paths.rs" rule.
-                let dir = crate::paths::sessions_dir();
-            let logger = crate::session_log::SessionLogger::new(dir);
-            let list: serde_json::Value = logger.list_sessions().iter().map(|(sid, state)| {
-                serde_json::json!({ "id": sid, "state": state })
-            }).collect();
-            serde_json::json!({ "ok": true, "sessions": list })
-        },
-        // Full audit events for one session (round-68): events_of() existed
-        // for /api/sessions but no endpoint called it — the durable audit
-        // corpus was write-only, unqueryable by the panel or MCP. This reads
-        // the session's jsonl (permanent, survives agent restarts).
+        // Audit trail: session list (round-56) + per-session events
+        // (round-68) — bodies in api_sessions_list / api_session_events.
+        ("GET", "/api/sessions") => api_sessions_list(),
         ("GET", p) if p.starts_with("/api/sessions/") && p.len() > "/api/sessions/".len() => {
-            // round-87: the old literal "/api/sessions/{sid}" arm never
-            // matched a real session id (exact-string match) — the audit
-            // endpoint 404'd for every session. Guard-arm route.
-            let sid = p.strip_prefix("/api/sessions/")
-                .and_then(|s| s.split('/').next())
-                .unwrap_or("")
-                .to_string();
-            // round-116: the sid flows into a FILE PATH (events_of →
-            // {dir}/{sid}.jsonl). The forward-slash split alone let a
-            // backslash (0x5C, accepted in the request-target by the http
-            // crate) traverse on Windows: /api/sessions/..%5C..%5Cfoo read
-            // {dir}/../../foo.jsonl. Restrict to the session-id charset —
-            // session ids are hex (sid per-boot unique), so anything else is
-            // not a valid session anyway.
-            if !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                return built_response(StatusCode::BAD_REQUEST, "application/json", Body::from(r#"{"ok":false,"error":"invalid session id"}"#));
+            match api_session_events(p) {
+                Ok(v) => v,
+                Err(resp) => return *resp,
             }
-            // HIGH(audit round): the WRITER (terminal plugin) logs to
-                // paths::data_dir()/sessions — on registry-first installs the
-                // exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
-                // Vale), and these endpoints scanned an empty dir: the audit
-                // panel was permanently blind. Read the same dir; also honors
-                // the "zero current_exe() guessing outside paths.rs" rule.
-                let dir = crate::paths::sessions_dir();
-            let logger = crate::session_log::SessionLogger::new(dir);
-            let events = logger.events_of(&sid);
-            serde_json::json!({ "ok": true, "id": sid, "events": events })
-        },
-        // Read the tray's vale-update.log (promised by the tray's doc comment
-        // but never implemented) — lets a remote client see auto-update
-        // failures instead of asking the user to open files.
-        ("GET", "/api/logs") => {
-            // Zero current_exe() guessing outside paths.rs — exe_dir() is the
-            // same resolution, centralized.
-            let dir = crate::paths::exe_dir();
-            let log = dir.join("vale-update.log");
-            let text = std::fs::read_to_string(&log).unwrap_or_else(|_| String::new());
-            serde_json::json!({"ok": true, "log": text.chars().rev().take(64 * 1024).collect::<String>().chars().rev().collect::<String>()})
         }
+        // vale-update.log reader (tray promise) — body in api_logs.
+        ("GET", "/api/logs") => api_logs(),
         ("GET", "/api/events/poll") => {
             let after: u64 = query_param(query_str.as_deref(), "after")
                 .and_then(|v| v.parse().ok())
@@ -895,216 +571,31 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
             api_events_poll(&state, after)
         },
 
-        // Settings: read / write the runtime-configurable values (round-69).
-        // buffer_mb is the per-session output buffer cap — the panel's
-        // settings writes it here; it takes effect for NEW output (existing
-        // buffers keep their size), persists to config.yaml, survives restarts.
-        ("GET", "/api/settings") => {
-            let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_default();
-            let console_url = Config::load(&cfg_path).ok()
-                .and_then(|c| c.platform.console_url.clone());
-            // Tunnel state: tunnel.yml present + cloudflared running? Lets the
-            // Settings page show the persisted state after a refresh (the
-            // Gateway card must not blank out once connected).
-            let install_dir = crate::paths::install_dir();
-            let tunnel_configured = install_dir.join("tunnel.yml").exists();
-            // Blocking-subprocess audit: tasklist is a synchronous child
-            // process — run it on the blocking pool so the polled-every-15s
-            // /api/status sibling handler never stalls the async runtime
-            // workers. On non-Windows (dev/CI) tasklist doesn't exist and
-            // this degrades to false, as before.
-            let tunnel_running = tokio::task::spawn_blocking(|| {
-                std::process::Command::new("tasklist")
-                    .args(["/FI", "IMAGENAME eq cloudflared.exe"])
-                    .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("cloudflared"))
-                    .unwrap_or(false)
-            })
-            .await
-            .unwrap_or(false);
-            serde_json::json!({
-                "ok": true,
-                "buffer_mb": state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024),
-                "console_url": console_url,
-                "tunnel_configured": tunnel_configured,
-                "tunnel_running": tunnel_running,
-            })
-        }
-        ("PUT", "/api/settings") => {
-            let v: serde_json::Value = match serde_json::from_str(&body_str) {
-                Ok(v) => v,
-                Err(e) => return axum::Json(serde_json::json!({
-                    "ok": false, "error": format!("invalid JSON: {e}"), "code": "invalid_params",
-                })).into_response(),
-            };
-            // stage-n (settings audit): a PUT may legitimately carry ONLY ONE
-            // of the keys — the old code reset buffer_mb to 8 whenever it was
-            // ABSENT (a console-only save silently clobbered a user's 64).
-            // Missing key = leave unchanged; empty console_url string =
-            // explicit clear (unchanged semantics).
-            let mb = v.get("buffer_mb").and_then(|b| b.as_u64()).map(|x| (x as usize).clamp(1, 64));
-            if let Some(mb) = mb {
-                state.terminal_buf_bytes.store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
-            }
-            let console_url = v.get("console_url").map(|val| {
-                val.as_str().map(|x| x.trim().to_string()).filter(|x| !x.is_empty())
-            });
-            // Persist to the ACTUALLY-LOADED config path (round-101: the old
-            // hardcoded exe_dir/config.yaml silently reverted on restart for
-            // dev/custom invocations — main.rs sets state.config_path from
-            // argv[1]). Atomic write, same as bootstrap. Best-effort: a
-            // read-only install dir must not fail the PUT — the runtime
-            // value already took effect.
-            let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_else(|| {
-                // Zero current_exe() guessing outside paths.rs — exe_dir() is
-                // the same resolution (empty on failure), centralized.
-                crate::paths::exe_dir().join("config.yaml")
-            });
-            if mb.is_some() || console_url.is_some() {
-                if let Ok(mut cfg) = Config::load(&cfg_path) {
-                    if let Some(mb) = mb {
-                        cfg.terminal.buffer_mb = mb as u32;
-                    }
-                    if let Some(url) = console_url.clone() {
-                        cfg.platform.console_url = url;
-                    }
-                    if let Ok(yaml) = serde_yaml::to_string(&cfg) {
-                        let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
-                    }
-                }
-            }
-            serde_json::json!({ "ok": true, "buffer_mb": mb.unwrap_or_else(|| {
-                state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024)
-            }) })
+        // Settings read/write (round-69) — bodies in
+        // api_settings_get / api_settings_put.
+        ("GET", "/api/settings") => api_settings_get(&state).await,
+        ("PUT", "/api/settings") => match api_settings_put(&state, &body_str) {
+            Ok(v) => v,
+            Err(resp) => return *resp,
         }
 
-        // Gateway connect (Settings page card): persist console_url, then
-        // register the device with the gateway (reg-key exchange) and
-        // optionally provision the free cloudflared tunnel. Returns per-step
-        // results so the page can show what happened.
-        ("POST", "/api/gateway/connect") => {
-            let v: serde_json::Value = match serde_json::from_str(&body_str) {
-                Ok(v) => v,
-                Err(_) => return built_response(
-                    StatusCode::BAD_REQUEST,
-                    "application/json",
-                    Body::from(serde_json::json!({
-                        "ok": false, "error": "invalid JSON", "code": "invalid_params",
-                    }).to_string()),
-                ),
-            };
-            let console_url = v.get("console_url").and_then(|c| c.as_str()).map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let reg_key = v.get("reg_key").and_then(|c| c.as_str()).map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty());
-            let want_tunnel = v.get("tunnel").and_then(|t| t.as_bool()).unwrap_or(false);
-            // 1. Persist console_url to config.yaml.
-            let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_default();
-            // HIGH(audit round): the old `unwrap_or_default()` meant a
-            // TRANSIENT load failure (AV file-sharing lock, concurrent edit)
-            // rewrote the WHOLE config.yaml from a token-less default — next
-            // boot ensure_token minted a NEW device token, the gateway saw a
-            // fresh device, and every client 401'd. Fall back to the LIVE
-            // in-memory config instead of a blank default.
-            let mut cfg = Config::load(&cfg_path)
-                .unwrap_or_else(|_| state.config.clone());
-            // Only touch console_url when the request actually speaks to it:
-            // absent = keep binding, "" = clear (the partial-PUT semantics
-            // audit flagged — a reg-key-only request used to silently
-            // unbind the gateway).
-            if let Some(val) = v.get("console_url") {
-                cfg.platform.console_url = val
-                    .as_str()
-                    .map(|x| x.trim().to_string())
-                    .filter(|x| !x.is_empty());
-            }
-            if let Ok(yaml) = serde_yaml::to_string(&cfg) {
-                let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
-            }
-            // 2. If a reg key was given, exchange it at the gateway for the
-            //    Cloudflare API token (the gateway's saved credential) — this
-            //    registers the device AND enables tunnel provisioning.
-            let mut registered = false;
-            let mut cf_token = String::new();
-            if let (Some(url), Some(key)) = (console_url.as_deref(), reg_key.as_deref()) {
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(30))
-                    .build();
-                if let Ok(client) = client {
-                    let r = client
-                        .post(format!("{}/api/install/tunnel-token", url.trim_end_matches('/')))
-                        .header("content-type", "application/json")
-                        // MED(audit round): a key containing \" or , used to
-                        // corrupt/inject fields in the hand-built JSON body.
-                        .body(serde_json::json!({ "key": key }).to_string())
-                        .send().await;
-                    if let Ok(resp) = r {
-                        if let Ok(j) = resp.json::<serde_json::Value>().await {
-                            if let Some(t) = j.get("apiToken").and_then(|x| x.as_str()) {
-                                cf_token = t.to_string();
-                                registered = true;
-                            }
-                        }
-                    }
-                }
-            }
-            // 3. Optional tunnel: write tunnel.yml + spawn cloudflared with
-            //    the token (free tier). Best-effort; report the outcome.
-            let mut tunnel_status = "skipped".to_string();
-            if want_tunnel && !cf_token.is_empty() {
-                tunnel_status = provision_tunnel(&cf_token).await;
-            } else if want_tunnel {
-                tunnel_status = "no cf token (register first or set CLOUDFLARE_API_TOKEN)".to_string();
-            }
-            serde_json::json!({
-                "ok": true,
-                "registered": registered,
-                "console_url": console_url,
-                "tunnel": tunnel_status,
-            })
-        }
+        // Gateway connect (Settings page card) — body in api_gateway_connect.
+        ("POST", "/api/gateway/connect") => match api_gateway_connect(&state, &body_str).await {
+            Ok(v) => v,
+            Err(resp) => return *resp,
+        },
 
         // ---- Plugin management (round-admin-ui): playwright-mcp process
         // ---- control for the panel's plugins page. Auth: all /api/* POSTs
         // and /api GETs pass the gate above.
-        ("GET", "/api/plugins/status") => {
-            let mut obj = serde_json::json!({ "ok": true, "playwright": state.playwright.status().await });
-            // P2-4: same boxed manifest as /api/status (advisory, omitted when absent).
-            if let Some(boxed) = boxed_versions() {
-                obj["boxed_versions"] = boxed;
-            }
-            obj
+        ("GET", "/api/plugins/status") => api_plugins_status(&state).await,
+        ("POST", "/api/plugins/playwright/start") => match api_playwright_start(&state).await {
+            Ok(v) => v,
+            Err(resp) => return *resp,
         }
-        ("POST", "/api/plugins/playwright/start") => {
-            match state.playwright.start().await {
-                Ok(v) => {
-                    // {ok:true, ...v} — merge the manager payload at top level
-                    let mut obj = v.as_object().cloned().unwrap_or_default();
-                    obj.insert("ok".into(), serde_json::json!(true));
-                    serde_json::Value::Object(obj)
-                }
-                // Dev builds have no bundled node.exe — fail loudly with the
-                // path hint instead of pretending the process started.
-                Err(e) => return built_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "application/json",
-                    Body::from(serde_json::json!({ "ok": false, "error": e.to_string() }).to_string()),
-                ),
-            }
-        }
-        ("POST", "/api/plugins/playwright/stop") => {
-            match state.playwright.stop().await {
-                Ok(v) => {
-                    let mut obj = v.as_object().cloned().unwrap_or_default();
-                    obj.insert("ok".into(), serde_json::json!(true));
-                    serde_json::Value::Object(obj)
-                }
-                Err(e) => return built_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "application/json",
-                    Body::from(serde_json::json!({ "ok": false, "error": e.to_string() }).to_string()),
-                ),
-            }
+        ("POST", "/api/plugins/playwright/stop") => match api_playwright_stop(&state).await {
+            Ok(v) => v,
+            Err(resp) => return *resp,
         }
 
         // Generic tool dispatch: POST /api/tools/{name}
@@ -1137,6 +628,299 @@ async fn api_call_tool(state: &AppState, tool_name: &str, body: &str) -> serde_j
     match tool.handler.call(params).await {
         Ok(result) => serde_json::json!({"ok": true, "result": result}),
         Err(e) => serde_json::json!({"ok": false, "error": e.to_string(), "code": e.code()}),
+    }
+}
+
+// ── API endpoint handlers ────────────────────────────────────
+// Bodies extracted from handle_request's route match so dispatch stays
+// auth + routing only. Same contract as before the extraction: a returned
+// serde_json::Value is served as `axum::Json(...).into_response()`; an Err
+// short-circuits handle_request with the already-built response (status +
+// headers preserved verbatim). The Err is boxed like check_auth's — Response
+// is large and clippy::result_large_err fires on a plain Result err variant.
+
+/// GET /api/sessions — audit trail: session list with terminal state
+/// (round-56). The logger lives in the terminal plugin's private field —
+/// read the same directory directly (cheap: one file per session).
+fn api_sessions_list() -> serde_json::Value {
+    // HIGH(audit round): the WRITER (terminal plugin) logs to
+    // paths::data_dir()/sessions — on registry-first installs the
+    // exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
+    // Vale), and these endpoints scanned an empty dir: the audit
+    // panel was permanently blind. Read the same dir; also honors
+    // the "zero current_exe() guessing outside paths.rs" rule.
+    let dir = crate::paths::sessions_dir();
+    let logger = crate::session_log::SessionLogger::new(dir);
+    let list: serde_json::Value = logger.list_sessions().iter().map(|(sid, state)| {
+        serde_json::json!({ "id": sid, "state": state })
+    }).collect();
+    serde_json::json!({ "ok": true, "sessions": list })
+}
+
+/// GET /api/sessions/{sid} — full audit events for one session (round-68):
+/// events_of() existed for /api/sessions but no endpoint called it — the
+/// durable audit corpus was write-only, unqueryable by the panel or MCP.
+/// This reads the session's jsonl (permanent, survives agent restarts).
+fn api_session_events(p: &str) -> Result<serde_json::Value, Box<Response>> {
+    // round-87: the old literal "/api/sessions/{sid}" arm never
+    // matched a real session id (exact-string match) — the audit
+    // endpoint 404'd for every session. Guard-arm route.
+    let sid = p.strip_prefix("/api/sessions/")
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("")
+        .to_string();
+    // round-116: the sid flows into a FILE PATH (events_of →
+    // {dir}/{sid}.jsonl). The forward-slash split alone let a
+    // backslash (0x5C, accepted in the request-target by the http
+    // crate) traverse on Windows: /api/sessions/..%5C..%5Cfoo read
+    // {dir}/../../foo.jsonl. Restrict to the session-id charset —
+    // session ids are hex (sid per-boot unique), so anything else is
+    // not a valid session anyway.
+    if !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(Box::new(built_response(StatusCode::BAD_REQUEST, "application/json", Body::from(r#"{"ok":false,"error":"invalid session id"}"#))));
+    }
+    // HIGH(audit round): the WRITER (terminal plugin) logs to
+    // paths::data_dir()/sessions — on registry-first installs the
+    // exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
+    // Vale), and these endpoints scanned an empty dir: the audit
+    // panel was permanently blind. Read the same dir; also honors
+    // the "zero current_exe() guessing outside paths.rs" rule.
+    let dir = crate::paths::sessions_dir();
+    let logger = crate::session_log::SessionLogger::new(dir);
+    let events = logger.events_of(&sid);
+    Ok(serde_json::json!({ "ok": true, "id": sid, "events": events }))
+}
+
+/// GET /api/logs — read the tray's vale-update.log (promised by the tray's
+/// doc comment but never implemented) — lets a remote client see auto-update
+/// failures instead of asking the user to open files.
+fn api_logs() -> serde_json::Value {
+    // Zero current_exe() guessing outside paths.rs — exe_dir() is the
+    // same resolution, centralized.
+    let dir = crate::paths::exe_dir();
+    let log = dir.join("vale-update.log");
+    let text = std::fs::read_to_string(&log).unwrap_or_else(|_| String::new());
+    serde_json::json!({"ok": true, "log": text.chars().rev().take(64 * 1024).collect::<String>().chars().rev().collect::<String>()})
+}
+
+/// GET /api/settings — read the runtime-configurable values (round-69).
+/// buffer_mb is the per-session output buffer cap — the panel's settings
+/// writes it here; it takes effect for NEW output (existing buffers keep
+/// their size), persists to config.yaml, survives restarts.
+async fn api_settings_get(state: &AppState) -> serde_json::Value {
+    let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_default();
+    let console_url = Config::load(&cfg_path).ok()
+        .and_then(|c| c.platform.console_url.clone());
+    // Tunnel state: tunnel.yml present + cloudflared running? Lets the
+    // Settings page show the persisted state after a refresh (the
+    // Gateway card must not blank out once connected).
+    let install_dir = crate::paths::install_dir();
+    let tunnel_configured = install_dir.join("tunnel.yml").exists();
+    // Blocking-subprocess audit: tasklist is a synchronous child
+    // process — run it on the blocking pool so the polled-every-15s
+    // /api/status sibling handler never stalls the async runtime
+    // workers. On non-Windows (dev/CI) tasklist doesn't exist and
+    // this degrades to false, as before.
+    let tunnel_running = tokio::task::spawn_blocking(|| {
+        std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq cloudflared.exe"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("cloudflared"))
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false);
+    serde_json::json!({
+        "ok": true,
+        "buffer_mb": state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024),
+        "console_url": console_url,
+        "tunnel_configured": tunnel_configured,
+        "tunnel_running": tunnel_running,
+    })
+}
+
+/// PUT /api/settings — write the runtime-configurable values (round-69).
+/// Err carries the ready-made error response, byte-identical to the
+/// pre-extraction early return (including its HTTP-200 Json shape).
+fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, Box<Response>> {
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return Err(Box::new(axum::Json(serde_json::json!({
+            "ok": false, "error": format!("invalid JSON: {e}"), "code": "invalid_params",
+        })).into_response())),
+    };
+    // stage-n (settings audit): a PUT may legitimately carry ONLY ONE
+    // of the keys — the old code reset buffer_mb to 8 whenever it was
+    // ABSENT (a console-only save silently clobbered a user's 64).
+    // Missing key = leave unchanged; empty console_url string =
+    // explicit clear (unchanged semantics).
+    let mb = v.get("buffer_mb").and_then(|b| b.as_u64()).map(|x| (x as usize).clamp(1, 64));
+    if let Some(mb) = mb {
+        state.terminal_buf_bytes.store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
+    }
+    let console_url = v.get("console_url").map(|val| {
+        val.as_str().map(|x| x.trim().to_string()).filter(|x| !x.is_empty())
+    });
+    // Persist to the ACTUALLY-LOADED config path (round-101: the old
+    // hardcoded exe_dir/config.yaml silently reverted on restart for
+    // dev/custom invocations — main.rs sets state.config_path from
+    // argv[1]). Atomic write, same as bootstrap. Best-effort: a
+    // read-only install dir must not fail the PUT — the runtime
+    // value already took effect.
+    let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_else(|| {
+        // Zero current_exe() guessing outside paths.rs — exe_dir() is
+        // the same resolution (empty on failure), centralized.
+        crate::paths::exe_dir().join("config.yaml")
+    });
+    if mb.is_some() || console_url.is_some() {
+        if let Ok(mut cfg) = Config::load(&cfg_path) {
+            if let Some(mb) = mb {
+                cfg.terminal.buffer_mb = mb as u32;
+            }
+            if let Some(url) = console_url.clone() {
+                cfg.platform.console_url = url;
+            }
+            if let Ok(yaml) = serde_yaml::to_string(&cfg) {
+                let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
+            }
+        }
+    }
+    Ok(serde_json::json!({ "ok": true, "buffer_mb": mb.unwrap_or_else(|| {
+        state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024)
+    }) }))
+}
+
+/// POST /api/gateway/connect (Settings page card): persist console_url, then
+/// register the device with the gateway (reg-key exchange) and optionally
+/// provision the free cloudflared tunnel. Returns per-step results so the
+/// page can show what happened.
+async fn api_gateway_connect(state: &AppState, body: &str) -> Result<serde_json::Value, Box<Response>> {
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Err(Box::new(built_response(
+            StatusCode::BAD_REQUEST,
+            "application/json",
+            Body::from(serde_json::json!({
+                "ok": false, "error": "invalid JSON", "code": "invalid_params",
+            }).to_string()),
+        ))),
+    };
+    let console_url = v.get("console_url").and_then(|c| c.as_str()).map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let reg_key = v.get("reg_key").and_then(|c| c.as_str()).map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let want_tunnel = v.get("tunnel").and_then(|t| t.as_bool()).unwrap_or(false);
+    // 1. Persist console_url to config.yaml.
+    let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_default();
+    // HIGH(audit round): the old `unwrap_or_default()` meant a
+    // TRANSIENT load failure (AV file-sharing lock, concurrent edit)
+    // rewrote the WHOLE config.yaml from a token-less default — next
+    // boot ensure_token minted a NEW device token, the gateway saw a
+    // fresh device, and every client 401'd. Fall back to the LIVE
+    // in-memory config instead of a blank default.
+    let mut cfg = Config::load(&cfg_path)
+        .unwrap_or_else(|_| state.config.clone());
+    // Only touch console_url when the request actually speaks to it:
+    // absent = keep binding, "" = clear (the partial-PUT semantics
+    // audit flagged — a reg-key-only request used to silently
+    // unbind the gateway).
+    if let Some(val) = v.get("console_url") {
+        cfg.platform.console_url = val
+            .as_str()
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty());
+    }
+    if let Ok(yaml) = serde_yaml::to_string(&cfg) {
+        let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
+    }
+    // 2. If a reg key was given, exchange it at the gateway for the
+    //    Cloudflare API token (the gateway's saved credential) — this
+    //    registers the device AND enables tunnel provisioning.
+    let mut registered = false;
+    let mut cf_token = String::new();
+    if let (Some(url), Some(key)) = (console_url.as_deref(), reg_key.as_deref()) {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build();
+        if let Ok(client) = client {
+            let r = client
+                .post(format!("{}/api/install/tunnel-token", url.trim_end_matches('/')))
+                .header("content-type", "application/json")
+                // MED(audit round): a key containing \" or , used to
+                // corrupt/inject fields in the hand-built JSON body.
+                .body(serde_json::json!({ "key": key }).to_string())
+                .send().await;
+            if let Ok(resp) = r {
+                if let Ok(j) = resp.json::<serde_json::Value>().await {
+                    if let Some(t) = j.get("apiToken").and_then(|x| x.as_str()) {
+                        cf_token = t.to_string();
+                        registered = true;
+                    }
+                }
+            }
+        }
+    }
+    // 3. Optional tunnel: write tunnel.yml + spawn cloudflared with
+    //    the token (free tier). Best-effort; report the outcome.
+    let mut tunnel_status = "skipped".to_string();
+    if want_tunnel && !cf_token.is_empty() {
+        tunnel_status = crate::tunnel::provision_tunnel(&cf_token).await;
+    } else if want_tunnel {
+        tunnel_status = "no cf token (register first or set CLOUDFLARE_API_TOKEN)".to_string();
+    }
+    Ok(serde_json::json!({
+        "ok": true,
+        "registered": registered,
+        "console_url": console_url,
+        "tunnel": tunnel_status,
+    }))
+}
+
+/// GET /api/plugins/status — plugin management (round-admin-ui): the panel's
+/// plugins page polls the playwright-mcp running state here.
+async fn api_plugins_status(state: &AppState) -> serde_json::Value {
+    let mut obj = serde_json::json!({ "ok": true, "playwright": state.playwright.status().await });
+    // P2-4: same boxed manifest as /api/status (advisory, omitted when absent).
+    if let Some(boxed) = boxed_versions() {
+        obj["boxed_versions"] = boxed;
+    }
+    obj
+}
+
+/// POST /api/plugins/playwright/start — playwright-mcp process control for
+/// the panel's plugins page.
+async fn api_playwright_start(state: &AppState) -> Result<serde_json::Value, Box<Response>> {
+    match state.playwright.start().await {
+        Ok(v) => {
+            // {ok:true, ...v} — merge the manager payload at top level
+            let mut obj = v.as_object().cloned().unwrap_or_default();
+            obj.insert("ok".into(), serde_json::json!(true));
+            Ok(serde_json::Value::Object(obj))
+        }
+        // Dev builds have no bundled node.exe — fail loudly with the
+        // path hint instead of pretending the process started.
+        Err(e) => Err(Box::new(built_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "application/json",
+            Body::from(serde_json::json!({ "ok": false, "error": e.to_string() }).to_string()),
+        ))),
+    }
+}
+
+/// POST /api/plugins/playwright/stop — playwright-mcp process control for
+/// the panel's plugins page.
+async fn api_playwright_stop(state: &AppState) -> Result<serde_json::Value, Box<Response>> {
+    match state.playwright.stop().await {
+        Ok(v) => {
+            let mut obj = v.as_object().cloned().unwrap_or_default();
+            obj.insert("ok".into(), serde_json::json!(true));
+            Ok(serde_json::Value::Object(obj))
+        }
+        Err(e) => Err(Box::new(built_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "application/json",
+            Body::from(serde_json::json!({ "ok": false, "error": e.to_string() }).to_string()),
+        ))),
     }
 }
 

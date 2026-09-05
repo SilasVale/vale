@@ -8,7 +8,7 @@ pub mod bootstrap;
 pub mod register;
 
 /// Cross-task control channel for the cloudflared tunnel supervisor
-/// (supervision audit #1): provision_tunnel (web.rs) rewrites tunnel.yml
+/// (supervision audit #1): provision_tunnel (tunnel.rs) rewrites tunnel.yml
 /// and then REQUESTS a restart; main.rs's supervisor task owns the single
 /// child and performs it. Generation counter because both sides are cheap
 /// pollers — no channel plumbing through AppState.
@@ -52,6 +52,7 @@ pub mod session_log;
 pub mod plugins;
 pub mod state;
 pub mod tools;
+pub mod tunnel;
 pub mod web;
 
 /// Default config.yaml embedded at compile time.
