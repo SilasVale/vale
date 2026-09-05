@@ -85,13 +85,13 @@ jobs:
         working-directory: agent/resources/panel-react
 
   agent:
-    name: agent (cargo test + clippy)
+    name: agent (cargo test + clippy + fmt)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: agent
@@ -100,6 +100,9 @@ jobs:
         working-directory: agent
       - name: Clippy (zero warnings)
         run: cargo clippy -p vale-agent --features terminal,keyring --all-targets -- -D warnings
+        working-directory: agent
+      - name: Format check
+        run: cargo fmt --all -- --check
         working-directory: agent
 
   agent-windows-target:
