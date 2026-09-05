@@ -23,18 +23,22 @@
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
-use bytes::Bytes;
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::sync::mpsc;
 use tower::Service;
 
 use crate::state::AppState;
 use vale_agent_core::EventBus;
+
+mod panel;
+mod sse;
+
+pub use panel::WebPanel;
+pub(crate) use panel::{panel_content_type, panel_token_response, plausible_grant, redeem_panel_grant, serve_panel_file};
+pub(crate) use sse::{sse_stream, sse_term_stream, SseConnectionGuard};
 
 /// Minimal self-contained status page — the panel SPA is retired, but the
 /// device URL should still answer something readable in a browser. Apple-style
@@ -57,181 +61,9 @@ const STATUS_PAGE: &str = concat!(
     "</p></div></body></html>",
 );
 
-// ── Terminal panel static assets (embedded, public) ──────────
-
-/// Serve a file from the embedded panel assets. Whitelist by name — no path
-/// traversal, no directory listing.
-fn serve_panel_file(file: &str, content_type: &'static str) -> Response {
-    const HTML: &str = include_str!("../resources/panel/index.html");
-    const JS: &str = include_str!("../resources/panel/panel.js");
-    const CSS: &str = include_str!("../resources/panel/panel.css");
-    const XTERM_JS: &str = include_str!("../resources/panel/vendor/xterm.min.js");
-    const XTERM_CSS: &str = include_str!("../resources/panel/vendor/xterm.css");
-    const FIT_JS: &str = include_str!("../resources/panel/vendor/xterm-addon-fit.min.js");
-    let body: &str = match file {
-        "index.html" => HTML,
-        "panel.js" => JS,
-        "panel.css" => CSS,
-        "vendor/xterm.min.js" => XTERM_JS,
-        "vendor/xterm.css" => XTERM_CSS,
-        "vendor/xterm-addon-fit.min.js" => FIT_JS,
-        _ => return built_response(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", Body::from("not found")),
-    };
-    // Version-query the bundle URLs on the HTML: Cloudflare overrides our
-    // no-cache with Browser-Cache-TTL 4h for .js/.css, so after an update
-    // browsers kept running the PREVIOUS panel for hours (blank page if it
-    // was a broken build). Per-release query strings give each build a
-    // distinct cache key; the ?v= is stripped below before whitelist match.
-    let html_ver = if file == "index.html" {
-        Some(env!("CARGO_PKG_VERSION"))
-    } else {
-        None
-    };
-    let body = match html_ver {
-        Some(ver) => Body::from(
-            body.replacen("panel.css", &format!("panel.css?v={ver}"), 1)
-                .replacen("panel.js", &format!("panel.js?v={ver}"), 1),
-        ),
-        None => Body::from(body),
-    };
-    let mut resp = built_response(StatusCode::OK, content_type, body);
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
-    resp
-}
-
-fn panel_content_type(file: &str) -> &'static str {
-    if file.ends_with(".js") { "text/javascript; charset=utf-8" }
-    else if file.ends_with(".css") { "text/css; charset=utf-8" }
-    else { "text/html; charset=utf-8" }
-}
-
-/// Serve the panel SPA with the device token injected as
-/// `window.__PANEL_TOKEN__` (before `</head>`). Shared by every
-/// injection-authorized path — loopback, the gateway proxy (X-Vale-Auth
-/// secret) and a redeemed one-time panel grant — so all three produce the
-/// byte-identical response shape: 200, text/html, no-store (a cached copy of
-/// this page IS the device token).
-fn panel_token_response(token: &str) -> Response {
-    // serde_json escapes quotes but NOT < > (no escape_html feature), so a
-    // non-hex token containing </script> could break out of the script
-    // element and run attacker JS on the device origin. Escape < > manually.
-    let escaped = serde_json::to_string(token)
-        .unwrap_or_else(|_| "\"\"".into())
-        .replace('<', "\\u003c")
-        .replace('>', "\\u003e");
-    let inject = format!("<script>window.__PANEL_TOKEN__={escaped};</script>");
-    let html = include_str!("../resources/panel/index.html")
-        .replacen("</head>", &format!("{inject}</head>"), 1);
-    let mut resp = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-store"),
-    );
-    resp
-}
-
-/// Cheap shape check on a `?grant=` code BEFORE any network work: the gateway
-/// mints 32 lowercase hex chars (store/grants.ts randomHex(16)); anything
-/// else is a probe and must not cost a redeem round-trip (a probe that
-/// reached the gateway would burn a KV read + a request per attempt). Pure
-/// and offline-testable; the 16..=128 window stays forward-compatible if the
-/// gateway ever lengthens codes (worst case then: the gateway 404s and the
-/// panel falls back to the plain no-token page).
-fn plausible_grant(code: &str) -> bool {
-    (16..=128).contains(&code.len()) && code.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-/// Redeem a one-time panel grant at the gateway: POST
-/// `<console_url>/api/devices/panel-grant/redeem` with OUR OWN device token
-/// as Bearer (possession of the token IS the device identity — the same rule
-/// as self-register) and the grant code from the panel URL in the body. The
-/// gateway validates the grant (single-use, 120s TTL, bound to this device),
-/// consumes it and answers `{ok:true}`; only then may the token be injected.
-///
-/// Returns true ONLY on an explicit ok:true. ANY failure (gateway unbound,
-/// network down, timeout, non-2xx, bad body) means "no injection" and the
-/// caller serves the plain panel — the same readable state a bad token gets.
-/// Short 5s timeout: a panel navigation must not hang on a dead gateway.
-/// The grant and token values are NEVER logged or echoed anywhere.
-///
-/// Uses the same inline reqwest pattern as api_gateway_connect below (no
-/// shared gateway-call helper exists); rustls-tls keeps the Windows
-/// cross-compile pure-Rust.
-async fn redeem_panel_grant(console_url: &str, device_token: &str, grant: &str) -> bool {
-    let url = format!(
-        "{}/api/devices/panel-grant/redeem",
-        console_url.trim_end_matches('/')
-    );
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    match client
-        .post(url)
-        .header("content-type", "application/json")
-        .header("Authorization", format!("Bearer {device_token}"))
-        .body(serde_json::json!({ "grant": grant }).to_string())
-        .send()
-        .await
-    {
-        Ok(r) if r.status().is_success() => r
-            .json::<serde_json::Value>()
-            .await
-            .ok()
-            .and_then(|v| v.get("ok").and_then(|b| b.as_bool()))
-            .unwrap_or(false),
-        _ => false,
-    }
-}
-
-// ── Tower Service ────────────────────────────────────────────
-
-#[derive(Clone)]
-pub struct WebPanel {
-    state: Arc<AppState>,
-}
-
-impl WebPanel {
-    pub fn new(state: Arc<AppState>) -> Self {
-        Self { state }
-    }
-}
-
-impl Service<Request<Body>> for WebPanel {
-    type Response = Response;
-    type Error = Infallible;
-    type Future = Pin<Box<dyn Future<Output = Result<Response, Infallible>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
-        let state = self.state.clone();
-        Box::pin(async move {
-            let resp = handle_request(req, state).await;
-            // NO global `Access-Control-Allow-Origin: *`. That header is what
-            // let any third-party page fetch /panel/ and read the injected
-            // device token (the original reason it was removed). Without it,
-            // cross-origin JS cannot read panel responses at all; the panel
-            // itself is same-origin and needs no CORS. MCP clients (Claude
-            // Code) are not browsers and are unaffected.
-            Ok(resp)
-        })
-    }
-}
-
-// ── Response helpers ───────────────────────────────────────
-
 /// Build a response with a fallback that can't panic — the builder only fails
 /// on invalid status/header constants, which ours never are.
-fn built_response(status: StatusCode, content_type: &'static str, body: Body) -> Response {
+pub(super) fn built_response(status: StatusCode, content_type: &'static str, body: Body) -> Response {
     Response::builder()
         .status(status)
         .header("Content-Type", content_type)
@@ -244,14 +76,14 @@ fn built_response(status: StatusCode, content_type: &'static str, body: Body) ->
 /// Read a query parameter by name, splitting on `&` so it works regardless of
 /// position (`?after=5&token=x` — the old strip_prefix("token=") only matched
 /// when the param came first).
-fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
+pub(super) fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
     query?.split('&').find_map(|pair| pair.strip_prefix(key).and_then(|rest| rest.strip_prefix('=')))
 }
 
 /// Host header value without its `:port` suffix (trimmed) — shared by the
 /// token-injection host allowlist and the loopback check below (the same
 /// trim + strip-:port dance was duplicated at both sites).
-fn host_no_port(headers: &axum::http::HeaderMap) -> Option<&str> {
+pub(super) fn host_no_port(headers: &axum::http::HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::HOST)
         .and_then(|h| h.to_str().ok())
@@ -380,7 +212,7 @@ where
 
 // ── Request handler ──────────────────────────────────────────
 
-async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
+pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
@@ -1032,198 +864,6 @@ async fn api_playwright_stop(state: &AppState) -> Result<serde_json::Value, Box<
 /// stage-n SSE audit LOW: bound concurrent SSE connections so a flood of
 /// viewers can't exhaust tasks/memory. 64 slots shared across /api/events
 /// and /api/events/term; each slot is a permit that releases on drop.
-static SSE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
-const SSE_MAX_CONNECTIONS: usize = 64;
-struct SseConnectionGuard;
-impl SseConnectionGuard {
-    fn acquire() -> Option<Self> {
-        let prev = SSE_CONNECTIONS.fetch_add(1, Ordering::SeqCst);
-        if prev < SSE_MAX_CONNECTIONS {
-            Some(SseConnectionGuard)
-        } else {
-            SSE_CONNECTIONS.fetch_sub(1, Ordering::SeqCst);
-            None
-        }
-    }
-}
-impl Drop for SseConnectionGuard {
-    fn drop(&mut self) {
-        SSE_CONNECTIONS.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-/// Adapter: tokio mpsc::Receiver → futures::Stream for axum Body::from_stream
-struct MpscStream {
-    rx: mpsc::Receiver<Result<Bytes, Infallible>>,
-}
-
-impl futures::stream::Stream for MpscStream {
-    type Item = Result<Bytes, Infallible>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.rx.poll_recv(cx)
-    }
-}
-
-/// Build a text/event-stream response from a broadcast receiver. The
-/// `encode` closure turns a received item into a `data:` frame; `lagged`
-/// provides the fallback frame when the receiver falls behind (loss-tolerant
-/// stream — the client catches up by polling from its last seq).
-async fn sse_response<T>(
-    mut rx: tokio::sync::broadcast::Receiver<T>,
-    encode: impl Fn(&T) -> String + Send + 'static,
-    lagged: impl Fn(u64) -> String + Send + 'static,
-    initial: Option<String>,
-) -> Response
-where
-    T: Clone + Send + 'static,
-{
-    let (tx, mpsc_rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
-
-    tokio::spawn(async move {
-        use tokio::sync::broadcast::error::RecvError;
-        // stage-n: emit an epoch marker as the FIRST frame so SSE clients can
-        // distinguish a fresh agent boot from a quiet stream (the epoch nonce
-        // is otherwise only in /api/events/poll).
-        if let Some(init) = &initial {
-            let _ = tx.send(Ok(Bytes::from(init.clone()))).await;
-        }
-        loop {
-            // Heartbeat: an idle stream emitted zero bytes while declaring
-            // keep-alive, so a silently-dropped connection was never detected
-            // and a reconnect missed every event during the outage. Send a
-            // comment frame every 30s of silence — it keeps the socket alive
-            // AND makes the client's read loop detect a dead connection.
-            // The mpsc is bounded (128); a client that stopped reading fills
-            // it and tx.send blocks FOREVER (leak: the task + broadcast
-            // subscription survive a silently-dead client). Bound each send
-            // at 5s — a full channel means the client is gone.
-            let send_bounded = async |bytes: Bytes| {
-                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes))).await
-                    .map(|r| r.is_err())
-                    .unwrap_or(true)
-            };
-            match tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv()).await {
-                Ok(Ok(item)) => {
-                    if send_bounded(Bytes::from(encode(&item))).await { break; }
-                }
-                Ok(Err(RecvError::Lagged(n))) => {
-                    // Client gone: stop like the Ok branch, or this task keeps
-                    // the broadcast subscription and a failing send forever.
-                    if send_bounded(Bytes::from(lagged(n))).await { break; }
-                }
-                Ok(Err(RecvError::Closed)) => break,
-                Err(_) => {
-                    // 30s of silence — heartbeat.
-                    if send_bounded(Bytes::from(": ping\n\n")).await { break; }
-                }
-            }
-        }
-    });
-
-    let body = Body::from_stream(MpscStream { rx: mpsc_rx });
-
-    let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("connection"),
-        axum::http::HeaderValue::from_static("keep-alive"),
-    );
-    resp
-}
-
-async fn sse_stream(state: Arc<AppState>) -> Response {
-    let rx = state.event_bus.subscribe();
-    // SeqEvent serializes as {"seq":n,"event":{...}}. The `v` field is a
-    // protocol version anchor (round-54): clients ignore unknown fields, so
-    // this is purely a diagnostic marker.
-    let encode = |event: &vale_agent_core::events::SeqEvent| {
-        let mut obj = serde_json::to_value(event).unwrap_or_default();
-        if let Some(o) = obj.as_object_mut() { o.insert("v".into(), serde_json::json!(1)); }
-        format!("data: {}\n\n", obj)
-    };
-    // Plain data frame so EventSource.onmessage fires; the client responds by
-    // polling once from its last seq to catch up.
-    let lagged = |n: u64| format!("data: {{\"v\":1,\"lagged\":{n}}}\n\n");
-    // stage-n: emit the epoch nonce as the initial frame so SSE clients can
-    // distinguish a fresh boot from a quiet stream.
-    let epoch = state.event_bus.epoch();
-    let initial = Some(format!("data: {{\"v\":1,\"epoch\":{epoch}}}\n\n"));
-    sse_response(rx, encode, lagged, initial).await
-}
-
-/// SSE stream of raw terminal output (TermOutput JSON frames).
-async fn sse_term_stream(state: Arc<AppState>) -> Response {
-    use tokio::sync::broadcast::error::RecvError;
-    use tokio::sync::mpsc;
-    let mut rx = state.event_bus.subscribe_term_output();
-    // {"v":1,"session_id":"term-0","data":[104,101,...]} — the v field is a
-    // protocol version anchor (round-54), same semantics as /api/events.
-    let encode = |output: &serde_json::Value| {
-        let mut obj = output.clone();
-        if let Some(o) = obj.as_object_mut() { o.insert("v".into(), serde_json::json!(1)); }
-        format!("data: {}\n\n", serde_json::to_string(&obj).unwrap_or_default())
-    };
-    // Loss-tolerant stream; a lagged frame is ignored client-side (it has no
-    // session_id). Keep the connection alive.
-    let lagged = |_n: u64| "data: {\"v\":1,\"lagged\":true}\n\n".to_string();
-
-    let (tx, mpsc_rx) = mpsc::channel::<Result<Bytes, Infallible>>(128);
-    tokio::spawn(async move {
-        // Dead-client detection only — NO session keepalive here. The panel's
-        // 30s terminal_select heartbeat (panel.js) already touches every live
-        // session it watches; touching ALL sessions from the SSE tick
-        // disabled the idle sweeper for the whole device while ANY tab was
-        // open (round-49: an orphaned MCP ssh to prod was never reaped while
-        // a panel tab sat open) and stamped every last_output equal, breaking
-        // the eviction tiebreak. The 60s ping below only keeps the
-        // connection alive (a closed tab → send fails → loop breaks).
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            let send_bounded = async |bytes: Bytes| {
-                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes))).await
-                    .map(|r| r.is_err())
-                    .unwrap_or(true)
-            };
-            tokio::select! {
-                _ = tick.tick() => {
-                    // Heartbeat byte — dead-client detection depends on a
-                    // send failing (the 5s bounded send into the full mpsc).
-                    if send_bounded(Bytes::from(": ping\n\n")).await { break; }
-                }
-                msg = rx.recv() => {
-                    match msg {
-                        Ok(item) => {
-                            if send_bounded(Bytes::from(encode(&item))).await { break; }
-                        }
-                        Err(RecvError::Lagged(n)) => {
-                            if send_bounded(Bytes::from(lagged(n))).await { break; }
-                        }
-                        Err(RecvError::Closed) => break,
-                    }
-                }
-            }
-        }
-    });
-
-    let body = Body::from_stream(MpscStream { rx: mpsc_rx });
-    let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("connection"),
-        axum::http::HeaderValue::from_static("keep-alive"),
-    );
-    resp
-}
-
-// ── Status ────────────────────────────────────────────────────
-
 /// P2-4: read the boxed-component version manifest (`vale setup`/`vale update`
 /// write `<install>/boxed-versions.json`). Returns None when absent or
 /// unparseable — advisory only, never fail-closed.
