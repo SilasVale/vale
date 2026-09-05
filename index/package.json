@@ -1,0 +1,9 @@
+{
+  "name": "vale-dist",
+  "private": true,
+  "type": "module",
+  "description": "Vale Index worker (Cloudflare) — one-time-claim unit tests via node --test",
+  "scripts": {
+    "test": "node --test"
+  }
+}

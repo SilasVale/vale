@@ -10,6 +10,10 @@
 // Design aligned with DeepSeek Harness (DSH) web GUI: dark-first design
 // system, --dsw-alias-* tokens, 12px radius cards, layered shadows.
 
+// One-time-download claim serializer (Durable Object, see ./claim.js).
+// Re-exported so wrangler binds TEMP_CLAIM to it.
+export { TempClaimDO } from "./claim.js";
+
 const FAVICON = "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%0A%20%20%3C%21--%20Vale%20brand%20mark%3A%20the%20vale%20at%20sunrise%20%E2%80%94%20near%20hill%2C%20far%20ridge%2C%20signal%20over%20the%20pass%20--%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sky%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23f59f00%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23e8590c%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%20%20%3CradialGradient%20id%3D%22glow%22%20cx%3D%22.5%22%20cy%3D%22.5%22%20r%3D%22.5%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23fff8e1%22%20stop-opacity%3D%22.55%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffe8a3%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%3C%2FradialGradient%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sheen%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.25%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%22.45%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%237c2d12%22%20stop-opacity%3D%22.10%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%3C%2Fdefs%3E%0A%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sky%29%22%2F%3E%0A%0A%20%20%3C%21--%20signal%20rising%20over%20the%20pass%20--%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%227.5%22%20fill%3D%22url%28%23glow%29%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%224%22%20fill%3D%22%23fff8e1%22%2F%3E%0A%0A%20%20%3C%21--%20far%20ridge%20%28haze%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20opacity%3D%22.78%22%20d%3D%22M14%2041Q26%2016%2044%2041Z%22%2F%3E%0A%20%20%3C%21--%20near%20hill%20%28solid%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M2%2041Q12%2020%2024%2041Z%22%2F%3E%0A%0A%20%20%3C%21--%20glass%20sheen%20--%3E%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sheen%29%22%2F%3E%0A%3C%2Fsvg%3E%0A";
 
 const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
@@ -412,35 +416,20 @@ export default {
       }
     }
 
-    // Download: GET /files/<token>  ->  stream file + delete (one-time)
+    // Download: GET /files/<token>  ->  serialized one-time claim.
+    // The claim runs inside TempClaimDO (instance named by the token), not
+    // here: an inline R2 get-then-delete is racy — two concurrent GETs can
+    // both pass get() before either delete lands, and the "one-time" file
+    // downloads twice. The DO runtime delivers one instance's requests
+    // strictly one at a time, so the first claim wins (streams the bytes)
+    // and losers observe the winner's delete as 404. The DO is short-lived
+    // per claim (milliseconds: one R2 get + one delete, no storage, alarms,
+    // or sockets — duration billing forbids an always-on shape here).
     const fileMatch = /^\/files\/([A-Za-z0-9_-]{16,64})$/.exec(url.pathname);
     if (fileMatch && request.method === "GET") {
       const token = fileMatch[1];
-      const key = `files/${token}`;
-      const obj = await env.TEMP_FILES.get(key);
-      if (!obj) {
-        return new Response(JSON.stringify({ error: "file not found or already downloaded" }), { status: 404 });
-      }
-      // Lazy expiry (see the put above): an unclaimed file past its 24h
-      // window is deleted on access and reported as gone. Uploads predating
-      // the expiresAt field have no deadline and are served as before.
-      const expRaw = obj.customMetadata && obj.customMetadata.expiresAt;
-      if (expRaw && Number(expRaw) < Date.now()) {
-        await env.TEMP_FILES.delete(key);
-        return new Response(JSON.stringify({ error: "file expired" }), { status: 410 });
-      }
-      // One-time (sequential retry protection ONLY): the object is deleted
-      // BEFORE the body streams, so a retry after a completed download 404s.
-      // This is not a once-only lock — concurrent GETs can all pass the
-      // get() above before any delete lands, and each receives the bytes.
-      await env.TEMP_FILES.delete(key);
-      return new Response(obj.body, {
-        headers: {
-          "content-type": obj.httpMetadata?.contentType || "application/octet-stream",
-          "content-disposition": obj.httpMetadata?.contentDisposition || 'attachment',
-          "cache-control": "no-store",
-        },
-      });
+      const id = env.TEMP_CLAIM.idFromName(`files/${token}`);
+      return env.TEMP_CLAIM.get(id).fetch(request);
     }
 
     // Version endpoint for the agent_update MCP tool (and legacy tray

@@ -17,6 +17,15 @@
   // R2 bucket: `wrangler r2 bucket create vale-temp-files`.
   // KV namespace: `wrangler kv namespace create TEMP_TOKENS`.
   "r2_buckets": [{ "binding": "TEMP_FILES", "bucket_name": "vale-temp-files" }],
+  // One-time-download claim serializer: GET /files/<token> is forwarded to
+  // the TempClaimDO instance named by the token, whose input queue closes
+  // the concurrent-get race (first claim wins, losers 404). Short-lived
+  // per claim only (no storage/alarms/sockets — duration billing forbids
+  // an always-on shape). Add-only migration: no deleted_classes needed.
+  "durable_objects": {
+    "bindings": [{ "name": "TEMP_CLAIM", "class_name": "TempClaimDO" }]
+  },
+  "migrations": [{ "tag": "v1-temp-claim", "new_sqlite_classes": ["TempClaimDO"] }],
   // Custom domain (added in the Cloudflare dashboard, like the other Vale
   // workers — wrangler 4.x ignores the custom_domains field): <download-host>
   // Vars (set via `wrangler var put`, NOT committed): CONSOLE_URL (the Vale
