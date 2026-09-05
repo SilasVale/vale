@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 use tower::Service;
 
 use crate::state::AppState;
-use vale_agent_core::{Config, EventBus};
+use vale_agent_core::EventBus;
 
 /// Minimal self-contained status page — the panel SPA is retired, but the
 /// device URL should still answer something readable in a browser. Apple-style
@@ -184,7 +184,11 @@ fn host_no_port(headers: &axum::http::HeaderMap) -> Option<&str> {
 /// panel fetches SSE with fetch(), which sets headers; nothing used the
 /// query param).
 fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>> {
-    let Some(ref token) = state.config.server.device_token else {
+    // Write-through (audit A4): the token comes from the LIVE snapshot, not
+    // a boot-time copy — a token rotated via config mutations is visible
+    // immediately, without a restart.
+    let cfg = state.config_snapshot();
+    let Some(ref token) = cfg.server.device_token else {
         // Fail CLOSED: bootstrap guarantees a token on every serving boot
         // (generates + persists fresh installs, recovers quarantined ones,
         // exits when randomness is unavailable) — a missing token here can
@@ -413,6 +417,9 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
     if method == Method::GET
         && (path == "/panel" || path == "/panel/" || path == "/desktop" || path == "/desktop/")
     {
+        // Write-through (audit A4): one snapshot of the LIVE config for the
+        // whole injection decision (proxy_secret + device_token below).
+        let cfg = state.config_snapshot();
         let mut resp = serve_panel_file("index.html", "text/html; charset=utf-8");
         resp.headers_mut().insert(
             axum::http::HeaderName::from_static("cache-control"),
@@ -427,7 +434,7 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         // the gateway proxy sends it only for authenticated (admin session
         // or plugin link) requests. Localhost/loopback keeps working for
         // on-device use.
-        let secret = state.config.server.proxy_secret.as_deref().unwrap_or("");
+        let secret = cfg.server.proxy_secret.as_deref().unwrap_or("");
         // round-104: an EMPTY/absent configured secret must never match — the
         // old gate accepted an empty header when the secret was "" (quarantine
         // recovery / pre-secret boot), which is exactly the fail-open RCE.
@@ -439,7 +446,7 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 // Constant-time compare (timing-safe for a 64-hex secret).
                 .map(|v| timing_safe_eq(v.as_bytes(), secret.as_bytes()))
                 .unwrap_or(false);
-        if let Some(ref token) = state.config.server.device_token {
+        if let Some(ref token) = cfg.server.device_token {
             // EXACT host allowlist. A substring/prefix match here was
             // bypassable — e.g. Host: evil-agent.saisi.online.evil.com matches
             // .contains("agent.saisi.online") and the token is handed to the
@@ -708,9 +715,11 @@ fn api_logs() -> serde_json::Value {
 /// writes it here; it takes effect for NEW output (existing buffers keep
 /// their size), persists to config.yaml, survives restarts.
 async fn api_settings_get(state: &AppState) -> serde_json::Value {
-    let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_default();
-    let console_url = Config::load(&cfg_path).ok()
-        .and_then(|c| c.platform.console_url.clone());
+    // Write-through (audit A4): console_url comes from the LIVE snapshot —
+    // the same source the PUT handler persists through update_config (the
+    // old disk re-read here was a second source of truth that could
+    // disagree with memory).
+    let console_url = state.config_snapshot().platform.console_url;
     // Tunnel state: tunnel.yml present + cloudflared running? Lets the
     // Settings page show the persisted state after a refresh (the
     // Gateway card must not blank out once connected).
@@ -740,8 +749,10 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
 }
 
 /// PUT /api/settings — write the runtime-configurable values (round-69).
-/// Err carries the ready-made error response, byte-identical to the
-/// pre-extraction early return (including its HTTP-200 Json shape).
+/// Write-through (audit A4): changes land in the LIVE config AND config.yaml
+/// in one update_config step. Err carries the ready-made error response,
+/// byte-identical to the pre-extraction early return (including its
+/// HTTP-200 Json shape).
 fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, Box<Response>> {
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -761,29 +772,23 @@ fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, B
     let console_url = v.get("console_url").map(|val| {
         val.as_str().map(|x| x.trim().to_string()).filter(|x| !x.is_empty())
     });
-    // Persist to the ACTUALLY-LOADED config path (round-101: the old
-    // hardcoded exe_dir/config.yaml silently reverted on restart for
-    // dev/custom invocations — main.rs sets state.config_path from
-    // argv[1]). Atomic write, same as bootstrap. Best-effort: a
-    // read-only install dir must not fail the PUT — the runtime
-    // value already took effect.
-    let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_else(|| {
-        // Zero current_exe() guessing outside paths.rs — exe_dir() is
-        // the same resolution (empty on failure), centralized.
-        crate::paths::exe_dir().join("config.yaml")
-    });
+    // Write-through (audit A4): merge onto the CURRENT in-process snapshot
+    // and persist via update_config — the runtime buffer cap, the in-process
+    // config and config.yaml all move together (the old code rewrote the
+    // file from a disk re-read and left state.config stale until restart).
+    // Best-effort persist (as before): a read-only install dir must not fail
+    // the PUT — the runtime value already took effect. With no config_path
+    // (dev invocations), update_config still updates memory and writes
+    // nothing.
     if mb.is_some() || console_url.is_some() {
-        if let Ok(mut cfg) = Config::load(&cfg_path) {
-            if let Some(mb) = mb {
-                cfg.terminal.buffer_mb = mb as u32;
-            }
-            if let Some(url) = console_url.clone() {
-                cfg.platform.console_url = url;
-            }
-            if let Ok(yaml) = serde_yaml::to_string(&cfg) {
-                let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
-            }
+        let mut cfg = state.config_snapshot();
+        if let Some(mb) = mb {
+            cfg.terminal.buffer_mb = mb as u32;
         }
+        if let Some(url) = console_url {
+            cfg.platform.console_url = url;
+        }
+        let _ = state.update_config(cfg, true);
     }
     Ok(serde_json::json!({ "ok": true, "buffer_mb": mb.unwrap_or_else(|| {
         state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024)
@@ -810,29 +815,29 @@ async fn api_gateway_connect(state: &AppState, body: &str) -> Result<serde_json:
     let reg_key = v.get("reg_key").and_then(|c| c.as_str()).map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     let want_tunnel = v.get("tunnel").and_then(|t| t.as_bool()).unwrap_or(false);
-    // 1. Persist console_url to config.yaml.
-    let cfg_path = state.config_path.lock().unwrap_or_else(|p| p.into_inner()).clone().unwrap_or_default();
-    // HIGH(audit round): the old `unwrap_or_default()` meant a
-    // TRANSIENT load failure (AV file-sharing lock, concurrent edit)
-    // rewrote the WHOLE config.yaml from a token-less default — next
-    // boot ensure_token minted a NEW device token, the gateway saw a
-    // fresh device, and every client 401'd. Fall back to the LIVE
-    // in-memory config instead of a blank default.
-    let mut cfg = Config::load(&cfg_path)
-        .unwrap_or_else(|_| state.config.clone());
-    // Only touch console_url when the request actually speaks to it:
-    // absent = keep binding, "" = clear (the partial-PUT semantics
-    // audit flagged — a reg-key-only request used to silently
-    // unbind the gateway).
+    // 1. Persist console_url — write-through (audit A4): merge onto the
+    //    CURRENT in-process snapshot and persist via update_config so memory
+    //    and config.yaml move together in one step. The HIGH(audit)
+    //    device_token-survival invariant holds by construction: the snapshot
+    //    always carries the boot device_token (fail-closed auth depends on
+    //    it), so the persisted file can NEVER lose it — the old
+    //    reload-from-disk-with-stale-fallback could rewrite the file from a
+    //    STALE snapshot on a transient load failure.
+    //    Only touch console_url when the request actually speaks to it:
+    //    absent = keep binding, "" = clear (the partial-PUT semantics
+    //    audit flagged — a reg-key-only request used to silently
+    //    unbind the gateway).
+    //    Best-effort persist (matches the old `let _ =`); with no
+    //    config_path (dev/tests) update_config still updates memory and
+    //    writes nothing.
+    let mut cfg = state.config_snapshot();
     if let Some(val) = v.get("console_url") {
         cfg.platform.console_url = val
             .as_str()
             .map(|x| x.trim().to_string())
             .filter(|x| !x.is_empty());
     }
-    if let Ok(yaml) = serde_yaml::to_string(&cfg) {
-        let _ = crate::bootstrap::atomic_write(&cfg_path, yaml.as_bytes());
-    }
+    let _ = state.update_config(cfg, true);
     // 2. If a reg key was given, exchange it at the gateway for the
     //    Cloudflare API token (the gateway's saved credential) — this
     //    registers the device AND enables tunnel provisioning.
@@ -1175,7 +1180,9 @@ async fn api_status(state: &AppState) -> serde_json::Value {
     // the console can store it at registration and present X-Vale-Auth when
     // proxying /panel/ — the agent injects the panel token only for
     // requests carrying the matching secret.
-    if let Some(sec) = state.config.server.proxy_secret.as_deref() {
+    // Write-through (audit A4): read the LIVE snapshot, not the boot copy.
+    let cfg = state.config_snapshot();
+    if let Some(sec) = cfg.server.proxy_secret.as_deref() {
         out["proxy_secret"] = serde_json::json!(sec);
     }
     out
@@ -1507,23 +1514,28 @@ mod tests {
     // tunnel provisioning arms need the network and are deliberately NOT
     // tested here.
 
-    const CFG_TOKEN: &str = "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233";
     const CFG_URL: &str = "https://gw.example";
 
-    /// A config with a 64-hex device_token and no console binding.
-    const CFG_YAML_TOKEN_ONLY: &str = "server:\n  device_token: aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233\nterminal:\n  buffer_mb: 8\nplatform:\n  console_url: null\n";
+    /// A config with a device_token and no console binding.
+    /// Write-through era: the device_token in the FILE must equal the token
+    /// the harness authenticates with — in production AppState::new is
+    /// seeded from the very config.yaml at config_path (run_server:
+    /// load_config(argv[1])), so the harness mirrors that exactly.
+    const CFG_YAML_TOKEN_ONLY: &str = "server:\n  device_token: test-token\nterminal:\n  buffer_mb: 8\nplatform:\n  console_url: null\n";
     /// A config with a device_token, a bound console_url and buffer_mb 8.
-    const CFG_YAML_TOKEN_AND_URL: &str = "server:\n  device_token: aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233\nterminal:\n  buffer_mb: 8\nplatform:\n  console_url: https://gw.example\n";
+    const CFG_YAML_TOKEN_AND_URL: &str = "server:\n  device_token: test-token\nterminal:\n  buffer_mb: 8\nplatform:\n  console_url: https://gw.example\n";
 
     /// State whose config_path points at a per-test tempdir config.yaml —
-    /// mirrors main.rs round-101 (persist to the ACTUALLY-LOADED path).
-    /// No global state: every test owns its directory and removes it.
+    /// mirrors main.rs (persist to the ACTUALLY-LOADED path). The in-memory
+    /// snapshot IS the file's config, exactly like the production boot
+    /// (AppState::new(load_config(argv[1]))). No global state: every test
+    /// owns its directory and removes it.
     fn state_with_cfg(tag: &str, yaml: &str) -> (Arc<AppState>, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("vale-web-cfg-{}-{tag}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let cfg_path = dir.join("config.yaml");
         std::fs::write(&cfg_path, yaml).unwrap();
-        let st = state();
+        let st = Arc::new(AppState::new(Config::load(&cfg_path).unwrap()));
         *st.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(cfg_path.clone());
         (st, cfg_path)
     }
@@ -1571,7 +1583,7 @@ mod tests {
         // HIGH(audit): a settings write must NEVER drop the device_token —
         // a token-less rewrite makes the next boot mint a NEW token and 401
         // every client (the recorded rotation incident).
-        assert_eq!(cfg.server.device_token.as_deref(), Some(CFG_TOKEN), "device_token must survive PUT /api/settings");
+        assert_eq!(cfg.server.device_token.as_deref(), Some(TEST_TOKEN), "device_token must survive PUT /api/settings");
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 
@@ -1597,7 +1609,32 @@ mod tests {
         let cfg = Config::load(&cfg_path).unwrap();
         assert_eq!(cfg.platform.console_url.as_deref(), Some("https://other.example"));
         assert_eq!(cfg.terminal.buffer_mb, 16, "console_url-only PUT must not reset buffer_mb");
-        assert_eq!(cfg.server.device_token.as_deref(), Some(CFG_TOKEN));
+        assert_eq!(cfg.server.device_token.as_deref(), Some(TEST_TOKEN));
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn settings_put_visible_in_memory_and_file() {
+        // Audit A4 write-through: a PUT must be visible IN-PROCESS (the live
+        // snapshot, no disk reload, no restart — the old state.config was a
+        // frozen boot snapshot) AND land in config.yaml. Both sources move
+        // together; neither can drift.
+        let (st, cfg_path) = state_with_cfg("put-memory", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(
+            req_with_json("PUT", "/api/settings", r#"{"buffer_mb": 32, "console_url": "https://mem.example"}"#),
+            st.clone(),
+        ).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        // 1. In-memory visibility: config_snapshot() reflects the change
+        //    WITHOUT touching the disk (this assert reads only the RwLock).
+        let snap = st.config_snapshot();
+        assert_eq!(snap.terminal.buffer_mb, 32, "in-memory buffer_mb must update");
+        assert_eq!(snap.platform.console_url.as_deref(), Some("https://mem.example"), "in-memory console_url must update");
+        assert_eq!(snap.server.device_token.as_deref(), Some(TEST_TOKEN), "device_token survives in memory too");
+        // 2. The file was written (persist=true) with the same values.
+        let disk = Config::load(&cfg_path).unwrap();
+        assert_eq!(disk.terminal.buffer_mb, 32, "persist=true must write config.yaml");
+        assert_eq!(disk.platform.console_url.as_deref(), Some("https://mem.example"));
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 
@@ -1608,7 +1645,7 @@ mod tests {
         let (st, cfg_path) = state_with_cfg("gw-persist", CFG_YAML_TOKEN_ONLY);
         let resp = handle_request(
             req_with_json("POST", "/api/gateway/connect", r#"{"console_url": "https://conn.example"}"#),
-            st,
+            st.clone(),
         ).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
@@ -1616,9 +1653,12 @@ mod tests {
         assert_eq!(v["registered"], false, "no reg_key → no registration");
         assert_eq!(v["tunnel"], "skipped");
         assert_eq!(v["console_url"], "https://conn.example");
+        // Write-through (audit A4): the binding is ALSO visible in-process —
+        // no restart, no disk reload.
+        assert_eq!(st.config_snapshot().platform.console_url.as_deref(), Some("https://conn.example"), "gateway connect must update the in-memory config too");
         let cfg = Config::load(&cfg_path).unwrap();
         assert_eq!(cfg.platform.console_url.as_deref(), Some("https://conn.example"), "connect must persist the binding");
-        assert_eq!(cfg.server.device_token.as_deref(), Some(CFG_TOKEN), "device_token must survive the gateway-card write too");
+        assert_eq!(cfg.server.device_token.as_deref(), Some(TEST_TOKEN), "device_token must survive the gateway-card write too");
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 

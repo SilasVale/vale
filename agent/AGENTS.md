@@ -132,8 +132,10 @@ src/
   session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
-                   managers own their locks internally (only config_path
-                   carries a small std Mutex inside AppState)
+                   managers own their locks internally (inside AppState only
+                   config_path carries a small std Mutex and config a std
+                   RwLock — write-through via update_config, read via
+                   config_snapshot)
   mcp/server.rs    DeviceServer (rmcp ServerHandler), bind() -> (addr, handle)
                    (port 0 = ephemeral, used by tests), serve_with_token
   web.rs           HTTP surface — hand-rolled Tower service (NOT axum route

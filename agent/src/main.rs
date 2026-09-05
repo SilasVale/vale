@@ -699,31 +699,29 @@ async fn run_server(config_path: PathBuf) {
     // are silent (the console may be offline at boot).
     {
         let reg_install = vale_agent::paths::install_dir();
-        let reg_cfgpath = state.config_path.clone();
+        let reg_state = state.clone();
         tokio::spawn(async move {
             // Supervision audit #2: the old loop SNAPSHOT-READ the config
             // once and — violating the documented saisi decouple — fell back
             // to the HARDCODED gateway "https://api.saisi.online" plus a
             // hardcoded hostname, POSTing the device TOKEN from "pure local"
-            // installs. Now EVERY cycle re-reads live config + hostname file
+            // installs. Now EVERY cycle reads the live config + hostname file
             // (so Settings-card changes apply without restart), and with no
             // console_url configured NOTHING is ever sent anywhere.
+            // Audit A4: "live config" is the write-through snapshot — the
+            // same value PUT /api/settings and the gateway card persist; the
+            // per-cycle config.yaml disk re-read is gone (one source of
+            // truth, trusted in-process).
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             loop {
-                let cfg_path = reg_cfgpath
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .clone();
-                let cfg = cfg_path.as_ref().and_then(|p| Config::load(p).ok());
+                let cfg = reg_state.config_snapshot();
                 let console = cfg
-                    .as_ref()
-                    .and_then(|c| c.platform.console_url.clone())
+                    .platform
+                    .console_url
+                    .clone()
                     .map(|x| x.trim().to_string())
                     .filter(|x| !x.is_empty());
-                let token = cfg
-                    .as_ref()
-                    .and_then(|c| c.server.device_token.clone())
-                    .unwrap_or_default();
+                let token = cfg.server.device_token.clone().unwrap_or_default();
                 let hostname = std::fs::read_to_string(reg_install.join("vale-agent.hostname"))
                     .map(|x| x.trim().to_string())
                     .unwrap_or_default();
@@ -799,7 +797,7 @@ async fn run_server(config_path: PathBuf) {
     // only on shutdown (Ok) or an immediate startup failure (Err).
     let mut last_err = None;
     for attempt in 1..=5 {
-        match vale_agent::mcp::serve(state.config.clone(), state.clone()).await {
+        match vale_agent::mcp::serve(state.config_snapshot(), state.clone()).await {
             Ok(()) => return,
             Err(e) => {
                 last_err = Some(e);

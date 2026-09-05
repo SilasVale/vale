@@ -15,17 +15,24 @@ use crate::plugins::terminal::TerminalPlugin;
 use crate::plugins::update::UpdatePlugin;
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
+use anyhow::Context;
 
 pub struct AppState {
-    // Lock posture: 除config_path外managers持有内部锁 — managers own their
-    // locks internally (callers hold Arc<Manager>); AppState itself holds no
-    // lock except config_path below.
+    // Lock posture: managers own their locks internally (callers hold
+    // Arc<Manager>); AppState itself holds the config RwLock below + the
+    // small config_path Mutex.
     pub serial_pool: Arc<SerialPool>,
     pub terminal_mgr: Arc<TerminalManager>,
     /// Unified event bus.
     pub event_bus: Arc<AppEventBus>,
     pub plugin_registry: PluginRegistry,
-    pub config: Config,
+    /// Write-through config (architecture audit A4 — one source of truth):
+    /// the in-process RwLock IS the live config; read via `config_snapshot`,
+    /// mutated ONLY via `update_config` (which optionally persists to
+    /// config_path). The old plain `Config` field was an immutable boot
+    /// snapshot, so PUT /api/settings + gateway-connect mutations were
+    /// invisible in-process until restart.
+    pub config: std::sync::RwLock<Config>,
     /// Process start time — /api/status exposes uptime_secs for health
     /// diagnosis (a low uptime after an update/crash is a red flag; stage-n).
     pub started_at: std::time::Instant,
@@ -114,7 +121,59 @@ impl AppState {
             memory: memory.clone(),
         });
 
-        Self { serial_pool, terminal_mgr, event_bus, plugin_registry, config, started_at, config_path: std::sync::Arc::new(std::sync::Mutex::new(None)), terminal_buf_bytes, playwright, memory }
+        Self {
+            serial_pool,
+            terminal_mgr,
+            event_bus,
+            plugin_registry,
+            config: std::sync::RwLock::new(config),
+            started_at,
+            config_path: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            terminal_buf_bytes,
+            playwright,
+            memory,
+        }
+    }
+
+    /// Cheap read-side snapshot of the live config (Config is Clone: a few
+    /// Options/Strings). Poison recovery per the lock convention — a
+    /// panicked writer never takes the config (or the server) down.
+    pub fn config_snapshot(&self) -> Config {
+        let cfg = self.config.read().unwrap_or_else(|p| p.into_inner());
+        cfg.clone()
+    }
+
+    /// Write-through config update: swap the in-process value and — when
+    /// `persist` is set — atomically rewrite the ACTUALLY-LOADED config file
+    /// (`config_path`, set at boot from argv[1], main.rs round-101) from the
+    /// SAME value, so the file can never drift from memory (audit A4: two
+    /// sources of truth).
+    ///
+    /// `persist=false` swaps memory only — for tests and callers whose
+    /// persistence is handled elsewhere. With no config_path wired (dev
+    /// invocations / harnesses), `persist=true` still swaps in-memory and
+    /// simply writes nothing.
+    pub fn update_config(&self, cfg: Config, persist: bool) -> anyhow::Result<()> {
+        // ONE write guard across persist + swap: concurrent updates can never
+        // interleave out of order (file is always written in swap order), and
+        // no reader can observe memory ahead of the file. Persist happens
+        // BEFORE the swap, so a failed disk write leaves BOTH sides untouched
+        // — either both move or neither does (write-through, not write-behind).
+        let mut guard = self.config.write().unwrap_or_else(|p| p.into_inner());
+        if persist {
+            let path = self
+                .config_path
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone();
+            if let Some(path) = path {
+                let yaml = serde_yaml::to_string(&cfg).context("failed to serialize config")?;
+                crate::bootstrap::atomic_write(&path, yaml.as_bytes())
+                    .with_context(|| format!("failed to persist config to {}", path.display()))?;
+            }
+        }
+        *guard = cfg;
+        Ok(())
     }
 }
 
