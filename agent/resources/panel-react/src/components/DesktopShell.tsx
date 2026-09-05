@@ -58,6 +58,10 @@ export function DesktopShell({
   const [page, setPage] = useState<Page>("terminal");
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const newMenuRef = useRef<HTMLDivElement | null>(null);
+  // P1-5: closing a session kills a possibly-running command — inline
+  // two-step confirm, copied from the memory_delete pattern (MemoryPage):
+  // first click arms ("close?"), second executes. Cancel disarms.
+  const [confirmCloseSid, setConfirmCloseSid] = useState<string | null>(null);
   // stage-n: agent version + vitals for the status strip — /api/status is
   // polled every 15 s (the electron tray shows the same data; CPU% is a
   // server-side delta metric so it needs repeated samples to appear).
@@ -161,15 +165,31 @@ export function DesktopShell({
                     >
                       <span className="dtab-dot" data-kind={s.kind} />
                       <span className="dtab-name">{s.label}</span>
-                      <button
-                        type="button"
-                        className="dtab-close"
-                        title="Close session"
-                        aria-label={`Close session ${s.label}`}
-                        onClick={(e) => { e.stopPropagation(); onClose(s.sid); }}
-                      >
-                        <Icon name="close" size={10} />
-                      </button>
+                      {confirmCloseSid === s.sid ? (
+                        <span className="dtab-confirm" onClick={(e) => e.stopPropagation()}>
+                          <span className="tab-confirm-hint">close?</span>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-mini"
+                            onClick={(e) => { e.stopPropagation(); setConfirmCloseSid(null); onClose(s.sid); }}
+                          >Close</button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-mini"
+                            onClick={(e) => { e.stopPropagation(); setConfirmCloseSid(null); }}
+                          >Cancel</button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="dtab-close"
+                          title="Close session"
+                          aria-label={`Close session ${s.label}`}
+                          onClick={(e) => { e.stopPropagation(); setConfirmCloseSid(s.sid); }}
+                        >
+                          <Icon name="close" size={10} />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>

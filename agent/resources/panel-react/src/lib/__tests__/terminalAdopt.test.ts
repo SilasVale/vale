@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { adoptNeedsAnotherPage, adoptPageExceeded, MAX_ADOPT_PAGES } from "../terminalAdopt";
+import { adoptNeedsAnotherPage, adoptPageExceeded, MAX_ADOPT_PAGES, splitWriteSlices, WRITE_SLICE_CHARS } from "../terminalAdopt";
 
 // round-246 (terminal-display audit HIGH-3): the adopt-read paging decision.
 // A single terminal_read is capped at 1 MiB; these tests pin WHEN the panel
@@ -44,5 +44,23 @@ describe("adoptPageExceeded", () => {
   it("allows up to MAX_ADOPT_PAGES chained reads", () => {
     expect(adoptPageExceeded(MAX_ADOPT_PAGES)).toBe(false);
     expect(adoptPageExceeded(MAX_ADOPT_PAGES + 1)).toBe(true);
+  });
+});
+
+describe("splitWriteSlices (P1-4 backpressure)", () => {
+  it("returns small payloads as a single slice", () => {
+    expect(splitWriteSlices("hello")).toEqual(["hello"]);
+  });
+
+  it("splits large payloads at the slice bound without losing bytes", () => {
+    const text = "ab".repeat(100 * 1024); // 200 KiB
+    const slices = splitWriteSlices(text);
+    expect(slices.length).toBe(Math.ceil(text.length / WRITE_SLICE_CHARS));
+    expect(slices.join("")).toBe(text);
+    for (const s of slices.slice(0, -1)) expect(s.length).toBe(WRITE_SLICE_CHARS);
+  });
+
+  it("returns [] for empty input", () => {
+    expect(splitWriteSlices("")).toEqual([]);
   });
 });

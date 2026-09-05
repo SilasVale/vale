@@ -28,6 +28,9 @@ interface SessionRuntime {
 
 const runtimes = new Map<string, SessionRuntime>();
 
+// P1-4: export downloads at most this many 1 MiB pages (see exportSession).
+export const MAX_EXPORT_PAGES = 16;
+
 export function useSessions(connected: boolean) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSid, setActiveSid] = useState<string | null>(null);
@@ -245,12 +248,16 @@ export function useSessions(connected: boolean) {
   const exportSession = useCallback((sid: string) => {
     // review #7: ONE read returns at most 1 MiB (the spill cap tail-clamps)
     // — long sessions exported as a truncated slice with no marker. Page
-    // the retained history with the returned END cursor (bounded: 64 MiB).
+    // the retained history with the returned END cursor.
+    // P1-4 (export backpressure): bound the download (a 64 MiB Blob build
+    // froze the tab on huge AI sessions) and SAY SO — a truncation marker
+    // goes into the file tail plus a status-line prompt.
     (async () => {
       try {
         const parts: string[] = [];
         let offset = 0;
-        for (let i = 0; i < 64; i++) {
+        let truncated = false;
+        for (let i = 0; i < MAX_EXPORT_PAGES; i++) {
           const r: any = await callTool("terminal_read", { session_id: sid, offset, clean: true });
           const text = (r && r.text) || "";
           if (!text) break;
@@ -258,13 +265,23 @@ export function useSessions(connected: boolean) {
           const end = Number(r.end ?? 0);
           if (!Number.isFinite(end) || end <= offset) break;
           offset = end;
+          if (i === MAX_EXPORT_PAGES - 1) {
+            // Loop exhausted with the cursor still advancing — probe once to
+            // tell "stopped exactly at the end" from "more history pending".
+            try {
+              const probe: any = await callTool("terminal_read", { session_id: sid, offset, clean: true });
+              if (probe && probe.text) truncated = true;
+            } catch { /* probe failed — treat the export as complete */ }
+          }
         }
+        if (truncated) parts.push(`\n…[export truncated at ${MAX_EXPORT_PAGES} MiB — read the full log via terminal_read offset ${offset}]…\n`);
         const blob = new Blob([parts.join("")], { type: "text/plain" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = `${sid}.log`;
         a.click();
         URL.revokeObjectURL(a.href);
+        if (truncated) setStatusState(`export truncated at ${MAX_EXPORT_PAGES} MiB — the file tail says where to continue reading`);
       } catch {
         setStatusState("export failed");
       }

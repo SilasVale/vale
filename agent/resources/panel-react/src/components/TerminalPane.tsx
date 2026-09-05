@@ -6,7 +6,7 @@ import { callTool } from "../lib/api";
 import { getTheme, onThemeChange } from "../lib/theme";
 import { Icon } from "../ui/Icon";
 import type { Session } from "../hooks/useSessions";
-import { adoptNeedsAnotherPage } from "../lib/terminalAdopt";
+import { adoptNeedsAnotherPage, splitWriteSlices, WRITE_SLICE_CHARS } from "../lib/terminalAdopt";
 
 // TerminalPane owns one xterm instance per session (imperative — xterm is
 // DOM-heavy and must NOT re-render on React state changes). It registers a
@@ -166,6 +166,50 @@ export function TerminalPane({ session, registerWrite }: {
     };
     containerRef.current.addEventListener("contextmenu", onContext);
 
+    // P1-4 (terminal backpressure): EVERY byte reaching xterm goes through
+    // this per-frame pump. SSE frames landing in the same frame are batched
+    // into ONE term.write, and 1 MiB adopt pages are sliced across frames —
+    // a chatty session can never freeze the UI in one synchronous write.
+    // The renderedRef dedup cursor still advances synchronously at ENQUEUE
+    // time (useSSE dedups later frames against it between pump runs).
+    const writeQueue: string[] = [];
+    let writeScheduled = false;
+    let writeRaf = 0;
+    const pumpWrites = () => {
+      writeScheduled = false;
+      writeRaf = 0;
+      if (writeQueue.length === 0) return;
+      let out = "";
+      while (writeQueue.length > 0) {
+        const head = writeQueue[0]!;
+        if (out.length === 0 || out.length + head.length <= WRITE_SLICE_CHARS) {
+          out += head;
+          writeQueue.shift();
+        } else break;
+      }
+      try { term.write(out); } catch { /* disposed mid-flush */ }
+      if (writeQueue.length > 0) schedulePump();
+    };
+    const schedulePump = () => {
+      if (writeScheduled) return;
+      writeScheduled = true;
+      if (typeof requestAnimationFrame !== "undefined") writeRaf = requestAnimationFrame(pumpWrites);
+      else writeRaf = setTimeout(pumpWrites, 0) as unknown as number;
+    };
+    const queueWrite = (text: string) => {
+      if (!text) return;
+      for (const s of splitWriteSlices(text)) writeQueue.push(s);
+      schedulePump();
+    };
+    const cancelPump = () => {
+      try {
+        if (typeof cancelAnimationFrame !== "undefined") cancelAnimationFrame(writeRaf);
+        else clearTimeout(writeRaf);
+      } catch { /* noop */ }
+      writeQueue.length = 0;
+      writeScheduled = false;
+    };
+
     // Register the SSE write callback: dedup via the frame's absolute start
     // offset, and skip while a sync read is in flight (round-68).
     // round-99: registerWrite returns an unregister fn — the callback must
@@ -178,8 +222,8 @@ export function TerminalPane({ session, registerWrite }: {
     const unregister = registerWrite(session.sid, (bytes, start) => {
       // The SSE hook passed the frame; TerminalPane only needs the bytes
       // (the hook already validated session_id). Dedup is done by the hook
-      // caller in useSSE — here we just write + advance.
-      term.write(new TextEncoder().encode(decoder.decode(bytes, { stream: true })));
+      // caller in useSSE — here we just enqueue + advance.
+      queueWrite(decoder.decode(bytes, { stream: true }));
       // review #1: when the caller knows the ABSOLUTE offset of these
       // bytes (every SSE frame + every clamped read does), position there —
       // the += form permanently desyncs across server-side clamps.
@@ -221,14 +265,14 @@ export function TerminalPane({ session, registerWrite }: {
             const bytes = new Uint8Array(bin.length);
             for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
             if (skip < bytes.length) {
-              term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
+              queueWrite(decoder.decode(bytes.subarray(skip), { stream: true }));
               renderedRef.current = Math.max(renderedRef.current, Number(r.start) + bytes.length);
               advanced = true;
             }
           } else if (skip >= 0 && r.text) {
             const bytes = new TextEncoder().encode(r.text);
             if (skip < bytes.length) {
-              term.write(new TextEncoder().encode(decoder.decode(bytes.subarray(skip), { stream: true })));
+              queueWrite(decoder.decode(bytes.subarray(skip), { stream: true }));
               renderedRef.current = Math.max(renderedRef.current, Number(r.start) + bytes.length);
               advanced = true;
             }
@@ -250,6 +294,7 @@ export function TerminalPane({ session, registerWrite }: {
     return () => {
       offTheme();
       sub.dispose();
+      cancelPump();
       searchRef.current = null;
       fitRef.current = null;
       term.dispose();

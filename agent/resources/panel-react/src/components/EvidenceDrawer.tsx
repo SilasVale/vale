@@ -3,8 +3,10 @@
 // every 3s because its poll also drives the screencast; the embedded pane
 // must not poll, so this drawer:
 //   1. fetches pwshots + actions ON DEMAND when opened,
-//   2. refreshes on the agent's SSE `browser-actions-changed` push while
-//      open (round-252), and
+//   2. refreshes on the agent's `vale-browser-actions-changed` /
+//      `vale-playwright-changed` window events (re-dispatched by useSSE from
+//      its single /api/events/term stream — P1-3 removed this drawer's own
+//      duplicate /api/events fetch) while open, and
 //   3. fetches each new screenshot blob when its row appears.
 // Visual parity comes from reusing the existing .browser-ev-* classes.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -75,53 +77,23 @@ export function EvidenceDrawer({ apiBase, token, open, onClose }: {
     };
   }, [open, shots, shotUrls, selected, base, auth]);
 
-  // Load on open; refresh on the agent's SSE actions-changed push while open.
+  // Load on open; refresh on the agent's activity pushes while open.
+  // (P1-3: useSSE re-dispatches its single stream's control frames as
+  // `vale-*` window events — subscribe to those instead of opening a second
+  // /api/events fetch.)
   useEffect(() => {
     if (!open) return;
     aliveRef.current = true;
     void refresh();
-    let dead = false;
-    let abort: AbortController | null = null;
-    let retry = 0;
-    const connect = async () => {
-      if (dead || !aliveRef.current) return;
-      try {
-        const ctl = new AbortController();
-        abort = ctl;
-        const timer = setTimeout(() => ctl.abort(), 30000);
-        const res = await fetch(`${base}/api/events`, {
-          headers: { authorization: `Bearer ${token}` }, signal: ctl.signal,
-        }).finally(() => clearTimeout(timer));
-        if (!res.ok || !res.body) throw new Error(String(res.status));
-        retry = 0;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        while (!dead && aliveRef.current) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          let idx;
-          while ((idx = buf.indexOf("\n\n")) >= 0) {
-            const frame = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            const line = frame.split("\n").find((l) => l.startsWith("data: "));
-            if (!line) continue;
-            try {
-              const o = JSON.parse(line.slice(6));
-              if (o?.ev === "browser-actions-changed" || o?.ev === "playwright-changed") void refresh();
-            } catch { /* keepalive */ }
-          }
-        }
-      } catch { /* fall through */ }
-      if (!dead && aliveRef.current) {
-        retry = Math.min(retry + 1, 5);
-        setTimeout(connect, Math.min(2000 * 2 ** retry, 30000));
-      }
+    const onActivity = () => { if (aliveRef.current) void refresh(); };
+    window.addEventListener("vale-browser-actions-changed", onActivity);
+    window.addEventListener("vale-playwright-changed", onActivity);
+    return () => {
+      aliveRef.current = false;
+      window.removeEventListener("vale-browser-actions-changed", onActivity);
+      window.removeEventListener("vale-playwright-changed", onActivity);
     };
-    void connect();
-    return () => { dead = true; aliveRef.current = false; try { abort?.abort(); } catch { /* noop */ } };
-  }, [open, base, token, refresh]);
+  }, [open, refresh]);
 
   const toggleExpanded = useCallback((k: string) => {
     setExpanded((prev) => {

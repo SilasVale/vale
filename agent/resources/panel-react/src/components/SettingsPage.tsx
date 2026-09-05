@@ -42,6 +42,10 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
   const [gwTunnel, setGwTunnel] = useState(false);
   const [gwStatus, setGwStatus] = useState("");
   const [gwBusy, setGwBusy] = useState(false);
+  // P1-5: connecting spends a one-time reg-key + may provision a tunnel —
+  // inline two-step confirm, copied from the memory_delete pattern
+  // (MemoryPage): first click arms, second executes. Cancel disarms.
+  const [gwConfirm, setGwConfirm] = useState(false);
 
   useEffect(() => {
     callApi("/api/settings")
@@ -76,6 +80,7 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
   // Save gateway config + register + optional tunnel, one click.
   async function connectGateway() {
     if (!gwUrl.trim()) { setGwStatus("gateway URL required"); return; }
+    setGwConfirm(false);
     setGwBusy(true);
     setGwStatus("connecting…");
     try {
@@ -157,9 +162,19 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
             <span>Public access (free cloudflared tunnel)</span>
           </label>
           <div className="settings-actions">
-            <button className="btn btn-ghost btn-mini" onClick={connectGateway} disabled={gwBusy}>
-              {gwBusy ? "Connecting…" : "Save & connect"}
-            </button>
+            {gwConfirm ? (
+              <>
+                <span className="mem-confirm-hint">save & connect?</span>
+                <button className="btn btn-danger btn-mini" onClick={connectGateway} disabled={gwBusy}>
+                  {gwBusy ? "Connecting…" : "Connect"}
+                </button>
+                <button className="btn btn-ghost btn-mini" onClick={() => setGwConfirm(false)} disabled={gwBusy}>Cancel</button>
+              </>
+            ) : (
+              <button className="btn btn-ghost btn-mini" onClick={() => setGwConfirm(true)} disabled={gwBusy}>
+                Save & connect
+              </button>
+            )}
           </div>
         </div>
         {gwStatus && <p className="hint settings-status">{gwStatus}</p>}

@@ -8,6 +8,8 @@
 
 ## Cross-compilation to Windows (MSVC)
 
+Panel-first: the raw `cargo xwin build` commands below do NOT rebuild the panel SPA — after touching `resources/panel-react/`, run `npm run build` there first (or use `scripts/build.sh agent`, which does both), since panel.js is embedded at compile time via include_str!.
+
 Requires `cargo-xwin` for cross-compiling from Linux:
 
 ```bash

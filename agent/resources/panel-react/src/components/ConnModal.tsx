@@ -79,12 +79,22 @@ export function ConnModal({ kind, onClose, onConnect }: {
         if (autoReconnect) extra.auto_reconnect = true;
         await onConnect(`${sport}?baud=${baud}`, extra);
       }
+      // P2-2: the password/passphrase must not linger in the form state
+      // after a successful connect (screen share / shoulder surf).
+      setPass("");
       onClose();
     } catch (e: any) {
       setStatus(e.message || "connect failed");
     } finally {
       setBusy(false);
     }
+  }
+
+  // P2-2: dismissing the modal also wipes the password field — a cancelled
+  // attempt leaves no secret in the (possibly re-opened) form state.
+  function close() {
+    setPass("");
+    onClose();
   }
 
   const mkField = (label: string, value: string, set: (v: string) => void, placeholder: string, type = "text") => (
@@ -97,7 +107,7 @@ export function ConnModal({ kind, onClose, onConnect }: {
   );
 
   return (
-    <div id="conn-modal" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div id="conn-modal" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className="modal-card">
         <h2>{kind === "ssh" ? "New SSH" : "New Serial"}</h2>
         {saved.length > 0 && (
@@ -130,7 +140,7 @@ export function ConnModal({ kind, onClose, onConnect }: {
           </>
         )}
         <div className="modal-actions">
-          <button onClick={onClose}>Cancel</button>
+          <button onClick={close}>Cancel</button>
           <button className="primary" onClick={connect} disabled={busy}>Connect</button>
         </div>
         <div id="modal-status" className={status.startsWith("host") || status.startsWith("port") ? "error" : ""}>{status}</div>

@@ -37,3 +37,21 @@ export function adoptNeedsAnotherPage(
 export function adoptPageExceeded(page: number): boolean {
   return page > MAX_ADOPT_PAGES;
 }
+
+// P1-4 (terminal backpressure): one term.write of a full 1 MiB adopt page (or
+// a burst of SSE frames) blocks the main thread while xterm parses + lays out
+// the text. Slice payloads into per-frame budgets — TerminalPane queues the
+// slices and writes (at most) one budget per animation frame, so a chatty
+// session can never freeze the UI in a single call.
+
+/** Max characters handed to xterm in a single animation frame. */
+export const WRITE_SLICE_CHARS = 64 * 1024;
+
+/** Split text into per-frame write slices (pure, unit-tested). */
+export function splitWriteSlices(text: string, size: number = WRITE_SLICE_CHARS): string[] {
+  if (!text) return [];
+  const n = Math.max(1, Math.floor(size));
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += n) out.push(text.slice(i, i + n));
+  return out;
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { callTool } from "../lib/api";
+import { callTool, getHost, getToken } from "../lib/api";
 
 // SSE terminal stream — connects to /api/events/term, dispatches byte frames
 // to the matching session's xterm (via per-session write callbacks registered
@@ -77,8 +77,10 @@ export function useSSE(
 
   useEffect(() => {
     if (!connected) { setSseState("connecting"); return; }
-    const hostname = (localStorage.getItem("valeHost") || "").trim();
-    const token = localStorage.getItem("valeToken") || "";
+    // P2-1(b): reuse the transport singletons (initTransport in boot/connect)
+    // instead of reading localStorage directly — one credential source.
+    const hostname = getHost().trim();
+    const token = getToken();
     if (!hostname) { setSseState("down"); return; }
 
     let attempt = 0;

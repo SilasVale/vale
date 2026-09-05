@@ -26,6 +26,8 @@ Subprojects have their own build docs:
 - **agent**: `agent/AGENTS.md` (cargo-xwin cross-compile, feature gating, MCP tool additions, Windows smoke checklist; mirrored by `agent/CLAUDE.md` — keep both in sync)
 - **gateway / index**: wrangler deploy per their `wrangler.jsonc`
 
+Panel-first: `./scripts/build.sh agent` rebuilds the panel SPA before the exe (panel.js is embedded at compile time) — never ship a raw `cargo xwin build` after touching `agent/resources/panel-react/`.
+
 ## Conventions
 
 - **Commits**: conventional commits with stage tags (`fix(stage-x)`, `feat(stage-x)`, …); each commit leaves the tree green. Before committing, run the subproject's `format:check` (e.g. gateway: `npm run format:check`) — no husky hooks (deliberately heavy; manual until a later round).

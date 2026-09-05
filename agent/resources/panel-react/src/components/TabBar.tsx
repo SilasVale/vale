@@ -1,4 +1,5 @@
 // react-jsx: no React import needed
+import { useState } from "react";
 import type { Session } from "../hooks/useSessions";
 import { Icon } from "../ui/Icon";
 
@@ -15,6 +16,10 @@ export function TabBar({ sessions, activeSid, onActivate, onClose, onExport, vie
   view: SessionView;
   onViewChange: (v: SessionView) => void;
 }) {
+  // P1-5: closing a session kills a possibly-running command — inline
+  // two-step confirm, copied from the memory_delete pattern (MemoryPage):
+  // first click arms ("close?"), second executes. Cancel disarms.
+  const [confirmSid, setConfirmSid] = useState<string | null>(null);
   return (
     <div className="tabrow">
       <div id="tabs" role="tablist" aria-label="Terminal sessions">
@@ -39,13 +44,29 @@ export function TabBar({ sessions, activeSid, onActivate, onClose, onExport, vie
               <Icon name="export" size={12} />
             </span>
             {!s.savedOnly && !s.closed && (
-              <span
-                className="tab-close"
-                title="Close session"
-                onClick={(e) => { e.stopPropagation(); onClose(s.sid); }}
-              >
-                <Icon name="close" size={12} />
-              </span>
+              confirmSid === s.sid ? (
+                <span className="tab-confirm" onClick={(e) => e.stopPropagation()}>
+                  <span className="tab-confirm-hint">close?</span>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-mini"
+                    onClick={(e) => { e.stopPropagation(); setConfirmSid(null); onClose(s.sid); }}
+                  >Close</button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-mini"
+                    onClick={(e) => { e.stopPropagation(); setConfirmSid(null); }}
+                  >Cancel</button>
+                </span>
+              ) : (
+                <span
+                  className="tab-close"
+                  title="Close session"
+                  onClick={(e) => { e.stopPropagation(); setConfirmSid(s.sid); }}
+                >
+                  <Icon name="close" size={12} />
+                </span>
+              )
             )}
           </div>
         ))}

@@ -56,7 +56,7 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   const urlEditingRef = useRef(false);
   // round-253: event-driven "AI is operating" pulse (SSE browser-actions-
   // changed / playwright-changed — no polling).
-  const aiActive = useAiActivityPulse("", token);
+  const aiActive = useAiActivityPulse();
   // round-260: attention flash — when the AI STARTS a new burst (idle →
   // active transition), glow the Evidence toggle so the user notices even
   // while not watching. Pure UI state; fades by itself.

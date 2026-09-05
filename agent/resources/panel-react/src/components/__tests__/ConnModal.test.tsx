@@ -47,4 +47,16 @@ describe("ConnModal (ssh)", () => {
     await waitFor(() => expect(onConnect).toHaveBeenCalledTimes(1));
     expect(onConnect.mock.calls[0]![1]).toEqual({ password: "" });
   });
+
+  it("clears the password field after a successful connect (P2-2)", async () => {
+    const onConnect = vi.fn().mockResolvedValue({});
+    render(<ConnModal kind="ssh" onClose={() => {}} onConnect={onConnect} />);
+    fill("box.example.com", "root");
+    const passInput = screen.getByPlaceholderText("leave empty for keychain") as HTMLInputElement;
+    fireEvent.change(passInput, { target: { value: "s3cret" } });
+    expect(passInput.value).toBe("s3cret");
+    fireEvent.click(screen.getByText("Connect"));
+    await waitFor(() => expect(onConnect).toHaveBeenCalledTimes(1));
+    expect(passInput.value).toBe("");
+  });
 });

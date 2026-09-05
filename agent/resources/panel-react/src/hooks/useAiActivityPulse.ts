@@ -1,21 +1,27 @@
 // useAiActivityPulse — event-driven "AI is operating" indicator (round-253).
 //
-// The screenshot BrowserPane derives AI activity by polling pwshots/actions
-// every 3s. The embedded REAL-browser pane must not poll — instead it lights
-// up when the agent PUSHES activity: the SSE `browser-actions-changed` event
-// (emitted by record_mcp_action / record_mcp_screenshot) and
-// `playwright-changed`. The pulse self-clears after a short fade — a UI
-// timer, not a data poll.
+// P1-3 (three-streams-into-one): this hook used to open its OWN /api/events
+// SSE fetch alongside useSSE's /api/events/term stream (plus EvidenceDrawer's
+// own copy — three streams doing one job). useSSE already re-dispatches every
+// control frame as a `vale-<ev>` window event, so this hook now just subscribes
+// to those (browser-actions-changed / playwright-changed) and keeps its UI
+// fade timer. No fetch, no backoff, no token needed.
+//
+// Signature kept as () — callers pass nothing; the pulse is purely local UI.
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Active for this long after the last activity push (UI fade window). */
-const PULSE_MS = 8000;
+export const PULSE_MS = 8000;
 
-export function useAiActivityPulse(apiBase: string, token: string): boolean {
+/** Window events (dispatched by useSSE) that mean "the AI is operating". */
+export const AI_ACTIVITY_EVENTS = [
+  "vale-browser-actions-changed",
+  "vale-playwright-changed",
+] as const;
+
+export function useAiActivityPulse(): boolean {
   const [active, setActive] = useState(false);
   const fadeRef = useRef<number | undefined>(undefined);
-  const activeRef = useRef(false);
-  activeRef.current = active;
 
   const pulse = useCallback(() => {
     setActive(true);
@@ -27,53 +33,13 @@ export function useAiActivityPulse(apiBase: string, token: string): boolean {
   }, []);
 
   useEffect(() => {
-    let dead = false;
-    let abort: AbortController | null = null;
-    let retry = 0;
-    const connect = async () => {
-      if (dead) return;
-      try {
-        const ctl = new AbortController();
-        abort = ctl;
-        const timer = setTimeout(() => ctl.abort(), 30000);
-        const res = await fetch(`${apiBase}/api/events`, {
-          headers: { authorization: `Bearer ${token}` },
-          signal: ctl.signal,
-        }).finally(() => clearTimeout(timer));
-        if (!res.ok || !res.body) throw new Error(String(res.status));
-        retry = 0;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buf = "";
-        while (!dead) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          let idx;
-          while ((idx = buf.indexOf("\n\n")) >= 0) {
-            const frame = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            const line = frame.split("\n").find((l) => l.startsWith("data: "));
-            if (!line) continue;
-            try {
-              const o = JSON.parse(line.slice(6));
-              if (o?.ev === "browser-actions-changed" || o?.ev === "playwright-changed") pulse();
-            } catch { /* keepalive */ }
-          }
-        }
-      } catch { /* fall through to retry */ }
-      if (!dead) {
-        retry = Math.min(retry + 1, 5);
-        setTimeout(connect, Math.min(2000 * 2 ** retry, 30000));
-      }
-    };
-    void connect();
+    const onActivity = () => pulse();
+    for (const ev of AI_ACTIVITY_EVENTS) window.addEventListener(ev, onActivity);
     return () => {
-      dead = true;
+      for (const ev of AI_ACTIVITY_EVENTS) window.removeEventListener(ev, onActivity);
       if (fadeRef.current) window.clearTimeout(fadeRef.current);
-      try { abort?.abort(); } catch { /* noop */ }
     };
-  }, [apiBase, token, pulse]);
+  }, [pulse]);
 
   return active;
 }

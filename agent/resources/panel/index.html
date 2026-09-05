@@ -13,8 +13,12 @@
        The vanilla DOM (conn form, panel shell) was migrated to React components
        in round-75..79; panel.css styles are reused via the same IDs/classes. -->
   <div id="root"></div>
-  <script src="vendor/xterm.min.js"></script>
-  <script src="vendor/xterm-addon-fit.min.js"></script>
+  <!-- P2-6: the vendor xterm UMD globals (window.Terminal/FitAddon) are dead —
+       TerminalPane imports @xterm/xterm + addons from the npm bundle in
+       panel.js. The two vendor <script> tags are removed (two blocking
+       downloads + ~stale duplicate xterm copy saved). vendor/xterm.css STAYS:
+       the bundle never imports @xterm/xterm's CSS, so the base terminal
+       styles still come from that link. -->
   <script type="module" src="panel.js"></script>
 </body>
 </html>

@@ -13,6 +13,7 @@ export function initTransport(host: string, tok: string, on401: () => void) {
 }
 export function hasTransport() { return !!hostname && !!token; }
 export function getHost() { return hostname; }
+export function getToken() { return token; }
 
 /** Fetch a path on the device with the bearer token. Returns parsed JSON. */
 export async function callApi(path: string, init: RequestInit = {}): Promise<any> {

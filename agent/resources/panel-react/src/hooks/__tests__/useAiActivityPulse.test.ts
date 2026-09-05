@@ -1,37 +1,45 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
-import { useAiActivityPulse } from "../useAiActivityPulse";
+import { renderHook, act } from "@testing-library/react";
+import { useAiActivityPulse, PULSE_MS } from "../useAiActivityPulse";
 
-// round-253: the embedded pane's AI-activity pulse must light on an SSE
-// browser-actions-changed push (event-driven, no polling), then fade.
+// round-253: the embedded pane's AI-activity pulse must light on an agent
+// activity push, then fade. P1-3: the hook no longer opens its own SSE
+// stream — it subscribes to the `vale-*` window events re-dispatched by
+// useSSE's single stream.
 describe("useAiActivityPulse", () => {
   beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    vi.useFakeTimers();
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it("lights up on a browser-actions-changed SSE push and fades after ~8s", async () => {
-    const enc = new TextEncoder();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/events")) {
-        const stream = new ReadableStream({
-          start(controller) {
-            controller.enqueue(enc.encode('data: {"ev":"browser-actions-changed"}\n\n'));
-          },
-        });
-        return new Response(stream, { status: 200 });
-      }
-      return new Response("{}", { status: 200 });
-    });
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-    const { result } = renderHook(() => useAiActivityPulse("", "t"));
-    // The pushed event should set active=true (real timers pump the stream).
-    await waitFor(() => expect(result.current).toBe(true), { timeout: 3000 });
-    // After the 8s fade window it clears (UI timer, not a poll).
-    await new Promise((r) => setTimeout(r, 9000));
+  it("lights up on a vale-browser-actions-changed window event and fades after the pulse window", () => {
+    const { result } = renderHook(() => useAiActivityPulse());
     expect(result.current).toBe(false);
-  }, 20000);
+    act(() => {
+      window.dispatchEvent(new CustomEvent("vale-browser-actions-changed", { detail: {} }));
+    });
+    expect(result.current).toBe(true);
+    act(() => {
+      window.dispatchEvent(new CustomEvent("vale-playwright-changed", { detail: {} }));
+    });
+    expect(result.current).toBe(true);
+    // After the fade window it clears (UI timer, not a poll).
+    act(() => {
+      vi.advanceTimersByTime(PULSE_MS + 1000);
+    });
+    expect(result.current).toBe(false);
+  });
+
+  it("opens no fetch of its own (P1-3: single-stream rule)", () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    renderHook(() => useAiActivityPulse());
+    act(() => {
+      window.dispatchEvent(new CustomEvent("vale-browser-actions-changed", { detail: {} }));
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
