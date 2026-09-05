@@ -200,10 +200,13 @@ export default function DevicesPanel() {
     }
   };
 
-  // Open the device's panel at the device origin. The gateway 302s the
-  // ?token= into a scoped cookie (round-124), so the token never lingers in
-  // the omnibox. Blocked up-front when the tunnel is known to be down —
-  // a pure-local device would otherwise open a dead hostname.
+  // Open the device's panel at the device origin. The gateway mints a
+  // ONE-TIME grant (120s TTL, consumed at first use, bound to this device)
+  // and the agent redeems it server-side, injecting the token itself — the
+  // permanent device token no longer rides in ?token= (browser
+  // history/journal, logs, referer chain). Blocked up-front when the tunnel
+  // is known to be down — a pure-local device would otherwise open a dead
+  // hostname.
   const openPanel = async (name: string) => {
     const st = deviceStatuses[name];
     if (st && st.tunnel_up === false) {
@@ -211,16 +214,12 @@ export default function DevicesPanel() {
       return;
     }
     try {
-      const data = await api.getDeviceMcp(name);
-      const cfg = JSON.parse(data.mcp.json);
-      const auth = cfg.mcpServers["vale-agent"].headers.Authorization; // "Bearer <device_token>"
-      const tok = auth.replace("Bearer ", "");
-      const host = new URL(cfg.mcpServers["vale-agent"].url).hostname;
-      // Cheap hardening: encode the token (a future non-hex charset must not
-      // break the URL) + noopener so the panel cannot reach window.opener.
-      // The token still rides in ?token= (history/address-bar/logs) — the
-      // real fix (gateway-issued one-time grant) is tracked separately.
-      window.open(`https://${host}/panel/?token=${encodeURIComponent(tok)}`, "_blank", "noopener");
+      const data = await api.openDevicePanel(name);
+      if (data.url) {
+        // noopener so the panel page cannot reach window.opener (the grant
+        // in the URL is single-use, but the panel itself is still a credentialed app).
+        window.open(data.url, "_blank", "noopener");
+      }
     } catch (err) {
       toast(err instanceof ApiError ? err.message : t("devices.saveFail"), true);
     }

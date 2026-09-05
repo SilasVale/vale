@@ -25,6 +25,10 @@
  *   DELETE /api/devices/register-keys/<code> (admin — revoke an unused key)
  *   GET    /api/devices/install-cmd         (admin — current npm install version/download)
  *
+ * Panel grants (one-time, so the permanent device token never rides in a URL):
+ *   POST /api/devices/<name>/panel-grant    (admin — mint a 120s single-use grant)
+ *   POST /api/devices/panel-grant/redeem    (device token — agent consumes a grant)
+ *
  * Handler convention: dispatch(ctx, method, path, request, env, url) →
  * handler(request, env, url).
  *
@@ -52,6 +56,9 @@ import {
   getPluginByToken,
   migratePluginLinks,
   removePluginLinksForDevice,
+  createPanelGrant,
+  getPanelGrant,
+  deletePanelGrant,
   type Device,
 } from "../store.ts";
 import { safeEq } from "../auth.ts";
@@ -448,6 +455,70 @@ async function handleDeviceMcp(request: Request, env: any, url: URL): Promise<Re
   return jsonOk({ name: d.name, hostname: d.hostname, mcp: mcpConfig(d) });
 }
 
+// POST /api/devices/<name>/panel-grant — mint a ONE-TIME panel grant (admin
+// session). The console's "open panel" used to fetch the MCP config, extract
+// the device's PERMANENT 64-hex token and open
+// https://<host>/panel/?token=<token> — the credential rode in the browser
+// history/journal, any logs and the referer chain. Now the console mints a
+// 120s single-use grant bound to this device and opens
+// https://<host>/panel/?grant=<code>; the AGENT redeems it against this
+// endpoint with its own Bearer token and injects the token server-side. The
+// panel URL is derived exactly like mcpConfig() (same hostname source).
+async function handleDevicePanelGrant(request: Request, env: any, url: URL): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (user.role !== "admin")
+    return jsonError(403, "Admin permission required", "authorization_error");
+  const m = url.pathname.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/panel-grant$`))!;
+  const devName = decodeDeviceName(m[1]!);
+  if (devName === null) return jsonError(400, "Invalid device name", "invalid_request");
+  const d = await getDevice(env, devName);
+  if (!d) return jsonError(404, "Device not found", "not_found_error");
+  const code = await createPanelGrant(env, d.name);
+  return jsonOk({ ok: true, url: `https://${d.hostname}/panel/?grant=${code}` });
+}
+
+// POST /api/devices/panel-grant/redeem — the AGENT consumes a panel grant.
+// Auth: the device's own Bearer token (possession of the token IS the device
+// identity — same rule as /api/upload's device path and self-register): scan
+// the small device registry for a safeEq token match, never a short-circuit
+// compare. The grant must belong to the caller: a leaked/grabbed grant code
+// is worthless from any other device, and the 403 doesn't distinguish
+// "wrong device" from "wrong code" beyond what the status codes already say.
+//
+// CONCURRENCY: check-then-delete on eventually-consistent KV means two
+// concurrent redeems can BOTH pass the get before either delete lands (KV
+// has no atomic swap). Single-use is therefore best-effort — the same class
+// the tunnel-token flow accepted before its claim lock; here the blast
+// radius is one extra panel response within a 120s TTL, gated by a
+// device-token Bearer the attacker doesn't have. The delete runs FIRST so a
+// crash between delete and respond fails closed (no grant left to retry).
+async function handlePanelGrantRedeem(request: Request, env: any): Promise<Response> {
+  const auth = String(request.headers.get("authorization") || "");
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (!token) return jsonError(401, "Missing device token", "authentication_error");
+  // KV read failure → null → 401 (fail closed, like handleFileUpload's catch).
+  let caller: Device | null = null;
+  try {
+    const devices = await listDevices(env);
+    caller =
+      devices.find(
+        (d) => typeof d.token === "string" && d.token.length >= 32 && safeEq(d.token, token),
+      ) ?? null;
+  } catch {
+    /* caller stays null */
+  }
+  if (!caller) return jsonError(401, "Invalid device token", "authentication_error");
+  const body = await readJson(request);
+  const code = String(body?.grant || "").trim();
+  const grant = await getPanelGrant(env, code); // malformed/unknown/expired → null → 404
+  if (!grant) return jsonError(404, "Grant not found or expired", "not_found_error");
+  if (grant.device !== caller.name)
+    return jsonError(403, "Grant does not match this device", "authorization_error");
+  await deletePanelGrant(env, code);
+  return jsonOk({ ok: true });
+}
+
 async function handleDeviceDelete(request: Request, env: any, url: URL): Promise<Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
@@ -675,6 +746,17 @@ export default {
       handler: handleFileUpload,
     });
 
+    // Panel-grant redeem: the AGENT consumes a one-time panel grant with its
+    // own device Bearer token (no session — device-token auth, like
+    // /api/upload's device path). Registered alongside the other
+    // non-session routes; see handlePanelGrantRedeem for the auth + race
+    // notes. (Path is disjoint from the mint route below: /panel-grant vs
+    // /panel-grant/redeem.)
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p === "/api/devices/panel-grant/redeem",
+      handler: handlePanelGrantRedeem,
+    });
+
     // Admin-gated device module. Exact matches: index.js compared these
     // paths with === and regexes, so prefix matching would capture subpaths
     // that index.js let fall through to 404.
@@ -696,6 +778,10 @@ export default {
     ctx.routes.push({
       match: (m, p) => m === "POST" && new RegExp(`^${DEVICE_BASE}/[^/]+/rename$`).test(p),
       handler: handleDeviceRename,
+    });
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && new RegExp(`^${DEVICE_BASE}/[^/]+/panel-grant$`).test(p),
+      handler: handleDevicePanelGrant,
     });
     ctx.routes.push({
       match: (m, p) => m === "GET" && p === DEVICE_BASE,

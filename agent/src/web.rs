@@ -7,7 +7,9 @@
 //!   GET  /                   → minimal status page (no token needed)
 //!   GET  /panel, /panel/     → Apple-style terminal panel (token entered in
 //!                              the browser, saved to localStorage; no server
-//!                              token injection since 1.0.5)
+//!                              token injection since 1.0.5 — back via
+//!                              loopback / gateway-proxy secret / one-time
+//!                              panel grant ?grant=, redeemed at the gateway)
 //!   GET  /api/events         → SSE event stream
 //!   GET  /api/events/poll    → poll events (?after=N)
 //!   GET  /api/events/term    → SSE terminal byte stream (TermOutput JSON frames)
@@ -104,6 +106,88 @@ fn panel_content_type(file: &str) -> &'static str {
     if file.ends_with(".js") { "text/javascript; charset=utf-8" }
     else if file.ends_with(".css") { "text/css; charset=utf-8" }
     else { "text/html; charset=utf-8" }
+}
+
+/// Serve the panel SPA with the device token injected as
+/// `window.__PANEL_TOKEN__` (before `</head>`). Shared by every
+/// injection-authorized path — loopback, the gateway proxy (X-Vale-Auth
+/// secret) and a redeemed one-time panel grant — so all three produce the
+/// byte-identical response shape: 200, text/html, no-store (a cached copy of
+/// this page IS the device token).
+fn panel_token_response(token: &str) -> Response {
+    // serde_json escapes quotes but NOT < > (no escape_html feature), so a
+    // non-hex token containing </script> could break out of the script
+    // element and run attacker JS on the device origin. Escape < > manually.
+    let escaped = serde_json::to_string(token)
+        .unwrap_or_else(|_| "\"\"".into())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e");
+    let inject = format!("<script>window.__PANEL_TOKEN__={escaped};</script>");
+    let html = include_str!("../resources/panel/index.html")
+        .replacen("</head>", &format!("{inject}</head>"), 1);
+    let mut resp = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("cache-control"),
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    resp
+}
+
+/// Cheap shape check on a `?grant=` code BEFORE any network work: the gateway
+/// mints 32 lowercase hex chars (store/grants.ts randomHex(16)); anything
+/// else is a probe and must not cost a redeem round-trip (a probe that
+/// reached the gateway would burn a KV read + a request per attempt). Pure
+/// and offline-testable; the 16..=128 window stays forward-compatible if the
+/// gateway ever lengthens codes (worst case then: the gateway 404s and the
+/// panel falls back to the plain no-token page).
+fn plausible_grant(code: &str) -> bool {
+    (16..=128).contains(&code.len()) && code.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Redeem a one-time panel grant at the gateway: POST
+/// `<console_url>/api/devices/panel-grant/redeem` with OUR OWN device token
+/// as Bearer (possession of the token IS the device identity — the same rule
+/// as self-register) and the grant code from the panel URL in the body. The
+/// gateway validates the grant (single-use, 120s TTL, bound to this device),
+/// consumes it and answers `{ok:true}`; only then may the token be injected.
+///
+/// Returns true ONLY on an explicit ok:true. ANY failure (gateway unbound,
+/// network down, timeout, non-2xx, bad body) means "no injection" and the
+/// caller serves the plain panel — the same readable state a bad token gets.
+/// Short 5s timeout: a panel navigation must not hang on a dead gateway.
+/// The grant and token values are NEVER logged or echoed anywhere.
+///
+/// Uses the same inline reqwest pattern as api_gateway_connect below (no
+/// shared gateway-call helper exists); rustls-tls keeps the Windows
+/// cross-compile pure-Rust.
+async fn redeem_panel_grant(console_url: &str, device_token: &str, grant: &str) -> bool {
+    let url = format!(
+        "{}/api/devices/panel-grant/redeem",
+        console_url.trim_end_matches('/')
+    );
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client
+        .post(url)
+        .header("content-type", "application/json")
+        .header("Authorization", format!("Bearer {device_token}"))
+        .body(serde_json::json!({ "grant": grant }).to_string())
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| v.get("ok").and_then(|b| b.as_bool()))
+            .unwrap_or(false),
+        _ => false,
+    }
 }
 
 // ── Tower Service ────────────────────────────────────────────
@@ -471,23 +555,37 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
                 .map(|host| host == "127.0.0.1" || host == "localhost")
                 .unwrap_or(false);
             if host_ok && (via_proxy || loopback) {
-                // serde_json escapes quotes but NOT < > (no escape_html
-                // feature), so a non-hex token containing </script> could
-                // break out of the script element and run attacker JS on the
-                // device origin. Escape < > manually.
-                let escaped = serde_json::to_string(token)
-                    .unwrap_or_else(|_| "\"\"".into())
-                    .replace('<', "\\u003c")
-                    .replace('>', "\\u003e");
-                let inject = format!("<script>window.__PANEL_TOKEN__={escaped};</script>");
-                let html = include_str!("../resources/panel/index.html")
-                    .replacen("</head>", &format!("{inject}</head>"), 1);
-                let mut resp2 = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
-                resp2.headers_mut().insert(
-                    axum::http::HeaderName::from_static("cache-control"),
-                    axum::http::HeaderValue::from_static("no-store"),
-                );
-                return resp2;
+                return panel_token_response(token);
+            }
+            // One-time panel grant (gateway-issued; the fix the console's
+            // openPanel ?token= flow was waiting for): the console mints a
+            // 120s single-use grant bound to THIS device and opens
+            // /panel/?grant=<code> directly at the device origin — the
+            // permanent token never rides in a URL. The grant is redeemed
+            // here (Bearer = our own device token) and on success the panel
+            // is served with the token injected — EXACTLY the response shape
+            // of the authorized injection path above. Panel paths only (the
+            // desktop shell never receives grants).
+            let panel_path = path == "/panel" || path == "/panel/";
+            let grant = query_param(req.uri().query(), "grant").unwrap_or("").trim();
+            if panel_path && plausible_grant(grant) {
+                // Pure-local device (no console binding): ?grant= is simply
+                // invalid — fall through to the plain panel, the same
+                // readable state a bad/absent token gets.
+                if let Some(base) = cfg
+                    .platform
+                    .console_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|u| !u.is_empty())
+                {
+                    if redeem_panel_grant(base, token, grant).await {
+                        return panel_token_response(token);
+                    }
+                }
+                // Redeem failed (network down, expired/consumed/wrong-device
+                // grant, gateway 4xx): fall through to the plain panel below.
+                // No injection on a maybe — a grant is a claim, not a proof.
             }
         }
         return resp;
@@ -1360,6 +1458,186 @@ mod tests {
         // Static asset route: /desktop/panel.js serves the bundle.
         let r = handle_request(req_with_host("/desktop/panel.js", "127.0.0.1:18080"), st).await;
         assert_eq!(r.status(), StatusCode::OK, "desktop panel.js must serve");
+    }
+
+    // ── One-time panel grants (?grant=) ──────────────────────────────────
+    //
+    // The redeem arm is exercised against a local TCP listener speaking just
+    // enough HTTP for the reqwest POST — no real gateway, no external
+    // network. Hosts are deliberately NON-allowlisted and non-loopback: on
+    // those hosts the ONLY way the token may be injected is a successful
+    // grant redemption, which makes the assertions unambiguous.
+
+    const GRANT: &str = "0123456789abcdef0123456789abcdef";
+
+    /// One-shot redeem stub: accepts ONE connection, captures the raw request
+    /// bytes, answers `<status_line>` + `<body>` and returns the captured
+    /// request via the JoinHandle. Aborting the handle (dropping it) closes
+    /// the listener — used to prove NO call was made.
+    async fn spawn_redeem_stub(
+        status_line: &'static str,
+        body: &'static str,
+    ) -> (String, tokio::task::JoinHandle<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let handle = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            // Read until the content-length declared by the request is
+            // satisfied (headers + JSON body may arrive split); bounded by a
+            // per-read timeout so a malformed client can't hang the test.
+            let mut data: Vec<u8> = Vec::new();
+            loop {
+                let mut buf = [0u8; 2048];
+                let n = match tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    sock.read(&mut buf),
+                )
+                .await
+                {
+                    Ok(Ok(n)) => n,
+                    _ => 0,
+                };
+                if n == 0 { break; }
+                data.extend_from_slice(&buf[..n]);
+                if let Ok(text) = std::str::from_utf8(&data) {
+                    if let Some(i) = text.find("\r\n\r\n") {
+                        let len: usize = text[..i]
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse().ok())
+                            })
+                            .unwrap_or(0);
+                        if text[i + 4..].len() >= len { break; }
+                    }
+                }
+            }
+            let captured = String::from_utf8_lossy(&data).to_string();
+            let resp = format!(
+                "{status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.shutdown().await;
+            captured
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    #[tokio::test]
+    async fn panel_grant_redeem_success_injects_token() {
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some(TEST_TOKEN.into());
+        let (base, handle) = spawn_redeem_stub("HTTP/1.1 200 OK", "{\"ok\":true}").await;
+        cfg.platform.console_url = Some(base);
+        let st = Arc::new(AppState::new(cfg));
+        // Non-allowlisted, non-loopback host: injection ONLY via the grant.
+        let r = handle_request(
+            req_with_host(&format!("/panel/?grant={GRANT}"), "d1.example.com:18080"),
+            st,
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        // Same response shape as the authorized injection path: no-store.
+        assert_eq!(
+            r.headers().get("cache-control").and_then(|v| v.to_str().ok()),
+            Some("no-store"),
+            "grant-served panel must be no-store"
+        );
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let html = String::from_utf8_lossy(&b);
+        assert!(html.contains("__PANEL_TOKEN__"), "successful redeem must inject: {html}");
+        // The redeem call carried OUR bearer token + the grant code, and the
+        // grant value must not leak beyond the redeem body itself.
+        let captured = handle.await.unwrap();
+        assert!(captured.contains("POST /api/devices/panel-grant/redeem"), "captured: {captured}");
+        assert!(captured.contains(&format!("authorization: Bearer {}", TEST_TOKEN)), "captured: {captured}");
+        assert!(captured.contains(GRANT), "captured: {captured}");
+    }
+
+    #[tokio::test]
+    async fn panel_grant_redeem_failure_serves_plain_panel() {
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some(TEST_TOKEN.into());
+        let (base, handle) = spawn_redeem_stub("HTTP/1.1 404 Not Found", "{\"type\":\"error\"}").await;
+        cfg.platform.console_url = Some(base);
+        let st = Arc::new(AppState::new(cfg));
+        let r = handle_request(
+            req_with_host(&format!("/panel/?grant={GRANT}"), "d1.example.com:18080"),
+            st,
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK, "the panel page itself still serves");
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        assert!(
+            !String::from_utf8_lossy(&b).contains("__PANEL_TOKEN__"),
+            "a failed redeem must NOT inject (bad-grant = bad-token behavior)"
+        );
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn panel_grant_without_console_url_falls_back_to_plain_panel() {
+        // Pure-local device: no console binding → nothing to redeem with, so
+        // ?grant= is simply invalid (existing bad-token behavior) and NO
+        // network call is possible (no stub exists to answer one).
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some(TEST_TOKEN.into());
+        let st = Arc::new(AppState::new(cfg));
+        let r = handle_request(
+            req_with_host(&format!("/panel/?grant={GRANT}"), "d1.example.com:18080"),
+            st,
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        assert!(!String::from_utf8_lossy(&b).contains("__PANEL_TOKEN__"));
+    }
+
+    #[tokio::test]
+    async fn panel_grant_malformed_code_never_redeems() {
+        // The stub answers ok:true to ANYTHING — if the shape check let a
+        // malformed grant through, redemption would "succeed" and the token
+        // would be injected onto a non-allowlisted host. No injection + no
+        // captured request proves the check gates the network call.
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some(TEST_TOKEN.into());
+        let (base, handle) = spawn_redeem_stub("HTTP/1.1 200 OK", "{\"ok\":true}").await;
+        cfg.platform.console_url = Some(base);
+        let st = Arc::new(AppState::new(cfg));
+        let r = handle_request(
+            req_with_host("/panel/?grant=not-a-hex-code!", "d1.example.com:18080"),
+            st,
+        )
+        .await;
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        assert!(!String::from_utf8_lossy(&b).contains("__PANEL_TOKEN__"));
+        let waited = tokio::time::timeout(std::time::Duration::from_millis(300), handle).await;
+        assert!(waited.is_err(), "no redeem request may be made for a malformed grant");
+    }
+
+    #[test]
+    fn plausible_grant_shape() {
+        assert!(plausible_grant(&"a".repeat(32)), "gateway-minted shape (32 hex)");
+        assert!(plausible_grant(&"a".repeat(16)), "floor accepted");
+        assert!(plausible_grant("ABCDEF0123456789ABCDEF0123456789"), "uppercase hex ok");
+        assert!(!plausible_grant(""), "empty rejected");
+        assert!(!plausible_grant("abcdefgh"), "too short rejected");
+        assert!(!plausible_grant(&"g".repeat(32)), "non-hex rejected");
+        assert!(!plausible_grant(&"a".repeat(129)), "over-long rejected");
+    }
+
+    #[test]
+    fn panel_grant_query_extraction() {
+        // Position-independent + ignore surrounding params (the shared
+        // query_param helper; grant must not be confused with lookalikes).
+        assert_eq!(query_param(Some(&format!("grant={GRANT}")), "grant"), Some(GRANT));
+        assert_eq!(query_param(Some(&format!("x=1&grant={GRANT}")), "grant"), Some(GRANT));
+        assert_eq!(query_param(Some("xgrants=1"), "grant"), None, "prefix must not match");
+        assert_eq!(query_param(Some("grants=1"), "grant"), None, "longer key must not match");
+        assert_eq!(query_param(None, "grant"), None);
     }
 
     async fn json_body(resp: Response) -> serde_json::Value {

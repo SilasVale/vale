@@ -229,6 +229,15 @@ export const api = {
   getDeviceMcp: (name: string) =>
     request<{ mcp: { json: string } }>(`/api/devices/${encodeURIComponent(name)}/mcp`),
 
+  // Devices: one-time panel grant (admin) — mints a 120s single-use code the
+  // agent redeems with its own token, so the PERMANENT device token never
+  // rides in a panel URL (history/address bar/logs/referer).
+  openDevicePanel: (name: string) =>
+    request<{ ok: boolean; url: string }>(
+      `/api/devices/${encodeURIComponent(name)}/panel-grant`,
+      { method: "POST" },
+    ),
+
   // Devices: registration key
   generateRegKey: () => request<{ key: string }>("/api/devices/register-key", { method: "POST" }),
   listRegKeys: () =>

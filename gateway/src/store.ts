@@ -28,6 +28,7 @@
  *   store/devices.ts   device registry (devices:v1) + CF tunnel API token
  *   store/regkeys.ts   one-time device registration keys / grants
  *   store/plugins.ts   plugin-link registry (plugins:v1)
+ *   store/grants.ts    one-time device-panel grants (panelgrant:<code>)
  */
 export * from "./store/cache.ts";
 export * from "./store/users.ts";
@@ -36,3 +37,4 @@ export * from "./store/settings.ts";
 export * from "./store/devices.ts";
 export * from "./store/regkeys.ts";
 export * from "./store/plugins.ts";
+export * from "./store/grants.ts";
