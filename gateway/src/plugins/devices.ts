@@ -58,6 +58,19 @@ import { route, type Plugin, type PluginContext } from "./registry.ts";
 
 const DEVICE_BASE = "/api/devices";
 
+// Upload hardening (see proxyUploadToWorker): max accepted upload size and
+// the upstream response headers that must never be re-served at the
+// console origin.
+const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+const UPLOAD_STRIP_RESPONSE_HEADERS = new Set([
+  "set-cookie",
+  "set-cookie2",
+  "connection",
+  "transfer-encoding",
+  "keep-alive",
+  "upgrade",
+]);
+
 /* ---------------- Route handlers (bodies copied verbatim from index.js) ---------------- */
 
 // Public device registration (the Windows install calls this with a one-time
@@ -318,19 +331,27 @@ async function proxyUploadToWorker(request: Request, env: any): Promise<Response
   const indexWorkerUrl = env.INDEX_WORKER_URL || "https://agent.saisi.online";
   const uploadUrl = `${indexWorkerUrl}/api/upload`;
 
+  // Size bound: an unbounded passthrough turns the gateway into a free
+  // large-file relay (subrequest memory + egress). 25MB is far above any
+  // legitimate update payload. Bodies without a declared length (chunked)
+  // are still bounded by the platform's own request-body ceiling.
+  const declared = Number(request.headers.get("content-length") || "");
+  if (Number.isFinite(declared) && declared > UPLOAD_MAX_BYTES) {
+    return jsonError(413, "Upload too large (max 25MB)", "invalid_request");
+  }
+
   // Rebuild the request with the UPLOAD_KEY header for the index worker.
   // Forward a MINIMAL header set: Authorization is the only credential the
-  // index worker needs, Content-Type must survive verbatim (the multipart
-  // boundary in it is how the worker's formData() splits parts), and
-  // Content-Length keeps the upstream body framing honest. Everything else
-  // — notably the client's Cookie header — stays on this side: the index
+  // index worker needs, and Content-Type must survive verbatim (the multipart
+  // boundary in it is how the worker's formData() splits parts). Everything
+  // else — notably the client's Cookie header and the inbound Content-Length
+  // (the runtime reframes the forwarded stream itself; a stale manual value
+  // corrupts the upstream framing) — stays on this side: the index
   // worker is a separate origin and must never see console cookies.
   const headers = new Headers();
   headers.set("Authorization", `Bearer ${env.UPLOAD_KEY || ""}`);
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
-  const contentLength = request.headers.get("content-length");
-  if (contentLength) headers.set("Content-Length", contentLength);
 
   const resp = await fetchWithTimeout(
     uploadUrl,
@@ -342,9 +363,16 @@ async function proxyUploadToWorker(request: Request, env: any): Promise<Response
     60000,
   );
 
+  // Never re-serve the upstream's response headers verbatim: a Set-Cookie
+  // from the index worker would plant a foreign cookie on the console
+  // origin, and hop-by-hop framing headers are the runtime's job.
+  const outHeaders = new Headers();
+  resp.headers.forEach((value, key) => {
+    if (!UPLOAD_STRIP_RESPONSE_HEADERS.has(key.toLowerCase())) outHeaders.append(key, value);
+  });
   return new Response(resp.body, {
     status: resp.status,
-    headers: resp.headers,
+    headers: outHeaders,
   });
 }
 

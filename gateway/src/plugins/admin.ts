@@ -9,10 +9,9 @@ import { safeEq } from "../auth.ts";
  * handleConsole(request, env, url) got.
  *
  * Guard: ALL routes except /api/admin/public require an admin session —
- * requireSession copied verbatim from index.js, and each gated handler
- * checks role === "admin" (index.js gated these with the line
- * `if (user.role !== "admin") return jsonError(403, ...)` after the shared
- * session check; here the guard is inlined per handler with a 401).
+ * requireAdmin from session.ts (401 not logged in / 403 non-admin, same as
+ * the devices plugin). The PUT /api/admin/password bootstrap branch stays
+ * session-less by design (first-password set on a fresh deployment).
  */
 
 import {
@@ -27,12 +26,12 @@ import {
   verifyAdminPassword,
   getUser,
   maskKey,
+  userKeysStatus,
   ADMIN_ID,
-  USER_KEY_NAMES,
 } from "../store.ts";
 import { MODELS, ROUTE_INFO } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
-import { requireSession } from "../session.ts";
+import { requireAdmin } from "../session.ts";
 import type { PluginContext } from "./registry.ts";
 
 const ADMIN_BASE = "/api/admin";
@@ -57,17 +56,15 @@ async function adminPublic(_request: Request, env: Env): Promise<Response> {
  * fetches (reg-key gated) so tunnel setup needs no browser login. Admin-only. ---- */
 
 async function adminGetCfToken(request: Request, env: Env): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user || user.role !== "admin")
-    return jsonError(401, "Not logged in", "authentication_error");
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
   const token = await getCfToken(env);
   return jsonOk({ configured: !!token, masked: token ? maskKey(token) : "" });
 }
 
 async function adminPutCfToken(request: Request, env: Env): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user || user.role !== "admin")
-    return jsonError(401, "Not logged in", "authentication_error");
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
   const body = await readJson(request);
   const v = String(body?.token || "").trim();
   if (v && !/^[A-Za-z0-9_-]{20,}$/.test(v)) {
@@ -84,9 +81,8 @@ async function adminPutCfToken(request: Request, env: Env): Promise<Response> {
 /* ---- Invite codes ---- */
 
 async function adminInvite(request: Request, env: Env): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user || user.role !== "admin")
-    return jsonError(401, "Not logged in", "authentication_error");
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
   const code = await createInvite(env);
   return jsonOk({ ok: true, code });
 }
@@ -94,9 +90,8 @@ async function adminInvite(request: Request, env: Env): Promise<Response> {
 /* ---- Users ---- */
 
 async function adminListUsers(request: Request, env: Env): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user || user.role !== "admin")
-    return jsonError(401, "Not logged in", "authentication_error");
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
   const users = await listUsers(env);
   const out = [];
   for (const u of users) {
@@ -115,9 +110,8 @@ async function adminListUsers(request: Request, env: Env): Promise<Response> {
 }
 
 async function adminSetUserEnabled(request: Request, env: Env, url: URL): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user || user.role !== "admin")
-    return jsonError(401, "Not logged in", "authentication_error");
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
   const path = url.pathname;
   // round-107: malformed percent-escape in the user id threw URIError (500).
   let id: string;
@@ -137,9 +131,8 @@ async function adminSetUserEnabled(request: Request, env: Env, url: URL): Promis
  * the admin indefinitely). ---- */
 
 async function adminGetPassword(request: Request, env: Env): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user || user.role !== "admin")
-    return jsonError(401, "Not logged in", "authentication_error");
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
   return jsonOk({ set: await hasAdminPassword(env) });
 }
 
@@ -172,9 +165,8 @@ async function adminPutPassword(request: Request, env: Env): Promise<Response> {
     await setAdminPassword(env, v);
     return jsonOk({ ok: true, changed: true, initial: true });
   }
-  const user = await requireSession(request, env);
-  if (!user || user.role !== "admin")
-    return jsonError(401, "Not logged in", "authentication_error");
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
   const body = await readJson(request);
   const v = String(body?.password || "");
   if (v.length < 8)
@@ -186,19 +178,6 @@ async function adminPutPassword(request: Request, env: Env): Promise<Response> {
   }
   await setAdminPassword(env, v);
   return jsonOk({ ok: true, changed: true });
-}
-
-/* ---- Helper (copied verbatim from index.js) ---- */
-
-function userKeysStatus(
-  ukeys: Record<string, any>,
-): Record<string, { configured: boolean; masked: string }> {
-  const out: Record<string, { configured: boolean; masked: string }> = {};
-  for (const n of USER_KEY_NAMES) {
-    const v = ukeys[n];
-    out[n] = { configured: !!v, masked: maskKey(v) };
-  }
-  return out;
 }
 
 export default {

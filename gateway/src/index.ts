@@ -297,9 +297,17 @@ export async function buildHealth(env: any) {
 }
 
 /** UTF-8-safe base64: btoa is Latin1-only and throws on non-ASCII (the vale
- *  CLI is full of Chinese text). Encode to bytes first. */
+ *  CLI is full of Chinese text). Encode to bytes first. Chunked: spreading a
+ *  big Uint8Array into String.fromCharCode blows the argument-length limit
+ *  (RangeError) as the CLI grows — append per 32k chunk instead. */
 export function encodeBase64Utf8(text: string) {
-  return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
 }
 
 /**

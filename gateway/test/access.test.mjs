@@ -90,6 +90,18 @@ test("username collision gets a suffix instead of overwriting", async () => {
   assert.ok(u.id.startsWith("alice-"));
 });
 
+test("two emails sharing a local part get distinct accounts; original untouched", async () => {
+  const env = makeEnv();
+  const a = await ensureUserByEmail(env, "sam@example.com");
+  const b = await ensureUserByEmail(env, "sam@other.com");
+  assert.notEqual(a.id, b.id);
+  // The first account's record was not overwritten by the second provisioning.
+  const raw = JSON.parse(await env.KEYS.get(`user:${a.id}`));
+  assert.equal(raw.accessEmail, "sam@example.com");
+  assert.equal(await env.KEYS.get("access-email:sam@example.com"), a.id);
+  assert.equal(await env.KEYS.get("access-email:sam@other.com"), b.id);
+});
+
 test("ACCESS_ADMIN_EMAIL binds to the seeded admin account", async () => {
   const env = makeEnv({
     adminEmail: "me@163.com",

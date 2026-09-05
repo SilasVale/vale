@@ -21,7 +21,7 @@ export class RouteDO {
     this.env = env;
   }
 
-  // Defense-in-depth parity with PluginHubDO: a Durable Object has its own
+  // Defense-in-depth: a Durable Object has its own
   // external address even with workers_dev:false + no routes, so the main
   // router's auth is NOT the last line. When DO_AUTH is configured, any
   // request without the shared secret is rejected (constant-time compare).

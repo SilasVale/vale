@@ -135,7 +135,7 @@ const I18N = {
     "route.ds.backend": "DeepSeek 官方",
     "route.ds.desc": "api.deepseek.com/anthropic，Bearer 透传",
     "route.or.backend": "OpenRouter",
-    "route.or.desc": "openrouter.ai，透传用户自己的 key（经 openrouter-proxy 代理）",
+    "route.or.desc": "openrouter.ai，透传用户自己的 key",
     "route.gmi.backend": "GMI Cloud",
     "route.gmi.desc": "api.gmi-serving.com — MiniMax Week 免费档（M3/M2.7 免费 14 天），透传用户自己的 GMI key，OpenAI 格式",
     "route.amd.backend": "AMD Radeon Cloud",
@@ -388,7 +388,7 @@ const I18N = {
     "route.ds.backend": "DeepSeek Official",
     "route.ds.desc": "api.deepseek.com/anthropic — Bearer passthrough",
     "route.or.backend": "OpenRouter",
-    "route.or.desc": "openrouter.ai — user's own key, proxied via openrouter-proxy",
+    "route.or.desc": "openrouter.ai — user's own key, direct passthrough",
     "route.gmi.backend": "GMI Cloud",
     "route.gmi.desc":
       "api.gmi-serving.com — MiniMax Week free tier (M3/M2.7 free 14 days), user's own GMI key, OpenAI format",

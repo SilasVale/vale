@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
-import { getPluginByToken, removePluginLink, __clearCaches } from "../src/store.ts";
+import { getPluginByToken, removePluginLink, __clearCaches, setAdminPassword } from "../src/store.ts";
 
 // Full worker fetch: pair/claim + ws-ticket are public (no admin session) —
 // the extension has no session cookie. Asserted by behavior, not source order.
@@ -111,6 +111,8 @@ function makeResetEnv() {
   ]);
   return {
     CONSOLE_HOST: "x",
+    // Fail-closed issuance: login refuses without SESSION_SECRET.
+    SESSION_SECRET: "test-session-secret-0123456789abcdef",
     KEYS: {
       async get(k) { return m.has(k) ? m.get(k) : null; },
       async put(k, v) { m.set(k, v); },
@@ -145,6 +147,31 @@ test("reset-password: too-short new password → 400", async () => {
   const env = makeResetEnv();
   const res = await apiFetch(env, "/api/auth/reset-password", { body: JSON.stringify({ adminKey: "ADMIN_KEY_123", newPassword: "short" }) });
   assert.equal(res.status, 400);
+});
+
+// SESSION_SECRET fail-closed issuance: correct credentials but no signing
+// secret → 500 config_error and NO session cookie (never fall back to the
+// admin password as HMAC key — it would be offline-brute-forceable).
+test("login without SESSION_SECRET → 500, no session issued (fail-closed)", async () => {
+  __clearCaches();
+  const env = makeResetEnv();
+  delete env.SESSION_SECRET;
+  await setAdminPassword(env, "newpass123");
+  const login = await apiFetch(env, "/api/auth/login", { body: JSON.stringify({ username: "admin", password: "newpass123" }) });
+  assert.equal(login.status, 500);
+  assert.ok(!String(login.headers.get("set-cookie") || "").includes("ag_session="));
+});
+
+// Rotation compat: a cookie signed with the OLD admin-password key still
+// verifies after SESSION_SECRET is configured (next login re-issues).
+test("pre-rotation password-signed cookie still verifies with SESSION_SECRET set", async () => {
+  __clearCaches();
+  const env = makeEnv();
+  env.SESSION_SECRET = "test-session-secret-0123456789abcdef";
+  const cookie = await issueSessionToken("pw", "admin", "admin"); // old key = stored admin password
+  const req = new Request("https://x/api/plugins/status", { method: "GET", headers: { "content-type": "application/json", cookie: `ag_session=${cookie}` } });
+  const res = await worker.fetch(req, env);
+  assert.equal(res.status, 200);
 });
 
 test("OpenRouter usage: authenticated request normalizes account data", async () => {

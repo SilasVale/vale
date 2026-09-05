@@ -33,6 +33,9 @@ function freshEnv() {
   const kv = new Map();
   return {
     CONSOLE_HOST: "x",
+    // Fail-closed issuance: login/register refuse without SESSION_SECRET,
+    // so the deploy env carries one (see the fail-closed test below).
+    SESSION_SECRET: "test-session-secret-0123456789abcdef",
     KEYS: {
       async get(k) {
         return kv.has(k) ? kv.get(k) : null;

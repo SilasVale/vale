@@ -1530,6 +1530,13 @@ export default {
       match: (m, p) => m === "POST" && p.startsWith("/v1/chat/completions"),
       handler,
     });
+    // OpenAI Responses API entry — the impl already serves it (isResponses
+    // branch) but the route was never registered, so plugin dispatch 404'd
+    // before reaching the impl.
+    ctx.routes.push({
+      match: (m, p) => m === "POST" && p.startsWith("/v1/responses"),
+      handler,
+    });
     // Cross-plugin API surface (mirrors the exports index.js exposes today).
     ctx.api.translate = { handleGateway, handleGatewayImpl, resolveAutoModel, isModelUsable };
   },

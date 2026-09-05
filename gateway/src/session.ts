@@ -25,7 +25,27 @@ import { jsonError } from "./http.ts";
 import { requireAccessSession } from "./access.ts";
 
 export function sessionSecret(env: any, adminPassword: string): string {
+  // VERIFY path only (rotation compat): prefer the dedicated SESSION_SECRET
+  // but still accept cookies signed with the admin password so a secret
+  // rotation / first-time SESSION_SECRET rollout doesn't log everyone out.
+  // New issuance MUST use issueSessionSecret (fail-closed) instead.
   return env.SESSION_SECRET || adminPassword;
+}
+
+/**
+ * Issuance key for NEW sessions (login / register) — FAIL CLOSED.
+ * Without a dedicated high-entropy SESSION_SECRET the HMAC key would fall
+ * back to the admin password, letting any invited user offline-brute-force
+ * it from their own signed cookie (HMAC-SHA256 is not memory-hard).
+ * Returns null (and logs an error) when unconfigured; callers must refuse
+ * to issue a session (HTTP 500 config_error), never silently fall back.
+ */
+export function issueSessionSecret(env: any): string | null {
+  if (env.SESSION_SECRET) return env.SESSION_SECRET;
+  console.error(
+    "[session] SESSION_SECRET not configured — refusing to issue new session (fail-closed)",
+  );
+  return null;
 }
 
 // Negative-cache for the revocation check — this was the LAST raw KV read on
@@ -59,7 +79,14 @@ async function requireCookieSession(request: Request, env: any): Promise<User | 
       if (revoked) return null;
     }
   }
-  const session = await verifySessionToken(sessionSecret(env, ap), cookie);
+  const primary = sessionSecret(env, ap);
+  let session = await verifySessionToken(primary, cookie);
+  if (!session && env.SESSION_SECRET && ap && env.SESSION_SECRET !== ap) {
+    // Rotation compat: SESSION_SECRET is set now, but this cookie was
+    // signed with the old admin-password key — accept it this once (the
+    // next login re-issues under SESSION_SECRET).
+    session = await verifySessionToken(ap, cookie);
+  }
   if (!session) return null;
   const user = await getUser(env, session.uid);
   if (!user || !user.enabled) return null;

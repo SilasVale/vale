@@ -255,7 +255,7 @@ export class BreakerDO {
     this.state = state;
     this.env = env;
   }
-  // DO external-address defense-in-depth (see RouteDO/PluginHubDO).
+  // DO external-address defense-in-depth (see RouteDO).
   authorized(request: Request): boolean {
     const expected = this.env?.DO_AUTH || "";
     // Auth-core audit MED-2: FAIL CLOSED — a DO has its own external

@@ -1060,3 +1060,17 @@ export function maskKey(v: string): string {
   if (v.length <= 6) return v[0] + "…" + v.slice(-2);
   return v.slice(0, 3) + "…" + v.slice(-4);
 }
+
+/** Per-key configured/masked status for the console (shared by the auth
+ *  plugin's /api/me and the admin plugin's user list — was copy-pasted in
+ *  both with subtly different types). */
+export function userKeysStatus(
+  ukeys: Record<string, any>,
+): Record<string, { configured: boolean; masked: string }> {
+  const out: Record<string, { configured: boolean; masked: string }> = {};
+  for (const n of USER_KEY_NAMES) {
+    const v = ukeys?.[n];
+    out[n] = { configured: !!v, masked: maskKey(v || "") };
+  }
+  return out;
+}

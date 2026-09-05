@@ -113,6 +113,44 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
 
 /** Browser tools → agent's mcp_client_call → playwright-mcp.
  *   (The extension/PluginHubDO path was deleted round-341.) */
+//
+// Gateway-side guardrails for this bridge: the per-fetch budget below is
+// per ATTEMPT, and the old code stacked attempts serially (invoke + start +
+// connect + retry ≈ 4×320s ≈ 21min of pinned isolate time on a hung device,
+// with unbounded concurrent browser_* calls piling on):
+//   - BROWSER_GATEWAY_BUDGET_MS: hard TOTAL cap for one browser_* call
+//     (invoke + self-heal + retry combined).
+//   - BROWSER_SELFHEAL_TIMEOUT_MS: start/connect are liveness probes, not
+//     work — they get a short timeout, never the call budget.
+//   - BROWSER_MAX_CONCURRENT_PER_DEVICE: isolate-local per-device semaphore
+//     (same pattern as __probeRate in index.ts). No existing mechanism was
+//     reusable: BreakerDO guards upstream CHANNEL health per channel-name via
+//     DO state, and withKeyLock serializes KV read-modify-write — neither is
+//     a per-device in-flight semaphore. Excess calls fail with SESSION_BUSY
+//     so MCP clients back off and retry instead of dogpiling.
+const BROWSER_GATEWAY_BUDGET_MS = 350_000;
+const BROWSER_SELFHEAL_TIMEOUT_MS = 15_000;
+const BROWSER_MAX_CONCURRENT_PER_DEVICE = 4;
+const __browserInflight = new Map<string, number>();
+
+async function withBrowserSlot<T>(slot: string, fn: () => Promise<T>): Promise<T> {
+  const cur = __browserInflight.get(slot) || 0;
+  if (cur >= BROWSER_MAX_CONCURRENT_PER_DEVICE) {
+    throw ToolErr(
+      SESSION_BUSY,
+      `too many concurrent browser calls on device ${slot} — retry shortly`,
+    );
+  }
+  __browserInflight.set(slot, cur + 1);
+  try {
+    return await fn();
+  } finally {
+    const left = (__browserInflight.get(slot) || 1) - 1;
+    if (left <= 0) __browserInflight.delete(slot);
+    else __browserInflight.set(slot, left);
+  }
+}
+
 async function callMcpClientBridge(name: string, _env: any, device: any, args: any): Promise<any> {
   // SSRF guard (same checks as deviceFetch): the device record's hostname is
   // dialed here with the device Bearer token, and these raw fetches bypass
@@ -159,6 +197,13 @@ async function callMcpClientBridge(name: string, _env: any, device: any, args: a
     pmArgs.timeout_secs = Math.min(Math.max(Math.trunc(pmArgs.timeout_secs) || 1, 1), 300);
   }
   const callBudgetMs = ((pmArgs.timeout_secs as number) || 120) * 1000 + 20_000;
+  // Gateway-side total budget (see the guardrails comment above): every
+  // attempt below draws from this deadline instead of stacking full budgets.
+  const slot = String(device?.name || device?.hostname || "default");
+  const deadline = Date.now() + BROWSER_GATEWAY_BUDGET_MS;
+  // Floor 1s so the final attempt still fires instead of
+  // AbortSignal.timeout(0/negative) aborting instantly.
+  const budgetLeftMs = () => Math.max(1000, deadline - Date.now());
   if ((name === "browser_click" || name === "browser_type") && args?.element_ref != null) {
     pmArgs.target = /^e?\d+$/.test(String(args.element_ref))
       ? String(args.element_ref).replace(/^(\d+)$/, "e$1")
@@ -171,7 +216,7 @@ async function callMcpClientBridge(name: string, _env: any, device: any, args: a
       method: "POST",
       headers,
       body: JSON.stringify({ tool: pmTool, arguments: pmArgs }),
-      signal: AbortSignal.timeout(callBudgetMs),
+      signal: AbortSignal.timeout(Math.min(callBudgetMs, budgetLeftMs())),
     });
     // The agent's tool API always returns 200 + {ok:false,error,code} (web.rs api_call_tool);
     // the failure info is in the body, so res.ok alone can't be trusted.
@@ -181,33 +226,39 @@ async function callMcpClientBridge(name: string, _env: any, device: any, args: a
       throw new Error(`mcp_client_call failed: ${res.status}`);
     }
   };
-  let out = await invoke();
-  if (out && out.ok === false) {
-    const msg = String(out.error || "");
-    // round-118 self-healing: after a device reboot nothing relaunches playwright-mcp and nobody
-    // creates a client session — the first browser_* is bound to be "not connected", requiring manual
-    // intervention. Here we do start → connect → retry once, so the browser chain self-heals on boot.
-    // round-132: "Session not found" is also covered by self-healing — playwright-mcp 0.0.79
-    // reclaims sessions server-side after ~15s idle; resending connect restores them.
-    if (/not connected|server running|refused|timed out|session not found/i.test(msg)) {
-      await fetch(`${base}/api/plugins/playwright/start`, {
-        method: "POST",
-        headers,
-        signal: AbortSignal.timeout(callBudgetMs),
-      });
-      await fetch(`${base}/api/tools/mcp_client_connect`, {
-        method: "POST",
-        headers,
-        body: "{}",
-        signal: AbortSignal.timeout(callBudgetMs),
-      });
-      out = await invoke();
-    }
+  const run = async (): Promise<any> => {
+    let out = await invoke();
     if (out && out.ok === false) {
-      throw new Error(String(out.error || "mcp_client_call failed"));
+      const msg = String(out.error || "");
+      // round-118 self-healing: after a device reboot nothing relaunches playwright-mcp and nobody
+      // creates a client session — the first browser_* is bound to be "not connected", requiring manual
+      // intervention. Here we do start → connect → retry once, so the browser chain self-heals on boot.
+      // round-132: "Session not found" is also covered by self-healing — playwright-mcp 0.0.79
+      // reclaims sessions server-side after ~15s idle; resending connect restores them.
+      if (/not connected|server running|refused|timed out|session not found/i.test(msg)) {
+        // Liveness probes, not work: short timeouts drawing from the same
+        // total budget (a hung agent must not eat another 2×320s here).
+        const healTimeout = () => Math.min(BROWSER_SELFHEAL_TIMEOUT_MS, budgetLeftMs());
+        await fetch(`${base}/api/plugins/playwright/start`, {
+          method: "POST",
+          headers,
+          signal: AbortSignal.timeout(healTimeout()),
+        });
+        await fetch(`${base}/api/tools/mcp_client_connect`, {
+          method: "POST",
+          headers,
+          body: "{}",
+          signal: AbortSignal.timeout(healTimeout()),
+        });
+        out = await invoke();
+      }
+      if (out && out.ok === false) {
+        throw new Error(String(out.error || "mcp_client_call failed"));
+      }
     }
-  }
-  return out;
+    return out;
+  };
+  return withBrowserSlot(slot, run);
 }
 
 export async function callTool(tool: any, env: any, device: any, args: any): Promise<any> {
