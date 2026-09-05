@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use vale_agent::register::self_register_plan;
 use vale_agent::state::AppState;
-use vale_agent::Config;
+use vale_agent_core::Config;
 
 /// Startup log file (set in main): every out!/eout! line also lands here, so
 /// a boot-task agent (no console) or a silent crash is diagnosable by reading

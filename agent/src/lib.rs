@@ -1,4 +1,8 @@
-// Re-export core types from vale-agent-core
+// Compat shim: core types re-exported so external/embedding consumers can
+// import from the `vale_agent` facade. The CANONICAL import path for core
+// types is `vale_agent_core::…` (the crate boundary; 5× the usage and the
+// convention all internal src/ modules follow) — new code MUST import from
+// vale_agent_core directly, never add consumers to these re-exports.
 pub use vale_agent_core::config;
 pub use vale_agent_core::error;
 pub use vale_agent_core::events;

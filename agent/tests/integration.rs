@@ -1,8 +1,8 @@
 //! Integration tests for vale_command — lib crate, so we can import vale_command types.
 
-use vale_agent::config::Config;
-use vale_agent::events::AppEventBus;
-use vale_agent::EventBus;
+use vale_agent_core::config::Config;
+use vale_agent_core::events::AppEventBus;
+use vale_agent_core::EventBus;
 
 // ═══════════════════════════════════════════════════════════════
 // Config parsing
@@ -70,7 +70,7 @@ fn config_default_impl() {
 
 #[test]
 fn ensure_token_is_64_hex_chars() {
-    use vale_agent::config::ServerConfig;
+    use vale_agent_core::config::ServerConfig;
     let mut c = ServerConfig::default();
     let (token, changed) = c.ensure_token().unwrap();
     assert!(changed, "fresh config must report changed");
@@ -86,7 +86,7 @@ fn ensure_token_is_64_hex_chars() {
 
 #[test]
 fn ensure_token_idempotent() {
-    use vale_agent::config::ServerConfig;
+    use vale_agent_core::config::ServerConfig;
     let mut c = ServerConfig::default();
     let (t1, _) = c.ensure_token().unwrap();
     let t1 = t1.unwrap();
@@ -98,7 +98,7 @@ fn ensure_token_idempotent() {
 
 #[test]
 fn ensure_token_unique_across_configs() {
-    use vale_agent::config::ServerConfig;
+    use vale_agent_core::config::ServerConfig;
     let mut a = ServerConfig::default();
     let mut b = ServerConfig::default();
     let (ta, _) = a.ensure_token().unwrap();
@@ -131,7 +131,7 @@ fn ensure_token_serialization_roundtrip() {
 #[test]
 fn eventbus_emit_and_recent() {
     let bus = AppEventBus::new();
-    let ev = vale_agent::AgentEvent::ShellExec {
+    let ev = vale_agent_core::AgentEvent::ShellExec {
         command: "ls".into(),
     };
     let seq = bus.emit(&ev);
@@ -150,7 +150,7 @@ fn eventbus_seq_monotonic() {
     let bus = AppEventBus::new();
     let mut last = 0;
     for i in 0..10 {
-        let seq = bus.emit(&vale_agent::AgentEvent::ShellExec {
+        let seq = bus.emit(&vale_agent_core::AgentEvent::ShellExec {
             command: format!("cmd{i}"),
         });
         assert_eq!(seq, last + 1);
@@ -162,7 +162,7 @@ fn eventbus_seq_monotonic() {
 fn eventbus_after_filter() {
     let bus = AppEventBus::new();
     for i in 0..5 {
-        bus.emit(&vale_agent::AgentEvent::ShellExec {
+        bus.emit(&vale_agent_core::AgentEvent::ShellExec {
             command: format!("cmd{i}"),
         });
     }
@@ -181,7 +181,7 @@ fn eventbus_ring_cap_and_resume() {
     let bus = AppEventBus::new();
     // Cap is 200; emit 250 events — ring evicts oldest, seq keeps counting
     for i in 0..250 {
-        bus.emit(&vale_agent::AgentEvent::ShellExec {
+        bus.emit(&vale_agent_core::AgentEvent::ShellExec {
             command: format!("cmd{i}"),
         });
     }
@@ -206,10 +206,10 @@ fn eventbus_hook_receives_seq() {
     bus.set_hook(move |seq, _ev| {
         sink.lock().unwrap().push(seq);
     });
-    bus.emit(&vale_agent::AgentEvent::ShellExec {
+    bus.emit(&vale_agent_core::AgentEvent::ShellExec {
         command: "a".into(),
     });
-    bus.emit(&vale_agent::AgentEvent::ShellExec {
+    bus.emit(&vale_agent_core::AgentEvent::ShellExec {
         command: "b".into(),
     });
     assert_eq!(*seen.lock().unwrap(), vec![1u64, 2]);

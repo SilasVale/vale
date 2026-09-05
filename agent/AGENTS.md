@@ -165,7 +165,11 @@ src/
   tools/           terminal/ (TerminalManager + TermBackend trait; pty.rs,
                    ssh.rs, serial.rs, secrets.rs, stub.rs), serial.rs, ssh.rs
 vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_token via
-                   getrandom), DeviceError (typed variants), EventBus/AppEventBus
+                   getrandom), DeviceError (typed variants), EventBus/AppEventBus.
+                   CANONICAL import path for core types: `vale_agent_core::…`
+                   (lib.rs's `vale_agent::` re-exports are a compat shim for
+                   external/embedding consumers — internal code never adds
+                   consumers to them; unified 2026-09-05)
 (vale-tray/ and vale-desktop/ Tauri source deleted round-330 — both
  retired; the npm CLI + Electron shell replaced them. Git history has
  the old crates.)
