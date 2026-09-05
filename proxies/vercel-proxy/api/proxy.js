@@ -5,8 +5,11 @@
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/messages";
 const SAFE = ["accept","accept-encoding","accept-language","anthropic-version","content-type","user-agent"];
 
-// Upstream fetch budget: fail fast instead of hanging a client.
-const UPSTREAM_TIMEOUT_MS = 30000;
+// Upstream fetch budget: fail fast instead of hanging a client. Covers
+// WAITING FOR RESPONSE HEADERS only — the response body (possibly a long
+// SSE stream) is forwarded untimed so a long generation is never cut
+// mid-stream (regression ff5ad05a cut every streamed body at 30 s).
+const HEADER_TIMEOUT_MS = 30000;
 
 // CORS allowlist: the console origins used in this repo plus loopback for
 // local dev (same closed set as the CF zen proxies). Any other Origin gets
@@ -60,14 +63,23 @@ export default async function handler(request) {
     h.set("Authorization", clientAuth);
     h.set("Content-Type", "application/json");
     if (!h.has("anthropic-version")) h.set("anthropic-version", "2023-06-01");
-    const r = await fetch(OPENROUTER_URL, {
-      method: request.method,
-      headers: h,
-      // GET/HEAD carry no body: passing request.body there throws on some
-      // runtimes. Only methods with a body send one.
-      body: ["POST", "PUT", "PATCH"].includes(request.method) ? request.body : undefined,
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
+    // Fetch upstream: timeout only until response headers arrive; the body
+    // stream then flows untimed (long SSE must not be aborted mid-stream).
+    const ac = new AbortController();
+    const headerTimer = setTimeout(() => ac.abort(), HEADER_TIMEOUT_MS);
+    let r;
+    try {
+      r = await fetch(OPENROUTER_URL, {
+        method: request.method,
+        headers: h,
+        // GET/HEAD carry no body: passing request.body there throws on some
+        // runtimes. Only methods with a body send one.
+        body: ["POST", "PUT", "PATCH"].includes(request.method) ? request.body : undefined,
+        signal: ac.signal,
+      });
+    } finally {
+      clearTimeout(headerTimer);
+    }
     const rh = new Headers(r.headers);
     for (const [k, v] of Object.entries(cors)) rh.set(k, v);
     return new Response(r.body, { status: r.status, headers: rh });

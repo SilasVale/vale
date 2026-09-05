@@ -10,8 +10,16 @@ const TARGETS = {
 };
 const SAFE = ["accept","accept-encoding","accept-language","anthropic-version","content-type","user-agent"];
 
-// Upstream fetch budget: fail fast instead of hanging a client.
-const UPSTREAM_TIMEOUT_MS = 30000;
+// Upstream fetch budget: fail fast instead of hanging a client. The timeout
+// covers WAITING FOR RESPONSE HEADERS only — once the upstream answers, the
+// response body (possibly a long SSE stream: muse-spark generations run
+// minutes) is forwarded UNTIMED. AbortSignal.timeout on the whole fetch
+// aborts the body mid-stream at the budget (regression ff5ad05a: every
+// streamed response through this relay died at 30 s, surfacing as truncated
+// SSE to OpenAI Responses clients — "stream ended before a terminal
+// response event"). Cloudflare/Vercel streaming bodies must not carry a
+// wall-clock abort.
+const HEADER_TIMEOUT_MS = 30000;
 
 // CORS allowlist: the console origins used in this repo plus loopback for
 // local dev (same closed set as the CF zen proxies). Any other Origin gets
@@ -123,14 +131,25 @@ export default async function handler(request) {
     }
     if (!h.has("anthropic-version")) h.set("anthropic-version", "2023-06-01");
     h.set("Content-Type", "application/json");
-    const r = await fetch(upstream, {
-      method: request.method,
-      headers: h,
-      // GET/HEAD carry no body: passing request.body there throws on some
-      // runtimes. Only methods with a body send one.
-      body: ["POST", "PUT", "PATCH"].includes(request.method) ? request.body : undefined,
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
+    // Fetch the upstream, waiting for response HEADERS with a timeout but
+    // leaving the response BODY stream untimed (long SSE generations must
+    // not be aborted at the header budget). AbortController is cleared once
+    // headers arrive, so the body flows until the upstream ends it.
+    const ac = new AbortController();
+    const headerTimer = setTimeout(() => ac.abort(), HEADER_TIMEOUT_MS);
+    let r;
+    try {
+      r = await fetch(upstream, {
+        method: request.method,
+        headers: h,
+        // GET/HEAD carry no body: passing request.body there throws on some
+        // runtimes. Only methods with a body send one.
+        body: ["POST", "PUT", "PATCH"].includes(request.method) ? request.body : undefined,
+        signal: ac.signal,
+      });
+    } finally {
+      clearTimeout(headerTimer);
+    }
     const rh = new Headers(r.headers);
     for (const [k, v] of Object.entries(cors)) rh.set(k, v);
     return new Response(r.body, { status: r.status, headers: rh });

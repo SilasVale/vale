@@ -13,8 +13,13 @@
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
 
-// Upstream fetch budget: fail fast instead of hanging a client for minutes.
-const UPSTREAM_TIMEOUT_MS = 30000;
+// Upstream fetch budget: fail fast instead of hanging a client. Covers
+// WAITING FOR RESPONSE HEADERS only — streamed response bodies (Anthropic
+// SSE from /v1/messages, chat/completions chunks) are forwarded untimed so
+// a long generation is never cut mid-stream (regression ff5ad05a cut every
+// streamed body at 30 s on the Vercel relay; the same whole-request
+// AbortSignal.timeout pattern would cut CF streams the same way).
+const HEADER_TIMEOUT_MS = 30000;
 // Largest request body accepted on the JSON POST paths (10MB). Bodies are
 // parsed with request.json() (fully buffered), so bound memory explicitly.
 const MAX_JSON_BYTES = 10 * 1024 * 1024;
@@ -80,6 +85,20 @@ function jsonTooLarge(request) {
   return Number.isFinite(n) && n > MAX_JSON_BYTES;
 }
 
+// Fetch the upstream and wait for response HEADERS with a timeout, but keep
+// the returned body stream UNTIMED — the caller forwards `upstream.body` to
+// the client and that SSE stream may run for minutes. AbortSignal.timeout
+// on the whole fetch would abort the body mid-stream at the budget.
+async function fetchUpstreamHeaders(url, init) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), HEADER_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -104,7 +123,7 @@ export default {
       if (request.method === "GET" && url.pathname.endsWith("/models")) {
         const up = await fetch("https://opencode.ai/zen/go/v1/models", {
           headers: { "x-api-key": env.OPENCODE_GO_API_KEY },
-          signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+          signal: AbortSignal.timeout(HEADER_TIMEOUT_MS),
         });
         return new Response(up.body, {
           status: up.status,
@@ -135,7 +154,7 @@ export default {
       // Anthropic SSE stream. Other models keep the translate path below.
       const NATIVE = new Set(["deepseek-v4-flash"]);
       const native = NATIVE.has(model);
-      const upstream = await fetch(
+      const upstream = await fetchUpstreamHeaders(
         native ? "https://opencode.ai/zen/go/v1/messages" : "https://opencode.ai/zen/go/v1/chat/completions",
         {
           method: "POST",
@@ -143,7 +162,6 @@ export default {
             ? { "x-api-key": env.OPENCODE_GO_API_KEY, "Content-Type": "application/json", "anthropic-version": "2023-06-01" }
             : { Authorization: `Bearer ${env.OPENCODE_GO_API_KEY}`, "Content-Type": "application/json" },
           body: native ? JSON.stringify(anthropicReq) : JSON.stringify(toOpenAIRequest(anthropicReq, model)),
-          signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         },
       );
       if (!upstream.ok) {

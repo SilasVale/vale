@@ -9,7 +9,13 @@ Independently deployed small proxy Workers / Vercel projects, invoked by the Val
 | `my-openrouter-proxy/` | `openrouter-proxy` | OpenRouter BYOK passthrough (BYOK-only: anonymous callers get 401, no built-in key exists to spend) | none — BYOK-only, no secret to configure |
 | `vercel-proxy/` | Vercel project | `<mirror-host>/api/zen` + `/api/proxy` AI egress (both BYOK-only: caller key required), controlled `/api/github/{web\|raw\|api\|release}/...` GitHub HTTP reverse proxy, plus `/api/gform/{gle\|docs\|...}/...` Google Forms reverse proxy (body rewriting, anonymous public forms) (Vercel platform, not a Worker) | none — BYOK-only, no secret to configure |
 
-Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default-closed when unset); the OpenRouter paths (`my-openrouter-proxy`, `/api/proxy`, `/api/zen`) are BYOK-only — the caller always supplies their own upstream key and there is deliberately **no server-side key to leak, rotate, or configure**. Upstream fetches carry a 30s `AbortSignal.timeout`; 5xx responses use generic client text (detail stays in the worker/function log).
+Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default-closed when unset); the OpenRouter paths (`my-openrouter-proxy`, `/api/proxy`, `/api/zen`) and zen-us `/v1/responses` are BYOK-only — the caller always supplies their own upstream key and there is deliberately **no server-side key to leak, rotate, or configure**. Upstream fetches carry a 30s timeout that covers **waiting for response headers only** — streamed response bodies (long SSE generations, e.g. muse-spark via `/v1/responses`) are forwarded untimed so a long generation is never cut mid-stream. 5xx responses use generic client text (detail stays in the worker/function log).
+
+## `/v1/responses` (muse-spark) — why BYOK on zen-us, and the US-exit caveat
+
+`zen-us-proxy` also serves `POST /v1/responses` as a pure BYOK relay (Bearer → upstream), used for `og/muse-spark-*` Contributor (responses-only upstream, Meta region policy forces a US exit). Unlike `/v1/messages` it does NOT gate on `CLIENT_KEY`: the caller's own zen key rides as Bearer and is spent by the caller, not by this worker.
+
+**Current caveat (2026-09-05):** a Cloudflare worker egress does NOT clear the Meta RegionError — zen geo-locates the CF egress IP (EU edges → `403 RegionError: This model is not available in your country`). Only the Vercel relay (`v.saisi.online/api/zen`, edge in ORD/Chicago) is verified to clear it. The gateway therefore defaults muse to the Vercel relay (`MUSE_RESPONSES_EXIT` unset); `zen-us` remains a configurable exit for when a US-pinned CF egress becomes available.
 
 ## Deployment
 

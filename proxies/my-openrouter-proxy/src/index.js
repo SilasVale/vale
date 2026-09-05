@@ -8,8 +8,13 @@
 // earlier us-proxy-db binding was idle and has been removed). Only
 // zen-us-proxy keeps its D1 binding, as an intentional geo-hack.
 
-// Upstream fetch budget: fail fast instead of hanging a client for minutes.
-const UPSTREAM_TIMEOUT_MS = 30000;
+// Upstream fetch budget: fail fast instead of hanging a client. Covers
+// WAITING FOR RESPONSE HEADERS only — the streamed response body (Anthropic
+// SSE) is forwarded untimed so a long generation is never cut mid-stream
+// (regression ff5ad05a cut every streamed body at 30 s on the Vercel relay;
+// the same whole-request AbortSignal.timeout pattern would cut CF streams
+// the same way).
+const HEADER_TIMEOUT_MS = 30000;
 
 // CORS allowlist: the console origins used in this repo plus loopback for
 // local `wrangler dev` (same closed set as zen-go-proxy). Any other Origin
@@ -88,14 +93,23 @@ export default {
         headers.set("anthropic-version", "2023-06-01");
       }
 
-      const response = await fetch(openRouterUrl, {
-        method: request.method,
-        headers: headers,
-        // GET/HEAD carry no body: passing request.body there throws on some
-        // runtimes and confuses upstreams. Only POST sends one.
-        body: request.method === "POST" ? request.body : undefined,
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      });
+      // Timeout only until response headers arrive; the body stream then
+      // flows untimed (long SSE must not be aborted mid-stream).
+      const ac = new AbortController();
+      const headerTimer = setTimeout(() => ac.abort(), HEADER_TIMEOUT_MS);
+      let response;
+      try {
+        response = await fetch(openRouterUrl, {
+          method: request.method,
+          headers: headers,
+          // GET/HEAD carry no body: passing request.body there throws on some
+          // runtimes and confuses upstreams. Only POST sends one.
+          body: request.method === "POST" ? request.body : undefined,
+          signal: ac.signal,
+        });
+      } finally {
+        clearTimeout(headerTimer);
+      }
 
       const modifiedHeaders = new Headers(response.headers);
       for (const [k, v] of Object.entries(cors)) modifiedHeaders.set(k, v);

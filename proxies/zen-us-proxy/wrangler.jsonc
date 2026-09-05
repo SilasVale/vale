@@ -10,6 +10,12 @@
   "routes": [
     { "pattern": "zen-us.saisi.online/*", "zone_id": "79860b60a8681147d0ce38294d404ead" }
   ],
+  // smart placement (same as zen-go-proxy): move execution toward the
+  // upstream (opencode.ai/zen/go). For /v1/responses (muse-spark) this can
+  // place the worker on a US edge — Meta's geographic policy only allows
+  // permitted regions, and an EU/Asia egress returns 403 RegionError from
+  // zen (observed with the plain D1-pinned EU edge on 2026-09-05).
+  "placement": { "mode": "smart" },
   "d1_databases": [
     {
       "binding": "DB",
