@@ -37,6 +37,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.psq = void 0;
 exports.deskShortcutRepairPs = deskShortcutRepairPs;
 exports.busyIsFresh = busyIsFresh;
+exports.boxedVersions = boxedVersions;
+exports.writeBoxedVersions = writeBoxedVersions;
 /**
  * vale CLI — DSH-style management for the Vale Agent.
  *
@@ -45,6 +47,7 @@ exports.busyIsFresh = busyIsFresh;
  * created by setup). The native tray was retired 2026-08-22.
  */
 const child_process_1 = require("child_process");
+const crypto = __importStar(require("crypto"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const EXE_SRC = path.join(__dirname, "..", "vale-agent.exe");
@@ -133,6 +136,64 @@ function deskShortcutRepairPs(qq, sink) {
 // exported: the update mutual-exclusion window (npm audit #10 seam), unit-tested.
 function busyIsFresh(mtimeMs, nowMs) {
     return nowMs - mtimeMs < 10 * 60 * 1000;
+}
+function boxedVersions(installDir, pkgDir) {
+    const pkgVer = (p) => {
+        try {
+            const j = JSON.parse(fs.readFileSync(p, "utf8"));
+            return typeof j?.version === "string" && j.version ? j.version : "unknown";
+        }
+        catch {
+            return "unknown";
+        }
+    };
+    const shaOf = (p) => {
+        try {
+            const st = fs.statSync(p);
+            if (!st.isFile() || st.size > 300 * 1024 * 1024)
+                return "unknown";
+            return crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");
+        }
+        catch {
+            return "unknown";
+        }
+    };
+    const cfBin = fs.existsSync(path.join(installDir, "tools", "cloudflared.exe"))
+        ? path.join(installDir, "tools", "cloudflared.exe")
+        : path.join(pkgDir, "cloudflared.exe");
+    let cfVer = "unknown";
+    try {
+        if (fs.existsSync(cfBin)) {
+            const r = (0, child_process_1.spawnSync)(cfBin, ["--version"], { encoding: "utf8", timeout: 15000 });
+            const line = ((r.stdout || "") + (r.stderr || "")).split(/\r?\n/)[0].trim();
+            if (line)
+                cfVer = line.slice(0, 120);
+        }
+    }
+    catch { /* best-effort */ }
+    const pwRoot = path.join(installDir, "playwright");
+    return {
+        updated: new Date().toISOString(),
+        playwright_mcp: {
+            version: pkgVer(path.join(pwRoot, "node_modules", "@playwright", "mcp", "package.json")),
+            sha256: shaOf(path.join(pkgDir, "vale-playwright.zip")),
+        },
+        playwright_core: {
+            version: pkgVer(path.join(pwRoot, "node_modules", "playwright-core", "package.json")),
+            sha256: "unknown",
+        },
+        cloudflared: { version: cfVer, sha256: fs.existsSync(cfBin) ? shaOf(cfBin) : "unknown" },
+    };
+}
+// exported: best-effort writer for the P2-4 manifest (never throws).
+function writeBoxedVersions(installDir, pkgDir) {
+    try {
+        fs.mkdirSync(installDir, { recursive: true });
+        fs.writeFileSync(path.join(installDir, "boxed-versions.json"), JSON.stringify(boxedVersions(installDir, pkgDir), null, 2));
+    }
+    catch (e) {
+        console.log("boxed-versions: manifest write skipped (" + (e?.message || e) + ")");
+    }
 }
 function svc(action) {
     sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
@@ -344,6 +405,8 @@ const commands = {
             fs.copyFileSync(CF_SRC, path.join(DIR, "tools", "cloudflared.exe"));
             console.log("setup: cloudflared staged (tunnel optional — `vale tunnel install` to enable)");
         }
+        // P2-4: record the boxed-component versions (never fail-closed).
+        writeBoxedVersions(DIR, path.join(__dirname, ".."));
         // round-330: Tauri vale-desktop staging removed (retired).
         // stage-l: stage the Electron shell sources (main/preload) so the desktop
         // app picks up menu/command features on a fresh install too.
@@ -490,6 +553,9 @@ const commands = {
             if (fs.existsSync(icoSrc))
                 fs.copyFileSync(icoSrc, path.join(DIR, "vale-desktop-electron", "icon.ico"));
         }
+        // P2-4: refresh the boxed-component manifest from the staged package +
+        // the current install dir (best-effort, never fail-closed).
+        writeBoxedVersions(DIR, path.join(__dirname, ".."));
         const q = DIR.replace(/'/g, "''");
         const log = `Out-File '${q}\\vale-update.log' -Append`;
         // round-143: write the run-hidden.vbs wrapper next to node.exe, so the
