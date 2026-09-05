@@ -1,10 +1,10 @@
 //! PTY backend — local shell via portable-pty (`terminal` feature).
 
 use super::{TermBackend, TermOutput};
-use vale_agent_core::DeviceError;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize, SlavePty};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
+use vale_agent_core::DeviceError;
 
 pub struct PtyBackend {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -59,22 +59,42 @@ pub struct PtyBackend {
 }
 
 impl PtyBackend {
-    pub fn spawn(shell: &str, rows: u16, cols: u16, tx: tokio::sync::mpsc::Sender<TermOutput>, sid: String) -> Result<Self, DeviceError> {
+    pub fn spawn(
+        shell: &str,
+        rows: u16,
+        cols: u16,
+        tx: tokio::sync::mpsc::Sender<TermOutput>,
+        sid: String,
+    ) -> Result<Self, DeviceError> {
         let shell_cmd = if shell.is_empty() {
             // stage-m: the ONLY supported Windows shell is pwsh (PowerShell
             // 7) — it has clean OSC 633 shell integration. Windows
             // PowerShell 5.1 is NOT supported: its PSReadLine 2.0.0
             // re-echoes the injected sequences as input → `>>` (vscode#236841).
-            if cfg!(windows) { "pwsh" } else { "bash" }
-        } else { shell };
+            if cfg!(windows) {
+                "pwsh"
+            } else {
+                "bash"
+            }
+        } else {
+            shell
+        };
 
         tracing::debug!("[vale-agent] PTY: spawning shell={shell_cmd}");
 
         let r = if rows > 0 { rows } else { 24 };
         let c = if cols > 0 { cols } else { 80 };
         let pty = native_pty_system();
-        let pair = pty.openpty(PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 })
-            .map_err(|e| DeviceError::Internal { message: format!("PTY open: {e}") })?;
+        let pair = pty
+            .openpty(PtySize {
+                rows: r,
+                cols: c,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| DeviceError::Internal {
+                message: format!("PTY open: {e}"),
+            })?;
 
         // stage-m (VS Code shell integration): PowerShell sessions get the
         // OSC 633 injection — a Prompt override + PSConsoleHostReadLine wrap
@@ -137,18 +157,31 @@ impl PtyBackend {
                 }
             }
         }
-        let child = pair.slave.spawn_command(cmd)
-            .map_err(|e| DeviceError::Internal { message: format!("spawn: {e}") })?;
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .map_err(|e| DeviceError::Internal {
+                message: format!("spawn: {e}"),
+            })?;
 
-        let reader = pair.master.try_clone_reader()
-            .map_err(|e| DeviceError::Internal { message: format!("clone reader: {e}") })?;
-        let writer: Box<dyn Write + Send> = Box::new(
-            pair.master.take_writer()
-                .map_err(|e| DeviceError::Internal { message: format!("take writer: {e}") })?,
-        );
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| DeviceError::Internal {
+                message: format!("clone reader: {e}"),
+            })?;
+        let writer: Box<dyn Write + Send> =
+            Box::new(
+                pair.master
+                    .take_writer()
+                    .map_err(|e| DeviceError::Internal {
+                        message: format!("take writer: {e}"),
+                    })?,
+            );
 
         let master: Box<dyn MasterPty + Send> = pair.master;
-        let slave: Arc<Mutex<Option<Box<dyn SlavePty + Send>>>> = Arc::new(Mutex::new(Some(pair.slave)));
+        let slave: Arc<Mutex<Option<Box<dyn SlavePty + Send>>>> =
+            Arc::new(Mutex::new(Some(pair.slave)));
         let child_slot: Arc<Mutex<Option<Box<dyn Child + Send + Sync>>>> =
             Arc::new(Mutex::new(Some(child)));
         // stage-n: the reader lives in a SHARED slot so the reaper can drop
@@ -186,7 +219,15 @@ impl PtyBackend {
                 match result {
                     Ok(0) => break,
                     Ok(n) => {
-                        if tx.blocking_send(TermOutput { session_id: sid_reader.clone(), data: buf[..n].to_vec() }).is_err() { break; }
+                        if tx
+                            .blocking_send(TermOutput {
+                                session_id: sid_reader.clone(),
+                                data: buf[..n].to_vec(),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                     // WouldBlock is the ConPTY non-blocking no-data case —
                     // poll again shortly. Other errors (handle dropped by
@@ -303,7 +344,10 @@ impl TermBackend for PtyBackend {
             let _ = w.flush();
         }
     }
-    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+    fn write_async<'a>(
+        &'a self,
+        data: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
         // round-106: the round-105 version used the BLOCKING std Mutex::lock
         // (only fails on poison) and a blocking write_all on the master fd —
         // a full n_tty input queue (foreground process not reading stdin)
@@ -326,28 +370,44 @@ impl TermBackend for PtyBackend {
         // A gate whose START is older than the 5s write timeout can no
         // longer belong to a live writer (a live writer clears it at 5s or
         // completed); clear it and proceed instead of failing permanently.
-        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-        if self.write_in_flight.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            let started = self.last_write_start.load(std::sync::atomic::Ordering::SeqCst);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if self
+            .write_in_flight
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            let started = self
+                .last_write_start
+                .load(std::sync::atomic::Ordering::SeqCst);
             if started != 0 && now_ms.saturating_sub(started) >= 5000 {
                 // Stale gate from an abandoned write — reclaim it. The old
                 // spawn_blocking task, if still parked, will drain whenever
                 // the queue frees and write into a consumed buffer (safe).
-                self.write_in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+                self.write_in_flight
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
             } else {
                 return Box::pin(async move {
-                    Err("pty write already in flight (previous write wedged on a full input queue)".into())
+                    Err(
+                        "pty write already in flight (previous write wedged on a full input queue)"
+                            .into(),
+                    )
                 });
             }
         }
-        self.last_write_start.store(now_ms, std::sync::atomic::Ordering::SeqCst);
+        self.last_write_start
+            .store(now_ms, std::sync::atomic::Ordering::SeqCst);
         // round-110: cooldown after a timeout — the wedged queue would
         // re-accumulate a parked thread per retry; fail fast for 5s.
-        let last_t = self.last_write_timeout.load(std::sync::atomic::Ordering::SeqCst);
+        let last_t = self
+            .last_write_timeout
+            .load(std::sync::atomic::Ordering::SeqCst);
         // round-112: saturating_sub — a backward system-clock jump wrapped
         // the raw u64 subtraction (and panicked in debug builds).
         if last_t != 0 && now_ms.saturating_sub(last_t) < 5000 {
-            self.write_in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.write_in_flight
+                .store(false, std::sync::atomic::Ordering::SeqCst);
             return Box::pin(async move {
                 Err("pty write in cooldown after a timeout (input queue wedged)".into())
             });
@@ -411,9 +471,12 @@ impl TermBackend for PtyBackend {
                         // retry until the chunk is written or timed out.
                         let mut w = w2.lock().unwrap_or_else(|p| p.into_inner());
                         let mut done = 0usize;
-                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(9);
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(9);
                         while done < slice.len() {
-                            if std::time::Instant::now() >= deadline { return; }
+                            if std::time::Instant::now() >= deadline {
+                                return;
+                            }
                             match w.write(&slice[done..]) {
                                 Ok(0) => std::thread::sleep(std::time::Duration::from_millis(20)),
                                 Ok(n) => done += n,
@@ -423,11 +486,18 @@ impl TermBackend for PtyBackend {
                         }
                         let _ = w.flush();
                     }),
-                ).await;
+                )
+                .await;
                 match step {
                     Ok(Ok(())) => {}
-                    Ok(Err(e)) => { res = Err(format!("pty write task failed: {e}")); break; }
-                    Err(_) => { res = Err("pty write timed out after 10s (input queue full)".into()); break; }
+                    Ok(Err(e)) => {
+                        res = Err(format!("pty write task failed: {e}"));
+                        break;
+                    }
+                    Err(_) => {
+                        res = Err("pty write timed out after 10s (input queue full)".into());
+                        break;
+                    }
                 }
                 off = end;
                 if off < d.len() {
@@ -436,7 +506,10 @@ impl TermBackend for PtyBackend {
             }
             if res.is_err() {
                 last_timeout.store(
-                    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0),
                     std::sync::atomic::Ordering::SeqCst,
                 );
             }
@@ -448,13 +521,19 @@ impl TermBackend for PtyBackend {
         // Real PTY resize — the shell gets SIGWINCH / ConPTY reflows.
         // (The old code wrote an ANSI escape into the shell's stdin.)
         if let Ok(m) = self.master.lock() {
-            let _ = m.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+            let _ = m.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            });
         }
     }
     fn close(&self) {
         // review #9: from here on, any recorded exit status belongs to the
         // kill WE issued — report None (explicit close), not "natural exit".
-        self.closed_explicitly.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.closed_explicitly
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         // Kill the shell; the reaper thread observes the exit and reaps it.
         // Handles drop with the backend, closing the HPCON cleanly.
         if let Ok(mut guard) = self.child.lock() {
@@ -479,7 +558,10 @@ impl TermBackend for PtyBackend {
         }
     }
     fn exit_code(&self) -> Option<i32> {
-        if self.closed_explicitly.load(std::sync::atomic::Ordering::SeqCst) {
+        if self
+            .closed_explicitly
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             return None;
         }
         self.exit_code.lock().ok().and_then(|g| *g)

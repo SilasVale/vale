@@ -10,18 +10,21 @@ pub mod system;
 pub mod terminal;
 pub mod update;
 
-use vale_agent_core::DeviceError;
-use vale_agent_core::Plugin;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use vale_agent_core::DeviceError;
+use vale_agent_core::Plugin;
 
 /// Helper: extract a required string field from JSON params.
 pub fn require_str(params: &Value, field: &str) -> Result<String, DeviceError> {
-    params.get(field)
+    params
+        .get(field)
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| DeviceError::InvalidParams { message: format!("missing required field: {field}") })
+        .ok_or_else(|| DeviceError::InvalidParams {
+            message: format!("missing required field: {field}"),
+        })
 }
 
 /// Serialize a value, falling back to an empty JSON array on failure.
@@ -49,11 +52,16 @@ impl Default for PluginRegistry {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        Self { plugins: vec![], by_name: HashMap::new(), tools_by_plugin: Vec::new() }
+        Self {
+            plugins: vec![],
+            by_name: HashMap::new(),
+            tools_by_plugin: Vec::new(),
+        }
     }
 
     pub fn register(&mut self, plugin: Box<dyn Plugin>) {
-        let tools: Vec<Arc<vale_agent_core::ToolDef>> = plugin.tools().into_iter().map(Arc::new).collect();
+        let tools: Vec<Arc<vale_agent_core::ToolDef>> =
+            plugin.tools().into_iter().map(Arc::new).collect();
         for t in &tools {
             if let Some(prev) = self.by_name.insert(t.name.clone(), t.clone()) {
                 // Core audit #12: last-wins SHADOWING silently duplicates the
@@ -64,18 +72,23 @@ impl PluginRegistry {
                 tracing::warn!("plugin tool name collision: '{}' registered twice", t.name);
             }
         }
-        self.tools_by_plugin.push((plugin.name().to_string(), tools));
+        self.tools_by_plugin
+            .push((plugin.name().to_string(), tools));
         self.plugins.push(plugin);
     }
 
     /// All tools across plugins (cached — no rebuilds).
     pub fn all_tools(&self) -> Vec<Arc<vale_agent_core::ToolDef>> {
-        self.tools_by_plugin.iter().flat_map(|(_, ts)| ts.iter().cloned()).collect()
+        self.tools_by_plugin
+            .iter()
+            .flat_map(|(_, ts)| ts.iter().cloned())
+            .collect()
     }
 
     /// Tools of one plugin by name (cached).
     pub fn plugin_tools(&self, name: &str) -> &[Arc<vale_agent_core::ToolDef>] {
-        self.tools_by_plugin.iter()
+        self.tools_by_plugin
+            .iter()
             .find(|(n, _)| n == name)
             .map(|(_, ts)| ts.as_slice())
             .unwrap_or(&[])
@@ -89,17 +102,23 @@ impl PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vale_agent_core::ToolDef;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use vale_agent_core::ToolDef;
 
     /// Counting plugin — tools() must run exactly once at register time.
     struct CountingPlugin(Arc<AtomicUsize>);
 
     impl Plugin for CountingPlugin {
-        fn name(&self) -> &'static str { "counting" }
-        fn display_name(&self) -> &'static str { "Counting" }
-        fn description(&self) -> &'static str { "" }
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+        fn display_name(&self) -> &'static str {
+            "Counting"
+        }
+        fn description(&self) -> &'static str {
+            ""
+        }
         fn tools(&self) -> Vec<ToolDef> {
             self.0.fetch_add(1, Ordering::SeqCst);
             vec![ToolDef::new(
@@ -116,13 +135,25 @@ mod tests {
         let count = Arc::new(AtomicUsize::new(0));
         let mut reg = PluginRegistry::new();
         reg.register(Box::new(CountingPlugin(count.clone())));
-        assert_eq!(count.load(Ordering::SeqCst), 1, "register must build tools once");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "register must build tools once"
+        );
 
         let all = reg.all_tools();
         assert_eq!(all.len(), 1);
-        assert_eq!(count.load(Ordering::SeqCst), 1, "all_tools must not rebuild");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "all_tools must not rebuild"
+        );
         assert_eq!(reg.plugin_tools("counting").len(), 1);
-        assert_eq!(count.load(Ordering::SeqCst), 1, "plugin_tools must not rebuild");
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "plugin_tools must not rebuild"
+        );
         assert!(reg.find_tool("c1").is_some());
     }
 }

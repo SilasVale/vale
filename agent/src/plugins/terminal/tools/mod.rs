@@ -32,11 +32,11 @@ pub(crate) use ctx::{remove_spill_for, sweep_spills_once};
 
 use std::sync::Arc;
 
-use vale_agent_core::{EventBus, ToolDef};
 use crate::plugins::terminal::{DiagStore, OutputBuf};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
 use ctx::JobsMap;
+use vale_agent_core::{EventBus, ToolDef};
 
 pub(super) fn build(
     terminal_mgr: &Arc<TerminalManager>,
@@ -47,7 +47,8 @@ pub(super) fn build(
     logger: &crate::session_log::SessionLogger,
     buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
 ) -> Vec<ToolDef> {
-    let jobs: JobsMap = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let jobs: JobsMap =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut tools = vec![
         sessions::tool_open(terminal_mgr, bus, output_buf, logger, buffer_limit),
         exec::tool_jobs(&jobs),

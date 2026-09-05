@@ -107,7 +107,10 @@ async fn stdio_bridge_roundtrip() {
     // override via env so the test exercises the REAL stdio bridge without
     // the device bundle.
     std::env::set_var("VALE_TEST_STDIO_NODE", node_bin());
-    std::env::set_var("VALE_TEST_STDIO_ENTRY", script.to_string_lossy().to_string());
+    std::env::set_var(
+        "VALE_TEST_STDIO_ENTRY",
+        script.to_string_lossy().to_string(),
+    );
 
     let r: Value = connect
         .handler
@@ -122,10 +125,15 @@ async fn stdio_bridge_roundtrip() {
     // List mirrors the remote tool.
     let r: Value = list.handler.call(json!({})).await.expect("list");
     assert_eq!(r["tool_count"], 1);
-    assert!(r["tools"].as_array().unwrap().iter().any(|t| t["name"] == "echo"));
+    assert!(r["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|t| t["name"] == "echo"));
 
     // Call the echo tool end-to-end over stdio.
-    let r: Value = call.handler
+    let r: Value = call
+        .handler
         .call(json!({ "tool": "echo", "arguments": { "text": "hello" } }))
         .await
         .expect("call echo");
@@ -134,10 +142,22 @@ async fn stdio_bridge_roundtrip() {
     assert!(text.contains("hello"), "echo result: {text}");
 
     // Disconnect tears down the child.
-    let r: Value = disconnect.handler.call(json!({})).await.expect("disconnect");
+    let r: Value = disconnect
+        .handler
+        .call(json!({}))
+        .await
+        .expect("disconnect");
     assert_eq!(r["status"], "disconnected");
-    let err = call.handler.call(json!({ "tool": "echo" })).await.unwrap_err().to_string();
-    assert!(err.contains("not connected"), "call after disconnect: {err}");
+    let err = call
+        .handler
+        .call(json!({ "tool": "echo" }))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("not connected"),
+        "call after disconnect: {err}"
+    );
 
     let _ = std::fs::remove_dir_all(script.parent().unwrap());
 }

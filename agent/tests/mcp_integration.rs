@@ -2,16 +2,15 @@
 //! rmcp client. Exercises the whole dispatch path (HTTP → DeviceServer →
 //! PluginRegistry → tool handler) with zero hardware.
 
-use vale_agent::state::AppState;
-use vale_agent_core::Config;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ContentBlock};
-use rmcp::ServiceExt;
 use rmcp::transport::{
-    StreamableHttpClientTransport,
-    streamable_http_client::StreamableHttpClientTransportConfig,
+    streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
 };
+use rmcp::ServiceExt;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+use vale_agent::state::AppState;
+use vale_agent_core::Config;
 
 /// Start a headless server on an ephemeral port; returns the MCP URL.
 async fn start_server(auth_token: Option<&str>) -> String {
@@ -68,7 +67,10 @@ async fn unknown_tool_returns_error() {
     let client = ().serve(transport).await.expect("connect client");
 
     let params = CallToolRequestParams::new("does_not_exist");
-    let err = client.call_tool(params).await.expect_err("unknown tool must fail");
+    let err = client
+        .call_tool(params)
+        .await
+        .expect_err("unknown tool must fail");
     assert!(!err.to_string().is_empty());
     let _ = client.cancel().await;
 }
@@ -108,7 +110,10 @@ async fn authorized_with_bearer_token() {
     let client = ().serve(transport).await.expect("connect client");
 
     let params = CallToolRequestParams::new("terminal_list");
-    let resp: CallToolResult = client.call_tool(params).await.expect("call_tool with token");
+    let resp: CallToolResult = client
+        .call_tool(params)
+        .await
+        .expect("call_tool with token");
     let text = match resp.content.first().expect("content") {
         ContentBlock::Text(t) => t.text.clone(),
         _ => panic!("expected text content"),

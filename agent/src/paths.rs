@@ -45,7 +45,11 @@ fn registry_value(name: &str) -> Option<String> {
     let line = text.lines().find(|l| l.contains(name))?;
     let after = line.split("REG_SZ").nth(1)?;
     let v = after.trim();
-    if v.is_empty() { None } else { Some(v.to_string()) }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v.to_string())
+    }
 }
 
 #[cfg(not(windows))]
@@ -132,7 +136,10 @@ pub fn harden_file(path: &std::path::Path) -> Result<(), std::io::Error> {
             ])
             .output()?;
         if !out.status.success() {
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, "icacls rejected"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "icacls rejected",
+            ));
         }
         Ok(())
     }
@@ -181,7 +188,10 @@ mod harden_tests {
         std::fs::write(&p, b"x").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
         harden_file(&p).expect("harden ok");
-        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

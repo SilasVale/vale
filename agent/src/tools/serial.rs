@@ -102,9 +102,11 @@ impl SerialPool {
                 6 => serialport::DataBits::Six,
                 7 => serialport::DataBits::Seven,
                 8 => serialport::DataBits::Eight,
-                _ => return Err(DeviceError::Internal {
-                    message: format!("invalid data_bits: {db} (5/6/7/8)"),
-                }),
+                _ => {
+                    return Err(DeviceError::Internal {
+                        message: format!("invalid data_bits: {db} (5/6/7/8)"),
+                    })
+                }
             };
             builder = builder.data_bits(db);
         }
@@ -115,9 +117,11 @@ impl SerialPool {
                 "odd" => serialport::Parity::Odd,
                 "even" => serialport::Parity::Even,
                 "none" => serialport::Parity::None,
-                _ => return Err(DeviceError::Internal {
-                    message: format!("invalid parity: {p} (odd/even/none)"),
-                }),
+                _ => {
+                    return Err(DeviceError::Internal {
+                        message: format!("invalid parity: {p} (odd/even/none)"),
+                    })
+                }
             };
             builder = builder.parity(parity);
         }
@@ -127,9 +131,11 @@ impl SerialPool {
             let sb = match sb {
                 1 => serialport::StopBits::One,
                 2 => serialport::StopBits::Two,
-                _ => return Err(DeviceError::Internal {
-                    message: format!("invalid stop_bits: {sb} (1/2)"),
-                }),
+                _ => {
+                    return Err(DeviceError::Internal {
+                        message: format!("invalid stop_bits: {sb} (1/2)"),
+                    })
+                }
             };
             builder = builder.stop_bits(sb);
         }
@@ -147,9 +153,11 @@ impl SerialPool {
             }
         }
 
-        let port = builder.open().map_err(|e| DeviceError::SerialPortNotFound {
-            port: format!("{port_name}: {e}"),
-        })?;
+        let port = builder
+            .open()
+            .map_err(|e| DeviceError::SerialPortNotFound {
+                port: format!("{port_name}: {e}"),
+            })?;
 
         // round-99: the exclusivity check above was check-then-act — two
         // concurrent opens of the same port BOTH passed the check (lock

@@ -19,7 +19,9 @@ const MAX_BYTES: u64 = 1_000_000;
 /// rotate; rotated files are `agent.log.<stamp>.old`, pruned to KEEP_OLD.
 const KEEP_OLD: usize = 3;
 
-fn day_bucket(secs: u64) -> u64 { secs / 86_400 }
+fn day_bucket(secs: u64) -> u64 {
+    secs / 86_400
+}
 
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
@@ -44,9 +46,19 @@ pub struct RotatingFile {
 
 impl RotatingFile {
     pub fn new(path: PathBuf) -> std::io::Result<Self> {
-        let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?;
         let written = file.metadata().map(|m| m.len()).unwrap_or(0);
-        Ok(Self { inner: Arc::new(Mutex::new(Inner { file, path, written, day: day_bucket(unix_now()) })) })
+        Ok(Self {
+            inner: Arc::new(Mutex::new(Inner {
+                file,
+                path,
+                written,
+                day: day_bucket(unix_now()),
+            })),
+        })
     }
 }
 
@@ -55,14 +67,25 @@ fn rotate_locked(g: &mut Inner) -> std::io::Result<()> {
     let stamp = unix_now();
     let old = g.path.with_extension(format!("log.{stamp}.old"));
     let _ = std::fs::rename(&g.path, &old);
-    g.file = std::fs::OpenOptions::new().create(true).append(true).open(&g.path)?;
+    g.file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&g.path)?;
     g.written = 0;
     g.day = day_bucket(stamp);
     // prune: keep the newest KEEP_OLD rotated files (names embed the epoch
     // stamp, so a lexical sort of the ".old" siblings is chronological)
     if let Ok(rd) = std::fs::read_dir(g.path.parent().unwrap_or(std::path::Path::new("."))) {
-        let prefix = format!("{}.", g.path.file_name().and_then(|n| n.to_str()).unwrap_or("agent.log").trim_end_matches(".log"));
-        let mut olds: Vec<PathBuf> = rd.flatten()
+        let prefix = format!(
+            "{}.",
+            g.path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("agent.log")
+                .trim_end_matches(".log")
+        );
+        let mut olds: Vec<PathBuf> = rd
+            .flatten()
             .map(|e| e.path())
             .filter(|p| {
                 p.file_name()
@@ -90,8 +113,7 @@ impl Write for Sink {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         // size cap OR day change (stage-n: daily rotation)
-        if g.written.saturating_add(buf.len() as u64) > MAX_BYTES
-            || day_bucket(unix_now()) != g.day
+        if g.written.saturating_add(buf.len() as u64) > MAX_BYTES || day_bucket(unix_now()) != g.day
         {
             rotate_locked(&mut g)?;
         }
@@ -108,7 +130,9 @@ impl Write for Sink {
 impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RotatingFile {
     type Writer = Sink;
     fn make_writer(&'a self) -> Sink {
-        Sink { inner: self.inner.clone() }
+        Sink {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -138,7 +162,10 @@ mod tests {
         });
         assert!(rotated, "rotation must produce agent.log.<stamp>.old");
         let live = std::fs::metadata(&path).unwrap().len();
-        assert!(live > 0 && live <= MAX_BYTES, "live log stays bounded: {live}");
+        assert!(
+            live > 0 && live <= MAX_BYTES,
+            "live log stays bounded: {live}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

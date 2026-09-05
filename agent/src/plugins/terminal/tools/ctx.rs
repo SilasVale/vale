@@ -10,8 +10,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use vale_agent_core::DeviceError;
 use crate::tools::terminal::TerminalManager;
+use vale_agent_core::DeviceError;
 
 /// Background-job record (refactor Phase 3): gives run_in_background
 /// commands completion semantics — callers poll terminal_jobs instead of
@@ -33,7 +33,8 @@ pub(super) type JobsMap = std::sync::Arc<std::sync::Mutex<HashMap<String, JobInf
 /// Sessions that existed before the last agent restart (Phase 4). PTYs die
 /// with the process; keeping their metadata lets errors say "this session
 /// existed before the restart" instead of a bare not-found. Capped at 128.
-pub(super) fn pre_restart_map() -> std::sync::Arc<std::sync::Mutex<HashMap<String, serde_json::Value>>> {
+pub(super) fn pre_restart_map(
+) -> std::sync::Arc<std::sync::Mutex<HashMap<String, serde_json::Value>>> {
     static PRE: OnceLock<std::sync::Arc<std::sync::Mutex<HashMap<String, serde_json::Value>>>> =
         OnceLock::new();
     PRE.get_or_init(|| {
@@ -43,7 +44,8 @@ pub(super) fn pre_restart_map() -> std::sync::Arc<std::sync::Mutex<HashMap<Strin
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         std::sync::Arc::new(std::sync::Mutex::new(loaded))
-    }).clone()
+    })
+    .clone()
 }
 pub(super) fn persist_pre_restart(map: &HashMap<String, serde_json::Value>) {
     let path = crate::plugins::terminal::log_dir().join("sessions-pre-restart.json");
@@ -61,7 +63,10 @@ pub(super) async fn session_lost(mgr: &Arc<TerminalManager>, sid: &str) -> Devic
     let list = if open.is_empty() {
         "(none — agent restarted? re-open with terminal_open)".to_string()
     } else {
-        open.iter().map(|i| i.id.clone()).collect::<Vec<_>>().join(", ")
+        open.iter()
+            .map(|i| i.id.clone())
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     DeviceError::InvalidParams { message: format!(
         "Session not found: {sid}.{} Open sessions: [{list}]. Re-open with terminal_open(kind,target) then retry.",
@@ -74,9 +79,13 @@ pub(super) async fn session_lost(mgr: &Arc<TerminalManager>, sid: &str) -> Devic
 /// session vanished instead of a bare not-found.
 fn pre_restart_context(sid: &str) -> String {
     let map = pre_restart_map();
-    let existed = map.lock().unwrap_or_else(|p| p.into_inner()).contains_key(sid);
+    let existed = map
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .contains_key(sid);
     if existed {
-        " This session existed before the last agent restart - PTYs cannot survive restarts.".to_string()
+        " This session existed before the last agent restart - PTYs cannot survive restarts."
+            .to_string()
     } else {
         String::new()
     }
@@ -104,11 +113,15 @@ fn valid_spill_id(sid: &str) -> bool {
     // ids are `term-<hex>-<n>`; tests seed simpler synthetic ids.)
     !sid.is_empty()
         && sid.len() <= 64
-        && sid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && sid
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 pub(super) fn spill_path(sid: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join("vale").join(format!("{sid}.spill"))
+    std::env::temp_dir()
+        .join("vale")
+        .join(format!("{sid}.spill"))
 }
 
 /// Drop the oldest `discard` bytes from a session's spill file (round-115).
@@ -125,7 +138,9 @@ pub(super) fn spill_path(sid: &str) -> std::path::PathBuf {
 pub(super) fn rotate_spill(sid: &str, discard: u64) -> bool {
     use std::io::{Seek, SeekFrom, Write};
     let p = spill_path(sid);
-    let Ok(mut f) = std::fs::File::open(&p) else { return true };
+    let Ok(mut f) = std::fs::File::open(&p) else {
+        return true;
+    };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     if discard >= len {
         drop(f);
@@ -138,7 +153,9 @@ pub(super) fn rotate_spill(sid: &str, discard: u64) -> bool {
     while remain > 0 {
         let want = (remain.min(buf.len() as u64)) as usize;
         let n = std::io::Read::read(&mut f, &mut buf[..want]).unwrap_or(0);
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         tail.extend_from_slice(&buf[..n]);
         remain -= n as u64;
     }
@@ -196,13 +213,19 @@ pub(super) fn read_spill(sid: &str, start: usize, end: usize, base: u64) -> (Vec
     // no-offset read (cursor 0) OOM'd the agent. Cap a single read at 1MB.
     use std::io::{Read, Seek, SeekFrom};
     const MAX_SPILL_READ: u64 = 1_048_576;
-    let Ok(mut f) = std::fs::File::open(spill_path(sid)) else { return (Vec::new(), start.max(base as usize) as u64) };
+    let Ok(mut f) = std::fs::File::open(spill_path(sid)) else {
+        return (Vec::new(), start.max(base as usize) as u64);
+    };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     // File covers absolute [base, base+len). Intersect the request with it.
     let file_end = base + len;
     let e = (end as u64).min(file_end);
     let s = (start as u64).max(base).min(e);
-    let read_start = if e - s > MAX_SPILL_READ { e - MAX_SPILL_READ } else { s };
+    let read_start = if e - s > MAX_SPILL_READ {
+        e - MAX_SPILL_READ
+    } else {
+        s
+    };
     let _ = f.seek(SeekFrom::Start(read_start - base)); // file-relative offset
     let mut out = Vec::with_capacity((e - read_start) as usize);
     let _ = f.take(e - read_start).read_to_end(&mut out);

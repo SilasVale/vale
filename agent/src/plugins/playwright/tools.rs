@@ -12,8 +12,8 @@
 
 use serde_json::{json, Value};
 
-use vale_agent_core::ToolDef;
 use crate::plugins::to_value_or_empty;
+use vale_agent_core::ToolDef;
 
 /// Install dir — registry-first, then exe dir (crate::paths::install_dir).
 fn install_dir() -> std::path::PathBuf {
@@ -22,10 +22,15 @@ fn install_dir() -> std::path::PathBuf {
 
 /// Read playwright-core's version from the bundled package.json.
 fn pw_version(pw_dir: &std::path::Path) -> Option<String> {
-    let pkg = pw_dir.join("node_modules").join("playwright-core").join("package.json");
+    let pkg = pw_dir
+        .join("node_modules")
+        .join("playwright-core")
+        .join("package.json");
     let text = std::fs::read_to_string(pkg).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
-    v.get("version").and_then(|v| v.as_str()).map(|s| s.to_string())
+    v.get("version")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 fn node_exe_path(pw_dir: &std::path::Path) -> std::path::PathBuf {

@@ -23,83 +23,93 @@ pub(crate) const SERVICE_NAME: &str = "ValeCommand";
 /// supervision path (setup no longer installs the legacy service; an
 /// upgrade removes it).
 pub(crate) fn supervise_tunnel() {
-        let install_dir = vale_agent::paths::install_dir();
-        // C2: cloudflared is BOXED under install_dir\tools\ and the AGENT owns
-        // the tunnel lifecycle (spawn-if-absent on boot). No Windows service,
-        // no external owner — this is the single supervision path.
-        // Supervision audit #1: the OLD code spawned cloudflared once,
-        // fire-and-forget — a tunnel that exited (CF network-fatal, cert
-        // churn, OOM) left the device DARK while /api/status kept answering,
-        // and provision_tunnel could stack a SECOND concurrent tunnel. One
-        // supervisor task now owns the child for the process lifetime:
-        // respawn with capped backoff (reset after a healthy minute) and a
-        // RESTART when tunnel_ctl's generation bumps (fresh tunnel.yml).
-        // CRITICAL (d1 530 incident, round-80): this block runs in main()
-        // BEFORE the runtime exists — tokio::spawn HERE PANICKED the service
-        // at boot on Windows only (cfg(windows) elided from Linux checks),
-        // killing the agent and the tunnel = device unreachable. Own a
-        // private current-thread runtime on a plain thread: correct in ANY
-        // context, panic-proof placement.
-        std::thread::spawn(move || {
-            let inst = install_dir;
-            let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                Ok(rt) => rt,
-                Err(e) => { log_line(&format!("cloudflared supervisor: no runtime: {e}")); return; }
-            };
-            rt.block_on(async move {
-                use std::time::{Duration, Instant};
-                let mut backoff: u64 = 5;
-                loop {
-                    let cf = inst.join("tools").join("cloudflared.exe");
-                    let cfg = inst.join("tunnel.yml");
-                    if !(cf.exists() && cfg.exists()) {
-                        // Not staged yet — provision downloads later; keep polling.
-                        tokio::time::sleep(Duration::from_secs(30)).await;
-                        continue;
-                    }
-                    let my_gen = vale_agent::tunnel_ctl::generation();
-                    match tokio::process::Command::new(&cf)
-                        .args(["tunnel", "--config"]).arg(&cfg).arg("run")
-                        .kill_on_drop(true)
-                        .spawn()
-                    {
-                        Ok(mut child) => {
-                            log_line("cloudflared tunnel: launched from install dir (supervised)");
-                            let started = Instant::now();
-                            let mut restarted = false;
-                            loop {
-                                if let Ok(Some(_)) = child.try_wait() {
-                                    break;
-                                }
-                                if vale_agent::tunnel_ctl::generation() != my_gen {
-                                    let _ = child.kill().await;
-                                    let _ = child.wait().await;
-                                    restarted = true;
-                                    break;
-                                }
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                            }
-                            if started.elapsed() >= Duration::from_secs(60) {
-                                backoff = 5; // survived a healthy minute — reset
-                            }
-                            if restarted {
-                                log_line("cloudflared tunnel: restart requested (re-provisioned)");
-                                continue; // immediate respawn on the new config
-                            }
-                            log_line(&format!(
-                                "cloudflared tunnel exited after {}s — respawn in {backoff}s",
-                                started.elapsed().as_secs()
-                            ));
-                        }
-                        Err(e) => {
-                            log_line(&format!("cloudflared tunnel: spawn failed: {e} — retry in {backoff}s"));
-                        }
-                    }
-                    tokio::time::sleep(Duration::from_secs(backoff)).await;
-                    backoff = (backoff * 2).min(60);
+    let install_dir = vale_agent::paths::install_dir();
+    // C2: cloudflared is BOXED under install_dir\tools\ and the AGENT owns
+    // the tunnel lifecycle (spawn-if-absent on boot). No Windows service,
+    // no external owner — this is the single supervision path.
+    // Supervision audit #1: the OLD code spawned cloudflared once,
+    // fire-and-forget — a tunnel that exited (CF network-fatal, cert
+    // churn, OOM) left the device DARK while /api/status kept answering,
+    // and provision_tunnel could stack a SECOND concurrent tunnel. One
+    // supervisor task now owns the child for the process lifetime:
+    // respawn with capped backoff (reset after a healthy minute) and a
+    // RESTART when tunnel_ctl's generation bumps (fresh tunnel.yml).
+    // CRITICAL (d1 530 incident, round-80): this block runs in main()
+    // BEFORE the runtime exists — tokio::spawn HERE PANICKED the service
+    // at boot on Windows only (cfg(windows) elided from Linux checks),
+    // killing the agent and the tunnel = device unreachable. Own a
+    // private current-thread runtime on a plain thread: correct in ANY
+    // context, panic-proof placement.
+    std::thread::spawn(move || {
+        let inst = install_dir;
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                log_line(&format!("cloudflared supervisor: no runtime: {e}"));
+                return;
+            }
+        };
+        rt.block_on(async move {
+            use std::time::{Duration, Instant};
+            let mut backoff: u64 = 5;
+            loop {
+                let cf = inst.join("tools").join("cloudflared.exe");
+                let cfg = inst.join("tunnel.yml");
+                if !(cf.exists() && cfg.exists()) {
+                    // Not staged yet — provision downloads later; keep polling.
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    continue;
                 }
-            });
+                let my_gen = vale_agent::tunnel_ctl::generation();
+                match tokio::process::Command::new(&cf)
+                    .args(["tunnel", "--config"])
+                    .arg(&cfg)
+                    .arg("run")
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(mut child) => {
+                        log_line("cloudflared tunnel: launched from install dir (supervised)");
+                        let started = Instant::now();
+                        let mut restarted = false;
+                        loop {
+                            if let Ok(Some(_)) = child.try_wait() {
+                                break;
+                            }
+                            if vale_agent::tunnel_ctl::generation() != my_gen {
+                                let _ = child.kill().await;
+                                let _ = child.wait().await;
+                                restarted = true;
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+                        if started.elapsed() >= Duration::from_secs(60) {
+                            backoff = 5; // survived a healthy minute — reset
+                        }
+                        if restarted {
+                            log_line("cloudflared tunnel: restart requested (re-provisioned)");
+                            continue; // immediate respawn on the new config
+                        }
+                        log_line(&format!(
+                            "cloudflared tunnel exited after {}s — respawn in {backoff}s",
+                            started.elapsed().as_secs()
+                        ));
+                    }
+                    Err(e) => {
+                        log_line(&format!(
+                            "cloudflared tunnel: spawn failed: {e} — retry in {backoff}s"
+                        ));
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(backoff)).await;
+                backoff = (backoff * 2).min(60);
+            }
         });
+    });
 }
 
 /// Windows boot self-heal — runs before the listener binds, idempotent.
@@ -171,7 +181,9 @@ fn self_heal() {
                     Ok(_) => {
                         log_line("self-heal: copy fallback restored the exe from .bak");
                         if let Err(rm_e) = std::fs::remove_file(&bak) {
-                            log_line(&format!("self-heal: warning: cannot remove stale .bak: {rm_e}"));
+                            log_line(&format!(
+                                "self-heal: warning: cannot remove stale .bak: {rm_e}"
+                            ));
                         }
                     }
                     Err(ce) => {
@@ -190,7 +202,9 @@ fn self_heal() {
                 log_line("self-heal: half-swap recovery: applied pending .new over exe");
                 if let Err(rm_e) = std::fs::remove_file(&bak) {
                     // Stale-copy cleanup only — not fatal if it fails.
-                    log_line(&format!("self-heal: warning: cannot remove stale .bak: {rm_e}"));
+                    log_line(&format!(
+                        "self-heal: warning: cannot remove stale .bak: {rm_e}"
+                    ));
                 }
             }
             Err(e) => {
@@ -225,7 +239,10 @@ fn self_heal() {
     ] {
         if stale.exists() {
             match std::fs::remove_file(&stale) {
-                Ok(()) => log_line(&format!("self-heal: removed stale staged file {}", stale.display())),
+                Ok(()) => log_line(&format!(
+                    "self-heal: removed stale staged file {}",
+                    stale.display()
+                )),
                 Err(e) => log_line(&format!(
                     "self-heal: warning: cannot remove stale staged file {}: {e}",
                     stale.display()
@@ -233,7 +250,10 @@ fn self_heal() {
             }
         }
     }
-    let cfg_str = install_dir.join("config.yaml").to_string_lossy().into_owned();
+    let cfg_str = install_dir
+        .join("config.yaml")
+        .to_string_lossy()
+        .into_owned();
 
     // 1. Stale binaries from other installs (they lock the exe AND hold the
     //    port). Runs as SYSTEM at boot; Stop-Process -Force is fine from
@@ -287,7 +307,13 @@ fn self_heal() {
     );
     run_bounded("self-heal: Register-ScheduledTask ValeAgent", {
         let mut c = std::process::Command::new("powershell");
-        c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script]);
+        c.args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ]);
         c
     });
 
@@ -377,7 +403,7 @@ fn run_service(_args: Vec<std::ffi::OsString>) {
     use std::sync::mpsc;
     use std::time::Duration;
     use windows_service::service::{
-        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceStatus, ServiceState,
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
         ServiceType,
     };
     use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
@@ -425,7 +451,8 @@ fn run_service(_args: Vec<std::ffi::OsString>) {
     // client 401'd while the real install-dir config was never loaded. Read
     // the process command line (env::args carries the binPath param) and fall
     // back to the exe's own directory (never a relative path).
-    let config_path = std::env::args().nth(1)
+    let config_path = std::env::args()
+        .nth(1)
         .map(PathBuf::from)
         .or_else(|| {
             // Zero current_exe() guessing outside paths.rs — exe_dir() is the

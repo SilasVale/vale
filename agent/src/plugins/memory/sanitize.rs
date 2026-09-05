@@ -121,8 +121,12 @@ fn redact_line(line: &str) -> String {
     let mut scan_from = 0;
     loop {
         // Earliest = or ": " at/after scan_from.
-        let eq = result[scan_from..].find('=').map(|i| (scan_from + i, 1usize));
-        let col = result[scan_from..].find(": ").map(|i| (scan_from + i, 2usize));
+        let eq = result[scan_from..]
+            .find('=')
+            .map(|i| (scan_from + i, 1usize));
+        let col = result[scan_from..]
+            .find(": ")
+            .map(|i| (scan_from + i, 2usize));
         let next = match (eq, col) {
             (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
             (Some(a), None) => Some(a),
@@ -190,7 +194,10 @@ mod tests {
         assert_eq!(sanitize("secretary: ann"), "secretary: ann");
         // …while real shapes still redact:
         assert!(sanitize("auth_token: abc123").contains("<redacted>"));
-        assert!(sanitize("authtoken abc123\n").contains("<redacted>") || sanitize("x-api-key: abc123").contains("<redacted>"));
+        assert!(
+            sanitize("authtoken abc123\n").contains("<redacted>")
+                || sanitize("x-api-key: abc123").contains("<redacted>")
+        );
         assert!(sanitize("api_key=supersecretvalue").contains("<redacted>"));
     }
 
@@ -217,7 +224,8 @@ mod tests {
 
     #[test]
     fn redacts_json_nested() {
-        let content = r#"{"url":"https://x","headers":{"Authorization":"Bearer tok123"},"body":"ok"}"#;
+        let content =
+            r#"{"url":"https://x","headers":{"Authorization":"Bearer tok123"},"body":"ok"}"#;
         let out = sanitize(content);
         assert!(!out.contains("tok123"));
         assert!(out.contains("<redacted>"));

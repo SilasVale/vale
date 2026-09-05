@@ -2,8 +2,8 @@
 
 use super::{TermBackend, TermOutput};
 use crate::tools::serial::SerialPool;
-use vale_agent_core::DeviceError;
 use std::sync::Arc;
+use vale_agent_core::DeviceError;
 
 /// Serial link config (port + framing) — captured at open so an
 /// auto-reconnect can reopen the SAME port with the SAME parameters
@@ -24,7 +24,13 @@ fn pool_open(
     pool: &Arc<SerialPool>,
     cfg: &SerialCfg,
 ) -> Result<(Box<dyn serialport::SerialPort>, String), DeviceError> {
-    let (port_id, _) = pool.open(cfg.port.clone(), Some(cfg.baud), cfg.data_bits, cfg.parity.clone(), cfg.stop_bits)?;
+    let (port_id, _) = pool.open(
+        cfg.port.clone(),
+        Some(cfg.baud),
+        cfg.data_bits,
+        cfg.parity.clone(),
+        cfg.stop_bits,
+    )?;
     match pool.borrow_port(&port_id) {
         Some(port) => Ok((port, port_id)),
         None => {
@@ -67,7 +73,8 @@ impl SerialBackend {
         parity: Option<String>,
         stop_bits: Option<u8>,
         auto_reconnect: bool,
-        tx: tokio::sync::mpsc::Sender<TermOutput>, sid: String,
+        tx: tokio::sync::mpsc::Sender<TermOutput>,
+        sid: String,
     ) -> Result<Self, DeviceError> {
         let cfg = super::parse_serial_config(target);
         let port_name = cfg.port;
@@ -76,7 +83,13 @@ impl SerialBackend {
         let data_bits = data_bits.or(cfg.data_bits);
         let parity = parity.or(cfg.parity);
         let stop_bits = stop_bits.or(cfg.stop_bits);
-        let link = SerialCfg { port: port_name.clone(), baud, data_bits, parity, stop_bits };
+        let link = SerialCfg {
+            port: port_name.clone(),
+            baud,
+            data_bits,
+            parity,
+            stop_bits,
+        };
         tracing::debug!("[vale-agent] Serial: opening {port_name} at {baud} baud (data_bits={:?} parity={:?} stop_bits={:?} auto_reconnect={})", link.data_bits, link.parity, link.stop_bits, auto_reconnect);
 
         // Open in pool, then BORROW the handle out (round-118: the old
@@ -122,15 +135,23 @@ impl SerialBackend {
         std::thread::spawn(move || {
             let mut port_id = port_id_r;
             loop {
-                if close_rx.try_recv().is_ok() { break; }
-                let cur = port_shared_r.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                if close_rx.try_recv().is_ok() {
+                    break;
+                }
+                let cur = port_shared_r
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
                 let result = {
                     let mut p = cur.blocking_lock();
                     let mut buf = vec![0u8; 4096];
                     read_chunk(p.as_mut(), &mut buf)
                 };
                 match result {
-                    Ok(data) if !data.is_empty() => match tx_r.blocking_send(TermOutput { session_id: sid_r.clone(), data }) {
+                    Ok(data) if !data.is_empty() => match tx_r.blocking_send(TermOutput {
+                        session_id: sid_r.clone(),
+                        data,
+                    }) {
                         Ok(()) => {}
                         Err(_) => break,
                     },
@@ -138,7 +159,9 @@ impl SerialBackend {
                     Err(_) if !auto_reconnect => break,
                     Err(_) => {
                         // Port died — try to reopen with the same config.
-                        tracing::info!("[vale-agent] Serial {port_name}: link lost, auto-reconnecting…");
+                        tracing::info!(
+                            "[vale-agent] Serial {port_name}: link lost, auto-reconnecting…"
+                        );
                         let _ = tx_r.blocking_send(TermOutput {
                             session_id: sid_r.clone(),
                             data: format!("\r\n\x1b[33m[serial] {port_name}: link lost — waiting for the port to reappear (auto-reconnect)…\x1b[0m\r\n").into_bytes(),
@@ -154,10 +177,15 @@ impl SerialBackend {
                         // with short timeout) — direct call is fine.
                         let mut attempts = 0u32;
                         loop {
-                            if close_rx.try_recv().is_ok() { return; }
+                            if close_rx.try_recv().is_ok() {
+                                return;
+                            }
                             match pool_open(&pool_r, &link_r) {
                                 Ok((new_port, new_id)) => {
-                                    tracing::info!("[vale-agent] Serial {port_name}: reconnected (attempt {})", attempts + 1);
+                                    tracing::info!(
+                                        "[vale-agent] Serial {port_name}: reconnected (attempt {})",
+                                        attempts + 1
+                                    );
                                     let _ = tx_r.blocking_send(TermOutput {
                                         session_id: sid_r.clone(),
                                         data: format!("\r\n\x1b[32m[serial] {port_name}: reconnected\x1b[0m\r\n").into_bytes(),
@@ -170,7 +198,9 @@ impl SerialBackend {
                                 Err(_) => {
                                     attempts += 1;
                                     // Probe cadence: fast at first, then 2s.
-                                    std::thread::sleep(std::time::Duration::from_millis(if attempts < 5 { 500 } else { 2000 }));
+                                    std::thread::sleep(std::time::Duration::from_millis(
+                                        if attempts < 5 { 500 } else { 2000 },
+                                    ));
                                 }
                             }
                         }
@@ -196,7 +226,10 @@ impl SerialBackend {
                         Err(_) => return, // backend dropped: session gone
                     },
                 };
-                let cur = port_shared_w.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                let cur = port_shared_w
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
                 let ok = {
                     let mut p = cur.blocking_lock();
                     p.write_all(&data).is_ok() && p.flush().is_ok()
@@ -217,7 +250,12 @@ impl SerialBackend {
             }
         });
 
-        Ok(SerialBackend { write_tx, close_tx, pool: Some(pool), port_id: Some(port_id) })
+        Ok(SerialBackend {
+            write_tx,
+            close_tx,
+            pool: Some(pool),
+            port_id: Some(port_id),
+        })
     }
 }
 
@@ -226,7 +264,10 @@ impl TermBackend for SerialBackend {
         // try_send: drop-on-full (never block the caller on a stalled device)
         let _ = self.write_tx.try_send(data.to_vec());
     }
-    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+    fn write_async<'a>(
+        &'a self,
+        data: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
         // round-107: the spawn_blocking + timeout ABANDONED a blocked task
         // per timeout (thread pile-up) AND the queued command was delivered
         // to the device later (the caller was told it failed, then it ran —
@@ -237,7 +278,9 @@ impl TermBackend for SerialBackend {
         let d = data.to_vec();
         Box::pin(async move {
             for _ in 0..10 {
-                if tx.try_send(d.clone()).is_ok() { return Ok(()); }
+                if tx.try_send(d.clone()).is_ok() {
+                    return Ok(());
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
             Err("serial write timed out (device not draining)".into())

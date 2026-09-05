@@ -2,8 +2,8 @@
 
 use super::{TermBackend, TermOutput};
 use crate::tools::ssh::SshSession;
-use vale_agent_core::DeviceError;
 use tokio::sync::mpsc;
+use vale_agent_core::DeviceError;
 
 pub struct SshBackend {
     /// Keep session alive (owns the russh Handle)
@@ -16,9 +16,13 @@ pub struct SshBackend {
 
 impl SshBackend {
     pub async fn connect(
-        target: &str, password: &str, key_path: &str,
-        rows: u16, cols: u16,
-        tx: mpsc::Sender<TermOutput>, sid: String,
+        target: &str,
+        password: &str,
+        key_path: &str,
+        rows: u16,
+        cols: u16,
+        tx: mpsc::Sender<TermOutput>,
+        sid: String,
     ) -> Result<Self, DeviceError> {
         let (user, host, port) = super::parse_ssh_target(target);
         // Keychain fallback: an empty password param consults the OS keychain
@@ -38,33 +42,51 @@ impl SshBackend {
         // peer that completes the handshake then stalls (tarpit, sshd stuck
         // on reverse-DNS) hung terminal_open forever. Bound the whole
         // connect+auth+open_shell sequence.
-        let (session, output_rx, write_tx, resize_tx) = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            async {
+        let (session, output_rx, write_tx, resize_tx) =
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
                 let session = SshSession::connect(
-                    &host, port, &user,
+                    &host,
+                    port,
+                    &user,
                     if pass.is_empty() { None } else { Some(&pass) },
-                    if key_path.is_empty() { None } else { Some(key_path) },
-                ).await?;
+                    if key_path.is_empty() {
+                        None
+                    } else {
+                        Some(key_path)
+                    },
+                )
+                .await?;
                 let (output_rx, write_tx, resize_tx) = session.open_shell(rows, cols).await?;
                 Ok::<_, DeviceError>((session, output_rx, write_tx, resize_tx))
-            },
-        )
-        .await
-        .map_err(|_| DeviceError::SshTimeout { host: host.to_string() })??;
+            })
+            .await
+            .map_err(|_| DeviceError::SshTimeout {
+                host: host.to_string(),
+            })??;
 
         let mut output_rx = output_rx;
 
         // Forward raw output bytes as TermOutput (bounded send — awaits)
         tokio::spawn(async move {
             while let Some(data) = output_rx.recv().await {
-                if tx.send(TermOutput { session_id: sid.clone(), data }).await.is_err() {
+                if tx
+                    .send(TermOutput {
+                        session_id: sid.clone(),
+                        data,
+                    })
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
         });
 
-        Ok(SshBackend { _session: session, write_tx, resize_tx })
+        Ok(SshBackend {
+            _session: session,
+            write_tx,
+            resize_tx,
+        })
     }
 }
 
@@ -73,7 +95,10 @@ impl TermBackend for SshBackend {
         // Keystrokes must never block — drop when full (round-53).
         let _ = self.write_tx.try_send(data.to_vec());
     }
-    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+    fn write_async<'a>(
+        &'a self,
+        data: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
         // round-103: RELIABLE write for terminal_execute — the old
         // try_send dropped the whole command when the channel was full
         // (ssh channel task blocked on remote TCP backpressure), and the
@@ -110,7 +135,10 @@ impl TermBackend for SshBackend {
         // leaves the timed-out command running on the remote.
         let mut sent = false;
         for _ in 0..8 {
-            if self.write_tx.try_send(vec![0x03]).is_ok() { sent = true; break; }
+            if self.write_tx.try_send(vec![0x03]).is_ok() {
+                sent = true;
+                break;
+            }
             std::thread::yield_now();
         }
         if !sent {

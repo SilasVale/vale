@@ -101,7 +101,9 @@ fn resolve_node() -> Result<PathBuf, DeviceError> {
                 let text = String::from_utf8_lossy(&out.stdout);
                 if let Some(first) = text.lines().next() {
                     let p = PathBuf::from(first.trim());
-                    if p.exists() { return Ok(p); }
+                    if p.exists() {
+                        return Ok(p);
+                    }
                 }
             }
         }
@@ -114,7 +116,12 @@ fn resolve_node() -> Result<PathBuf, DeviceError> {
 /// Bundled playwright-mcp entry script — 0.0.79's bin is the package-root cli.js
 /// (no dist/; cli.js relatively requires package.json in the same directory).
 fn bundled_mcp_entry() -> Result<PathBuf, DeviceError> {
-    let p = install_dir().join("playwright").join("node_modules").join("@playwright").join("mcp").join("cli.js");
+    let p = install_dir()
+        .join("playwright")
+        .join("node_modules")
+        .join("@playwright")
+        .join("mcp")
+        .join("cli.js");
     if !p.exists() {
         return Err(DeviceError::Internal {
             message: format!(
@@ -150,7 +157,9 @@ async fn reap_leftovers() {
     let mut cmd = tokio::process::Command::new("powershell");
     cmd.args(["-NoProfile", "-Command", script]);
     #[cfg(windows)]
-    { let _ = no_window(&mut cmd); }
+    {
+        let _ = no_window(&mut cmd);
+    }
     let _ = cmd.output().await;
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 }
@@ -180,7 +189,10 @@ async fn probe_healthy() -> bool {
 
 impl PlaywrightManager {
     pub fn new() -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self { inner: Mutex::new(None), bus: std::sync::Mutex::new(None) })
+        std::sync::Arc::new(Self {
+            inner: Mutex::new(None),
+            bus: std::sync::Mutex::new(None),
+        })
     }
 
     /// Wire the event bus (called once from AppState::new, after both Arcs
@@ -224,9 +236,9 @@ impl PlaywrightManager {
         };
         if !has_live_child || child_exited {
             // round-132: no child spawned by us (or already exited) ≠ service unavailable —
-// in production the ValePlaywright scheduled task hosts the instance in the
-// interactive session. Probe health before concluding; otherwise the panel
-// always shows Stopped.
+            // in production the ValePlaywright scheduled task hosts the instance in the
+            // interactive session. Probe health before concluding; otherwise the panel
+            // always shows Stopped.
             if probe_healthy().await {
                 return serde_json::json!({
                     "running": true,
@@ -271,8 +283,8 @@ impl PlaywrightManager {
             }
         }
         // round-132: a healthy instance (scheduled-task/panel-hosted) already owns 9229 —
-// reuse it instead of spawning (spawn would fail to bind, the child dies
-// instantly, and the panel errors).
+        // reuse it instead of spawning (spawn would fail to bind, the child dies
+        // instantly, and the panel errors).
         if probe_healthy().await {
             return Ok(serde_json::json!({
                 "status": "already_running",
@@ -282,17 +294,17 @@ impl PlaywrightManager {
         }
 
         // round-142: no healthy instance = the previous generation may have left orphans —
-// a hard-killed node leaves headless chromium in the background, still locking the
-// profile directory ("Browser is already in use"), poisoning every later start
-// (measured on d1, 2026-08-25). Reclaim the playwright node + chromium tree first.
+        // a hard-killed node leaves headless chromium in the background, still locking the
+        // profile directory ("Browser is already in use"), poisoning every later start
+        // (measured on d1, 2026-08-25). Reclaim the playwright node + chromium tree first.
         reap_leftovers().await;
 
         // round-129: @playwright/mcp has no --mcp-token flag (tested: 0.0.79 and
-// earlier don't accept it either; the child exits immediately) — the
-// per-launch secret plan is a no-go. Anti-squatting changed to:
-// 127.0.0.1-only binding (playwright-mcp default) + --allowed-hosts
-// 127.0.0.1 (blocks DNS-rebinding remote access). The secret is now only
-// displayed as connection info, no longer a security boundary.
+        // earlier don't accept it either; the child exits immediately) — the
+        // per-launch secret plan is a no-go. Anti-squatting changed to:
+        // 127.0.0.1-only binding (playwright-mcp default) + --allowed-hosts
+        // 127.0.0.1 (blocks DNS-rebinding remote access). The secret is now only
+        // displayed as connection info, no longer a security boundary.
         let port = MCP_PORT;
         let node = resolve_node()?;
         let entry = bundled_mcp_entry()?;
@@ -301,9 +313,7 @@ impl PlaywrightManager {
         // methods return &mut Self, so the chain must end on .spawn() (owned
         // Result) unless we break it into a stmt.
         let mut child = tokio::process::Command::new(&node);
-        child
-            .arg(&entry)
-            .arg("--port").arg(port.to_string());
+        child.arg(&entry).arg("--port").arg(port.to_string());
         // ONE-BROWSER FIX: same attach-or-fork decision as the stdio spawn —
         // desktop Electron CDP (9333) wins when the user watches the embedded
         // real-browser view (round-247); else the bridge's chromium (9223)
@@ -322,23 +332,25 @@ impl PlaywrightManager {
             child.arg("--output-dir").arg(pwout);
         }
         child
-            .arg("--host").arg("127.0.0.1")
+            .arg("--host")
+            .arg("127.0.0.1")
             // round-131: playwright-mcp's Host comparison is a RAW string including the
-// port — on non-default port 9229 you must write "127.0.0.1:9229" (writing
-// "127.0.0.1" never matches, all requests 403, start always fails).
-// localhost synonym included.
-            .arg("--allowed-hosts").arg("127.0.0.1:9229,localhost:9229")
+            // port — on non-default port 9229 you must write "127.0.0.1:9229" (writing
+            // "127.0.0.1" never matches, all requests 403, start always fails).
+            // localhost synonym included.
+            .arg("--allowed-hosts")
+            .arg("127.0.0.1:9229,localhost:9229")
             // The device Web UI uses a self-signed HTTPS certificate — ignore cert
-// errors, otherwise navigation always fails with
-// net::ERR_CERT_AUTHORITY_INVALID.
+            // errors, otherwise navigation always fails with
+            // net::ERR_CERT_AUTHORITY_INVALID.
             .arg("--ignore-https-errors")
             // round-141 real fix: coreBundle's HTTP heartbeat (pings the client every
-// ~3s; at the default 5s timeout it server.close()s → destroys the whole
-// browser context) inevitably kills thin clients with no downlink stream —
-// that is the root cause of "Session not found ~4s after every call, page
-// reset". Setting 0 makes startHeartbeat return immediately; session and
-// browser stay resident, snapshot references / panel state survive across
-// calls.
+            // ~3s; at the default 5s timeout it server.close()s → destroys the whole
+            // browser context) inevitably kills thin clients with no downlink stream —
+            // that is the root cause of "Session not found ~4s after every call, page
+            // reset". Setting 0 makes startHeartbeat return immediately; session and
+            // browser stay resident, snapshot references / panel state survive across
+            // calls.
             .env("PLAYWRIGHT_MCP_PING_TIMEOUT_MS", "0")
             // stdin PIPED and the handle held in ManagedPlaywright — see
             // the struct comment. Without it the runner cannot survive the
@@ -351,21 +363,25 @@ impl PlaywrightManager {
             .stderr(Stdio::piped());
         // round-143: CREATE_NO_WINDOW so node.exe doesn't flash a console.
         #[cfg(windows)]
-        { let _ = no_window(&mut child); }
-        let mut child = child
-            .spawn()
-            .map_err(|e| DeviceError::Internal { message: format!("spawn playwright-mcp: {e}") })?;
+        {
+            let _ = no_window(&mut child);
+        }
+        let mut child = child.spawn().map_err(|e| DeviceError::Internal {
+            message: format!("spawn playwright-mcp: {e}"),
+        })?;
         // Health poll (up to 10s): POST a JSON-RPC initialize to /mcp and verify the
-// body is a valid JSON-RPC result. round-129: the old probe.is_ok() passed on
-// any HTTP status (GET /mcp is designed to return 4xx) — only an instance
-// that truly completes the MCP handshake counts as healthy; a squatter cannot
-// answer with a valid JSON-RPC initialize response. The poll also checks
-// whether the child exited (port taken → bind failure → instant death). Each
-// probe has a 2s timeout.
+        // body is a valid JSON-RPC result. round-129: the old probe.is_ok() passed on
+        // any HTTP status (GET /mcp is designed to return 4xx) — only an instance
+        // that truly completes the MCP handshake counts as healthy; a squatter cannot
+        // answer with a valid JSON-RPC initialize response. The poll also checks
+        // whether the child exited (port taken → bind failure → instant death). Each
+        // probe has a 2s timeout.
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
-            .map_err(|e| DeviceError::Internal { message: format!("http client: {e}") })?;
+            .map_err(|e| DeviceError::Internal {
+                message: format!("http client: {e}"),
+            })?;
         let mut ok = false;
         // round-163: 30s of patience, not 10s — right after an update the
         // freshly-extracted node.exe + node_modules get a full Defender pass
@@ -375,7 +391,13 @@ impl PlaywrightManager {
         for _ in 0..60 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             // Child died (bind failure on an occupied port) — fail fast.
-            if child.try_wait().map_err(|e| DeviceError::Internal { message: format!("child wait: {e}") })?.is_some() {
+            if child
+                .try_wait()
+                .map_err(|e| DeviceError::Internal {
+                    message: format!("child wait: {e}"),
+                })?
+                .is_some()
+            {
                 break;
             }
             let probe = client
@@ -431,9 +453,17 @@ impl PlaywrightManager {
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_millis(500),
                         s.read_to_end(&mut buf),
-                    ).await;
+                    )
+                    .await;
                 }
-                String::from_utf8_lossy(&buf).chars().rev().take(500).collect::<String>().chars().rev().collect::<String>()
+                String::from_utf8_lossy(&buf)
+                    .chars()
+                    .rev()
+                    .take(500)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>()
             };
             let _ = child.kill().await;
             #[cfg(not(windows))]
@@ -441,7 +471,11 @@ impl PlaywrightManager {
             return Err(DeviceError::Internal {
                 message: format!(
                     "playwright-mcp did not become healthy on localhost:{port}{}",
-                    if stderr_hint.is_empty() { String::new() } else { format!(": {}", stderr_hint) }
+                    if stderr_hint.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", stderr_hint)
+                    }
                 ),
             });
         }
@@ -456,7 +490,13 @@ impl PlaywrightManager {
                 // A concurrent start landed while we polled — lose cleanly.
                 loser = Some(child);
             } else {
-                *guard = Some(ManagedPlaywright { _stdin: child.stdin.take(), child, secret: String::new(), started_at: now_ms(), _kill_tx: kill_tx });
+                *guard = Some(ManagedPlaywright {
+                    _stdin: child.stdin.take(),
+                    child,
+                    secret: String::new(),
+                    started_at: now_ms(),
+                    _kill_tx: kill_tx,
+                });
             }
         }
         if let Some(mut child) = loser {

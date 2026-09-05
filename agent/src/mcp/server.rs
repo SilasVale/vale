@@ -2,20 +2,18 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
-    Tool, ToolsCapability,
+    CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult,
+    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolsCapability,
 };
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::{
-    StreamableHttpServerConfig, StreamableHttpService,
-    session::local::LocalSessionManager,
+    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 use rmcp::{ErrorData as McpError, ServerHandler};
 use tokio_util::sync::CancellationToken;
 
-use vale_agent_core::{Config, DeviceError};
 use crate::state::AppState;
+use vale_agent_core::{Config, DeviceError};
 
 #[derive(Debug, Clone)]
 pub struct DeviceServer {
@@ -31,9 +29,8 @@ impl DeviceServer {
 impl ServerHandler for DeviceServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
-        info.instructions = Some(
-            "Vale Command device access: Terminal (PTY/SSH/Serial) tools.".into(),
-        );
+        info.instructions =
+            Some("Vale Command device access: Terminal (PTY/SSH/Serial) tools.".into());
         let mut caps = ServerCapabilities::default();
         let mut tools_cap = ToolsCapability::default();
         // Tool list is static — no list_changed notifications are ever sent
@@ -57,14 +54,19 @@ impl ServerHandler for DeviceServer {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let tool_name = request.name.as_ref();
-        let tool = self.state.plugin_registry.find_tool(tool_name).ok_or_else(|| {
-            // round-118: MCP spec — an unknown TOOL in tools/call is Invalid
-            // params (-32602), not Method not found (-32601, reserved for a
-            // genuinely unknown METHOD). The old error misattributed the
-            // failure to the server's method dispatch.
-            McpError::invalid_params(format!("Unknown tool: {tool_name}"), None)
-        })?;
-        let params: serde_json::Value = request.arguments
+        let tool = self
+            .state
+            .plugin_registry
+            .find_tool(tool_name)
+            .ok_or_else(|| {
+                // round-118: MCP spec — an unknown TOOL in tools/call is Invalid
+                // params (-32602), not Method not found (-32601, reserved for a
+                // genuinely unknown METHOD). The old error misattributed the
+                // failure to the server's method dispatch.
+                McpError::invalid_params(format!("Unknown tool: {tool_name}"), None)
+            })?;
+        let params: serde_json::Value = request
+            .arguments
             .map(serde_json::Value::Object)
             .unwrap_or(serde_json::json!({}));
         // round-118: route the request's cancellation token (rmcp flips it on
@@ -84,7 +86,10 @@ impl ServerHandler for DeviceServer {
         // the panic message to stderr via the default hook (the client saw a
         // connection drop / 500 instead of an MCP isError). Wrap the call so
         // a panic maps to McpError::internal_error and the task survives.
-        let call = std::panic::AssertUnwindSafe(tool.handler.call_cancellable(params.clone(), cancel.clone()));
+        let call = std::panic::AssertUnwindSafe(
+            tool.handler
+                .call_cancellable(params.clone(), cancel.clone()),
+        );
         let result = tokio::select! {
             r = futures::FutureExt::catch_unwind(call) => match r {
                 Ok(inner) => inner,
@@ -126,14 +131,24 @@ impl ServerHandler for DeviceServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let tools: Vec<Tool> = self.state.plugin_registry.all_tools().iter()
+        let tools: Vec<Tool> = self
+            .state
+            .plugin_registry
+            .all_tools()
+            .iter()
             .map(|t| to_mcp_tool(t))
             .collect();
-        Ok(ListToolsResult { tools, ..Default::default() })
+        Ok(ListToolsResult {
+            tools,
+            ..Default::default()
+        })
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        self.state.plugin_registry.find_tool(name).map(|t| to_mcp_tool(&t))
+        self.state
+            .plugin_registry
+            .find_tool(name)
+            .map(|t| to_mcp_tool(&t))
     }
 }
 
@@ -200,7 +215,10 @@ pub async fn bind(
     // MCP service at /mcp (token-gated) + the web surface via fallback_service
     // (Tower layer)
     let mcp_app = axum::Router::new()
-        .nest_service("/mcp", crate::web::TokenGate::new(service, config.server.device_token.clone()))
+        .nest_service(
+            "/mcp",
+            crate::web::TokenGate::new(service, config.server.device_token.clone()),
+        )
         .fallback_service(crate::web::WebPanel::new(state.clone()));
     let mcp_listener = tokio::net::TcpListener::bind(addr).await?;
     let actual = mcp_listener.local_addr()?;
@@ -213,7 +231,9 @@ pub async fn bind(
     });
 
     let mcp_handle = tokio::spawn(async move {
-        if let Err(e) = mcp_srv.await { tracing::error!("Server: {e}"); }
+        if let Err(e) = mcp_srv.await {
+            tracing::error!("Server: {e}");
+        }
     });
 
     Ok((actual, mcp_handle))

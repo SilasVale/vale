@@ -17,7 +17,9 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
         // cloudflared is NOT bundled (the npm package stays small) — download
         // the official Windows binary on demand (same source the installer
         // used; ~54MB, one-time).
-        tracing::info!("[vale-agent] provision_tunnel: downloading cloudflared via the gateway proxy");
+        tracing::info!(
+            "[vale-agent] provision_tunnel: downloading cloudflared via the gateway proxy"
+        );
         // Download through the vale-gate proxy (agent.saisi.online) — the
         // device can reach our worker even when GitHub is blocked (GFW etc.).
         // The worker streams the official GitHub release back to us.
@@ -31,7 +33,10 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
         };
         let resp = match client.get(url).send().await {
             Ok(r) => r,
-            Err(_) => return "cloudflared download failed (official GitHub release unreachable)".to_string(),
+            Err(_) => {
+                return "cloudflared download failed (official GitHub release unreachable)"
+                    .to_string()
+            }
         };
         let bytes = match resp.bytes().await {
             Ok(b) => b,
@@ -44,7 +49,10 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
         if std::fs::write(&cf, &bytes).is_err() {
             return "cloudflared download write failed".to_string();
         }
-        tracing::info!("[vale-agent] provision_tunnel: cloudflared downloaded ({} bytes)", bytes.len());
+        tracing::info!(
+            "[vale-agent] provision_tunnel: cloudflared downloaded ({} bytes)",
+            bytes.len()
+        );
     }
     let hostname = std::fs::read_to_string(install_dir.join("vale-agent.hostname"))
         .map(|s| s.trim().to_string())
@@ -57,7 +65,8 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
         !v.is_empty()
             && v.len() <= 253
             && !v.starts_with('-')
-            && v.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+            && v.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
     };
     if !host_ok(&hostname) {
         return "cannot provision: vale-agent.hostname missing or invalid (set it via `vale setup --hostname <sub>` first)".to_string();
@@ -65,14 +74,18 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
     if !host_ok(cf_token) {
         return "cannot provision: gateway returned a malformed API token".to_string();
     }
-    let tunnel_name = format!("vale-agent-{}", hostname.split('.').next().unwrap_or("device"));
+    let tunnel_name = format!(
+        "vale-agent-{}",
+        hostname.split('.').next().unwrap_or("device")
+    );
     // 1. login with token. cloudflared writes cert.pem to %USERPROFILE%\.cloudflared\
     //    — under the SYSTEM service that is systemprofile, and `tunnel login
     //    --token` may not write it there reliably. After login, ensure the
     //    credentials exist: copy from a real user profile if missing.
     let login = tokio::process::Command::new(&cf)
         .args(["tunnel", "login", "--token", cf_token])
-        .output().await;
+        .output()
+        .await;
     let login_ok = login.map(|o| o.status.success()).unwrap_or(false);
     if !login_ok {
         return "cloudflared login failed".to_string();
@@ -95,12 +108,20 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
             let mut pos = i;
             for (si, len) in seg.iter().enumerate() {
                 for _ in 0..*len {
-                    if !is_hex(bytes[pos]) { ok = false; break; }
+                    if !is_hex(bytes[pos]) {
+                        ok = false;
+                        break;
+                    }
                     pos += 1;
                 }
-                if !ok { break; }
+                if !ok {
+                    break;
+                }
                 if si < seg.len() - 1 {
-                    if bytes[pos] != b'-' { ok = false; break; }
+                    if bytes[pos] != b'-' {
+                        ok = false;
+                        break;
+                    }
                     pos += 1;
                 }
             }
@@ -127,13 +148,17 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
     }
     let list = tokio::process::Command::new(&cf)
         .args(["tunnel", "list"])
-        .output().await;
-    let list_text = list.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+        .output()
+        .await;
+    let list_text = list
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
     let mut tunnel_id = find_tunnel_id_by_name(&list_text, &tunnel_name);
     if tunnel_id.is_none() {
         let created = tokio::process::Command::new(&cf)
             .args(["tunnel", "create", &tunnel_name])
-            .output().await;
+            .output()
+            .await;
         let (created_text, created_err) = match created {
             Ok(o) => (
                 String::from_utf8_lossy(&o.stdout).to_string(),
@@ -145,8 +170,11 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
         if tunnel_id.is_none() {
             let list2 = tokio::process::Command::new(&cf)
                 .args(["tunnel", "list"])
-                .output().await;
-            let list2_text = list2.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+                .output()
+                .await;
+            let list2_text = list2
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
             tunnel_id = find_tunnel_id_by_name(&list2_text, &tunnel_name);
         }
     }
@@ -163,7 +191,8 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
     // 3. DNS route (best-effort)
     let _ = tokio::process::Command::new(&cf)
         .args(["tunnel", "route", "dns", &tunnel_name, &hostname])
-        .output().await;
+        .output()
+        .await;
     // 3b. Update the tunnel's REMOTE config via the Cloudflare API — cloudflared
     //     prefers the remote config when one exists, and a stale remote (old
     //     127.0.0.2 ingress) would override the local tunnel.yml. Point the
@@ -198,7 +227,9 @@ async fn ensure_cf_credentials() {
     }
     // Candidate user profiles to copy from.
     for user in ["Administrator", "admin", "user"] {
-        let src = std::path::PathBuf::from(r"C:\Users").join(user).join(".cloudflared");
+        let src = std::path::PathBuf::from(r"C:\Users")
+            .join(user)
+            .join(".cloudflared");
         let cert = src.join("cert.pem");
         if cert.exists() {
             let _ = std::fs::create_dir_all(&sys_cf);
@@ -212,7 +243,9 @@ async fn ensure_cf_credentials() {
                         }
                     }
                 }
-                tracing::info!("[vale-agent] provision_tunnel: copied cloudflared credentials from {user}");
+                tracing::info!(
+                    "[vale-agent] provision_tunnel: copied cloudflared credentials from {user}"
+                );
                 return;
             }
         }
@@ -236,12 +269,20 @@ async fn update_remote_config(cf_token: &str, tunnel_id: &str, hostname: &str) {
     let acc = match client
         .get("https://api.cloudflare.com/client/v4/accounts")
         .header("authorization", format!("Bearer {cf_token}"))
-        .send().await
+        .send()
+        .await
     {
-        Ok(r) => match r.json::<serde_json::Value>().await { Ok(j) => j, Err(_) => return },
+        Ok(r) => match r.json::<serde_json::Value>().await {
+            Ok(j) => j,
+            Err(_) => return,
+        },
         Err(_) => return,
     };
-    let account_id = match acc["result"].as_array().and_then(|a| a.first()).and_then(|x| x["id"].as_str()) {
+    let account_id = match acc["result"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|x| x["id"].as_str())
+    {
         Some(v) => v.to_string(),
         None => return,
     };
@@ -262,12 +303,15 @@ async fn update_remote_config(cf_token: &str, tunnel_id: &str, hostname: &str) {
         .header("authorization", format!("Bearer {cf_token}"))
         .header("content-type", "application/json")
         .body(body.to_string())
-        .send().await
+        .send()
+        .await
     {
         Ok(r) => {
             let ok = r.status().is_success();
             tracing::info!("[vale-agent] provision_tunnel: remote config update ok={ok}");
         }
-        Err(_) => tracing::warn!("[vale-agent] provision_tunnel: remote config update failed (network)"),
+        Err(_) => {
+            tracing::warn!("[vale-agent] provision_tunnel: remote config update failed (network)")
+        }
     }
 }

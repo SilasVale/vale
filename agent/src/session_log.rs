@@ -35,11 +35,13 @@ const MAX_CLOSED_LOG_LINES: usize = 2000;
 /// O(file size) at close).
 fn trim_file(path: &std::path::Path) {
     use std::io::{BufRead, BufReader, BufWriter, Write as _};
-    let Ok(file) = std::fs::File::open(path) else { return };
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
     let mut reader = BufReader::new(file);
     let mut header = String::new();
     let _ = reader.read_line(&mut header); // version header (may be empty)
-    // tail = the last command/start + everything after it (rolling).
+                                           // tail = the last command/start + everything after it (rolling).
     let mut tail: Vec<String> = Vec::new();
     let mut have_start = false;
     let mut line = String::new();
@@ -52,7 +54,9 @@ fn trim_file(path: &std::path::Path) {
                     // A NEW start: everything before it is older history —
                     // drain immediately (bounds memory; only the last
                     // start window + rolling tail are retained).
-                    if have_start { tail.clear(); }
+                    if have_start {
+                        tail.clear();
+                    }
                     have_start = true;
                 }
                 tail.push(line.clone());
@@ -62,7 +66,11 @@ fn trim_file(path: &std::path::Path) {
                 if tail.len() > MAX_CLOSED_LOG_LINES + 1 {
                     let drop = tail.len() - (MAX_CLOSED_LOG_LINES + 1);
                     // Never drop line 0 while it is the start.
-                    if !(have_start && tail[0].contains("\"command/start\"") && drop > 0 && tail.len() > drop) {
+                    if !(have_start
+                        && tail[0].contains("\"command/start\"")
+                        && drop > 0
+                        && tail.len() > drop)
+                    {
                         tail.drain(..drop);
                     } else if have_start && tail[0].contains("\"command/start\"") {
                         // Start at head: keep it, drop from index 1.
@@ -75,7 +83,9 @@ fn trim_file(path: &std::path::Path) {
             Err(_) => break,
         }
     }
-    if tail.is_empty() { return; }
+    if tail.is_empty() {
+        return;
+    }
     // round-116: atomic trim — File::create truncates the file to zero and
     // rewrites in place; a crash (Windows service kill, power loss) between
     // truncate and rewrite destroyed the WHOLE session audit tail (and the
@@ -87,14 +97,18 @@ fn trim_file(path: &std::path::Path) {
         {
             let mut w = BufWriter::new(&mut out);
             w.write_all(header.as_bytes())?;
-            for l in &tail { w.write_all(l.as_bytes())?; }
+            for l in &tail {
+                w.write_all(l.as_bytes())?;
+            }
             w.flush()?;
         }
         out.sync_all()?;
         std::fs::rename(&tmp, path)?;
         Ok(())
     })();
-    if res.is_err() { let _ = std::fs::remove_file(&tmp); }
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
 }
 
 /// One audit event for a session. `seq` is per-session monotonic; `ts` is
@@ -121,16 +135,56 @@ pub struct SessionEvent {
 
 impl SessionEvent {
     pub fn command_start(seq: u64, command: &str) -> Self {
-        Self { seq, ts: unix_now(), kind: "command/start".into(), command: Some(command.to_string()), text: None, exit_code: None, reason: None, status: None, duration_ms: None }
+        Self {
+            seq,
+            ts: unix_now(),
+            kind: "command/start".into(),
+            command: Some(command.to_string()),
+            text: None,
+            exit_code: None,
+            reason: None,
+            status: None,
+            duration_ms: None,
+        }
     }
     pub fn output(seq: u64, text: String) -> Self {
-        Self { seq, ts: unix_now(), kind: "output".into(), command: None, text: Some(text), exit_code: None, reason: None, status: None, duration_ms: None }
+        Self {
+            seq,
+            ts: unix_now(),
+            kind: "output".into(),
+            command: None,
+            text: Some(text),
+            exit_code: None,
+            reason: None,
+            status: None,
+            duration_ms: None,
+        }
     }
     pub fn command_end(seq: u64, exit_code: Option<i32>, reason: Option<&str>) -> Self {
-        Self { seq, ts: unix_now(), kind: "command/end".into(), command: None, text: None, exit_code, reason: reason.map(|s| s.to_string()), status: None, duration_ms: None }
+        Self {
+            seq,
+            ts: unix_now(),
+            kind: "command/end".into(),
+            command: None,
+            text: None,
+            exit_code,
+            reason: reason.map(|s| s.to_string()),
+            status: None,
+            duration_ms: None,
+        }
     }
     pub fn status(seq: u64, status: &str) -> Self {
-        Self { seq, ts: unix_now(), kind: "status".into(), command: None, text: None, exit_code: None, reason: None, status: Some(status.to_string()), duration_ms: None }
+        Self {
+            seq,
+            ts: unix_now(),
+            kind: "status".into(),
+            command: None,
+            text: None,
+            exit_code: None,
+            reason: None,
+            status: Some(status.to_string()),
+            duration_ms: None,
+        }
     }
 }
 
@@ -210,7 +264,11 @@ impl SessionLogger {
         // degrade gracefully because its closure must return a writer.
         if !f.contains_key(sid) {
             let path = self.dir.join(format!("{sid}.jsonl"));
-            match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
                 Ok(file) => {
                     // audit round: a crash mid-writeln can leave a fragment
                     // WITHOUT the trailing newline (lines past the 8 KiB
@@ -242,13 +300,21 @@ impl SessionLogger {
                         let _ = w.write_all(b"\n");
                     }
                     // New file → write the version header FIRST (round-56).
-                    if w.get_ref().metadata().map(|m| m.len() == 0).unwrap_or(false) {
-                        let _ = writeln!(w, "{}", serde_json::json!({
-                            "type": "session", "version": 1, "id": sid,
-                            "createdAt": std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs()).unwrap_or(0),
-                        }));
+                    if w.get_ref()
+                        .metadata()
+                        .map(|m| m.len() == 0)
+                        .unwrap_or(false)
+                    {
+                        let _ = writeln!(
+                            w,
+                            "{}",
+                            serde_json::json!({
+                                "type": "session", "version": 1, "id": sid,
+                                "createdAt": std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_secs()).unwrap_or(0),
+                            })
+                        );
                     }
                     f.insert(sid.to_string(), w);
                 }
@@ -262,7 +328,10 @@ impl SessionLogger {
                     // never panic: a log() call must not abort the agent.
                     let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
                     let fall = |p: &std::path::Path| {
-                        std::fs::OpenOptions::new().create(true).append(true).open(p)
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(p)
                     };
                     let fb = fall(std::path::Path::new(null)).or_else(|_| {
                         tracing::error!(
@@ -341,8 +410,14 @@ impl SessionLogger {
         // close. Cap identically (char-boundary-safe).
         let command = if command.len() > 4096 {
             let cut = command.floor_char_boundary(4096);
-            format!("{}…[truncated {} bytes]", &command[..cut], command.len() - cut)
-        } else { command.to_string() };
+            format!(
+                "{}…[truncated {} bytes]",
+                &command[..cut],
+                command.len() - cut
+            )
+        } else {
+            command.to_string()
+        };
         self.log(sid, SessionEvent::command_start(0, &command));
     }
     pub fn log_output(&self, sid: &str, text: String) {
@@ -356,10 +431,18 @@ impl SessionLogger {
         let text = if text.len() > 4096 {
             let cut = text.floor_char_boundary(4096);
             format!("{}…[truncated {} bytes]", &text[..cut], text.len() - cut)
-        } else { text };
+        } else {
+            text
+        };
         self.log(sid, SessionEvent::output(0, text));
     }
-    pub fn log_command_end(&self, sid: &str, exit_code: Option<i32>, reason: Option<&str>, duration_ms: Option<u64>) {
+    pub fn log_command_end(
+        &self,
+        sid: &str,
+        exit_code: Option<i32>,
+        reason: Option<&str>,
+        duration_ms: Option<u64>,
+    ) {
         let mut ev = SessionEvent::command_end(0, exit_code, reason);
         ev.duration_ms = duration_ms;
         self.log(sid, ev);
@@ -376,9 +459,13 @@ impl SessionLogger {
         let mut events = Vec::new();
         let mut max_seq = 0u64;
         for line in content.lines() {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
             // Header line — not an event.
-            if v.get("type").and_then(|t| t.as_str()) == Some("session") { continue; }
+            if v.get("type").and_then(|t| t.as_str()) == Some("session") {
+                continue;
+            }
             if let Some(seq) = v.get("seq").and_then(|s| s.as_u64()) {
                 max_seq = max_seq.max(seq);
             }
@@ -413,11 +500,21 @@ impl SessionLogger {
     /// List all session files (id → terminal state) for /api/sessions.
     pub fn list_sessions(&self) -> Vec<(String, serde_json::Value)> {
         let mut out = Vec::new();
-        let Ok(entries) = std::fs::read_dir(&self.dir) else { return out };
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return out;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-            let Some(sid) = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(sid) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+            else {
+                continue;
+            };
             if let Some(state) = self.terminal_state_of(&sid) {
                 out.push((sid, state));
             }
@@ -464,18 +561,29 @@ impl SessionLogger {
     /// prune. Returns the number of files removed.
     pub fn prune_stale(&self, max_age_days: u64) -> usize {
         use std::time::{Duration, SystemTime};
-        if SystemTime::now().duration_since(std::time::UNIX_EPOCH).is_err() {
+        if SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .is_err()
+        {
             return 0;
         }
         let max_age = Duration::from_secs(max_age_days.saturating_mul(86_400));
         let mut removed = 0;
-        let Ok(entries) = std::fs::read_dir(&self.dir) else { return 0 };
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return 0;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             // audit round: crashed trim rotations left `<sid>.jsonl.tmp`
             // litter invisible to the `.jsonl`-extension filter.
-            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-            if !(fname.ends_with(".jsonl") || fname.ends_with(".jsonl.tmp")) { continue; }
+            let fname = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            if !(fname.ends_with(".jsonl") || fname.ends_with(".jsonl.tmp")) {
+                continue;
+            }
             let Ok(meta) = entry.metadata() else { continue };
             // stage-n: use the stored createdAt from the version header instead
             // of mtime — a forward clock jump (NTP/DST/manual adjust) of >30 days
@@ -494,12 +602,24 @@ impl SessionLogger {
     /// session ids (the panel shows "interrupted — may still be running").
     pub fn recover_interrupted(&self) -> Vec<String> {
         let mut affected = Vec::new();
-        let Ok(entries) = std::fs::read_dir(&self.dir) else { return affected };
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return affected;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-            let Some(sid) = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
-            let Some((events, max_seq)) = self.read_events(&sid) else { continue };
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Some(sid) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+            else {
+                continue;
+            };
+            let Some((events, max_seq)) = self.read_events(&sid) else {
+                continue;
+            };
             // Seed the in-memory counter from the file's max seq — the
             // counter restarted at 0 after restart, so post-restart events
             // re-used seqs that already existed on disk (violating the
@@ -532,7 +652,10 @@ impl SessionLogger {
                         // — the round-99 branch read the wrong field and
                         // never fired.
                         if let Some(text) = v.get("status").and_then(|t| t.as_str()) {
-                            if text == "backgrounded" || text == "closed" || text.starts_with("exited:") {
+                            if text == "backgrounded"
+                                || text == "closed"
+                                || text.starts_with("exited:")
+                            {
                                 last_end = Some(i);
                             }
                         }
@@ -580,14 +703,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vale-slog-torn-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("s1.jsonl").as_path(), b"{\"id\":\"s1\",\"seq\":1,\"kind\":\"comm").unwrap();
+        std::fs::write(
+            dir.join("s1.jsonl").as_path(),
+            b"{\"id\":\"s1\",\"seq\":1,\"kind\":\"comm",
+        )
+        .unwrap();
         let logger = SessionLogger::new(dir.clone());
         logger.log_status("s1", "resumed");
         drop(logger);
         let logger2 = SessionLogger::new(dir.clone());
         let events = logger2.events_of("s1");
         assert!(
-            events.iter().any(|e| e["status"].as_str() == Some("resumed")),
+            events
+                .iter()
+                .any(|e| e["status"].as_str() == Some("resumed")),
             "post-repair append must parse cleanly, got {events:?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -625,7 +754,10 @@ mod tests {
         logger.log_command_end("s1", Some(0), Some("marker"), None);
 
         let content = std::fs::read_to_string(dir.join("s1.jsonl")).unwrap();
-        let lines: Vec<serde_json::Value> = content.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let lines: Vec<serde_json::Value> = content
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
         // 1 version header + 3 events (round-56).
         assert_eq!(lines.len(), 4);
         assert_eq!(lines[0]["type"], "session");
@@ -669,7 +801,11 @@ mod tests {
         assert_eq!(affected, vec!["s1"]);
 
         let content = std::fs::read_to_string(dir.join("s1.jsonl")).unwrap();
-        let last: serde_json::Value = content.lines().last().map(|l| serde_json::from_str(l).unwrap()).unwrap();
+        let last: serde_json::Value = content
+            .lines()
+            .last()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .unwrap();
         assert_eq!(last["kind"], "command/end");
         assert_eq!(last["reason"], "interrupted");
         assert_eq!(last["seq"], 3);
@@ -714,7 +850,11 @@ mod tests {
         logger.flush_all();
         let content = std::fs::read_to_string(dir.join("s1.jsonl")).unwrap();
         // Last line is the event (first is the version header).
-        let ev: serde_json::Value = content.lines().last().map(|l| serde_json::from_str(l).unwrap()).unwrap();
+        let ev: serde_json::Value = content
+            .lines()
+            .last()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .unwrap();
         let text = ev["text"].as_str().unwrap();
         assert!(text.len() < 5000, "capped text too long: {}", text.len());
         assert!(text.contains("truncated"));

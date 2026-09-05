@@ -6,21 +6,22 @@
 //! MCP list_tools and the web /api/spec endpoint alike. Code moved verbatim
 //! from the former monolithic `plugins/terminal/tools.rs`.
 
-use std::sync::Arc;
 use serde_json::{json, Value};
+use std::sync::Arc;
 
-use vale_agent_core::{recover_guard, AgentEvent, DeviceError, EventBus, ToolDef};
-use crate::plugins::{require_str, to_value_or_empty};
+use super::ctx::{
+    append_spill, persist_pre_restart, pre_restart_map, rotate_spill, session_lost, MAX_SPILL_BYTES,
+};
 use crate::plugins::terminal::{OutputBuf, SessionBuf};
+use crate::plugins::{require_str, to_value_or_empty};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::{parse_serial_target, parse_ssh_target, TerminalManager};
-use super::ctx::{append_spill, persist_pre_restart, pre_restart_map, rotate_spill, session_lost, MAX_SPILL_BYTES};
+use vale_agent_core::{recover_guard, AgentEvent, DeviceError, EventBus, ToolDef};
 
 // P2-5: drainer frames rerouted after a vanished history entry (warn path
 // below). Monotonic process-lifetime counter — a rising value means the
 // retain/close race is firing, not silent data loss.
-static DRAINER_DROPPED_FRAMES: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static DRAINER_DROPPED_FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Map a session kind to its close/death event (round-54): the same
 /// three-way mapping used to live in the drainer AND tool_close — a new
@@ -28,9 +29,15 @@ static DRAINER_DROPPED_FRAMES: std::sync::atomic::AtomicU64 =
 /// retain_live's idempotency silently masked the mismatch.
 fn close_event(kind: &str, sid: &str) -> AgentEvent {
     match kind {
-        "ssh" => AgentEvent::SshDisconnect { session_id: sid.to_string() },
-        "serial" => AgentEvent::SerialClose { port_id: sid.to_string() },
-        _ => AgentEvent::TermClose { session_id: sid.to_string() },
+        "ssh" => AgentEvent::SshDisconnect {
+            session_id: sid.to_string(),
+        },
+        "serial" => AgentEvent::SerialClose {
+            port_id: sid.to_string(),
+        },
+        _ => AgentEvent::TermClose {
+            session_id: sid.to_string(),
+        },
     }
 }
 
@@ -360,7 +367,11 @@ pub(super) fn tool_write(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
     )
 }
 
-pub(super) fn tool_close(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf) -> ToolDef {
+pub(super) fn tool_close(
+    terminal_mgr: &Arc<TerminalManager>,
+    bus: &Arc<dyn EventBus>,
+    output_buf: &OutputBuf,
+) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let bus = bus.clone();
     let buf = output_buf.clone();
@@ -384,8 +395,7 @@ pub(super) fn tool_close(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn Even
                 let label = meta.as_ref().map(|m| m.label.clone()).unwrap_or_default();
                 // Explicit close has no natural exit code — the drainer's
                 // later retain (if any) carries the real code and wins.
-                recover_guard(&buf)
-                    .retain_live(&session_id, &kind, &label, None);
+                recover_guard(&buf).retain_live(&session_id, &kind, &label, None);
                 bus.emit(&close_event(&kind, &session_id));
                 // round-163: same push contract as terminal_open.
                 bus.emit_term_output(json!({"ev": "sessions-changed"}));

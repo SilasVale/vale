@@ -20,7 +20,10 @@ pub(crate) fn log_line(line: &str) {
         use std::io::Write as _;
         // Rotation: startup.log grows forever (the agent runs indefinitely
         // as a boot task) — rotate to startup.log.old once it passes 1MB.
-        if std::fs::metadata(p).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        if std::fs::metadata(p)
+            .map(|m| m.len() > 1_000_000)
+            .unwrap_or(false)
+        {
             let _ = std::fs::rename(p, p.with_extension("log.old"));
         }
         let _ = std::fs::OpenOptions::new()
@@ -57,7 +60,6 @@ macro_rules! eout {
     }};
 }
 
-
 /// Windows service name — must match what the installer's `sc create` registers.
 #[cfg_attr(not(windows), allow(dead_code))]
 // Windows-only plumbing (self-heal, child-reaper job, SCM service, tunnel
@@ -65,7 +67,6 @@ macro_rules! eout {
 // reaches the module.
 #[cfg(windows)]
 mod winmain;
-
 
 /// Print error and pause before exit (Windows console friendly). In service mode
 /// stdin is not connected, so the read returns immediately and we still exit.
@@ -88,8 +89,8 @@ fn init_tracing() {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    let env = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "info".into());
+    let env =
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
     let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
     // stage-n: on Windows ALSO mirror tracing into agent.log (next to the
     // exe, 1 MB rotation) — the scheduled task / service context has no
@@ -105,7 +106,11 @@ fn init_tracing() {
         } else {
             vale_agent::filelog::RotatingFile::new(dir.join("agent.log"))
                 .ok()
-                .map(|w| tracing_subscriber::fmt::layer().with_ansi(false).with_writer(w))
+                .map(|w| {
+                    tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(w)
+                })
         };
         tracing_subscriber::Registry::default()
             .with(env)
@@ -116,7 +121,10 @@ fn init_tracing() {
     }
     #[cfg(not(windows))]
     {
-        tracing_subscriber::Registry::default().with(env).with(stdout_layer).init();
+        tracing_subscriber::Registry::default()
+            .with(env)
+            .with(stdout_layer)
+            .init();
     }
 }
 
@@ -134,7 +142,10 @@ fn main() {
         let dir = vale_agent::paths::exe_dir();
         if !dir.as_os_str().is_empty() {
             let _ = LOG_FILE.set(dir.join("startup.log"));
-            log_line(&format!("=== vale-agent {} starting ===", env!("CARGO_PKG_VERSION")));
+            log_line(&format!(
+                "=== vale-agent {} starting ===",
+                env!("CARGO_PKG_VERSION")
+            ));
         }
     }
 
@@ -176,15 +187,24 @@ fn main() {
     };
     let init_mode = args.get(1).map(String::as_str) == Some("--init");
     let config_path = if init_mode {
-        args.get(2).map(PathBuf::from).or_else(exe_dir_cfg).unwrap_or_else(|| PathBuf::from("config.yaml"))
+        args.get(2)
+            .map(PathBuf::from)
+            .or_else(exe_dir_cfg)
+            .unwrap_or_else(|| PathBuf::from("config.yaml"))
     } else {
-        args.get(1).map(PathBuf::from).or_else(exe_dir_cfg).unwrap_or_else(|| PathBuf::from("config.yaml"))
+        args.get(1)
+            .map(PathBuf::from)
+            .or_else(exe_dir_cfg)
+            .unwrap_or_else(|| PathBuf::from("config.yaml"))
     };
 
     if init_mode {
         let _config = load_config(&config_path);
         tracing::info!("Init complete: {}", config_path.display());
-        out!("  Init complete: {} (token above). Start normally next run.", config_path.display());
+        out!(
+            "  Init complete: {} (token above). Start normally next run.",
+            config_path.display()
+        );
         return;
     }
 
@@ -214,9 +234,16 @@ fn main() {
         let si_dir = install_dir.join("shell-integration");
         let si_script = si_dir.join("shellIntegration.ps1");
         if std::fs::create_dir_all(&si_dir).is_ok()
-            && std::fs::write(&si_script, include_str!("../resources/shell-integration/shellIntegration.ps1")).is_ok()
+            && std::fs::write(
+                &si_script,
+                include_str!("../resources/shell-integration/shellIntegration.ps1"),
+            )
+            .is_ok()
         {
-            log_line(&format!("shell integration script: {}", si_script.display()));
+            log_line(&format!(
+                "shell integration script: {}",
+                si_script.display()
+            ));
         }
 
         let fix_script = install_dir.join("fix-tunnel.ps1");
@@ -227,7 +254,6 @@ fn main() {
                 .spawn();
         }
     }
-
 
     // C2 unified process model — the AGENT owns the cloudflared tunnel
     // (spawn-if-absent, supervised; see winmain::supervise_tunnel).
@@ -255,10 +281,11 @@ fn load_config(config_path: &Path) -> Config {
             tracing::warn!("config.yaml ACL hardening unavailable: {e}");
         }
     }
-    let (config, token) = match vale_agent::bootstrap::load_or_create(config_path, &|msg| eout!("{msg}")) {
-        Ok(v) => v,
-        Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
-    };
+    let (config, token) =
+        match vale_agent::bootstrap::load_or_create(config_path, &|msg| eout!("{msg}")) {
+            Ok(v) => v,
+            Err(e) => fatal(&format!("Failed to load {}: {e}", config_path.display())),
+        };
     // After the load path (a created-if-missing default holds only known
     // keys; anything unexpected here is from the user's file, pre-existing
     // or just typo'd). Non-fatal by design — see warn_unknown_keys.
@@ -290,7 +317,10 @@ fn load_config(config_path: &Path) -> Config {
         } else {
             "********".to_string()
         };
-        out!("  Auth token: {masked}  (saved to {})", config_path.display());
+        out!(
+            "  Auth token: {masked}  (saved to {})",
+            config_path.display()
+        );
     }
     config
 }
@@ -307,14 +337,28 @@ fn load_config(config_path: &Path) -> Config {
 /// extra keys with the accepted set, recursively for our known sections.
 fn warn_unknown_keys(config_path: &Path) {
     const SECTIONS: &[(&str, &[&str])] = &[
-        ("server", &["host", "port", "name", "device_token", "proxy_secret"]),
+        (
+            "server",
+            &["host", "port", "name", "device_token", "proxy_secret"],
+        ),
         ("serial", &["default_baud_rate", "default_timeout_ms"]),
         ("terminal", &["buffer_mb"]),
-        ("browser", &["page_load_timeout_secs", "headless_executable", "headless_cdp_port"]),
+        (
+            "browser",
+            &[
+                "page_load_timeout_secs",
+                "headless_executable",
+                "headless_cdp_port",
+            ],
+        ),
         ("platform", &["console_url", "download_url"]),
     ];
-    let Ok(raw) = std::fs::read_to_string(config_path) else { return };
-    let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&raw) else { return };
+    let Ok(raw) = std::fs::read_to_string(config_path) else {
+        return;
+    };
+    let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&raw) else {
+        return;
+    };
     let Some(map) = val.as_mapping() else { return };
     let known_top: Vec<&str> = SECTIONS.iter().map(|(k, _)| *k).collect();
     for (k, v) in map {
@@ -475,6 +519,8 @@ pub(crate) async fn run_server(config_path: PathBuf) {
     }
     fatal(&format!(
         "Server failed to start after 5 attempts: {}",
-        last_err.map(|e| e.to_string()).unwrap_or_else(|| "unknown error".into())
+        last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown error".into())
     ));
 }

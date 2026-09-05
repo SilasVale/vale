@@ -77,7 +77,9 @@ fn ensure_token_is_64_hex_chars() {
     let token = token.expect("token generated");
     assert_eq!(token.len(), 64);
     // lowercase hex only — digits '0'-'9' and 'a'-'f'
-    assert!(token.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    assert!(token
+        .bytes()
+        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
     // proxy secret is generated too
     assert!(c.proxy_secret.as_deref().is_some_and(|s| s.len() == 64));
 }
@@ -101,7 +103,11 @@ fn ensure_token_unique_across_configs() {
     let mut b = ServerConfig::default();
     let (ta, _) = a.ensure_token().unwrap();
     let (tb, _) = b.ensure_token().unwrap();
-    assert_ne!(ta.unwrap(), tb.unwrap(), "two fresh configs must not share a token");
+    assert_ne!(
+        ta.unwrap(),
+        tb.unwrap(),
+        "two fresh configs must not share a token"
+    );
 }
 
 #[test]
@@ -112,7 +118,10 @@ fn ensure_token_serialization_roundtrip() {
     let yaml = serde_yaml::to_string(&c).unwrap();
     let back: Config = serde_yaml::from_str(&yaml).unwrap();
     assert_eq!(back.server.device_token.as_deref(), Some(token.as_str()));
-    assert_eq!(back.server.proxy_secret, c.server.proxy_secret, "secret survives roundtrip");
+    assert_eq!(
+        back.server.proxy_secret, c.server.proxy_secret,
+        "secret survives roundtrip"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -122,7 +131,9 @@ fn ensure_token_serialization_roundtrip() {
 #[test]
 fn eventbus_emit_and_recent() {
     let bus = AppEventBus::new();
-    let ev = vale_agent::AgentEvent::ShellExec { command: "ls".into() };
+    let ev = vale_agent::AgentEvent::ShellExec {
+        command: "ls".into(),
+    };
     let seq = bus.emit(&ev);
     assert_eq!(seq, 1);
 
@@ -139,7 +150,9 @@ fn eventbus_seq_monotonic() {
     let bus = AppEventBus::new();
     let mut last = 0;
     for i in 0..10 {
-        let seq = bus.emit(&vale_agent::AgentEvent::ShellExec { command: format!("cmd{i}") });
+        let seq = bus.emit(&vale_agent::AgentEvent::ShellExec {
+            command: format!("cmd{i}"),
+        });
         assert_eq!(seq, last + 1);
         last = seq;
     }
@@ -149,7 +162,9 @@ fn eventbus_seq_monotonic() {
 fn eventbus_after_filter() {
     let bus = AppEventBus::new();
     for i in 0..5 {
-        bus.emit(&vale_agent::AgentEvent::ShellExec { command: format!("cmd{i}") });
+        bus.emit(&vale_agent::AgentEvent::ShellExec {
+            command: format!("cmd{i}"),
+        });
     }
     // recent(0) returns everything retained
     let all = bus.recent(0);
@@ -166,7 +181,9 @@ fn eventbus_ring_cap_and_resume() {
     let bus = AppEventBus::new();
     // Cap is 200; emit 250 events — ring evicts oldest, seq keeps counting
     for i in 0..250 {
-        bus.emit(&vale_agent::AgentEvent::ShellExec { command: format!("cmd{i}") });
+        bus.emit(&vale_agent::AgentEvent::ShellExec {
+            command: format!("cmd{i}"),
+        });
     }
     let all = bus.recent(0);
     // Cap is 256 (was 200 — must match the broadcast channel cap so a Lagged
@@ -189,8 +206,12 @@ fn eventbus_hook_receives_seq() {
     bus.set_hook(move |seq, _ev| {
         sink.lock().unwrap().push(seq);
     });
-    bus.emit(&vale_agent::AgentEvent::ShellExec { command: "a".into() });
-    bus.emit(&vale_agent::AgentEvent::ShellExec { command: "b".into() });
+    bus.emit(&vale_agent::AgentEvent::ShellExec {
+        command: "a".into(),
+    });
+    bus.emit(&vale_agent::AgentEvent::ShellExec {
+        command: "b".into(),
+    });
     assert_eq!(*seen.lock().unwrap(), vec![1u64, 2]);
 }
 
@@ -328,4 +349,3 @@ fn serial_pool_list_ports_does_not_panic() {
     // list_ports may fail if no serial ports exist, but shouldn't panic
     let _ = pool.list_ports();
 }
-

@@ -14,26 +14,26 @@ mod tools;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use vale_agent_core::{Plugin, ToolDef};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
 use vale_agent_core::EventBus;
+use vale_agent_core::{Plugin, ToolDef};
 
 /// Per-session output buffer for non-destructive MCP read access.
 /// Stores accumulated raw bytes with a cursor tracking how much has been read.
 #[derive(Default)]
 pub struct SessionBuf {
     pub data: Vec<u8>,
-    pub cursor: usize,    // bytes already consumed by terminal_read (index into data)
-    pub dropped: u64,     // total bytes evicted from the front (absolute offset base)
+    pub cursor: usize, // bytes already consumed by terminal_read (index into data)
+    pub dropped: u64,  // total bytes evicted from the front (absolute offset base)
     /// Marker-injected PTY only: set once the shell's FIRST prompt marker
     /// has been observed. terminal_execute refuses to write before this —
     /// a command entering PowerShell mid-profile-init gets shredded into
     /// continuation prompts (observed live as `>>` + lost output).
     pub first_prompt_seen: bool,
-    pub spill_base: u64,  // absolute offset of the spill FILE's first byte (round-115: the file
-                          // is rotated when it exceeds MAX_SPILL_BYTES — the head is dropped,
-                          // so reads must offset by this base to stay continuous)
+    pub spill_base: u64, // absolute offset of the spill FILE's first byte (round-115: the file
+                         // is rotated when it exceeds MAX_SPILL_BYTES — the head is dropped,
+                         // so reads must offset by this base to stay continuous)
 }
 
 impl SessionBuf {
@@ -49,7 +49,9 @@ impl SessionBuf {
     /// Slice from an absolute byte offset, clamped. Eviction can at worst
     /// skip or boundedly duplicate data — never panic on an out-of-range index.
     pub fn slice_from(&self, abs: usize) -> &[u8] {
-        let rel = abs.saturating_sub(self.dropped as usize).min(self.data.len());
+        let rel = abs
+            .saturating_sub(self.dropped as usize)
+            .min(self.data.len());
         &self.data[rel..]
     }
 }
@@ -60,9 +62,9 @@ pub struct RetainedSession {
     pub buf: SessionBuf,
     pub kind: String,
     pub label: String,
-    pub closed_at_unix: u64,     // seconds since epoch, set at retain time
-    pub seq: u64,                // monotonic retain order — tie-breaks same-second closes
-    pub exit_code: Option<i32>,  // natural shell exit code (PTY `exit`); None for explicit close/ssh/serial
+    pub closed_at_unix: u64,    // seconds since epoch, set at retain time
+    pub seq: u64,               // monotonic retain order — tie-breaks same-second closes
+    pub exit_code: Option<i32>, // natural shell exit code (PTY `exit`); None for explicit close/ssh/serial
 }
 
 /// Live + retained output buffers, guarded by one mutex so the live→history
@@ -110,7 +112,13 @@ impl SessionStore {
 
     /// Move a live buffer into history (idempotent: false if the drainer
     /// already retained it). Enforces the caps, evicting oldest-closed first.
-    pub fn retain_live(&mut self, sid: &str, kind: &str, label: &str, exit_code: Option<i32>) -> bool {
+    pub fn retain_live(
+        &mut self,
+        sid: &str,
+        kind: &str,
+        label: &str,
+        exit_code: Option<i32>,
+    ) -> bool {
         if let Some(mut buf) = self.live.remove(sid) {
             let closed_at_unix = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -143,7 +151,14 @@ impl SessionStore {
                 None => {
                     self.history.insert(
                         sid.to_string(),
-                        RetainedSession { buf, kind: kind.to_string(), label: label.to_string(), closed_at_unix, seq: self.retain_seq, exit_code },
+                        RetainedSession {
+                            buf,
+                            kind: kind.to_string(),
+                            label: label.to_string(),
+                            closed_at_unix,
+                            seq: self.retain_seq,
+                            exit_code,
+                        },
                     );
                 }
             }
@@ -159,7 +174,8 @@ impl SessionStore {
         // same-second closes tie on it — `seq` (monotonic retain order) breaks
         // the tie deterministically.
         let oldest_key = |history: &HashMap<String, RetainedSession>| {
-            history.iter()
+            history
+                .iter()
                 .min_by_key(|(_, h)| (h.closed_at_unix, h.seq))
                 .map(|(k, _)| k.clone())
         };
@@ -179,7 +195,11 @@ impl SessionStore {
         while total > self.max_history_bytes {
             match oldest_key(&self.history) {
                 Some(k) => {
-                    total -= self.history.get(&k).map(|h| h.buf.end_abs() as u64).unwrap_or(0);
+                    total -= self
+                        .history
+                        .get(&k)
+                        .map(|h| h.buf.end_abs() as u64)
+                        .unwrap_or(0);
                     self.history.remove(&k);
                     crate::plugins::terminal::tools::remove_spill_for(&k);
                 }
@@ -226,7 +246,9 @@ pub fn clean_terminal_output(raw: &[u8]) -> String {
             while i < bytes.len() && !(bytes[i] >= 0x40 && bytes[i] <= 0x7e) {
                 i += 1;
             }
-            if i < bytes.len() { i += 1; } // skip the terminating letter
+            if i < bytes.len() {
+                i += 1;
+            } // skip the terminating letter
         } else if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b']' {
             // Skip OSC sequence (ESC ] ... ST|BEL): terminal title (ESC ]0;...
             // BEL) appears in every bash prompt, so leaving it in makes AI-read
@@ -281,8 +303,14 @@ pub fn clean_terminal_output(raw: &[u8]) -> String {
             let end = (i + len).min(bytes.len());
             let chunk = &bytes[i..end];
             match std::str::from_utf8(chunk) {
-                Ok(s) => { out.push_str(s); i = end; }
-                Err(_) => { out.push(char::REPLACEMENT_CHARACTER); i += 1; }
+                Ok(s) => {
+                    out.push_str(s);
+                    i = end;
+                }
+                Err(_) => {
+                    out.push(char::REPLACEMENT_CHARACTER);
+                    i += 1;
+                }
             }
         }
     }
@@ -323,17 +351,22 @@ impl TerminalPlugin {
         // session forever.
         let pruned = logger.prune_stale(30);
         if pruned > 0 {
-            tracing::info!("[vale-agent] session log retention: pruned {pruned} stale audit file(s)");
+            tracing::info!(
+                "[vale-agent] session log retention: pruned {pruned} stale audit file(s)"
+            );
         }
         let interrupted = logger.recover_interrupted();
         if !interrupted.is_empty() {
             tracing::info!(
                 "[vale-agent] session log recovery: {} interrupted session(s) marked: {:?}",
-                interrupted.len(), interrupted
+                interrupted.len(),
+                interrupted
             );
         }
         Self {
-            terminal_mgr, serial_pool, bus,
+            terminal_mgr,
+            serial_pool,
+            bus,
             output_buf: Arc::new(std::sync::Mutex::new(SessionStore::new())),
             diag: Arc::new(std::sync::Mutex::new(DiagBuf::default())),
             logger,
@@ -343,28 +376,45 @@ impl TerminalPlugin {
 }
 
 impl Plugin for TerminalPlugin {
-    fn name(&self) -> &'static str { "terminal" }
-    fn display_name(&self) -> &'static str { "Terminal" }
+    fn name(&self) -> &'static str {
+        "terminal"
+    }
+    fn display_name(&self) -> &'static str {
+        "Terminal"
+    }
     fn description(&self) -> &'static str {
         "Terminal access — PTY local shell, SSH remote, serial port"
     }
 
     fn tools(&self) -> Vec<ToolDef> {
-        tools::build(&self.terminal_mgr, &self.serial_pool, &self.bus, &self.output_buf, &self.diag, &self.logger, &self.buffer_limit)
+        tools::build(
+            &self.terminal_mgr,
+            &self.serial_pool,
+            &self.bus,
+            &self.output_buf,
+            &self.diag,
+            &self.logger,
+            &self.buffer_limit,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vale_agent_core::{AppEventBus, Plugin};
     use serde_json::json;
+    use vale_agent_core::{AppEventBus, Plugin};
 
     fn plugin() -> TerminalPlugin {
         let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
         let serial = Arc::new(SerialPool::new(115200, 1000));
         let mgr = Arc::new(TerminalManager::new(serial.clone()));
-        TerminalPlugin::new(mgr, serial, bus, Arc::new(std::sync::atomic::AtomicUsize::new(8 * 1024 * 1024)))
+        TerminalPlugin::new(
+            mgr,
+            serial,
+            bus,
+            Arc::new(std::sync::atomic::AtomicUsize::new(8 * 1024 * 1024)),
+        )
     }
 
     #[test]
@@ -375,13 +425,27 @@ mod tests {
         // (canonical + legacy) + terminal_env + terminal_jobs + saved/connect/forget.
         assert_eq!(tools.len(), 26);
         for expected in [
-            "terminal_open", "terminal_write", "terminal_close", "terminal_list",
-            "terminal_execute", "terminal_list_ports", "terminal_resize",
-            "terminal_select", "terminal_read", "terminal_screen",
-            "terminal_history", "terminal_diag_write", "terminal_diag_read",
-            "secret_set", "secret_get", "secret_delete",
-            "terminal_secret_set", "terminal_secret_get", "terminal_secret_delete",
-            "terminal_saved_connections", "terminal_connect_saved",
+            "terminal_open",
+            "terminal_write",
+            "terminal_close",
+            "terminal_list",
+            "terminal_execute",
+            "terminal_list_ports",
+            "terminal_resize",
+            "terminal_select",
+            "terminal_read",
+            "terminal_screen",
+            "terminal_history",
+            "terminal_diag_write",
+            "terminal_diag_read",
+            "secret_set",
+            "secret_get",
+            "secret_delete",
+            "terminal_secret_set",
+            "terminal_secret_get",
+            "terminal_secret_delete",
+            "terminal_saved_connections",
+            "terminal_connect_saved",
             "terminal_forget_saved",
             "terminal_jobs",
             "terminal_env",
@@ -400,8 +464,15 @@ mod tests {
         // backend is compiled (it would open a real PTY).
         let tools = plugin().tools();
         let t = tools.iter().find(|t| t.name == "terminal_open").unwrap();
-        let err = t.handler.call(json!({"kind": "pty", "target": ""})).await.unwrap_err();
-        assert!(err.to_string().contains("backend not enabled"), "unexpected error: {err}");
+        let err = t
+            .handler
+            .call(json!({"kind": "pty", "target": ""}))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("backend not enabled"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
@@ -409,6 +480,9 @@ mod tests {
         let tools = plugin().tools();
         let t = tools.iter().find(|t| t.name == "terminal_write").unwrap();
         let err = t.handler.call(json!({})).await.unwrap_err();
-        assert!(err.to_string().contains("missing required field"), "unexpected error: {err}");
+        assert!(
+            err.to_string().contains("missing required field"),
+            "unexpected error: {err}"
+        );
     }
 }

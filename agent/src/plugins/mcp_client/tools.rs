@@ -128,12 +128,21 @@ async fn rpc_ref(
                     let r = client
                         .list_tools(Some(rmcp::model::PaginatedRequestParams::default()))
                         .await
-                        .map_err(|e| DeviceError::Internal { message: format!("MCP list failed: {e}") })?;
+                        .map_err(|e| DeviceError::Internal {
+                            message: format!("MCP list failed: {e}"),
+                        })?;
                     serde_json::to_value(r).unwrap_or(Value::Null)
                 }
                 "tools/call" => {
-                    let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+                    let name = params
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let args = params
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or_else(|| json!({}));
                     let arguments: serde_json::Map<String, serde_json::Value> =
                         serde_json::from_value(args).unwrap_or_default();
                     let r = client
@@ -141,10 +150,16 @@ async fn rpc_ref(
                             rmcp::model::CallToolRequestParams::new(name).with_arguments(arguments),
                         )
                         .await
-                        .map_err(|e| DeviceError::Internal { message: format!("MCP call failed: {e}") })?;
+                        .map_err(|e| DeviceError::Internal {
+                            message: format!("MCP call failed: {e}"),
+                        })?;
                     serde_json::to_value(r).unwrap_or(Value::Null)
                 }
-                _ => return Err(DeviceError::Internal { message: format!("stdio transport: unsupported method {method}") }),
+                _ => {
+                    return Err(DeviceError::Internal {
+                        message: format!("stdio transport: unsupported method {method}"),
+                    })
+                }
             };
             Ok(call)
         }
@@ -160,8 +175,17 @@ async fn rpc_ref_http(
     params: Value,
     timeout_secs: u64,
 ) -> Result<Value, DeviceError> {
-    let McpSession::Http { url, session_id, http, headers, .. } = sess else {
-        return Err(DeviceError::Internal { message: "not an http session".into() });
+    let McpSession::Http {
+        url,
+        session_id,
+        http,
+        headers,
+        ..
+    } = sess
+    else {
+        return Err(DeviceError::Internal {
+            message: "not an http session".into(),
+        });
     };
     let mut envelope = json!({"jsonrpc": "2.0", "method": method});
     if let Some(i) = id {
@@ -178,8 +202,15 @@ async fn rpc_ref_http(
         .json(&envelope);
     for (k, v) in headers.iter() {
         let kl = k.to_ascii_lowercase();
-        if ["mcp-session-id", "content-type", "accept", "content-length", "host", "connection"]
-            .contains(&kl.as_str())
+        if [
+            "mcp-session-id",
+            "content-type",
+            "accept",
+            "content-length",
+            "host",
+            "connection",
+        ]
+        .contains(&kl.as_str())
         {
             continue; // protocol-managed — never caller-overridable
         }
@@ -188,22 +219,28 @@ async fn rpc_ref_http(
     if let Some(sid) = session_id {
         req = req.header("mcp-session-id", sid.as_str());
     }
-    let resp = req.send().await.map_err(|e| {
-        DeviceError::Internal { message: format!("MCP request failed: {e}") }
+    let resp = req.send().await.map_err(|e| DeviceError::Internal {
+        message: format!("MCP request failed: {e}"),
     })?;
     if method == "initialize" {
-        if let Some(sid) = resp.headers().get("mcp-session-id").and_then(|v| v.to_str().ok()) {
+        if let Some(sid) = resp
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+        {
             *session_id = Some(sid.to_string());
         }
     }
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| {
-        DeviceError::Internal { message: format!("MCP response read failed: {e}") }
+    let text = resp.text().await.map_err(|e| DeviceError::Internal {
+        message: format!("MCP response read failed: {e}"),
     })?;
     // round-132 diagnostics: record the method/id/session used/status of every
     // Plugin audit: bound what a rogue server can pour into memory/echo.
     if text.len() > 16 * 1024 * 1024 {
-        return Err(DeviceError::Internal { message: "MCP response exceeds 16 MiB cap".into() });
+        return Err(DeviceError::Internal {
+            message: "MCP response exceeds 16 MiB cap".into(),
+        });
     }
     // MCP round trip (with millisecond timestamps since round-137).
     {
@@ -221,7 +258,11 @@ async fn rpc_ref_http(
     }
     if !status.is_success() {
         return Err(DeviceError::Internal {
-            message: format!("MCP server returned HTTP {}: {}", status.as_u16(), truncate(&text, 200)),
+            message: format!(
+                "MCP server returned HTTP {}: {}",
+                status.as_u16(),
+                truncate(&text, 200)
+            ),
         });
     }
     if text.trim().is_empty() {
@@ -256,31 +297,48 @@ fn parse_envelope(body: &str, id: Option<u64>) -> Result<Value, DeviceError> {
     }
     for cand in candidates.iter().rev() {
         if let Ok(v) = serde_json::from_str::<Value>(cand) {
-            if id.map(|i| v.get("id").and_then(|x| x.as_u64()) == Some(i)).unwrap_or(true) {
+            if id
+                .map(|i| v.get("id").and_then(|x| x.as_u64()) == Some(i))
+                .unwrap_or(true)
+            {
                 return check_envelope(v, id);
             }
         }
     }
     Err(DeviceError::Internal {
-        message: format!("MCP response did not contain a usable JSON-RPC message: {}", truncate(body, 200)),
+        message: format!(
+            "MCP response did not contain a usable JSON-RPC message: {}",
+            truncate(body, 200)
+        ),
     })
 }
 
 fn check_envelope(v: Value, id: Option<u64>) -> Result<Value, DeviceError> {
     if let Some(err) = v.get("error") {
-        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown MCP error");
-        return Err(DeviceError::Internal { message: format!("MCP error: {msg}") });
+        let msg = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown MCP error");
+        return Err(DeviceError::Internal {
+            message: format!("MCP error: {msg}"),
+        });
     }
     match v.get("result") {
         Some(r) => Ok(r.clone()),
         None if id.is_none() => Ok(Value::Null), // notification: no response body
-        None => Err(DeviceError::Internal { message: "MCP response missing result".into() }),
+        None => Err(DeviceError::Internal {
+            message: "MCP response missing result".into(),
+        }),
     }
 }
 
 fn truncate(s: &str, n: usize) -> String {
     // char-boundary-safe (remote payloads slice here too — audit HIGH #1)
-    if s.len() <= n { s.to_string() } else { format!("{}…", &s[..s.floor_char_boundary(n)]) }
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..s.floor_char_boundary(n)])
+    }
 }
 
 /// `mcp_client_connect` — open a client session to a local browser MCP server.
@@ -319,17 +377,25 @@ pub fn mcp_client_connect() -> ToolDef {
             }
         }),
         |params: Value| async move {
-            let transport = params.get("transport").and_then(|v| v.as_str())
-                .unwrap_or("stdio").to_string();
-            let url = params.get("url").and_then(|v| v.as_str())
+            let transport = params
+                .get("transport")
+                .and_then(|v| v.as_str())
+                .unwrap_or("stdio")
+                .to_string();
+            let url = params
+                .get("url")
+                .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .unwrap_or(DEFAULT_URL)
                 .to_string();
-            let headers: Vec<(String, String)> = params.get("headers")
+            let headers: Vec<(String, String)> = params
+                .get("headers")
                 .and_then(|v| v.as_object())
-                .map(|m| m.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect())
+                .map(|m| {
+                    m.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
                 .unwrap_or_default();
 
             if transport == "http" {
@@ -341,13 +407,20 @@ pub fn mcp_client_connect() -> ToolDef {
 }
 
 /// Connect over Streamable HTTP (legacy 9229 / any URL).
-async fn connect_http(url: String, headers: Vec<(String, String)>) -> Result<serde_json::Value, DeviceError> {
+async fn connect_http(
+    url: String,
+    headers: Vec<(String, String)>,
+) -> Result<serde_json::Value, DeviceError> {
     // Plugin audit MED: connect took ANY caller URL — plain http to internal
     // hosts was an SSRF + sniffable. Policy: https anywhere; http ONLY for
     // the loopback bundled server (9229).
-    let parsed = reqwest::Url::parse(&url)
-        .map_err(|e| DeviceError::InvalidParams { message: format!("bad MCP url: {e}") })?;
-    let loopback = matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost") | Some("::1"));
+    let parsed = reqwest::Url::parse(&url).map_err(|e| DeviceError::InvalidParams {
+        message: format!("bad MCP url: {e}"),
+    })?;
+    let loopback = matches!(
+        parsed.host_str(),
+        Some("127.0.0.1") | Some("localhost") | Some("::1")
+    );
     if !(parsed.scheme() == "https" || (parsed.scheme() == "http" && loopback)) {
         return Err(DeviceError::InvalidParams {
             message: "MCP url must be https, or http to a loopback host".into(),
@@ -359,7 +432,9 @@ async fn connect_http(url: String, headers: Vec<(String, String)>) -> Result<ser
         let guard = SESSION.lock().await;
         if let Some(McpSession::Http { url: u, .. }) = guard.as_ref() {
             if *u == url {
-                return Ok(json!({ "status": "already_connected", "url": url, "transport": "http" }));
+                return Ok(
+                    json!({ "status": "already_connected", "url": url, "transport": "http" }),
+                );
             }
         }
     }
@@ -385,7 +460,9 @@ async fn connect_http(url: String, headers: Vec<(String, String)>) -> Result<ser
             // A concurrent connect for the same URL won the race — reuse its session,
             // drop this copy and return.
             Some(McpSession::Http { url: u, .. }) if *u == url => {
-                return Ok(json!({ "status": "already_connected", "url": url, "transport": "http" }));
+                return Ok(
+                    json!({ "status": "already_connected", "url": url, "transport": "http" }),
+                );
             }
             _ => {}
         }
@@ -429,7 +506,12 @@ async fn connect_http(url: String, headers: Vec<(String, String)>) -> Result<ser
 /// node — the agent no longer bundles node.exe).
 fn bundled_playwright() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let dir = crate::paths::install_dir();
-    let node = crate::paths::node_path().or_else(|| dir.join("playwright").join("node.exe").exists().then(|| dir.join("playwright").join("node.exe")))?;
+    let node = crate::paths::node_path().or_else(|| {
+        dir.join("playwright")
+            .join("node.exe")
+            .exists()
+            .then(|| dir.join("playwright").join("node.exe"))
+    })?;
     let entry = dir
         .join("playwright")
         .join("node_modules")
@@ -482,11 +564,9 @@ fn tcp_probe_up(port: u16) -> bool {
     // string must read as "down", never panic the caller.
     let addr: Option<std::net::SocketAddr> = format!("127.0.0.1:{port}").parse().ok();
     match addr {
-        Some(a) => std::net::TcpStream::connect_timeout(
-            &a,
-            std::time::Duration::from_millis(300),
-        )
-        .is_ok(),
+        Some(a) => {
+            std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_millis(300)).is_ok()
+        }
         None => false,
     }
 }
@@ -558,7 +638,8 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
 /// round-252: module-level event bus for the event-driven actions feed. Set
 /// once by McpClientPlugin (the registry owns the real bus); the tools emit
 /// `browser-actions-changed` after recording an action or screenshot.
-static ACTIONS_BUS: std::sync::OnceLock<std::sync::Arc<dyn vale_agent_core::EventBus>> = std::sync::OnceLock::new();
+static ACTIONS_BUS: std::sync::OnceLock<std::sync::Arc<dyn vale_agent_core::EventBus>> =
+    std::sync::OnceLock::new();
 
 pub(crate) fn set_actions_bus(bus: std::sync::Arc<dyn vale_agent_core::EventBus>) {
     let _ = ACTIONS_BUS.set(bus);
@@ -618,7 +699,8 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
         (std::path::PathBuf::from(n), std::path::PathBuf::from(e))
     } else {
         bundled_playwright().ok_or_else(|| DeviceError::Internal {
-            message: "bundled playwright not found (install_dir/playwright/) — run the installer".into(),
+            message: "bundled playwright not found (install_dir/playwright/) — run the installer"
+                .into(),
         })?
     };
 
@@ -662,20 +744,34 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
     let transport = rmcp::transport::child_process::TokioChildProcess::new(
         process_wrap::tokio::CommandWrap::from(cmd),
     )
-    .map_err(|e| DeviceError::Internal { message: format!("spawn playwright stdio: {e}") })?;
+    .map_err(|e| DeviceError::Internal {
+        message: format!("spawn playwright stdio: {e}"),
+    })?;
 
-    let client = ()
-        .serve(transport)
-        .await
-        .map_err(|e| DeviceError::Internal { message: format!("MCP stdio handshake failed: {e}") })?;
+    let client =
+        ().serve(transport)
+            .await
+            .map_err(|e| DeviceError::Internal {
+                message: format!("MCP stdio handshake failed: {e}"),
+            })?;
 
     let tools = client
         .list_all_tools()
         .await
-        .map_err(|e| DeviceError::Internal { message: format!("MCP stdio list_tools failed: {e}") })?;
+        .map_err(|e| DeviceError::Internal {
+            message: format!("MCP stdio list_tools failed: {e}"),
+        })?;
     let names: Vec<(String, String)> = tools
         .iter()
-        .map(|t| (t.name.to_string(), t.description.clone().map(|c| c.to_string()).unwrap_or_default()))
+        .map(|t| {
+            (
+                t.name.to_string(),
+                t.description
+                    .clone()
+                    .map(|c| c.to_string())
+                    .unwrap_or_default(),
+            )
+        })
         .collect();
 
     Ok((
@@ -751,10 +847,15 @@ fn embedded_view_index(text: &str) -> Option<usize> {
     for line in text.lines() {
         // "- N: (current) [Title](url)" or "- N: [Title](url)"
         let trimmed = line.trim();
-        if !trimmed.starts_with('-') { continue; }
+        if !trimmed.starts_with('-') {
+            continue;
+        }
         let rest = &trimmed[1..];
         let idx_part = rest.trim_start().split(':').next().unwrap_or("").trim();
-        let idx: usize = match idx_part.parse() { Ok(i) => i, Err(_) => continue };
+        let idx: usize = match idx_part.parse() {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
         // The desktop SPA is the tab we must NOT drive; anything else with a
         // URL is the embedded view (or a stray page — still better than the
         // SPA itself).
@@ -767,13 +868,23 @@ fn embedded_view_index(text: &str) -> Option<usize> {
 
 async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceError> {
     diag_log("[select] auto-selecting the embedded-view tab (desktop CDP attached)");
-    let list = match rpc_ref(sess, None, "tools/call", json!({
-        "name": "browser_tabs",
-        "arguments": { "action": "list" },
-    }), 15).await {
+    let list = match rpc_ref(
+        sess,
+        None,
+        "tools/call",
+        json!({
+            "name": "browser_tabs",
+            "arguments": { "action": "list" },
+        }),
+        15,
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => {
-            diag_log(&format!("[select] tab list failed (best-effort, ignoring): {e}"));
+            diag_log(&format!(
+                "[select] tab list failed (best-effort, ignoring): {e}"
+            ));
             return Ok(());
         }
     };
@@ -788,20 +899,36 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
     // round-300b diagnostic: dump the RAW rpc result when extract fails —
     // the http arm's shape keeps drifting across playwright-mcp versions.
     if extract_tool_text(&list).is_none() {
-        diag_log(&format!("[select] RAW list result: {}", serde_json::to_string(&list).unwrap_or_default()));
+        diag_log(&format!(
+            "[select] RAW list result: {}",
+            serde_json::to_string(&list).unwrap_or_default()
+        ));
     }
     let mut text = extract_tool_text(&list).unwrap_or_default();
     diag_log(&format!("[select] initial tab list text: {}", text.trim()));
     let mut embedded_idx = embedded_view_index(&text);
     // Fallback retries in case the attach is slower than usual.
     for attempt in 0..4 {
-        if embedded_idx.is_some() { break; }
+        if embedded_idx.is_some() {
+            break;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
-        diag_log(&format!("[select] retry {}/4 — tab list not ready yet", attempt + 1));
-        match rpc_ref(sess, None, "tools/call", json!({
-            "name": "browser_tabs",
-            "arguments": { "action": "list" },
-        }), 15).await {
+        diag_log(&format!(
+            "[select] retry {}/4 — tab list not ready yet",
+            attempt + 1
+        ));
+        match rpc_ref(
+            sess,
+            None,
+            "tools/call",
+            json!({
+                "name": "browser_tabs",
+                "arguments": { "action": "list" },
+            }),
+            15,
+        )
+        .await
+        {
             Ok(v) => {
                 text = extract_tool_text(&v).unwrap_or_default();
                 if text.is_empty() && matches!(sess, McpSession::Http { .. }) {
@@ -815,15 +942,24 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
                 }
                 embedded_idx = embedded_view_index(&text);
             }
-            Err(e) => diag_log(&format!("[select] tab list failed on retry (ignoring): {e}")),
+            Err(e) => diag_log(&format!(
+                "[select] tab list failed on retry (ignoring): {e}"
+            )),
         }
     }
     if let Some(idx) = embedded_idx {
         diag_log(&format!("[select] selecting embedded-view tab {idx}"));
-        let _ = rpc_ref(sess, None, "tools/call", json!({
-            "name": "browser_tabs",
-            "arguments": { "action": "select", "index": idx },
-        }), 15).await;
+        let _ = rpc_ref(
+            sess,
+            None,
+            "tools/call",
+            json!({
+                "name": "browser_tabs",
+                "arguments": { "action": "select", "index": idx },
+            }),
+            15,
+        )
+        .await;
     } else {
         diag_log("[select] no embedded-view tab found after retries — leaving default selection");
     }
@@ -862,7 +998,11 @@ fn extract_tool_text(v: &serde_json::Value) -> Option<String> {
             }
         }
     }
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// Judge whether a failure is "the session was reaped by the server"
@@ -905,10 +1045,17 @@ async fn heal_and_restore(sess: &mut McpSession) -> Result<(), DeviceError> {
         // A failed restore-navigation is not fatal: the original call retries
         // anyway (worst case it lands on a blank page, better than erroring
         // out). Generous timeout — cold pages can be slow.
-        let _ = rpc_ref(sess, Some(id), "tools/call", json!({
-            "name": "browser_navigate",
-            "arguments": { "url": url },
-        }), 60).await;
+        let _ = rpc_ref(
+            sess,
+            Some(id),
+            "tools/call",
+            json!({
+                "name": "browser_navigate",
+                "arguments": { "url": url },
+            }),
+            60,
+        )
+        .await;
     }
     Ok(())
 }
@@ -918,7 +1065,9 @@ async fn heal_and_restore(sess: &mut McpSession) -> Result<(), DeviceError> {
 /// through browser_navigate; only tracking it from responses keeps the
 /// restore point close to the page the user is actually on.
 fn track_page_url(sess: &mut McpSession, result: &Value) {
-    let Ok(text) = serde_json::to_string(result) else { return };
+    let Ok(text) = serde_json::to_string(result) else {
+        return;
+    };
     for marker in ["- Page URL: ", "\\n- Page URL: ", "### Page\\n- Page URL: "] {
         if let Some(pos) = text.find(marker) {
             let rest = &text[pos + marker.len()..];
@@ -943,11 +1092,18 @@ async fn handshake(sess: &mut McpSession) -> Result<Value, DeviceError> {
         McpSession::Stdio { .. } => Ok(json!({"name": "playwright-mcp", "version": "stdio"})),
         McpSession::Http { next_id, .. } => {
             let init_id = next_id.fetch_add(1, Ordering::Relaxed);
-            let resp = rpc_ref(sess, Some(init_id), "initialize", json!({
-                "protocolVersion": "2025-03-26",
-                "capabilities": {},
-                "clientInfo": {"name": "vale-agent", "version": "1"}
-            }), 30).await?;
+            let resp = rpc_ref(
+                sess,
+                Some(init_id),
+                "initialize",
+                json!({
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {"name": "vale-agent", "version": "1"}
+                }),
+                30,
+            )
+            .await?;
             rpc_ref(sess, None, "notifications/initialized", Value::Null, 10).await?;
             Ok(resp.get("serverInfo").cloned().unwrap_or(json!(null)))
         }
@@ -957,26 +1113,50 @@ async fn handshake(sess: &mut McpSession) -> Result<Value, DeviceError> {
 async fn list_tools_ref(sess: &mut McpSession) -> Result<Vec<(String, String)>, DeviceError> {
     match sess {
         McpSession::Stdio { client, .. } => {
-            let tools = client
-                .list_tools(Default::default())
-                .await
-                .map_err(|e| DeviceError::Internal { message: format!("MCP stdio list failed: {e}") })?;
+            let tools =
+                client
+                    .list_tools(Default::default())
+                    .await
+                    .map_err(|e| DeviceError::Internal {
+                        message: format!("MCP stdio list failed: {e}"),
+                    })?;
             Ok(tools
                 .tools
                 .iter()
-                .map(|t| (t.name.to_string(), t.description.clone().map(|c| c.to_string()).unwrap_or_default()))
+                .map(|t| {
+                    (
+                        t.name.to_string(),
+                        t.description
+                            .clone()
+                            .map(|c| c.to_string())
+                            .unwrap_or_default(),
+                    )
+                })
                 .collect())
         }
         McpSession::Http { next_id, .. } => {
             let id = next_id.fetch_add(1, Ordering::Relaxed);
             let r = rpc_ref(sess, Some(id), "tools/list", json!({}), 30).await?;
-            let arr = r.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default();
-            Ok(arr.into_iter().map(|t| {
-                (
-                    t.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
-                    t.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
-                )
-            }).collect())
+            let arr = r
+                .get("tools")
+                .and_then(|t| t.as_array())
+                .cloned()
+                .unwrap_or_default();
+            Ok(arr
+                .into_iter()
+                .map(|t| {
+                    (
+                        t.get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        t.get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                })
+                .collect())
         }
     }
 }
@@ -1040,11 +1220,18 @@ pub fn mcp_client_call() -> ToolDef {
             "required": ["tool"]
         }),
         |params: Value| async move {
-            let tool = params.get("tool").and_then(|v| v.as_str())
-                .ok_or_else(|| DeviceError::InvalidParams { message: "missing required field: tool".into() })?
+            let tool = params
+                .get("tool")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| DeviceError::InvalidParams {
+                    message: "missing required field: tool".into(),
+                })?
                 .to_string();
             let t0 = std::time::Instant::now();
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
 
             let mut guard = SESSION.lock().await;
             let sess = guard.as_mut().ok_or_else(|| DeviceError::InvalidParams {
@@ -1065,10 +1252,12 @@ pub fn mcp_client_call() -> ToolDef {
             //
             // round-131: 180s — the first navigation includes a cold browser
             // start; 60s would spuriously time out.
-            let call_body = || json!({
-                "name": tool,
-                "arguments": args,
-            });
+            let call_body = || {
+                json!({
+                    "name": tool,
+                    "arguments": args,
+                })
+            };
             let id = match sess {
                 McpSession::Http { next_id, .. } => next_id.fetch_add(1, Ordering::Relaxed),
                 McpSession::Stdio { .. } => 0, // rmcp manages ids internally
@@ -1125,9 +1314,11 @@ pub fn mcp_client_call() -> ToolDef {
                     // and MCP screenshots were silently unresolvable. Match
                     // the extension bare; the paren check below is the real
                     // terminator.
-                    if let Some(dot) = text[marker..].find(".png")
+                    if let Some(dot) = text[marker..]
+                        .find(".png")
                         .or_else(|| text[marker..].find(".jpg"))
-                        .or_else(|| text[marker..].find(".jpeg")) {
+                        .or_else(|| text[marker..].find(".jpeg"))
+                    {
                         let end_rel = marker + dot + 4; // include extension
                         if end_rel < text.len() && bytes.get(end_rel) == Some(&b')') {
                             let rel = &text[open + 1..end_rel];
@@ -1138,7 +1329,8 @@ pub fn mcp_client_call() -> ToolDef {
                 if let Some(rel) = resolved {
                     let rel = rel.replace("\\\\", "\\");
                     let name = std::path::Path::new(&rel)
-                        .file_name().map(|f| f.to_string_lossy().to_string())
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
                         .unwrap_or_default();
                     // Plugin audit HIGH #2: candidate[0] was the SERVER-
                     // CONTROLLED path verbatim — a malicious/compromised MCP
@@ -1190,8 +1382,12 @@ pub fn mcp_client_call() -> ToolDef {
                             // Early-return the structured shape BrowserPane
                             // parses (content[].type=image) — falling through
                             // would flatten everything into a text string.
-                            if let Some(arr) = result.get_mut("content").and_then(|c| c.as_array_mut()) {
-                                arr.push(json!({"type": "image", "data": b64, "mimeType": "image/png"}));
+                            if let Some(arr) =
+                                result.get_mut("content").and_then(|c| c.as_array_mut())
+                            {
+                                arr.push(
+                                    json!({"type": "image", "data": b64, "mimeType": "image/png"}),
+                                );
                                 return Ok(json!({ "ok": true, "result": result }));
                             }
                             break;
@@ -1210,7 +1406,10 @@ pub fn mcp_client_call() -> ToolDef {
                 }
             }
             let empty = Vec::new();
-            let content = result.get("content").and_then(|c| c.as_array()).unwrap_or(&empty);
+            let content = result
+                .get("content")
+                .and_then(|c| c.as_array())
+                .unwrap_or(&empty);
             let mut texts: Vec<String> = Vec::new();
             for c in content {
                 let ctype = c.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -1221,7 +1420,10 @@ pub fn mcp_client_call() -> ToolDef {
                         }
                     }
                     "image" => {
-                        let mime = c.get("mimeType").and_then(|m| m.as_str()).unwrap_or("image/png");
+                        let mime = c
+                            .get("mimeType")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("image/png");
                         if let Some(d) = c.get("data").and_then(|d| d.as_str()) {
                             texts.push(format!("data:{mime};base64,{d}"));
                         }
@@ -1245,8 +1447,14 @@ pub fn mcp_client_disconnect() -> ToolDef {
             let sess = SESSION.lock().await.take();
             if let Some(s) = sess {
                 match s {
-                    McpSession::Http { url, session_id, http, .. } => {
-                        let mut req = http.delete(&url)
+                    McpSession::Http {
+                        url,
+                        session_id,
+                        http,
+                        ..
+                    } => {
+                        let mut req = http
+                            .delete(&url)
                             .header("content-type", "application/json")
                             .timeout(Duration::from_secs(5));
                         if let Some(sid) = &session_id {
@@ -1274,10 +1482,16 @@ mod one_browser_tests {
 
     #[test]
     fn mcp_browser_args_attach_arm_carries_cdp_and_output_dir() {
-        let args = mcp_browser_args(Some("http://127.0.0.1:9333"), std::path::Path::new("D:\\Vale\\pwout"));
+        let args = mcp_browser_args(
+            Some("http://127.0.0.1:9333"),
+            std::path::Path::new("D:\\Vale\\pwout"),
+        );
         assert_eq!(args[0], "--cdp-endpoint");
         assert_eq!(args[1], "http://127.0.0.1:9333");
-        assert!(!args.iter().any(|a| a == "--headless"), "attach mode must not fork a private browser");
+        assert!(
+            !args.iter().any(|a| a == "--headless"),
+            "attach mode must not fork a private browser"
+        );
         assert!(args.contains(&"--output-dir".to_string()));
         assert_eq!(args.last().unwrap(), "D:\\Vale\\pwout");
     }
@@ -1286,7 +1500,10 @@ mod one_browser_tests {
     fn mcp_browser_args_desktop_attach_carries_9333() {
         // round-247: in the Electron shell the AI must drive the EMBEDDED
         // view (9333).
-        let args = mcp_browser_args(Some("http://127.0.0.1:9333"), std::path::Path::new("/tmp/pwout"));
+        let args = mcp_browser_args(
+            Some("http://127.0.0.1:9333"),
+            std::path::Path::new("/tmp/pwout"),
+        );
         assert_eq!(args[1], "http://127.0.0.1:9333");
         assert!(!args.iter().any(|a| a == "--headless"));
     }
@@ -1297,7 +1514,11 @@ mod one_browser_tests {
         assert!(args.contains(&"--headless".to_string()));
         assert!(args.contains(&"chromium".to_string()));
         assert!(!args.iter().any(|a| a.contains("9333")));
-        assert_eq!(args.last().unwrap(), "/tmp/pwout", "evidence must land in pwout either way");
+        assert_eq!(
+            args.last().unwrap(),
+            "/tmp/pwout",
+            "evidence must land in pwout either way"
+        );
     }
 
     #[test]
@@ -1307,7 +1528,10 @@ mod one_browser_tests {
         let args = serde_json::json!({ "url": cjk });
         let sum = mcp_action_summary("browser_navigate", &args);
         assert!(sum.len() <= 203 && sum.ends_with('…'), "len={}", sum.len());
-        assert!(sum.is_char_boundary(sum.len()), "truncated string must END on a char boundary");
+        assert!(
+            sum.is_char_boundary(sum.len()),
+            "truncated string must END on a char boundary"
+        );
         let short = mcp_action_summary("browser_click", &serde_json::json!({ "ref": "e12" }));
         assert_eq!(short, "browser_click ref=e12");
     }
@@ -1334,13 +1558,17 @@ mod one_browser_tests {
         let t = extract_tool_text(&stdio).unwrap();
         assert!(t.contains("https://x.com"));
         // http: nested content array.
-        let http = serde_json::json!({ "result": { "content": [ { "type": "text", "text": "hello" } ] } });
+        let http =
+            serde_json::json!({ "result": { "content": [ { "type": "text", "text": "hello" } ] } });
         assert_eq!(extract_tool_text(&http).unwrap().trim(), "hello");
         // rmcp 2.x CallToolResult: TOP-LEVEL content, no result wrapper
         // (round-300 device-caught: auto-select saw empty text without this).
         let top = serde_json::json!({ "content": [ { "type": "text", "text": "- 0: (current) [Vale Agent](http://127.0.0.1:18080/desktop/)\n- 1: [X](https://x.com/)" } ] });
         let t = extract_tool_text(&top).unwrap();
-        assert!(t.contains("https://x.com"), "top-level content must parse: {t:?}");
+        assert!(
+            t.contains("https://x.com"),
+            "top-level content must parse: {t:?}"
+        );
         // Empty -> None.
         assert!(extract_tool_text(&serde_json::json!({})).is_none());
         assert!(extract_tool_text(&serde_json::json!({ "content": [] })).is_none());

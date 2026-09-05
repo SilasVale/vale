@@ -71,7 +71,10 @@ fn windows_vitals() -> Vitals {
                 kernel: to_u64(&kernel),
                 user: to_u64(&user),
             };
-            let prev = PREV_CPU.lock().unwrap_or_else(|p| p.into_inner()).replace(cur);
+            let prev = PREV_CPU
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .replace(cur);
             if let Some(prev) = prev {
                 let d_idle = cur.idle.saturating_sub(prev.idle);
                 let d_total = (cur.kernel.saturating_add(cur.user))

@@ -73,7 +73,14 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["memory_save", "memory_search", "memory_list", "memory_update", "memory_delete", "memory_export"]
+            vec![
+                "memory_save",
+                "memory_search",
+                "memory_list",
+                "memory_update",
+                "memory_delete",
+                "memory_export"
+            ]
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

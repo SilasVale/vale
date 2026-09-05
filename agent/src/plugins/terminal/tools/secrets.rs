@@ -6,8 +6,8 @@
 
 use serde_json::{json, Value};
 
-use vale_agent_core::ToolDef;
 use crate::plugins::require_str;
+use vale_agent_core::ToolDef;
 
 // ── Secrets (keychain) ─────────────────────────────
 

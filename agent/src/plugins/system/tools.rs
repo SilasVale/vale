@@ -12,9 +12,9 @@
 //! - Errors are returned as structured JSON (`{"ok": false, "error": ...}`),
 //!   never thrown — the model sees a readable failure, not an exception.
 
+use futures::StreamExt;
 use serde_json::{json, Value};
 use vale_agent_core::ToolDef;
-use futures::StreamExt;
 
 use crate::plugins::{require_str, to_value_or_empty};
 
@@ -658,7 +658,10 @@ mod file_tool_tests {
     use serde_json::json;
 
     async fn run(tool: &ToolDef, params: serde_json::Value) -> serde_json::Value {
-        tool.handler.call(params).await.unwrap_or_else(|e| json!({"ok": false, "error": e.to_string()}))
+        tool.handler
+            .call(params)
+            .await
+            .unwrap_or_else(|e| json!({"ok": false, "error": e.to_string()}))
     }
 
     #[tokio::test]
@@ -675,7 +678,11 @@ mod file_tool_tests {
 
     #[tokio::test]
     async fn file_stat_missing_returns_error() {
-        let out = run(&tool_file_stat(), json!({ "path": "Z:/definitely/not/here.txt" })).await;
+        let out = run(
+            &tool_file_stat(),
+            json!({ "path": "Z:/definitely/not/here.txt" }),
+        )
+        .await;
         assert_eq!(out["ok"], false);
     }
 
@@ -694,7 +701,11 @@ mod file_tool_tests {
         let content = vec![b'x'; 200_000]; // 200 KiB
         let w = run(&tool_file_write(), json!({ "path": tmp.to_string_lossy(), "data": base64::engine::general_purpose::STANDARD.encode(&content) })).await;
         assert_eq!(w["ok"], true);
-        let r1 = run(&tool_file_read(), json!({ "path": tmp.to_string_lossy(), "offset": 0, "limit": 131072, "raw": true })).await;
+        let r1 = run(
+            &tool_file_read(),
+            json!({ "path": tmp.to_string_lossy(), "offset": 0, "limit": 131072, "raw": true }),
+        )
+        .await;
         assert_eq!(r1["ok"], true);
         assert_eq!(r1["bytes"], 131072);
         assert_eq!(r1["size"], 200000);
@@ -722,24 +733,39 @@ mod file_tool_tests {
 
     #[tokio::test]
     async fn file_download_rejects_non_http() {
-        let out = run(&tool_file_download(), json!({ "url": "ftp://example.com/file.txt", "path": "/tmp/test.txt" })).await;
+        let out = run(
+            &tool_file_download(),
+            json!({ "url": "ftp://example.com/file.txt", "path": "/tmp/test.txt" }),
+        )
+        .await;
         assert_eq!(out["ok"], false);
         assert!(out["error"].as_str().unwrap().contains("http"));
     }
 
     #[tokio::test]
     async fn file_download_rejects_ip_url() {
-        let out = run(&tool_file_download(), json!({ "url": "http://127.0.0.1/secret", "path": "/tmp/test.txt" })).await;
+        let out = run(
+            &tool_file_download(),
+            json!({ "url": "http://127.0.0.1/secret", "path": "/tmp/test.txt" }),
+        )
+        .await;
         assert_eq!(out["ok"], false);
         assert!(out["error"].as_str().unwrap().contains("IP"));
     }
 
     #[tokio::test]
     async fn file_download_rejects_path_traversal() {
-        let out = run(&tool_file_download(), json!({ "url": "https://example.com/file.txt", "path": "/etc/passwd" })).await;
+        let out = run(
+            &tool_file_download(),
+            json!({ "url": "https://example.com/file.txt", "path": "/etc/passwd" }),
+        )
+        .await;
         assert_eq!(out["ok"], false);
         let err = out["error"].as_str().unwrap();
-        assert!(err.contains("data dir") || err.contains("invalid path"), "got: {err}");
+        assert!(
+            err.contains("data dir") || err.contains("invalid path"),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -752,7 +778,11 @@ mod file_tool_tests {
 
     #[tokio::test]
     async fn net_test_tcp_reachable() {
-        let out = run(&tool_net_test(), json!({ "host": "127.0.0.1", "port": 1, "timeout_secs": 2 })).await;
+        let out = run(
+            &tool_net_test(),
+            json!({ "host": "127.0.0.1", "port": 1, "timeout_secs": 2 }),
+        )
+        .await;
         assert_eq!(out["ok"], true);
         assert_eq!(out["tcp_reachable"], false);
     }

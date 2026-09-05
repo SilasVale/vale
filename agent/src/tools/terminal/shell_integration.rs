@@ -79,7 +79,11 @@ pub fn find_command_line(data: &[u8]) -> Option<CommandLine> {
         if data[i] == ESC && data[i + 1] == b']' {
             if let Some((rel_end, cmd, nonce)) = parse_osc_633_e(&data[i..]) {
                 let end = i + rel_end;
-                return Some(CommandLine { command: cmd, nonce, end });
+                return Some(CommandLine {
+                    command: cmd,
+                    nonce,
+                    end,
+                });
             }
             // Same rule: skip only non-633; OSCs.
             if let Some(n) = osc_skip_len(data, i) {
@@ -238,7 +242,9 @@ fn osc_payload_end(data: &[u8]) -> Option<usize> {
 /// must NOT be skipped to its next BEL — skipping would swallow a real
 /// completion marker that follows it in the same buffer window.
 fn osc_skip_len(data: &[u8], i: usize) -> Option<usize> {
-    let is_633 = data.get(i + 2..).is_some_and(|rest| rest.starts_with(b"633;"));
+    let is_633 = data
+        .get(i + 2..)
+        .is_some_and(|rest| rest.starts_with(b"633;"));
     if is_633 {
         return None;
     }
@@ -483,7 +489,10 @@ mod tests {
             carry.push(*b);
             let found = find_finished(&carry);
             if i + 1 < full.len() {
-                assert!(found.is_none(), "found before full input at byte {i}: {carry:?}");
+                assert!(
+                    found.is_none(),
+                    "found before full input at byte {i}: {carry:?}"
+                );
             } else {
                 let f = found.expect("finished at last byte");
                 assert_eq!(f.exit_code, Some(0));
@@ -502,9 +511,16 @@ mod tests {
             carry.push(*b);
             let found = find_prompt_started(&carry);
             if i < 7 {
-                assert!(found.is_none(), "prompt found too early at byte {i}: {carry:?}");
+                assert!(
+                    found.is_none(),
+                    "prompt found too early at byte {i}: {carry:?}"
+                );
             } else {
-                assert_eq!(found, Some(8), "prompt end must be past the BEL at byte {i}");
+                assert_eq!(
+                    found,
+                    Some(8),
+                    "prompt end must be past the BEL at byte {i}"
+                );
             }
         }
     }

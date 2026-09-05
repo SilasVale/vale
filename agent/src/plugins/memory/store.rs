@@ -70,7 +70,11 @@ pub struct MemoryLimits {
 
 impl Default for MemoryLimits {
     fn default() -> Self {
-        Self { max_entries: 10_000, max_bytes: 64 * 1024 * 1024, retention_days: None }
+        Self {
+            max_entries: 10_000,
+            max_bytes: 64 * 1024 * 1024,
+            retention_days: None,
+        }
     }
 }
 
@@ -133,7 +137,9 @@ impl MemoryStore {
         // A torn write can cut a multi-byte UTF-8 sequence in half — one
         // invalid byte must not hide the WHOLE store (read_to_string fails
         // then), so decode lossy and let the per-line parse skip junk.
-        let Ok(bytes) = std::fs::read(self.file_path()) else { return };
+        let Ok(bytes) = std::fs::read(self.file_path()) else {
+            return;
+        };
         let text = String::from_utf8_lossy(&bytes);
         let mut guard = recover_guard(&self.inner);
         for line in text.lines() {
@@ -141,7 +147,9 @@ impl MemoryStore {
             if line.contains("\"type\":\"memory\"") || line.contains("\"type\": \"memory\"") {
                 continue;
             }
-            let Ok(rec) = serde_json::from_str::<MemoryRecord>(line) else { continue };
+            let Ok(rec) = serde_json::from_str::<MemoryRecord>(line) else {
+                continue;
+            };
             // Dedup by id is last-wins; tag index is rebuilt after the sweep
             // so a superseded line's tags cannot orphan-register the winner.
             guard.by_id.insert(rec.id.clone(), rec.clone());
@@ -161,7 +169,12 @@ impl MemoryStore {
         // total_bytes counts LIVE records only — the old per-line sum counted
         // every update revision (store.rs history), inflating the byte cap
         // into premature evictions.
-        guard.total_bytes = guard.by_id.values().filter(|r| !r.deleted).map(|r| r.content.len()).sum();
+        guard.total_bytes = guard
+            .by_id
+            .values()
+            .filter(|r| !r.deleted)
+            .map(|r| r.content.len())
+            .sum();
         // order is rebuilt lazily in list/search; mark dirty for the first
         // rebuild.
         guard.dirty = true;
@@ -189,7 +202,11 @@ impl MemoryStore {
     fn append_line(&self, line: &str) {
         use std::io::Write;
         let path = self.file_path();
-        let mut f = match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let mut f = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             Ok(f) => f,
             Err(_) => return,
         };
@@ -207,7 +224,9 @@ impl MemoryStore {
             // and silently destroy that record on every future load. Detect
             // the missing terminator and start a fresh line.
             use std::io::{Read, Seek, SeekFrom};
-            let tail_bad = std::fs::OpenOptions::new().read(true).open(&path)
+            let tail_bad = std::fs::OpenOptions::new()
+                .read(true)
+                .open(&path)
                 .and_then(|mut r| {
                     r.seek(SeekFrom::End(-1))?;
                     let mut b = [0u8; 1];
@@ -278,7 +297,10 @@ impl MemoryStore {
         // Snapshot the doomed tombstones so a FAILED disk rewrite can be
         // rolled back into the index — otherwise memory (clean) and disk
         // (still holding them) diverge and they RESURRECT at next load.
-        let removed_records: Vec<MemoryRecord> = removed.iter().filter_map(|id| guard.by_id.get(id).cloned()).collect();
+        let removed_records: Vec<MemoryRecord> = removed
+            .iter()
+            .filter_map(|id| guard.by_id.get(id).cloned())
+            .collect();
         // Rewrite the JSONL with only the survivors (temp + rename).
         let path = self.file_path();
         let tmp = path.with_extension("jsonl.tmp");
@@ -316,7 +338,10 @@ impl MemoryStore {
             return 0;
         }
         guard.dirty = true;
-        tracing::info!("[vale-agent] memory compact: removed {removed_count} tombstone(s)", removed_count = removed.len());
+        tracing::info!(
+            "[vale-agent] memory compact: removed {removed_count} tombstone(s)",
+            removed_count = removed.len()
+        );
         before.saturating_sub(guard.by_id.len())
     }
 
@@ -344,7 +369,11 @@ impl MemoryStore {
                 guard.total_bytes += rec.content.len();
             }
             for tag in &rec.tags {
-                guard.tag_index.entry(tag.to_lowercase()).or_default().insert(id.clone());
+                guard
+                    .tag_index
+                    .entry(tag.to_lowercase())
+                    .or_default()
+                    .insert(id.clone());
             }
             guard.dirty = true;
         }
@@ -399,7 +428,11 @@ impl MemoryStore {
                 set.remove(id);
             }
             for t in &rec.tags {
-                guard.tag_index.entry(t.to_lowercase()).or_default().insert(id.to_string());
+                guard
+                    .tag_index
+                    .entry(t.to_lowercase())
+                    .or_default()
+                    .insert(id.to_string());
             }
             guard.dirty = true;
         }
@@ -576,9 +609,16 @@ impl MemoryStore {
                     if let Some(rec) = guard.by_id.get_mut(&id) {
                         rec.deleted = true;
                         rec.updated_at = unix_now();
-                        if let Ok(line) = serde_json::to_string(&*rec) { persist.push(line); }
+                        if let Ok(line) = serde_json::to_string(&*rec) {
+                            persist.push(line);
+                        }
                     }
-                    guard.total_bytes = guard.by_id.values().filter(|r| !r.deleted).map(|r| r.content.len()).sum();
+                    guard.total_bytes = guard
+                        .by_id
+                        .values()
+                        .filter(|r| !r.deleted)
+                        .map(|r| r.content.len())
+                        .sum();
                     guard.dirty = true;
                 }
                 None => break,
@@ -604,7 +644,9 @@ impl MemoryStore {
                     if let Some(rec) = guard.by_id.get_mut(&id) {
                         rec.deleted = true;
                         rec.updated_at = unix_now();
-                        if let Ok(line) = serde_json::to_string(&*rec) { persist.push(line); }
+                        if let Ok(line) = serde_json::to_string(&*rec) {
+                            persist.push(line);
+                        }
                     }
                     guard.total_bytes = new_total;
                     guard.dirty = true;
@@ -625,11 +667,18 @@ impl MemoryStore {
                 if let Some(rec) = guard.by_id.get_mut(&id) {
                     rec.deleted = true;
                     rec.updated_at = unix_now();
-                    if let Ok(line) = serde_json::to_string(&*rec) { persist.push(line); }
+                    if let Ok(line) = serde_json::to_string(&*rec) {
+                        persist.push(line);
+                    }
                 }
                 guard.dirty = true;
             }
-            guard.total_bytes = guard.by_id.values().filter(|r| !r.deleted).map(|r| r.content.len()).sum();
+            guard.total_bytes = guard
+                .by_id
+                .values()
+                .filter(|r| !r.deleted)
+                .map(|r| r.content.len())
+                .sum();
         }
         drop(guard);
         for line in persist {
@@ -661,7 +710,8 @@ mod tests {
     /// Unique per-test directory (test name suffix) — concurrent `cargo test`
     /// threads would otherwise collide on one shared path.
     fn tmp_store(name: &str) -> (MemoryStore, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("vale-mem-test-{}-{}", name, std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("vale-mem-test-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         (MemoryStore::new(dir.clone(), MemoryLimits::default()), dir)
     }
@@ -684,7 +734,10 @@ mod tests {
         // torn fragment is simply skipped.
         let store2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
         let hits = store2.search("body-b", None, 10);
-        assert!(hits.iter().any(|r| r.title == "b"), "post-repair append must be loadable");
+        assert!(
+            hits.iter().any(|r| r.title == "b"),
+            "post-repair append must be loadable"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -700,7 +753,10 @@ mod tests {
         std::fs::write(dir.join("memory.jsonl"), &bytes).unwrap();
         let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
         let hits = store.search("keep", None, 10);
-        assert!(hits.iter().any(|r| r.title == "ok"), "valid records must load despite a trailing invalid byte");
+        assert!(
+            hits.iter().any(|r| r.title == "ok"),
+            "valid records must load despite a trailing invalid byte"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -709,21 +765,53 @@ mod tests {
         // max_entries=2: inserting a 3rd evicts the oldest. The flip MUST be
         // on disk — otherwise the evicted entry resurrects on restart.
         let dir = std::env::temp_dir().join(format!("vale-mem-evict-{}", std::process::id()));
-        let store = MemoryStore::new(dir.clone(), MemoryLimits { max_entries: 2, ..MemoryLimits::default() });
+        let store = MemoryStore::new(
+            dir.clone(),
+            MemoryLimits {
+                max_entries: 2,
+                ..MemoryLimits::default()
+            },
+        );
         // EXPLICIT timestamps — unix_now() is second-granular, so three fast
         // inserts tie and the victim would fall to id ordering, not age.
-        let mut a = rec("oldest", "O"); a.updated_at = 100; a.created_at = 100;
-        let mut b = rec("mid", "M"); b.updated_at = 200; b.created_at = 200;
-        let mut c = rec("newest", "N"); c.updated_at = 300; c.created_at = 300;
+        let mut a = rec("oldest", "O");
+        a.updated_at = 100;
+        a.created_at = 100;
+        let mut b = rec("mid", "M");
+        b.updated_at = 200;
+        b.created_at = 200;
+        let mut c = rec("newest", "N");
+        c.updated_at = 300;
+        c.created_at = 300;
         store.insert(a);
         store.insert(b);
         store.insert(c);
-        let live_ids: Vec<String> = store.list(None, None, 50, false).into_iter().map(|r| r.title).collect();
-        assert!(!live_ids.contains(&"oldest".to_string()), "oldest should be evicted in-memory");
+        let live_ids: Vec<String> = store
+            .list(None, None, 50, false)
+            .into_iter()
+            .map(|r| r.title)
+            .collect();
+        assert!(
+            !live_ids.contains(&"oldest".to_string()),
+            "oldest should be evicted in-memory"
+        );
         drop(store);
-        let store2 = MemoryStore::new(dir.clone(), MemoryLimits { max_entries: 2, ..MemoryLimits::default() });
-        let titles: Vec<String> = store2.list(None, None, 50, false).into_iter().map(|r| r.title).collect();
-        assert!(!titles.contains(&"oldest".to_string()), "eviction must survive restart, got {titles:?}");
+        let store2 = MemoryStore::new(
+            dir.clone(),
+            MemoryLimits {
+                max_entries: 2,
+                ..MemoryLimits::default()
+            },
+        );
+        let titles: Vec<String> = store2
+            .list(None, None, 50, false)
+            .into_iter()
+            .map(|r| r.title)
+            .collect();
+        assert!(
+            !titles.contains(&"oldest".to_string()),
+            "eviction must survive restart, got {titles:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -737,14 +825,25 @@ mod tests {
         let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
         let id = store.insert(rec("doc", "v1-content"));
         for i in 0..10 {
-            store.update(&id, None, Some(format!("v{}-content-longer", i)), None, None, None);
+            store.update(
+                &id,
+                None,
+                Some(format!("v{}-content-longer", i)),
+                None,
+                None,
+                None,
+            );
         }
         let expected = store.get(&id, false).unwrap().content.len();
         drop(store);
         let store2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
         store2.insert(rec("probe", "x")); // touches enforce; total recomputed on load
         let live_total = store2.total_bytes_live();
-        assert_eq!(live_total, expected + 1, "total must equal live contents, not update history");
+        assert_eq!(
+            live_total,
+            expected + 1,
+            "total must equal live contents, not update history"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -806,14 +905,30 @@ mod tests {
         let _ = s.insert(a);
         let _ = s.insert(rec("ConPTY resize", "window reflow handling"));
         // Two terms in different fields (title + content) → match (AND).
-        assert_eq!(s.search("conpty exit", None, 10).len(), 1, "title+content AND");
+        assert_eq!(
+            s.search("conpty exit", None, 10).len(),
+            1,
+            "title+content AND"
+        );
         // Terms spanning title/tags → match.
-        assert_eq!(s.search("conpty terminal", None, 10).len(), 1, "title+tag AND");
+        assert_eq!(
+            s.search("conpty terminal", None, 10).len(),
+            1,
+            "title+tag AND"
+        );
         // Order-independent.
         assert_eq!(s.search("exit conpty", None, 10).len(), 1, "reversed order");
         // One term missing → no match (AND semantics).
-        assert_eq!(s.search("conpty resize", None, 10).len(), 1, "both words present in one rec");
-        assert_eq!(s.search("conpty nope", None, 10).len(), 0, "missing term excludes");
+        assert_eq!(
+            s.search("conpty resize", None, 10).len(),
+            1,
+            "both words present in one rec"
+        );
+        assert_eq!(
+            s.search("conpty nope", None, 10).len(),
+            0,
+            "missing term excludes"
+        );
         // Single word still works (backward compat).
         assert_eq!(s.search("hang", None, 10).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
@@ -857,7 +972,10 @@ mod tests {
         // Reload from disk — the rewritten JSONL has no tombstones either.
         let s2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
         assert!(s2.get(&ids[0], false).is_some());
-        assert!(s2.get(&ids[1], true).is_none(), "disk rewrite dropped tombstones");
+        assert!(
+            s2.get(&ids[1], true).is_none(),
+            "disk rewrite dropped tombstones"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -868,7 +986,10 @@ mod tests {
         let (s, dir) = tmp_store("small_store_never_auto_compacts");
         let id = s.insert(rec("only", "x"));
         s.delete(&id);
-        assert!(s.get(&id, true).is_some(), "small store keeps tombstones restorable");
+        assert!(
+            s.get(&id, true).is_some(),
+            "small store keeps tombstones restorable"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -879,7 +1000,13 @@ mod tests {
         // and then a capped store over the SAME dir, corrupting the test).
         let dir = std::env::temp_dir().join(format!("vale-mem-test-evict-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let s = MemoryStore::new(dir.clone(), MemoryLimits { max_entries: 2, ..Default::default() });
+        let s = MemoryStore::new(
+            dir.clone(),
+            MemoryLimits {
+                max_entries: 2,
+                ..Default::default()
+            },
+        );
         let a = s.insert(rec("a", "1"));
         let b = s.insert(rec("b", "2"));
         let c = s.insert(rec("c", "3"));
@@ -889,10 +1016,12 @@ mod tests {
         assert!(s.get(&b, false).is_some(), "second entry survives");
         assert!(s.get(&c, false).is_some(), "newest entry survives");
         // Soft-deleted still present on disk + retrievable with include_deleted.
-        assert!(s.get(&a, true).is_some(), "evicted entry stays soft-deleted");
+        assert!(
+            s.get(&a, true).is_some(),
+            "evicted entry stays soft-deleted"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
-
 
     #[test]
     fn content_truncation() {
@@ -901,9 +1030,20 @@ mod tests {
         let id = s.insert(rec("t", &long));
         let rec = s.get(&id, false).unwrap();
         // Truncated to the cap with a "…" suffix (UTF-8 3 bytes).
-        assert!(rec.content.len() <= DEFAULT_MAX_CONTENT_BYTES + 3, "content must be capped (got {})", rec.content.len());
-        assert!(rec.content.ends_with('…'), "truncated content ends with ellipsis");
-        assert!(!rec.content.contains(&"x".repeat(DEFAULT_MAX_CONTENT_BYTES + 1)), "long tail removed");
+        assert!(
+            rec.content.len() <= DEFAULT_MAX_CONTENT_BYTES + 3,
+            "content must be capped (got {})",
+            rec.content.len()
+        );
+        assert!(
+            rec.content.ends_with('…'),
+            "truncated content ends with ellipsis"
+        );
+        assert!(
+            !rec.content
+                .contains(&"x".repeat(DEFAULT_MAX_CONTENT_BYTES + 1)),
+            "long tail removed"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -16,12 +16,21 @@ const PAGES: &[(&str, PageSource)] = &[
     ("status", PageSource::Local("/")),
     ("panel", PageSource::Local("/panel/")),
     ("panel-js", PageSource::Local("/panel/panel.js")),
-    ("console-js", PageSource::Remote("https://api.saisi.online/app.js")),
+    (
+        "console-js",
+        PageSource::Remote("https://api.saisi.online/app.js"),
+    ),
     ("panel-css", PageSource::Local("/panel/panel.css")),
     ("panel-html", PageSource::Local("/panel/")),
     ("console", PageSource::Remote("https://api.saisi.online/")),
-    ("console-css", PageSource::Remote("https://api.saisi.online/style.css")),
-    ("download", PageSource::Remote("https://agent.saisi.online/")),
+    (
+        "console-css",
+        PageSource::Remote("https://api.saisi.online/style.css"),
+    ),
+    (
+        "download",
+        PageSource::Remote("https://agent.saisi.online/"),
+    ),
     // round-262 (user: extension unused): the Vale Browser Control extension
     // (popup/options/terminal) was removed — its Embedded page entries went
     // with it. PAGES now covers the agent + deployed console/download only.
@@ -34,9 +43,12 @@ const MAX_PAGE_BYTES: usize = 64 * 1024;
 fn parse_target(t: &str) -> Result<(String, u16), DeviceError> {
     // host:port (default 18080) — always the LOCAL agent, never arbitrary.
     let (host, port) = match t.rsplit_once(':') {
-        Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|_| DeviceError::Internal {
-            message: format!("bad port in target: {t}"),
-        })?),
+        Some((h, p)) => (
+            h.to_string(),
+            p.parse::<u16>().map_err(|_| DeviceError::Internal {
+                message: format!("bad port in target: {t}"),
+            })?,
+        ),
         None => (t.to_string(), 18080),
     };
     // Plugin audit MED: the comment promised "always the LOCAL agent" but
@@ -75,9 +87,17 @@ fn redact_tokens(s: &str) -> String {
                     out.push('"');
                     rest = &after[end + 1..];
                 }
-                None => { out.push_str(rest); rest = ""; break; }
+                None => {
+                    out.push_str(rest);
+                    rest = "";
+                    break;
+                }
             },
-            None => { out.push_str(rest); rest = ""; break; }
+            None => {
+                out.push_str(rest);
+                rest = "";
+                break;
+            }
         }
     }
     out.push_str(rest);
@@ -125,82 +145,100 @@ pub fn page_view(console_url: Option<String>, download_url: Option<String>) -> T
             let console_url = console_url.clone();
             let download_url = download_url.clone();
             async move {
-            let page = params.get("page").and_then(|v| v.as_str()).unwrap_or("panel");
-            let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("127.0.0.1:18080");
-            let (host, port) = parse_target(target)?;
-            let source = PAGES.iter().find(|(n, _)| *n == page).map(|(_, s)| s)
-                .ok_or_else(|| DeviceError::Internal { message: format!("unknown page: {page}") })?;
-            // saisi decouple: remote pages need the configured base; when
-            // unset, fail explicitly (never fall back to a hardcoded host).
-            let remote_url = match page {
-                "console-js" => {
-                    let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
+                let page = params
+                    .get("page")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("panel");
+                let target = params
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("127.0.0.1:18080");
+                let (host, port) = parse_target(target)?;
+                let source = PAGES
+                    .iter()
+                    .find(|(n, _)| *n == page)
+                    .map(|(_, s)| s)
+                    .ok_or_else(|| DeviceError::Internal {
+                        message: format!("unknown page: {page}"),
+                    })?;
+                // saisi decouple: remote pages need the configured base; when
+                // unset, fail explicitly (never fall back to a hardcoded host).
+                let remote_url = match page {
+                    "console-js" => {
+                        let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
                         message: "console page requires platform.console_url (not configured — purely local install)".into(),
                     })?;
-                    Some(format!("{}/app.js", base.trim_end_matches('/')))
-                }
-                "console" => {
-                    let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
+                        Some(format!("{}/app.js", base.trim_end_matches('/')))
+                    }
+                    "console" => {
+                        let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
                         message: "console page requires platform.console_url (not configured — purely local install)".into(),
                     })?;
-                    Some(base.trim_end_matches('/').to_string())
-                }
-                "console-css" => {
-                    let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
+                        Some(base.trim_end_matches('/').to_string())
+                    }
+                    "console-css" => {
+                        let base = console_url.as_deref().ok_or_else(|| DeviceError::Internal {
                         message: "console page requires platform.console_url (not configured — purely local install)".into(),
                     })?;
-                    Some(format!("{}/style.css", base.trim_end_matches('/')))
-                }
-                "download" => {
-                    let base = download_url.as_deref().ok_or_else(|| DeviceError::Internal {
+                        Some(format!("{}/style.css", base.trim_end_matches('/')))
+                    }
+                    "download" => {
+                        let base = download_url.as_deref().ok_or_else(|| DeviceError::Internal {
                         message: "download page requires platform.download_url (not configured — purely local install)".into(),
                     })?;
-                    Some(base.trim_end_matches('/').to_string())
-                }
-                _ => None,
-            };
+                        Some(base.trim_end_matches('/').to_string())
+                    }
+                    _ => None,
+                };
 
-            let url = match source {
-                PageSource::Local(p) => format!("http://{host}:{port}{p}"),
-                PageSource::Remote(u) => remote_url.unwrap_or_else(|| u.to_string()),
-            };
-            // Local static pages need no auth (the panel HTML is public;
-            // the token is injected server-side, the static file itself has
-            // no secrets). Remote pages are public console/download sites.
-            let resp = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .map_err(|e| DeviceError::Internal { message: format!("client: {e}") })?
-                .get(&url)
-                .send()
-                .await
-                .map_err(|e| DeviceError::Internal { message: format!("fetch {url}: {e}") })?;
-            let body = resp.text().await
-                .map_err(|e| DeviceError::Internal { message: format!("read {url}: {e}") })?;
-            let len = body.len();
-            let truncated = len > MAX_PAGE_BYTES;
-            // Redact any injected device token before returning: the panel
-            // HTML embeds window.__PANEL_TOKEN__ = "<token>", which a design
-            // review must never see (a leaked review output = device control).
-            // The agent's own token is also never part of a design diff.
-            let redacted = redact_tokens(&body);
-            // char-boundary-safe truncation: slicing a String at a fixed byte
-            // index PANICS when it lands inside a multi-byte UTF-8 char.
-            let text = if truncated {
-                let mut end = MAX_PAGE_BYTES;
-                while end > 0 && !redacted.is_char_boundary(end) { end -= 1; }
-                &redacted[..end]
-            } else {
-                &redacted[..]
-            };
+                let url = match source {
+                    PageSource::Local(p) => format!("http://{host}:{port}{p}"),
+                    PageSource::Remote(u) => remote_url.unwrap_or_else(|| u.to_string()),
+                };
+                // Local static pages need no auth (the panel HTML is public;
+                // the token is injected server-side, the static file itself has
+                // no secrets). Remote pages are public console/download sites.
+                let resp = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(10))
+                    .build()
+                    .map_err(|e| DeviceError::Internal {
+                        message: format!("client: {e}"),
+                    })?
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| DeviceError::Internal {
+                        message: format!("fetch {url}: {e}"),
+                    })?;
+                let body = resp.text().await.map_err(|e| DeviceError::Internal {
+                    message: format!("read {url}: {e}"),
+                })?;
+                let len = body.len();
+                let truncated = len > MAX_PAGE_BYTES;
+                // Redact any injected device token before returning: the panel
+                // HTML embeds window.__PANEL_TOKEN__ = "<token>", which a design
+                // review must never see (a leaked review output = device control).
+                // The agent's own token is also never part of a design diff.
+                let redacted = redact_tokens(&body);
+                // char-boundary-safe truncation: slicing a String at a fixed byte
+                // index PANICS when it lands inside a multi-byte UTF-8 char.
+                let text = if truncated {
+                    let mut end = MAX_PAGE_BYTES;
+                    while end > 0 && !redacted.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    &redacted[..end]
+                } else {
+                    &redacted[..]
+                };
 
-            Ok(json!({
-                "page": page,
-                "url": url,
-                "bytes": body.len(),
-                "truncated": truncated,
-                "content": text,
-            }))
+                Ok(json!({
+                    "page": page,
+                    "url": url,
+                    "bytes": body.len(),
+                    "truncated": truncated,
+                    "content": text,
+                }))
             }
         },
     )

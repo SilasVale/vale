@@ -12,28 +12,66 @@ use crate::recover_guard;
 #[serde(tag = "type")]
 pub enum AgentEvent {
     // ── Browser ──
-    BrowserNavigate { url: String, title: String },
-    BrowserClick { selector: String },
-    BrowserType { selector: String, text: String },
+    BrowserNavigate {
+        url: String,
+        title: String,
+    },
+    BrowserClick {
+        selector: String,
+    },
+    BrowserType {
+        selector: String,
+        text: String,
+    },
     BrowserScreenshot,
-    BrowserScroll { direction: String, amount: String },
-    BrowserTabNew { url: String, tab_id: String },
-    BrowserTabClose { tab_id: String },
-    BrowserTabSelect { tab_id: String },
-    BrowserEvaluate { js: String },
-    BrowserWaitFor { selector: String },
+    BrowserScroll {
+        direction: String,
+        amount: String,
+    },
+    BrowserTabNew {
+        url: String,
+        tab_id: String,
+    },
+    BrowserTabClose {
+        tab_id: String,
+    },
+    BrowserTabSelect {
+        tab_id: String,
+    },
+    BrowserEvaluate {
+        js: String,
+    },
+    BrowserWaitFor {
+        selector: String,
+    },
 
     // ── SSH ──
-    SshConnect { host: String, username: String, session_id: String },
-    SshDisconnect { session_id: String },
+    SshConnect {
+        host: String,
+        username: String,
+        session_id: String,
+    },
+    SshDisconnect {
+        session_id: String,
+    },
 
     // ── Serial ──
-    SerialOpen { port: String, baud: u32, session_id: String },
-    SerialClose { port_id: String },
+    SerialOpen {
+        port: String,
+        baud: u32,
+        session_id: String,
+    },
+    SerialClose {
+        port_id: String,
+    },
 
     // ── Terminal / Shell ──
-    TermClose { session_id: String },
-    ShellExec { command: String },
+    TermClose {
+        session_id: String,
+    },
+    ShellExec {
+        command: String,
+    },
 }
 
 /// Broadcast envelope — every event carries a bus-assigned monotonically
@@ -162,7 +200,10 @@ impl EventBus for AppEventBus {
         let (ring, next_seq) = &mut *guard;
         let seq = *next_seq;
         *next_seq += 1;
-        ring.push_back(SeqEvent { seq, event: event.clone() });
+        ring.push_back(SeqEvent {
+            seq,
+            event: event.clone(),
+        });
         if ring.len() > RING_CAP {
             ring.pop_front();
         }
@@ -173,7 +214,10 @@ impl EventBus for AppEventBus {
         // permanently (poll_after only returns seq > after). tokio broadcast
         // send is synchronous and never awaits, so sending INSIDE the lock
         // keeps send order == seq order at no cost.
-        let _ = self.tx.send(SeqEvent { seq, event: event.clone() });
+        let _ = self.tx.send(SeqEvent {
+            seq,
+            event: event.clone(),
+        });
         drop(guard);
         // Optional hook (e.g. Tauri event forwarding)
         let hook = recover_guard(&self.hook);

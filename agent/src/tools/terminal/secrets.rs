@@ -29,13 +29,16 @@ mod dpapi {
     pub fn seal(plain: &[u8]) -> Option<Vec<u8>> {
         use windows_sys::Win32::Foundation::LocalFree;
         use windows_sys::Win32::Security::Cryptography::{
-            CryptProtectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+            CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
         };
         let in_blob = CRYPT_INTEGER_BLOB {
             cbData: plain.len() as u32,
             pbData: plain.as_ptr() as *mut u8,
         };
-        let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+        let mut out = CRYPT_INTEGER_BLOB {
+            cbData: 0,
+            pbData: std::ptr::null_mut(),
+        };
         let ok = unsafe {
             CryptProtectData(
                 &in_blob,
@@ -59,14 +62,17 @@ mod dpapi {
     pub fn open(bytes: &[u8]) -> Option<Vec<u8>> {
         use windows_sys::Win32::Foundation::LocalFree;
         use windows_sys::Win32::Security::Cryptography::{
-            CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+            CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
         };
         let payload = bytes.get(MAGIC.len()..)?;
         let in_blob = CRYPT_INTEGER_BLOB {
             cbData: payload.len() as u32,
             pbData: payload.as_ptr() as *mut u8,
         };
-        let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+        let mut out = CRYPT_INTEGER_BLOB {
+            cbData: 0,
+            pbData: std::ptr::null_mut(),
+        };
         let ok = unsafe {
             CryptUnprotectData(
                 &in_blob,
@@ -106,7 +112,9 @@ pub(crate) mod file_impl {
     }
 
     fn read_all() -> serde_json::Map<String, serde_json::Value> {
-        let Ok(bytes) = std::fs::read(store_path()) else { return serde_json::Map::new() };
+        let Ok(bytes) = std::fs::read(store_path()) else {
+            return serde_json::Map::new();
+        };
         #[cfg(windows)]
         {
             if dpapi::is_sealed(&bytes) {
@@ -151,8 +159,9 @@ pub(crate) mod file_impl {
         let payload = dpapi::seal(&json).unwrap_or(json); // DPAPI outage must not brick storage (ACL line still holds)
         #[cfg(not(windows))]
         let payload = json;
-        std::fs::write(&tmp, payload)
-            .map_err(|e| DeviceError::Keychain { reason: format!("write {tmp:?}: {e}") })?;
+        std::fs::write(&tmp, payload).map_err(|e| DeviceError::Keychain {
+            reason: format!("write {tmp:?}: {e}"),
+        })?;
         // Credential audit round MED-2: hardening is FAIL-CLOSED for the
         // password store — if the ACL cannot be restricted, the plaintext
         // file would sit under inherited Users:RX ACLs (every local account
@@ -165,8 +174,9 @@ pub(crate) mod file_impl {
         }
         #[allow(unused_must_use)]
         { /* unix permissions handled inside harden_file */ }
-        std::fs::rename(&tmp, &p)
-            .map_err(|e| DeviceError::Keychain { reason: format!("rename to {p:?}: {e}") })
+        std::fs::rename(&tmp, &p).map_err(|e| DeviceError::Keychain {
+            reason: format!("rename to {p:?}: {e}"),
+        })
     }
 
     pub(crate) fn key_of(target: &str) -> String {
@@ -182,7 +192,10 @@ pub(crate) mod file_impl {
     pub fn set(target: &str, password: &str) -> Result<(), DeviceError> {
         let _g = recover_guard(&STORE_LOCK);
         let mut map = read_all();
-        map.insert(key_of(target), serde_json::Value::String(password.to_string()));
+        map.insert(
+            key_of(target),
+            serde_json::Value::String(password.to_string()),
+        );
         write_all(&map)
     }
     pub fn get(target: &str) -> Result<Option<String>, DeviceError> {
@@ -211,8 +224,13 @@ pub(crate) mod file_impl {
         let stripped = target.strip_suffix(":22").map(|s| format!("ssh:{s}"));
         let removed_norm = map.remove(&key_of(target)).is_some();
         let removed_raw = map.remove(&format!("ssh:{target}")).is_some();
-        let removed_strip = stripped.as_deref().map(|k| map.remove(k).is_some()).unwrap_or(false);
-        if removed_norm || removed_raw || removed_strip { write_all(&map)?; }
+        let removed_strip = stripped
+            .as_deref()
+            .map(|k| map.remove(k).is_some())
+            .unwrap_or(false);
+        if removed_norm || removed_raw || removed_strip {
+            write_all(&map)?;
+        }
         Ok(())
     }
     pub fn list() -> Vec<String> {
@@ -234,8 +252,9 @@ mod secrets_impl {
         // secret_delete left the other spelling's entry alive in the
         // keychain while reporting "deleted". Same class: IPv6 brackets and
         // hostname case.
-        Entry::new(SERVICE, &file_impl::key_of(target))
-            .map_err(|e| DeviceError::Keychain { reason: format!("create entry: {e}") })
+        Entry::new(SERVICE, &file_impl::key_of(target)).map_err(|e| DeviceError::Keychain {
+            reason: format!("create entry: {e}"),
+        })
     }
 
     pub fn set(target: &str, password: &str) -> Result<(), DeviceError> {
@@ -309,7 +328,9 @@ mod secrets_impl {
                 file_impl::delete(target)?;
                 match failed {
                     Some(f) => Err(DeviceError::Keychain {
-                        reason: format!("keychain entry survives delete ({f}) — password NOT fully removed"),
+                        reason: format!(
+                            "keychain entry survives delete ({f}) — password NOT fully removed"
+                        ),
                     }),
                     None => Ok(()),
                 }
@@ -327,14 +348,16 @@ mod secrets_impl {
     pub use super::file_impl::{delete, get, list, set};
 }
 
-pub use secrets_impl::{delete as secret_delete, get as secret_get, list as secret_list, set as secret_set};
+pub use secrets_impl::{
+    delete as secret_delete, get as secret_get, list as secret_list, set as secret_set,
+};
 
 #[cfg(test)]
 mod file_store_tests {
     //! Credential audit follow-up: file_impl had ZERO coverage (the
     //! keyring-branch compile-miss proved why this matters). TEST_DIR
     //! isolates each test thread's store file.
-    use super::file_impl::{self, TEST_DIR, write_all_with};
+    use super::file_impl::{self, write_all_with, TEST_DIR};
 
     fn isolated(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("vale-sec-test-{name}-{}", std::process::id()));
@@ -348,11 +371,20 @@ mod file_store_tests {
     fn crud_roundtrip() {
         let dir = isolated("crud");
         file_impl::set("user@host:22", "pw-A").unwrap();
-        assert_eq!(file_impl::get("user@host:22").unwrap().as_deref(), Some("pw-A"));
+        assert_eq!(
+            file_impl::get("user@host:22").unwrap().as_deref(),
+            Some("pw-A")
+        );
         // normalized identity: the OTHER port-spelling finds the SAME entry
-        assert_eq!(file_impl::get("user@host").unwrap().as_deref(), Some("pw-A"));
+        assert_eq!(
+            file_impl::get("user@host").unwrap().as_deref(),
+            Some("pw-A")
+        );
         file_impl::set("user@host:22", "pw-B").unwrap();
-        assert_eq!(file_impl::get("user@host:22").unwrap().as_deref(), Some("pw-B"));
+        assert_eq!(
+            file_impl::get("user@host:22").unwrap().as_deref(),
+            Some("pw-B")
+        );
         file_impl::delete("user@host").unwrap();
         assert_eq!(file_impl::get("user@host:22").unwrap(), None);
         assert!(file_impl::list().is_empty());
@@ -368,14 +400,23 @@ mod file_store_tests {
             r#"{"ssh:user@host":"old-pw"}"#,
         )
         .unwrap();
-        assert_eq!(file_impl::get("user@host:22").unwrap().as_deref(), Some("old-pw"));
-        assert_eq!(file_impl::get("user@host").unwrap().as_deref(), Some("old-pw"));
+        assert_eq!(
+            file_impl::get("user@host:22").unwrap().as_deref(),
+            Some("old-pw")
+        );
+        assert_eq!(
+            file_impl::get("user@host").unwrap().as_deref(),
+            Some("old-pw")
+        );
         // delete must clear BOTH spellings (round-126 class)
         file_impl::set("user@host:22", "new-pw").unwrap(); // creates normalized twin
         file_impl::delete("user@host").unwrap();
         assert_eq!(file_impl::get("user@host").unwrap(), None);
         let left = std::fs::read_to_string(dir.join("vale-secrets.json")).unwrap();
-        assert!(!left.contains("ssh:user@host"), "raw key survived delete: {left}");
+        assert!(
+            !left.contains("ssh:user@host"),
+            "raw key survived delete: {left}"
+        );
         // AND the third shape: legacy raw entry found + purged via the :22 query
         std::fs::write(dir.join("vale-secrets.json"), r#"{"ssh:z@y":"lz"}"#).unwrap();
         assert_eq!(file_impl::get("z@y:22").unwrap().as_deref(), Some("lz"));
@@ -395,9 +436,19 @@ mod file_store_tests {
         map.insert("ssh:x".into(), serde_json::json!("secret"));
         let err = write_all_with(&map, &|_| Err(std::io::Error::other("no icacls here")))
             .expect_err("must refuse");
-        assert!(err.to_string().contains("refusing to persist secrets"), "{err}");
-        assert!(!dir.join("vale-secrets.json.tmp").exists(), "tmp must be cleaned");
-        assert_eq!(std::fs::read(&store).unwrap(), b"{\"keep\":\"me\"}", "original intact");
+        assert!(
+            err.to_string().contains("refusing to persist secrets"),
+            "{err}"
+        );
+        assert!(
+            !dir.join("vale-secrets.json.tmp").exists(),
+            "tmp must be cleaned"
+        );
+        assert_eq!(
+            std::fs::read(&store).unwrap(),
+            b"{\"keep\":\"me\"}",
+            "original intact"
+        );
         // and the happy path still lands through the same seam
         write_all_with(&map, &|_| Ok(())).unwrap();
         assert!(std::fs::read_to_string(&store).unwrap().contains("ssh:x"));

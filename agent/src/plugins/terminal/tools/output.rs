@@ -4,14 +4,16 @@
 //! registration. Code moved verbatim from the former monolithic
 //! `plugins/terminal/tools.rs`.
 
-use std::sync::Arc;
 use serde_json::{json, Value};
+use std::sync::Arc;
 
-use vale_agent_core::{recover_guard, ToolDef};
-use crate::plugins::require_str;
-use crate::plugins::terminal::{clean_terminal_output, DiagStore, OutputBuf, RetainedSession, SessionBuf};
-use crate::tools::terminal::TerminalManager;
 use super::ctx::{read_spill, spill_path};
+use crate::plugins::require_str;
+use crate::plugins::terminal::{
+    clean_terminal_output, DiagStore, OutputBuf, RetainedSession, SessionBuf,
+};
+use crate::tools::terminal::TerminalManager;
+use vale_agent_core::{recover_guard, ToolDef};
 
 // ── History ───────────────────────────────────────
 
@@ -230,7 +232,6 @@ pub(super) fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
         },
     )
 }
-
 
 // ── Diagnostics ────────────────────────────────────
 

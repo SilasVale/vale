@@ -21,7 +21,10 @@ pub struct DesignPlugin {
 
 impl DesignPlugin {
     pub fn new(console_url: Option<String>, download_url: Option<String>) -> Self {
-        Self { console_url, download_url }
+        Self {
+            console_url,
+            download_url,
+        }
     }
 }
 
@@ -42,6 +45,9 @@ impl vale_agent_core::Plugin for DesignPlugin {
         "Vale page design inspection — view a page's HTML/CSS to see its design"
     }
     fn tools(&self) -> Vec<ToolDef> {
-        vec![tools::page_view(self.console_url.clone(), self.download_url.clone())]
+        vec![tools::page_view(
+            self.console_url.clone(),
+            self.download_url.clone(),
+        )]
     }
 }

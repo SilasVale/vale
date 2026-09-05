@@ -1,9 +1,9 @@
 //! Config bootstrap for the `src/main.rs` binary: create a default config if
 //! missing, load it, and ensure an auth token exists.
 
-use vale_agent_core::Config;
 use std::io::Write;
 use std::path::Path;
+use vale_agent_core::Config;
 
 /// Atomic file write (round-57): temp file in the SAME directory + rename.
 /// Windows rename is atomic on the same volume (MoveFileEx); the old
@@ -12,7 +12,12 @@ use std::path::Path;
 /// every client 401'd with no recovery path.
 pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = dir.join(format!(".{}.tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("config")));
+    let tmp = dir.join(format!(
+        ".{}.tmp",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("config")
+    ));
     {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(contents)?;
@@ -38,10 +43,7 @@ pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 /// Never `println!` here: in Windows service mode there is no console and a
 /// bare `println!` panics (see `out!`/`eout!` in main.rs). Any diagnostics
 /// go through the injected `log` callback, which callers may discard.
-pub fn load_or_create(
-    path: &Path,
-    log: &dyn Fn(&str),
-) -> anyhow::Result<(Config, Option<String>)> {
+pub fn load_or_create(path: &Path, log: &dyn Fn(&str)) -> anyhow::Result<(Config, Option<String>)> {
     if !path.exists() {
         atomic_write(path, crate::DEFAULT_CONFIG_YAML.as_bytes())?;
         log(&format!("  Created default config: {}", path.display()));
@@ -54,7 +56,10 @@ pub fn load_or_create(
             // value, YAML typo) previously made EVERY boot fatal forever —
             // the bad file was never quarantined, so the device went dark
             // with no remote recovery. Quarantine + rewrite a fresh default.
-            log(&format!("  !! Failed to load {}: {primary_err}", path.display()));
+            log(&format!(
+                "  !! Failed to load {}: {primary_err}",
+                path.display()
+            ));
             log("     Quarantining the bad file as config.yaml.bad and writing a fresh default.");
             let bad = path.with_extension("yaml.bad");
             let _ = std::fs::rename(path, &bad);
@@ -79,15 +84,21 @@ pub fn load_or_create(
                 // occurrence (a merged/appended duplicate's later line is
                 // what a working parser used before the file broke — the old
                 // first-wins kept a stale token and 401'd newer clients).
-                let extract = |key: &str| bad_text.lines()
-                    .filter_map(|l| {
-                        let t = l.trim();
-                        let colon = t.find(':')?;
-                        if t[..colon].trim() != key { return None; }
-                        let v = t[colon + 1..].split('#').next().unwrap_or("").trim();
-                        let v = v.trim_matches(|c| c == '"' || c == '\'' || c == ' ');
-                        Some(v.to_string())
-                    }).rfind(|tok| tok.len() == 64 && tok.chars().all(|c| c.is_ascii_hexdigit())); // last wins (duplicate keys)
+                let extract = |key: &str| {
+                    bad_text
+                        .lines()
+                        .filter_map(|l| {
+                            let t = l.trim();
+                            let colon = t.find(':')?;
+                            if t[..colon].trim() != key {
+                                return None;
+                            }
+                            let v = t[colon + 1..].split('#').next().unwrap_or("").trim();
+                            let v = v.trim_matches(|c| c == '"' || c == '\'' || c == ' ');
+                            Some(v.to_string())
+                        })
+                        .rfind(|tok| tok.len() == 64 && tok.chars().all(|c| c.is_ascii_hexdigit()))
+                }; // last wins (duplicate keys)
                 let recovered = extract("device_token").or_else(|| extract("auth_token"));
                 // round-138: also recover the proxy_secret — the old path
                 // returned early with secret=None, and the next boot's
@@ -114,7 +125,10 @@ pub fn load_or_create(
                             log("     !! proxy_secret was missing/corrupt — generated a NEW one; gateway /panel/ injection needs the console to re-read /api/status");
                         }
                     }
-                    atomic_write(path, serde_yaml::to_string(&fresh).unwrap_or_default().as_bytes())?;
+                    atomic_write(
+                        path,
+                        serde_yaml::to_string(&fresh).unwrap_or_default().as_bytes(),
+                    )?;
                     log("     Recovered the previous device_token from the quarantined config.");
                     return Ok((fresh, None));
                 }

@@ -3,14 +3,18 @@
 //! The `seeded_tools` harness builds the FULL tool registry via `build`, so
 //! these tests exercise the same dispatch path production uses.
 
-use std::sync::Arc;
-use serde_json::json;
-use vale_agent_core::{recover_guard, AppEventBus, EventBus, ToolDef};
-use crate::plugins::terminal::{clean_terminal_output, DiagBuf, DiagStore, OutputBuf, SessionStore};
 use crate::plugins::terminal::tools::ctx::spill_path;
-use crate::plugins::terminal::tools::exec::{append_command_newline, execute_result_json, find_prompt_marker};
+use crate::plugins::terminal::tools::exec::{
+    append_command_newline, execute_result_json, find_prompt_marker,
+};
+use crate::plugins::terminal::{
+    clean_terminal_output, DiagBuf, DiagStore, OutputBuf, SessionStore,
+};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
+use serde_json::json;
+use std::sync::Arc;
+use vale_agent_core::{recover_guard, AppEventBus, EventBus, ToolDef};
 
 use super::build;
 
@@ -27,16 +31,30 @@ fn seeded_tools() -> (Vec<ToolDef>, OutputBuf) {
     let log_dir = std::env::temp_dir().join(format!("vale-sesslog-tools-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&log_dir);
     let logger = crate::session_log::SessionLogger::new(log_dir);
-    let tools = build(&mgr, &serial, &bus, &buf, &diag, &logger, &Arc::new(std::sync::atomic::AtomicUsize::new(8 * 1024 * 1024)));
+    let tools = build(
+        &mgr,
+        &serial,
+        &bus,
+        &buf,
+        &diag,
+        &logger,
+        &Arc::new(std::sync::atomic::AtomicUsize::new(8 * 1024 * 1024)),
+    );
     (tools, buf)
 }
 
 fn find<'a>(tools: &'a [ToolDef], name: &str) -> &'a ToolDef {
-    tools.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("missing tool: {name}"))
+    tools
+        .iter()
+        .find(|t| t.name == name)
+        .unwrap_or_else(|| panic!("missing tool: {name}"))
 }
 
 async fn call(tool: &ToolDef, params: serde_json::Value) -> serde_json::Value {
-    tool.handler.call(params).await.expect("handler should not error")
+    tool.handler
+        .call(params)
+        .await
+        .expect("handler should not error")
 }
 
 fn seed(buf: &OutputBuf, sid: &str, data: &[u8], dropped: u64) {
@@ -55,7 +73,10 @@ async fn screen_empty_session_returns_empty() {
     seed(&buf, "s1", b"", 0);
     let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1"})).await;
     assert_eq!(out["screen"], "");
-    assert!(out.get("dropped").is_none(), "no dropped when nothing evicted");
+    assert!(
+        out.get("dropped").is_none(),
+        "no dropped when nothing evicted"
+    );
 }
 
 #[tokio::test]
@@ -67,7 +88,11 @@ async fn screen_tail_lines_with_ansi_stripped() {
         data.extend_from_slice(format!("\x1b[32mline-{i}\x1b[0m\n").as_bytes());
     }
     seed(&buf, "s1", &data, 0);
-    let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 3})).await;
+    let out = call(
+        find(&tools, "terminal_screen"),
+        json!({"session_id": "s1", "lines": 3}),
+    )
+    .await;
     assert_eq!(out["screen"], "line-7\nline-8\nline-9");
 }
 
@@ -78,7 +103,11 @@ async fn screen_skips_trailing_blank_lines() {
     // lines, so screen must return real content even with a trailing newline.
     let (tools, buf) = seeded_tools();
     seed(&buf, "s1", b"hello\r\nworld\r\n", 0);
-    let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 5})).await;
+    let out = call(
+        find(&tools, "terminal_screen"),
+        json!({"session_id": "s1", "lines": 5}),
+    )
+    .await;
     assert_eq!(out["screen"], "hello\nworld");
 }
 
@@ -86,7 +115,11 @@ async fn screen_skips_trailing_blank_lines() {
 async fn screen_lines_exceeds_buffer_returns_all() {
     let (tools, buf) = seeded_tools();
     seed(&buf, "s1", b"a\nb\nc", 0);
-    let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 100})).await;
+    let out = call(
+        find(&tools, "terminal_screen"),
+        json!({"session_id": "s1", "lines": 100}),
+    )
+    .await;
     assert_eq!(out["screen"], "a\nb\nc");
 }
 
@@ -103,7 +136,11 @@ async fn screen_reports_dropped_after_eviction() {
 async fn screen_utf8_multibyte_survives() {
     let (tools, buf) = seeded_tools();
     seed(&buf, "s1", "héllo wörld\nsécond líne".as_bytes(), 0);
-    let out = call(find(&tools, "terminal_screen"), json!({"session_id": "s1", "lines": 10})).await;
+    let out = call(
+        find(&tools, "terminal_screen"),
+        json!({"session_id": "s1", "lines": 10}),
+    )
+    .await;
     assert_eq!(out["screen"], "héllo wörld\nsécond líne");
 }
 
@@ -126,7 +163,11 @@ async fn read_offset_zero_rereads_from_beginning() {
     seed(&buf, "s1", b"abc", 0);
     // First read advances cursor to end.
     call(find(&tools, "terminal_read"), json!({"session_id": "s1"})).await;
-    let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 0})).await;
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": "s1", "offset": 0}),
+    )
+    .await;
     assert_eq!(out["text"], "abc");
 }
 
@@ -134,7 +175,11 @@ async fn read_offset_zero_rereads_from_beginning() {
 async fn read_explicit_offset_slices() {
     let (tools, buf) = seeded_tools();
     seed(&buf, "s1", b"hello world", 0);
-    let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 6})).await;
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": "s1", "offset": 6}),
+    )
+    .await;
     assert_eq!(out["text"], "world");
 }
 
@@ -142,14 +187,22 @@ async fn read_explicit_offset_slices() {
 async fn read_clean_strips_ansi() {
     let (tools, buf) = seeded_tools();
     seed(&buf, "s1", b"\x1b[31mred\x1b[0m", 0);
-    let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "clean": true})).await;
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": "s1", "clean": true}),
+    )
+    .await;
     assert_eq!(out["text"], "red");
 }
 
 #[tokio::test]
 async fn read_unknown_session_empty() {
     let (tools, _buf) = seeded_tools();
-    let out = call(find(&tools, "terminal_read"), json!({"session_id": "missing"})).await;
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": "missing"}),
+    )
+    .await;
     assert_eq!(out["text"], "");
 }
 
@@ -159,7 +212,11 @@ async fn read_unknown_session_empty() {
 async fn read_reports_start_end_spans() {
     let (tools, buf) = seeded_tools();
     seed(&buf, "s1", b"hello world", 0);
-    let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 0})).await;
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": "s1", "offset": 0}),
+    )
+    .await;
     assert_eq!(out["text"], "hello world");
     assert_eq!(out["start"], 0);
     assert_eq!(out["end"], 11);
@@ -176,7 +233,11 @@ async fn read_absolute_offset_after_eviction() {
     // the read to the in-memory window start).
     let p = spill_path("s1");
     let _ = std::fs::remove_file(&p);
-    let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 6})).await;
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": "s1", "offset": 6}),
+    )
+    .await;
     assert_eq!(out["text"], "hello world");
     assert_eq!(out["start"], 6);
     assert_eq!(out["end"], 21);
@@ -189,7 +250,7 @@ async fn read_merges_spill_and_memory() {
     // dir keyed by sid — concurrent tests reusing "s1" raced on the
     // same file (one test's remove_file killed the other's data).
     seed(&buf, "spill-s1", b"tail", 10); // 10 bytes evicted, memory holds "tail"
-    // Write the evicted head to the spill file the way the drainer does.
+                                         // Write the evicted head to the spill file the way the drainer does.
     use std::io::Write;
     let p = spill_path("spill-s1");
     let _ = std::fs::create_dir_all(p.parent().unwrap());
@@ -197,7 +258,11 @@ async fn read_merges_spill_and_memory() {
     f.write_all(b"0123456789").unwrap();
     // offset 6 → spill [6,10) = "6789" + memory "tail" = "6789tail";
     // end_abs = dropped(10) + memory(4) = 14.
-    let out = call(find(&tools, "terminal_read"), json!({"session_id": "spill-s1", "offset": 6, "clean": false})).await;
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": "spill-s1", "offset": 6, "clean": false}),
+    )
+    .await;
     assert_eq!(out["text"], "6789tail");
     assert_eq!(out["start"], 6);
     assert_eq!(out["end"], 14);
@@ -209,8 +274,14 @@ async fn read_merges_spill_and_memory() {
 async fn read_works_on_retained_session() {
     let (tools, buf) = seeded_tools();
     seed(&buf, "s1", b"closed-log", 0);
-    buf.lock().unwrap().retain_live("s1", "serial", "COM4", None);
-    let out = call(find(&tools, "terminal_read"), json!({"session_id": "s1", "offset": 0})).await;
+    buf.lock()
+        .unwrap()
+        .retain_live("s1", "serial", "COM4", None);
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": "s1", "offset": 0}),
+    )
+    .await;
     assert_eq!(out["text"], "closed-log");
     assert_eq!(out["start"], 0);
     assert_eq!(out["end"], 10);
@@ -240,7 +311,9 @@ async fn history_lists_live_and_closed_sorted_newest_first() {
     assert!(out.is_array(), "history should return an array, got {out}");
     // No live sessions in seeded_tools (manager has none) — only history.
     seed(&buf, "s1", b"a", 0);
-    buf.lock().unwrap().retain_live("s1", "ssh", "admin@host", None);
+    buf.lock()
+        .unwrap()
+        .retain_live("s1", "ssh", "admin@host", None);
     let out = call(find(&tools, "terminal_history"), json!({})).await;
     let arr = out.as_array().unwrap();
     assert_eq!(arr.len(), 1);
@@ -257,11 +330,16 @@ async fn history_retains_natural_exit_code() {
     let (tools, buf) = seeded_tools();
     seed(&buf, "s1", b"exit 42", 0);
     // Drainer path: retain with the natural exit code (Some(42)).
-    buf.lock().unwrap().retain_live("s1", "pty", "shell", Some(42));
+    buf.lock()
+        .unwrap()
+        .retain_live("s1", "pty", "shell", Some(42));
     let out = call(find(&tools, "terminal_history"), json!({})).await;
     let arr = out.as_array().unwrap();
     assert_eq!(arr.len(), 1);
-    assert_eq!(arr[0]["exit_code"], 42, "natural exit code must surface in history");
+    assert_eq!(
+        arr[0]["exit_code"], 42,
+        "natural exit code must surface in history"
+    );
     // Explicit close (None) → exit_code null in JSON.
     seed(&buf, "s2", b"closed", 0);
     buf.lock().unwrap().retain_live("s2", "pty", "shell", None);
@@ -296,7 +374,12 @@ async fn history_limit_caps_closed_entries() {
 fn retain_evicts_oldest_beyond_session_cap() {
     let mut store = SessionStore::with_caps(2, 10_000_000);
     for i in 0..3 {
-        store.live.entry(format!("s{i}")).or_default().data.extend_from_slice(b"x");
+        store
+            .live
+            .entry(format!("s{i}"))
+            .or_default()
+            .data
+            .extend_from_slice(b"x");
         store.retain_live(&format!("s{i}"), "pty", "shell", None);
     }
     // Cap 2 → oldest (s0) evicted.
@@ -308,7 +391,12 @@ fn retain_evicts_oldest_beyond_session_cap() {
 fn retain_evicts_oldest_beyond_byte_cap() {
     let mut store = SessionStore::with_caps(10, 3); // 3 bytes total cap
     for i in 0..3 {
-        store.live.entry(format!("s{i}")).or_default().data.extend_from_slice(b"xx");
+        store
+            .live
+            .entry(format!("s{i}"))
+            .or_default()
+            .data
+            .extend_from_slice(b"xx");
         store.retain_live(&format!("s{i}"), "pty", "shell", None);
     }
     // Total bytes exceed 3 → evict oldest until under. s0 (2B) evicted first.
@@ -319,9 +407,20 @@ fn retain_evicts_oldest_beyond_byte_cap() {
 #[test]
 fn retain_idempotent_second_call_false() {
     let mut store = SessionStore::new();
-    store.live.entry("s1".into()).or_default().data.extend_from_slice(b"hi");
-    assert!(store.retain_live("s1", "pty", "shell", None), "first retain moves it");
-    assert!(!store.retain_live("s1", "pty", "shell", None), "second retain is a no-op");
+    store
+        .live
+        .entry("s1".into())
+        .or_default()
+        .data
+        .extend_from_slice(b"hi");
+    assert!(
+        store.retain_live("s1", "pty", "shell", None),
+        "first retain moves it"
+    );
+    assert!(
+        !store.retain_live("s1", "pty", "shell", None),
+        "second retain is a no-op"
+    );
 }
 
 #[tokio::test]
@@ -329,7 +428,10 @@ async fn read_requires_session_id() {
     let (tools, _buf) = seeded_tools();
     let tool = find(&tools, "terminal_read");
     let err = tool.handler.call(json!({})).await.unwrap_err();
-    assert!(err.to_string().contains("missing required field"), "unexpected: {err}");
+    assert!(
+        err.to_string().contains("missing required field"),
+        "unexpected: {err}"
+    );
 }
 
 // ── terminal_execute (dispatch) ─────────────────────────────
@@ -339,7 +441,10 @@ async fn execute_requires_command() {
     let (tools, _buf) = seeded_tools();
     let tool = find(&tools, "terminal_execute");
     let err = tool.handler.call(json!({})).await.unwrap_err();
-    assert!(err.to_string().contains("missing required field"), "unexpected: {err}");
+    assert!(
+        err.to_string().contains("missing required field"),
+        "unexpected: {err}"
+    );
 }
 
 #[tokio::test]
@@ -347,11 +452,18 @@ async fn execute_local_shell_mode_runs_on_stub() {
     // Headless (no `terminal` feature): the local-shell mode uses tokio::process
     // and must work — the stub only affects terminal_open/write/resize.
     let (tools, _buf) = seeded_tools();
-    let out = call(find(&tools, "terminal_execute"), json!({"command": "echo stub-ok"})).await;
+    let out = call(
+        find(&tools, "terminal_execute"),
+        json!({"command": "echo stub-ok"}),
+    )
+    .await;
     // Unified shape (round-60): {"kind":"local","text":...,"truncated":...}.
     assert_eq!(out["kind"], "local");
     let text = out["text"].as_str().unwrap_or_default();
-    assert!(text.contains("stub-ok"), "expected echo output in result, got: {text}");
+    assert!(
+        text.contains("stub-ok"),
+        "expected echo output in result, got: {text}"
+    );
 }
 
 #[tokio::test]
@@ -361,8 +473,15 @@ async fn execute_session_mode_missing_session_errors() {
     // enabled"; real: "session not found") — only assert it errors.
     let (tools, _buf) = seeded_tools();
     let tool = find(&tools, "terminal_execute");
-    let err = tool.handler.call(json!({"command": "echo hi", "session_id": "nope"})).await.unwrap_err();
-    assert!(!err.to_string().is_empty(), "expected a DeviceError, got empty");
+    let err = tool
+        .handler
+        .call(json!({"command": "echo hi", "session_id": "nope"}))
+        .await
+        .unwrap_err();
+    assert!(
+        !err.to_string().is_empty(),
+        "expected a DeviceError, got empty"
+    );
 }
 
 // ── append_command_newline (Windows CRLF vs Unix LF) ───────
@@ -411,7 +530,10 @@ fn clean_unterminated_csi_absorbed() {
 fn clean_osc_title_stripped() {
     // OSC title sequences (ESC ]0;... BEL) appear in every bash prompt —
     // they must be stripped so AI-read screen text isn't full of noise.
-    assert_eq!(clean_terminal_output(b"\x1b]0;user@host: ~\x07prompt$ "), "prompt$ ");
+    assert_eq!(
+        clean_terminal_output(b"\x1b]0;user@host: ~\x07prompt$ "),
+        "prompt$ "
+    );
 }
 
 #[test]
@@ -424,15 +546,15 @@ fn clean_osc_with_st_terminator() {
 fn clean_bash_prompt_with_osc_and_csi() {
     // A real bash prompt: OSC title + CSI color codes + prompt text.
     let input = b"\x1b]0;zhengsaisi@61-83: ~\x07\x1b[01;32mzhengsaisi@61-83\x1b[00m:\x1b[01;34m~\x1b[00m$ echo hi\nhi";
-    assert_eq!(clean_terminal_output(input), "zhengsaisi@61-83:~$ echo hi\nhi");
+    assert_eq!(
+        clean_terminal_output(input),
+        "zhengsaisi@61-83:~$ echo hi\nhi"
+    );
 }
 
 #[test]
 fn clean_crlf_mixed_with_ansi() {
-    assert_eq!(
-        clean_terminal_output(b"a\r\x1b[Kb\r\nc\rd"),
-        "a\nb\nc\nd"
-    );
+    assert_eq!(clean_terminal_output(b"a\r\x1b[Kb\r\nc\rd"), "a\nb\nc\nd");
 }
 
 #[test]
@@ -551,18 +673,21 @@ mod wait_loop_sim {
         // exactly the echoed prompt + command + output + next prompt.
         assert!(text.contains("echo hi"), "echo must be in result: {text:?}");
         assert!(text.contains("hi"), "output must be in result: {text:?}");
-        assert!(!text.contains("\x1b]633"), "no raw 633 bytes may leak: {text:?}");
-        assert!(text.contains("PS C:\\Users\\x>"), "next prompt must be in result: {text:?}");
+        assert!(
+            !text.contains("\x1b]633"),
+            "no raw 633 bytes may leak: {text:?}"
+        );
+        assert!(
+            text.contains("PS C:\\Users\\x>"),
+            "next prompt must be in result: {text:?}"
+        );
     }
 
     #[test]
     fn pty_stream_marker_split_inside_exit_code() {
         // The 633;D sequence is split mid-exit-code across chunks — the
         // carry buffer must bridge it and still report the code.
-        let chunks: &[&[u8]] = &[
-            b"ok\r\n\x1b]633;D;",
-            b"42\x07\x1b]633;A\x07PS> ",
-        ];
+        let chunks: &[&[u8]] = &[b"ok\r\n\x1b]633;D;", b"42\x07\x1b]633;A\x07PS> "];
         let (text, code) = scan_633_stream(chunks);
         assert_eq!(code, Some(42));
         assert!(text.contains("ok"), "output must survive: {text:?}");
@@ -580,7 +705,10 @@ mod wait_loop_sim {
         ];
         let (text, code) = scan_633_stream(chunks);
         assert_eq!(code, Some(0), "last code wins");
-        assert!(text.contains("cmd-1") && text.contains("cmd-2"), "both commands in result: {text:?}");
+        assert!(
+            text.contains("cmd-1") && text.contains("cmd-2"),
+            "both commands in result: {text:?}"
+        );
         assert!(text.contains("out2"), "second output in result: {text:?}");
     }
 
@@ -622,7 +750,10 @@ fn execute_result_done_has_no_note() {
     assert_eq!(out["still_running"], false);
     let text = out["text"].as_str().unwrap_or_default();
     assert_eq!(text, "ok\n", "done must keep text verbatim: {text}");
-    assert!(!text.contains("[note:"), "done must not carry the partial note");
+    assert!(
+        !text.contains("[note:"),
+        "done must not carry the partial note"
+    );
     assert_eq!(out["exit_code"], 0);
 }
 
@@ -632,11 +763,26 @@ fn execute_result_partial_carries_note_and_flag() {
     assert_eq!(out["state"], "partial");
     assert_eq!(out["still_running"], true);
     let text = out["text"].as_str().unwrap_or_default();
-    assert!(text.starts_with("half"), "partial must keep the prefix: {text}");
-    assert!(text.contains("[note:"), "partial must carry the continuation note: {text}");
-    assert!(text.contains("terminal_read"), "note must name terminal_read: {text}");
-    assert!(text.contains("Do NOT re-run"), "note must forbid re-runs: {text}");
-    assert!(text.contains("do NOT open a new session"), "note must forbid new sessions: {text}");
+    assert!(
+        text.starts_with("half"),
+        "partial must keep the prefix: {text}"
+    );
+    assert!(
+        text.contains("[note:"),
+        "partial must carry the continuation note: {text}"
+    );
+    assert!(
+        text.contains("terminal_read"),
+        "note must name terminal_read: {text}"
+    );
+    assert!(
+        text.contains("Do NOT re-run"),
+        "note must forbid re-runs: {text}"
+    );
+    assert!(
+        text.contains("do NOT open a new session"),
+        "note must forbid new sessions: {text}"
+    );
 }
 
 #[test]
@@ -646,5 +792,8 @@ fn execute_result_timeout_has_no_note() {
     assert_eq!(out["still_running"], false, "timeout aborted the command");
     assert_eq!(out["timed_out"], true);
     let text = out["text"].as_str().unwrap_or_default();
-    assert!(!text.contains("[note:"), "timeout must not carry the partial note: {text}");
+    assert!(
+        !text.contains("[note:"),
+        "timeout must not carry the partial note: {text}"
+    );
 }

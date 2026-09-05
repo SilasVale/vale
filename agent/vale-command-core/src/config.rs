@@ -120,7 +120,13 @@ impl Default for ServerConfig {
         // read the injected __PANEL_TOKEN__ and get RCE as SYSTEM.
         // 127.0.0.2 is cloudflared's canonical ingress for this tunnel;
         // 127.0.0.1 covers localhost. Nothing else is reachable.
-        Self { host: "127.0.0.2".into(), port: 18080, name: "vale-agent".into(), device_token: None, proxy_secret: None }
+        Self {
+            host: "127.0.0.2".into(),
+            port: 18080,
+            name: "vale-agent".into(),
+            device_token: None,
+            proxy_secret: None,
+        }
     }
 }
 
@@ -141,25 +147,36 @@ impl ServerConfig {
         // Some("") passed auth only with an empty Bearer header, so all /mcp
         // and /api/* returned 401 forever with no remote recovery.
         let mut changed = false;
-        if self.device_token.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+        if self
+            .device_token
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty())
+        {
             // round-103: still ensure the proxy secret exists (a pre-secret
             // config gets one on this boot; persistence is the caller's).
-            if self.proxy_secret.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+            if self
+                .proxy_secret
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty())
+            {
                 return Ok((None, changed));
             }
             let mut b2 = [0u8; 32];
-            getrandom::getrandom(&mut b2).map_err(|e| anyhow::anyhow!("failed to generate proxy secret: {e}"))?;
+            getrandom::getrandom(&mut b2)
+                .map_err(|e| anyhow::anyhow!("failed to generate proxy secret: {e}"))?;
             let sec: String = b2.iter().map(|b| format!("{b:02x}")).collect();
             self.proxy_secret = Some(sec);
             changed = true;
             return Ok((None, changed));
         }
         let mut buf = [0u8; 32];
-        getrandom::getrandom(&mut buf).map_err(|e| anyhow::anyhow!("failed to generate device token: {e}"))?;
+        getrandom::getrandom(&mut buf)
+            .map_err(|e| anyhow::anyhow!("failed to generate device token: {e}"))?;
         let token: String = buf.iter().map(|b| format!("{b:02x}")).collect();
         self.device_token = Some(token.clone());
         let mut b2 = [0u8; 32];
-        getrandom::getrandom(&mut b2).map_err(|e| anyhow::anyhow!("failed to generate proxy secret: {e}"))?;
+        getrandom::getrandom(&mut b2)
+            .map_err(|e| anyhow::anyhow!("failed to generate proxy secret: {e}"))?;
         let sec: String = b2.iter().map(|b| format!("{b:02x}")).collect();
         self.proxy_secret = Some(sec);
         Ok((Some(token), true))
@@ -168,7 +185,10 @@ impl ServerConfig {
 
 impl Default for SerialConfig {
     fn default() -> Self {
-        Self { default_baud_rate: 115200, default_timeout_ms: 1000 }
+        Self {
+            default_baud_rate: 115200,
+            default_timeout_ms: 1000,
+        }
     }
 }
 
@@ -180,7 +200,11 @@ impl Default for TerminalConfig {
 
 impl Default for BrowserConfig {
     fn default() -> Self {
-        Self { page_load_timeout_secs: 30, headless_executable: None, headless_cdp_port: None }
+        Self {
+            page_load_timeout_secs: 30,
+            headless_executable: None,
+            headless_cdp_port: None,
+        }
     }
 }
 
@@ -201,7 +225,10 @@ mod tests {
         writeln!(f, "  port: 0").unwrap();
         let r = Config::load(&p);
         let err = r.unwrap_err();
-        assert!(err.to_string().contains("port"), "rejection must mention port: {err}");
+        assert!(
+            err.to_string().contains("port"),
+            "rejection must mention port: {err}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

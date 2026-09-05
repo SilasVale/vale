@@ -4,13 +4,13 @@
 //! built once at registration. Code moved verbatim from the former
 //! monolithic `plugins/terminal/tools.rs`.
 
-use std::sync::Arc;
 use serde_json::{json, Value};
+use std::sync::Arc;
 
-use vale_agent_core::{DeviceError, EventBus, ToolDef};
 use crate::plugins::require_str;
 use crate::plugins::terminal::OutputBuf;
 use crate::tools::terminal::TerminalManager;
+use vale_agent_core::{DeviceError, EventBus, ToolDef};
 // The reconnect path reuses the open tool's full handler — terminal-feature
 // only (headless builds return the explicit "terminal feature disabled"
 // error without it).

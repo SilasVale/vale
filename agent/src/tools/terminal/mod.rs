@@ -16,21 +16,21 @@ mod secrets;
 // compiles in BOTH feature configs. terminal_execute's session path
 // references it unconditionally (the feature gate lives in the backends,
 // not here).
-pub(crate) mod shell_integration;
 #[cfg(feature = "terminal")]
 mod connections;
 #[cfg(feature = "terminal")]
 mod pty;
 #[cfg(feature = "terminal")]
 mod serial;
+pub(crate) mod shell_integration;
 #[cfg(feature = "terminal")]
 mod ssh;
 #[cfg(not(feature = "terminal"))]
 mod stub;
 
-pub use secrets::{secret_delete, secret_get, secret_list, secret_set};
 #[cfg(feature = "terminal")]
 pub use connections::{forget as conn_forget, list as conn_list, remember as conn_remember};
+pub use secrets::{secret_delete, secret_get, secret_list, secret_set};
 
 use serde::{Deserialize, Serialize};
 
@@ -128,7 +128,9 @@ pub struct TermOpenRequest {
     pub auto_reconnect: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// A chunk of terminal output sent to the frontend
 #[derive(Debug, Clone, Serialize)]
@@ -196,7 +198,10 @@ pub struct SerialTargetConfig {
 
 pub fn parse_serial_config(target: &str) -> SerialTargetConfig {
     let target = target.trim();
-    let mut cfg = SerialTargetConfig { baud: 115200, ..Default::default() };
+    let mut cfg = SerialTargetConfig {
+        baud: 115200,
+        ..Default::default()
+    };
     if let Some((port, params)) = target.split_once('?') {
         cfg.port = port.to_string();
         for kv in params.split('&') {
@@ -232,8 +237,14 @@ pub trait TermBackend: Send + Sync {
     /// send so backpressure never loses a command. The error (round-105) is
     /// propagated so an undelivered command surfaces as an execute error
     /// instead of a success-shaped 'idle'.
-    fn write_async<'a>(&'a self, data: &'a [u8]) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
-        Box::pin(async move { self.write(data); Ok(()) })
+    fn write_async<'a>(
+        &'a self,
+        data: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            self.write(data);
+            Ok(())
+        })
     }
     fn resize(&self, rows: u16, cols: u16);
     fn close(&self);
@@ -244,18 +255,22 @@ pub trait TermBackend: Send + Sync {
     fn terminate(&self);
     /// Natural-exit code of the backend process, if it exited on its own
     /// (PTY only; SSH/serial return None) (round-60).
-    fn exit_code(&self) -> Option<i32> { None }
+    fn exit_code(&self) -> Option<i32> {
+        None
+    }
     /// review #3: whether this backend ACTUALLY received shell-integration
     /// injection (PTY: script present). Default false for ssh/serial.
-    fn marker_injected(&self) -> bool { false }
+    fn marker_injected(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(feature = "terminal")]
 mod desktop_impl {
     use super::*;
-    use vale_agent_core::DeviceError;
     use std::sync::Arc;
     use tokio::sync::mpsc;
+    use vale_agent_core::DeviceError;
 
     struct Session {
         id: String,
@@ -318,7 +333,11 @@ mod desktop_impl {
                 buf.iter().map(|b| format!("{b:02x}")).collect()
             };
             let mgr = Self {
-                inner: std::sync::Arc::new(tokio::sync::Mutex::new(TerminalInner { sessions: Vec::new(), next_id: 0, boot_prefix })),
+                inner: std::sync::Arc::new(tokio::sync::Mutex::new(TerminalInner {
+                    sessions: Vec::new(),
+                    next_id: 0,
+                    boot_prefix,
+                })),
                 serial_pool,
             };
             // Idle sweeper: force-close sessions that have been silent for the
@@ -370,7 +389,8 @@ mod desktop_impl {
 
         /// Open a new terminal session. Returns (session_id, channel_receiver) for streaming output.
         pub async fn term_open(
-            &self, req: &TermOpenRequest,
+            &self,
+            req: &TermOpenRequest,
         ) -> Result<(String, mpsc::Receiver<TermOutput>), DeviceError> {
             let id = {
                 let mut inner = self.inner.lock().await;
@@ -380,24 +400,46 @@ mod desktop_impl {
                 inner.next_id += 1;
                 id
             };
-            let kind = if req.kind.is_empty() { "pty".to_string() } else { req.kind.clone() };
+            let kind = if req.kind.is_empty() {
+                "pty".to_string()
+            } else {
+                req.kind.clone()
+            };
             // Bounded: backpressure through the reader threads (blocking_send)
             let (tx, rx) = mpsc::channel(256);
 
             let (backend, label) = match kind.as_str() {
                 "ssh" => {
                     let be = ssh::SshBackend::connect(
-                        &req.target, &req.password, &req.key_path, req.rows, req.cols, tx, id.clone(),
-                    ).await?;
+                        &req.target,
+                        &req.password,
+                        &req.key_path,
+                        req.rows,
+                        req.cols,
+                        tx,
+                        id.clone(),
+                    )
+                    .await?;
                     let (user, host, _port) = parse_ssh_target(&req.target);
                     let label = format!("{user}@{host}");
                     (Arc::new(be) as Arc<dyn TermBackend>, label)
                 }
                 "serial" => {
                     let be = serial::SerialBackend::open(
-                        self.serial_pool.clone(), &req.target, req.data_bits, req.parity.clone(), req.stop_bits, req.auto_reconnect, tx, id.clone(),
-                    ).await?;
-                    let label = format!("serial:{}", req.target.split('?').next().unwrap_or(&req.target));
+                        self.serial_pool.clone(),
+                        &req.target,
+                        req.data_bits,
+                        req.parity.clone(),
+                        req.stop_bits,
+                        req.auto_reconnect,
+                        tx,
+                        id.clone(),
+                    )
+                    .await?;
+                    let label = format!(
+                        "serial:{}",
+                        req.target.split('?').next().unwrap_or(&req.target)
+                    );
                     (Arc::new(be) as Arc<dyn TermBackend>, label)
                 }
                 _ => {
@@ -406,9 +448,14 @@ mod desktop_impl {
                     // PowerShell while the caller believed it was remote (the
                     // commands simply ran on the device). Only genuine PTY
                     // spellings land here now.
-                    if !matches!(kind.as_str(), "pty" | "pwsh" | "powershell" | "bash" | "shell") {
+                    if !matches!(
+                        kind.as_str(),
+                        "pty" | "pwsh" | "powershell" | "bash" | "shell"
+                    ) {
                         return Err(DeviceError::InvalidParams {
-                            message: format!("unknown terminal kind '{kind}' (expected pty|ssh|serial)"),
+                            message: format!(
+                                "unknown terminal kind '{kind}' (expected pty|ssh|serial)"
+                            ),
                         });
                     }
                     // PTY spawn (openpty + spawn_command) blocks — off-executor
@@ -427,7 +474,11 @@ mod desktop_impl {
                         })??
                     };
                     let label = if req.target.is_empty() {
-                        if cfg!(windows) { "PowerShell".into() } else { "bash".into() }
+                        if cfg!(windows) {
+                            "PowerShell".into()
+                        } else {
+                            "bash".into()
+                        }
                     } else {
                         // Just the filename, not full path
                         std::path::Path::new(&req.target)
@@ -453,7 +504,8 @@ mod desktop_impl {
                     // Evict the session idle-longest; on a last_output tie
                     // fall back to the OLDEST-opened — an old-but-actively-
                     // watched session must survive.
-                    let idle = inner.sessions
+                    let idle = inner
+                        .sessions
                         .iter()
                         .enumerate()
                         .min_by_key(|(_, s)| (s.last_output, s.opened_at))
@@ -472,7 +524,17 @@ mod desktop_impl {
                 // execute on the never-arriving 633 path.
                 let inject = kind == "pty" && req.inject_marker && backend.marker_injected();
                 let shell = infer_shell(&kind, &req.target);
-                inner.sessions.push(Session { id: id.clone(), kind, label, shell, backend, inject_marker: inject, last_output: std::time::Instant::now(), opened_at: std::time::Instant::now(), busy: false });
+                inner.sessions.push(Session {
+                    id: id.clone(),
+                    kind,
+                    label,
+                    shell,
+                    backend,
+                    inject_marker: inject,
+                    last_output: std::time::Instant::now(),
+                    opened_at: std::time::Instant::now(),
+                    busy: false,
+                });
                 deferred
             };
             for b in deferred {
@@ -481,10 +543,18 @@ mod desktop_impl {
             Ok((id, rx))
         }
 
-        pub async fn term_resize(&self, sid: &str, rows: u16, cols: u16) -> Result<(), DeviceError> {
+        pub async fn term_resize(
+            &self,
+            sid: &str,
+            rows: u16,
+            cols: u16,
+        ) -> Result<(), DeviceError> {
             let mut inner = self.inner.lock().await;
-            let s = inner.sessions.iter_mut().find(|s| s.id == sid)
-                .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
+            let s = inner.sessions.iter_mut().find(|s| s.id == sid).ok_or(
+                DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                },
+            )?;
             s.backend.resize(rows, cols);
             // Activity = heartbeat: a client actively resizing is alive — the
             // 15-min idle sweeper must not kill it (round-49).
@@ -509,8 +579,11 @@ mod desktop_impl {
             // lock — a blocked write stalls only its own call, not the system.
             let backend = {
                 let mut inner = self.inner.lock().await;
-                let s = inner.sessions.iter_mut().find(|s| s.id == sid)
-                    .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
+                let s = inner.sessions.iter_mut().find(|s| s.id == sid).ok_or(
+                    DeviceError::SessionNotFound {
+                        id: sid.to_string(),
+                    },
+                )?;
                 // Activity = heartbeat (round-49): typing into a session is liveness.
                 s.last_output = std::time::Instant::now();
                 s.backend.clone()
@@ -520,7 +593,9 @@ mod desktop_impl {
             // the transport is under backpressure.
             // round-105: propagate the error — an undelivered command must
             // fail the execute, not report success-shaped 'idle'.
-            backend.write_async(data).await
+            backend
+                .write_async(data)
+                .await
                 .map_err(|e| DeviceError::Internal { message: e })?;
             Ok(())
         }
@@ -529,7 +604,10 @@ mod desktop_impl {
             // review #10: remove under the lock, close AFTER it drops.
             let removed = {
                 let mut inner = self.inner.lock().await;
-                inner.sessions.iter().position(|s| s.id == sid)
+                inner
+                    .sessions
+                    .iter()
+                    .position(|s| s.id == sid)
                     .map(|pos| inner.sessions.remove(pos))
             };
             match removed {
@@ -538,7 +616,9 @@ mod desktop_impl {
                     session.backend.close();
                     Ok(kind)
                 }
-                None => Err(DeviceError::SessionNotFound { id: sid.to_string() }),
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
             }
         }
 
@@ -552,7 +632,10 @@ mod desktop_impl {
             // review #10: remove under the lock, close AFTER it drops.
             let removed = {
                 let mut inner = self.inner.lock().await;
-                inner.sessions.iter().position(|s| s.id == sid)
+                inner
+                    .sessions
+                    .iter()
+                    .position(|s| s.id == sid)
                     .map(|pos| inner.sessions.remove(pos))
             };
             if let Some(session) = removed {
@@ -576,7 +659,9 @@ mod desktop_impl {
                 s.last_output = std::time::Instant::now();
                 Ok(())
             } else {
-                Err(DeviceError::SessionNotFound { id: sid.to_string() })
+                Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                })
             }
         }
 
@@ -592,8 +677,11 @@ mod desktop_impl {
             // backend is Arc'd, so clone + terminate outside the lock.
             let backend = {
                 let inner = self.inner.lock().await;
-                let s = inner.sessions.iter().find(|s| s.id == sid)
-                    .ok_or(DeviceError::SessionNotFound { id: sid.to_string() })?;
+                let s = inner.sessions.iter().find(|s| s.id == sid).ok_or(
+                    DeviceError::SessionNotFound {
+                        id: sid.to_string(),
+                    },
+                )?;
                 s.backend.clone()
             };
             backend.terminate();
@@ -616,7 +704,9 @@ mod desktop_impl {
                 }
                 // round-105: a nonexistent session reported busy — clients
                 // retried forever. Distinguish.
-                None => Err(DeviceError::SessionNotFound { id: sid.to_string() }),
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
             }
         }
 
@@ -634,8 +724,13 @@ mod desktop_impl {
         /// (21 failures in one week of real usage). Poll every 250 ms up to
         /// `max_wait_ms`; Ok(false) after the deadline keeps the old
         /// session_busy mapping for the caller.
-        pub async fn term_acquire_execute(&self, sid: &str, max_wait_ms: u64) -> Result<bool, DeviceError> {
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
+        pub async fn term_acquire_execute(
+            &self,
+            sid: &str,
+            max_wait_ms: u64,
+        ) -> Result<bool, DeviceError> {
+            let deadline =
+                tokio::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
             loop {
                 match self.term_try_execute(sid).await {
                     Ok(true) => return Ok(true),
@@ -654,13 +749,24 @@ mod desktop_impl {
         /// a session that is still running) (round-60).
         pub async fn term_exit_code(&self, sid: &str) -> Option<i32> {
             let inner = self.inner.lock().await;
-            inner.sessions.iter().find(|s| s.id == sid).and_then(|s| s.backend.exit_code())
+            inner
+                .sessions
+                .iter()
+                .find(|s| s.id == sid)
+                .and_then(|s| s.backend.exit_code())
         }
 
         pub async fn term_list(&self) -> Vec<TermSessionInfo> {
             let inner = self.inner.lock().await;
-            inner.sessions.iter()
-                .map(|s| TermSessionInfo { id: s.id.clone(), kind: s.kind.clone(), label: s.label.clone(), shell: s.shell.clone() })
+            inner
+                .sessions
+                .iter()
+                .map(|s| TermSessionInfo {
+                    id: s.id.clone(),
+                    kind: s.kind.clone(),
+                    label: s.label.clone(),
+                    shell: s.shell.clone(),
+                })
                 .collect()
         }
 
@@ -670,12 +776,16 @@ mod desktop_impl {
         /// its kind/label.
         pub async fn term_info(&self, sid: &str) -> Option<TermSessionInfo> {
             let inner = self.inner.lock().await;
-            inner.sessions.iter().find(|s| s.id == sid).map(|s| TermSessionInfo {
-                id: s.id.clone(),
-                kind: s.kind.clone(),
-                label: s.label.clone(),
-                shell: s.shell.clone(),
-            })
+            inner
+                .sessions
+                .iter()
+                .find(|s| s.id == sid)
+                .map(|s| TermSessionInfo {
+                    id: s.id.clone(),
+                    kind: s.kind.clone(),
+                    label: s.label.clone(),
+                    shell: s.shell.clone(),
+                })
         }
 
         /// round-108: whether this session gets the OSC 133;D prompt marker
@@ -684,7 +794,12 @@ mod desktop_impl {
         /// at command end, which can be seconds after the echo.
         pub async fn term_marker_injected(&self, sid: &str) -> bool {
             let inner = self.inner.lock().await;
-            inner.sessions.iter().find(|s| s.id == sid).map(|s| s.inject_marker).unwrap_or(false)
+            inner
+                .sessions
+                .iter()
+                .find(|s| s.id == sid)
+                .map(|s| s.inject_marker)
+                .unwrap_or(false)
         }
 
         /// round-109: correct the marker flag after open — the injection is
@@ -752,10 +867,7 @@ mod tests {
 
     #[test]
     fn parse_ssh_ipv6_bracketed_default_port() {
-        assert_eq!(
-            parse_ssh_target("[::1]"),
-            ("root".into(), "::1".into(), 22)
-        );
+        assert_eq!(parse_ssh_target("[::1]"), ("root".into(), "::1".into(), 22));
     }
 
     #[test]
@@ -769,7 +881,10 @@ mod tests {
 
     #[test]
     fn parse_serial_plain() {
-        assert_eq!(parse_serial_target("/dev/ttyUSB0"), ("/dev/ttyUSB0".into(), 115200));
+        assert_eq!(
+            parse_serial_target("/dev/ttyUSB0"),
+            ("/dev/ttyUSB0".into(), 115200)
+        );
     }
 
     #[test]
@@ -779,7 +894,10 @@ mod tests {
 
     #[test]
     fn parse_serial_bad_baud_defaults() {
-        assert_eq!(parse_serial_target("COM3?baud=xyz"), ("COM3".into(), 115200));
+        assert_eq!(
+            parse_serial_target("COM3?baud=xyz"),
+            ("COM3".into(), 115200)
+        );
     }
 
     #[test]
@@ -830,7 +948,13 @@ mod tests {
             // "unknown" → the command wrapper was silently disabled.
             assert_eq!(infer_shell("pty", "powershell"), "powershell");
             assert_eq!(infer_shell("pty", "pwsh"), "pwsh");
-            assert_eq!(infer_shell("pty", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "powershell");
+            assert_eq!(
+                infer_shell(
+                    "pty",
+                    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+                ),
+                "powershell"
+            );
             assert_eq!(infer_shell("pty", "cmd.exe"), "cmd");
             assert_eq!(infer_shell("pty", "zsh.exe"), "unknown");
         } else {
@@ -885,7 +1009,10 @@ mod tests {
             tokio::spawn(async move { mgr.term_acquire_execute(&sid, 5000).await })
         };
         tokio::time::sleep(Duration::from_millis(600)).await;
-        assert!(!waiter.is_finished(), "acquirer must still be waiting while the lock is held");
+        assert!(
+            !waiter.is_finished(),
+            "acquirer must still be waiting while the lock is held"
+        );
         mgr.term_release_execute(&sid).await;
         let got = tokio::time::timeout(Duration::from_secs(2), waiter)
             .await
@@ -894,7 +1021,7 @@ mod tests {
             .unwrap();
         assert!(got, "acquirer must get the lock once released");
         mgr.term_release_execute(&sid).await; // waiter done — free it again
-        // Deadline path: held again → the bounded acquire gives up with false.
+                                              // Deadline path: held again → the bounded acquire gives up with false.
         assert!(mgr.term_try_execute(&sid).await.unwrap());
         assert!(!mgr.term_acquire_execute(&sid, 500).await.unwrap());
         mgr.term_release_execute(&sid).await;
@@ -923,7 +1050,9 @@ mod tests {
             })
             .await
             .expect("open pty");
-        mgr.term_write(&sid, "echo pty-roundtrip\n").await.expect("write");
+        mgr.term_write(&sid, "echo pty-roundtrip\n")
+            .await
+            .expect("write");
 
         let mut saw = String::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -933,7 +1062,10 @@ mod tests {
                 _ => break,
             }
         }
-        assert!(saw.contains("pty-roundtrip"), "pty output did not echo: {saw:?}");
+        assert!(
+            saw.contains("pty-roundtrip"),
+            "pty output did not echo: {saw:?}"
+        );
         let _ = mgr.term_close(&sid).await;
     }
 }

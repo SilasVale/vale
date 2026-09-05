@@ -87,23 +87,30 @@ where
             // subscription survive a silently-dead client). Bound each send
             // at 5s — a full channel means the client is gone.
             let send_bounded = async |bytes: Bytes| {
-                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes))).await
+                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes)))
+                    .await
                     .map(|r| r.is_err())
                     .unwrap_or(true)
             };
             match tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv()).await {
                 Ok(Ok(item)) => {
-                    if send_bounded(Bytes::from(encode(&item))).await { break; }
+                    if send_bounded(Bytes::from(encode(&item))).await {
+                        break;
+                    }
                 }
                 Ok(Err(RecvError::Lagged(n))) => {
                     // Client gone: stop like the Ok branch, or this task keeps
                     // the broadcast subscription and a failing send forever.
-                    if send_bounded(Bytes::from(lagged(n))).await { break; }
+                    if send_bounded(Bytes::from(lagged(n))).await {
+                        break;
+                    }
                 }
                 Ok(Err(RecvError::Closed)) => break,
                 Err(_) => {
                     // 30s of silence — heartbeat.
-                    if send_bounded(Bytes::from(": ping\n\n")).await { break; }
+                    if send_bounded(Bytes::from(": ping\n\n")).await {
+                        break;
+                    }
                 }
             }
         }
@@ -130,7 +137,9 @@ pub(crate) async fn sse_stream(state: Arc<AppState>) -> Response {
     // this is purely a diagnostic marker.
     let encode = |event: &vale_agent_core::events::SeqEvent| {
         let mut obj = serde_json::to_value(event).unwrap_or_default();
-        if let Some(o) = obj.as_object_mut() { o.insert("v".into(), serde_json::json!(1)); }
+        if let Some(o) = obj.as_object_mut() {
+            o.insert("v".into(), serde_json::json!(1));
+        }
         format!("data: {}\n\n", obj)
     };
     // Plain data frame so EventSource.onmessage fires; the client responds by
@@ -152,8 +161,13 @@ pub(crate) async fn sse_term_stream(state: Arc<AppState>) -> Response {
     // protocol version anchor (round-54), same semantics as /api/events.
     let encode = |output: &serde_json::Value| {
         let mut obj = output.clone();
-        if let Some(o) = obj.as_object_mut() { o.insert("v".into(), serde_json::json!(1)); }
-        format!("data: {}\n\n", serde_json::to_string(&obj).unwrap_or_default())
+        if let Some(o) = obj.as_object_mut() {
+            o.insert("v".into(), serde_json::json!(1));
+        }
+        format!(
+            "data: {}\n\n",
+            serde_json::to_string(&obj).unwrap_or_default()
+        )
     };
     // Loss-tolerant stream; a lagged frame is ignored client-side (it has no
     // session_id). Keep the connection alive.
@@ -172,7 +186,8 @@ pub(crate) async fn sse_term_stream(state: Arc<AppState>) -> Response {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             let send_bounded = async |bytes: Bytes| {
-                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes))).await
+                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes)))
+                    .await
                     .map(|r| r.is_err())
                     .unwrap_or(true)
             };

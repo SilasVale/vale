@@ -4,15 +4,15 @@
 //! One builder fn per MCP tool, built once at registration. Code moved
 //! verbatim from the former monolithic `plugins/terminal/tools.rs`.
 
+use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
-use serde_json::{json, Value};
 
-use vale_agent_core::{recover_guard, AgentEvent, DeviceError, EventBus, ToolDef};
-use crate::plugins::{require_str, to_value_or_empty};
-use crate::plugins::terminal::{clean_terminal_output, OutputBuf};
-use crate::tools::terminal::TerminalManager;
 use super::ctx::{session_lost, JobInfo, JobsMap};
+use crate::plugins::terminal::{clean_terminal_output, OutputBuf};
+use crate::plugins::{require_str, to_value_or_empty};
+use crate::tools::terminal::TerminalManager;
+use vale_agent_core::{recover_guard, AgentEvent, DeviceError, EventBus, ToolDef};
 
 /// Build the session-mode execute result JSON (round-157): a partial (idle)
 /// return means the command is STILL RUNNING — the wait loop gave up on
@@ -123,19 +123,36 @@ pub(super) fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
     // with no digits/BEL made the whole search fail even when a REAL marker
     // followed. Scan ALL prefixes; only a complete sequence counts.
     let mut search_from = 0;
-    while let Some(rel) = data[search_from..].windows(PREFIX.len()).position(|w| w == PREFIX) {
+    while let Some(rel) = data[search_from..]
+        .windows(PREFIX.len())
+        .position(|w| w == PREFIX)
+    {
         let start = search_from + rel;
         let mut i = start + PREFIX.len();
         let digits_start = i;
-        while i < data.len() && data[i].is_ascii_digit() { i += 1; }
-        if i == digits_start { search_from = start + 1; continue; } // prefix but no digits yet — try the next prefix
-        if i >= data.len() || data[i] != 0x07 { search_from = start + 1; continue; } // incomplete — try the next
-        // round-101: a digit run that overflows i32 (11+ digits) must not
-        // abort the whole scan — continue to the next prefix like the other
-        // false-prefix cases.
-        let code: i32 = match std::str::from_utf8(&data[digits_start..i]).ok().and_then(|s| s.parse().ok()) {
+        while i < data.len() && data[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == digits_start {
+            search_from = start + 1;
+            continue;
+        } // prefix but no digits yet — try the next prefix
+        if i >= data.len() || data[i] != 0x07 {
+            search_from = start + 1;
+            continue;
+        } // incomplete — try the next
+          // round-101: a digit run that overflows i32 (11+ digits) must not
+          // abort the whole scan — continue to the next prefix like the other
+          // false-prefix cases.
+        let code: i32 = match std::str::from_utf8(&data[digits_start..i])
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
             Some(c) => c,
-            None => { search_from = start + 1; continue; }
+            None => {
+                search_from = start + 1;
+                continue;
+            }
         };
         return Some((start, i + 1, code));
     }
@@ -208,7 +225,13 @@ pub(super) fn tool_jobs(jobs: &JobsMap) -> ToolDef {
 
 // ── Execute ──────────────────────────────────────
 
-pub(super) fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, output_buf: &OutputBuf, logger: &crate::session_log::SessionLogger, jobs: &JobsMap) -> ToolDef {
+pub(super) fn tool_execute(
+    terminal_mgr: &Arc<TerminalManager>,
+    bus: &Arc<dyn EventBus>,
+    output_buf: &OutputBuf,
+    logger: &crate::session_log::SessionLogger,
+    jobs: &JobsMap,
+) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     let buf = output_buf.clone();
     let bus = bus.clone();

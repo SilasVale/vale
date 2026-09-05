@@ -40,7 +40,13 @@ pub(crate) fn serve_panel_file(file: &str, content_type: &'static str) -> Respon
         "vendor/xterm.min.js" => XTERM_JS,
         "vendor/xterm.css" => XTERM_CSS,
         "vendor/xterm-addon-fit.min.js" => FIT_JS,
-        _ => return built_response(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", Body::from("not found")),
+        _ => {
+            return built_response(
+                StatusCode::NOT_FOUND,
+                "text/plain; charset=utf-8",
+                Body::from("not found"),
+            )
+        }
     };
     // Version-query the bundle URLs on the HTML: Cloudflare overrides our
     // no-cache with Browser-Cache-TTL 4h for .js/.css, so after an update
@@ -68,9 +74,13 @@ pub(crate) fn serve_panel_file(file: &str, content_type: &'static str) -> Respon
 }
 
 pub(crate) fn panel_content_type(file: &str) -> &'static str {
-    if file.ends_with(".js") { "text/javascript; charset=utf-8" }
-    else if file.ends_with(".css") { "text/css; charset=utf-8" }
-    else { "text/html; charset=utf-8" }
+    if file.ends_with(".js") {
+        "text/javascript; charset=utf-8"
+    } else if file.ends_with(".css") {
+        "text/css; charset=utf-8"
+    } else {
+        "text/html; charset=utf-8"
+    }
 }
 
 /// Serve the panel SPA with the device token injected as
@@ -88,8 +98,11 @@ pub(crate) fn panel_token_response(token: &str) -> Response {
         .replace('<', "\\u003c")
         .replace('>', "\\u003e");
     let inject = format!("<script>window.__PANEL_TOKEN__={escaped};</script>");
-    let html = include_str!("../../resources/panel/index.html")
-        .replacen("</head>", &format!("{inject}</head>"), 1);
+    let html = include_str!("../../resources/panel/index.html").replacen(
+        "</head>",
+        &format!("{inject}</head>"),
+        1,
+    );
     let mut resp = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
     resp.headers_mut().insert(
         axum::http::HeaderName::from_static("cache-control"),

@@ -37,7 +37,9 @@ mod panel;
 mod sse;
 
 pub use panel::WebPanel;
-pub(crate) use panel::{panel_content_type, panel_token_response, plausible_grant, redeem_panel_grant, serve_panel_file};
+pub(crate) use panel::{
+    panel_content_type, panel_token_response, plausible_grant, redeem_panel_grant, serve_panel_file,
+};
 pub(crate) use sse::{sse_stream, sse_term_stream, SseConnectionGuard};
 
 /// Minimal self-contained status page — the panel SPA is retired, but the
@@ -63,7 +65,11 @@ const STATUS_PAGE: &str = concat!(
 
 /// Build a response with a fallback that can't panic — the builder only fails
 /// on invalid status/header constants, which ours never are.
-pub(super) fn built_response(status: StatusCode, content_type: &'static str, body: Body) -> Response {
+pub(super) fn built_response(
+    status: StatusCode,
+    content_type: &'static str,
+    body: Body,
+) -> Response {
     Response::builder()
         .status(status)
         .header("Content-Type", content_type)
@@ -77,7 +83,10 @@ pub(super) fn built_response(status: StatusCode, content_type: &'static str, bod
 /// position (`?after=5&token=x` — the old strip_prefix("token=") only matched
 /// when the param came first).
 pub(super) fn query_param<'a>(query: Option<&'a str>, key: &str) -> Option<&'a str> {
-    query?.split('&').find_map(|pair| pair.strip_prefix(key).and_then(|rest| rest.strip_prefix('=')))
+    query?.split('&').find_map(|pair| {
+        pair.strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+    })
 }
 
 /// Host header value without its `:port` suffix (trimmed) — shared by the
@@ -116,7 +125,8 @@ fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>
             Body::from(r#"{"ok":false,"error":"unauthorized"}"#),
         )));
     };
-    let from_header = req.headers()
+    let from_header = req
+        .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
@@ -139,7 +149,11 @@ fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>
 /// /api/* gate; a short-circuiting == leaks the match position via timing
 /// (round-116; the proxy-secret check below already used this shape).
 fn timing_safe_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
 }
 
 // ── Token gate for the MCP route ─────────────────────────────
@@ -198,7 +212,8 @@ where
             // Fail closed, mirroring check_auth above.
             return Box::pin(async { Ok(unauthorized_mcp_response()) });
         };
-        let authorized = req.headers()
+        let authorized = req
+            .headers()
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
@@ -225,7 +240,9 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
 
     // SSE event stream — streaming, handled before body parsing
     if method == Method::GET && path == "/api/events" {
-        if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        if let Err(resp) = check_auth(&req, &state) {
+            return *resp;
+        }
         // stage-n SSE audit LOW: bound concurrent SSE connections so a flood
         // of viewers can't exhaust tasks/memory. Reserve a slot; if full, 503.
         let _guard = match SseConnectionGuard::acquire() {
@@ -243,7 +260,9 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
 
     // SSE terminal byte stream — streamed TermOutput JSON frames.
     if method == Method::GET && path == "/api/events/term" {
-        if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        if let Err(resp) = check_auth(&req, &state) {
+            return *resp;
+        }
         let _guard = match SseConnectionGuard::acquire() {
             Some(g) => g,
             None => {
@@ -261,8 +280,14 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
     // the pwout dir (browser_run_script & playwright scripts drop screenshots
     // here). The panel polls pwshots and shows new PNGs as the AI works,
     // so a human can see what the AI did without any live frame stream.
-    if method == Method::GET && (path == "/api/browser/pwshots" || path == "/api/browser/pwshot" || path == "/api/browser/actions") {
-        if let Err(resp) = check_auth(&req, &state) { return *resp; }
+    if method == Method::GET
+        && (path == "/api/browser/pwshots"
+            || path == "/api/browser/pwshot"
+            || path == "/api/browser/actions")
+    {
+        if let Err(resp) = check_auth(&req, &state) {
+            return *resp;
+        }
         // Surface audit D#2 (one-browser round): the READ side resolved
         // current_exe()'s parent while the WRITE side (playwright tools)
         // uses the registry install_dir() — the exact 1.2.219 /api/sessions
@@ -279,16 +304,30 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
                     }
                 }
             }
-            return built_response(StatusCode::OK, "application/json", Body::from(serde_json::json!({"actions": actions}).to_string()));
+            return built_response(
+                StatusCode::OK,
+                "application/json",
+                Body::from(serde_json::json!({"actions": actions}).to_string()),
+            );
         }
         if path == "/api/browser/pwshots" {
             let mut shots: Vec<serde_json::Value> = Vec::new();
             if let Ok(rd) = std::fs::read_dir(&pwout) {
                 for e in rd.filter_map(|e| e.ok()) {
                     let name = e.file_name().to_string_lossy().to_string();
-                    if !name.ends_with(".png") { continue; }
+                    if !name.ends_with(".png") {
+                        continue;
+                    }
                     let meta = e.metadata().ok();
-                    let mtime_ms = meta.as_ref().and_then(|m| m.modified().ok()).map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)).unwrap_or(0);
+                    let mtime_ms = meta
+                        .as_ref()
+                        .and_then(|m| m.modified().ok())
+                        .map(|t| {
+                            t.duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis())
+                                .unwrap_or(0)
+                        })
+                        .unwrap_or(0);
                     shots.push(serde_json::json!({
                         "name": name,
                         "mtime_ms": mtime_ms,
@@ -298,12 +337,20 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
             }
             shots.sort_by(|a, b| b["mtime_ms"].as_u64().cmp(&a["mtime_ms"].as_u64()));
             shots.truncate(40);
-            return built_response(StatusCode::OK, "application/json", Body::from(serde_json::json!({"shots": shots}).to_string()));
+            return built_response(
+                StatusCode::OK,
+                "application/json",
+                Body::from(serde_json::json!({"shots": shots}).to_string()),
+            );
         }
         // /api/browser/pwshot?name=xxx — serve one screenshot (basename only)
         let name = query_param(req.uri().query(), "name").unwrap_or("");
         if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-            return built_response(StatusCode::BAD_REQUEST, "text/plain", Body::from("bad name"));
+            return built_response(
+                StatusCode::BAD_REQUEST,
+                "text/plain",
+                Body::from("bad name"),
+            );
         }
         return match std::fs::read(pwout.join(name)) {
             Ok(bytes) => {
@@ -314,8 +361,12 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
                 );
                 resp
             }
-            Err(_) => built_response(StatusCode::NOT_FOUND, "text/plain", Body::from("no such shot")),
-        }
+            Err(_) => built_response(
+                StatusCode::NOT_FOUND,
+                "text/plain",
+                Body::from("no such shot"),
+            ),
+        };
     }
 
     // round-137 Plan C: interactive-browser WebSocket relay. MUST sit before
@@ -374,11 +425,16 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
             // silently killed token injection for real devices (round-19).
             let host_ok = host_no_port(req.headers())
                 .map(|host| {
-                    host == "127.0.0.1" || host == "localhost"
+                    host == "127.0.0.1"
+                        || host == "localhost"
                         || host == "agent.saisi.online"
                         || (host.ends_with(".agent.saisi.online")
                             && host.matches('.').count() == 3
-                            && host.split('.').next().map(|d| d.starts_with("d")).unwrap_or(false))
+                            && host
+                                .split('.')
+                                .next()
+                                .map(|d| d.starts_with("d"))
+                                .unwrap_or(false))
                 })
                 .unwrap_or(false);
             // round-102: token injection only via the gateway proxy OR
@@ -424,14 +480,22 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
     }
     if method == Method::GET && (path.starts_with("/panel/") || path.starts_with("/desktop/")) {
         // Strip any ?v=… cache-buster before whitelist matching.
-        let prefix_len = if path.starts_with("/desktop/") { "/desktop/".len() } else { "/panel/".len() };
+        let prefix_len = if path.starts_with("/desktop/") {
+            "/desktop/".len()
+        } else {
+            "/panel/".len()
+        };
         let file = path[prefix_len..].split('?').next().unwrap_or("");
         return serve_panel_file(file, panel_content_type(file));
     }
 
     // GET non-API — minimal status page: public (no token needed)
     if method == Method::GET && !path.starts_with("/api") && path != "/mcp" {
-        let mut resp = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(STATUS_PAGE));
+        let mut resp = built_response(
+            StatusCode::OK,
+            "text/html; charset=utf-8",
+            Body::from(STATUS_PAGE),
+        );
         resp.headers_mut().insert(
             axum::http::HeaderName::from_static("cache-control"),
             axum::http::HeaderValue::from_static("no-cache"),
@@ -441,7 +505,9 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
 
     // Auth gate for all the /mcp + /api/* routes that follow
     if needs_auth {
-        if let Err(resp) = check_auth(&req, &state) { return *resp; }
+        if let Err(resp) = check_auth(&req, &state) {
+            return *resp;
+        }
     }
 
     // Extract query params before consuming body
@@ -470,18 +536,29 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
                 src = s.source();
             }
             let (status, code, msg) = if too_large {
-                (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", "request body exceeds 1 MB limit")
+                (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "payload_too_large",
+                    "request body exceeds 1 MB limit",
+                )
             } else {
-                (StatusCode::BAD_REQUEST, "body_read_error", "failed to read request body")
+                (
+                    StatusCode::BAD_REQUEST,
+                    "body_read_error",
+                    "failed to read request body",
+                )
             };
             return built_response(
                 status,
                 "application/json",
-                Body::from(serde_json::json!({
-                    "ok": false,
-                    "error": msg,
-                    "code": code,
-                }).to_string()),
+                Body::from(
+                    serde_json::json!({
+                        "ok": false,
+                        "error": msg,
+                        "code": code,
+                    })
+                    .to_string(),
+                ),
             );
         }
     };
@@ -506,7 +583,7 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
             api_events_poll(&state, after)
-        },
+        }
 
         // Settings read/write (round-69) — bodies in
         // api_settings_get / api_settings_put.
@@ -514,7 +591,7 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
         ("PUT", "/api/settings") => match api_settings_put(&state, &body_str) {
             Ok(v) => v,
             Err(resp) => return *resp,
-        }
+        },
 
         // Gateway connect (Settings page card) — body in api_gateway_connect.
         ("POST", "/api/gateway/connect") => match api_gateway_connect(&state, &body_str).await {
@@ -529,11 +606,11 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
         ("POST", "/api/plugins/playwright/start") => match api_playwright_start(&state).await {
             Ok(v) => v,
             Err(resp) => return *resp,
-        }
+        },
         ("POST", "/api/plugins/playwright/stop") => match api_playwright_stop(&state).await {
             Ok(v) => v,
             Err(resp) => return *resp,
-        }
+        },
 
         // Generic tool dispatch: POST /api/tools/{name}
         ("POST", p) if p.starts_with("/api/tools/") => {
@@ -552,14 +629,18 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
 async fn api_call_tool(state: &AppState, tool_name: &str, body: &str) -> serde_json::Value {
     let tool = match state.plugin_registry.find_tool(tool_name) {
         Some(t) => t,
-        None => return serde_json::json!({"ok": false, "error": format!("unknown tool: {tool_name}"), "code": "invalid_params"}),
+        None => {
+            return serde_json::json!({"ok": false, "error": format!("unknown tool: {tool_name}"), "code": "invalid_params"})
+        }
     };
     let params: serde_json::Value = if body.is_empty() {
         serde_json::json!({})
     } else {
         match serde_json::from_str(body) {
             Ok(v) => v,
-            Err(e) => return serde_json::json!({"ok": false, "error": format!("invalid JSON body: {e}"), "code": "invalid_params"}),
+            Err(e) => {
+                return serde_json::json!({"ok": false, "error": format!("invalid JSON body: {e}"), "code": "invalid_params"})
+            }
         }
     };
     match tool.handler.call(params).await {
@@ -588,9 +669,11 @@ fn api_sessions_list() -> serde_json::Value {
     // the "zero current_exe() guessing outside paths.rs" rule.
     let dir = crate::paths::sessions_dir();
     let logger = crate::session_log::SessionLogger::new(dir);
-    let list: serde_json::Value = logger.list_sessions().iter().map(|(sid, state)| {
-        serde_json::json!({ "id": sid, "state": state })
-    }).collect();
+    let list: serde_json::Value = logger
+        .list_sessions()
+        .iter()
+        .map(|(sid, state)| serde_json::json!({ "id": sid, "state": state }))
+        .collect();
     serde_json::json!({ "ok": true, "sessions": list })
 }
 
@@ -602,7 +685,8 @@ fn api_session_events(p: &str) -> Result<serde_json::Value, Box<Response>> {
     // round-87: the old literal "/api/sessions/{sid}" arm never
     // matched a real session id (exact-string match) — the audit
     // endpoint 404'd for every session. Guard-arm route.
-    let sid = p.strip_prefix("/api/sessions/")
+    let sid = p
+        .strip_prefix("/api/sessions/")
         .and_then(|s| s.split('/').next())
         .unwrap_or("")
         .to_string();
@@ -614,7 +698,11 @@ fn api_session_events(p: &str) -> Result<serde_json::Value, Box<Response>> {
     // session ids are hex (sid per-boot unique), so anything else is
     // not a valid session anyway.
     if !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-        return Err(Box::new(built_response(StatusCode::BAD_REQUEST, "application/json", Body::from(r#"{"ok":false,"error":"invalid session id"}"#))));
+        return Err(Box::new(built_response(
+            StatusCode::BAD_REQUEST,
+            "application/json",
+            Body::from(r#"{"ok":false,"error":"invalid session id"}"#),
+        )));
     }
     // HIGH(audit round): the WRITER (terminal plugin) logs to
     // paths::data_dir()/sessions — on registry-first installs the
@@ -664,7 +752,11 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
         std::process::Command::new("tasklist")
             .args(["/FI", "IMAGENAME eq cloudflared.exe"])
             .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("cloudflared"))
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .to_lowercase()
+                    .contains("cloudflared")
+            })
             .unwrap_or(false)
     })
     .await
@@ -684,23 +776,34 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
 /// byte-identical to the pre-extraction early return (including its
 /// HTTP-200 Json shape).
 fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, Box<Response>> {
-    let v: serde_json::Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(e) => return Err(Box::new(axum::Json(serde_json::json!({
-            "ok": false, "error": format!("invalid JSON: {e}"), "code": "invalid_params",
-        })).into_response())),
-    };
+    let v: serde_json::Value =
+        match serde_json::from_str(body) {
+            Ok(v) => v,
+            Err(e) => return Err(Box::new(
+                axum::Json(serde_json::json!({
+                    "ok": false, "error": format!("invalid JSON: {e}"), "code": "invalid_params",
+                }))
+                .into_response(),
+            )),
+        };
     // stage-n (settings audit): a PUT may legitimately carry ONLY ONE
     // of the keys — the old code reset buffer_mb to 8 whenever it was
     // ABSENT (a console-only save silently clobbered a user's 64).
     // Missing key = leave unchanged; empty console_url string =
     // explicit clear (unchanged semantics).
-    let mb = v.get("buffer_mb").and_then(|b| b.as_u64()).map(|x| (x as usize).clamp(1, 64));
+    let mb = v
+        .get("buffer_mb")
+        .and_then(|b| b.as_u64())
+        .map(|x| (x as usize).clamp(1, 64));
     if let Some(mb) = mb {
-        state.terminal_buf_bytes.store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
+        state
+            .terminal_buf_bytes
+            .store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
     }
     let console_url = v.get("console_url").map(|val| {
-        val.as_str().map(|x| x.trim().to_string()).filter(|x| !x.is_empty())
+        val.as_str()
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
     });
     // Write-through (audit A4): merge onto the CURRENT in-process snapshot
     // and persist via update_config — the runtime buffer cap, the in-process
@@ -720,29 +823,45 @@ fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, B
         }
         let _ = state.update_config(cfg, true);
     }
-    Ok(serde_json::json!({ "ok": true, "buffer_mb": mb.unwrap_or_else(|| {
+    Ok(
+        serde_json::json!({ "ok": true, "buffer_mb": mb.unwrap_or_else(|| {
         state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024)
-    }) }))
+    }) }),
+    )
 }
 
 /// POST /api/gateway/connect (Settings page card): persist console_url, then
 /// register the device with the gateway (reg-key exchange) and optionally
 /// provision the free cloudflared tunnel. Returns per-step results so the
 /// page can show what happened.
-async fn api_gateway_connect(state: &AppState, body: &str) -> Result<serde_json::Value, Box<Response>> {
+async fn api_gateway_connect(
+    state: &AppState,
+    body: &str,
+) -> Result<serde_json::Value, Box<Response>> {
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
-        Err(_) => return Err(Box::new(built_response(
-            StatusCode::BAD_REQUEST,
-            "application/json",
-            Body::from(serde_json::json!({
-                "ok": false, "error": "invalid JSON", "code": "invalid_params",
-            }).to_string()),
-        ))),
+        Err(_) => {
+            return Err(Box::new(built_response(
+                StatusCode::BAD_REQUEST,
+                "application/json",
+                Body::from(
+                    serde_json::json!({
+                        "ok": false, "error": "invalid JSON", "code": "invalid_params",
+                    })
+                    .to_string(),
+                ),
+            )))
+        }
     };
-    let console_url = v.get("console_url").and_then(|c| c.as_str()).map(|s| s.trim().to_string())
+    let console_url = v
+        .get("console_url")
+        .and_then(|c| c.as_str())
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let reg_key = v.get("reg_key").and_then(|c| c.as_str()).map(|s| s.trim().to_string())
+    let reg_key = v
+        .get("reg_key")
+        .and_then(|c| c.as_str())
+        .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     let want_tunnel = v.get("tunnel").and_then(|t| t.as_bool()).unwrap_or(false);
     // 1. Persist console_url — write-through (audit A4): merge onto the
@@ -779,12 +898,16 @@ async fn api_gateway_connect(state: &AppState, body: &str) -> Result<serde_json:
             .build();
         if let Ok(client) = client {
             let r = client
-                .post(format!("{}/api/install/tunnel-token", url.trim_end_matches('/')))
+                .post(format!(
+                    "{}/api/install/tunnel-token",
+                    url.trim_end_matches('/')
+                ))
                 .header("content-type", "application/json")
                 // MED(audit round): a key containing \" or , used to
                 // corrupt/inject fields in the hand-built JSON body.
                 .body(serde_json::json!({ "key": key }).to_string())
-                .send().await;
+                .send()
+                .await;
             if let Ok(resp) = r {
                 if let Ok(j) = resp.json::<serde_json::Value>().await {
                     if let Some(t) = j.get("apiToken").and_then(|x| x.as_str()) {
@@ -868,7 +991,8 @@ async fn api_playwright_stop(state: &AppState) -> Result<serde_json::Value, Box<
 /// write `<install>/boxed-versions.json`). Returns None when absent or
 /// unparseable — advisory only, never fail-closed.
 fn boxed_versions() -> Option<serde_json::Value> {
-    let text = std::fs::read_to_string(crate::paths::install_dir().join("boxed-versions.json")).ok()?;
+    let text =
+        std::fs::read_to_string(crate::paths::install_dir().join("boxed-versions.json")).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -938,31 +1062,41 @@ fn api_events_poll(state: &AppState, after: u64) -> serde_json::Value {
 // ── Plugin Spec ───────────────────────────────────────────────
 
 fn api_spec(state: &AppState) -> serde_json::Value {
-    let plugins: Vec<serde_json::Value> = state.plugin_registry.plugins.iter().map(|p| {
-        let nav = p.nav_item();
-        let tools: Vec<serde_json::Value> = state.plugin_registry.plugin_tools(p.name()).iter().map(|t| {
-            serde_json::json!({
-                "name": t.name,
-                "description": t.description,
-                "schema": t.input_schema,
-            })
-        }).collect();
-        let mut obj = serde_json::json!({
-            "name": p.name(),
-            "displayName": p.display_name(),
-            "description": p.description(),
-            "tools": tools,
-        });
-        if let Some(n) = nav {
-            obj["navItem"] = serde_json::json!({
-                "id": n.id,
-                "icon": n.icon,
-                "label": n.label,
-                "html": n.html_snippet,
+    let plugins: Vec<serde_json::Value> = state
+        .plugin_registry
+        .plugins
+        .iter()
+        .map(|p| {
+            let nav = p.nav_item();
+            let tools: Vec<serde_json::Value> = state
+                .plugin_registry
+                .plugin_tools(p.name())
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "schema": t.input_schema,
+                    })
+                })
+                .collect();
+            let mut obj = serde_json::json!({
+                "name": p.name(),
+                "displayName": p.display_name(),
+                "description": p.description(),
+                "tools": tools,
             });
-        }
-        obj
-    }).collect();
+            if let Some(n) = nav {
+                obj["navItem"] = serde_json::json!({
+                    "id": n.id,
+                    "icon": n.icon,
+                    "label": n.label,
+                    "html": n.html_snippet,
+                });
+            }
+            obj
+        })
+        .collect();
 
     serde_json::json!({"ok": true, "plugins": plugins})
 }
@@ -970,8 +1104,8 @@ fn api_spec(state: &AppState) -> serde_json::Value {
 mod tests {
     use super::*;
     use crate::state::AppState;
-    use vale_agent_core::Config;
     use axum::http::Request;
+    use vale_agent_core::Config;
 
     const TEST_TOKEN: &str = "test-token";
 
@@ -1005,8 +1139,13 @@ mod tests {
         req_with_host_proxy(path, host, false)
     }
     fn req_with_host_proxy(path: &str, host: &str, via_proxy: bool) -> Request<Body> {
-        let mut b = Request::builder().method("GET").uri(path).header(axum::http::header::HOST, host);
-        if via_proxy { b = b.header("x-vale-proxy", "1"); }
+        let mut b = Request::builder()
+            .method("GET")
+            .uri(path)
+            .header(axum::http::header::HOST, host);
+        if via_proxy {
+            b = b.header("x-vale-proxy", "1");
+        }
         b.body(Body::empty()).unwrap()
     }
     fn req_with_host_secret(path: &str, host: &str) -> Request<Body> {
@@ -1014,7 +1153,10 @@ mod tests {
             .method("GET")
             .uri(path)
             .header(axum::http::header::HOST, host)
-            .header("x-vale-auth", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+            .header(
+                "x-vale-auth",
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            )
             .body(Body::empty())
             .unwrap()
     }
@@ -1023,7 +1165,10 @@ mod tests {
             .method("GET")
             .uri(path)
             .header(axum::http::header::HOST, host)
-            .header("x-vale-auth", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+            .header(
+                "x-vale-auth",
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            )
             .body(Body::empty())
             .unwrap()
     }
@@ -1031,42 +1176,89 @@ mod tests {
     #[tokio::test]
     async fn panel_token_injection_host_gate() {
         let mut cfg = Config::default();
-        cfg.server.device_token = Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into());
-        cfg.server.proxy_secret = Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into());
+        cfg.server.device_token =
+            Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into());
+        cfg.server.proxy_secret =
+            Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into());
         let st = Arc::new(AppState::new(cfg));
         // The device's own subdomain MUST inject when the request carries
         // the gateway's shared secret (X-Vale-Auth, round-103 — a spoofable
         // marker header was replaced with a constant-time secret check).
-        let ok = handle_request(req_with_host_secret("/panel/", "d1.agent.saisi.online"), st.clone()).await;
+        let ok = handle_request(
+            req_with_host_secret("/panel/", "d1.agent.saisi.online"),
+            st.clone(),
+        )
+        .await;
         let body = axum::body::to_bytes(ok.into_body(), 1 << 20).await.unwrap();
-        assert!(String::from_utf8_lossy(&body).contains("window.__PANEL_TOKEN__"), "device host with secret must inject");
+        assert!(
+            String::from_utf8_lossy(&body).contains("window.__PANEL_TOKEN__"),
+            "device host with secret must inject"
+        );
 
         // Direct (no secret) on the device host MUST NOT inject — an
         // attacker hitting the enumerable public hostname gets no token.
-        let direct = handle_request(req_with_host("/panel/", "d1.agent.saisi.online"), st.clone()).await;
-        let bd = axum::body::to_bytes(direct.into_body(), 1 << 20).await.unwrap();
-        assert!(!String::from_utf8_lossy(&bd).contains("window.__PANEL_TOKEN__"), "direct device access must NOT inject (RCE)");
+        let direct = handle_request(
+            req_with_host("/panel/", "d1.agent.saisi.online"),
+            st.clone(),
+        )
+        .await;
+        let bd = axum::body::to_bytes(direct.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&bd).contains("window.__PANEL_TOKEN__"),
+            "direct device access must NOT inject (RCE)"
+        );
 
         // A spoofed WRONG secret must not inject either.
-        let wrong = handle_request(req_with_host_secret_wrong("/panel/", "d1.agent.saisi.online"), st.clone()).await;
-        let bw = axum::body::to_bytes(wrong.into_body(), 1 << 20).await.unwrap();
-        assert!(!String::from_utf8_lossy(&bw).contains("window.__PANEL_TOKEN__"), "wrong secret must NOT inject");
+        let wrong = handle_request(
+            req_with_host_secret_wrong("/panel/", "d1.agent.saisi.online"),
+            st.clone(),
+        )
+        .await;
+        let bw = axum::body::to_bytes(wrong.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&bw).contains("window.__PANEL_TOKEN__"),
+            "wrong secret must NOT inject"
+        );
 
         // Apex with secret + loopback inject.
-        let apex = handle_request(req_with_host_secret("/panel/", "agent.saisi.online"), st.clone()).await;
-        let ba = axum::body::to_bytes(apex.into_body(), 1 << 20).await.unwrap();
-        assert!(String::from_utf8_lossy(&ba).contains("window.__PANEL_TOKEN__"), "apex with secret must inject");
+        let apex = handle_request(
+            req_with_host_secret("/panel/", "agent.saisi.online"),
+            st.clone(),
+        )
+        .await;
+        let ba = axum::body::to_bytes(apex.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&ba).contains("window.__PANEL_TOKEN__"),
+            "apex with secret must inject"
+        );
         for h in ["127.0.0.1:18080", "localhost"] {
             let r = handle_request(req_with_host("/panel/", h), st.clone()).await;
             let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
-            assert!(String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"), "{h} must inject");
+            assert!(
+                String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"),
+                "{h} must inject"
+            );
         }
 
         // Multi-level attacker subdomain + suffix-spoof MUST NOT inject.
-        for h in ["evil.agent.saisi.online", "agent.saisi.online.evil.com", "evil.com", "d1.agent.saisi.online.evil.com"] {
+        for h in [
+            "evil.agent.saisi.online",
+            "agent.saisi.online.evil.com",
+            "evil.com",
+            "d1.agent.saisi.online.evil.com",
+        ] {
             let r = handle_request(req_with_host("/panel/", h), st.clone()).await;
             let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
-            assert!(!String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"), "{h} must NOT inject");
+            assert!(
+                !String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"),
+                "{h} must NOT inject"
+            );
         }
     }
 
@@ -1079,7 +1271,10 @@ mod tests {
         let r = handle_request(req_with_host("/panel/", "127.0.0.1:18080"), st).await;
         let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
         let html = String::from_utf8_lossy(&b);
-        assert!(html.contains("\\u003c/script\\u003e"), "must escape </script>: {html}");
+        assert!(
+            html.contains("\\u003c/script\\u003e"),
+            "must escape </script>: {html}"
+        );
     }
 
     #[tokio::test]
@@ -1090,11 +1285,18 @@ mod tests {
         cfg.server.device_token = Some("test-token-123".into());
         let st = Arc::new(AppState::new(cfg));
         let r = handle_request(req_with_host("/desktop/", "127.0.0.1:18080"), st.clone()).await;
-        assert_eq!(r.status(), StatusCode::OK, "desktop route must serve the SPA");
+        assert_eq!(
+            r.status(),
+            StatusCode::OK,
+            "desktop route must serve the SPA"
+        );
         let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
         let html = String::from_utf8_lossy(&b);
         assert!(html.contains("id=\"root\""), "desktop SPA html: {html}");
-        assert!(html.contains("__PANEL_TOKEN__"), "loopback token injection on /desktop/: {html}");
+        assert!(
+            html.contains("__PANEL_TOKEN__"),
+            "loopback token injection on /desktop/: {html}"
+        );
         // Static asset route: /desktop/panel.js serves the bundle.
         let r = handle_request(req_with_host("/desktop/panel.js", "127.0.0.1:18080"), st).await;
         assert_eq!(r.status(), StatusCode::OK, "desktop panel.js must serve");
@@ -1138,7 +1340,9 @@ mod tests {
                     Ok(Ok(n)) => n,
                     _ => 0,
                 };
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 data.extend_from_slice(&buf[..n]);
                 if let Ok(text) = std::str::from_utf8(&data) {
                     if let Some(i) = text.find("\r\n\r\n") {
@@ -1150,7 +1354,9 @@ mod tests {
                                     .and_then(|v| v.trim().parse().ok())
                             })
                             .unwrap_or(0);
-                        if text[i + 4..].len() >= len { break; }
+                        if text[i + 4..].len() >= len {
+                            break;
+                        }
                     }
                 }
             }
@@ -1182,18 +1388,29 @@ mod tests {
         assert_eq!(r.status(), StatusCode::OK);
         // Same response shape as the authorized injection path: no-store.
         assert_eq!(
-            r.headers().get("cache-control").and_then(|v| v.to_str().ok()),
+            r.headers()
+                .get("cache-control")
+                .and_then(|v| v.to_str().ok()),
             Some("no-store"),
             "grant-served panel must be no-store"
         );
         let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
         let html = String::from_utf8_lossy(&b);
-        assert!(html.contains("__PANEL_TOKEN__"), "successful redeem must inject: {html}");
+        assert!(
+            html.contains("__PANEL_TOKEN__"),
+            "successful redeem must inject: {html}"
+        );
         // The redeem call carried OUR bearer token + the grant code, and the
         // grant value must not leak beyond the redeem body itself.
         let captured = handle.await.unwrap();
-        assert!(captured.contains("POST /api/devices/panel-grant/redeem"), "captured: {captured}");
-        assert!(captured.contains(&format!("authorization: Bearer {}", TEST_TOKEN)), "captured: {captured}");
+        assert!(
+            captured.contains("POST /api/devices/panel-grant/redeem"),
+            "captured: {captured}"
+        );
+        assert!(
+            captured.contains(&format!("authorization: Bearer {}", TEST_TOKEN)),
+            "captured: {captured}"
+        );
         assert!(captured.contains(GRANT), "captured: {captured}");
     }
 
@@ -1201,7 +1418,8 @@ mod tests {
     async fn panel_grant_redeem_failure_serves_plain_panel() {
         let mut cfg = Config::default();
         cfg.server.device_token = Some(TEST_TOKEN.into());
-        let (base, handle) = spawn_redeem_stub("HTTP/1.1 404 Not Found", "{\"type\":\"error\"}").await;
+        let (base, handle) =
+            spawn_redeem_stub("HTTP/1.1 404 Not Found", "{\"type\":\"error\"}").await;
         cfg.platform.console_url = Some(base);
         let st = Arc::new(AppState::new(cfg));
         let r = handle_request(
@@ -1209,7 +1427,11 @@ mod tests {
             st,
         )
         .await;
-        assert_eq!(r.status(), StatusCode::OK, "the panel page itself still serves");
+        assert_eq!(
+            r.status(),
+            StatusCode::OK,
+            "the panel page itself still serves"
+        );
         let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
         assert!(
             !String::from_utf8_lossy(&b).contains("__PANEL_TOKEN__"),
@@ -1255,14 +1477,23 @@ mod tests {
         let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
         assert!(!String::from_utf8_lossy(&b).contains("__PANEL_TOKEN__"));
         let waited = tokio::time::timeout(std::time::Duration::from_millis(300), handle).await;
-        assert!(waited.is_err(), "no redeem request may be made for a malformed grant");
+        assert!(
+            waited.is_err(),
+            "no redeem request may be made for a malformed grant"
+        );
     }
 
     #[test]
     fn plausible_grant_shape() {
-        assert!(plausible_grant(&"a".repeat(32)), "gateway-minted shape (32 hex)");
+        assert!(
+            plausible_grant(&"a".repeat(32)),
+            "gateway-minted shape (32 hex)"
+        );
         assert!(plausible_grant(&"a".repeat(16)), "floor accepted");
-        assert!(plausible_grant("ABCDEF0123456789ABCDEF0123456789"), "uppercase hex ok");
+        assert!(
+            plausible_grant("ABCDEF0123456789ABCDEF0123456789"),
+            "uppercase hex ok"
+        );
         assert!(!plausible_grant(""), "empty rejected");
         assert!(!plausible_grant("abcdefgh"), "too short rejected");
         assert!(!plausible_grant(&"g".repeat(32)), "non-hex rejected");
@@ -1273,15 +1504,31 @@ mod tests {
     fn panel_grant_query_extraction() {
         // Position-independent + ignore surrounding params (the shared
         // query_param helper; grant must not be confused with lookalikes).
-        assert_eq!(query_param(Some(&format!("grant={GRANT}")), "grant"), Some(GRANT));
-        assert_eq!(query_param(Some(&format!("x=1&grant={GRANT}")), "grant"), Some(GRANT));
-        assert_eq!(query_param(Some("xgrants=1"), "grant"), None, "prefix must not match");
-        assert_eq!(query_param(Some("grants=1"), "grant"), None, "longer key must not match");
+        assert_eq!(
+            query_param(Some(&format!("grant={GRANT}")), "grant"),
+            Some(GRANT)
+        );
+        assert_eq!(
+            query_param(Some(&format!("x=1&grant={GRANT}")), "grant"),
+            Some(GRANT)
+        );
+        assert_eq!(
+            query_param(Some("xgrants=1"), "grant"),
+            None,
+            "prefix must not match"
+        );
+        assert_eq!(
+            query_param(Some("grants=1"), "grant"),
+            None,
+            "longer key must not match"
+        );
         assert_eq!(query_param(None, "grant"), None);
     }
 
     async fn json_body(resp: Response) -> serde_json::Value {
-        let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
         serde_json::from_slice(&body).unwrap()
     }
 
@@ -1308,7 +1555,8 @@ mod tests {
         let resp = handle_request(
             req_with_token("POST", "/api/tools/terminal_list", TEST_TOKEN),
             state(),
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["ok"], true);
@@ -1320,7 +1568,8 @@ mod tests {
         let resp = handle_request(
             req_with_token("POST", "/api/tools/does_not_exist", TEST_TOKEN),
             state(),
-        ).await;
+        )
+        .await;
         let v = json_body(resp).await;
         assert_eq!(v["ok"], false);
         assert!(v["error"].as_str().unwrap().contains("unknown tool"));
@@ -1356,8 +1605,14 @@ mod tests {
         let v = json_body(resp).await;
         assert_eq!(v["ok"], false);
         let err = v["error"].as_str().unwrap_or_default();
-        assert!(err.contains("node.exe"), "error must name the missing node.exe: {err}");
-        assert!(err.contains("playwright"), "error must point at the playwright bundle: {err}");
+        assert!(
+            err.contains("node.exe"),
+            "error must name the missing node.exe: {err}"
+        );
+        assert!(
+            err.contains("playwright"),
+            "error must point at the playwright bundle: {err}"
+        );
     }
 
     #[tokio::test]
@@ -1383,7 +1638,9 @@ mod tests {
         // The root page needs no token — it carries no data beyond the version.
         let resp = handle_request(req("GET", "/"), state()).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
+            .await
+            .unwrap();
         let text = String::from_utf8_lossy(&body);
         assert!(text.contains("vale-agent"));
     }
@@ -1404,24 +1661,23 @@ mod tests {
         let resp = handle_request(req("GET", "/api/events/term"), st.clone()).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
-        st.event_bus.emit_term_output(
-            serde_json::json!({"session_id": "term-0", "data": [104, 105]}),
-        );
+        st.event_bus
+            .emit_term_output(serde_json::json!({"session_id": "term-0", "data": [104, 105]}));
 
         // Read just the first frame — the SSE stream never closes, so the whole
         // body can't be drained with to_bytes.
         let mut body = resp.into_body();
-        let frame = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            body.frame(),
-        )
-        .await
-        .expect("SSE frame within timeout")
-        .expect("stream produced a frame")
-        .expect("frame ok");
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(2), body.frame())
+            .await
+            .expect("SSE frame within timeout")
+            .expect("stream produced a frame")
+            .expect("frame ok");
         let bytes = frame.into_data().expect("data frame");
         let text = String::from_utf8_lossy(&bytes);
-        assert!(text.contains("term-0"), "SSE frame missing session id: {text}");
+        assert!(
+            text.contains("term-0"),
+            "SSE frame missing session id: {text}"
+        );
         assert!(text.starts_with("data: "));
     }
 
@@ -1476,9 +1732,18 @@ mod tests {
         let v = json_body(resp).await;
         assert_eq!(v["ok"], true);
         assert!(v["buffer_mb"].is_u64(), "buffer_mb must be a number: {v}");
-        assert!(v["tunnel_configured"].is_boolean(), "tunnel_configured shape: {v}");
-        assert!(v["tunnel_running"].is_boolean(), "tunnel_running shape: {v}");
-        assert!(v["console_url"].is_null(), "unbound config must read back null: {v}");
+        assert!(
+            v["tunnel_configured"].is_boolean(),
+            "tunnel_configured shape: {v}"
+        );
+        assert!(
+            v["tunnel_running"].is_boolean(),
+            "tunnel_running shape: {v}"
+        );
+        assert!(
+            v["console_url"].is_null(),
+            "unbound config must read back null: {v}"
+        );
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 
@@ -1488,20 +1753,32 @@ mod tests {
         let resp = handle_request(
             req_with_json("PUT", "/api/settings", r#"{"buffer_mb": 32}"#),
             st.clone(),
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["ok"], true);
         assert_eq!(v["buffer_mb"].as_u64(), Some(32));
         // The runtime cap took effect immediately (panel hint: applies to NEW
         // output), and the file now carries 8 → 32.
-        assert_eq!(st.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed), 32 * 1024 * 1024);
+        assert_eq!(
+            st.terminal_buf_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+            32 * 1024 * 1024
+        );
         let cfg = Config::load(&cfg_path).unwrap();
-        assert_eq!(cfg.terminal.buffer_mb, 32, "PUT must persist to config.yaml");
+        assert_eq!(
+            cfg.terminal.buffer_mb, 32,
+            "PUT must persist to config.yaml"
+        );
         // HIGH(audit): a settings write must NEVER drop the device_token —
         // a token-less rewrite makes the next boot mint a NEW token and 401
         // every client (the recorded rotation incident).
-        assert_eq!(cfg.server.device_token.as_deref(), Some(TEST_TOKEN), "device_token must survive PUT /api/settings");
+        assert_eq!(
+            cfg.server.device_token.as_deref(),
+            Some(TEST_TOKEN),
+            "device_token must survive PUT /api/settings"
+        );
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 
@@ -1512,21 +1789,37 @@ mod tests {
         let resp = handle_request(
             req_with_json("PUT", "/api/settings", r#"{"buffer_mb": 16}"#),
             st.clone(),
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let cfg = Config::load(&cfg_path).unwrap();
         assert_eq!(cfg.terminal.buffer_mb, 16);
-        assert_eq!(cfg.platform.console_url.as_deref(), Some(CFG_URL), "buffer-only PUT must not clear console_url");
+        assert_eq!(
+            cfg.platform.console_url.as_deref(),
+            Some(CFG_URL),
+            "buffer-only PUT must not clear console_url"
+        );
         // 2. console_url-only PUT: buffer_mb stays 16 (the stage-n settings
         //    audit: the old code reset an ABSENT buffer_mb to 8).
         let resp = handle_request(
-            req_with_json("PUT", "/api/settings", r#"{"console_url": "https://other.example"}"#),
+            req_with_json(
+                "PUT",
+                "/api/settings",
+                r#"{"console_url": "https://other.example"}"#,
+            ),
             st.clone(),
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let cfg = Config::load(&cfg_path).unwrap();
-        assert_eq!(cfg.platform.console_url.as_deref(), Some("https://other.example"));
-        assert_eq!(cfg.terminal.buffer_mb, 16, "console_url-only PUT must not reset buffer_mb");
+        assert_eq!(
+            cfg.platform.console_url.as_deref(),
+            Some("https://other.example")
+        );
+        assert_eq!(
+            cfg.terminal.buffer_mb, 16,
+            "console_url-only PUT must not reset buffer_mb"
+        );
         assert_eq!(cfg.server.device_token.as_deref(), Some(TEST_TOKEN));
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
@@ -1539,20 +1832,42 @@ mod tests {
         // together; neither can drift.
         let (st, cfg_path) = state_with_cfg("put-memory", CFG_YAML_TOKEN_ONLY);
         let resp = handle_request(
-            req_with_json("PUT", "/api/settings", r#"{"buffer_mb": 32, "console_url": "https://mem.example"}"#),
+            req_with_json(
+                "PUT",
+                "/api/settings",
+                r#"{"buffer_mb": 32, "console_url": "https://mem.example"}"#,
+            ),
             st.clone(),
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         // 1. In-memory visibility: config_snapshot() reflects the change
         //    WITHOUT touching the disk (this assert reads only the RwLock).
         let snap = st.config_snapshot();
-        assert_eq!(snap.terminal.buffer_mb, 32, "in-memory buffer_mb must update");
-        assert_eq!(snap.platform.console_url.as_deref(), Some("https://mem.example"), "in-memory console_url must update");
-        assert_eq!(snap.server.device_token.as_deref(), Some(TEST_TOKEN), "device_token survives in memory too");
+        assert_eq!(
+            snap.terminal.buffer_mb, 32,
+            "in-memory buffer_mb must update"
+        );
+        assert_eq!(
+            snap.platform.console_url.as_deref(),
+            Some("https://mem.example"),
+            "in-memory console_url must update"
+        );
+        assert_eq!(
+            snap.server.device_token.as_deref(),
+            Some(TEST_TOKEN),
+            "device_token survives in memory too"
+        );
         // 2. The file was written (persist=true) with the same values.
         let disk = Config::load(&cfg_path).unwrap();
-        assert_eq!(disk.terminal.buffer_mb, 32, "persist=true must write config.yaml");
-        assert_eq!(disk.platform.console_url.as_deref(), Some("https://mem.example"));
+        assert_eq!(
+            disk.terminal.buffer_mb, 32,
+            "persist=true must write config.yaml"
+        );
+        assert_eq!(
+            disk.platform.console_url.as_deref(),
+            Some("https://mem.example")
+        );
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 
@@ -1562,9 +1877,14 @@ mod tests {
         // tunnel provisioning are SKIPPED (no outbound HTTP on this arm).
         let (st, cfg_path) = state_with_cfg("gw-persist", CFG_YAML_TOKEN_ONLY);
         let resp = handle_request(
-            req_with_json("POST", "/api/gateway/connect", r#"{"console_url": "https://conn.example"}"#),
+            req_with_json(
+                "POST",
+                "/api/gateway/connect",
+                r#"{"console_url": "https://conn.example"}"#,
+            ),
             st.clone(),
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["ok"], true);
@@ -1573,10 +1893,22 @@ mod tests {
         assert_eq!(v["console_url"], "https://conn.example");
         // Write-through (audit A4): the binding is ALSO visible in-process —
         // no restart, no disk reload.
-        assert_eq!(st.config_snapshot().platform.console_url.as_deref(), Some("https://conn.example"), "gateway connect must update the in-memory config too");
+        assert_eq!(
+            st.config_snapshot().platform.console_url.as_deref(),
+            Some("https://conn.example"),
+            "gateway connect must update the in-memory config too"
+        );
         let cfg = Config::load(&cfg_path).unwrap();
-        assert_eq!(cfg.platform.console_url.as_deref(), Some("https://conn.example"), "connect must persist the binding");
-        assert_eq!(cfg.server.device_token.as_deref(), Some(TEST_TOKEN), "device_token must survive the gateway-card write too");
+        assert_eq!(
+            cfg.platform.console_url.as_deref(),
+            Some("https://conn.example"),
+            "connect must persist the binding"
+        );
+        assert_eq!(
+            cfg.server.device_token.as_deref(),
+            Some(TEST_TOKEN),
+            "device_token must survive the gateway-card write too"
+        );
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 
@@ -1590,14 +1922,22 @@ mod tests {
         let resp = handle_request(
             req_with_json("POST", "/api/gateway/connect", r#"{"reg_key": "some-key"}"#),
             st,
-        ).await;
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["ok"], true);
         assert_eq!(v["registered"], false);
-        assert!(v["console_url"].is_null(), "reg-key-only request reports no binding change: {v}");
+        assert!(
+            v["console_url"].is_null(),
+            "reg-key-only request reports no binding change: {v}"
+        );
         let cfg = Config::load(&cfg_path).unwrap();
-        assert_eq!(cfg.platform.console_url.as_deref(), Some(CFG_URL), "reg-key-only request must keep the existing binding");
+        assert_eq!(
+            cfg.platform.console_url.as_deref(),
+            Some(CFG_URL),
+            "reg-key-only request must keep the existing binding"
+        );
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 }

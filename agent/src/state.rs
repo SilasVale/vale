@@ -1,21 +1,21 @@
 use std::fmt;
 use std::sync::Arc;
 
-use vale_agent_core::events::{AppEventBus, EventBus};
-use vale_agent_core::Config;
-use crate::plugins::PluginRegistry;
 use crate::plugins::design::DesignPlugin;
 use crate::plugins::mcp_client::McpClientPlugin;
-use crate::plugins::memory::MemoryPlugin;
 use crate::plugins::memory::store::{MemoryLimits, MemoryStore};
+use crate::plugins::memory::MemoryPlugin;
 use crate::plugins::playwright::manager::PlaywrightManager;
 use crate::plugins::playwright::PlaywrightPlugin;
 use crate::plugins::system::SystemPlugin;
 use crate::plugins::terminal::TerminalPlugin;
 use crate::plugins::update::UpdatePlugin;
+use crate::plugins::PluginRegistry;
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
 use anyhow::Context;
+use vale_agent_core::events::{AppEventBus, EventBus};
+use vale_agent_core::Config;
 
 pub struct AppState {
     // Lock posture: managers own their locks internally (callers hold
@@ -78,8 +78,13 @@ fn build_registry(deps: &RegistryDeps) -> PluginRegistry {
         deps.buffer_limit.clone(),
     )));
     registry.register(Box::new(UpdatePlugin::new(deps.download_url.clone())));
-    registry.register(Box::new(McpClientPlugin::new(deps.event_bus.clone() as Arc<dyn EventBus>)));
-    registry.register(Box::new(DesignPlugin::new(deps.console_url.clone(), deps.download_url.clone())));
+    registry.register(Box::new(McpClientPlugin::new(
+        deps.event_bus.clone() as Arc<dyn EventBus>
+    )));
+    registry.register(Box::new(DesignPlugin::new(
+        deps.console_url.clone(),
+        deps.download_url.clone(),
+    )));
     registry.register(Box::new(PlaywrightPlugin::new(deps.playwright.clone())));
     registry.register(Box::new(MemoryPlugin::new(deps.memory.clone())));
     registry.register(Box::new(SystemPlugin));

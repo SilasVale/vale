@@ -51,7 +51,8 @@ fn load_known_hosts() -> Result<serde_json::Map<String, serde_json::Value>, std:
 /// install (nothing creates vale-known-hosts.json). NotFound → empty map;
 /// corrupt/other errors still propagate so check_server_key FAILS CLOSED
 /// (the re-TOFU-everything MITM protection round-57 built stays intact).
-fn load_known_hosts_or_empty() -> Result<serde_json::Map<String, serde_json::Value>, std::io::Error> {
+fn load_known_hosts_or_empty() -> Result<serde_json::Map<String, serde_json::Value>, std::io::Error>
+{
     match load_known_hosts() {
         Ok(map) => Ok(map),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::Map::new()),
@@ -65,7 +66,10 @@ fn load_known_hosts_or_empty() -> Result<serde_json::Map<String, serde_json::Val
 fn save_known_hosts(map: &serde_json::Map<String, serde_json::Value>) -> std::io::Result<()> {
     let p = known_hosts_path();
     let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_string(map).unwrap_or_else(|_| "{}".into()),
+    )?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -95,7 +99,9 @@ impl client::Handler for SshHandler {
         // on `hosts` before mutating it. Compute the action first — the log
         // macros borrow `fp`/`old_fp`, so the insert (which moves `fp`) must
         // happen AFTER logging in its own scope.
-        let existing = hosts.get(&self.trust_key).and_then(|v| v.as_str().map(String::from));
+        let existing = hosts
+            .get(&self.trust_key)
+            .and_then(|v| v.as_str().map(String::from));
         let changed = match &existing {
             None => {
                 tracing::info!("[vale-agent] ssh: TOFU trust {} fp={}", self.trust_key, fp);
@@ -164,15 +170,25 @@ impl SshSession {
         let handler = SshHandler {
             trust_key: format!("{username}@{host}:{port}"),
         };
-        let mut handle: Handle<SshHandler> =
-            match tokio::time::timeout(std::time::Duration::from_secs(15), connect(config, format!("{host}:{port}"), handler)).await {
-                Ok(Ok(h)) => h,
-                Ok(Err(e)) => return Err(DeviceError::SshConnectFailed {
+        let mut handle: Handle<SshHandler> = match tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            connect(config, format!("{host}:{port}"), handler),
+        )
+        .await
+        {
+            Ok(Ok(h)) => h,
+            Ok(Err(e)) => {
+                return Err(DeviceError::SshConnectFailed {
                     host: host.to_string(),
                     reason: format!("connect failed: {e}"),
-                }),
-                Err(_) => return Err(DeviceError::SshTimeout { host: host.to_string() }),
-            };
+                })
+            }
+            Err(_) => {
+                return Err(DeviceError::SshTimeout {
+                    host: host.to_string(),
+                })
+            }
+        };
 
         // Authenticate: public key when a key path is given (the password
         // field doubles as the key passphrase — None works for unencrypted
@@ -218,7 +234,10 @@ impl SshSession {
                 use russh::client::KeyboardInteractiveAuthResponse;
                 use russh::MethodKind;
                 let mut ki_ok = false;
-                if let russh::client::AuthResult::Failure { remaining_methods, .. } = auth {
+                if let russh::client::AuthResult::Failure {
+                    remaining_methods, ..
+                } = auth
+                {
                     if remaining_methods.contains(&MethodKind::KeyboardInteractive) {
                         let mut resp = handle
                             .authenticate_keyboard_interactive_start(username, None)
@@ -229,9 +248,14 @@ impl SshSession {
                             })?;
                         for _ in 0..4 {
                             match resp {
-                                KeyboardInteractiveAuthResponse::Success => { ki_ok = true; break; }
+                                KeyboardInteractiveAuthResponse::Success => {
+                                    ki_ok = true;
+                                    break;
+                                }
                                 KeyboardInteractiveAuthResponse::Failure { .. } => break,
-                                KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                                KeyboardInteractiveAuthResponse::InfoRequest {
+                                    prompts, ..
+                                } => {
                                     // Answer ONLY a password-looking prompt with
                                     // the password — the first non-empty prompt
                                     // may be an OTP/2FA challenge (Duo, TOTP),
@@ -250,7 +274,11 @@ impl SshSession {
                                                 && (t.contains("password")
                                                     || t.contains("passphrase")
                                                     || t.contains("passcode"));
-                                            if pass_like { pass.to_string() } else { String::new() }
+                                            if pass_like {
+                                                pass.to_string()
+                                            } else {
+                                                String::new()
+                                            }
                                         })
                                         .collect();
                                     resp = handle
@@ -258,7 +286,9 @@ impl SshSession {
                                         .await
                                         .map_err(|e| DeviceError::SshConnectFailed {
                                             host: host.to_string(),
-                                            reason: format!("keyboard-interactive respond failed: {e}"),
+                                            reason: format!(
+                                                "keyboard-interactive respond failed: {e}"
+                                            ),
                                         })?;
                                 }
                             }
@@ -268,7 +298,9 @@ impl SshSession {
                 if !ki_ok {
                     return Err(DeviceError::SshConnectFailed {
                         host: host.to_string(),
-                        reason: "password authentication rejected (password or keyboard-interactive)".into(),
+                        reason:
+                            "password authentication rejected (password or keyboard-interactive)"
+                                .into(),
                     });
                 }
             }
@@ -289,16 +321,14 @@ impl SshSession {
     /// Open an SFTP session on this connection (P4c). The caller owns the
     /// SftpSession and must close it before dropping the SshSession.
     #[cfg(feature = "terminal")]
-    pub async fn sftp_session(
-        &self,
-    ) -> Result<russh_sftp::client::SftpSession, DeviceError> {
-        let channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| DeviceError::Internal {
-                message: format!("sftp open channel: {e}"),
-            })?;
+    pub async fn sftp_session(&self) -> Result<russh_sftp::client::SftpSession, DeviceError> {
+        let channel =
+            self.handle
+                .channel_open_session()
+                .await
+                .map_err(|e| DeviceError::Internal {
+                    message: format!("sftp open channel: {e}"),
+                })?;
         channel
             .request_subsystem(true, "sftp")
             .await
@@ -330,13 +360,14 @@ impl SshSession {
             mpsc::Sender<(u16, u16)>,
         ),
         DeviceError,
-    > {        let channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| DeviceError::Internal {
-                message: format!("open channel: {e}"),
-            })?;
+    > {
+        let channel =
+            self.handle
+                .channel_open_session()
+                .await
+                .map_err(|e| DeviceError::Internal {
+                    message: format!("open channel: {e}"),
+                })?;
 
         let r = if rows > 0 { rows } else { 24 };
         let c = if cols > 0 { cols } else { 80 };

@@ -1,7 +1,9 @@
-use rmcp::{ServiceExt, transport::{
-    StreamableHttpClientTransport,
-    streamable_http_client::StreamableHttpClientTransportConfig,
-}};
+use rmcp::{
+    transport::{
+        streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
+    },
+    ServiceExt,
+};
 
 #[tokio::main]
 async fn main() {

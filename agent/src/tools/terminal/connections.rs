@@ -43,27 +43,43 @@ fn write_all(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), Dev
     // partial file (read_all then parsed to an empty map, losing every saved
     // connection), the same class fixed for secrets.rs/config.yaml.
     let tmp = p.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_else(|_| "{}".into()))
-        .map_err(|e| DeviceError::Internal { message: format!("write {tmp:?}: {e}") })?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_string(map).unwrap_or_else(|_| "{}".into()),
+    )
+    .map_err(|e| DeviceError::Internal {
+        message: format!("write {tmp:?}: {e}"),
+    })?;
     // Credential audit round MED-2: shared hardener (metadata-only store, so
     // best-effort — a failure cannot leak more than host/port inventory).
     if crate::paths::harden_file(&tmp).is_err() {
         tracing::debug!("[vale-agent] connections: ACL hardening unavailable");
     }
-    std::fs::rename(&tmp, &p)
-        .map_err(|e| DeviceError::Internal { message: format!("rename to {p:?}: {e}") })
+    std::fs::rename(&tmp, &p).map_err(|e| DeviceError::Internal {
+        message: format!("rename to {p:?}: {e}"),
+    })
 }
 
 /// Remember a successful connection. `kind` is pty|ssh|serial, `target` the
 /// open target (with ?baud= etc. for serial). Deduped by `kind:target`.
-pub fn remember(kind: &str, target: &str, label: &str, params: &serde_json::Map<String, serde_json::Value>) -> Result<(), DeviceError> {
-    if kind == "pty" && target.is_empty() { return Ok(()); } // default shell — nothing to remember
+pub fn remember(
+    kind: &str,
+    target: &str,
+    label: &str,
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), DeviceError> {
+    if kind == "pty" && target.is_empty() {
+        return Ok(());
+    } // default shell — nothing to remember
     let _g = recover_guard(&STORE_LOCK);
     let mut map = read_all();
     let key = format!("{kind}:{target}");
     let mut entry = serde_json::Map::new();
     entry.insert("kind".into(), serde_json::Value::String(kind.to_string()));
-    entry.insert("target".into(), serde_json::Value::String(target.to_string()));
+    entry.insert(
+        "target".into(),
+        serde_json::Value::String(target.to_string()),
+    );
     entry.insert("label".into(), serde_json::Value::String(label.to_string()));
     // Preserve the open params so a reconnect passes them through (baud,
     // parity, data/stop bits, rows/cols — the target string alone would lose
@@ -112,7 +128,9 @@ pub fn forget(id: &str) -> Result<bool, DeviceError> {
     let _g = recover_guard(&STORE_LOCK);
     let mut map = read_all();
     let removed = map.remove(id).is_some();
-    if removed { write_all(&map)?; }
+    if removed {
+        write_all(&map)?;
+    }
     Ok(removed)
 }
 
@@ -122,7 +140,8 @@ mod conn_tests {
     use super::*;
 
     fn isolated(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("vale-conn-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("vale-conn-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         TEST_DIR.with(|d| *d.borrow_mut() = Some(dir.clone()));
@@ -165,7 +184,10 @@ mod conn_tests {
         )
         .unwrap();
         let got = list();
-        assert!(got[0]["params"].get("password").is_none(), "legacy password leaked through list()");
+        assert!(
+            got[0]["params"].get("password").is_none(),
+            "legacy password leaked through list()"
+        );
         assert_eq!(got[0]["params"]["user"], "a");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -173,7 +195,10 @@ mod conn_tests {
     #[test]
     fn forget_reports_reality() {
         let dir = isolated("forget");
-        assert!(!forget("ssh:none@x:22").unwrap(), "unknown id must report false");
+        assert!(
+            !forget("ssh:none@x:22").unwrap(),
+            "unknown id must report false"
+        );
         remember("pty", "pwsh", "shell", &serde_json::Map::new()).unwrap();
         assert_eq!(list().len(), 1);
         assert!(forget("pty:pwsh").unwrap());
