@@ -28,6 +28,11 @@ pub struct JobInfo {
     pub exit_code: Option<i32>,
 }
 type JobsMap = std::sync::Arc<std::sync::Mutex<HashMap<String, JobInfo>>>;
+// P2-5: drainer frames rerouted after a vanished history entry (warn path
+// above). Monotonic process-lifetime counter — a rising value means the
+// retain/close race is firing, not silent data loss.
+static DRAINER_DROPPED_FRAMES: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 // (A process-global jobs_map() once existed here — review #2 removed it:
 // the bg waiter wrote THAT map while inserts/reads used the per-registry
 // one, so terminal_jobs never observed completion. One map, threaded
@@ -472,8 +477,22 @@ fn tool_open(
                         // offset N dedups against start). Route the tail into
                         // the retained history entry instead; the cursor stays
                         // continuous and the tail reaches the panel.
+                        // P2-5: no expect() on the contains/get pair — degrade
+                        // loudly (warn + drop-frame count) instead of panicking
+                        // the drainer task mid-stream.
                         let entry: &mut SessionBuf = if store.history.contains_key(&sid_buf) {
-                            &mut store.history.get_mut(&sid_buf).expect("checked above").buf
+                            match store.history.get_mut(&sid_buf) {
+                                Some(h) => &mut h.buf,
+                                None => {
+                                    DRAINER_DROPPED_FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    tracing::warn!(
+                                        sid = %sid_buf,
+                                        dropped = DRAINER_DROPPED_FRAMES.load(std::sync::atomic::Ordering::Relaxed),
+                                        "drainer: history entry vanished after contains_key; routing frame to live entry"
+                                    );
+                                    store.live.entry(sid_buf.clone()).or_default()
+                                }
+                            }
                         } else {
                             store.live.entry(sid_buf.clone()).or_default()
                         };
@@ -1084,10 +1103,12 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                     // window below — SSH commands run REMOTELY and their long
                     // silent stretches must not read as "command finished".
                     let sess_info = terminal_mgr.term_info(&sid).await;
-                    if sess_info.is_none() {
+                    // P2-5: no expect("checked above") — the session may close
+                    // between the check and this line; degrade to the enriched
+                    // not-found error instead of panicking the handler.
+                    let Some(sess_info) = sess_info else {
                         return Err(session_lost(&terminal_mgr, &sid).await);
-                    }
-                    let sess_info = sess_info.expect("checked above");
+                    };
                     let sess_kind = sess_info.kind.clone();
                     let sess_shell = sess_info.shell.clone();
                     // Background mode (round-60): write the command and return
@@ -1348,11 +1369,15 @@ fn tool_execute(terminal_mgr: &Arc<TerminalManager>, bus: &Arc<dyn EventBus>, ou
                                         while let Some(f) = crate::tools::terminal::shell_integration::find_finished(&pending) {
                                             pending.drain(..f.end);
                                             marker_seen_at = Some(Instant::now());
-                                            if let Ok(mut jm) = jobs_bg.lock() {
-                                                if let Some(j) = jm.get_mut(&job_id2) {
-                                                    j.done = true;
-                                                    j.exit_code = f.exit_code;
-                                                }
+                                            // P2-6: poison recovery, never skip the
+                                            // write — an if-let-Ok drop here
+                                            // swallowed done/exit_code and left
+                                            // terminal_jobs reporting running
+                                            // forever (same idiom as 377/988/1291).
+                                            let mut jm = jobs_bg.lock().unwrap_or_else(|p| p.into_inner());
+                                            if let Some(j) = jm.get_mut(&job_id2) {
+                                                j.done = true;
+                                                j.exit_code = f.exit_code;
                                             }
                                         }
                                     } else {

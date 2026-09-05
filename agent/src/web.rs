@@ -1068,7 +1068,12 @@ async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
         // ---- control for the panel's plugins page. Auth: all /api/* POSTs
         // and /api GETs pass the gate above.
         ("GET", "/api/plugins/status") => {
-            serde_json::json!({ "ok": true, "playwright": state.playwright.status().await })
+            let mut obj = serde_json::json!({ "ok": true, "playwright": state.playwright.status().await });
+            // P2-4: same boxed manifest as /api/status (advisory, omitted when absent).
+            if let Some(boxed) = boxed_versions() {
+                obj["boxed_versions"] = boxed;
+            }
+            obj
         }
         ("POST", "/api/plugins/playwright/start") => {
             match state.playwright.start().await {
@@ -1332,6 +1337,14 @@ async fn sse_term_stream(state: Arc<AppState>) -> Response {
 
 // ── Status ────────────────────────────────────────────────────
 
+/// P2-4: read the boxed-component version manifest (`vale setup`/`vale update`
+/// write `<install>/boxed-versions.json`). Returns None when absent or
+/// unparseable — advisory only, never fail-closed.
+fn boxed_versions() -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(crate::paths::install_dir().join("boxed-versions.json")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 async fn api_status(state: &AppState) -> serde_json::Value {
     let serial = state.serial_pool.list_open_ports();
     // stage-n: health diagnostics — uptime (a low value right after an
@@ -1358,6 +1371,12 @@ async fn api_status(state: &AppState) -> serde_json::Value {
         if !rel.is_empty() {
             out["release"] = serde_json::json!(rel);
         }
+    }
+    // P2-4: echo the boxed-component version manifest (written by
+    // `vale setup` / `vale update` next to the install dir). Omitted when
+    // absent (older installs); the file is advisory, never fail-closed.
+    if let Some(boxed) = boxed_versions() {
+        out["boxed_versions"] = boxed;
     }
     if let Some(cpu) = vitals.cpu_pct {
         out["cpu_pct"] = serde_json::json!(cpu);

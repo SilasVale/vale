@@ -396,12 +396,22 @@ async fn connect_http(url: String, headers: Vec<(String, String)>) -> Result<ser
     // when the desktop CDP is up AND the connected server exposes
     // browser_tabs (i.e. it IS a playwright-mcp driving the desktop) —
     // foreign MCP servers must never receive this call.
+    // P1-1: NEVER hold SESSION across the auto-select (3s settle + up to 4
+    // x 2s retries + network round-trips would block every call/connect).
+    // Take the session OUT of the slot, release the lock, run the network
+    // on the owned value, then restore it.
     if desktop_cdp_up() && tools.iter().any(|(n, _)| n == "browser_tabs") {
-        let mut guard = SESSION.lock().await;
-        if let Some(sess) = guard.as_mut() {
-            let _ = select_embedded_view_tab(sess).await;
+        let taken = SESSION.lock().await.take();
+        if let Some(mut sess) = taken {
+            let _ = select_embedded_view_tab(&mut sess).await;
+            let mut guard = SESSION.lock().await;
+            // A concurrent connect that landed meanwhile wins — never
+            // clobber a fresh session with our (older) one; dropping ours
+            // just drops an Http client (no child to reap).
+            if guard.is_none() {
+                *guard = Some(sess);
+            }
         }
-        drop(guard);
     }
 
     Ok(json!({
@@ -468,11 +478,17 @@ pub(crate) fn preferred_cdp_endpoint() -> Option<String> {
 }
 
 fn tcp_probe_up(port: u16) -> bool {
-    std::net::TcpStream::connect_timeout(
-        &format!("127.0.0.1:{port}").parse().unwrap(),
-        std::time::Duration::from_millis(300),
-    )
-    .is_ok()
+    // P2-7: no parse().unwrap() on a format!-built addr — a malformed port
+    // string must read as "down", never panic the caller.
+    let addr: Option<std::net::SocketAddr> = format!("127.0.0.1:{port}").parse().ok();
+    match addr {
+        Some(a) => std::net::TcpStream::connect_timeout(
+            &a,
+            std::time::Duration::from_millis(300),
+        )
+        .is_ok(),
+        None => false,
+    }
 }
 
 /// One-line human summary of an MCP browser call for the panel timeline.
@@ -698,12 +714,20 @@ async fn connect_stdio() -> Result<serde_json::Value, DeviceError> {
     // (the target whose URL is not the desktop SPA) so the very first
     // browser_navigate drives the page the user watches. Best-effort: a
     // failure (no Electron, tabs not ready yet, odd layout) only logs.
+    // P1-1: same take-out-and-release pattern as the http arm — never hold
+    // SESSION across the 3s settle + retries + network round-trips.
     if desktop_cdp_up() {
-        let mut guard = SESSION.lock().await;
-        if let Some(sess) = guard.as_mut() {
-            let _ = select_embedded_view_tab(sess).await;
+        let taken = SESSION.lock().await.take();
+        if let Some(mut sess) = taken {
+            let _ = select_embedded_view_tab(&mut sess).await;
+            let mut guard = SESSION.lock().await;
+            // A concurrent connect that landed meanwhile wins — never
+            // clobber a fresh session; dropping ours reaps its stdio
+            // child, which is correct (the slot no longer points at it).
+            if guard.is_none() {
+                *guard = Some(sess);
+            }
         }
-        drop(guard);
     }
 
     Ok(json!({

@@ -1,7 +1,7 @@
 //! Path resolution — ONE source of truth for where Vale lives on Windows.
 //!
 //! C1 (2026-08-28): `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}` (written by
-//! the NSIS installer / setup.ps1) is authoritative. Resolution order:
+//! vale setup (retired: NSIS/setup.ps1)) is authoritative. Resolution order:
 //!   1. registry InstallDir (Windows, when readable)
 //!   2. the running exe's directory (self-contained installs, dev builds,
 //!      and non-Windows) — the historic behavior
@@ -62,9 +62,10 @@ pub fn exe_dir() -> PathBuf {
 }
 
 /// The install dir — registry first, then the exe dir. No legacy directory
-/// probing: a fresh install always writes the registry (NSIS/setup.ps1/
-/// vale.js), and self-contained/dev installs are exe-relative. The exe dir
-/// is the ONLY fallback so there is exactly one resolution path.
+/// probing: a fresh install always writes the registry (written by vale setup
+/// (retired: NSIS/setup.ps1)/vale.js), and self-contained/dev installs are
+/// exe-relative. The exe dir is the ONLY fallback so there is exactly one
+/// resolution path.
 ///
 /// Cached (see the static above): boot-invariant for a running process.
 pub fn install_dir() -> PathBuf {

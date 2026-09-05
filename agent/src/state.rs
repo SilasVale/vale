@@ -17,6 +17,9 @@ use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
 
 pub struct AppState {
+    // Lock posture: 除config_path外managers持有内部锁 — managers own their
+    // locks internally (callers hold Arc<Manager>); AppState itself holds no
+    // lock except config_path below.
     pub serial_pool: Arc<SerialPool>,
     pub terminal_mgr: Arc<TerminalManager>,
     /// Unified event bus.
@@ -90,8 +93,8 @@ impl AppState {
             (config.terminal.buffer_mb.clamp(1, 64) as usize) * 1024 * 1024,
         ));
         let playwright = PlaywrightManager::new();
-        // Device-local memory store — lives under the install dir (same
-        // heuristic as the update plugin). Capacity from config `memory:`
+        // Device-local memory store — lives under the DATA dir
+        // (data_dir()/memory). Capacity from config `memory:`
         // (defaults when absent). Shared Arc with the MemoryPlugin.
         let memory = Arc::new(MemoryStore::new(
             crate::plugins::memory::default_memory_dir(),

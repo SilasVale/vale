@@ -347,7 +347,19 @@ fn self_heal() {
         Err(_) => return, // no exe path, nothing to repair
     };
     let exe_str = exe.to_string_lossy().into_owned();
-    let install_dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    // P2-8 dual-source install dir: prefer the centralized
+    // paths::install_dir() (registry InstallDir, the single source of truth);
+    // fall back to exe.parent() when the registry is missing (dev builds /
+    // unregistered installs — paths::install_dir() already falls back to the
+    // exe dir itself, so this is belt-and-braces). No legacy-dir probing.
+    let install_dir = {
+        let d = vale_agent::paths::install_dir();
+        if d.as_os_str().is_empty() {
+            exe.parent().map(|p| p.to_path_buf()).unwrap_or_default()
+        } else {
+            d
+        }
+    };
     // 0. Half-swap recovery (round-57): the NSIS upgrade swaps via
     //    exe → .bak then .new → exe — a power cut between the two renames
     //    leaves ONLY .bak + .new (no exe), the boot task fails to start the
@@ -412,7 +424,7 @@ fn self_heal() {
         }
     }
     // npm-channel staged leftovers: a FAILED agent_update stages
-    // `vale-agent.new.exe` / `vale-desktop.new.exe` / boxed `.new` files and
+    // `vale-agent.new.exe` / boxed `.new` files and
     // returns false WITHOUT launching the swap script — the Rust failure
     // paths and the swap script's own !$ok branch both delete them
     // best-effort, but a power cut between staging and cleanup can still
@@ -420,12 +432,11 @@ fn self_heal() {
     // understands the NSIS-era `vale-agent.exe.new` half-swap above (a
     // different filename); applying an npm-era staging of unknown provenance
     // could mix a failed release's components under the old version marker
-    // (and a stranded desktop `.new` would otherwise be picked up by the
+    // (a stranded boxed `.new` would otherwise be picked up by the
     // NEXT successful swap — version skew). Delete best-effort; the next
     // agent_update re-downloads + re-stages from scratch (safe + retryable).
     for stale in [
         install_dir.join("vale-agent.new.exe"),
-        install_dir.join("vale-desktop.new.exe"),
         install_dir.join("vale-playwright.new.zip"),
         install_dir.join("tools").join("cloudflared.new.exe"),
     ] {
