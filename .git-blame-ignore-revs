@@ -1,0 +1,6 @@
+# Commits whose diffs are mechanical/style-only and should be skipped by
+# git blame and GitHub's blame view (which honors this file natively).
+# After editing, run: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style(stage-agent): adopt rustfmt — cargo fmt --all, zero behavior change
+382dc453
