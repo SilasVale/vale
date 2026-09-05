@@ -174,6 +174,13 @@ build_studio() {
       && cp node_modules/@xterm/addon-fit/lib/addon-fit.js node_modules/@xterm/addon-web-links/lib/addon-web-links.js vendor/xterm/ )
   echo "=== [studio] API contract tests ==="
   ( cd "$ROOT/studio" && npm test )
+  # Fail-fast vendor check: vendor/ is gitignored and generated above — a
+  # missing loader means a silent broken editor (Monaco never ready).
+  # The server also warns at boot and reports /api/boot vendor status.
+  [ -f "$ROOT/studio/vendor/monaco/vs/loader.js" ] \
+    || { echo "  !! studio vendor missing: monaco loader.js"; exit 1; }
+  [ -f "$ROOT/studio/vendor/xterm/xterm.js" ] \
+    || { echo "  !! studio vendor missing: xterm.js"; exit 1; }
   echo "=== [studio] pm2 restart ==="
   pm2 start "$ROOT/studio/ecosystem.config.js" --only vale-studio >/dev/null 2>&1 || true
   pm2 restart vale-studio >/dev/null

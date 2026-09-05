@@ -19,6 +19,8 @@ Subprojects have their own build docs:
 - **agent**: `agent/CLAUDE.md` (cargo-xwin cross-compile, feature gating, MCP tool additions, Windows smoke checklist; mirrors `agent/AGENTS.md` — keep both in sync)
 - **gateway / index**: wrangler deploy per their `wrangler.jsonc`
 
+Panel-first: `./scripts/build.sh agent` rebuilds the panel SPA before the exe (panel.js is embedded at compile time) — never ship a raw `cargo xwin build` after touching `agent/resources/panel-react/`.
+
 ## Install / update channel (2026-08-28: npm is THE single channel)
 
 The NSIS installer, `setup.ps1` and `run-setup.bat` are RETIRED

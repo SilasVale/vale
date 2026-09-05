@@ -74,6 +74,12 @@ jobs:
       - name: Install deps
         run: npm ci --include=optional
         working-directory: agent/resources/panel-react
+      # P1-4: build the SPA in CI too (mirrors build.sh agent + release.yml
+      # Build-before-Test order — the exe include_str!-embeds the build
+      # output, so a build break must fail the PR, not the release).
+      - name: Build
+        run: npm run build
+        working-directory: agent/resources/panel-react
       - name: Test
         run: npm test
         working-directory: agent/resources/panel-react
@@ -166,6 +172,42 @@ jobs:
             fi
           done
           echo "electron src copies in sync OK"
+      # P1-2 bin/vale.js freshness (same gate as release.yml:140-143):
+      # recompile src/vale.ts with the tsc the electron step installed
+      # above and cmp against the committed bin/vale.js — a src change
+      # without recompiling fails the PR, not the release.
+      - name: bin/vale.js freshness (tsc recompile + cmp, same as release)
+        working-directory: agent
+        run: |
+          (cd vale-agent-npm && ./node_modules/.bin/tsc -p tsconfig.json --outDir /tmp/vale-fresh-bin)
+          if ! cmp -s "/tmp/vale-fresh-bin/vale.js" "vale-agent-npm/bin/vale.js"; then
+            echo "::error::vale-agent-npm/bin/vale.js is stale (src/vale.ts changed without recompiling) — recompile and commit bin/vale.js"
+            exit 1
+          fi
+          echo "bin/vale.js freshness check OK"
+      # P1-5 pack + content subset gate: actually run npm pack (no exe is
+      # staged in this xwin-less job, so the exe is EXCLUDED) and assert
+      # the other 6 release.yml files are inside — a files[]/rename slip
+      # fails the PR, not the release.
+      - name: Pack + content subset gate (no exe in this job)
+        working-directory: agent
+        run: |
+          TGZ_NAME=$(cd vale-agent-npm && npm pack 2>/dev/null | tail -n 1)
+          mkdir -p /tmp/packcheck
+          mv "vale-agent-npm/$TGZ_NAME" /tmp/packcheck/
+          tar tzf "/tmp/packcheck/$TGZ_NAME" > /tmp/tgz-list-ci.txt
+          for F in "vale-desktop-electron/src/main.js" \
+                   "vale-desktop-electron/src/preload.js" \
+                   "vale-desktop-electron/src/url-policy.js" \
+                   "vale-desktop-electron/icon.png" \
+                   "vale-desktop-electron/icon.ico" \
+                   "bin/vale.js"; do
+            if ! grep -qE "(^|/)${F}$" /tmp/tgz-list-ci.txt; then
+              echo "::error::packed tgz missing required file: $F"
+              exit 1
+            fi
+          done
+          echo "pack content subset check OK (6/6 — exe excluded, no xwin in this job)"
       # (c) vale-agent-npm CLI tests — deliberately NO npm ci first: the
       # package has zero dependencies and no lockfile, so npm ci would
       # fail with EUSAGE. `npm test` (node --test over node builtins) runs
@@ -223,7 +265,8 @@ jobs:
   # satellite proxies have NO unit tests — compile + config check without
   # uploading (wrangler v4 supports --dry-run; verified locally). Needs no
   # secrets: dry-run never uploads. vercel-proxy is a Vercel project, not a
-  # Worker — no dry-run exists for it; smoke it before deploy instead.
+  # Worker — no dry-run exists for it, so its api files get node --check
+  # instead (syntax gate; smoke it before deploy as well).
   proxies:
     name: proxies (wrangler dry-run)
     runs-on: ubuntu-latest
@@ -243,3 +286,11 @@ jobs:
       - name: Dry-run openrouter
         run: wrangler deploy --dry-run
         working-directory: proxies/my-openrouter-proxy
+      - name: Syntax-check vercel-proxy api
+        run: |
+          node --check api/proxy.js
+          node --check api/zen.js
+          node --experimental-strip-types --check api/git.ts
+          node --experimental-strip-types --check api/github.ts
+          node --experimental-strip-types --check api/gform.ts
+        working-directory: proxies/vercel-proxy
