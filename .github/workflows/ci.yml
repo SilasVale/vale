@@ -189,9 +189,11 @@ jobs:
         working-directory: index
 
   # studio API contract tests — black-box spawn of the real server
-  # (test/api.test.mjs). Runtime-only install: devDeps (monaco/xterm vendor
-  # assets) are unneeded for the contract tests, and --ignore-scripts skips
-  # the node-pty native build (server falls back to script(1)). Well under 2 min.
+  # (test/api.test.mjs). Mirrors build.sh studio: full install (the
+  # monaco/xterm browser assets are devDeps that get VENDORED into
+  # gitignored vendor/ — test 17 fetches them, so --omit=dev breaks it),
+  # --ignore-scripts skips the node-pty native build (server falls back
+  # to script(1)), then vendor, then test.
   studio:
     name: studio (api contract tests)
     runs-on: ubuntu-latest
@@ -202,8 +204,17 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: studio/package-lock.json
-      - name: Install deps (runtime only)
-        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Install deps (devDeps needed for vendored assets)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: studio
+      - name: Vendor browser assets (monaco/xterm, gitignored)
+        run: |
+          mkdir -p vendor/xterm
+          rm -rf vendor/monaco
+          mkdir -p vendor/monaco
+          cp -r node_modules/monaco-editor/min/vs/. vendor/monaco/vs/
+          cp node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/xterm/css/xterm.css vendor/xterm/
+          cp node_modules/@xterm/addon-fit/lib/addon-fit.js node_modules/@xterm/addon-web-links/lib/addon-web-links.js vendor/xterm/
         working-directory: studio
       - name: API contract tests
         run: npm test
