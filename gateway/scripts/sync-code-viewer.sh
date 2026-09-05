@@ -2,12 +2,11 @@
 # Sync the vale-gate sources into public/code/files and generate the manifest.
 # Usage: run `bash scripts/sync-code-viewer.sh` after editing code, then `wrangler deploy`.
 #
-# MIRROR DISCIPLINE (round-345): this script and scripts/build.sh deploy_worker
-# sync the SAME tree (gateway/public/code/files/vale-gate). Both use rm -rf +
-# re-copy: plain cp never deletes, so files removed from gateway/src (e.g.
-# plugin-hub.ts, round-341) kept being served by the Source Viewer. If you
-# change the file set here, mirror the change in build.sh (which I cannot —
-# see its deploy_worker gateway block), and vice versa.
+# MIRROR DISCIPLINE: scripts/build.sh deploy_worker (gateway) calls THIS script
+# as its single sync path — there is no second implementation to keep in
+# step. Both use rm -rf + re-copy: plain cp never deletes, so files removed
+# from gateway/src (e.g. plugin-hub.ts, round-341) kept being served by the
+# Source Viewer until the rm -rf discipline landed.
 set -e
 cd "$(dirname "$0")/.."
 DEST=public/code/files
@@ -63,3 +62,21 @@ with open(os.path.join(dest, "..", "manifest.json"), "w") as f:
     json.dump({"files": files}, f, indent=2, ensure_ascii=False)
 print(f"generated manifest: {len(files)} files → public/code/")
 EOF
+
+# Redact the production download host in the PUBLISHED snapshot (comments
+# only — code strings, error copy and defaults keep the real host). The
+# mirror is otherwise byte-identical to live; without this step every
+# re-sync wipes the redaction. Fail LOUD if a pattern stops matching
+# (source line moved) instead of silently publishing the raw host.
+redact() { # $1=file $2=live-text ERE $3=sed-expr $4=expected-count
+  local n m
+  n="$(grep -c -E -e "$2" "$DEST/vale-gate/$1" || true)"
+  [ "$n" = "$4" ] || { echo "  !! redaction pattern gone in $1 (want $4, got $n) — update sync-code-viewer.sh" >&2; exit 1; }
+  sed -i -e "$3" "$DEST/vale-gate/$1"
+  m="$(grep -c -F '<dist-host>' "$DEST/vale-gate/$1" || true)"
+  [ "$m" = "$4" ] || { echo "  !! redaction did not apply in $1 (want $4, got $m)" >&2; exit 1; }
+}
+redact "src/auth.ts" '\*\.agent\.saisi\.online' 's/\*\.agent\.saisi\.online/*.<dist-host>/g' 1
+redact "src/store.ts" 'd1\.agent\.saisi\.online' 's/d1\.agent\.saisi\.online/d1.<dist-host>/g' 1
+redact "src/plugins/devices.ts" '/api/version on agent\.saisi\.online' 's|/api/version on agent\.saisi\.online|/api/version on https://<dist-host>|g' 1
+echo "redacted production host in 3 mirror comments"

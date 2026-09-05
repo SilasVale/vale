@@ -82,22 +82,16 @@ deploy_worker() {
         return 1
       fi
     done
-    local mirror_root="$ROOT/gateway/public/code/files/vale-gate"
-    local code_dir="$mirror_root/src"
+    # Single sync path: delegate to gateway/scripts/sync-code-viewer.sh
+    # (rm -rf + re-copy + dynamic manifest + <dist-host> redaction). The old
+    # inline cp block lived here and drifted from that script (public/ +
+    # manifest were never synced) — one caller, no dual-script skew.
     if [ ! -d "$ROOT/gateway/src" ]; then
       echo "  !! gateway/src missing — skipping code viewer mirror sync" >&2
-    elif [ ! -d "$mirror_root" ]; then
-      echo "  !! code viewer mirror root missing: $mirror_root" >&2
     else
-      # rm -rf + re-copy: plain cp never deletes, so files removed from
-      # gateway/src (e.g. plugin-hub.ts) kept being served by the Source
-      # Viewer. wrangler.jsonc is refreshed too — the mirror copy drifts.
-      rm -rf "$code_dir"
-      mkdir -p "$code_dir"
-      cp "$ROOT"/gateway/src/*.ts "$code_dir/"
-      cp -r "$ROOT"/gateway/src/plugins/. "$code_dir/plugins/" 2>/dev/null || true
-      cp "$ROOT/gateway/wrangler.jsonc" "$mirror_root/wrangler.jsonc"
-      echo "  synced code viewer mirror ($mirror_root)"
+      bash "$ROOT/gateway/scripts/sync-code-viewer.sh" \
+        || { echo "  !! code viewer mirror sync failed — aborting deploy" >&2; return 1; }
+      echo "  synced code viewer mirror ($ROOT/gateway/public/code/files/vale-gate)"
     fi
   fi
   ( cd "$ROOT/$dir" \
