@@ -250,14 +250,10 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
         working-directory: studio
       - name: Vendor browser assets (monaco/xterm, gitignored)
-        run: |
-          mkdir -p vendor/xterm
-          rm -rf vendor/monaco
-          mkdir -p vendor/monaco
-          cp -r node_modules/monaco-editor/min/vs/. vendor/monaco/vs/
-          cp node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/xterm/css/xterm.css vendor/xterm/
-          cp node_modules/@xterm/addon-fit/lib/addon-fit.js node_modules/@xterm/addon-web-links/lib/addon-web-links.js vendor/xterm/
-        working-directory: studio
+        # Single-sourced in studio/scripts/vendor.sh (same script build.sh
+        # studio calls) — the script self-locates the studio dir, so this
+        # runs from the repo root with no working-directory override.
+        run: bash studio/scripts/vendor.sh
       - name: API contract tests
         run: npm test
         working-directory: studio
@@ -294,3 +290,24 @@ jobs:
           node --experimental-strip-types --check api/github.ts
           node --experimental-strip-types --check api/gform.ts
         working-directory: proxies/vercel-proxy
+
+  # extension/ (browser MV3) has no build/test tooling — zero CI gating
+  # until now. Mirror the vercel-proxy syntax gate above: parse every
+  # .js/.mjs under extension/ with node --check so a syntax error fails
+  # the PR instead of silently dead content/options scripts.
+  extension:
+    name: extension (node --check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax-check extension scripts
+        run: |
+          status=0
+          for f in $(find extension -type f \( -name '*.js' -o -name '*.mjs' \)); do
+            echo "node --check $f"
+            node --check "$f" || status=1
+          done
+          exit $status

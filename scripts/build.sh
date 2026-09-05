@@ -165,13 +165,9 @@ build_studio() {
   ( cd "$ROOT/studio" \
       && npm install --include=dev --no-audit --no-fund )
   echo "=== [studio] vendor browser assets ==="
-  ( cd "$ROOT/studio" \
-      && mkdir -p vendor/xterm \
-      && rm -rf vendor/monaco \
-      && mkdir -p vendor/monaco \
-      && cp -r node_modules/monaco-editor/min/vs/. vendor/monaco/vs/ \
-      && cp node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/xterm/css/xterm.css vendor/xterm/ \
-      && cp node_modules/@xterm/addon-fit/lib/addon-fit.js node_modules/@xterm/addon-web-links/lib/addon-web-links.js vendor/xterm/ )
+  # Single-sourced in studio/scripts/vendor.sh (ci.yml's studio job runs the
+  # same script after its own npm ci) — the cp sequence must not drift.
+  bash "$ROOT/studio/scripts/vendor.sh" "$ROOT/studio"
   echo "=== [studio] API contract tests ==="
   ( cd "$ROOT/studio" && npm test )
   # Fail-fast vendor check: vendor/ is gitignored and generated above — a

@@ -30,7 +30,7 @@ Panel-first: `./scripts/build.sh agent` rebuilds the panel SPA before the exe (p
 
 ## Conventions
 
-- **Commits**: conventional commits with stage tags (`fix(stage-x)`, `feat(stage-x)`, …); each commit leaves the tree green. Before committing, run the subproject's `format:check` (e.g. gateway: `npm run format:check`) — no husky hooks (deliberately heavy; manual until a later round).
+- **Commits**: conventional commits with stage tags (`fix(stage-x)`, `feat(stage-x)`, …); each commit leaves the tree green. Format gates exist only per-subproject where configured (gateway: prettier via `npm run format:check`; agent: `cargo clippy -D warnings`, not fmt-gated) — no husky hooks (deliberately heavy; manual until a later round).
 - **Subproject changes**: verify inside that subdir (agent: cargo test/clippy/xwin check; gateway/index: wrangler deploy).
 - **Worker name**: the gateway worker is `vale-gate`. If the Cloudflare dashboard still binds the console domain to an old-named worker, rebind it to `vale-gate`.
 - **Design docs**: `docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md` (desktop/core); `gateway/DEVICE-INTEGRATION.md` is SUPERSEDED (2026-08 extension era, history only).
