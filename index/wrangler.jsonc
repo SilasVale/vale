@@ -15,7 +15,8 @@
   "assets": { "directory": "./public", "binding": "ASSETS" },
   // Temporary file hosting: upload -> one-time download URL -> auto-deleted.
   // R2 bucket: `wrangler r2 bucket create vale-temp-files`.
-  // KV namespace: `wrangler kv namespace create TEMP_TOKENS`.
+  // NOTE: no KV binding — one-time state lives on the R2 key + expiresAt
+  // deadline (see src/claim.js).
   "r2_buckets": [{ "binding": "TEMP_FILES", "bucket_name": "vale-temp-files" }],
   // One-time-download claim serializer: GET /files/<token> is forwarded to
   // the TempClaimDO instance named by the token, whose input queue closes

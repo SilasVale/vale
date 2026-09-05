@@ -53,8 +53,9 @@ export async function respBytes(resp) {
   return new Uint8Array(await resp.arrayBuffer());
 }
 
-/** Assert a JSON error response has the exact status + body (no headers). */
+/** Assert a JSON error response has the exact status + body + JSON content-type. */
 export async function assertJsonError(resp, status, error) {
   assert.equal(resp.status, status);
+  assert.match(resp.headers.get("content-type") || "", /application\/json/);
   assert.equal(await resp.text(), JSON.stringify({ error }));
 }

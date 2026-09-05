@@ -16,7 +16,15 @@ export { TempClaimDO } from "./claim.js";
 
 const FAVICON = "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%0A%20%20%3C%21--%20Vale%20brand%20mark%3A%20the%20vale%20at%20sunrise%20%E2%80%94%20near%20hill%2C%20far%20ridge%2C%20signal%20over%20the%20pass%20--%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sky%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23f59f00%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23e8590c%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%20%20%3CradialGradient%20id%3D%22glow%22%20cx%3D%22.5%22%20cy%3D%22.5%22%20r%3D%22.5%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23fff8e1%22%20stop-opacity%3D%22.55%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffe8a3%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%3C%2FradialGradient%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sheen%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.25%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%22.45%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%237c2d12%22%20stop-opacity%3D%22.10%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%3C%2Fdefs%3E%0A%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sky%29%22%2F%3E%0A%0A%20%20%3C%21--%20signal%20rising%20over%20the%20pass%20--%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%227.5%22%20fill%3D%22url%28%23glow%29%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%224%22%20fill%3D%22%23fff8e1%22%2F%3E%0A%0A%20%20%3C%21--%20far%20ridge%20%28haze%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20opacity%3D%22.78%22%20d%3D%22M14%2041Q26%2016%2044%2041Z%22%2F%3E%0A%20%20%3C%21--%20near%20hill%20%28solid%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M2%2041Q12%2020%2024%2041Z%22%2F%3E%0A%0A%20%20%3C%21--%20glass%20sheen%20--%3E%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sheen%29%22%2F%3E%0A%3C%2Fsvg%3E%0A";
 
-const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
+const PAGE = (consoleUrl, installerUrl) => {
+// P2-8: both URLs flow into HTML (href attributes + inline <code> text).
+// They derive from the CONSOLE_URL env var / request origin, so treat them
+// as untrusted: https-only whitelist (http allowed solely for loopback dev)
+// + HTML-escape at the interpolation points. A crafted CONSOLE_URL must
+// never break out of the attribute/element (stored-XSS via env var).
+const safeConsole = escHtml(safePageUrl(consoleUrl, "/"));
+const safeInstaller = escHtml(safePageUrl(installerUrl, "/vale-agent/vale-agent-latest.tgz"));
+return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -255,17 +263,17 @@ const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
         </div>
       </div>
 
-      <p class="desc">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel and managed from the <a href="${consoleUrl}">Vale console</a>.</p>
+      <p class="desc">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel and managed from the <a href="${safeConsole}">Vale console</a>.</p>
 
       <div class="actions">
-        <code class="cmd">npm i -g ${installerUrl}</code>
+        <code class="cmd">npm i -g ${safeInstaller}</code>
         <span class="hint">Run on the Windows machine connected to the device. Requires Node.js + admin rights.</span>
       </div>
 
       <div class="steps">
         <div class="step">
           <div class="step-num">1</div>
-          <div class="step-body">Install the package: <code>npm i -g ${installerUrl}</code> — then run <code>vale setup --reg-key &lt;key&gt;</code> (get a key from the <a href="${consoleUrl}">Vale console</a> → Devices).</div>
+          <div class="step-body">Install the package: <code>npm i -g ${safeInstaller}</code> — then run <code>vale setup --reg-key &lt;key&gt;</code> (get a key from the <a href="${safeConsole}">Vale console</a> → Devices).</div>
         </div>
         <div class="step">
           <div class="step-num">2</div>
@@ -273,7 +281,7 @@ const PAGE = (consoleUrl, installerUrl) => `<!doctype html>
         </div>
         <div class="step">
           <div class="step-num">3</div>
-          <div class="step-body">Updates are the same channel: <code>npm i -g ${installerUrl} && vale update</code>.</div>
+          <div class="step-body">Updates are the same channel: <code>npm i -g ${safeInstaller} && vale update</code>.</div>
         </div>
       </div>
     </div>
@@ -301,16 +309,73 @@ function toggleTheme() {
 </script>
 </body>
 </html>`;
+};
 
-// In-memory token set (per-isolate; survives across requests until restart).
-// For multi-edge durability, swap to KV later. Tokens are 22 chars URL-safe.
+// P2-8 helpers: https-only URL whitelist (http allowed solely for loopback
+// dev) + HTML escaping for the landing-page interpolations above.
+function safePageUrl(u, fallback) {
+  try {
+    const s = String(u);
+    const parsed = new URL(s, "https://placeholder.local");
+    if (parsed.protocol === "https:") return s;
+    const host = parsed.hostname.toLowerCase();
+    if (parsed.protocol === "http:" && (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1")) return s;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// P2-9 helper: build a hardened Content-Disposition for an uploaded
+// filename. Strips quotes/backslashes/controls (header-split defence),
+// returns null when nothing survives (caller answers 400 — an illegal name
+// must never reach the R2 put as a forged header); keeps the quoted
+// filename parameter pure-ASCII and carries non-ASCII names via filename*
+// (RFC 5987) with an ASCII fallback.
+function buildContentDisposition(rawName) {
+  const cleaned = String(rawName || "").replace(/["\\\u0000-\u001f\u007f]/g, "").trim();
+  if (!cleaned) return null;
+  const ascii = cleaned.replace(/[^\x20-\x7e]/g, "").trim() || "download.bin";
+  if (ascii === cleaned) return `attachment; filename="${ascii}"`;
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(cleaned)}`;
+}
+
+// P2-5: agent_update refuses unverifiable installs (round-119) — a
+// truncated/placeholder sha in version.json must never be served as if it
+// were a real manifest. Same shape as assert_want_sha256 in
+// scripts/smoke-index.sh (the shared pre-publish guard): 64 hex chars.
+const SHA256_RE = /^[0-9a-f]{64}$/i;
+
+// P2-7 (was: stale "In-memory token set / swap to KV later" note):
+// claim tokens are one-time nonces created per upload below and consumed by
+// TempClaimDO (see ./claim.js), which deletes the R2 key on first claim.
+// There is NO token store — the R2 key + 24h customMetadata deadline IS the
+// state (the pre-DO in-memory/KV sketch never shipped). Tokens are 22
+// chars URL-safe.
 const TOKEN_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 function genToken(len = 22) {
+  // P2-11: rejection sampling — TOKEN_CHARS.length (62) does not divide
+  // 256, so buf%62 would overweight the first 256%62 = 8 symbols (A-H).
+  // Accept only bytes in [0, 248) (largest multiple of 62 below 256) and
+  // discard the rest: uniform over the alphabet at ~3% redraw cost.
+  const RANGE = 256 - (256 % TOKEN_CHARS.length); // 248
   let s = "";
-  const buf = new Uint8Array(len);
-  crypto.getRandomValues(buf);
-  for (let i = 0; i < len; i++) s += TOKEN_CHARS[buf[i] % TOKEN_CHARS.length];
+  while (s.length < len) {
+    const buf = new Uint8Array(32);
+    crypto.getRandomValues(buf);
+    for (let i = 0; i < buf.length && s.length < len; i++) {
+      if (buf[i] < RANGE) s += TOKEN_CHARS[buf[i] % TOKEN_CHARS.length];
+    }
+  }
   return s;
 }
 
@@ -351,31 +416,77 @@ export default {
         const auth = request.headers.get("authorization") || "";
         const expected = `Bearer ${env.UPLOAD_KEY || ""}`;
         if (!env.UPLOAD_KEY || !auth || !(await safeEq(auth, expected))) {
-          return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+          return new Response(JSON.stringify({ error: "unauthorized" }), {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          });
         }
         const ct = request.headers.get("content-type") || "";
         if (!ct.includes("multipart/form-data")) {
-          return new Response(JSON.stringify({ error: "expected multipart/form-data" }), { status: 400 });
+          return new Response(JSON.stringify({ error: "expected multipart/form-data" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
         }
         // Cap at 100 MiB (Cloudflare Workers limit ~10 MiB for free plan,
-        // 100 MiB for paid; adjust as needed). Screen the declared
-        // Content-Length BEFORE formData() materializes the whole body in
-        // memory — the multipart framing (boundary + part headers) adds a
-        // little on top of the file bytes, hence the margin. The
-        // authoritative check is file.size below.
+        // 100 MiB for paid — this 100 MiB cap ASSUMES a paid plan; on free,
+        // large uploads fail at the platform edge before reaching here).
+        // Screen the declared Content-Length BEFORE formData() materializes
+        // the whole body in memory — the multipart framing (boundary + part
+        // headers) adds a little on top of the file bytes, hence the
+        // margin. The authoritative check is file.size below.
+        // P1-4: a missing Content-Length (chunked client) cannot be
+        // pre-screened, so require the header (411) instead of buffering an
+        // unbounded body and 413ing after the fact.
         const MAX_BYTES = 100 * 1024 * 1024;
         const CL_MARGIN = 64 * 1024;
-        const declared = Number(request.headers.get("content-length") || "0");
-        if (declared > MAX_BYTES + CL_MARGIN) {
-          return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), { status: 413 });
+        const declaredRaw = request.headers.get("content-length");
+        if (declaredRaw === null || declaredRaw === "") {
+          return new Response(JSON.stringify({ error: "content-length required" }), {
+            status: 411,
+            headers: { "content-type": "application/json" },
+          });
         }
-        const form = await request.formData();
+        const declared = Number(declaredRaw);
+        if (declared > MAX_BYTES + CL_MARGIN) {
+          return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), {
+            status: 413,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        // A malformed framing (e.g. a quote-breaking filename) makes
+        // formData() throw — answer 400, not the 500 catch-all below.
+        let form;
+        try {
+          form = await request.formData();
+        } catch {
+          return new Response(JSON.stringify({ error: "invalid multipart body" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
+        }
         const file = form.get("file");
         if (!file || typeof file === "string") {
-          return new Response(JSON.stringify({ error: "no file field" }), { status: 400 });
+          return new Response(JSON.stringify({ error: "no file field" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
         }
         if (file.size > MAX_BYTES) {
-          return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), { status: 413 });
+          return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), {
+            status: 413,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        // P2-9: illegal filenames (nothing survives header sanitizing) are
+        // rejected 400 here — never forwarded into the R2 put as a forged
+        // Content-Disposition header.
+        const disposition = buildContentDisposition(file.name);
+        if (!disposition) {
+          return new Response(JSON.stringify({ error: "invalid filename" }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          });
         }
         const token = genToken(22);
         const key = `files/${token}`;
@@ -390,13 +501,7 @@ export default {
         await env.TEMP_FILES.put(key, file, {
           httpMetadata: {
             contentType: file.type || "application/octet-stream",
-            // The multipart filename lands in a response header: strip
-            // quotes, backslashes, CR/LF and other control chars so a
-            // crafted name can't split or forge headers. Empty result ->
-            // generic name.
-            contentDisposition: `attachment; filename="${
-              String(file.name || "").replace(/["\\\u0000-\u001f\u007f]/g, "").trim() || "download.bin"
-            }"`,
+            contentDisposition: disposition,
           },
           customMetadata: { expiresAt: String(expiresAt) },
         });
@@ -412,7 +517,10 @@ export default {
           note: "one-time download: file is deleted after first access or 24h",
         }), { headers: { "content-type": "application/json" } });
       } catch (err) {
-        return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+        return new Response(JSON.stringify({ error: String(err) }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
       }
     }
 
@@ -428,8 +536,18 @@ export default {
     const fileMatch = /^\/files\/([A-Za-z0-9_-]{16,64})$/.exec(url.pathname);
     if (fileMatch && request.method === "GET") {
       const token = fileMatch[1];
-      const id = env.TEMP_CLAIM.idFromName(`files/${token}`);
-      return env.TEMP_CLAIM.get(id).fetch(request);
+      // P1-1: idFromName/get/fetch cross the DO boundary (network I/O) — a
+      // DO/R2 outage must surface as a 503 JSON envelope, never as an
+      // uncaught throw (worker 500 HTML / unhandled rejection).
+      try {
+        const id = env.TEMP_CLAIM.idFromName(`files/${token}`);
+        return await env.TEMP_CLAIM.get(id).fetch(request);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        });
+      }
     }
 
     // Version endpoint for the agent_update MCP tool (and legacy tray
@@ -449,7 +567,10 @@ export default {
           const vj = await vresp.json();
           const ver = vj && vj.version;
           const sha = vj && vj.sha256;
-          if (ver && sha) {
+          // P2-5: assert the sha shape (64 hex), not just presence — a
+          // truncated/placeholder sha would otherwise ship a manifest that
+          // agent_update refuses anyway; fail to the honest 503 instead.
+          if (ver && typeof sha === "string" && SHA256_RE.test(sha)) {
             const base = new URL(request.url).origin;
             return new Response(
               JSON.stringify({

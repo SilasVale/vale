@@ -29,6 +29,8 @@ test("boundary: expiresAt == now serves (existing code uses strict <)", () => {
   assert.equal(decideClaim({ exists: true, expiresAtRaw: String(NOW), nowMs: NOW }), "serve");
 });
 
-test("non-numeric expiresAt serves (Number() -> NaN, NaN < now is false)", () => {
-  assert.equal(decideClaim({ exists: true, expiresAtRaw: "not-a-number", nowMs: NOW }), "serve");
+test("non-numeric expiresAt expires (fail closed: corrupt deadline must not grant unbounded download)", () => {
+  assert.equal(decideClaim({ exists: true, expiresAtRaw: "not-a-number", nowMs: NOW }), "expired");
+  assert.equal(decideClaim({ exists: true, expiresAtRaw: "NaN", nowMs: NOW }), "expired");
+  assert.equal(decideClaim({ exists: true, expiresAtRaw: "Infinity", nowMs: NOW }), "expired");
 });

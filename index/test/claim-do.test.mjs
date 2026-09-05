@@ -85,8 +85,7 @@ test("missing file 404s with the exact message", async () => {
   await assertJsonError(await claim(makeR2()).fetch(getReq()), 404, "file not found or already downloaded");
 });
 
-test("expired file 410s with the exact message and is deleted", async () => {
-  const r2 = makeR2();
+test("expired file 410s with the exact message and is deleted", async () => {  const r2 = makeR2();
   await seedFile(r2, TOKEN, BYTES, { expiresAt: Date.now() - 1000 });
   const do_ = claim(r2);
   await assertJsonError(await do_.fetch(getReq()), 410, "file expired");
@@ -143,4 +142,30 @@ test("WITHOUT serialization (contrast): overlapping claims both serve — the ra
   const [a, b] = await Promise.all([do_.fetch(getReq()), do_.fetch(getReq())]);
   assert.equal(a.status, 200, "unserialized claim A serves");
   assert.equal(b.status, 200, "unserialized claim B serves too — the original bug");
+});
+
+// P1-1: R2 outages surface as a 503 JSON envelope, never an uncaught throw.
+test("R2 get failure -> 503 temporarily unavailable (JSON envelope)", async () => {
+  const r2 = makeR2();
+  r2.get = async () => {
+    throw new Error("R2 down");
+  };
+  await assertJsonError(await claim(r2).fetch(getReq()), 503, "temporarily unavailable");
+});
+
+test("R2 delete failure -> 503 temporarily unavailable (JSON envelope)", async () => {
+  const r2 = makeR2();
+  await seedFile(r2, TOKEN, BYTES, { expiresAt: Date.now() + 3600_000 });
+  r2.delete = async () => {
+    throw new Error("R2 down");
+  };
+  await assertJsonError(await claim(r2).fetch(getReq()), 503, "temporarily unavailable");
+});
+
+test("corrupt (non-numeric) expiresAt expires 410 and is cleaned up (P2-10 fail-closed)", async () => {
+  const r2 = makeR2();
+  await seedFile(r2, TOKEN, BYTES, { expiresAt: "not-a-number" });
+  const do_ = claim(r2);
+  await assertJsonError(await do_.fetch(getReq()), 410, "file expired");
+  assert.equal(await r2.get(`files/${TOKEN}`), null, "corrupt-deadline key must be cleaned up");
 });

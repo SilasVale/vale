@@ -19,8 +19,25 @@
 #
 # Returns 0 on success, 1 on failure — never exits, so it is safe under
 # `set -e` in the caller (the caller decides the exit policy).
+#
+# Shared sha256-format guard (P2-5/P2-6): the worker's /api/version asserts
+# /^[0-9a-f]{64}$/i on the manifest sha (index/src/index.js SHA256_RE) and
+# 503s otherwise. Both publish paths (build.sh index deploy,
+# publish-release.sh) must call this FIRST on their expected sha, so a
+# truncated/all-zero/placeholder digest fails here with a clear message
+# instead of mid-smoke — or worse, shipping a manifest devices refuse
+# (agent_update rejects unverifiable installs, round-119). Returns 0/1,
+# never exits (same `set -e` contract as smoke_index_release).
+assert_want_sha256() {
+  local sha="$1"
+  if [[ "${sha:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then return 0; fi
+  echo "  !! want_sha is not a 64-hex sha256: '${sha:-<empty>}'"
+  return 1
+}
+
 smoke_index_release() {
   local want_version="$1" want_sha="$2"
+  assert_want_sha256 "$want_sha" || return 1
   local base="${SMOKE_BASE_URL:-https://agent.saisi.online}"
   local retry_sleep="${SMOKE_RETRY_SLEEP:-3}"
   local live=""

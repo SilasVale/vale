@@ -79,3 +79,30 @@ test("landing page still serves (routing change is scoped to /files/*)", async (
   assert.equal(resp.status, 200);
   assert.match(resp.headers.get("content-type"), /text\/html/);
 });
+
+test("DO boundary failure -> 503 temporarily unavailable (P1-1, JSON envelope)", async () => {
+  const r2 = makeR2();
+  await seedFile(r2, TOKEN, BYTES, { expiresAt: Date.now() + 3600_000 });
+  // idFromName throws (DO unavailable).
+  const { env: env1 } = makeEnv(r2);
+  env1.TEMP_CLAIM.idFromName = () => {
+    throw new Error("DO down");
+  };
+  await assertJsonError(
+    await worker.fetch(new Request(`https://dl.local/files/${TOKEN}`), env1),
+    503,
+    "temporarily unavailable",
+  );
+  // Stub fetch itself throws (R2 outage inside the DO, uncaught path).
+  const { env: env2 } = makeEnv(r2);
+  env2.TEMP_CLAIM.get = () => ({
+    fetch: async () => {
+      throw new Error("R2 down");
+    },
+  });
+  await assertJsonError(
+    await worker.fetch(new Request(`https://dl.local/files/${TOKEN}`), env2),
+    503,
+    "temporarily unavailable",
+  );
+});

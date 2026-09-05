@@ -17,15 +17,21 @@
 // that shape.
 
 // Pure claim-state decision (no I/O): extracted so the one-time-claim rule
-// is unit-testable without a DO runtime (miniflare). Mirrors the previous
-// inline semantics exactly:
+// is unit-testable without a DO runtime (miniflare). Semantics:
 //   - missing object            -> "gone"    (404 already-downloaded)
 //   - expiresAt past            -> "expired" (410, lazy 24h expiry)
-//   - otherwise (incl. uploads predating the expiresAt field, which carry
-//     no deadline)              -> "serve"
+//   - expiresAt missing/empty   -> "serve"   (legacy uploads predate the
+//     expiresAt field and carry no deadline — fail open for compat)
+//   - expiresAt present but non-numeric -> "expired" (410 + delete; a
+//     corrupt/unparseable deadline must not grant an unbounded download —
+//     fail closed. NOTE: this tightens the old fail-open rule, which served
+//     ANY non-numeric value including garbage; see claim.test.mjs.)
 export function decideClaim({ exists, expiresAtRaw, nowMs }) {
   if (!exists) return "gone";
-  if (expiresAtRaw && Number(expiresAtRaw) < nowMs) return "expired";
+  if (expiresAtRaw === undefined || expiresAtRaw === null || expiresAtRaw === "") return "serve";
+  const ts = Number(expiresAtRaw);
+  if (!Number.isFinite(ts)) return "expired";
+  if (ts < nowMs) return "expired";
   return "serve";
 }
 
@@ -44,25 +50,56 @@ export class TempClaimDO {
       return new Response("Not Found", { status: 404 });
     }
     const key = `files/${m[1]}`;
-    const obj = await this.env.TEMP_FILES.get(key);
+    // P1-1: R2 get/delete are network I/O — a DO/R2 outage must surface as
+    // a 503 JSON envelope (same shape as the upload handler's 500 envelope),
+    // never as an uncaught throw (worker 500 HTML / unhandled rejection).
+    let obj;
+    try {
+      obj = await this.env.TEMP_FILES.get(key);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
     const decision = decideClaim({
       exists: !!obj,
       expiresAtRaw: obj && obj.customMetadata && obj.customMetadata.expiresAt,
       nowMs: Date.now(),
     });
     if (decision === "gone") {
-      return new Response(JSON.stringify({ error: "file not found or already downloaded" }), { status: 404 });
+      return new Response(JSON.stringify({ error: "file not found or already downloaded" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
     }
     if (decision === "expired") {
-      await this.env.TEMP_FILES.delete(key);
-      return new Response(JSON.stringify({ error: "file expired" }), { status: 410 });
+      try {
+        await this.env.TEMP_FILES.delete(key);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ error: "file expired" }), {
+        status: 410,
+        headers: { "content-type": "application/json" },
+      });
     }
     // One-time: the object is deleted BEFORE the body streams, so a retry
     // after a completed download 404s. Concurrent claims cannot both get
     // here — the DO input queue serializes them, and the losers observe
     // this delete as "gone". (obj.body stays readable: get() already
     // fetched the object; deleting the key does not invalidate it.)
-    await this.env.TEMP_FILES.delete(key);
+    try {
+      await this.env.TEMP_FILES.delete(key);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
     return new Response(obj.body, {
       headers: {
         "content-type": obj.httpMetadata?.contentType || "application/octet-stream",
