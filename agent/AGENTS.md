@@ -110,9 +110,11 @@ vale-agent is a pure service — MCP server + terminal backends + SSE endpoints
 desktop (`vale-desktop/`), the standalone `vale-tray/`, and the NSIS-era
 installers are RETIRED; the Electron shell (`vale-desktop-electron/`) and the
 gateway device app replaced them. The
-web panel (`/panel`, Apple-style terminal) is served by `src/web.rs` — token
-entered in the browser, kept in localStorage (no server-side injection since
-1.0.5).
+web panel (`/panel`, Apple-style terminal) is served by `src/web/` — the
+browser either carries the proxy-secret marker, runs on loopback, or presents
+a one-time `?grant=` the agent redeems at the gateway (round of the panel-
+grant fix: the permanent device token never rides in a URL); the token is
+injected server-side into the panel HTML.
 
 - **MCP** (rmcp): served at `/mcp` ON THE MAIN AGENT PORT (default 18080,
   same HTTP surface) — token-gated via `TokenGate` in `src/web.rs` (rmcp has
@@ -138,22 +140,28 @@ src/
                    config_snapshot)
   mcp/server.rs    DeviceServer (rmcp ServerHandler), bind() -> (addr, handle)
                    (port 0 = ephemeral, used by tests), serve_with_token
-  web.rs           HTTP surface — hand-rolled Tower service (NOT axum route
+  web/             HTTP surface — hand-rolled Tower service (NOT axum route
                    handlers: they break Windows cross-compilation). TokenGate<S>
-                   wraps the /mcp route with the bearer check. Routes:
-                   GET / (minimal status page), /api/status, /api/spec,
-                   /api/events (SSE), /api/events/poll, /api/events/term (SSE),
-                   GET/PUT /api/settings (buffer_mb + console_url),
+                   wraps the /mcp route with the bearer check. mod.rs owns auth +
+                   dispatch + the api_* handlers (routes: GET / (minimal status
+                   page), /api/status, /api/spec, /api/events (SSE),
+                   /api/events/poll, /api/events/term (SSE), GET/PUT
+                   /api/settings (buffer_mb + console_url),
                    POST /api/gateway/connect (Settings-page Gateway card:
                    persist console_url, reg-key → CF token exchange, optional
                    free tunnel via provision_tunnel),
                    POST /api/tools/{name}, GET /api/plugins/status,
                    GET /api/browser/{pwshots,pwshot,actions} (AI evidence —
                    the pwout screenshots/action feed), GET /api/sessions
-                   (audit list)
+                   (audit list)); panel.rs serves the embedded /panel (static
+                   whitelist + token injection + one-time ?grant= redemption
+                   at the gateway) as the WebPanel fallback service; sse.rs
+                   holds the SSE streams (bounded conns, heartbeat, epoch).
   plugins/         PluginRegistry (tools cached once at register); terminal/
-                   mod.rs (plugin struct + shared helpers) + tools.rs (one
-                   builder fn per tool)
+                   mod.rs (plugin struct + shared helpers) + tools/ (ctx.rs
+                   shared state; per-domain builders exec/sessions/files/
+                   output/secrets/connections; mod.rs owns registry assembly
+                   + the exact tool order)
   tools/           terminal/ (TerminalManager + TermBackend trait; pty.rs,
                    ssh.rs, serial.rs, secrets.rs, stub.rs), serial.rs, ssh.rs
 vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_token via
@@ -186,7 +194,9 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
   `unwrap_or_else(|p| p.into_inner())` — never silently drop data.
 - **Channels**: output bounded with backpressure (blocking_send in reader
   threads); keystrokes try_send drop-on-full.
-- **MCP tool additions**: define the tool in `src/plugins/<plugin>/tools.rs`;
+- **MCP tool additions**: define the tool in
+  `src/plugins/<plugin>/tools.rs` (terminal: `tools/<domain>.rs` — pick the
+  domain module whose concern it shares; mod.rs owns registration order);
   the registry caches it at register time — no other registration site.
   Update the tool-count test in plugins/terminal/mod.rs (26 tools:
   22 terminal_* incl. env/jobs/saved/connect/forget + secret_* legacy aliases)
