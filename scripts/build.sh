@@ -76,8 +76,13 @@ deploy_worker() {
     # Gateway deploy preflight (fail-closed): DO_AUTH / SESSION_SECRET /
     # ADMIN_PASSWORD 任一缺失即 abort，不带病上线 (secrets live in the
     # worker, never in wrangler.jsonc — see its Secrets comment).
+    # NOTE: wrangler resolves the worker from the cwd's wrangler.jsonc —
+    # this MUST run inside $ROOT/$dir (repo root has no config and the
+    # command fails silently into 2>/dev/null, aborting every deploy).
     for s in DO_AUTH SESSION_SECRET ADMIN_PASSWORD; do
-      if ! CLOUDFLARE_API_TOKEN="$token" wrangler secret list 2>/dev/null | grep -qE "(^|[\"' ])${s}([\"' ]|$)"; then
+      if ! ( cd "$ROOT/$dir" \
+        && CLOUDFLARE_API_TOKEN="$token" wrangler secret list 2>/dev/null \
+        | grep -qE "(^|[\"' ])${s}([\"' ]|$)" ); then
         echo "  !! abort: worker secret $s 未配置 — 先执行 wrangler secret put $s (gateway fail-closed)" >&2
         return 1
       fi
