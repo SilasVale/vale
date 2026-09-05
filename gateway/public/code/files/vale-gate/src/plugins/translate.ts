@@ -59,6 +59,7 @@ import {
   OG_NATIVE_ANTHROPIC,
   OG_ZEN_ANTHROPIC,
   VERIFY_PATH,
+  museResponsesExit,
   usProxyBase,
 } from "../channels.ts";
 // Route table lives in the shared upstream module (also used by index.ts's
@@ -782,9 +783,12 @@ async function handleGatewayImpl(
     // Model is og/muse-spark-*: force the US exit (Meta region policy). The
     // route picked above already rode via() when forceUsProxy was true — but
     // pickRoute's og branch hardcodes /v1/chat/completions as the path, so
-    // rebuild the upstream for the responses path explicitly.
+    // rebuild the upstream for the responses path explicitly. The default
+    // exit is the zen-us Cloudflare worker (untimed streams — the Vercel
+    // relay truncated muse generations at ~30 s); MUSE_RESPONSES_EXIT=vercel
+    // restores the old relay. See museResponsesExit in channels.ts.
     const responsesUpstream = forceUsProxy
-      ? `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/responses")}`
+      ? museResponsesExit(env)
       : `${OG_ZEN_ANTHROPIC.replace("/v1/messages", "")}/v1/responses`;
     const forwardBody = rawWithModel(rawText, upstreamModel, scanned);
     // zen's responses endpoint is OpenAI-native: Bearer auth, no

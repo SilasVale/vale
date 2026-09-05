@@ -36,8 +36,8 @@ export const AMD_CHAT: string = "https://developer.amd.com.cn/radeon/api/v1/chat
 export const OG_NATIVE_ANTHROPIC: Set<string> = new Set();
 
 // Model-level forced US egress. These og/ models are region-blocked when zen
-// is reached directly from CN clients, so requests ALWAYS ride the Vercel US
-// exit regardless of the global US_PROXY switch:
+// is reached directly from CN clients, so requests ALWAYS ride a US exit
+// regardless of the global US_PROXY switch:
 //   - og/gpt-5.6-luna — zen region-blocks it for CN (translate.ts remaps the
 //     og/ spellings to the or/ route via OpenRouter's US exit).
 //   - og/muse-spark-1.2/1.3-contributor — Meta Geographic Use Policy blocks
@@ -53,6 +53,30 @@ export const OG_FORCE_US_PROXY: Set<string> = new Set([
 
 export function usProxyBase(env: any): string {
   return env?.US_PROXY_BASE || "https://v.saisi.online";
+}
+
+// US exit for og/muse-spark-* via POST /v1/responses (translate.ts). The
+// muse Contributor tier is responses-only upstream AND Meta region-blocks it
+// for CN, so it is FORCED through a US exit. The Vercel relay
+// (v.saisi.online/api/zen) is the only verified exit that clears the Meta
+// region policy (its edge runs in ORD/Chicago — a Cloudflare worker exit
+// still returns 403 RegionError, verified 2026-09-05). The relay used to
+// abort every streamed body at 30 s because its fetch carried a whole-request
+// AbortSignal.timeout (regression ff5ad05a, fixed 2026-09-05: the timeout now
+// covers response headers only, so long muse SSE generations stream to
+// completion). MUSE_RESPONSES_EXIT selects the exit:
+//   - "zen-us"        → the zen-us Cloudflare worker (zen-us.saisi.online/
+//                       v1/responses) — NOTE: currently returns Meta
+//                       RegionError from EU edges; kept as an option for when
+//                       a US-pinned CF egress exists
+//   - an https URL    → used verbatim (any US exit speaking the same
+//                       BYOK /v1/responses contract)
+//   - unset / other   → the Vercel relay default
+export function museResponsesExit(env: any): string {
+  const v = env?.MUSE_RESPONSES_EXIT;
+  if (v === "zen-us") return "https://zen-us.saisi.online/v1/responses";
+  if (typeof v === "string" && /^https:\/\//.test(v)) return v;
+  return `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/responses")}`;
 }
 
 export const MODELS: { id: string; owned_by: string }[] = [
