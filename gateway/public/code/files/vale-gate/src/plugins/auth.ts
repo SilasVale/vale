@@ -23,6 +23,7 @@ import {
   verifyAdminPassword,
   setAdminPassword,
   maskKey,
+  userKeysStatus,
   ADMIN_ID,
   USER_KEY_NAMES,
   getUserRoute,
@@ -70,7 +71,7 @@ function authRateLimited(request: Request): boolean {
 
 // Session HMAC key + session resolution live in the shared session module
 // (one requireSession contract across index + all plugins).
-import { sessionSecret, requireSession } from "../session.ts";
+import { issueSessionSecret, requireSession } from "../session.ts";
 
 /* ---- Register / Login ---- */
 
@@ -91,7 +92,11 @@ async function authRegister(request: Request, env: any, secure: boolean): Promis
       inviteCode: body.inviteCode,
       role: "user", // always a normal user; the admin can only come from seeding
     });
-    const token = await issueSessionToken(sessionSecret(env, ap), created.id, created.role);
+    // Fail-closed issuance: without SESSION_SECRET there is no safe HMAC key
+    // (the admin-password fallback would be offline-brute-forceable).
+    const sk = issueSessionSecret(env);
+    if (!sk) return jsonError(500, "Session signing not configured", "config_error");
+    const token = await issueSessionToken(sk, created.id, created.role);
     return jsonOk(
       { ok: true, username: created.username, role: created.role, token: created.token },
       { "Set-Cookie": sessionCookieHeader(token, 86400, secure) },
@@ -104,10 +109,6 @@ async function authRegister(request: Request, env: any, secure: boolean): Promis
 async function authLogin(request: Request, env: any, secure: boolean): Promise<Response> {
   if (!(await hasAdminPassword(env)))
     return jsonError(500, "Admin password not configured", "config_error");
-  // The session-signing key in fallback mode is the stored admin password
-  // HASH (same value requireSession uses) — getAdminPassword returns the
-  // hash, never the plaintext.
-  const ap = await getAdminPassword(env);
   const body = await readJson(request);
   // Brute-force throttle: 5 consecutive failures lock the username for 30s
   // (exponential backoff would need the failure count; a flat lock is simple
@@ -181,7 +182,10 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
   }
   // Success clears the failure counter.
   __loginFails.delete(`login-fails:${callerIp}:${user.id}`);
-  const token = await issueSessionToken(sessionSecret(env, ap), user.id, user.role);
+  // Fail-closed issuance (see authRegister): no SESSION_SECRET → no session.
+  const sk = issueSessionSecret(env);
+  if (!sk) return jsonError(500, "Session signing not configured", "config_error");
+  const token = await issueSessionToken(sk, user.id, user.role);
   return jsonOk(
     { ok: true, username: user.username, role: user.role },
     { "Set-Cookie": sessionCookieHeader(token, 86400, secure) },
@@ -670,17 +674,6 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
     return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
   }
   return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
-}
-
-function userKeysStatus(
-  ukeys: Record<string, string>,
-): Record<string, { configured: boolean; masked: string }> {
-  const out: Record<string, { configured: boolean; masked: string }> = {};
-  for (const n of USER_KEY_NAMES) {
-    const v = ukeys[n];
-    out[n] = { configured: !!v, masked: maskKey(v || "") };
-  }
-  return out;
 }
 
 export default {

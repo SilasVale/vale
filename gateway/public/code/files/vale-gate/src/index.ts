@@ -215,7 +215,11 @@ export default {
         const publicCors = { "Access-Control-Allow-Origin": "*" };
         if (path === "/api/vale-cli") {
           return new Response(cli, {
-            headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS, ...publicCors },
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8",
+              ...CORS_HEADERS,
+              ...publicCors,
+            },
           });
         }
         const b64 = encodeBase64Utf8(cli);
@@ -252,8 +256,7 @@ export default {
 
       // ---- Static page (Workers Assets): non-/v1/ paths → ai domain only ----
       if (!path.startsWith("/v1/")) {
-        if (!isPageHost)
-          return withCors(request, jsonError(404, "Not Found", "not_found_error"));
+        if (!isPageHost) return withCors(request, jsonError(404, "Not Found", "not_found_error"));
         if (env.ASSETS && typeof env.ASSETS.fetch === "function") {
           return withCors(request, await env.ASSETS.fetch(request));
         }
@@ -294,9 +297,17 @@ export async function buildHealth(env: any) {
 }
 
 /** UTF-8-safe base64: btoa is Latin1-only and throws on non-ASCII (the vale
- *  CLI is full of Chinese text). Encode to bytes first. */
+ *  CLI is full of Chinese text). Encode to bytes first. Chunked: spreading a
+ *  big Uint8Array into String.fromCharCode blows the argument-length limit
+ *  (RangeError) as the CLI grows — append per 32k chunk instead. */
 export function encodeBase64Utf8(text: string) {
-  return btoa(String.fromCharCode(...new TextEncoder().encode(text)));
+  const bytes = new TextEncoder().encode(text);
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
 }
 
 /**

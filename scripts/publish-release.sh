@@ -154,6 +154,7 @@ echo "== post-publish smoke =="
 # (versioned OR latest alias) must fail the release, not ship green.
 # shellcheck source=smoke-index.sh
 source "scripts/smoke-index.sh"
+assert_want_sha256 "$SHA" || exit 1
 smoke_index_release "$VER" "$SHA" || exit 1
 
 echo "== done. Next: push main, then create the GitHub tag v$VER via the API"

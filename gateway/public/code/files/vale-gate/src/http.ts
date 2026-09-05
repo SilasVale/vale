@@ -30,13 +30,32 @@ export function isLoopbackOrigin(origin: string): boolean {
   }
 }
 
-export function isAllowedOrigin(origin: string): boolean {
-  return !!origin && (ALLOWED_ORIGINS.has(origin) || isLoopbackOrigin(origin));
+export function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+export function isAllowedOrigin(origin: string, requestHost?: string): boolean {
+  if (!origin) return false;
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+  // Loopback origins are a `wrangler dev` affordance, not a production grant:
+  // a request to http://localhost:<port> whose Origin is also loopback is
+  // local dev; the SAME Origin arriving at the deployed console host is just
+  // a foreign local page and gets NO ACAO. (Pre-fix, production reflected
+  // any localhost origin — audit P2.)
+  return isLoopbackOrigin(origin) && !!requestHost && isLoopbackHost(requestHost);
 }
 
 function requestOrigin(request?: Request | null): string {
   try {
     return request?.headers?.get?.("origin") || "";
+  } catch {
+    return "";
+  }
+}
+
+function requestHost(request?: Request | null): string {
+  try {
+    return new URL(request?.url || "").hostname;
   } catch {
     return "";
   }
@@ -55,7 +74,7 @@ export const CORS_HEADERS: Record<string, string> = {
 export function corsHeadersFor(request?: Request | null): Record<string, string> {
   const headers: Record<string, string> = { ...CORS_HEADERS };
   const origin = requestOrigin(request);
-  if (isAllowedOrigin(origin)) {
+  if (isAllowedOrigin(origin, requestHost(request))) {
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Vary"] = "Origin";
   }
@@ -65,7 +84,7 @@ export function corsHeadersFor(request?: Request | null): Record<string, string>
 /** Stamp (or strip) ACAO on a mutable Headers object, per request origin. */
 export function stampCors(request: Request | null | undefined, headers: Headers): void {
   const origin = request ? requestOrigin(request) : "";
-  if (isAllowedOrigin(origin)) {
+  if (isAllowedOrigin(origin, requestHost(request))) {
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Vary", "Origin");
   } else {

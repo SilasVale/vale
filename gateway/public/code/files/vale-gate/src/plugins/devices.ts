@@ -49,7 +49,7 @@ import {
   removePluginLinksForDevice,
   type Device,
 } from "../store.ts";
-import { parseCookie } from "../auth.ts";
+import { parseCookie, safeEq } from "../auth.ts";
 import { build101Response, deviceFetch } from "../device-fetch.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { jsonOk, jsonError, readJson, stampCors } from "../http.ts";
@@ -57,6 +57,19 @@ import { requireSession } from "../session.ts";
 import { route, type Plugin, type PluginContext } from "./registry.ts";
 
 const DEVICE_BASE = "/api/devices";
+
+// Upload hardening (see proxyUploadToWorker): max accepted upload size and
+// the upstream response headers that must never be re-served at the
+// console origin.
+const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+const UPLOAD_STRIP_RESPONSE_HEADERS = new Set([
+  "set-cookie",
+  "set-cookie2",
+  "connection",
+  "transfer-encoding",
+  "keep-alive",
+  "upgrade",
+]);
 
 /* ---------------- Route handlers (bodies copied verbatim from index.js) ---------------- */
 
@@ -186,7 +199,7 @@ async function handleSelfRegister(request: Request, env: any): Promise<Response>
         "conflict",
       );
     }
-    const sameToken = existing.token === device.token;
+    const sameToken = safeEq(existing.token, device.token);
     if (!sameToken) {
       // Token rotation needs proof from the STORED tunnel that the caller
       // is the same physical device: its /api/status must answer with the
@@ -301,7 +314,7 @@ async function handleFileUpload(request: Request, env: any, _url: URL): Promise<
     try {
       const devices = await listDevices(env);
       ok = devices.some(
-        (d: any) => typeof d.token === "string" && d.token.length >= 32 && d.token === token,
+        (d: any) => typeof d.token === "string" && d.token.length >= 32 && safeEq(d.token, token),
       );
     } catch {
       ok = false;
@@ -318,9 +331,27 @@ async function proxyUploadToWorker(request: Request, env: any): Promise<Response
   const indexWorkerUrl = env.INDEX_WORKER_URL || "https://agent.saisi.online";
   const uploadUrl = `${indexWorkerUrl}/api/upload`;
 
+  // Size bound: an unbounded passthrough turns the gateway into a free
+  // large-file relay (subrequest memory + egress). 25MB is far above any
+  // legitimate update payload. Bodies without a declared length (chunked)
+  // are still bounded by the platform's own request-body ceiling.
+  const declared = Number(request.headers.get("content-length") || "");
+  if (Number.isFinite(declared) && declared > UPLOAD_MAX_BYTES) {
+    return jsonError(413, "Upload too large (max 25MB)", "invalid_request");
+  }
+
   // Rebuild the request with the UPLOAD_KEY header for the index worker.
-  const headers = new Headers(request.headers);
+  // Forward a MINIMAL header set: Authorization is the only credential the
+  // index worker needs, and Content-Type must survive verbatim (the multipart
+  // boundary in it is how the worker's formData() splits parts). Everything
+  // else — notably the client's Cookie header and the inbound Content-Length
+  // (the runtime reframes the forwarded stream itself; a stale manual value
+  // corrupts the upstream framing) — stays on this side: the index
+  // worker is a separate origin and must never see console cookies.
+  const headers = new Headers();
   headers.set("Authorization", `Bearer ${env.UPLOAD_KEY || ""}`);
+  const contentType = request.headers.get("content-type");
+  if (contentType) headers.set("Content-Type", contentType);
 
   const resp = await fetchWithTimeout(
     uploadUrl,
@@ -332,9 +363,16 @@ async function proxyUploadToWorker(request: Request, env: any): Promise<Response
     60000,
   );
 
+  // Never re-serve the upstream's response headers verbatim: a Set-Cookie
+  // from the index worker would plant a foreign cookie on the console
+  // origin, and hop-by-hop framing headers are the runtime's job.
+  const outHeaders = new Headers();
+  resp.headers.forEach((value, key) => {
+    if (!UPLOAD_STRIP_RESPONSE_HEADERS.has(key.toLowerCase())) outHeaders.append(key, value);
+  });
   return new Response(resp.body, {
     status: resp.status,
-    headers: resp.headers,
+    headers: outHeaders,
   });
 }
 
@@ -588,7 +626,7 @@ async function handleRegKeyRevoke(request: Request, env: any, url: URL): Promise
 // GET /api/devices/install-cmd — the CURRENT npm install version for the
 // devices page. The page hardcoded the tgz URL and drifted (it showed
 // 1.2.91 while 1.2.101 was live); the version source of truth is the index
-// worker's /api/version on agent.saisi.online. Fetched server-side (no CORS
+// worker's /api/version on https://<dist-host>. Fetched server-side (no CORS
 // concerns), cached 5 min in-isolate; a null version tells the UI to fall
 // back to its built-in constant.
 const INSTALL_SOURCE = "https://agent.saisi.online/api/version";

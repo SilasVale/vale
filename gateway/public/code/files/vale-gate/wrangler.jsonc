@@ -17,10 +17,6 @@
         "class_name": "BreakerDO"
       },
       {
-        "name": "PLUGIN_HUB",
-        "class_name": "PluginHubDO"
-      },
-      {
         "name": "ROUTE",
         "class_name": "RouteDO"
       }
@@ -32,12 +28,12 @@
       "new_sqlite_classes": ["BreakerDO"]
     },
     {
-      "tag": "v2-plugin-hub",
-      "new_sqlite_classes": ["PluginHubDO"]
-    },
-    {
       "tag": "v3-route",
       "new_sqlite_classes": ["RouteDO"]
+    },
+    {
+      "tag": "v4-delete-plugin-hub",
+      "deleted_classes": ["PluginHubDO"]
     }
   ],
   "assets": {
@@ -58,15 +54,23 @@
     "ACCESS_ADMIN_EMAIL": "13122231591@163.com",
     // Gateway-side image describing for text-only models: Command Code
     // vision-exp (GOAT plan). Descriptions are KV-cached per image.
-    "VISION_MODEL": "cm/deepseek/deepseek-v4-flash-vision-exp"
+    "VISION_MODEL": "cm/deepseek/deepseek-v4-flash-vision-exp",
+    // Models that must NOT get the describe-first treatment on /v1/messages —
+    // they read real Anthropic image blocks upstream (verified 2026-09-02:
+    // Radeon's vision-exp OCR'd a screenshot's session UUID exactly).
+    "VISION_CAPABLE_MODELS": "amd/DeepSeek-V4-Flash-Vision-Exp"
   }
   // Vale Gate — unified AI gateway + device console. Custom domains are added
   // in the dashboard (custom_domains API is OAuth-only).
-  // Vars (set via `wrangler var put`, NOT committed): CONSOLE_HOST, API_HOST, OPENROUTER_PROXY_URL, US_PROXY
+  // Vars: committed non-sensitive defaults below; per-deploy overrides
+  // (CONSOLE_HOST, API_HOST, OPENROUTER_PROXY_URL, US_PROXY) via dashboard /
+  // `wrangler var put`.
   // Secrets (set via `wrangler secret put`): CLIENT_KEY, DEEPSEEK_API_KEY, OPENCODE_GO_API_KEY,
   // OPENROUTER_API_KEY, QWEN_API_KEY, CMD_API_KEY (worker-level Command Code
   // key, e.g. for the vale-probe health check; per-user keys are BYOK via the console),
+  // NVAPI_KEY, GMI_API_KEY, AMD_API_KEY (same pattern: worker-level key only
+  // feeds /api/vale-probe; real traffic uses the requesting user's own key),
   // ADMIN_PASSWORD,
   // SESSION_SECRET (high-entropy; decouples session signing from the admin password — set it!),
-  // DO_AUTH (shared secret the main worker passes to PluginHubDO to gate its /call and /ws)
+  // DO_AUTH (shared secret the main worker passes to BreakerDO/RouteDO to gate their /call)
 }

@@ -164,10 +164,23 @@ export async function ensureUserByEmail(env: Env, email: string): Promise<User |
       if (u) return typeof u === "string" ? JSON.parse(u) : u;
     }
 
-    let name = usernameFromEmail(email);
+    const base = usernameFromEmail(email);
+    let name = base;
+    // Uniqueness loop: a single 4-hex suffix attempt could still collide and
+    // silently OVERWRITE the colliding account's record (the old code suffixed
+    // once, then put unconditionally). Retry with a fresh random suffix until
+    // the name is free; bounded so a pathological KV state can't loop forever.
     if (await env.KEYS.get(`user:${name}`)) {
-      const suffix = randomHex(2); // 4 hex chars — collision suffix
-      name = `${name}-${suffix}`;
+      let unique = false;
+      for (let i = 0; i < 10; i++) {
+        const candidate = `${base}-${randomHex(2)}`; // 4 hex chars — collision suffix
+        if (!(await env.KEYS.get(`user:${candidate}`))) {
+          name = candidate;
+          unique = true;
+          break;
+        }
+      }
+      if (!unique) throw new Error("could not allocate a unique username — try again");
     }
 
     const token = randomHex(24);

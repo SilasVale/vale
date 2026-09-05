@@ -73,6 +73,15 @@ deploy_worker() {
   # build-installer.sh used to sync it (round-320 deleted that script).
   # Sync before deploy so the served sources never drift from live.
   if [[ "$dir" == "gateway" ]]; then
+    # Gateway deploy preflight (fail-closed): DO_AUTH / SESSION_SECRET /
+    # ADMIN_PASSWORD 任一缺失即 abort，不带病上线 (secrets live in the
+    # worker, never in wrangler.jsonc — see its Secrets comment).
+    for s in DO_AUTH SESSION_SECRET ADMIN_PASSWORD; do
+      if ! CLOUDFLARE_API_TOKEN="$token" wrangler secret list 2>/dev/null | grep -qE "(^|[\"' ])${s}([\"' ]|$)"; then
+        echo "  !! abort: worker secret $s 未配置 — 先执行 wrangler secret put $s (gateway fail-closed)" >&2
+        return 1
+      fi
+    done
     local mirror_root="$ROOT/gateway/public/code/files/vale-gate"
     local code_dir="$mirror_root/src"
     if [ ! -d "$ROOT/gateway/src" ]; then
@@ -110,6 +119,9 @@ deploy_worker() {
     fi
     # shellcheck source=smoke-index.sh
     source "$ROOT/scripts/smoke-index.sh"
+    # Shared sha guard (fail-fast here too; smoke_index_release re-asserts
+    # internally — both publish paths call the same function, P2-6).
+    assert_want_sha256 "$want_sha" || exit 1
     smoke_index_release "$want_version" "$want_sha" || exit 1
   fi
 }
@@ -185,7 +197,8 @@ case "$cmd" in
   # round-320: build-installer.sh retired (it staged the dead Vercel mirror
   # + rewrote index.js + required retired Tauri exes — it always failed).
   # Releases use scripts/publish-release.sh (CDN publish + last-5 prune);
-  # `deploy` deploys the workers only.
+  # `deploy` builds agent + deploys gateway/index + the three Cloudflare
+  # proxies (not studio/vercel-proxy).
   deploy)   build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|studio|deploy]"; exit 1 ;;
 esac

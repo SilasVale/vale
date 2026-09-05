@@ -661,7 +661,7 @@ export async function createInvite(env: Env): Promise<string> {
  *
  * devices:v1 → JSON array of { name, hostname, token }
  *   name     → device id (also the console key), e.g. "d1"
- *   hostname → the device's public host, e.g. "d1.agent.saisi.online"
+ *   hostname → the device's public host, e.g. "d1.<dist-host>"
  *   token    → the vale-agent Bearer token (MCP + panel auth). Stored here so
  *              the console can show the MCP config and the proxy can inject it
  *              server-side; NEVER auto-dispensed to non-admin callers.
@@ -1059,4 +1059,18 @@ export function maskKey(v: string): string {
   if (!v) return "not configured";
   if (v.length <= 6) return v[0] + "…" + v.slice(-2);
   return v.slice(0, 3) + "…" + v.slice(-4);
+}
+
+/** Per-key configured/masked status for the console (shared by the auth
+ *  plugin's /api/me and the admin plugin's user list — was copy-pasted in
+ *  both with subtly different types). */
+export function userKeysStatus(
+  ukeys: Record<string, any>,
+): Record<string, { configured: boolean; masked: string }> {
+  const out: Record<string, { configured: boolean; masked: string }> = {};
+  for (const n of USER_KEY_NAMES) {
+    const v = ukeys?.[n];
+    out[n] = { configured: !!v, masked: maskKey(v || "") };
+  }
+  return out;
 }

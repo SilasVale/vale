@@ -1,18 +1,8 @@
 {
   "files": [
     {
-      "name": "src/index.js",
-      "path": "files/vale-gate/src/index.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/store.js",
-      "path": "files/vale-gate/src/store.js",
-      "group": "vale-gate"
-    },
-    {
-      "name": "src/auth.js",
-      "path": "files/vale-gate/src/auth.js",
+      "name": "wrangler.jsonc",
+      "path": "files/vale-gate/wrangler.jsonc",
       "group": "vale-gate"
     },
     {
@@ -21,18 +11,118 @@
       "group": "vale-gate"
     },
     {
-      "name": "public/app.js",
-      "path": "files/vale-gate/public/app.js",
-      "group": "vale-gate"
-    },
-    {
       "name": "public/style.css",
       "path": "files/vale-gate/public/style.css",
       "group": "vale-gate"
     },
     {
-      "name": "wrangler.jsonc",
-      "path": "files/vale-gate/wrangler.jsonc",
+      "name": "src/access.ts",
+      "path": "files/vale-gate/src/access.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/anthropic-translate.ts",
+      "path": "files/vale-gate/src/anthropic-translate.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/auth.ts",
+      "path": "files/vale-gate/src/auth.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/body-scan.ts",
+      "path": "files/vale-gate/src/body-scan.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/channels.ts",
+      "path": "files/vale-gate/src/channels.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/device-fetch.ts",
+      "path": "files/vale-gate/src/device-fetch.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/http.ts",
+      "path": "files/vale-gate/src/http.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/index.ts",
+      "path": "files/vale-gate/src/index.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/mcp-tools.ts",
+      "path": "files/vale-gate/src/mcp-tools.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/mcp.ts",
+      "path": "files/vale-gate/src/mcp.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/reliability.ts",
+      "path": "files/vale-gate/src/reliability.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/route-do.ts",
+      "path": "files/vale-gate/src/route-do.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/session.ts",
+      "path": "files/vale-gate/src/session.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/sse-guard.ts",
+      "path": "files/vale-gate/src/sse-guard.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store.ts",
+      "path": "files/vale-gate/src/store.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/upstream.ts",
+      "path": "files/vale-gate/src/upstream.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/plugins/admin.ts",
+      "path": "files/vale-gate/src/plugins/admin.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/plugins/auth.ts",
+      "path": "files/vale-gate/src/plugins/auth.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/plugins/devices.ts",
+      "path": "files/vale-gate/src/plugins/devices.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/plugins/mcp.ts",
+      "path": "files/vale-gate/src/plugins/mcp.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/plugins/registry.ts",
+      "path": "files/vale-gate/src/plugins/registry.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/plugins/translate.ts",
+      "path": "files/vale-gate/src/plugins/translate.ts",
       "group": "vale-gate"
     }
   ]
