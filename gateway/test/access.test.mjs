@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { webcrypto as crypto } from "node:crypto";
+import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 const { requireSession } = await import("../src/session.ts");
 const { verifyAccessJwt, ensureUserByEmail } = await import("../src/access.ts");
@@ -42,21 +43,21 @@ async function signJwtRaw(payload) {
   return `${h}.${p}.${b64url(sig)}`;
 }
 
+// Shared Map-KV stub (helpers.mjs) — `users` entries are raw KV keys
+// (values: strings raw, objects JSON-encoded), plus this file's ACCESS_* SSO
+// vars. `__store` aliases the stub's raw `_kv` map for seed assertions.
 function makeEnv({ adminEmail = "", users = {} } = {}) {
-  const store = new Map(Object.entries(users));
-  for (const [k, v] of Object.entries(users)) store.set(k, typeof v === "string" ? v : JSON.stringify(v));
-  return {
-    KEYS: {
-      async get(k) { return store.has(k) ? store.get(k) : null; },
-      async put(k, v) { store.set(k, v); },
-      async delete(k) { store.delete(k); },
+  const env = makeBaseEnv({
+    kv: users,
+    extra: {
+      ACCESS_AUD: AUD,
+      ACCESS_TEAM_DOMAIN: "test.cloudflareaccess.com",
+      ACCESS_JWKS_JSON: JSON.stringify({ keys: [keys.pubJwk] }),
+      ACCESS_ADMIN_EMAIL: adminEmail,
     },
-    ACCESS_AUD: AUD,
-    ACCESS_TEAM_DOMAIN: "test.cloudflareaccess.com",
-    ACCESS_JWKS_JSON: JSON.stringify({ keys: [keys.pubJwk] }),
-    ACCESS_ADMIN_EMAIL: adminEmail,
-    __store: store,
-  };
+  });
+  env.__store = env._kv;
+  return env;
 }
 
 function reqWith(jwt) {

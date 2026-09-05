@@ -13,34 +13,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { issueSessionToken, SESSION_COOKIE } from "../src/auth.ts";
+import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 const ADMIN_PW = "test-admin-password";
 const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 
 // KV stub: device registry, plugin links (plugins:v1 token → {device}),
 // admin password + users for the session path. `_admin_seeded` keeps
-// seedAdmin from rewriting anything (content is consistent across tests so
-// store.js's module-level cache can't go stale).
+// seedAdmin from rewriting anything. Shared Map-KV stub (helpers.mjs — it
+// also clears store.ts's module-level cache per env, which this read-only
+// seeding never needed but never hurts).
 function makeEnv() {
-  const kv = new Map([
-    ["devices:v1", JSON.stringify([DEVICE])],
-    ["plugins:v1", JSON.stringify({
+  return makeBaseEnv({
+    devices: [DEVICE],
+    links: {
       "tok-d1": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 * 30 },
       "tok-d2": { device: "d2", createdAt: 2 },
-    })],
-    ["auth:admin_password", ADMIN_PW],
-    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "" })],
-    ["user:bob", JSON.stringify({ id: "bob", username: "bob", role: "user", enabled: true, token: "" })],
-    ["_admin_seeded", "1"],
-  ]);
-  return {
-    CONSOLE_HOST: "x",
-    KEYS: {
-      async get(k) { return kv.has(k) ? kv.get(k) : null; },
-      async put(k, v) { kv.set(k, v); },
-      async delete(k) { kv.delete(k); },
     },
-  };
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" },
+      bob: { id: "bob", username: "bob", role: "user", enabled: true, token: "" },
+    },
+    kv: { "auth:admin_password": ADMIN_PW, _admin_seeded: "1" },
+  });
 }
 
 /**

@@ -6,23 +6,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { getPluginByToken, removePluginLink, __clearCaches, setAdminPassword } from "../src/store.ts";
+import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 // Full worker fetch: pair/claim + ws-ticket are public (no admin session) —
 // the extension has no session cookie. Asserted by behavior, not source order.
+// Shared Map-KV stub (helpers.mjs) seeded with this file's minimal base.
 function makeEnv() {
-  const m = new Map([
-    ["_admin_seeded", "1"],
-    ["auth:admin_password", "pw"],
-    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "" })],
-  ]);
-  return {
-    CONSOLE_HOST: "x",
-    KEYS: {
-      async get(k) { return m.has(k) ? m.get(k) : null; },
-      async put(k, v) { m.set(k, v); },
-      async delete(k) { m.delete(k); },
-    },
-  };
+  return makeBaseEnv({
+    users: { admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" } },
+    kv: { _admin_seeded: "1", "auth:admin_password": "pw" },
+  });
 }
 
 async function apiFetch(env, path, init = {}) {
@@ -30,13 +23,9 @@ async function apiFetch(env, path, init = {}) {
   return worker.fetch(req, env);
 }
 
+// Bare stub for the store-helper tests (direct store.ts calls, no worker).
 function env() {
-  const m = new Map();
-  return { KEYS: {
-    get: async (k) => m.get(k) ?? null,
-    put: async (k, v) => m.set(k, v),
-    delete: async (k) => m.delete(k),
-  } };
+  return makeBaseEnv({});
 }
 
 test("plugin link: get/remove (KV-seeded)", async () => {
@@ -104,21 +93,12 @@ test("plugins/status: valid admin session → 200 (R83 gate)", async () => {
 /* ---- Reset admin password (round-113, by admin gateway token) ---- */
 
 function makeResetEnv() {
-  const m = new Map([
-    ["_admin_seeded", "1"],
-    ["auth:admin_password", "oldsalt:oldhash"],
-    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "ADMIN_KEY_123" })],
-  ]);
-  return {
-    CONSOLE_HOST: "x",
+  return makeBaseEnv({
+    users: { admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "ADMIN_KEY_123" } },
+    kv: { _admin_seeded: "1", "auth:admin_password": "oldsalt:oldhash" },
     // Fail-closed issuance: login refuses without SESSION_SECRET.
-    SESSION_SECRET: "test-session-secret-0123456789abcdef",
-    KEYS: {
-      async get(k) { return m.has(k) ? m.get(k) : null; },
-      async put(k, v) { m.set(k, v); },
-      async delete(k) { m.delete(k); },
-    },
-  };
+    extra: { SESSION_SECRET: "test-session-secret-0123456789abcdef" },
+  });
 }
 
 test("reset-password: wrong adminKey → 403", async () => {

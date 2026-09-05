@@ -12,24 +12,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleMcp } from "../src/mcp.ts";
 import { __clearCaches } from "../src/store.ts";
+import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 
 // admin: token:admintoken → admin (role admin); bob: token:usertoken → bob (role user)
+// Shared Map-KV stub (helpers.mjs) seeded with this file's MCP base.
 function makeEnv() {
-  const kv = new Map([
-    ["token:admintoken", "admin"],
-    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" })],
-    ["token:usertoken", "bob"],
-    ["user:bob", JSON.stringify({ id: "bob", username: "bob", role: "user", enabled: true, token: "usertoken" })],
-    ["devices:v1", JSON.stringify([DEVICE])],
-  ]);
-  return {
-    KEYS: {
-      async get(k) { return kv.has(k) ? kv.get(k) : null; },
-      async put() {}, async delete() {}, async list() { return { keys: [] }; },
+  return makeBaseEnv({
+    devices: [DEVICE],
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" },
+      bob: { id: "bob", username: "bob", role: "user", enabled: true, token: "usertoken" },
     },
-  };
+    kv: { "token:admintoken": "admin", "token:usertoken": "bob" },
+  });
 }
 
 const post = (body, auth = "Bearer admintoken") =>
@@ -122,15 +119,14 @@ test("mcp: tools/call unknown device → -32602 listing registered devices (roun
   // name (the dominant real-world failure — 43 "Unknown device" calls/week);
   // the listing error only fires when several devices exist.
   __clearCaches();
-  const kv = new Map([
-    ["token:admintoken", "admin"],
-    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" })],
-    ["devices:v1", JSON.stringify([
+  const env = makeBaseEnv({
+    devices: [
       { name: "d1", hostname: "d1.agent.saisi.online", token: "t1" },
       { name: "d2", hostname: "d2.agent.saisi.online", token: "t2" },
-    ])],
-  ]);
-  const env = { CONSOLE_HOST: "x", KEYS: { async get(k) { return kv.get(k) ?? null; }, async put() {}, async delete() {}, async list() { return { keys: [] }; } } };
+    ],
+    users: { admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" } },
+    kv: { "token:admintoken": "admin" },
+  });
   const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: { device: "nope" } }, id: 4 }), env);
   assert.equal(res.status, 200);
   const data = await res.json();

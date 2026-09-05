@@ -19,6 +19,7 @@ import {
   withCors,
 } from "../src/http.ts";
 import { issueSessionToken, SESSION_COOKIE } from "../src/auth.ts";
+import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 const ADMIN_PW = "test-admin-password";
 const AI = "https://ai.saisi.online";
@@ -27,35 +28,25 @@ const DSH = "https://dsh.saisi.online";
 const EVIL = "https://evil.example";
 const LOOPBACK = "http://localhost:8787";
 
+// Shared Map-KV stub (helpers.mjs) seeded with the console base + the two
+// corsEnv-specific extras: the multi-origin CONSOLE_HOST and the ASSETS stub
+// (installer payloads are served from Workers Assets (/vale)).
 function corsEnv(extra = {}) {
-  const kv = new Map([
-    ["devices:v1", JSON.stringify([{ name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" }])],
-    ["plugins:v1", JSON.stringify({})],
-    ["auth:admin_password", ADMIN_PW],
-    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "" })],
-    ["_admin_seeded", "1"],
-  ]);
-  return {
-    CONSOLE_HOST: "ai.saisi.online,api.saisi.online",
-    KEYS: {
-      async get(k) {
-        return kv.has(k) ? kv.get(k) : null;
+  return makeBaseEnv({
+    devices: [{ name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" }],
+    links: {},
+    users: { admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" } },
+    kv: { "auth:admin_password": ADMIN_PW, _admin_seeded: "1" },
+    extra: {
+      CONSOLE_HOST: "ai.saisi.online,api.saisi.online",
+      ASSETS: {
+        async fetch() {
+          return new Response("#!/bin/sh\necho vale\n", { status: 200 });
+        },
       },
-      async put(k, v) {
-        kv.set(k, v);
-      },
-      async delete(k) {
-        kv.delete(k);
-      },
+      ...extra,
     },
-    // Installer payloads are served from Workers Assets (/vale).
-    ASSETS: {
-      async fetch() {
-        return new Response("#!/bin/sh\necho vale\n", { status: 200 });
-      },
-    },
-    ...extra,
-  };
+  });
 }
 
 const get = (path, origin, host = "https://ai.saisi.online") =>

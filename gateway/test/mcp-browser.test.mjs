@@ -9,6 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleMcp, callTool } from "../src/mcp.ts";
+import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 const DEVICE = { name: "d1", hostname: "d1.example.com", token: "devtok" };
 
@@ -188,32 +189,14 @@ test("mcp: browser_screenshot data-URL → MCP image content block", async () =>
   ]);
 });
 
-// KV stub for handleMcp-level tests.
+// KV stub for handleMcp-level tests — shared Map-KV stub (helpers.mjs)
+// seeded with this file's MCP base.
 function makeEnv() {
-  const kv = new Map([
-    ["token:admintoken", "admin"],
-    [
-      "user:admin",
-      JSON.stringify({
-        id: "admin",
-        username: "admin",
-        role: "admin",
-        enabled: true,
-        token: "admintoken",
-      }),
-    ],
-    ["devices:v1", JSON.stringify([DEVICE])],
-  ]);
-  return {
-    KEYS: {
-      async get(k) {
-        return kv.has(k) ? kv.get(k) : null;
-      },
-      async put() {},
-      async delete() {},
-      async list() {
-        return { keys: [] };
-      },
+  return makeBaseEnv({
+    devices: [DEVICE],
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" },
     },
-  };
+    kv: { "token:admintoken": "admin" },
+  });
 }

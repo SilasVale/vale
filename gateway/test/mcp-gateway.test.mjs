@@ -11,31 +11,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { __clearCaches } from "../src/store.ts";
+import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 const ADMIN_PW = "test-admin-password";
 const ADMIN_TOKEN = "test-admin-mcp-token";
 
+// Shared Map-KV stub (helpers.mjs) seeded with this file's console base +
+// the fixed gateway-token mapping; keeps the makeEnv(devices, links) shape.
 function makeEnv(devices, links = {}) {
-  __clearCaches();
-  const kv = new Map([
-    ["devices:v1", JSON.stringify(devices)],
-    ["plugins:v1", JSON.stringify(links)],
-    ["auth:admin_password", ADMIN_PW],
-    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "" })],
-    ["token:" + ADMIN_TOKEN, "admin"],
-    ["_admin_seeded", "1"],
-  ]);
-  return {
-    CONSOLE_HOST: "x",
-    KEYS: {
-      async get(k) { return kv.has(k) ? kv.get(k) : null; },
-      async put(k, v) { kv.set(k, v); },
-      async delete(k) { kv.delete(k); },
-      async list({ prefix } = {}) {
-        return { keys: [...kv.keys()].filter((k) => !prefix || k.startsWith(prefix)).map((k) => ({ name: k })) };
-      },
-    },
-  };
+  return makeBaseEnv({
+    devices,
+    links,
+    users: { admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" } },
+    kv: { "auth:admin_password": ADMIN_PW, _admin_seeded: "1", [`token:${ADMIN_TOKEN}`]: "admin" },
+  });
 }
 
 function mcpReq(method, params) {

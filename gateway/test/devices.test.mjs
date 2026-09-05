@@ -12,42 +12,24 @@ import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { issueSessionToken, SESSION_COOKIE } from "../src/auth.ts";
 import { __clearCaches, maskKey } from "../src/store.ts";
+import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 const ADMIN_PW = "test-admin-password";
 
+// Shared Map-KV stub (helpers.mjs, richest variant: list() + expiry tracking)
+// seeded with this file's console base; keeps the makeEnv(devices, links)
+// call shape the tests use. The expiry map is exposed as env._expiry (tests
+// backdate entries to reproduce real KV's expired-but-unreaped list names).
 function makeEnv(devices, links = {}) {
-  __clearCaches();
-  const kv = new Map([
-    ["devices:v1", JSON.stringify(devices)],
-    ["plugins:v1", JSON.stringify(links)],
-    ["auth:admin_password", ADMIN_PW],
-    ["user:admin", JSON.stringify({ id: "admin", username: "admin", role: "admin", enabled: true, token: "" })],
-    ["user:bob", JSON.stringify({ id: "bob", username: "bob", role: "user", enabled: true, token: "" })],
-    ["_admin_seeded", "1"],
-  ]);
-  const expiry = new Map(); // key → expiration (epoch SECONDS, like real KV)
-  return {
-    CONSOLE_HOST: "x",
-    KEYS: {
-      async get(k) { return kv.has(k) ? kv.get(k) : null; },
-      async put(k, v, opts) {
-        kv.set(k, v);
-        if (opts && opts.expirationTtl) expiry.set(k, Math.floor(Date.now() / 1000) + opts.expirationTtl);
-      },
-      async delete(k) { kv.delete(k); expiry.delete(k); },
-      async list({ prefix } = {}) {
-        const keys = [];
-        for (const k of kv.keys()) {
-          if (prefix && !k.startsWith(prefix)) continue;
-          keys.push({ name: k, expiration: expiry.get(k) || 0 });
-        }
-        return { keys };
-      },
+  return makeBaseEnv({
+    devices,
+    links,
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" },
+      bob: { id: "bob", username: "bob", role: "user", enabled: true, token: "" },
     },
-    // Test hook: real KV list() keeps returning expired-but-unreaped key
-    // names; tests backdate entries here to reproduce that state.
-    _expiry: expiry,
-  };
+    kv: { "auth:admin_password": ADMIN_PW, _admin_seeded: "1" },
+  });
 }
 
 async function adminCookie() { return issueSessionToken(ADMIN_PW, "admin", "admin"); }
