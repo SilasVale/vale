@@ -9,6 +9,44 @@ const TARGETS = {
   cm: "https://api.commandcode.ai/provider",
 };
 const SAFE = ["accept","accept-encoding","accept-language","anthropic-version","content-type","user-agent"];
+
+// Upstream fetch budget: fail fast instead of hanging a client.
+const UPSTREAM_TIMEOUT_MS = 30000;
+
+// CORS allowlist: the console origins used in this repo plus loopback for
+// local dev (same closed set as the CF zen proxies). Any other Origin gets
+// NO Access-Control-Allow-Origin header (default-closed). Non-browser
+// clients (gateway server-side) are unaffected by CORS.
+const ALLOWED_ORIGINS = new Set([
+  "https://ai.saisi.online",
+  "https://api.saisi.online",
+  "https://dsh.saisi.online",
+]);
+
+function isLoopbackOrigin(origin) {
+  try {
+    const u = new URL(origin);
+    return (
+      (u.protocol === "http:" || u.protocol === "https:") &&
+      (u.hostname === "localhost" || u.hostname === "127.0.0.1")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function corsHeaders(request) {
+  const origin = request.headers.get("origin") || "";
+  const headers = {
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+  };
+  if (ALLOWED_ORIGINS.has(origin) || isLoopbackOrigin(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers["Vary"] = "Origin";
+  }
+  return headers;
+}
 // Allowlist-relative upstream path: must stay a plain absolute path on the
 // chosen target's host. Rejects traversal (..), backslashes (WHATWG URL
 // parsers treat \ as / for https:, so \\host escapes the origin),
@@ -30,7 +68,8 @@ function normalizeUpstreamPath(p) {
 }
 export const config = { runtime: "edge" };
 export default async function handler(request) {
-  if (request.method === "OPTIONS") return new Response(null, {headers:{"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"*","Access-Control-Allow-Headers":"*"}});
+  const cors = corsHeaders(request);
+  if (request.method === "OPTIONS") return new Response(null, { headers: cors });
   try {
     // Caller gate (same BYOK rule as /api/proxy): the caller MUST supply
     // their own upstream key via x-api-key or Authorization. Anonymous relay
@@ -61,21 +100,40 @@ export default async function handler(request) {
     const h = new Headers();
     for (const n of SAFE) { const v = request.headers.get(n); if (v) h.set(n, v); }
     if (target === "og") {
-      // zen's two endpoints authenticate differently: /v1/messages accepts
-      // x-api-key, chat/completions accepts Authorization: Bearer — send both,
-      // zen picks the one it recognizes.
-      h.set("x-api-key", callerKey);
-      h.set("Authorization", `Bearer ${callerKey}`);
+      // zen's two endpoints authenticate differently — send exactly ONE key,
+      // chosen by path: /v1/messages takes x-api-key, chat/completions takes
+      // Authorization: Bearer. (Previously both were sent and zen picked one;
+      // single-key avoids leaking the credential in the unused scheme and
+      // matches each endpoint's documented auth.)
+      // NOTE (needs live verification): the per-path split has not yet been
+      // verified against the live upstream — confirm both paths still auth.
+      if (path.includes("chat/completions")) {
+        h.set("Authorization", `Bearer ${callerKey}`);
+      } else if (path.startsWith("/v1/messages")) {
+        h.set("x-api-key", callerKey);
+      } else {
+        // Non-AI paths (e.g. /v1/models): zen's native scheme is x-api-key.
+        h.set("x-api-key", callerKey);
+      }
     } else {
       h.set("Authorization", `Bearer ${callerKey}`);
     }
     if (!h.has("anthropic-version")) h.set("anthropic-version", "2023-06-01");
     h.set("Content-Type", "application/json");
-    const r = await fetch(upstream, { method: request.method, headers: h, body: request.body });
+    const r = await fetch(upstream, {
+      method: request.method,
+      headers: h,
+      // GET/HEAD carry no body: passing request.body there throws on some
+      // runtimes. Only methods with a body send one.
+      body: ["POST", "PUT", "PATCH"].includes(request.method) ? request.body : undefined,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
     const rh = new Headers(r.headers);
-    rh.set("Access-Control-Allow-Origin", "*");
+    for (const [k, v] of Object.entries(cors)) rh.set(k, v);
     return new Response(r.body, { status: r.status, headers: rh });
   } catch (e) {
-    return new Response(JSON.stringify({error:e.message}), {status:500,headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"}});
+    // Never leak internal detail — generic client text, full detail in log.
+    console.error(`[vercel-zen] handler error: ${e?.stack || e}`);
+    return new Response(JSON.stringify({ error: "Internal error" }), { status: 500, headers: { "Content-Type": "application/json", ...cors } });
   }
 }

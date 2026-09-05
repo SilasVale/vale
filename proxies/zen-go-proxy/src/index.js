@@ -13,6 +13,12 @@
 const VERIFY_PATH = "/v1/messages";
 const COUNT_PATH = "/v1/messages/count_tokens";
 
+// Upstream fetch budget: fail fast instead of hanging a client for minutes.
+const UPSTREAM_TIMEOUT_MS = 30000;
+// Largest request body accepted on the JSON POST paths (10MB). Bodies are
+// parsed with request.json() (fully buffered), so bound memory explicitly.
+const MAX_JSON_BYTES = 10 * 1024 * 1024;
+
 // CORS allowlist: the console origins used in this repo —
 //   https://ai.saisi.online + https://api.saisi.online (gateway CONSOLE_HOST),
 //   https://dsh.saisi.online (extension/manifest.json host_permissions),
@@ -50,6 +56,30 @@ function corsHeaders(request) {
   return headers;
 }
 
+// Constant-time string equality for the CLIENT_KEY gate (same pattern as
+// index/src/index.js safeEq): SHA-256 both sides to fixed 32-byte digests
+// first (no length early-exit to leak on), then fold XOR across every byte
+// without short-circuiting.
+async function safeEq(a, b) {
+  const enc = new TextEncoder();
+  const [da, db] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(String(a))),
+    crypto.subtle.digest("SHA-256", enc.encode(String(b))),
+  ]);
+  const a8 = new Uint8Array(da);
+  const b8 = new Uint8Array(db);
+  let diff = 0;
+  for (let i = 0; i < a8.length; i++) diff |= a8[i] ^ b8[i];
+  return diff === 0;
+}
+
+// Reject oversized JSON bodies BEFORE buffering them with request.json().
+// Missing content-length (chunked) passes through to the normal parse path.
+function jsonTooLarge(request) {
+  const n = Number(request.headers.get("content-length"));
+  return Number.isFinite(n) && n > MAX_JSON_BYTES;
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -63,14 +93,18 @@ export default {
       // Default-CLOSED: when CLIENT_KEY is unset every request is refused —
       // a missing gate secret must never pass callers through to the paid key.
       const clientKey = request.headers.get("x-api-key") || "";
-      if (!env.CLIENT_KEY || clientKey !== env.CLIENT_KEY) {
+      if (!env.CLIENT_KEY || !(await safeEq(clientKey, env.CLIENT_KEY))) {
         return jsonError(401, "Missing or invalid x-api-key", "authentication_error", cors);
       }
 
-      // GET /v1/models — passthrough upstream model list
+      // GET /v1/models — passthrough upstream model list.
+      // NOTE (needs live verification): auth header changed from
+      // `Authorization: Bearer` to `x-api-key` for consistency with
+      // zen-us-proxy; not yet verified against the live upstream.
       if (request.method === "GET" && url.pathname.endsWith("/models")) {
         const up = await fetch("https://opencode.ai/zen/go/v1/models", {
-          headers: { Authorization: `Bearer ${env.OPENCODE_GO_API_KEY}` },
+          headers: { "x-api-key": env.OPENCODE_GO_API_KEY },
+          signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         });
         return new Response(up.body, {
           status: up.status,
@@ -80,6 +114,9 @@ export default {
 
       // POST /v1/messages/count_tokens — estimate
       if (request.method === "POST" && url.pathname.endsWith(COUNT_PATH)) {
+        if (jsonTooLarge(request)) {
+          return jsonError(413, "Request body too large", "invalid_request_error", cors);
+        }
         const body = await request.json();
         return jsonOk({ input_tokens: Math.ceil(JSON.stringify(body.messages || []).length / 4) }, cors);
       }
@@ -88,6 +125,9 @@ export default {
         return jsonError(404, "Not Found", "not_found_error", cors);
       }
 
+      if (jsonTooLarge(request)) {
+        return jsonError(413, "Request body too large", "invalid_request_error", cors);
+      }
       const anthropicReq = await request.json();
       const model = anthropicReq.model || "deepseek-v4-flash";
       // deepseek-v4-flash is Anthropic-native on zen/go/v1/messages — forward
@@ -103,9 +143,20 @@ export default {
             ? { "x-api-key": env.OPENCODE_GO_API_KEY, "Content-Type": "application/json", "anthropic-version": "2023-06-01" }
             : { Authorization: `Bearer ${env.OPENCODE_GO_API_KEY}`, "Content-Type": "application/json" },
           body: native ? JSON.stringify(anthropicReq) : JSON.stringify(toOpenAIRequest(anthropicReq, model)),
+          signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
         },
       );
       if (!upstream.ok) {
+        // 5xx from upstream: generic client text, detail stays server-side.
+        if (upstream.status >= 500) {
+          let detail = `Upstream ${upstream.status}`;
+          try {
+            const err = await upstream.json();
+            detail = err.error?.message || detail;
+          } catch {}
+          console.error(`[zen-go] upstream 5xx: ${detail}`);
+          return jsonError(upstream.status, "Upstream unavailable", "api_error", cors);
+        }
         let message = `Upstream ${upstream.status}`;
         try {
           const err = await upstream.json();
@@ -133,7 +184,10 @@ export default {
       }
       return jsonOk(anthropicRes, cors);
     } catch (error) {
-      return jsonError(500, error.message || "Internal error", "api_error", cors);
+      // Never leak internal detail (key fragments, stack, upstream body) —
+      // generic client text, full detail in the worker log.
+      console.error(`[zen-go] handler error: ${error?.stack || error}`);
+      return jsonError(500, "Internal error", "api_error", cors);
     }
   },
 };

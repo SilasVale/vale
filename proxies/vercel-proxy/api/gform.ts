@@ -47,6 +47,14 @@ const RESPONSE_HEADERS = [
 ];
 const MAX_REDIRECTS = 5;
 
+// Upstream fetch budget: fail fast instead of hanging a client.
+const UPSTREAM_TIMEOUT_MS = 30000;
+// Rewrite ceiling: response bodies are fully buffered by response.text()
+// before rewriting, so bound memory explicitly. Bodies declaring MORE than
+// this via content-length skip the rewrite and stream straight through
+// (passthrough) — slightly un-rewritten assets, never an OOM kill.
+const MAX_REWRITE_BYTES = 10 * 1024 * 1024;
+
 type Route = { base: string; path: string };
 
 function bad(message: string, status = 400): Response {
@@ -222,7 +230,13 @@ export default async function handler(request: Request): Promise<Response> {
         const cookie = request.headers.get("cookie");
         if (cookie) effectiveHeaders.set("cookie", cookie);
       }
-      const response = await fetch(upstream, { method, headers: effectiveHeaders, body, redirect: "manual" });
+      const response = await fetch(upstream, {
+        method,
+        headers: effectiveHeaders,
+        body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      });
       if (response.status >= 300 && response.status < 400) {
         const target = redirectTarget(response, upstream);
         if (!target) {
@@ -247,6 +261,12 @@ export default async function handler(request: Request): Promise<Response> {
       if (response.status === 304) return new Response(null, { status: 304, headers: out });
       const contentType = response.headers.get("content-type");
       if (rewritable(contentType)) {
+        // Oversized bodies skip the rewrite (see MAX_REWRITE_BYTES): stream
+        // the pristine upstream bytes through instead of buffering them.
+        const declared = Number(response.headers.get("content-length"));
+        if (Number.isFinite(declared) && declared > MAX_REWRITE_BYTES) {
+          return new Response(response.body, { status: response.status, headers: out });
+        }
         return new Response(
           rewriteBody(await response.text(), origin, (contentType ?? "").startsWith("text/html")),
           { status: response.status, headers: out },
@@ -255,6 +275,8 @@ export default async function handler(request: Request): Promise<Response> {
       return new Response(response.body, { status: response.status, headers: out });
     }
   } catch (error) {
-    return bad(error instanceof Error ? error.message : "Google upstream unavailable", 502);
+    // Never leak internal detail — generic client text, full detail in log.
+    console.error(`[vercel-gform] upstream error: ${error instanceof Error ? error.stack || error.message : error}`);
+    return bad("Google upstream unavailable", 502);
   }
 }

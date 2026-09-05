@@ -102,6 +102,7 @@ VS.editor = (() => {
     const data = await VS.api(`/api/file?p=${encodeURIComponent(path)}`);
     if (data.binary) {
       if (data.dataUrl) return { kind: "image", data, path };
+      if (data.previewTooLarge) throw new Error(`图片过大 (${data.imageMime || data.binaryHint}, 超过 8MB 预览上限)，请用其他方式查看`);
       throw new Error(`二进制文件 (${data.binaryHint}) 不支持编辑`);
     }
     const uri = monaco.Uri.file(path);

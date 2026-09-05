@@ -318,3 +318,93 @@ test("image read returns proper image/* dataUrl MIME", async () => {
   assert.equal(jpg.imageMime, "image/jpeg");
   assert.ok(jpg.dataUrl.startsWith("data:image/jpeg;base64,"));
 });
+
+test("startup log masks the token (last 4 chars only)", async () => {
+  const log = child._log();
+  assert.ok(!log.includes(TOKEN), "full token must never appear in startup logs");
+  assert.ok(log.includes(`\u2022\u2022\u2022\u2022${TOKEN.slice(-4)}`), "masked tail must be logged");
+});
+
+test("boot reports vendored-asset health", async () => {
+  const data = await (await api("/api/boot")).json();
+  assert.ok(data.vendor && typeof data.vendor.monaco === "boolean");
+  assert.ok(typeof data.vendor.xterm === "boolean");
+});
+
+test("files endpoint clamps limit and reports truncation", async () => {
+  const tiny = await (await api(`/api/files?root=${encodeURIComponent(rootDir)}&limit=1`)).json();
+  assert.equal(tiny.files.length, 1);
+  assert.equal(tiny.truncated, true);
+  const huge = await (await api(`/api/files?root=${encodeURIComponent(rootDir)}&limit=99999999`)).json();
+  assert.ok(huge.files.length <= 20000, "must clamp to FILES_MAX");
+  assert.equal(typeof huge.truncated, "boolean");
+});
+
+test("error bodies carry no absolute paths", async () => {
+  const missing = await api(`/api/file?p=${encodeURIComponent(path.join(rootDir, "no-such-file.txt"))}`);
+  assert.equal(missing.status, 404);
+  assert.ok(!(await missing.text()).includes(rootDir));
+  // listTree failure path: point dir= at an existing FILE (resolves fine,
+  // readdir ENOTDIR) so the branch is actually reached.
+  const probe = path.join(rootDir, "tree-probe.txt");
+  await fsp.writeFile(probe, "probe");
+  const badDir = await api(`/api/tree?dir=${encodeURIComponent(probe)}`);
+  assert.equal(badDir.status, 404);
+  const bj = await badDir.json();
+  assert.equal(bj.message, "cannot list directory");
+  assert.ok(!JSON.stringify(bj).includes(rootDir));
+  await fsp.unlink(probe);
+});
+
+test("'new' lock conflict returns currentSha256", async () => {
+  const p = path.join(rootDir, "newsha.txt");
+  await fsp.writeFile(p, "v1");
+  const cur = await (await api(`/api/file?p=${encodeURIComponent(p)}`)).json();
+  const res = await api("/api/file", {
+    method: "PUT",
+    body: { p, content: "v2", baseSha256: "new" },
+  });
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).currentSha256, cur.sha256);
+});
+
+test("oversized image skips dataUrl with previewTooLarge", async () => {
+  const big = Buffer.alloc(9 * 1024 * 1024, 0x41);
+  big[0] = 0x00; // NUL in the sample window => detected binary
+  const p = path.join(rootDir, "big-img-test.png");
+  await fsp.writeFile(p, big);
+  const data = await (await api(`/api/file?p=${encodeURIComponent(p)}`)).json();
+  assert.equal(data.binary, true);
+  assert.equal(data.previewTooLarge, true);
+  assert.ok(!data.dataUrl, "no dataUrl for >8MB images");
+  await fsp.unlink(p);
+});
+
+test("overlong search query is clamped, not fatal", async () => {
+  const res = await api(`/api/search?q=${encodeURIComponent("a".repeat(500))}&root=${encodeURIComponent(rootDir)}`);
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray((await res.json()).matches));
+});
+
+test("gitTop confines the toplevel inside the given roots", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { gitStatus, gitTop } = await import("../lib/fsapi.mjs");
+  const outer = await fsp.mkdtemp(path.join(os.tmpdir(), "vale-studio-gittop-"));
+  const sub = path.join(outer, "sub");
+  await fsp.mkdir(sub);
+  await fsp.writeFile(path.join(sub, "f.txt"), "x\n");
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: outer });
+    execFileSync("git", ["add", "."], { cwd: outer });
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"], { cwd: outer });
+  } catch {
+    return; // git unavailable
+  }
+  // toplevel (outer) escapes roots=[sub] -> confined to no_git
+  assert.equal(gitTop(path.join(sub, "f.txt"), [sub]), null);
+  assert.throws(() => gitStatus(path.join(sub, "f.txt"), [sub]), (e) => e.code === "no_git");
+  // roots=[outer] contains the toplevel -> works
+  assert.equal(gitTop(path.join(sub, "f.txt"), [outer]), fs.realpathSync(outer));
+  assert.ok((await gitStatus(path.join(sub, "f.txt"), [outer])).top);
+  await fsp.rm(outer, { recursive: true, force: true });
+});

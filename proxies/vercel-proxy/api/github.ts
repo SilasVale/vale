@@ -43,6 +43,9 @@ const RESPONSE_HEADERS = [
 ];
 const MAX_REDIRECTS = 5;
 
+// Upstream fetch budget: fail fast instead of hanging a client.
+const UPSTREAM_TIMEOUT_MS = 30000;
+
 type Route = { base: string; path: string };
 
 function bad(message: string, status = 400): Response {
@@ -134,6 +137,7 @@ export default async function handler(request: Request): Promise<Response> {
         method: request.method,
         headers,
         redirect: "manual",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
       const target = redirectTarget(response, upstream);
       if (!target || response.status < 300 || response.status >= 400) {
@@ -145,6 +149,8 @@ export default async function handler(request: Request): Promise<Response> {
       upstream = target;
     }
   } catch (error) {
-    return bad(error instanceof Error ? error.message : "GitHub upstream unavailable", 502);
+    // Never leak internal detail — generic client text, full detail in log.
+    console.error(`[vercel-github] upstream error: ${error instanceof Error ? error.stack || error.message : error}`);
+    return bad("GitHub upstream unavailable", 502);
   }
 }

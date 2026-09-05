@@ -20,7 +20,7 @@ export function sha256(buf) {
   return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
-function isSubpath(child, parent) {
+export function isSubpath(child, parent) {
   if (child === parent) return true;
   return child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
 }
@@ -78,7 +78,9 @@ const IGNORED_IN_TREE = new Set([TRASH_DIR]);
 
 export async function listTree(dir, depth = 1) {
   const dirents = await fsp.readdir(dir, { withFileTypes: true }).catch((e) => {
-    throw new ApiError(404, "not_found", `cannot list ${dir}: ${e.code}`);
+    // Never echo the absolute path back: error bodies must stay path-free.
+    console.warn(`[studio] listTree failed for ${dir}: ${e.code || e.message}`);
+    throw new ApiError(404, "not_found", "cannot list directory");
   });
   const out = [];
   for (const d of dirents) {
@@ -110,6 +112,10 @@ export async function listTree(dir, depth = 1) {
 
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp"]);
 const TEXT_SAMPLE = 8192;
+// Image preview ceiling: dataUrls are base64 (+33%) held fully in memory on
+// both ends — never embed huge images. Above this the entry stays binary
+// with previewTooLarge so the frontend can say so explicitly.
+export const IMAGE_PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
 
 function detectBinary(buf) {
   const n = Math.min(buf.length, TEXT_SAMPLE);
@@ -141,7 +147,14 @@ export async function readFileEntry(p) {
     // sniff reliably), everything else 1:1 minus the dot.
     entry.imageMime =
       ext === ".jpg" ? "image/jpeg" : ext === ".ico" ? "image/x-icon" : `image/${ext.slice(1)}`;
-    entry.dataUrl = `data:${entry.imageMime};base64,${buf.toString("base64")}`;
+    if (stat.size <= IMAGE_PREVIEW_MAX_BYTES) {
+      entry.dataUrl = `data:${entry.imageMime};base64,${buf.toString("base64")}`;
+    } else {
+      // Too big to preview inline: stay binary, flag it (no dataUrl).
+      entry.previewTooLarge = true;
+      entry.content = null;
+      entry.binaryHint = ext.slice(1) || "bin";
+    }
   } else if (!binary) {
     entry.content = buf.toString("utf8");
     entry.truncated = false;
@@ -170,9 +183,9 @@ export async function writeFileAtomic(p, content, baseSha256) {
   }
   const currentSha = prevStat ? sha256(await fsp.readFile(p)) : null;
   if (baseSha256 === "new" && prevStat) {
-    throw new ApiError(409, "conflict", "file was created on disk after you opened it", {
-      currentSha256: currentSha,
-    });
+    const e = new ApiError(409, "conflict", "file was created on disk after you opened it");
+    e.currentSha256 = currentSha;
+    throw e;
   }
   if (
     typeof baseSha256 === "string" &&
@@ -206,7 +219,8 @@ export async function writeFileAtomic(p, content, baseSha256) {
 
 export async function makeDir(p) {
   await fsp.mkdir(p, { recursive: true }).catch((e) => {
-    throw new ApiError(500, "mkdir_failed", e.message);
+    // e.message embeds the absolute path — keep the code, drop the path.
+    throw new ApiError(500, "mkdir_failed", `mkdir failed: ${e.code || "error"}`);
   });
   return { ok: true };
 }
@@ -246,17 +260,70 @@ export async function trashFile(p, root) {
   try {
     await fsp.rename(p, dest);
   } catch (e) {
-    throw new ApiError(500, "trash_failed", `trash rename failed: ${e.code || e.message}`);
+    // e.message embeds absolute paths — keep the code, drop the path.
+    throw new ApiError(500, "trash_failed", `trash rename failed: ${e.code || "error"}`);
   }
+  await enforceTrashQuota(trashRoot);
   return { trashedTo: dest };
+}
+
+// Trash quota: the trash dir is operator-disk, never client-unbounded.
+// Evict oldest-first down to the caps (best-effort; never fail the trash op).
+const TRASH_MAX_FILES = 200;
+const TRASH_MAX_BYTES = 512 * 1024 * 1024;
+
+async function enforceTrashQuota(trashRoot) {
+  try {
+    const names = await fsp.readdir(trashRoot);
+    if (!names.length) return;
+    const stats = [];
+    let total = 0;
+    for (const n of names) {
+      try {
+        const st = await fsp.stat(path.join(trashRoot, n));
+        stats.push({ name: n, size: st.size, mtimeMs: st.mtimeMs });
+        total += st.size;
+      } catch {
+        /* vanished mid-scan */
+      }
+    }
+    if (stats.length <= TRASH_MAX_FILES && total <= TRASH_MAX_BYTES) return;
+    stats.sort((a, b) => a.mtimeMs - b.mtimeMs); // oldest first
+    let remaining = stats.length;
+    for (const s of stats) {
+      if (remaining <= TRASH_MAX_FILES && total <= TRASH_MAX_BYTES) break;
+      try {
+        await fsp.rm(path.join(trashRoot, s.name), { recursive: true, force: true });
+        total -= s.size;
+        remaining -= 1;
+      } catch {
+        /* best-effort */
+      }
+    }
+  } catch {
+    /* best-effort: quota never breaks trash */
+  }
 }
 
 // ── search ───────────────────────────────────────────────────────────────────
 
 const RG_LIMIT = 500;
+// Query ceiling: bounds rg argv + ReDoS-ish regex cost on the shared server.
+const SEARCH_Q_MAX = 200;
+// ripgrep wall-clock budget: slow trees resolve with what they have.
+const RG_TIMEOUT_MS = 15_000;
 
-export function searchWorkspace({ root, q, regex = false, ignoreCase = true }) {
+// Single-flight: identical concurrent searches (scanner fan-out, double
+// submit) share one rg process instead of forking N. Keyed by the full
+// query shape; entries are deleted on settle (no leak, no stale cache).
+const searchInflight = new Map();
+
+export function searchWorkspace({ root, q, regex = false, ignoreCase = true, flightKey = "" }) {
   if (!q) return Promise.resolve({ matches: [], truncated: false, engine: "none" });
+  const query = String(q).slice(0, SEARCH_Q_MAX);
+  const key = `${flightKey}::${root}::${regex ? "re" : "lit"}::${ignoreCase ? "i" : "s"}::${query}`;
+  const dupe = searchInflight.get(key);
+  if (dupe) return dupe;
   const hasRg = (() => {
     try {
       execFileSync("rg", ["--version"], { stdio: "ignore" });
@@ -265,7 +332,14 @@ export function searchWorkspace({ root, q, regex = false, ignoreCase = true }) {
       return false;
     }
   })();
-  return hasRg ? searchRipgrep({ root, q, regex, ignoreCase }) : searchJs({ root, q, regex, ignoreCase });
+  const run = hasRg
+    ? searchRipgrep({ root, q: query, regex, ignoreCase })
+    : searchJs({ root, q: query, regex, ignoreCase });
+  const shared = run.finally(() => {
+    if (searchInflight.get(key) === shared) searchInflight.delete(key);
+  });
+  searchInflight.set(key, shared);
+  return shared;
 }
 
 function searchRipgrep({ root, q, regex, ignoreCase }) {
@@ -289,6 +363,17 @@ function searchRipgrep({ root, q, regex, ignoreCase }) {
     const matches = [];
     let truncated = false;
     let buf = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      truncated = true;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already dead */
+      }
+    }, RG_TIMEOUT_MS);
+    if (timer.unref) timer.unref();
     child.stdout.on("data", (d) => {
       buf += d.toString();
       let idx;
@@ -315,8 +400,14 @@ function searchRipgrep({ root, q, regex, ignoreCase }) {
         }
       }
     });
-    child.on("close", () => resolve({ matches, truncated, engine: "ripgrep" }));
-    child.on("error", () => resolve(searchJs({ root, q, regex, ignoreCase })));
+    child.on("close", () => {
+      clearTimeout(timer);
+      resolve({ matches, truncated: truncated || timedOut, engine: "ripgrep" });
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve(searchJs({ root, q, regex, ignoreCase }));
+    });
   });
 }
 
@@ -352,7 +443,13 @@ async function searchJs({ root, q, regex, ignoreCase }) {
 
 // ── git ──────────────────────────────────────────────────────────────────────
 
-function gitTop(fileOrDir) {
+// Resolve the enclosing git toplevel for `fileOrDir`. When `roots` is given,
+// the discovered toplevel must itself sit inside one of the workspace roots
+// (realpath-compared): otherwise the caller would run `git status/log/diff`
+// with cwd OUTSIDE the allowed tree and leak whole-repo state belonging to
+// directories the client is not allowed to see. Returns null (= no_git)
+// when there is no repo or the toplevel escapes the roots.
+export function gitTop(fileOrDir, roots = null) {
   let start;
   try {
     start = fs.statSync(fileOrDir).isDirectory() ? fileOrDir : path.dirname(fileOrDir);
@@ -360,18 +457,36 @@ function gitTop(fileOrDir) {
     // Raced deletion between safeResolve and here — report 404, not 500.
     throw new ApiError(404, "not_found", "path not found");
   }
+  let top;
   try {
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       cwd: start,
       encoding: "utf8",
     }).trim();
   } catch {
     return null;
   }
+  if (roots) {
+    let topReal;
+    try {
+      topReal = fs.realpathSync(top);
+    } catch {
+      return null;
+    }
+    const inside = roots.some((r) => {
+      try {
+        return isSubpath(topReal, fs.realpathSync(r));
+      } catch {
+        return false;
+      }
+    });
+    if (!inside) return null;
+  }
+  return top;
 }
 
-export function gitStatus(p) {
-  const top = gitTop(p);
+export function gitStatus(p, roots = null) {
+  const top = gitTop(p, roots);
   if (!top) throw new ApiError(404, "no_git", "not inside a git repository");
   const status = execFileSync("git", ["status", "--porcelain", "-b"], {
     cwd: top,
@@ -381,8 +496,8 @@ export function gitStatus(p) {
   return { top, status };
 }
 
-export function gitLog(p, n = 30) {
-  const top = gitTop(p);
+export function gitLog(p, n = 30, roots = null) {
+  const top = gitTop(p, roots);
   if (!top) throw new ApiError(404, "no_git", "not inside a git repository");
   const rel = path.relative(top, p) || ".";
   const log = execFileSync(
@@ -393,8 +508,8 @@ export function gitLog(p, n = 30) {
   return { top, log };
 }
 
-export function gitDiff(p) {
-  const top = gitTop(p);
+export function gitDiff(p, roots = null) {
+  const top = gitTop(p, roots);
   if (!top) throw new ApiError(404, "no_git", "not inside a git repository");
   const rel = path.relative(top, p) || ".";
   const diff = execFileSync("git", ["diff", "HEAD", "--", rel], {
@@ -407,7 +522,7 @@ export function gitDiff(p) {
 
 export function gitInfo(root) {
   try {
-    const top = gitTop(root);
+    const top = gitTop(root, [root]);
     if (!top) return { git: false };
     const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
       cwd: top,

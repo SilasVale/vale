@@ -12,7 +12,7 @@ The workspace code editor + integrated terminal for <host>. Connects to **real f
 ```bash
 pm2 start ecosystem.config.js --only vale-studio   # production (pm2-managed)
 node server.mjs                                    # manual
-npm test                                           # API contract tests (17)
+npm test                                           # API contract tests (26)
 LD_LIBRARY_PATH=~/chromium-libs/root/usr/lib/x86_64-linux-gnu \
   node test/e2e.mjs                                # browser end-to-end (17)
 ```
@@ -40,6 +40,9 @@ LD_LIBRARY_PATH=~/chromium-libs/root/usr/lib/x86_64-linux-gnu \
   "token": "<openssl rand -hex 32>",
   "readOnly": false,               // when true, all write endpoints and the terminal are disabled
   "terminal": { "enabled": true },
+  "corsOrigins": ["https://dsh.saisi.online", "http://localhost:7738"],
+  "maxFileSizeMB": 8,              // write + image-preview ceiling
+  "publicHost": "code.saisi.online", // shown in the login link
   "roots": ["/home/zhengsaisi/vale"]  // whitelisted workspace roots
 }
 ```
@@ -47,8 +50,10 @@ LD_LIBRARY_PATH=~/chromium-libs/root/usr/lib/x86_64-linux-gnu \
 ## Security notes
 
 - Loopback binding + Bearer token (uniform 404 on errors + failure circuit breaker)
-- After `realpath`, every path must land inside a whitelisted root (symlink escape blocked; rename additionally confined to a single root)
-- Atomic writes + baseSha256 optimistic lock; deletions go to `<root>/.vale-studio-trash/`
+- Startup logs carry only the token's last 4 chars; the full login link prints once at first config generation (`--link` reprints on demand)
+- After `realpath`, every path must land inside a whitelisted root (symlink escape blocked; rename additionally confined to a single root); git toplevels must also sit inside the roots
+- Atomic writes + baseSha256 optimistic lock; deletions go to `<root>/.vale-studio-trash/` (200-file / 512MB quota, oldest-first eviction); images over 8MB skip inline preview
+- `/api/files` limit clamps to 20000 with a `truncated` flag; search queries clamp to 200 chars with a 15s ripgrep budget and single-flight dedupe
 - File watching is **targeted**: only watches the directories of open files (avoids exhausting inotify)
 
 ## Shortcuts

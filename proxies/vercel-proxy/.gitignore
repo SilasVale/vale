@@ -1,1 +1,4 @@
 dl/
+# Vercel local state (org/project ids + cache): machine-local, never commit.
+# Mirrors the proxies/README.md sensitive-files note.
+.vercel/
