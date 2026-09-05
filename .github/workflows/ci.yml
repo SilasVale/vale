@@ -261,19 +261,30 @@ jobs:
         run: npm test
         working-directory: studio
 
-  # satellite proxies have NO unit tests — compile + config check without
-  # uploading (wrangler v4 supports --dry-run; verified locally). Needs no
-  # secrets: dry-run never uploads. vercel-proxy is a Vercel project, not a
-  # Worker — no dry-run exists for it, so its api files get node --check
-  # instead (syntax gate; smoke it before deploy as well).
+  # satellite proxies: zero-dep behavior tests (node --test over the worker
+  # default export with a stubbed fetch — CORS gates, CLIENT_KEY/BYOK auth,
+  # protocol conversion, upstream error shaping) + a compile/config check
+  # without uploading (wrangler v4 --dry-run; verified locally; never needs
+  # secrets). vercel-proxy is a Vercel project, not a Worker — no dry-run
+  # exists for it, so its api files get node --check instead (syntax gate;
+  # smoke it before deploy as well).
   proxies:
-    name: proxies (wrangler dry-run)
+    name: proxies (node --test + wrangler dry-run)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Test zen-go
+        run: node --test
+        working-directory: proxies/zen-go-proxy
+      - name: Test zen-us
+        run: node --test
+        working-directory: proxies/zen-us-proxy
+      - name: Test openrouter
+        run: node --test
+        working-directory: proxies/my-openrouter-proxy
       - name: Install wrangler
         run: npm install -g wrangler@4
       - name: Dry-run zen-go

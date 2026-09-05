@@ -1,0 +1,6 @@
+{
+  "name": "zen-us-proxy-tests",
+  "private": true,
+  "type": "module",
+  "description": "Zen US-egress proxy (Cloudflare Worker) — behavior tests via node --test (zero deps)"
+}

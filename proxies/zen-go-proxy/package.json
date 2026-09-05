@@ -1,0 +1,6 @@
+{
+  "name": "zen-go-proxy-tests",
+  "private": true,
+  "type": "module",
+  "description": "Zen/Go egress proxy (Cloudflare Worker) — behavior tests via node --test (zero deps)"
+}
