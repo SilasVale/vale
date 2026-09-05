@@ -15,7 +15,15 @@ node server.mjs                                    # manual
 npm test                                           # API contract tests (26)
 LD_LIBRARY_PATH=~/chromium-libs/root/usr/lib/x86_64-linux-gnu \
   node test/e2e.mjs                                # browser end-to-end (17)
+node test/term-ws-test.mjs                         # terminal WS round-trip
 ```
+
+Test tiering (deliberate): `test/api.test.mjs` is the only CI gate (`npm test`) —
+it needs no running server. `test/e2e.mjs` and `test/term-ws-test.mjs` are
+live-server smoke checks against the pm2-managed instance on 127.0.0.1:7780
+(real PTY spawns, a real browser, local chromium libs, probe files in the repo
+root) — exactly why they are NOT wired into `npm test` or CI; run them by hand
+after a `build.sh studio` restart.
 
 ## Features
 
