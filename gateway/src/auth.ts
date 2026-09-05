@@ -63,9 +63,7 @@ export function csrfCookieViolation(request: Request): boolean {
   if (!MUTATING_METHODS.has(method)) return false;
   const cookie = request.headers.get("cookie") || "";
   const hasSession = cookie.includes(SESSION_COOKIE + "=");
-  const hasDevicePair = Object.keys(parseCookie(cookie)).some((n) =>
-    n.startsWith("vale_pt_"),
-  );
+  const hasDevicePair = Object.keys(parseCookie(cookie)).some((n) => n.startsWith("vale_pt_"));
   if (!hasSession && !hasDevicePair) return false; // bearer path
   // Browsers attach Sec-Fetch-Site to EVERY request (forbidden header — a
   // cross-site page cannot forge it), so a DRIVE-BY from a device panel or
