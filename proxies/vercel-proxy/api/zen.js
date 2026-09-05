@@ -107,7 +107,10 @@ export default async function handler(request) {
       // matches each endpoint's documented auth.)
       // NOTE (needs live verification): the per-path split has not yet been
       // verified against the live upstream — confirm both paths still auth.
-      if (path.includes("chat/completions")) {
+      // /v1/responses is OpenAI-format (muse-spark Contributor) — it takes
+      // Bearer like chat/completions, NOT x-api-key (fixes 401 after the
+      // single-key split in ff5ad05a).
+      if (path.includes("chat/completions") || path.includes("/v1/responses")) {
         h.set("Authorization", `Bearer ${callerKey}`);
       } else if (path.startsWith("/v1/messages")) {
         h.set("x-api-key", callerKey);
