@@ -570,12 +570,25 @@ export default {
           // P2-5: assert the sha shape (64 hex), not just presence — a
           // truncated/placeholder sha would otherwise ship a manifest that
           // agent_update refuses anyway; fail to the honest 503 instead.
+          // P2-1: the tarball filename is LIVE data, not decoration —
+          // version.json names the exact file (publish writes the
+          // versionless latest alias today, a versioned name tomorrow).
+          // Serve exactly that basename after a flat-name validation (no
+          // slashes, must end .tgz — a hostile manifest must not escape
+          // /vale-agent/). Absent/invalid falls back to the derived
+          // versioned name so older manifests keep working; smoke pins
+          // the consistent case (tarball field == download basename).
+          const tbRaw = vj && vj.tarball;
+          const tb =
+            typeof tbRaw === "string" && /^vale-agent-[A-Za-z0-9][A-Za-z0-9._-]*\.tgz$/.test(tbRaw)
+              ? tbRaw
+              : `vale-agent-${ver}.tgz`;
           if (ver && typeof sha === "string" && SHA256_RE.test(sha)) {
             const base = new URL(request.url).origin;
             return new Response(
               JSON.stringify({
                 version: ver,
-                download: `${base}/vale-agent/vale-agent-${ver}.tgz`,
+                download: `${base}/vale-agent/${tb}`,
                 sha256: sha,
               }),
               { headers: { "content-type": "application/json", "cache-control": "no-store" } }

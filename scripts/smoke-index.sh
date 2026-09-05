@@ -62,6 +62,25 @@ smoke_index_release() {
   local dl_url live_sha
   dl_url="$(echo "$live" | grep -oP '"download":"\K[^"]+' | head -1)"
   [ -n "$dl_url" ] || { echo "  !! manifest has no download URL"; return 1; }
+  # P2-1 tarball consistency: the worker must serve exactly the file named
+  # in version.json's tarball field (the field is live data since the
+  # worker reads it — a derived-name drift would resurrect the dead field
+  # silently). Compare basenames only: the manifest carries an absolute
+  # URL, version.json a flat filename. Capture-first (never
+  # `curl | grep -q` under the caller's pipefail — SIGPIPE false-fails,
+  # round-288 lesson). A version.json fetch failure only WARNs (the
+  # sha checks below stay the hard gates); a real mismatch FAILS.
+  local vjson tb_json
+  vjson="$(curl -fsSL -m 30 "$base/vale-agent/version.json" 2>/dev/null)" || vjson=""
+  # (grep-no-match exits 1: the || keeps the empty-tarball case inside the
+  # if/elif below instead of tripping the caller's `set -e` + pipefail.)
+  tb_json="$(echo "$vjson" | grep -oP '"tarball":"\K[^"]+' | head -1)" || tb_json=""
+  if [ -z "$vjson" ]; then
+    echo "  -- WARN: could not fetch $base/vale-agent/version.json for the tarball check (continuing)"
+  elif [ -n "$tb_json" ] && [ "$(basename "$dl_url")" != "$tb_json" ]; then
+    echo "  !! tarball mismatch: version.json names '$tb_json' but /api/version serves '$dl_url'"
+    return 1
+  fi
   live_sha=""
   for _ in 1 2 3 4 5; do
     # round-134: curl -f fails fast on 4xx/5xx (a 404 body would otherwise
