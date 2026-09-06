@@ -1148,6 +1148,29 @@ test("ds count_tokens also estimates locally (no per-turn upstream round-trip)",
   assert.ok(Number.isInteger(body.input_tokens) && body.input_tokens > 0);
 });
 
+// round-502 (coverage-driven): the count_tokens keyless guards had ZERO
+// pins (only the keyed happy paths were covered).
+test("count_tokens without the user's own key → 502, no estimate leaks", async () => {
+  const { env, a } = isoEnv({ aKeys: { DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined } });
+  const cases = [
+    ["ds/deepseek-v4-flash", /DEEPSEEK_API_KEY not configured/],
+    ["qw/qwen3.8-max-preview", /QWEN_API_KEY not configured/],
+    ["amd/DeepSeek-V4-Flash", /AMD_API_KEY not configured/],
+  ];
+  await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    async () => {
+      for (const [model, re] of cases) {
+        const res = await post(env, a.token, { model, messages: [{ role: "user", content: "hi" }] }, "/v1/messages/count_tokens");
+        assert.equal(res.status, 502, model);
+        assert.match((await res.json()).error.message, re, model);
+      }
+    },
+  );
+});
+
 // ── reliability on the translate path ──────────────────────────
 
 // A fetch that hangs until the caller's AbortController fires — like a real
