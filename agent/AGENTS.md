@@ -850,6 +850,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   winmain::started_by_scm() (macro fn can't carry visibility) so main.rs
   no longer touches windows_service directly; dropped the unused LOG_FILE
   import. xwin check + full matrix green.
+  ROUND-352 (2026-09-06): gateway matrix green (295/295 node --test, tsc,
+  prettier, eslint) + code-viewer mirror re-synced. The mirror had drifted
+  since the store/ + lib/ refactors: sync script copied only top-level +
+  plugins/*.ts (subdirs silently dropped), dead sse-guard.ts still served,
+  and the fail-closed redaction aborted on store.ts (the d1-host comment
+  moved to store/devices.ts:30 in the split). Script now copies store/ +
+  lib/ explicitly and redacts the new path; mirror verified byte-identical
+  except the 3 intended comment redactions (error-copy strings keep the
+  real host by design). Manifest 39 files, sse-guard gone.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
