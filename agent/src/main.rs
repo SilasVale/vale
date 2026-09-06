@@ -128,8 +128,6 @@ fn init_tracing() {
     }
 }
 
-/// Coverage audit row 9: the self-register decision, extracted (it was inlined
-/// in the supervisor loop) so the "never leak the token to a hardcoded
 fn main() {
     init_tracing();
 
@@ -311,17 +309,24 @@ fn load_config(config_path: &Path) -> Config {
         // Mask the token in startup.log (round-58): the full token is the
         // device's only credential — a support-shared log must not leak it.
         // The console reads the token from config.yaml, not from logs.
-        let masked = if token.len() > 8 {
-            format!("{}…{}", &token[..4], &token[token.len() - 4..])
-        } else {
-            "********".to_string()
-        };
         out!(
-            "  Auth token: {masked}  (saved to {})",
+            "  Auth token: {}  (saved to {})",
+            mask_token(token),
             config_path.display()
         );
     }
     config
+}
+
+/// Mask a device token for log output: first 4 + last 4, short tokens fully
+/// hidden (round-58: startup.log must never leak the credential).
+/// Extracted pure so the binary target has unit coverage (round-401).
+pub(crate) fn mask_token(token: &str) -> String {
+    if token.len() > 8 {
+        format!("{}…{}", &token[..4], &token[token.len() - 4..])
+    } else {
+        "********".to_string()
+    }
 }
 
 /// Serve the MCP + web panel for `config_path` until shutdown.
@@ -335,6 +340,14 @@ fn load_config(config_path: &Path) -> Config {
 /// the audit's own warning), so we mirror-parse into Value and LOUDLY flag
 /// extra keys with the accepted set, recursively for our known sections.
 fn warn_unknown_keys(config_path: &Path) {
+    for w in unknown_key_warnings(config_path) {
+        tracing::warn!("{w}");
+    }
+}
+
+/// Pure warning-text computation behind warn_unknown_keys (round-401: the
+/// logging wrapper is untestable; the text list is asserted directly).
+pub(crate) fn unknown_key_warnings(config_path: &Path) -> Vec<String> {
     const SECTIONS: &[(&str, &[&str])] = &[
         (
             "server",
@@ -353,12 +366,15 @@ fn warn_unknown_keys(config_path: &Path) {
         ("platform", &["console_url", "download_url"]),
     ];
     let Ok(raw) = std::fs::read_to_string(config_path) else {
-        return;
+        return Vec::new();
     };
     let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&raw) else {
-        return;
+        return Vec::new();
     };
-    let Some(map) = val.as_mapping() else { return };
+    let Some(map) = val.as_mapping() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
     let known_top: Vec<&str> = SECTIONS.iter().map(|(k, _)| *k).collect();
     for (k, v) in map {
         let Some(key) = k.as_str() else { continue };
@@ -368,17 +384,20 @@ fn warn_unknown_keys(config_path: &Path) {
                 for (sk, _) in sec {
                     if let Some(s) = sk.as_str() {
                         if !fields.contains(&s) {
-                            tracing::warn!("config.yaml: unknown key '{key}.{s}' — IGNORED by the agent (typo? check docs; will never take effect)");
+                            out.push(format!("config.yaml: unknown key '{key}.{s}' — IGNORED by the agent (typo? check docs; will never take effect)"));
                         }
                     }
                 }
             } else {
-                tracing::warn!("config.yaml: section '{key}' is not a mapping — ignored");
+                out.push(format!(
+                    "config.yaml: section '{key}' is not a mapping — ignored"
+                ));
             }
         } else if !known_top.contains(&key) {
-            tracing::warn!("config.yaml: unknown top-level key '{key}' — IGNORED by the agent (typo? check docs; will never take effect)");
+            out.push(format!("config.yaml: unknown top-level key '{key}' — IGNORED by the agent (typo? check docs; will never take effect)"));
         }
     }
+    out
 }
 
 pub(crate) async fn run_server(config_path: PathBuf) {
@@ -556,4 +575,83 @@ pub(crate) async fn run_server(config_path: PathBuf) {
             .map(|e| e.to_string())
             .unwrap_or_else(|| "unknown error".into())
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TMP_CTR: AtomicU64 = AtomicU64::new(0);
+
+    /// Unique scratch config path (no tempfile dep on the binary target).
+    fn scratch(yaml: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "vale-main-test-{}-{}-config.yaml",
+            std::process::id(),
+            TMP_CTR.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::write(&p, yaml).expect("write scratch config");
+        p
+    }
+
+    #[test]
+    fn mask_token_long_shows_first_and_last_four() {
+        assert_eq!(mask_token("abcdefghij123456"), "abcd…3456");
+    }
+
+    #[test]
+    fn mask_token_short_fully_hidden() {
+        assert_eq!(mask_token(""), "********");
+        assert_eq!(mask_token("12345678"), "********");
+        assert_eq!(mask_token("123456789"), "1234…6789");
+    }
+
+    #[test]
+    fn unknown_keys_clean_config_is_silent() {
+        let p = scratch("server:\n  host: 127.0.0.1\n  port: 18080\nterminal:\n  buffer_mb: 8\n");
+        assert!(unknown_key_warnings(&p).is_empty());
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn unknown_keys_flags_top_level_and_nested() {
+        let p = scratch("servre:\n  host: x\nserver:\n  devce_token: y\n  port: 1\n");
+        let w = unknown_key_warnings(&p);
+        assert!(
+            w.iter()
+                .any(|s| s.contains("unknown top-level key 'servre'")),
+            "{w:?}"
+        );
+        assert!(
+            w.iter()
+                .any(|s| s.contains("unknown key 'server.devce_token'")),
+            "{w:?}"
+        );
+        assert_eq!(w.len(), 2);
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn unknown_keys_non_mapping_section_and_bad_inputs_are_safe() {
+        let p = scratch("server: just-a-string\n");
+        let w = unknown_key_warnings(&p);
+        assert!(
+            w.iter()
+                .any(|s| s.contains("section 'server' is not a mapping")),
+            "{w:?}"
+        );
+        std::fs::remove_file(&p).ok();
+        // Missing file, invalid YAML, non-mapping root: silent, never panics.
+        assert!(
+            unknown_key_warnings(&PathBuf::from("/nonexistent-vale-dir-xyz/config.yaml"))
+                .is_empty()
+        );
+        let bad = scratch("{not yaml: [unclosed\n");
+        assert!(unknown_key_warnings(&bad).is_empty());
+        std::fs::remove_file(&bad).ok();
+        let list = scratch("- just\n- a\n- list\n");
+        assert!(unknown_key_warnings(&list).is_empty());
+        std::fs::remove_file(&list).ok();
+    }
 }
