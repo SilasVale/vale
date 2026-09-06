@@ -331,6 +331,75 @@ test("admin/users: user tokens are masked, raw values never leave the server", a
   assert.equal(byId.bob.token, maskKey("BOB_RAW_TOKEN_1234567890"));
 });
 
+// ── Admin ops remainder (round-424: cf-token shape/masking, invite issue,
+// enable/disable guards had zero pins) ──
+
+function adminEnv() {
+  return makeBaseEnv({
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" },
+      bob: { id: "bob", username: "bob", role: "user", enabled: true, token: "" },
+    },
+    kv: { _admin_seeded: "1", "auth:admin_password": "pw" },
+  });
+}
+
+async function adminCookie() {
+  return `ag_session=${await issueSessionToken("pw", "admin", "admin")}`;
+}
+
+test("admin/cf-token: invalid shape 400, valid roundtrips masked, empty clears", async () => {
+  __clearCaches();
+  const env = adminEnv();
+  const h = { cookie: await adminCookie(), "content-type": "application/json" };
+  const put = (token) => worker.fetch(
+    new Request("https://x/api/admin/cloudflare-token", { method: "PUT", headers: h, body: JSON.stringify({ token }) }),
+    env,
+  );
+  assert.equal((await put("short")).status, 400);
+  assert.equal((await put("bad chars!!")).status, 400);
+  const good = "CFTOKEN_abcdef1234567890";
+  assert.deepEqual(await (await put(good)).json(), { ok: true });
+  const got = await worker.fetch(new Request("https://x/api/admin/cloudflare-token", { headers: { cookie: await adminCookie() } }), env);
+  const body = await got.json();
+  assert.equal(body.configured, true);
+  assert.equal(body.masked, maskKey(good));
+  assert.ok(!JSON.stringify(body).includes(good), "raw CF token must not leak");
+  assert.deepEqual(await (await put("")).json(), { ok: true });
+  __clearCaches();
+  const cleared = await worker.fetch(new Request("https://x/api/admin/cloudflare-token", { headers: { cookie: await adminCookie() } }), env);
+  assert.equal((await cleared.json()).configured, false);
+});
+
+test("admin/invite: issues a code; gates apply", async () => {
+  __clearCaches();
+  const env = adminEnv();
+  const h = { cookie: await adminCookie(), "content-type": "application/json" };
+  const res = await worker.fetch(new Request("https://x/api/admin/invite", { method: "POST", headers: h }), env);
+  assert.equal(res.status, 200);
+  const { ok, code } = await res.json();
+  assert.equal(ok, true);
+  assert.ok(typeof code === "string" && code.length > 0, "invite code must be non-empty");
+  // no session → 401
+  assert.equal((await worker.fetch(new Request("https://x/api/admin/invite", { method: "POST" }), env)).status, 401);
+});
+
+test("admin/users/{id}/enabled: malformed id 400, admin untouchable, bob flips", async () => {
+  __clearCaches();
+  const env = adminEnv();
+  const cookie = await adminCookie();
+  const put = (id, enabled) => worker.fetch(
+    new Request(`https://x/api/admin/users/${id}/enabled`, { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }) }),
+    env,
+  );
+  assert.equal((await put("admin", false)).status, 400);
+  assert.equal((await put("%zz", false)).status, 400);
+  const off = await put("bob", false);
+  assert.deepEqual(await off.json(), { ok: true, id: "bob", enabled: false });
+  const on = await put("bob", true);
+  assert.deepEqual(await on.json(), { ok: true, id: "bob", enabled: true });
+});
+
 // ── Link-map hardening (round-392: sweep persistence, legacy links,
 // corrupt blobs, write-through — only return values were pinned) ──
 
