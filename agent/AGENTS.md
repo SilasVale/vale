@@ -1788,6 +1788,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-502 (2026-09-06): count audit — the count_tokens keyless guards
   had ZERO pins. Added 1 matrix test in gateway.test.mjs (ds/qw/amd, no
   upstream). Suite 546->547; gates clean; snapshot updated; pushed.
+  ROUND-503 (2026-09-06): chat-ladder audit — the chat-path keyless guards
+  had ZERO pins (488/496/499 only hit the messages ladder — coverage
+  proved it). Added 2 in gateway.test.mjs (7-arm matrix + og keyless/
+  breaker). Chat openrouter arm unreachable (pre-branch guard same var —
+  documented, not pinned). translate 86.42->89.18. Suite 547->549;
+  gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
