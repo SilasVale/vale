@@ -940,6 +940,17 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   #[cfg(all(test, feature))] TEST_DIR re-export (follows the file's cfg
   boundary rule); default suite unaffected (202), feat-gated 206->208,
   clippy x2 + xwin clean; snapshot feat count updated.
+  ROUND-360 (2026-09-06): gateway translate-domain audit — routing/breaker/
+  401 coverage was deep (67 tests) but TWO security properties had zero
+  pins: disabled-user relay access and cross-user key isolation (the exact
+  property the F3 proposal claims is "correctly scoped"). Added 4 tests in
+  gateway.test.mjs with a two-user isoEnv (distinct tokens — module cache
+  + F1 buckets forbid reuse): alice/bob header-level key proof on the og
+  translate path, no-borrow 502 (alice keyless while bob keyed, upstream
+  never called), disabled → 401 with no upstream call. Suite 295->299,
+  prettier clean; snapshot count updated. Round-9 CI SUCCESS on GitHub.
+  Tooling note: a heredoc append silently went nowhere once this round —
+  file-tool edits only for test appends from now on.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
