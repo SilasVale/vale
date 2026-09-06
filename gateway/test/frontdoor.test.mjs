@@ -54,7 +54,8 @@ test("unhandled throw answers 500 Internal error without internals", async () =>
 
 // round-471 (coverage-driven): the index.ts CSRF-gate 403 arm had ZERO
 // route pins (only unit pins on csrfCookieViolation itself).
-test("cross-site cookie-authed mutation 403s at the front door", async () => {  const csrfEnv = () => makeBaseEnv({ kv: { "auth:admin_password": "pw", _admin_seeded: "1" } });
+test("cross-site cookie-authed mutation 403s at the front door", async () => {
+  const csrfEnv = () => makeBaseEnv({ kv: { "auth:admin_password": "pw", _admin_seeded: "1" } });
   const mk = (site) =>
     new Request("https://x/api/me/keys", {
       method: "POST",
