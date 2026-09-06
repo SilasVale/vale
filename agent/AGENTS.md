@@ -1096,6 +1096,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   headers (spawn 'static), Arc clone, parse_envelope returns the result
   body (not the envelope). Stable 20/20 x3. Matrix: lib 250 (+7),
   feat-gated 256, clippy x2 + fmt + xwin clean; snapshot 280->287.
+  ROUND-377 (2026-09-06): filelog rotation audit — only the size trigger
+  was pinned; prune cap, append-resume accounting, day buckets untested.
+  Added 3: 900 KiB pre-existing + 200 KiB write rotates (metadata seeds
+  the cap — no fresh megabyte per restart), 5 priors + 1 rotation prunes
+  to exactly 3 (newest priors + live stamp survive), day_bucket UTC
+  boundaries. Matrix: lib 253 (+3), feat-gated 259, clippy x2 + fmt +
+  xwin clean; snapshot 287->290.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
