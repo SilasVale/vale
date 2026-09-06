@@ -92,6 +92,13 @@ export async function seedAdmin(env: Env): Promise<void> {
   // The deployer reads the minted value from KV (`user:admin`) and uses it
   // as the bootstrap adminKey. Existing deployments are untouched (they
   // return early on _admin_seeded above).
+  // round-394: mint ONLY when no user:admin record exists after the
+  // migration/backfill above. A v1 upgrade (user:u-admin, no marker) used
+  // to fall through here and CLOBBER the just-migrated record — new random
+  // token (orphaning the remapped token:V1TOK→admin mapping, which then
+  // still authenticated), ukeys:admin reset to {} (migrated keys wiped).
+  // The migration IS the seed for v1 upgrades; the deployer keeps V1TOK.
+  if (await env.KEYS.get(`user:${ADMIN_ID}`)) return;
   const adminToken = legacyToken || generateGatewayToken();
   const admin = {
     id: ADMIN_ID,
