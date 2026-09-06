@@ -1672,6 +1672,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   mcp-browser.test.mjs. Self-caught×3: real Response stub, Bearer lives
   in deviceFetch, callTool returns the envelope. Suite 510->511; gates
   clean; snapshot updated; pushed.
+  ROUND-476 (2026-09-06): static-branch audit — off-host 404 + ASSETS
+  proxy arms had ZERO pins. Added 1 in frontdoor.test.mjs. Self-caught:
+  a no-op edit merged two lines (fixed immediately after). Suite
+  511->512; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
