@@ -403,3 +403,101 @@ test("isChannelDownFailure: network errors + FULL timeouts feed the breaker", as
   assert.equal(isChannelDownFailure("upstream 500"), false); // zen's intermittent 500s must not cut the channel
   assert.equal(isChannelDownFailure(undefined), false);
 });
+
+// ── Degraded-cache contract (round-403: 5s TTL, trip invalidation,
+// fail-open had zero direct pins) ──
+
+function breakerEnv(handler) {
+  const calls = [];
+  const stub = {
+    async fetch(url, init) {
+      calls.push(String(url));
+      return handler(String(url), init);
+    },
+  };
+  return {
+    calls,
+    env: { BREAKER: { idFromName: (n) => n, get: () => stub }, DO_AUTH: "sekret" },
+  };
+}
+
+test("isChannelDegraded: caches the DO verdict for 5s, then re-checks", async () => {
+  const { isChannelDegraded, __clearDegradedCache } = await import("../src/reliability.ts");
+  __clearDegradedCache();
+  const { calls, env } = breakerEnv(() => new Response("1"));
+  const realNow = Date.now;
+  try {
+    assert.equal(await isChannelDegraded(env), true);
+    assert.equal(await isChannelDegraded(env), true);
+    assert.equal(calls.length, 1, "second call inside TTL must not hit the DO");
+    Date.now = () => realNow() + 6000;
+    assert.equal(await isChannelDegraded(env), true);
+    assert.equal(calls.length, 2, "past the TTL the verdict is re-read");
+  } finally {
+    Date.now = realNow;
+    __clearDegradedCache();
+  }
+});
+
+test("isChannelDegraded: closed channel reads false; DO error fails open (false)", async () => {
+  const { isChannelDegraded, __clearDegradedCache } = await import("../src/reliability.ts");
+  __clearDegradedCache();
+  const closed = breakerEnv(() => new Response("0"));
+  assert.equal(await isChannelDegraded(closed.env), false);
+  __clearDegradedCache();
+  const broken = breakerEnv(() => {
+    throw new Error("do down");
+  });
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(await isChannelDegraded(broken.env), false);
+  } finally {
+    console.error = origErr;
+    __clearDegradedCache();
+  }
+});
+
+test("recordChannelFailure trips the DO and invalidates the 5s cache at once", async () => {
+  const { isChannelDegraded, recordChannelFailure, __clearDegradedCache } = await import("../src/reliability.ts");
+  __clearDegradedCache();
+  let open = false;
+  const { calls, env } = breakerEnv((url) => {
+    if (url.endsWith("/trip")) open = true;
+    return new Response(open ? "1" : "0");
+  });
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(await isChannelDegraded(env), false);
+    await recordChannelFailure(env);
+    assert.ok(calls.some((u) => u.endsWith("/trip")), "must call the DO trip endpoint");
+    // No stale 5s "ok": the very next read sees the trip without waiting.
+    assert.equal(await isChannelDegraded(env), true);
+  } finally {
+    console.error = origErr;
+    __clearDegradedCache();
+  }
+});
+
+test("recordChannelSuccess hits the DO reset endpoint (never throws)", async () => {
+  const { recordChannelSuccess } = await import("../src/reliability.ts");
+  const { calls, env } = breakerEnv(() => new Response("ok"));
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    await recordChannelSuccess(env);
+    assert.ok(calls.some((u) => u.endsWith("/reset")));
+    await recordChannelSuccess({}); // no BREAKER binding: must not throw
+  } finally {
+    console.error = origErr;
+  }
+});
+
+test("upstreamTimeoutMs: default 30s, env override wins, invalid falls back", async () => {
+  const { upstreamTimeoutMs } = await import("../src/reliability.ts");
+  assert.equal(upstreamTimeoutMs({}), 30000);
+  assert.equal(upstreamTimeoutMs({ UPSTREAM_TIMEOUT_MS: "45000" }), 45000);
+  assert.equal(upstreamTimeoutMs({ UPSTREAM_TIMEOUT_MS: "0" }), 30000);
+  assert.equal(upstreamTimeoutMs({ UPSTREAM_TIMEOUT_MS: "junk" }), 30000);
+});
