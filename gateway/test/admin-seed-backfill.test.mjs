@@ -8,7 +8,7 @@
 // starts false; __resetSeedForTests re-arms it between the two cases.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { seedAdmin, __clearCaches, __resetSeedForTests } from "../src/store.ts";
+import { seedAdmin, getAdminPassword, verifyAdminPassword, __clearCaches, __resetSeedForTests } from "../src/store.ts";
 
 function mockEnv(entries) {
   __clearCaches();
@@ -123,4 +123,15 @@ test("seedAdmin runs once per process; keyless env is a no-op", async () => {
   assert.equal(env._kv.get("_admin_seeded"), marker);
   __resetSeedForTests();
   await seedAdmin({}); // no KEYS binding: must not throw
+});
+
+// round-447 (coverage-driven): getAdminPassword's keyless-env branch had
+// ZERO pins — the legacy Worker-secret fallback path.
+test("getAdminPassword without KEYS: empty without secret, legacy hash with it", async () => {
+  __clearCaches();
+  assert.equal(await getAdminPassword({}), "");
+  const v = await getAdminPassword({ ADMIN_PASSWORD: "s3cret" });
+  assert.ok(v.startsWith("legacy:"), `migrated format, got: ${v.slice(0, 8)}…`);
+  assert.equal(await verifyAdminPassword({ ADMIN_PASSWORD: "s3cret" }, "s3cret"), true);
+  assert.equal(await verifyAdminPassword({ ADMIN_PASSWORD: "s3cret" }, "wrong"), false);
 });
