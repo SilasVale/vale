@@ -1127,6 +1127,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   public fns untestable repeatedly → pins target compute_* + structure.
   Matrix: lib 267 (+6), feat-gated 273, clippy x2 + fmt + xwin clean;
   snapshot 298->304.
+  ROUND-381 (2026-09-06): update plugin audit — version/newer/hex pinned
+  but cleanup_staged (the never-mix-versions guard) + version_url had
+  zero tests. Added 3: staged .new files + .vale-update gone while all
+  4 live files stay byte-identical, empty-dir noop, manifest URL shape.
+  Matrix: lib 270 (+3), feat-gated 276, clippy x2 + fmt + xwin clean;
+  snapshot 304->307.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
