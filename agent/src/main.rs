@@ -436,24 +436,58 @@ pub(crate) async fn run_server(config_path: PathBuf) {
                 let mut fast_retry = true;
                 if let Some((url, body)) = self_register_plan(console.as_deref(), &token, &hostname)
                 {
+                    // Capture the STATUS, not just ok: the gateway's 409
+                    // (hostname fixed + rotated token, proof impossible from
+                    // here) is a PERMANENT conflict — retrying it every 60 s
+                    // is infinite hammering with zero chance of success, and
+                    // a debug-only log made "device not appearing in the
+                    // console" undiagnosable. Failures now surface at warn
+                    // with the status; a 409 backs off to the hourly cadence.
+                    let mut conflict = false;
                     let ok = match reqwest::Client::builder()
                         .timeout(std::time::Duration::from_secs(10))
                         .build()
                     {
-                        Ok(c) => c
-                            .post(&url)
-                            .header("content-type", "application/json")
-                            .body(body)
-                            .send()
-                            .await
-                            .ok()
-                            .map(|r| r.status().is_success())
-                            .unwrap_or(false),
+                        Ok(c) => {
+                            match c
+                                .post(&url)
+                                .header("content-type", "application/json")
+                                .body(body)
+                                .send()
+                                .await
+                            {
+                                Ok(r) => {
+                                    let st = r.status();
+                                    let ok = st.is_success();
+                                    if !ok {
+                                        if st.as_u16() == 409 {
+                                            conflict = true;
+                                        }
+                                        tracing::warn!(
+                                        "[vale-agent] device self-register to {url} → HTTP {st}{}",
+                                        if conflict { " (hostname/token conflict — resolve via the console Devices page; backing off)" } else { "" }
+                                    );
+                                    }
+                                    ok
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "[vale-agent] device self-register to {url} failed: {e}"
+                                    );
+                                    false
+                                }
+                            }
+                        }
                         Err(_) => false,
                     };
-                    tracing::debug!(ok, "device self-register to gateway");
-                    // steady-state heartbeat hourly; failures retry in 60 s.
-                    fast_retry = !ok;
+                    fast_retry = !ok && !conflict;
+                    if conflict {
+                        // Permanent per current credentials: retry at the
+                        // hourly heartbeat so a console-side fix still lands
+                        // without a restart.
+                        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                        continue;
+                    }
                     if !fast_retry {
                         tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
                         continue;
