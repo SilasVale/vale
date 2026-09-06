@@ -531,3 +531,53 @@ test("devices list/add/mcp: admin success paths", async () => {
   assert.equal(mcp.status, 200);
   assert.equal((await mcp.json()).name, "d1");
 });
+
+// round-459 (coverage-driven): DELETE success (with link revocation) and
+// the grant-redeem matrix had ZERO pins.
+test("devices delete: removes the record and revokes its plugin links", async () => {
+  __clearCaches();
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("a") }]);
+  await env.KEYS.put("plugins:v1", JSON.stringify({ "tok-x": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 } }));
+  __clearCaches();
+  const admin = await adminCookie();
+  const del = await worker.fetch(req("DELETE", "/api/devices/d1", { cookie: admin }), env);
+  assert.equal(del.status, 200);
+  const list = await (await worker.fetch(req("GET", "/api/devices", { cookie: admin }), env)).json();
+  assert.deepEqual(list.devices, []);
+  assert.deepEqual(JSON.parse(await env.KEYS.get("plugins:v1")), {}, "device links revoked on delete");
+});
+
+test("panel-grant redeem: no-token/unknown-token 401, mismatch 403, unknown grant 404, ok + single-use", async () => {
+  __clearCaches();
+  const env = makeEnv([
+    { name: "d1", hostname: "d1.agent.saisi.online", token: T64("a") },
+    { name: "d2", hostname: "d2.agent.saisi.online", token: T64("b") },
+  ]);
+  const admin = await adminCookie();
+  const mint = (n) => worker.fetch(req("POST", `/api/devices/${n}/panel-grant`, { cookie: admin }), env);
+  const code = (await (await mint("d1")).json()).url.split("grant=")[1];
+  assert.ok(code, "mint returns a grant code");
+  const redeem = (token, grant) => worker.fetch(req("POST", "/api/devices/panel-grant/redeem", {
+    ...(token ? { auth: token } : {}),
+    body: { grant },
+  }), env);
+  assert.equal((await redeem(null, code)).status, 401);
+  assert.equal((await redeem(T64("z"), code)).status, 401);
+  assert.equal((await redeem(T64("b"), code)).status, 403, "grant bound to another device");
+  assert.equal((await redeem(T64("a"), "nope")).status, 404);
+  assert.equal((await redeem(T64("a"), code)).status, 200);
+  assert.equal((await redeem(T64("a"), code)).status, 404, "single-use: consumed on first redeem");
+});
+
+test("panel-grant redeem: KV read failure fails closed 401", async () => {
+  __clearCaches();
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("a") }]);
+  const inner = env.KEYS.get.bind(env.KEYS);
+  await inner("devices:v1"); // warm any boot reads before breaking the stub
+  env.KEYS.get = async () => { throw new Error("kv down"); };
+  const res = await worker.fetch(req("POST", "/api/devices/panel-grant/redeem", {
+    auth: T64("a"),
+    body: { grant: "whatever" },
+  }), env);
+  assert.equal(res.status, 401, "listDevices throw → caller null → 401, never 500");
+});
