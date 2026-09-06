@@ -168,4 +168,78 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    fn day_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("vale-filelog-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn day_bucket_splits_at_utc_midnight() {
+        assert_eq!(day_bucket(0), 0);
+        assert_eq!(day_bucket(86_399), 0);
+        assert_eq!(day_bucket(86_400), 1);
+        assert_eq!(day_bucket(86_400 * 2 + 7), 2);
+    }
+
+    #[test]
+    fn existing_file_size_seeds_the_cap_accounting() {
+        // Append-resume: a 900 KiB pre-existing log must count toward the
+        // 1 MiB cap — otherwise every restart would grant a fresh megabyte
+        // and the bound would be fictional on long-lived devices.
+        use tracing_subscriber::fmt::MakeWriter;
+        let dir = day_dir("resume");
+        let path = dir.join("agent.log");
+        std::fs::write(&path, vec![b'y'; 900 * 1024]).unwrap();
+        let w = RotatingFile::new(path.clone()).unwrap();
+        let mut s = w.make_writer();
+        s.write_all(&vec![b'z'; 200 * 1024]).unwrap();
+        drop(s);
+        let rotated = std::fs::read_dir(&dir).unwrap().flatten().any(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            n.starts_with("agent.log.") && n.ends_with(".old")
+        });
+        assert!(rotated, "900 KiB + 200 KiB must cross the 1 MiB cap");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_keeps_only_the_newest_three_rotated_files() {
+        // Five realistic (10-digit, chronological-lexical) priors + one
+        // triggered rotation = 6 candidates → the 3 oldest are deleted.
+        use tracing_subscriber::fmt::MakeWriter;
+        let dir = day_dir("prune");
+        for i in 1..=5 {
+            let name = format!("agent.log.100000000{i}.old");
+            std::fs::write(dir.join(name), b"old").unwrap();
+        }
+        let path = dir.join("agent.log");
+        let w = RotatingFile::new(path.clone()).unwrap();
+        let chunk = vec![b'x'; 64 * 1024];
+        for _ in 0..20 {
+            let mut s = w.make_writer();
+            s.write_all(&chunk).unwrap();
+        }
+        drop(w);
+        let mut olds: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("agent.log.") && n.ends_with(".old"))
+            .collect();
+        olds.sort();
+        assert_eq!(olds.len(), 3, "KEEP_OLD=3 must hold, got: {olds:?}");
+        assert!(
+            olds.iter().any(|n| n.starts_with("agent.log.1000000004"))
+                && olds.iter().any(|n| n.starts_with("agent.log.1000000005")),
+            "the two newest priors must survive: {olds:?}"
+        );
+        assert!(
+            olds.iter().any(|n| !n.starts_with("agent.log.100000000")),
+            "the just-rotated live stamp must survive: {olds:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
