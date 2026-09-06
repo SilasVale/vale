@@ -1569,6 +1569,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   `host === "::1"` disjunct is dead (WHATWG never yields bare ::1) —
   removed. Index 54->56, page.js 100/100/100; pushed (snapshot tracks
   gateway/agent only).
+  ROUND-450 (2026-09-06): provider-arm audit — CMD/GMI/NV/QWEN testKey
+  arms had ZERO pins. Added 1 in plugins.test.mjs: ok shapes +
+  upstream-401 shape. Suite 467->468; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
