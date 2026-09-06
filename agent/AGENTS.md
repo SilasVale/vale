@@ -835,6 +835,21 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   task reports, superseded DEVICE-INTEGRATION.md) or gitignored build
   artifacts; zero live code references. Cleanup marathon (round-318..349)
   VERIFIED COMPLETE.
+  ROUND-350 (2026-09-06): register.rs unit tests committed (were uncommitted
+  in tree) — self_register_plan url/body, pure-local None, name fallback;
+  197 lib + feature-gated 201 pass, clippy/fmt clean. NOTE: box CC env
+  points at a broken gcc10-root (missing cc1) — cargo needs
+  env -u CC -u CXX -u CFLAGS (the gcc10-root note in root AGENTS.md is
+  dsh-upgrade-only, NOT vale).
+  ROUND-351 (2026-09-06): xwin RED -> GREEN — A7 refactor (d35873b0) moved
+  self_heal/setup_child_reaper_job/ffi_service_main into winmain.rs as
+  PRIVATE fns while main.rs called them unqualified: 3x E0425 on the
+  Windows target. Linux test/clippy never saw it (cfg(windows) elided) and
+  the 58-commit local stack was never pushed so CI never checked it.
+  Fix: pub(crate) + winmain:: qualified calls; SCM dispatch wrapped as
+  winmain::started_by_scm() (macro fn can't carry visibility) so main.rs
+  no longer touches windows_service directly; dropped the unused LOG_FILE
+  import. xwin check + full matrix green.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
