@@ -2141,4 +2141,59 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
+
+    #[tokio::test]
+    async fn token_rotation_takes_effect_on_api_and_mcp_gate() {
+        // Round-366 regression: TokenGate held a BOOT-time token clone while
+        // /api/* read the live snapshot, so a runtime rotation stale-accepted
+        // the old token on /mcp and rejected the new one. Both gates must
+        // read the live snapshot per request.
+        use std::convert::Infallible;
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+
+        struct OkSvc;
+        impl Service<Request<Body>> for OkSvc {
+            type Response = axum::http::Response<McpBoxBody>;
+            type Error = Infallible;
+            type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Infallible>> + Send>>;
+            fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Infallible>> {
+                Poll::Ready(Ok(()))
+            }
+            fn call(&mut self, _req: Request<Body>) -> Self::Future {
+                Box::pin(async {
+                    Ok(axum::http::Response::new(
+                        http_body_util::combinators::BoxBody::new(http_body_util::Full::new(
+                            bytes::Bytes::from_static(b"ok"),
+                        )),
+                    ))
+                })
+            }
+        }
+
+        let st = state();
+        assert!(check_auth(&req("GET", "/api/status"), &st).is_ok());
+        let mut gate = TokenGate::new(OkSvc, st.clone());
+        let res = Service::call(&mut gate, req_with_token("POST", "/mcp", TEST_TOKEN))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let mut cfg = st.config_snapshot();
+        cfg.server.device_token = Some("rotated-token".into());
+        st.update_config(cfg, false).unwrap();
+
+        // /api/* path: old rejected, new accepted.
+        assert!(check_auth(&req_with_token("GET", "/api/status", TEST_TOKEN), &st).is_err());
+        assert!(check_auth(&req_with_token("GET", "/api/status", "rotated-token"), &st).is_ok());
+        // /mcp path: old rejected, new reaches the inner service.
+        let res = Service::call(&mut gate, req_with_token("POST", "/mcp", TEST_TOKEN))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let res = Service::call(&mut gate, req_with_token("POST", "/mcp", "rotated-token"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
 }
