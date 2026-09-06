@@ -155,7 +155,7 @@ fn main() {
     // crash. Before round-134 an update orphaned every open shell (observed
     // on d1: shells from hours-old sessions survived four restarts).
     #[cfg(windows)]
-    setup_child_reaper_job();
+    winmain::setup_child_reaper_job();
 
     // If the Service Control Manager launched us, run as a Windows service.
     // service_dispatcher::start() succeeds only when the process was started by
@@ -163,8 +163,7 @@ fn main() {
     // and we fall through to the console path below.
     #[cfg(windows)]
     {
-        use windows_service::service_dispatcher;
-        if service_dispatcher::start(winmain::SERVICE_NAME, ffi_service_main).is_ok() {
+        if winmain::started_by_scm() {
             return;
         }
     }
@@ -214,7 +213,7 @@ fn main() {
     // its service before the ValeAgent boot task, so the new server dies on
     // bind and the device silently keeps serving the old version.
     #[cfg(windows)]
-    self_heal();
+    winmain::self_heal();
 
     // Self-heal the cloudflared tunnel on startup: if the bundled
     // fix-tunnel.ps1 exists (it repairs a legacy vale-command-dN tunnel +

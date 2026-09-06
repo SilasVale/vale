@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use crate::{log_line, run_server, LOG_FILE};
+use crate::{log_line, run_server};
 
 /// The SCM service name — deliberately the LEGACY name ("ValeCommand"): the
 /// service was registered under it by the old install path and re-registering
@@ -134,7 +134,7 @@ pub(crate) fn supervise_tunnel() {
 /// the device served 502 forever. Self-heal is best-effort: a stuck step
 /// must NEVER block the bind.
 #[cfg(windows)]
-fn self_heal() {
+pub(crate) fn self_heal() {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
         Err(_) => return, // no exe path, nothing to repair
@@ -330,7 +330,7 @@ fn self_heal() {
 /// closes our job handle and terminates them all. Nested jobs (Win8+) make
 /// this safe under Task Scheduler's own job wrapper.
 #[cfg(windows)]
-fn setup_child_reaper_job() {
+pub(crate) fn setup_child_reaper_job() {
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
         SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
@@ -393,6 +393,17 @@ fn run_bounded(what: &str, mut cmd: std::process::Command) {
 // that the SCM calls and which forwards the service args to `run_service`.
 #[cfg(windows)]
 windows_service::define_windows_service!(ffi_service_main, run_service);
+
+/// SCM probe, owned by winmain so main.rs never touches windows_service
+/// directly (A7 boundary): start the service dispatcher; `true` means the
+/// SCM launched us and took over (caller must return), `false` means a
+/// normal console launch — fall through. The macro-generated
+/// `ffi_service_main` is module-private, so the call site cannot live in
+/// main.rs.
+#[cfg(windows)]
+pub(crate) fn started_by_scm() -> bool {
+    windows_service::service_dispatcher::start(SERVICE_NAME, ffi_service_main).is_ok()
+}
 
 /// Windows service entry point: register SCM control handling, report RUNNING,
 /// run the server on a dedicated tokio runtime, then stop cleanly when told to.
