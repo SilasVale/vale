@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleGateway } from "../src/index.ts";
-import { scanTopLevelModel, rawWithModel, estimateTokens } from "../src/body-scan.ts";
+import { scanTopLevelModel, rawWithModel, estimateTokens, rawWithTopLevelField, rawWithDeepSeekProvider, rawWithOxAlphaReasoningDefault } from "../src/body-scan.ts";
 import { __clearCaches } from "../src/store.ts";
 
 let uidSeq = 0;
@@ -1354,6 +1354,59 @@ test("scanTopLevelModel: model after system/tools (Claude Code field order)", ()
   assert.equal(scanTopLevelModel(raw).model, "og/deepseek-v4-flash");
   const out = rawWithModel(raw, "ds/deepseek-v4-flash");
   assert.equal(JSON.parse(out).model, "ds/deepseek-v4-flash");
+});
+
+// ── rawWithTopLevelField (round-396: string-surgery injectors had zero
+// direct tests — only indirect translate-handler exercise) ──
+
+test("rawWithTopLevelField: replaces an existing string value, keeps the rest", () => {
+  const raw = JSON.stringify({ model: "a", stream: false, messages: [] });
+  const out = JSON.parse(rawWithTopLevelField(raw, "model", "b"));
+  assert.equal(out.model, "b");
+  assert.equal(out.stream, false);
+  assert.deepEqual(out.messages, []);
+});
+
+test("rawWithTopLevelField: replaces an object value wholesale", () => {
+  const raw = JSON.stringify({ reasoning: { effort: "low" }, model: "a" });
+  const out = JSON.parse(rawWithTopLevelField(raw, "reasoning", { effort: "max" }));
+  assert.deepEqual(out.reasoning, { effort: "max" });
+  assert.equal(out.model, "a");
+});
+
+test("rawWithTopLevelField: appends with comma / bare-brace separator", () => {
+  assert.deepEqual(JSON.parse(rawWithTopLevelField("{}", "a", 1)), { a: 1 });
+  assert.deepEqual(JSON.parse(rawWithTopLevelField('{"x":1}', "a", 1)), { x: 1, a: 1 });
+  assert.deepEqual(JSON.parse(rawWithTopLevelField('{ "x" : 1 } ', "a", 1)), { x: 1, a: 1 });
+});
+
+test("rawWithTopLevelField: nested same-name fields untouched", () => {
+  const raw = JSON.stringify({ model: "top", messages: [{ model: "nested" }] });
+  const out = JSON.parse(rawWithTopLevelField(raw, "model", "new"));
+  assert.equal(out.model, "new");
+  assert.equal(out.messages[0].model, "nested");
+});
+
+test("rawWithTopLevelField: field name inside a string value is not a match", () => {
+  const raw = JSON.stringify({ messages: [{ content: '"reasoning":{}' }] });
+  const out = JSON.parse(rawWithTopLevelField(raw, "reasoning", { effort: "max" }));
+  assert.deepEqual(out.reasoning, { effort: "max" });
+  assert.equal(out.messages[0].content, '"reasoning":{}');
+});
+
+test("rawWithTopLevelField: non-object body returns unchanged", () => {
+  assert.equal(rawWithTopLevelField("not json", "a", 1), "not json");
+  assert.equal(rawWithTopLevelField("[1,2]", "a", 1), "[1,2]");
+});
+
+test("rawWithDeepSeekProvider / rawWithOxAlphaReasoningDefault shapes", () => {
+  const p = JSON.parse(rawWithDeepSeekProvider(JSON.stringify({ model: "ds" })));
+  assert.deepEqual(p.provider, { order: ["deepseek"], allow_fallbacks: false });
+  const r = JSON.parse(rawWithOxAlphaReasoningDefault(JSON.stringify({ model: "ox" })));
+  assert.deepEqual(r.reasoning, { effort: "max" });
+  // client-sent reasoning respected as-is (not overridden to max)
+  const keep = JSON.stringify({ reasoning: { effort: "low" } });
+  assert.equal(rawWithOxAlphaReasoningDefault(keep), keep);
 });
 
 // ── F1 coverage: /v1/chat/completions per-token limiter ─────────────────
