@@ -1636,6 +1636,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-466 (2026-09-06): body-scan audit — escape arms in keys/values
   had ZERO direct pins. New body-scan.test.mjs (3 tests: span, escapes,
   null shapes). Suite 493->496; gates clean; snapshot updated; pushed.
+  ROUND-467 (2026-09-06): http-foundation audit — loopback/origin catch
+  arms had ZERO direct pins. New http.test.mjs (loopback matrix +
+  allowlist/P2 rule). Suite 496->498; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
