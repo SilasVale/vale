@@ -102,7 +102,10 @@ async function describeImage(
   // so with US_PROXY=1 the describe call went straight to a blocked/slow
   // zen while ordinary requests rode the proxy (and every image turned
   // into "(图片描述失败…)" placeholders for US users).
-  const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
+  // round-491: a KV outage must not fail the describe — every other KV read
+  // on this path is best-effort (cache read/write catch below); the proxy
+  // switch defaults to direct when unreadable.
+  const usProxyRaw = await getGlobalSetting(env, "US_PROXY").catch(() => null);
   // KV description cache: the client re-sends the same base64 image every
   // turn, so a per-image cache turns N vision calls per follow-up into 1.
   // Key = user id + SHA-256(model ":" data), 32 hex chars. The user prefix

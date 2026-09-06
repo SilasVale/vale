@@ -202,3 +202,20 @@ test("vision og path: network throw + unparsable body fail the request", async (
     globalThis.fetch = real;
   }
 });
+
+// round-491 (coverage-driven): the KV-read-throw swallow arm had ZERO pins
+// (a KV outage must not fail the describe — it just skips the cache).
+test("vision: KV read outage degrades to uncached describe, never throws", async () => {
+  const e = env();
+  const origGet = e.KEYS.get;
+  e.KEYS.get = async () => { throw new Error("kv down"); };
+  const s = stubVision("kv-down desc");
+  try {
+    const out = await preprocessImages([imageMessage], e, { OPENCODE_GO_API_KEY: "up-key" }, "m", "up-model", "uK");
+    assert.equal(out.changed, true);
+    assert.match(out.messages[0].content[0].text, /kv-down desc/);
+  } finally {
+    s.restore();
+    e.KEYS.get = origGet;
+  }
+});

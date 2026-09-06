@@ -156,7 +156,14 @@ export async function ensureUserByEmail(env: Env, email: string): Promise<User |
     const u = await env.KEYS.get(`user:${bound}`);
     if (u) {
       const user = typeof u === "string" ? JSON.parse(u) : u;
-      if (user.enabled !== false) return user;
+      // round-395: a DISABLED bound account must stay logged out — the old
+      // code fell through to the provision block below, whose re-check
+      // returned the record WITHOUT an enabled check (the cookie path in
+      // session.ts rejects disabled users, so Access users could never be
+      // suspended). Return null WITHOUT provisioning: minting a fresh
+      // suffixed account for a suspended user would defeat the suspension.
+      if (user.enabled === false) return null;
+      return user;
     }
   }
 
@@ -165,7 +172,11 @@ export async function ensureUserByEmail(env: Env, email: string): Promise<User |
     const again = await env.KEYS.get(`access-email:${email}`);
     if (again) {
       const u = await env.KEYS.get(`user:${again}`);
-      if (u) return typeof u === "string" ? JSON.parse(u) : u;
+      if (u) {
+        const user = typeof u === "string" ? JSON.parse(u) : u;
+        if (user.enabled === false) return null;
+        return user;
+      }
     }
 
     const base = usernameFromEmail(email);

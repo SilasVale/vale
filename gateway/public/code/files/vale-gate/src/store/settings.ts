@@ -58,7 +58,11 @@ export async function setGlobalSetting(env: Env, name: string, value: any): Prom
   // round-96: persist the CANONICAL value ("1" or "0") — the raw string is
   // cached write-through and a raw "0" in the cache bypassed the read-side
   // normalization on this isolate (see getGlobalSetting).
-  const canonical = s === "1" ? "1" : "0";
+  // round-439: booleans canonicalize truthfully — the old `s === "1"` arm
+  // stored boolean true (String → "true") as "0", silently INVERTING the
+  // switch for any caller passing a real boolean. No current caller does
+  // (mePutUsproxy maps to "1"/"0"), so this changes no live bytes.
+  const canonical = s === "1" || s === "true" || value === true ? "1" : "0";
   await env.KEYS.put(key, canonical);
   cset(key, canonical); // write-through: the switch takes effect immediately (zero delay within the same isolate)
 }
