@@ -162,15 +162,21 @@ fn timing_safe_eq(a: &[u8], b: &[u8]) -> bool {
 /// The MCP endpoint is as sensitive as the API (it drives terminals), so it
 /// is never reachable without the token. rmcp has no server-side auth hook,
 /// so the check happens here.
+///
+/// Round-366: reads the token from the LIVE config snapshot per request —
+/// like check_auth above — instead of a boot-time clone. The token is
+/// minted pre-serve and no production path rotates it today, but a clone
+/// would silently split /api vs /mcp auth the day one does (stale-accept
+/// the old token on /mcp while rejecting the new one).
 #[derive(Clone)]
 pub struct TokenGate<S> {
     inner: S,
-    token: Option<String>,
+    state: Arc<AppState>,
 }
 
 impl<S> TokenGate<S> {
-    pub fn new(inner: S, token: Option<String>) -> Self {
-        Self { inner, token }
+    pub fn new(inner: S, state: Arc<AppState>) -> Self {
+        Self { inner, state }
     }
 }
 
@@ -208,8 +214,11 @@ where
     }
 
     fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
-        let Some(token) = self.token.clone() else {
-            // Fail closed, mirroring check_auth above.
+        // Live snapshot (see struct docs): a runtime token rotation takes
+        // effect on /mcp immediately, exactly like /api/*. Fail closed when
+        // no token is configured, mirroring check_auth above.
+        let token = self.state.config_snapshot().server.device_token;
+        let Some(token) = token else {
             return Box::pin(async { Ok(unauthorized_mcp_response()) });
         };
         let authorized = req

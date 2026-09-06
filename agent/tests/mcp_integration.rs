@@ -121,3 +121,55 @@ async fn authorized_with_bearer_token() {
     assert_eq!(text, "[]");
     let _ = client.cancel().await;
 }
+
+async fn mcp_url_with(
+    auth_token: &str,
+    url: &str,
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(url).auth_header(auth_token),
+    );
+    ().serve(transport).await.expect("connect client")
+}
+
+#[tokio::test]
+async fn mcp_gate_follows_runtime_token_rotation() {
+    // Round-366: TokenGate used to hold a BOOT-time token clone while /api/*
+    // read the live snapshot — a runtime rotation would stale-accept the old
+    // token on /mcp and reject the new one. Both gates must move together.
+    let mut cfg = Config::default();
+    cfg.server.host = "127.0.0.1".into();
+    cfg.server.port = 0;
+    cfg.server.device_token = Some("old-sekret".into());
+    let state = Arc::new(AppState::new(cfg.clone()));
+    let (addr, _handle) = vale_agent::mcp::bind(cfg, state.clone(), CancellationToken::new())
+        .await
+        .expect("bind server");
+    let url = format!("http://{addr}/mcp");
+    // Old token works pre-rotation.
+    let client = mcp_url_with("old-sekret", &url).await;
+    let params = CallToolRequestParams::new("terminal_list");
+    client.call_tool(params).await.expect("pre-rotation call");
+    let _ = client.cancel().await;
+    // Rotate at runtime (no restart, no rebind — persist=false touches
+    // memory only).
+    let mut next = state.config_snapshot();
+    next.server.device_token = Some("new-sekret".into());
+    state.update_config(next, false).expect("rotate token");
+    // Old token now 401s…
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(url.as_str()).auth_header("old-sekret"),
+    );
+    let err = ().serve(transport).await.expect_err("rotated-out token must fail");
+    assert!(err.to_string().contains("401"), "unexpected error: {err}");
+    // …and the new token works.
+    let client = mcp_url_with("new-sekret", &url).await;
+    let params = CallToolRequestParams::new("terminal_list");
+    let resp: CallToolResult = client.call_tool(params).await.expect("post-rotation call");
+    let text = match resp.content.first().expect("content") {
+        ContentBlock::Text(t) => t.text.clone(),
+        _ => panic!("expected text content"),
+    };
+    assert_eq!(text, "[]");
+    let _ = client.cancel().await;
+}
