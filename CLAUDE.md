@@ -68,8 +68,9 @@ running every downstream test gate.
   `mcp-errors.ts` (tool-failure code family)
 - agent: `vale-command-core` (Plugin/ToolDef/Config/EventBus contract — import
   via `vale_agent_core::`), `paths.rs`, `state.rs` (ConfigHandle), `web/`
-  helpers, `tunnel.rs`, `lib/ratelimit`-equivalent: bounded subprocess runners
-  (`runSchtasks`/`run_bounded`)
+  helpers, `tunnel.rs`, `session_log.rs` (durable audit trail, best-effort
+  writes, 30 d retention), `lib/ratelimit`-equivalent: bounded subprocess
+  runners (`runSchtasks`/`run_bounded`)
 - vale CLI: network calls go through the bounded-fetch layer (see vale.ts) —
   no bare `fetch` in feature code
 

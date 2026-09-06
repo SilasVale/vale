@@ -56,7 +56,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 ## Foundation layers (features build on these; changes run every downstream gate)
 
 - **gateway**: http.ts, auth.ts (safeEq/randomHex/HMAC/CSRF), session.ts, reliability.ts, upstream.ts, channels.ts, body-scan.ts, store/cache.ts, lib/ratelimit.ts, mcp-errors.ts
-- **agent**: vale-command-core, paths.rs, state.rs ConfigHandle, web/ helpers, bounded subprocess runners
+- **agent**: vale-command-core, paths.rs, state.rs ConfigHandle, web/ helpers, session_log.rs (audit trail), bounded subprocess runners
 - **studio**: lib/fsapi.mjs (path safety/atomic writes/git), lib/auth.mjs, lib/pty.mjs, lib/watch.mjs, lib/terminals.mjs
 - **vale CLI**: boundedFetch — every network call goes through it (6cd81347)
 - **test harnesses**: gateway test/helpers.mjs, studio test/helpers.mjs, proxies per-file stubs

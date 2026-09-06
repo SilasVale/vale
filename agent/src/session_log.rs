@@ -1,5 +1,15 @@
 //! Session audit log — append-only JSONL per terminal session.
 //!
+//! Boundary (architecture review 2026-09-06): a FOUNDATION module consumed by
+//! every terminal tool path (exec/sessions/connections via the plugin ctx) —
+//! correctly layered, heavily hardened (round-54/56/58/59/68/98/99 + stage-n
+//! retention/clock-jump guards, each with tests), no structural change
+//! warranted. Content policy: commands and output are recorded verbatim (the
+//! audit trail's purpose is to reconstruct what ran) with 4 KiB caps; secrets
+//! pasted INTO a command line are therefore in the trail by design — the
+//! files live on the device under the ACL-restricted install dir and are
+//! pruned at 30 days.
+//!
 //! Every terminal command on a device is recorded as an event stream
 //! (`<install>/sessions/<sid>.jsonl`): command/start → output chunks →
 //! command/end. On agent restart the logger replays each file and appends a
