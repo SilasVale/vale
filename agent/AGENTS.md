@@ -1437,6 +1437,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   — restored immediately, diff-verified no-op). Matrix: lib 288->290,
   feat 296->298, clippy x2 + fmt + xwin clean; snapshot 347->349;
   pushed.
+  ROUND-428 (2026-09-06): gateway http-helpers audit — jsonOk/jsonError/
+  readJson (every plugin builds on these) had ZERO direct pins. Added
+  3 in cors.test.mjs: shape + header merge, error envelope, valid/
+  empty/invalid bodies. Suite 435->438; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
