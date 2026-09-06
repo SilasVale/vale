@@ -1,6 +1,6 @@
 # Vale Architecture — layering snapshot
 
-> Status: maintained ｜ Last full review: 2026-09-06 ｜ Scope: the whole repo
+> Status: maintained ｜ Last full review: 2026-09-06 (fsapi coverage refresh) ｜ Scope: the whole repo
 >
 > Single-page map of every module's boundary verdict. Each entry carries the
 > evidence (file-header note, ADR, or audit round). When a boundary verdict
@@ -51,6 +51,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | agent state.rs | write-through ConfigHandle: file before swap under one guard (ADR 0005) | c579b311 |
 | index single file | appropriate at current size; page template + claim logic extracted | 81b1c40f |
 | extension | clean: no stale endpoints, least-privilege manifest, shared.js for constants | abb541ce review |
+| studio lib/fsapi.mjs | cohesive (path safety/atomic write/search/git); the ripgrep-less searchJs fallback engine and the trash-quota eviction were the last zero-coverage seams — now pinned (3c9f2620) | 3c9f2620 |
 
 ## Foundation layers (features build on these; changes run every downstream gate)
 
@@ -79,7 +80,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | gateway | tsc + eslint(src+ui) + prettier + node --test | 295 |
 | agent | cargo test + clippy -D warnings + fmt --check + xwin check | 221 |
 | proxies (×3) | node --test behavior suites + wrangler dry-run | 26 |
-| studio | node --test (api/terms/terms-readonly; e2e live-only) | 36 |
+| studio | node --test (api/terms/terms-readonly/fsapi; e2e live-only) | 41 |
 | electron | node --test (url-policy) + tsc build | 4 |
 | extension | node --check all JS | — |
 | release chain | release-lib regression + bin/electron freshness + tgz content gate + fail-closed smoke/reconcile | 11 checks |
