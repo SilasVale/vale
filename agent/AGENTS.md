@@ -1554,6 +1554,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   plugins.test.mjs: gates + missing-key + deepseek/amd/openrouter
   shapes, og SSE ok/no-data/throw arms. Suite 463->465; gates clean;
   snapshot updated; pushed.
+  ROUND-447 (2026-09-06): admin-fallback audit — getAdminPassword's
+  keyless-env branch had ZERO pins. Added 1 in
+  admin-seed-backfill.test.mjs: empty→"", secret→legacy:hash +
+  verify roundtrip true/false. Suite 465->466; gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
