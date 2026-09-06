@@ -591,3 +591,48 @@ test("logout: session cookie lands on the sess-revoked blacklist with a capped T
   }), env);
   assert.equal(gated.status, 401);
 });
+
+// round-443 (coverage-driven): /api/me/usproxy + /api/me/token/regenerate
+// had ZERO route pins.
+function meEnv() {
+  return makeBaseEnv({
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" },
+      bob: { id: "bob", username: "bob", role: "user", enabled: true, token: "bob-tok-1" },
+    },
+    kv: { _admin_seeded: "1", "auth:admin_password": "pw", "token:bob-tok-1": "bob" },
+  });
+}
+
+const meReq = (env, cookie, path, method, body) => worker.fetch(new Request(`https://x${path}`, {
+  method,
+  headers: { ...(cookie ? { cookie: `ag_session=${cookie}` } : {}), "content-type": "application/json" },
+  body: body === undefined ? undefined : JSON.stringify(body),
+}), env);
+
+test("usproxy: 401 unauth, 403 non-admin, admin toggle roundtrips", async () => {
+  __clearCaches();
+  const env = meEnv();
+  assert.equal((await meReq(env, null, "/api/me/usproxy", "GET")).status, 401);
+  const admin = await issueSessionToken("pw", "admin", "admin");
+  const bob = await issueSessionToken("pw", "bob", "user");
+  assert.equal((await meReq(env, bob, "/api/me/usproxy", "PUT", { enabled: true })).status, 403);
+  assert.deepEqual(await (await meReq(env, admin, "/api/me/usproxy", "GET")).json(), { enabled: false });
+  assert.deepEqual(await (await meReq(env, admin, "/api/me/usproxy", "PUT", { enabled: true })).json(), { ok: true, enabled: true });
+  assert.deepEqual(await (await meReq(env, admin, "/api/me/usproxy", "GET")).json(), { enabled: true });
+  // round-94 end-to-end: explicit OFF persists (not env-bounce).
+  assert.deepEqual(await (await meReq(env, admin, "/api/me/usproxy", "PUT", { enabled: false })).json(), { ok: true, enabled: false });
+  assert.equal(await env.KEYS.get("settings:US_PROXY"), "0");
+});
+
+test("token/regenerate: 401 unauth; authed rotates and kills the old token", async () => {
+  __clearCaches();
+  const env = meEnv();
+  assert.equal((await meReq(env, null, "/api/me/token/regenerate", "POST", {})).status, 401);
+  const bob = await issueSessionToken("pw", "bob", "user");
+  const res = await meReq(env, bob, "/api/me/token/regenerate", "POST", {});
+  assert.equal(res.status, 200);
+  const { token } = await res.json();
+  assert.ok(token && token !== "bob-tok-1", "fresh token issued");
+  assert.equal(await env.KEYS.get("token:bob-tok-1"), null, "old token revoked");
+});
