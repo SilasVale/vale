@@ -1269,6 +1269,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   terminal_open, multi-live lists without guessing (no retry asserted),
   image block shape, TIMEOUT vs DEVICE_UNREACHABLE. Suite 392->396;
   gates clean; snapshot updated; pushed.
+  ROUND-400 (2026-09-06): bridge remainder audit — "session not found"
+  heal arm (132), non-JSON failure shape, slot release after failure
+  unpinned. Added 3: idle-reclaim heals start→connect→retry, 502 body
+  → "mcp_client_call failed: 502", 4 failures release slots (next call
+  serves, not BUSY). Suite 396->399; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
