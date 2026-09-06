@@ -2,6 +2,7 @@
 // breaker and fetch.
 import test from "node:test";
 import assert from "node:assert/strict";
+import worker from "../src/index.ts";
 import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, valeProbe } from "../src/index.ts";
 import { resolveAutoModel } from "../src/plugins/translate.ts";
 import { __clearDegradedCache } from "../src/reliability.ts";
@@ -525,6 +526,33 @@ test("isModelUsable: KV outage degrades to unusable, never throws", async () => 
   // qw has no env-key fallback: with keys unreadable it must read unusable.
   assert.equal(await isModelUsable(env, "qw/qwen3.8-max-preview", "u-use9"), false);
   assert.equal(await isModelUsable(env, "xx/nope", "u-use9"), false);
+});
+
+// round-473 (coverage-driven): the /api/vale-probe 429 arm had ZERO route
+// pins (only direct valeProbe calls).
+test("vale-probe route: 60 probes pass, 61st 429s on a fixed IP", async () => {
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  const kv = new Map();
+  const env = {
+    ...keyedEnv,
+    KEYS: {
+      async get(k) { return kv.has(k) ? kv.get(k) : null; },
+      async put(k, v) { kv.set(k, String(v)); },
+      async delete(k) { kv.delete(k); },
+    },
+  };
+  const probe = () => worker.fetch(new Request("https://x/api/vale-probe", {
+    method: "POST",
+    headers: { "content-type": "application/json", "cf-connecting-ip": "10.88.88.88" },
+    body: JSON.stringify({ model: "ds/deepseek-v4-flash" }),
+  }), env);
+  await withFetch(async () => new Response("{}", { status: 200 }), async () => {
+    for (let i = 0; i < 60; i++) {
+      assert.equal((await probe()).status, 200, `probe ${i + 1} passes the gate`);
+    }
+    assert.equal((await probe()).status, 429, "61st probe within the minute is rate-limited");
+  });
 });
 
 test("isModelUsable: nv/gmi pure BYOK — user key only, never env", async () => {
