@@ -460,3 +460,46 @@ test("plugin link: savePluginLinks is write-through (same-isolate reads stay fre
 function env_scrub(e) {
   e._kv.delete("plugins:v1");
 }
+
+// round-437 (coverage-driven): PUT /api/me/keys (BYOK save) had ZERO
+// direct pins — the validation arms and the masked-echo contract.
+test("me/keys PUT: 401 without session, 400 unknown name / empty value", async () => {
+  __clearCaches();
+  const env = makeEnv();
+  const unauth = await worker.fetch(new Request("https://x/api/me/keys", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "OPENROUTER_API_KEY", value: "x" }),
+  }), env);
+  assert.equal(unauth.status, 401);
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  const put = (body) => worker.fetch(new Request("https://x/api/me/keys", {
+    method: "PUT",
+    headers: { cookie: `ag_session=${cookie}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }), env);
+  assert.equal((await put({ name: "NOPE_KEY", value: "x" })).status, 400);
+  assert.equal((await put({ name: "OPENROUTER_API_KEY", value: "   " })).status, 400);
+  assert.equal((await put({ name: "OPENROUTER_API_KEY" })).status, 400);
+});
+
+test("me/keys PUT: saves trimmed, echoes masked, reveal reads back full", async () => {
+  __clearCaches();
+  const env = makeEnv();
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  const authed = (path, method, body) => worker.fetch(new Request(`https://x${path}`, {
+    method,
+    headers: { cookie: `ag_session=${cookie}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }), env);
+  const res = await authed("/api/me/keys", "PUT", { name: "OPENROUTER_API_KEY", value: "  or-secret-value  " });
+  assert.equal(res.status, 200);
+  const j = await res.json();
+  assert.equal(j.ok, true);
+  assert.equal(j.masked, maskKey("or-secret-value"));
+  assert.ok(!JSON.stringify(j).includes("or-secret-value"), "echo must not leak the secret");
+  const stored = JSON.parse(await env.KEYS.get("ukeys:admin"));
+  assert.equal(stored.OPENROUTER_API_KEY, "or-secret-value");
+  const reveal = await authed("/api/me/keys/reveal", "POST", { name: "OPENROUTER_API_KEY" });
+  assert.equal((await reveal.json()).value, "or-secret-value");
+});
