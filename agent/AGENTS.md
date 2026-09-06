@@ -1151,6 +1151,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   redaction over a stub, unknown/remote-unconfigured fail-closed.
   Matrix: lib 283 (+5), feat-gated 289, clippy x2 + fmt + xwin clean;
   snapshot 315->320.
+  ROUND-384 (2026-09-06): vale-command-core EventBus audit — seq/ring/
+  eviction/epoch/hook contract had ZERO tests despite feeding /api/
+  events + SSE. Added 9: monotonic seq, cursor filters + zeroed empty,
+  poll_after snapshot, 256-ring eviction with detectable gap (+ the
+  RING_CAP>=broadcast-cap invariant), hook args, per-boot epoch nonce,
+  term fan-out, wire shape, in-order broadcast. Snapshot formula now
+  counts the core binary explicitly (was silently 2): 320->331 (+11
+  core). Clippy x2 + fmt + xwin clean.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
