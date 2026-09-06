@@ -1194,6 +1194,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   gate; gateway/ui build + render smoke + devices smoke OK; tree clean
   after builds. (Wrangler dry-runs left to CI — needs account creds.)
   No code changes — pure verification round.
+  ROUND-390 (2026-09-06): store/users.ts helpers audit — token shape,
+  username lookup, invites, masking, registration guards had zero
+  direct pins (only cache-behavior + handler paths). Added 6:
+  48-hex unique tokens, trim+cache username lookup, 10-char invite
+  with 7-day TTL (opts captured), maskKey shapes, status parity over
+  all managed keys (unmanaged never appear), registration fail-closed
+  chain (name/password/duplicate/invite). Suite 348->354;
+  tsc/eslint/prettier clean; snapshot updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
