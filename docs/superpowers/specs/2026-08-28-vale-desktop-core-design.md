@@ -64,7 +64,7 @@ Vale Desktop = a device console over the agent service's capability domains:
 | Domain | Data source (unchanged contract) | Features |
 |---|---|---|
 | Terminal (session workspace) | `/api/tools/terminal_*`, SSE `/api/events/term`, `/api/sessions/{sid}` | multi-tab PTY/SSH/Serial; per-session view (terminal\|trajectory); Logs command-card drawer; export/rename/archive |
-| Browser (remote browser) | `/api/browser/ws-ticket` + WS, `/api/browser/pwshots` | Live interactive JPEG stream (mouse/keyboard/tabs/nav) + Evidence AI screenshot timeline |
+| Browser (real embedded browser) | Electron WebContentsView on CDP 9333, playwright-mcp driven; `/api/browser/{pwshots,pwshot,actions}` (AI evidence) | Live view in the SPA (no screenshot stream) + Evidence AI screenshot timeline |
 | Memory (device memory) | `/api/tools/memory_*` | search/browse/delete/export, shared with AI clients |
 | Plugins (tool catalog) | `/api/spec`, `/api/plugins/status`, `/api/plugins/playwright/start\|stop` | plugin inventory + playwright start/stop |
 | Settings (device config) | `/api/settings` | session buffer, transport info, memory notes |
@@ -107,9 +107,11 @@ App (slim: connection + page nav + domain hooks)
  │                      5s incremental backfill + 30s heartbeat + exp backoff
  │    usePlugins        /api/spec + /api/plugins/status 5s poll + start/stop
  │    useCommandEvents 2s poll /api/sessions/{sid} for active session → cards
- │    useBrowser (NEW)  extracted from BrowserPane: ws-ticket, WS lifecycle,
- │                      backoff reconnect, JPEG frames/fps, tabs poll, Evidence
- │                      3s poll, hidden-tab socket drop
+ │    useBrowser (NEW)  extracted from BrowserPane: real-browser lifecycle
+ │                      (CDP 9333 via playwright-mcp), tabs poll, Evidence
+ │                      3s poll, hidden-tab socket drop (the ws-ticket/WS
+ │                      JPEG-stream design was REPLACED round-264 — see banner;
+ │                      agent/AGENTS.md is truth)
  └─ page-local state:
       TerminalWorkspace per-session view, drawer open, selected card
       BrowserPage / MemoryPage internal state
@@ -157,15 +159,18 @@ Containment = third-party stays third-party, but EVERY lifecycle aspect of
 "being installed on Windows" is owned by Vale: artifact, version, process,
 config, uninstall. Internal code is NOT rewritten.
 
-### Playwright box (node.exe + playwright-mcp + bridge.js → one opaque artifact)
+### Playwright box (node.exe + playwright-mcp → one opaque artifact)
+
+> bridge.js was REMOVED round-263/265 — the npm package ships no bridge
+> (agent/AGENTS.md). The box below is node.exe + playwright-mcp only.
 
 | Aspect | Now | Boxed |
 |---|---|---|
-| Artifact | node.exe + node_modules scattered in install root | single `vale-playwright.zip` (build chain already produces it) + sha256 manifest, extracted into `InstallDir\plugins\playwright\` |
+| Artifact | node.exe + node_modules scattered in install root | single `vale-playwright.zip` (build chain already produces it) + sha256 manifest, extracted into `InstallDir\playwright\` |
 | Version | follows upstream | follows Vale release; `.new/.bak` safe swap on upgrade |
 | Process | agent spawns (PlaywrightManager + watchdog) | unchanged: agent spawns/monitors/restarts (stdio transport, no port) |
 | Config | — | — |
-| Uninstall | residue | kill tree → delete `plugins\playwright\` dir; no registry, no global npm |
+| Uninstall | residue | kill tree → delete `playwright\` dir; no registry, no global npm |
 | Optional hardening | — | spike: Node SEA single `playwright-bridge.exe` (absorbs node.exe); if driver-fork incompatible, keep zip box (still Vale-controlled) |
 
 ### cloudflared box
@@ -213,9 +218,12 @@ vale uninstall [--purge-data]       # remove (data kept unless --purge-data)
   manage it. The agent spawns cloudflared on boot (supervised model).
 - `agent_update` (AI-push path) downloads the npm tgz (sha256-verified) and
   swaps the exe via a WMI-survives-the-kill script — no more Setup.exe.
-- `build-installer.sh` packs the npm tgz and stages it to the Vercel mirror;
-  `index` worker's `/api/version` publishes the tgz URL + sha256; the
-  download page shows `npm i -g` + `vale setup` steps.
+- `scripts/publish-release.sh` packs the npm tgz and stages it to the dist
+  worker assets (versionless latest alias + the `version.json` discovery
+  manifest carrying version + sha256, round-297); the `index` worker's
+  `/api/version` derives the manifest from `version.json` (assets-down
+  fallback = 503, never fabricated); `build-installer.sh` was RETIRED
+  round-320. The download page shows `npm i -g` + `vale setup` steps.
 
 ## 9. Install layout (C1) — registry as single source of truth
 
@@ -224,18 +232,20 @@ HKLM\SOFTWARE\Vale\Agent
     InstallDir  (REG_SZ)  ← written by NSIS installer; read by everything
     DataDir     (REG_SZ)
 
-InstallDir default  C:\Program Files\Vale   (vale-agent.exe, vale-desktop.exe,
+InstallDir default  C:\Program Files\Vale   (vale-agent.exe,
                                              config.yaml, tools\, plugins\)
 DataDir    default  %ProgramData%\Vale      (sessions\, memory\, logs\,
                                              tunnel.yml, vale-agent.hostname/
                                              console/version)
 ```
 
-- All three entry points (NSIS / setup.ps1 / npm CLI) WRITE the same key;
-  agent runtime + CLI + installer + tray READ it (no more `current_exe()` guessing).
-- Upgrade: existing old dirs (`C:\vale-agent` / `D:\vale-agent`) are detected,
-  kept in place, and the registry points at them (or migrate with prompt);
-  never silently move data.
+- The npm CLI is the ONLY entry point: `vale setup` WRITES the same key
+  (NSIS / setup.ps1 are RETIRED — see §8b); agent runtime + CLI READ it
+  (no more `current_exe()` guessing).
+- Upgrade: `vale setup` is idempotent and self-cleaning — legacy dirs
+  (`C:\vale-agent` / `D:\vale-agent`) are removed when the registry points
+  elsewhere; never silently move data. Registry-first, zero
+  legacy-directory probing (`agent/AGENTS.md` governs where §12 differs).
 - Uninstall: delete program dir + registry key; keep data dir by default (with
   prompt). No system-level residue.
 
@@ -260,7 +270,11 @@ i18n bilingual, self-built CDP or cloud replacement, gateway/worker changes,
 `vale-desktop.exe` repackaging (shell unchanged; release chain `build.sh agent`
 follows agent/CLAUDE.md npm flow).
 
-## 12. Implementation notes (2026-08-28, as built)
+## 12. Implementation notes (2026-08-28 implementation snapshot — historical)
+
+> The notes below record the 2026-08-28 as-built state (NSIS/setup.ps1 era).
+> Current truth is npm-only (§8b) + registry-first with zero legacy probing
+> (`agent/AGENTS.md`); where they differ, registry-first governs.
 
 - **C1 registry layout is live**: NSIS installer now defaults to
   `$PROGRAMFILES\Vale` and writes `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}`;

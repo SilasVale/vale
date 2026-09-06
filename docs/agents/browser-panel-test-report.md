@@ -1,5 +1,13 @@
 # d1 Browser 面板全面测试报告
 
+<!-- SUPERSEDED ARCHITECTURE: bridge.js removed round-263, JPEG stream replaced round-264 -->
+> **SUPERSEDED (2026-09, round-263/264)** — the bridge.js + 127.0.0.1:9224 +
+> JPEG-frame architecture this report describes was REPLACED: bridge.js
+> removed (round-263), the live view replaced by the real embedded browser
+> (Electron WebContentsView on CDP 9333, playwright-mcp driven, round-264).
+> Current architecture: see `agent/AGENTS.md`. Kept as a test-history record
+> (the P0–P3 fixes shipped in 1.0.118 / npm 1.2.114–115 still apply).
+
 > 测试对象：`https://d1.agent.saisi.online/panel/`（设备 d1 的 Vale Agent 面板 → Browser 页）
 > 测试日期：2026-08-31
 > 测试方式：Playwright headless 打开面板 + 设备侧 API/进程验证

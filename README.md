@@ -36,7 +36,7 @@ vale setup --reg-key <key> # optional: register the device with a Vale Gate cons
 vale update                # later: one-command update (exe + electron shell)
 ```
 
-The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all path resolution goes through `src/paths.rs`. The terminal panel is served by the agent at `/panel` (token entered once in the browser), and the Electron desktop shell loads `/desktop/`.
+The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all path resolution goes through `agent/src/paths.rs`. The terminal panel is served by the agent at `/panel` (token entered once in the browser), and the Electron desktop shell loads `/desktop/`.
 
 ## Repository layout
 
@@ -49,21 +49,24 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 | ~~`studio/`~~ | RETIRED 2026-09-06 | — | replaced by code-server (vscode.saisi.online, behind Access); see docs/adr/0006 |
 | `proxies/` | **Satellite proxies** | Cloudflare Worker + Vercel (satellite) | zen-go / zen-us / openrouter AI egress + vercel-proxy (`./scripts/build.sh proxies|vercel-proxy`) |
 | `brand/` | **Brand assets** | static (satellite) | sunrise favicon / icon source (no build) |
-| `docs/` | docs | — | design decisions (`docs/adr/`), agent build guide (`agent/AGENTS.md`) |
+| `scripts/` | build/release | shell | unified build/publish entry (`build.sh`, `publish-release.sh`) |
+| `docs/` | docs | — | ADRs (`docs/adr/`) + agent contracts (`docs/agents/`) + research/superpowers (incl. `specs/`) |
 
 ## Build & deploy
 
 ```bash
 # Windows cross-compile of vale-agent (needs cargo-xwin)
-./scripts/build.sh agent
+./scripts/build.sh agent             # + panel SPA rebuild (embedded at compile time)
+
+# Deploy the workers (needs a Cloudflare API token)
+./scripts/build.sh gateway|index     # wrangler deploy the worker
+./scripts/build.sh proxies           # deploy satellite proxy workers (zen-go / zen-us / openrouter)
+./scripts/build.sh vercel-proxy      # deploy the Vercel exit proxy (v.saisi.online; needs vercel CLI)
+./scripts/build.sh deploy            # build agent + deploy gateway/index + 3 CF proxies (not vercel-proxy)
 
 # CDN-publish a release (pack + stage + version.json sha256 + last-5 prune
 # + deploy; then push + tag vX to get the CI-built GitHub release)
 ./scripts/publish-release.sh 1.2.N
-
-# Deploy the workers (needs a Cloudflare API token)
-./scripts/build.sh gateway
-./scripts/build.sh index
 ```
 
 See `agent/AGENTS.md` (Rust build guide) and `docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md` (desktop/core; `gateway/DEVICE-INTEGRATION.md` is a superseded 2026-08 design).
@@ -73,7 +76,7 @@ See `agent/AGENTS.md` (Rust build guide) and `docs/superpowers/specs/2026-08-28-
 - **Gateway plugin core (DSH-style)**: every `/api/*` route and `/mcp` lives in a plugin (`gateway/src/plugins/`: auth / devices / mcp / translate / admin) on a shared context; `index.ts` is a thin front door.
 - **Device control, AI-first**: an AI client connects to `https://<console>/mcp` (gateway) or `https://<device>/mcp` (direct) with a bearer token and gets the device tool surface.
 - **Terminal backends**: PTY (ConPTY on Windows, OSC 633 shell integration), SSH (keepalive 5s, bounded writes) and serial (auto-reconnect). Natural shell exits are detected (exit codes surface in `terminal_history`); the reader is pollable so `exit` never hangs the session.
-- **Browser control via mcp-client**: the `mcp-client` plugin connects to a local browser MCP server (`playwright-mcp`, default `http://127.0.0.1:9229/mcp`) and forwards its tools; the Rust agent only bridges. The Electron shell also exposes CDP :9333 for driving the desktop UI itself.
+- **Browser control via mcp-client**: the `mcp-client` plugin spawns the bundled `playwright-mcp` over stdio by default (stdin/stdout, no listening port) and forwards its tools; the Rust agent only bridges. `transport=http` (9229) remains for external servers only. The Electron shell also exposes CDP :9333 for driving the desktop UI itself.
 - **Memory**: JSONL-backed knowledge base under the install dir, sanitized credentials, LRU caps, soft delete + compaction.
 - **Console UI**: React + Vite (`gateway/ui`), built into `gateway/public`, dark mode, hash routing.
 
