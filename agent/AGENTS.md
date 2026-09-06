@@ -1578,6 +1578,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   per-IP bucket. Self-caught: garbage invite is 400 here (403 is the
   devices self-register path). Suite 468->469; gates clean; snapshot
   updated; pushed.
+  ROUND-452 (2026-09-06): login-gate audit — burst 429 + unknown-user
+  burn arms had ZERO pins. Added 1 in plugins.test.mjs: 10×401 then
+  11th 429. Self-caught: jsonError nests the message under
+  error.message. Suite 469->470; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
