@@ -102,10 +102,19 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
       // registered device when exactly one existed. Fallback applies only
       // when the caller named NO device.
       if (!deviceName && all.length === 1) device = all[0]!;
-      else if (!deviceName)
+      else if (!deviceName && all.length === 0)
         return mcpError(
           -32602,
           "No devices registered — register one on the console Devices page first",
+          id,
+        );
+      else if (!deviceName)
+        // round-398: several devices and no name used to answer "No devices
+        // registered" — wrong guidance when devices exist. Name them so the
+        // caller picks instead of guessing (same spirit as round-160).
+        return mcpError(
+          -32602,
+          `Multiple devices registered — specify device: ${all.map((d) => d.name).join(", ")}`,
           id,
         );
       else

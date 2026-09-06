@@ -337,3 +337,90 @@ test("mcp: non-GET/POST method → 405", async () => {
   );
   assert.equal(res.status, 405);
 });
+
+// ── Device resolution matrix (round-398: single-device fallback, I6a
+// typo guard, multi-device guidance, tools/list, throw mapping) ──
+
+test("mcp: omitted device with exactly one registered executes on it (round-160 fallback)", async () => {
+  const env = makeEnv(); // single DEVICE d1
+  let dialed = null;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    dialed = String(url);
+    return new Response(JSON.stringify({ ok: true, sessions: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const res = await handleMcp(
+      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: {} }, id: 11 }),
+      env,
+    );
+    assert.equal(res.status, 200);
+    assert.equal(dialed, "https://d1.agent.saisi.online/api/tools/terminal_list");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("mcp: typo'd device with one registered → Unknown device, never executes (I6a)", async () => {
+  const env = makeEnv();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("must not be called");
+  };
+  try {
+    const res = await handleMcp(
+      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: { device: "d2" } }, id: 12 }),
+      env,
+    );
+    const data = await res.json();
+    assert.equal(data.error.code, -32602);
+    assert.match(data.error.message, /Unknown device: d2/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("mcp: omitted device with several registered names them (round-398)", async () => {
+  const env = makeBaseEnv({
+    devices: [DEVICE, { name: "d2", hostname: "d2.agent.saisi.online", token: "devtok2" }],
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" },
+    },
+    kv: { "token:admintoken": "admin" },
+  });
+  const res = await handleMcp(
+    post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: {} }, id: 13 }),
+    env,
+  );
+  const data = await res.json();
+  assert.equal(data.error.code, -32602);
+  assert.match(data.error.message, /Multiple devices registered — specify device: d1, d2/);
+});
+
+test("mcp: tools/list returns the tool table with the id echoed", async () => {
+  const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/list", id: 14 }), makeEnv());
+  const data = await res.json();
+  assert.equal(data.id, 14);
+  assert.ok(Array.isArray(data.result.tools));
+  assert.ok(data.result.tools.length >= 20);
+  assert.ok(data.result.tools.every((t) => t.inputSchema.properties.device));
+});
+
+test("mcp: device dial failure → -32603 with DEVICE_UNREACHABLE in data", async () => {
+  const env = makeEnv();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("fetch failed");
+  };
+  try {
+    const res = await handleMcp(
+      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: { device: "d1" } }, id: 15 }),
+      env,
+    );
+    const data = await res.json();
+    assert.equal(data.error.code, -32603);
+    assert.deepEqual(data.error.data, { code: "DEVICE_UNREACHABLE" });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
