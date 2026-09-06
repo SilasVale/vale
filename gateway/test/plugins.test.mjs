@@ -650,6 +650,23 @@ test("logout: malformed cookie still 200s and clears the cookie", async () => {
   assert.equal(res.status, 200);
   assert.ok(String(res.headers.get("set-cookie") || "").includes("ag_session=;"), "cookie cleared");
 });
+
+// round-457 (coverage-driven): the logout 429 arm (round-111: a 429 must
+// STILL clear the client cookie) had ZERO pins.
+test("logout: 30 logouts then 429 that still clears the cookie", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const out = () => worker.fetch(new Request("https://x/api/auth/logout", {
+    method: "POST",
+    headers: { cookie: "ag_session=not-a-jwt", "cf-connecting-ip": "192.0.2.77" },
+  }), env);
+  for (let i = 0; i < 30; i++) {
+    assert.equal((await out()).status, 200, `attempt ${i + 1} passes the gate`);
+  }
+  const limited = await out();
+  assert.equal(limited.status, 429);
+  assert.ok(String(limited.headers.get("set-cookie") || "").includes("ag_session=;"), "429 still clears the cookie");
+});
 // round-442 (coverage-driven): the logout blacklist write had ZERO direct
 // pins — only its verify side was tested. Round-122 (*1000 ms-unit bug)
 // and round-124 (<60s floor) both lived exactly here.
@@ -992,6 +1009,43 @@ test("me/keys/usage: amd maps spend caps, og maps windows", async () => {
         weekly: { used: 2, limit: 50 },
       },
     });
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+// round-457 (coverage-driven): the AMD/OG usage throw arms + the AMD
+// testKey non-JSON arm had ZERO pins.
+test("me/keys/usage: amd/og throw is safe; amd test tolerates non-JSON", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const bob = await issueSessionToken("pw", "bob", "user");
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ AMD_API_KEY: "amd-k", OPENCODE_GO_API_KEY: "og-k" }));
+  __clearCaches();
+  const usage = (name) => worker.fetch(new Request("https://x/api/me/keys/usage", {
+    method: "POST",
+    headers: { cookie: `ag_session=${bob}`, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  }), env);
+  const test = (name) => worker.fetch(new Request("https://x/api/me/keys/test", {
+    method: "POST",
+    headers: { cookie: `ag_session=${bob}`, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  }), env);
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("down"); };
+  try {
+    assert.deepEqual(await (await usage("AMD_API_KEY")).json(),
+      { ok: false, name: "AMD_API_KEY", detail: "Usage query failed" });
+    assert.deepEqual(await (await usage("OPENCODE_GO_API_KEY")).json(),
+      { ok: false, name: "OPENCODE_GO_API_KEY", detail: "Usage query failed" });
+  } finally {
+    globalThis.fetch = real;
+  }
+  globalThis.fetch = async () => new Response("not json", { status: 200 });
+  try {
+    assert.deepEqual(await (await test("AMD_API_KEY")).json(),
+      { ok: true, name: "AMD_API_KEY", status: 200, detail: "AMD Radeon Cloud auth OK (0 models: )" });
   } finally {
     globalThis.fetch = real;
   }
