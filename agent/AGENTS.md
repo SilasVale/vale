@@ -1372,6 +1372,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   cancel, no close affordance for savedOnly/closed, view-switch gated
   on active session. Panel 116->121 (21->22 files); rebuilt, panel.js
   identical; pushed.
+  ROUND-417 (2026-09-06): panel IconRail audit — page buttons, theme
+  toggle, conn dot had ZERO tests. Added 5: 5 pages + active marking,
+  page notify, toggle flip + persist + remount-read, dot on/off,
+  desktop density classes. Panel 121->126 (22->23 files); rebuilt,
+  panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
