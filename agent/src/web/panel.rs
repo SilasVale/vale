@@ -224,3 +224,176 @@ impl Service<Request<Body>> for WebPanel {
 }
 
 // ── Response helpers ───────────────────────────────────────
+
+#[cfg(test)]
+mod panel_tests {
+    //! round-379: the static whitelist, bundle-hash stamping, token XSS
+    //! escaping, grant shape check, and grant redeem outcomes had zero
+    //! direct tests (only endpoint-level coverage in mod.rs).
+    use super::*;
+
+    async fn body_text(resp: Response) -> String {
+        let bytes = axum::body::to_bytes(resp.into_body(), 8 * 1024 * 1024)
+            .await
+            .unwrap();
+        String::from_utf8_lossy(&bytes).to_string()
+    }
+
+    #[test]
+    fn content_type_map() {
+        assert_eq!(
+            panel_content_type("panel.js"),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(
+            panel_content_type("vendor/xterm.min.js"),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(panel_content_type("panel.css"), "text/css; charset=utf-8");
+        assert_eq!(panel_content_type("index.html"), "text/html; charset=utf-8");
+        assert_eq!(
+            panel_content_type("anything-else"),
+            "text/html; charset=utf-8"
+        );
+    }
+
+    #[tokio::test]
+    async fn whitelist_serves_known_files_and_404s_the_rest() {
+        for file in [
+            "index.html",
+            "panel.js",
+            "panel.css",
+            "vendor/xterm.min.js",
+            "vendor/xterm.css",
+            "vendor/xterm-addon-fit.min.js",
+        ] {
+            let resp = serve_panel_file(file, panel_content_type(file));
+            assert_eq!(resp.status(), StatusCode::OK, "{file}");
+            assert_eq!(
+                resp.headers().get("cache-control").unwrap(),
+                "no-cache",
+                "{file}"
+            );
+            assert!(!body_text(resp).await.is_empty(), "{file} must have a body");
+        }
+        // Traversal, query-suffixed, empty, and unknown names all 404 —
+        // the match is on exact names, never the filesystem.
+        for evil in [
+            "../secret",
+            "..\\secret",
+            "panel.js?v=1",
+            "panel.js ",
+            "",
+            "vendor/evil.js",
+            "index.html ",
+            "/panel.js",
+        ] {
+            let resp = serve_panel_file(evil, "text/plain; charset=utf-8");
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{evil:?}");
+        }
+    }
+
+    #[test]
+    fn bundle_hash_stamps_once_and_leaves_vendor_css() {
+        let html = r#"<link href="panel.css"><script src="panel.js"></script><link href="vendor/xterm.css">"#;
+        let out = apply_bundle_hash(html);
+        let ver = panel_bundle_hash();
+        assert_eq!(out.matches(&format!("panel.css?v={ver}")).count(), 1);
+        assert_eq!(out.matches(&format!("panel.js?v={ver}")).count(), 1);
+        assert!(
+            out.contains("vendor/xterm.css\">"),
+            "vendor css untouched: {out}"
+        );
+        assert_eq!(ver.len(), 16, "FNV-1a-64 hex");
+    }
+
+    #[tokio::test]
+    async fn token_response_shape_and_xss_escape() {
+        let resp = panel_token_response("abc123");
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+        let body = body_text(resp).await;
+        assert!(body.contains("window.__PANEL_TOKEN__=\"abc123\""));
+
+        // A hostile token must not break out of the script element.
+        let evil = "ab</script><script>alert(1)//";
+        let body = body_text(panel_token_response(evil)).await;
+        assert!(
+            !body.contains("</script><script>"),
+            "script breakout: {body}"
+        );
+        assert!(body.contains("\\u003c"), "angle brackets escaped: {body}");
+    }
+
+    #[test]
+    fn grant_shape_check() {
+        assert!(plausible_grant(&"a".repeat(32)));
+        assert!(
+            plausible_grant(&"A".repeat(16)),
+            "uppercase hex + lower bound"
+        );
+        assert!(plausible_grant(&"f".repeat(128)), "upper bound");
+        for bad in [
+            "",
+            "abc",
+            &"g".repeat(32),
+            &"a".repeat(15),
+            &"a".repeat(129),
+            "..../../....",
+        ] {
+            assert!(!plausible_grant(bad), "{bad:?} must be a probe");
+        }
+    }
+
+    async fn stub_redeem(status: u16, body: Vec<u8>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 8192];
+            let mut req = Vec::new();
+            loop {
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let resp = format!(
+                "HTTP/1.1 {status} OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.write_all(&body).await;
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    #[tokio::test]
+    async fn redeem_true_only_on_explicit_ok_true() {
+        let base = stub_redeem(200, br#"{"ok":true}"#.to_vec()).await;
+        assert!(redeem_panel_grant(&base, "tok", &"a".repeat(32)).await);
+
+        let base = stub_redeem(200, br#"{"ok":false}"#.to_vec()).await;
+        assert!(!redeem_panel_grant(&base, "tok", &"a".repeat(32)).await);
+
+        let base = stub_redeem(200, br#"{"unexpected":1}"#.to_vec()).await;
+        assert!(!redeem_panel_grant(&base, "tok", &"a".repeat(32)).await);
+
+        let base = stub_redeem(500, br#"oops"#.to_vec()).await;
+        assert!(!redeem_panel_grant(&base, "tok", &"a".repeat(32)).await);
+
+        // Dead gateway: connection refused fails fast (no 5s hang).
+        assert!(!redeem_panel_grant("http://127.0.0.1:1", "tok", &"a".repeat(32)).await);
+    }
+}
