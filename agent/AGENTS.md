@@ -1720,6 +1720,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-486 (2026-09-06): empty-stream audit — the non-SSE error arm had
   ZERO pins. Added 1 in reliability.test.mjs: explicit error event, no
   message_start. Suite 528->529; gates clean; snapshot updated; pushed.
+  ROUND-487 (2026-09-06): mixed-block audit — passthrough + empty-data
+  arms had ZERO pins. Added 1 in translate-vision.test.mjs. Noted: the
+  failure strip leaves a trailing ")" on all messages (pre-existing
+  cosmetic wart, out of scope). Suite 529->530; gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
