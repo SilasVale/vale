@@ -1601,6 +1601,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   usage throws, AMD non-JSON had ZERO pins. Added 2 in
   plugins.test.mjs. plugins/auth.ts now ~98% (rest is route-unreachable
   defense). Suite 476->478; gates clean; snapshot updated; pushed.
+  ROUND-458 (2026-09-06): devices-surface audit — list/add/mcp success
+  paths had ZERO pins (only gates). Added 1 in devices.test.mjs:
+  empty→add→masked list→mcp 404/200 (raw token only in the snippet).
+  Suite 478->479; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
