@@ -1413,6 +1413,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   vacuous final test pre-commit (replaced with a real controlled-value
   assertion). Panel 149->155 (28->29 files); rebuilt, panel.js
   identical; pushed.
+  ROUND-424 (2026-09-06): gateway admin-ops audit — cf-token/invite/
+  enable had ZERO pins (password paths were covered). Added 3:
+  token shape 400s + masked roundtrip + clear, invite code + 401,
+  malformed-id/admin/bob enable guards. Suite 432->435; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
