@@ -971,6 +971,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   exit_code/status folded). Caught my own off-by-one in the cap bound
   (2001 vs 2002) before committing. Matrix: lib 204, feat-gated 210,
   clippy x2 + fmt + xwin clean; snapshot 238->240.
+  ROUND-363 (2026-09-06): pack-chain periodic replay (round-4's catch
+  still holding, zero drift): release-lib 11/11, bin round-298 marker OK,
+  electron tsc-fresh 3/3 + npm-package copies in-sync 3/3, bin/vale.js
+  fresh, npm pack 6/6 subset gate (artifacts cleaned, tree verified
+  clean), npm CLI 3/3. No code changes — pure verification round.
+  Rounds 10–11 CI SUCCESS on GitHub (round-12 queued at push time).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
