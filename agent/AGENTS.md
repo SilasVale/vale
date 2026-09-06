@@ -1185,6 +1185,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   codes cost zero KV reads, corrupt/empty records → null (mintedAt 0),
   keyless get/delete no-throw, delete removes. Suite 341->348;
   tsc/eslint/prettier clean; snapshot updated.
+  ROUND-389 (2026-09-06): full-repo matrix sweep, zero code changes —
+  every suite green same-day: agent lib 283 + core 15 + 27+2+7+1,
+  feat-gated 289, clippy x2 + fmt + xwin clean; gateway 348 + tsc +
+  eslint + prettier; index 54/54; panel vitest 93/93 (17 files);
+  proxies 12+7+7 (node --test per CI, no npm-test script exists);
+  npm CLI 3/3; extension 3-file node --check; vercel-proxy 5/5 syntax
+  gate; gateway/ui build + render smoke + devices smoke OK; tree clean
+  after builds. (Wrangler dry-runs left to CI — needs account creds.)
+  No code changes — pure verification round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
