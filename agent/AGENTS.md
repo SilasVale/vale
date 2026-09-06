@@ -1086,6 +1086,16 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   production per round-359). Fixed my own Cow as_ref ambiguity
   pre-commit. Matrix: lib 243 (+4), feat-gated 249, clippy x2 + fmt +
   xwin clean; snapshot 276->280.
+  ROUND-376 (2026-09-06): mcp_client http-arm audit — rpc_ref_http
+  (session capture, header hygiene, 16MiB cap, empty/500 mapping) +
+  track_page_url had ZERO tests (only framing/summary pins). Added 7
+  against single-shot local stubs: initialize captures session id,
+  caller headers ride but mcp-session-id/content-type never override,
+  empty→Null, 500→truncated error, >16MiB rejected, track sets http
+  last_url on marker + ignores ftp/absent. Fixed pre-commit: owned stub
+  headers (spawn 'static), Arc clone, parse_envelope returns the result
+  body (not the envelope). Stable 20/20 x3. Matrix: lib 250 (+7),
+  feat-gated 256, clippy x2 + fmt + xwin clean; snapshot 280->287.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
