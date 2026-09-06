@@ -1319,6 +1319,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Added 5 (chainEnv harness): no-ds→qw, og-only→flash, or-only→luna,
   keyless last-line guarantee, chosen-but-unusable enters the chain.
   Suite 419->424; gates clean; snapshot updated; pushed.
+  ROUND-408 (2026-09-06): RouteDO audit — auth gates pinned but CRUD +
+  error paths (roundtrip, null-delete, 400s, 404, 500, unauth) had zero
+  direct pins. Added 5 in route-do.test.mjs. Suite 424->429; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
