@@ -893,6 +893,18 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   GitHub picked it up without a second push. Re-run CI: SUCCESS (9/9).
   LESSON: any CLI test that reaches past readSettings must pin
   VALE_SETTINGS — ambient HOME is a hidden test dependency.
+  ROUND-356 (2026-09-06): F3 decision material ready —
+  docs/adr/proposal-scoped-relay-token.md (unnumbered proposal per ADR
+  convention, NOT 0007). Tree-verified blast radius: the admin token is
+  relay x-api-key (translate.ts:183) + /mcp Bearer admin
+  (terminal_execute/secret_*/browser on any device, mcp.ts:32-45) +
+  session-less password bootstrap/reset (admin.ts, auth.ts:192-214), all
+  seeded from legacy CLIENT_KEY (store/admin.ts:57,95). Per-user BYOK is
+  correctly scoped (own-keys-only reveal, masked admin lists) — out of
+  scope. Options A–D with B (scoped relay role, staged dual-accept)
+  recommended; 3 explicit questions for the human. No behavior changed —
+  implementation waits for sign-off. Also fixed ADR README drift (missing
+  0006 row, singular proposal-* wording) and repointed the F3 Next line.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
@@ -1032,8 +1044,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
 
 ### Next candidates
 - gateway F3: CLIENT_KEY doubles as admin token (billing keys + /mcp RCE
-  by every settings.json holder) — DESIGN decision, needs user sign-off
-  (breaks existing clients if tightened)
+  by every settings.json holder) — decision material ready:
+  docs/adr/proposal-scoped-relay-token.md (round-356 audit + options A–D,
+  B recommended). Needs user sign-off (breaks existing clients if tightened)
 - npm publish (waits on user `npm login`; registry name confirmed free)
 - CI now owns the release build. Next manual release: SKIP the curl asset
   upload — just push the tag and let CI attach it; keep-latest stays manual.
