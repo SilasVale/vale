@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.mjs",
     "link": "node server.mjs --link",
-    "test": "node --test test/api.test.mjs"
+    "test": "node --test test/api.test.mjs test/terms.test.mjs test/terms-readonly.test.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

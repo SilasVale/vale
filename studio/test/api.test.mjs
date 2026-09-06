@@ -1,4 +1,6 @@
-// API contract tests — black-box: spawn the real server against a temp workspace.
+// API contract tests — black-box: spawn the real server against a temp
+// workspace (harness extracted to test/helpers.mjs, shared with the
+// terminal/readOnly contract files).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -6,71 +8,27 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { startStudio, stopStudio } from "./helpers.mjs";
 
 const PORT = 7799;
 const BASE = `http://127.0.0.1:${PORT}`;
 const TOKEN = "test-token-abcdef";
 let child = null;
 let rootDir = null;
-
-async function waitForServer(timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(`${BASE}/api/boot`, { headers: { authorization: `Bearer ${TOKEN}` } });
-      if (r.ok) return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  throw new Error("server did not become ready");
-}
-
-function api(p, { method = "GET", body, token = TOKEN } = {}) {
-  const headers = {};
-  if (token) headers.authorization = `Bearer ${token}`;
-  if (body !== undefined) headers["content-type"] = "application/json";
-  return fetch(BASE + p, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-}
+let api;
 
 test.before(async () => {
-  rootDir = await fsp.mkdtemp(path.join(os.tmpdir(), "vale-studio-test-"));
-  await fsp.writeFile(path.join(rootDir, "hello.txt"), "hello world\n");
-  await fsp.mkdir(path.join(rootDir, "sub"));
-  await fsp.writeFile(path.join(rootDir, "sub", "code.js"), "const x = 41 + 1;\n");
-  // a file outside roots to prove isolation
-  const cfgPath = path.join(rootDir, "..", `studio-cfg-${Date.now()}.json`);
-  const cfg = {
+  ({ child, rootDir, api } = await startStudio({
     port: PORT,
-    bind: "127.0.0.1",
     token: TOKEN,
-    readOnly: false,
-    corsOrigins: ["https://dsh.saisi.online"],
-    terminal: { enabled: true },
-    maxFileSizeMB: 8,
-    roots: [rootDir],
-  };
-  await fsp.writeFile(cfgPath, JSON.stringify(cfg));
-  const serverPath = path.join(import.meta.dirname, "..", "server.mjs");
-  child = spawn(process.execPath, [serverPath, "--config", cfgPath], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let log = "";
-  child.stdout.on("data", (d) => (log += d));
-  child.stderr.on("data", (d) => (log += d));
-  child._log = () => log;
-  await waitForServer();
+    files: {
+      "hello.txt": "hello world\n",
+      "sub/code.js": "const x = 41 + 1;\n",
+    },
+  }));
 });
 
-test.after(() => {
-  if (child) {
-    child.kill("SIGTERM");
-    setTimeout(() => child.kill("SIGKILL"), 1000);
-  }
-});
+test.after(() => stopStudio(child));
 
 test("rejects missing/invalid token with uniform 404", async () => {
   const noTok = await api("/api/boot", { token: null });
