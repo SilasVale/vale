@@ -1,8 +1,20 @@
 /**
- * device-fetch — device reverse-proxy helpers for vale-gate.
+ * device-fetch — device dialing primitives for vale-gate (FOUNDATION module).
  *
  * Holds the pieces of the device module that need to be importable without
  * dragging in all of index.js (keeps index.js ↔ mcp.js imports acyclic).
+ *
+ * Boundary + security review (2026-09-06): correctly layered — every device
+ * dial (proxyDevice, MCP terminal tools, browser bridge) flows through
+ * deviceFetch with the full SSRF guard stack: authority-prefix sanitization
+ * (round-120/121) → parsed-hostname equality → private-IP blocklist
+ * (deviceHostError) → the registration-time suffix allowlist
+ * (DEVICE_HOST_SUFFIX, default .agent.saisi.online) → header hygiene →
+ * bounded fetch. Known characteristic, accepted: fetch follows redirects, so
+ * a device could 302 the gateway toward another PUBLIC host — unreachable
+ * from a Worker's network position for internal targets (link-local/
+ * metadata fail to route), and public targets are dialable by the device
+ * anyway. DNS rebinding requires controlling the operator's own zone.
  */
 
 /**

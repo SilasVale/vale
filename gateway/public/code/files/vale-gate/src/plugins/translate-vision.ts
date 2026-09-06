@@ -116,7 +116,10 @@ async function describeImage(
     "SHA-256",
     new TextEncoder().encode(`${visionModel}:${data}`),
   );
-  const h = [...new Uint8Array(digest)].slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+  const h = [...new Uint8Array(digest)]
+    .slice(0, 16)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
   const cacheKey = data.length > 16 ? `img-desc:${uid || "anon"}:${h}` : "";
   if (cacheKey && env.KEYS) {
     try {

@@ -102,7 +102,11 @@ async function adminListUsers(request: Request, env: Env): Promise<Response> {
       role: u.role,
       enabled: u.enabled,
       createdAt: u.createdAt,
-      token: u.token,
+      // Never return gateway tokens in the clear (same rule as the devices
+      // list below, which maskKey()s device tokens) — a console session
+      // holder must not harvest every user's credential. No reveal endpoint
+      // by design (minimal change); rotation lives in /api/me.
+      token: maskKey(u.token || ""),
       keys: userKeysStatus(ukeys),
     });
   }

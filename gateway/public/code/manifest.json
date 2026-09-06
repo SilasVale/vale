@@ -56,6 +56,16 @@
       "group": "vale-gate"
     },
     {
+      "name": "src/mcp-browser.ts",
+      "path": "files/vale-gate/src/mcp-browser.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/mcp-errors.ts",
+      "path": "files/vale-gate/src/mcp-errors.ts",
+      "group": "vale-gate"
+    },
+    {
       "name": "src/mcp-tools.ts",
       "path": "files/vale-gate/src/mcp-tools.ts",
       "group": "vale-gate"
@@ -81,13 +91,13 @@
       "group": "vale-gate"
     },
     {
-      "name": "src/sse-guard.ts",
-      "path": "files/vale-gate/src/sse-guard.ts",
+      "name": "src/store.ts",
+      "path": "files/vale-gate/src/store.ts",
       "group": "vale-gate"
     },
     {
-      "name": "src/store.ts",
-      "path": "files/vale-gate/src/store.ts",
+      "name": "src/tooling.ts",
+      "path": "files/vale-gate/src/tooling.ts",
       "group": "vale-gate"
     },
     {
@@ -106,6 +116,11 @@
       "group": "vale-gate"
     },
     {
+      "name": "src/plugins/device-proxy.ts",
+      "path": "files/vale-gate/src/plugins/device-proxy.ts",
+      "group": "vale-gate"
+    },
+    {
       "name": "src/plugins/devices.ts",
       "path": "files/vale-gate/src/plugins/devices.ts",
       "group": "vale-gate"
@@ -116,13 +131,68 @@
       "group": "vale-gate"
     },
     {
+      "name": "src/plugins/model-route.ts",
+      "path": "files/vale-gate/src/plugins/model-route.ts",
+      "group": "vale-gate"
+    },
+    {
       "name": "src/plugins/registry.ts",
       "path": "files/vale-gate/src/plugins/registry.ts",
       "group": "vale-gate"
     },
     {
+      "name": "src/plugins/translate-vision.ts",
+      "path": "files/vale-gate/src/plugins/translate-vision.ts",
+      "group": "vale-gate"
+    },
+    {
       "name": "src/plugins/translate.ts",
       "path": "files/vale-gate/src/plugins/translate.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/lib/ratelimit.ts",
+      "path": "files/vale-gate/src/lib/ratelimit.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store/admin.ts",
+      "path": "files/vale-gate/src/store/admin.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store/cache.ts",
+      "path": "files/vale-gate/src/store/cache.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store/devices.ts",
+      "path": "files/vale-gate/src/store/devices.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store/grants.ts",
+      "path": "files/vale-gate/src/store/grants.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store/plugins.ts",
+      "path": "files/vale-gate/src/store/plugins.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store/regkeys.ts",
+      "path": "files/vale-gate/src/store/regkeys.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store/settings.ts",
+      "path": "files/vale-gate/src/store/settings.ts",
+      "group": "vale-gate"
+    },
+    {
+      "name": "src/store/users.ts",
+      "path": "files/vale-gate/src/store/users.ts",
       "group": "vale-gate"
     }
   ]

@@ -24,6 +24,13 @@ cp "$PWD"/src/*.js "$DEST/vale-gate/src/" 2>/dev/null || true
 mkdir -p "$DEST/vale-gate/src/plugins"
 cp "$PWD"/src/plugins/*.ts "$DEST/vale-gate/src/plugins/"
 cp "$PWD"/src/plugins/*.js "$DEST/vale-gate/src/plugins/" 2>/dev/null || true
+# Subdirectory domains (structure refactors): src/store/ (split from store.ts)
+# and src/lib/ (ratelimit factory). The old top-level-only copy silently
+# dropped them from the published snapshot — copy each live subdir so the
+# mirror stays a byte-identical tree (redactions below still apply per file).
+mkdir -p "$DEST/vale-gate/src/store" "$DEST/vale-gate/src/lib"
+cp "$PWD"/src/store/*.ts "$DEST/vale-gate/src/store/"
+cp "$PWD"/src/lib/*.ts "$DEST/vale-gate/src/lib/"
 # Live public/ is a Vite build shell (index.html + hashed assets/ + static
 # files). The dead single-file public/app.js was removed round-341 — do NOT
 # re-add it here; sync only what live serves.
@@ -77,6 +84,6 @@ redact() { # $1=file $2=live-text ERE $3=sed-expr $4=expected-count
   [ "$m" = "$4" ] || { echo "  !! redaction did not apply in $1 (want $4, got $m)" >&2; exit 1; }
 }
 redact "src/auth.ts" '\*\.agent\.saisi\.online' 's/\*\.agent\.saisi\.online/*.<dist-host>/g' 1
-redact "src/store.ts" 'd1\.agent\.saisi\.online' 's/d1\.agent\.saisi\.online/d1.<dist-host>/g' 1
+redact "src/store/devices.ts" 'd1\.agent\.saisi\.online' 's/d1\.agent\.saisi\.online/d1.<dist-host>/g' 1
 redact "src/plugins/devices.ts" '/api/version on agent\.saisi\.online' 's|/api/version on agent\.saisi\.online|/api/version on https://<dist-host>|g' 1
 echo "redacted production host in 3 mirror comments"

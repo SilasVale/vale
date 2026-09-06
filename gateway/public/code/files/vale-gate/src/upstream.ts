@@ -8,6 +8,12 @@
  * it, so `vale use or` probed a different upstream than /v1/messages used.
  * One module, one contract. Semantics follow the translate plugin (the
  * battle-tested copy).
+ *
+ * Boundary (architecture review 2026-09-06): the routing DECISION layer —
+ * per-prefix upstream selection, US-egress wrapping, header shaping. The
+ * DATA registry (endpoints/whitelists/health cards) lives in channels.ts;
+ * the dependency is one-way upstream -> channels. Reviewed as correctly
+ * layered; no split warranted.
  */
 
 import {

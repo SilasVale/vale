@@ -1,5 +1,9 @@
 /**
- * Cloudflare Access identity — zero-password console login (spec option C).
+ * access.ts — Cloudflare Access IDENTITY layer (zero-password console login,
+ * spec option C). Sits beside session.ts in the resolution flow:
+ * requireSession tries the cookie session first, then falls back to this
+ * module's edge-verified identity. Reviewed 2026-09-06: correctly layered
+ * (one-way deps store/auth; JWT verify self-contained with L5 hardening).
  *
  * After a visitor passes the zone's Access email-OTP challenge, Cloudflare
  * injects a signed JWT into every origin-bound request:

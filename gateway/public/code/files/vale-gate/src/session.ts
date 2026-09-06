@@ -1,5 +1,7 @@
 /**
- * Session auth — the single requireSession/sessionSecret implementation.
+ * session.ts — session RESOLUTION flow (the middle layer of the auth trio:
+ * primitives in auth.ts ← this file ← HTTP routes in plugins/auth.ts).
+ * The single requireSession/sessionSecret implementation.
  *
  * Was copied verbatim into index.ts and plugins/{auth,devices,admin,mcp}.ts;
  * every copy drifted independently (the mcp plugin's round-88 gate missed the
