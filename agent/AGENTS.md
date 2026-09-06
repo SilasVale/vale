@@ -1549,6 +1549,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   store→GET→clear roundtrip, effective-mirrors-stored. Self-caught:
   effective is null without stored route (no resolver wiring in test).
   Suite 462->463; gates clean; snapshot updated; pushed.
+  ROUND-446 (2026-09-06): keys-test audit — POST /api/me/keys/test had
+  ZERO route pins (per-provider live probes). Added 2 in
+  plugins.test.mjs: gates + missing-key + deepseek/amd/openrouter
+  shapes, og SSE ok/no-data/throw arms. Suite 463->465; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
