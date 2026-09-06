@@ -226,3 +226,102 @@ pub(crate) async fn sse_term_stream(state: Arc<AppState>) -> Response {
 }
 
 // ── Status ────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod sse_tests {
+    //! round-371: the SSE loss-tolerant contract (epoch-first frames,
+    //! lagged fallback, header shape) and the guard acquire/release cycle
+    //! had zero tests. All sse_response cases use pre-queued broadcast
+    //! sends + sender-drop, so no timers are involved (the 30s heartbeat
+    //! arm is intentionally untested — it would take 30s).
+    //!
+    //! NOTE: SseConnectionGuard tests never drain the 64-slot pool: the
+    //! process-global counter is shared with the parallel endpoint tests
+    //! (term_sse_streams_output holds a real guard) — a drain-to-None test
+    //! would starve them into 503s.
+    use super::*;
+
+    async fn body_bytes(resp: Response) -> String {
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    fn frames() -> (impl Fn(&String) -> String, impl Fn(u64) -> String) {
+        (
+            |s: &String| format!("data: {s}\n\n"),
+            |n: u64| format!("data: lagged={n}\n\n"),
+        )
+    }
+
+    #[test]
+    fn guard_acquire_release_cycle() {
+        let g = SseConnectionGuard::acquire();
+        assert!(g.is_some(), "a free pool must grant a slot");
+        drop(g);
+        assert!(
+            SseConnectionGuard::acquire().is_some(),
+            "a dropped guard must release its slot"
+        );
+    }
+
+    #[test]
+    fn guard_two_concurrent_holds_coexist() {
+        let a = SseConnectionGuard::acquire();
+        let b = SseConnectionGuard::acquire();
+        assert!(a.is_some() && b.is_some(), "two holds must both grant");
+    }
+
+    #[tokio::test]
+    async fn response_carries_sse_headers() {
+        let (_tx, rx) = tokio::sync::broadcast::channel::<String>(16);
+        let (encode, lagged) = frames();
+        let resp = sse_response(rx, encode, lagged, None).await;
+        let h = resp.headers();
+        assert_eq!(h.get("content-type").unwrap(), "text/event-stream");
+        assert_eq!(h.get("cache-control").unwrap(), "no-cache");
+        assert_eq!(h.get("connection").unwrap(), "keep-alive");
+        drop(_tx);
+    }
+
+    #[tokio::test]
+    async fn initial_frame_comes_first_then_close_ends_stream() {
+        let (tx, rx) = tokio::sync::broadcast::channel::<String>(16);
+        let (encode, lagged) = frames();
+        let resp = sse_response(rx, encode, lagged, Some("data: epoch=7\n\n".into())).await;
+        drop(tx); // no live items: Closed must end the body right after initial
+        assert_eq!(body_bytes(resp).await, "data: epoch=7\n\n");
+    }
+
+    #[tokio::test]
+    async fn live_items_encode_in_fifo_order() {
+        let (tx, rx) = tokio::sync::broadcast::channel::<String>(16);
+        tx.send("a".to_string()).unwrap();
+        tx.send("b".to_string()).unwrap();
+        let (encode, lagged) = frames();
+        let resp = sse_response(rx, encode, lagged, None).await;
+        drop(tx);
+        assert_eq!(body_bytes(resp).await, "data: a\n\ndata: b\n\n");
+    }
+
+    #[tokio::test]
+    async fn lagged_receiver_gets_lagged_frame() {
+        // cap-2 channel, 5 sends, zero recvs before handoff: the receiver
+        // is lagged by exactly 3 when the pump task takes over.
+        let (tx, rx) = tokio::sync::broadcast::channel::<String>(2);
+        for i in 0..5 {
+            tx.send(format!("m{i}")).unwrap();
+        }
+        let (encode, lagged) = frames();
+        let resp = sse_response(rx, encode, lagged, None).await;
+        drop(tx);
+        // Lag notice first, then the surviving tail (m3, m4) the channel
+        // kept — the loss-tolerant contract: notice + newest, never a gap
+        // mistaken for a quiet stream.
+        assert_eq!(
+            body_bytes(resp).await,
+            "data: lagged=3\n\ndata: m3\n\ndata: m4\n\n"
+        );
+    }
+}
