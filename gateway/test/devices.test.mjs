@@ -35,10 +35,11 @@ function makeEnv(devices, links = {}) {
 async function adminCookie() { return issueSessionToken(ADMIN_PW, "admin", "admin"); }
 async function userCookie() { return issueSessionToken(ADMIN_PW, "bob", "user"); }
 
-function req(method, path, { body, cookie, auth } = {}) {
+function req(method, path, { body, cookie, auth, ip } = {}) {
   const headers = {};
   if (cookie) headers.cookie = `${SESSION_COOKIE}=${cookie}`;
   if (auth) headers.authorization = `Bearer ${auth}`;
+  if (ip) headers["cf-connecting-ip"] = ip;
   return new Request(`https://x${path}`, {
     method,
     headers,
@@ -374,8 +375,12 @@ test("admin gate matrix: no session → 401, non-admin → 403 on every admin de
 /* ---------------- self-register (round-158 anti-hijack endpoint) -------- */
 // round-440 (coverage-driven): handleSelfRegister had ZERO route pins.
 const T64 = (c) => c.repeat(64);
-const selfReg = (env, body) => worker.fetch(
-  req("POST", "/api/devices/self-register", { body }),
+// round-441: the public device routes share one 10/min/IP gate — each test
+// below uses its own cf-connecting-ip so the tests never trip each other.
+let nextIp = 41;
+const testIp = () => `10.44.1.${nextIp++}`;
+const selfReg = (env, body, ip) => worker.fetch(
+  req("POST", "/api/devices/self-register", { body, ip: ip || testIp() }),
   env,
 );
 
@@ -438,4 +443,61 @@ test("self-register: stored-tunnel proof rotates the token", async () => {
   } finally {
     restore();
   }
+});
+
+/* ---------------- register + tunnel-token (one-time-key chain) ---------- */
+// round-441 (coverage-driven): both public one-time-key handlers had ZERO
+// route pins — the spend/claim/grant chain and the round-68 anti-takeover.
+const regPost = (env, path, body) => worker.fetch(
+  req("POST", path, { body, ip: testIp() }),
+  env,
+);
+
+test("register: garbage key 403s with zero KV writes; happy path spends the key", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  const garbage = await regPost(env, "/api/register", { key: "nope", name: "d9", hostname: "d9.agent.saisi.online", token: T64("a") });
+  assert.equal(garbage.status, 403);
+  assert.ok([...env._kv.keys()].every((k) => !k.startsWith("regclaim")), "round-115: invalid keys are zero-write");
+  await env.KEYS.put("regkey:kk11", "1");
+  const body = { key: "kk11", name: "d9", hostname: "d9.agent.saisi.online", token: T64("a") };
+  const { restore } = stubFetch("d9.agent.saisi.online", {});
+  let res;
+  try {
+    res = await regPost(env, "/api/register", body);
+  } finally {
+    restore();
+  }
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).ok, true);
+  assert.equal(await regPost(env, "/api/register", body).then((r) => r.status), 403, "spent key refuses reuse");
+  const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+  assert.ok(devs.some((d) => d.name === "d9"));
+});
+
+test("register: existing device name refuses with 409 (round-68 anti-takeover)", async () => {
+  __clearCaches();
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("c") }]);
+  await env.KEYS.put("regkey:kk22", "1");
+  const res = await regPost(env, "/api/register", { key: "kk22", name: "d1", hostname: "d1.agent.saisi.online", token: T64("d") });
+  assert.equal(res.status, 409);
+  const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+  assert.equal(devs.find((d) => d.name === "d1").token, T64("c"), "production record untouched");
+});
+
+test("tunnel-token: valid key returns the CF token once, then feeds register via grant", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  await env.KEYS.put("regkey:kk33", "1");
+  await env.KEYS.put("cf:api_token", "CFTOKEN");
+  const bad = await regPost(env, "/api/install/tunnel-token", { key: "nope" });
+  assert.equal(bad.status, 403);
+  const res = await regPost(env, "/api/install/tunnel-token", { key: "kk33" });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).apiToken, "CFTOKEN");
+  const again = await regPost(env, "/api/install/tunnel-token", { key: "kk33" });
+  assert.equal(again.status, 403, "spent key cannot harvest the token twice");
+  // Same install completes registration with the spent key via the grant.
+  const reg = await regPost(env, "/api/register", { key: "kk33", name: "d9", hostname: "d9.agent.saisi.online", token: T64("e") });
+  assert.equal(reg.status, 200);
 });
