@@ -1694,3 +1694,20 @@ test("nv/gmi/amd/cm without the user's own key → 502, upstream never called", 
     },
   );
 });
+
+// round-497 (coverage-driven): the upstream retry-after passthrough arm had
+// ZERO pins (extra rides as a response header, not the body — and only the
+// /v1/chat/completions branch passes it; the /v1/messages branch does not).
+// NOTE: the inspectFailure-status arms nearby are defensive-only — no
+// translate call site passes inspect, so the 502 default always applies.
+test("og chat/completions: upstream 429 retry-after surfaces as a response header", async () => {
+  const { env, token } = gwEnv();
+  const res = await withFetch(async () => new Response(JSON.stringify({
+    error: { message: "slow down", type: "rate_limit_error" },
+  }), { status: 429, headers: { "content-type": "application/json", "retry-after": "1" } }), () =>
+    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions"),
+  );
+  assert.equal(res.status, 429);
+  assert.equal(res.headers.get("retry-after"), "1");
+  assert.equal((await res.json()).error.type, "rate_limit_error");
+});
