@@ -567,6 +567,28 @@ test("register: bad invite / short password / duplicate name → 400; no secret 
   assert.equal((await reg({ username: "gail", password: "s3cret-long", inviteCode: code2 })).status, 500);
 });
 
+// round-451 (coverage-driven): the auth/register rate-limit 429 arm had
+// ZERO pins. 30 garbage attempts (403s) then the 31st → 429. Fresh
+// cf-connecting-ip: the auth-rate limiter buckets per IP and earlier
+// register tests already spent the default bucket.
+test("register: 30 attempts then 429 (per-IP rate limit)", async () => {
+  __clearCaches();
+  const env = regEnv();
+  const reg = () => worker.fetch(new Request("https://x/api/auth/register", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "cf-connecting-ip": "198.51.100.77",
+    },
+    body: JSON.stringify({ username: "mallory", password: "s3cret-long", inviteCode: "WRONG" }),
+  }), env);
+  for (let i = 0; i < 30; i++) {
+    assert.equal((await reg()).status, 400, `attempt ${i + 1} passes the gate`);
+  }
+  const limited = await reg();
+  assert.equal(limited.status, 429, "31st attempt within the minute is rate-limited");
+});
+
 // round-442 (coverage-driven): the logout blacklist write had ZERO direct
 // pins — only its verify side was tested. Round-122 (*1000 ms-unit bug)
 // and round-124 (<60s floor) both lived exactly here.
