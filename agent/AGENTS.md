@@ -1275,6 +1275,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   → "mcp_client_call failed: 502", 4 failures release slots (next call
   serves, not BUSY). Suite 396->399; gates clean; snapshot updated;
   pushed.
+  ROUND-401 (2026-09-06): agent main.rs audit — binary target had ZERO
+  tests. Extracted mask_token + unknown_key_warnings (pure text list;
+  wrapper only logs), removed a stale audit-row comment, added 5 bin
+  tests (mask long/short/boundary, clean silent, top+nested flags,
+  non-mapping/missing/invalid/list safe). Full matrix: lib 283 + bin 5
+  + 27+2+7+1, core 15, feat 289, clippy x2 + fmt + xwin clean; snapshot
+  335->340; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
