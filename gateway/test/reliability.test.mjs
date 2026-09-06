@@ -550,3 +550,53 @@ test("upstreamTimeoutMs: default 30s, env override wins, invalid falls back", as
   assert.equal(upstreamTimeoutMs({ UPSTREAM_TIMEOUT_MS: "0" }), 30000);
   assert.equal(upstreamTimeoutMs({ UPSTREAM_TIMEOUT_MS: "junk" }), 30000);
 });
+
+// ── toOpenAIRequest pure transforms (round-480: zero direct pins — only
+// indirect route exercise; the system-array, tool_result-array, thinking /
+// tool_use, and tool_choice arms were uncovered) ──
+
+test("toOpenAIRequest: system array blocks + tool_result array content", async () => {
+  const { toOpenAIRequest } = await import("../src/anthropic-translate.ts");
+  const out = toOpenAIRequest({
+    system: [{ type: "text", text: "be nice" }, { type: "other", text: "dropped" }],
+    messages: [{
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "t1", content: [{ text: "r1" }, { thinking: "h1" }] }],
+    }],
+  }, "m");
+  assert.deepEqual(out.messages[0], { role: "system", content: "be nice" });
+  assert.deepEqual(out.messages[1], { role: "tool", tool_call_id: "t1", content: "r1\nh1" });
+});
+
+test("toOpenAIRequest: assistant thinking + tool_use → reasoning_content + tool_calls", async () => {
+  const { toOpenAIRequest } = await import("../src/anthropic-translate.ts");
+  const out = toOpenAIRequest({
+    messages: [{
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hmm" },
+        { type: "text", text: "here" },
+        { type: "tool_use", id: "c1", name: "bash", input: { cmd: "ls" } },
+      ],
+    }],
+  }, "m");
+  const a = out.messages[0];
+  assert.equal(a.content, "here");
+  assert.equal(a.reasoning_content, "hmm");
+  assert.deepEqual(a.tool_calls, [{ id: "c1", type: "function", function: { name: "bash", arguments: '{"cmd":"ls"}' } }]);
+});
+
+test("toOpenAIRequest: tools normalize + tool_choice mapping", async () => {
+  const { toOpenAIRequest } = await import("../src/anthropic-translate.ts");
+  const base = {
+    messages: [{ role: "user", content: "hi" }],
+    tools: [{ name: "web_search", description: "search" }], // no input_schema → object default
+  };
+  const auto = toOpenAIRequest({ ...base, tool_choice: { type: "tool", name: "web_search" } }, "m");
+  assert.deepEqual(auto.tools[0].function.parameters, { type: "object", properties: {} });
+  assert.deepEqual(auto.tool_choice, { type: "function", function: { name: "web_search" } });
+  const any = toOpenAIRequest({ ...base, tool_choice: { type: "any" } }, "m");
+  assert.equal(any.tool_choice, "required");
+  const other = toOpenAIRequest({ ...base, tool_choice: { type: "auto" } }, "m");
+  assert.equal(other.tool_choice, "auto");
+});
