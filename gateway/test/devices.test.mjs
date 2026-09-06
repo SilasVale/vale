@@ -599,6 +599,47 @@ test("upload proxy: admin session is proxied with the upload key", async () => {
   }
 });
 
+// round-463 (coverage-driven): the upload 413 bound + the public-gate 429
+// arm had ZERO pins.
+test("upload proxy: declared 26MB body 413s without touching the network", async () => {
+  __clearCaches();
+  const env = {
+    ...makeEnv([]),
+    UPLOAD_KEY: "test-upload-key",
+    INDEX_WORKER_URL: "https://idx.example",
+  };
+  let calls = 0;
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; return new Response("{}"); };
+  try {
+    const res = await worker.fetch(new Request("https://x/api/upload", {
+      method: "POST",
+      headers: {
+        cookie: `${SESSION_COOKIE}=${await adminCookie()}`,
+        "content-type": "multipart/form-data; boundary=----valeboundary",
+        "content-length": String(26 * 1024 * 1024),
+      },
+      body: "small-lie",
+    }), env);
+    assert.equal(res.status, 413);
+    assert.equal(calls, 0, "rejected before any upstream dial");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("public gate: 10 tunnel-token attempts then 429", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  const attempt = () => worker.fetch(req("POST", "/api/install/tunnel-token", {
+    body: { key: "nope" }, ip: "10.99.99.99",
+  }), env);
+  for (let i = 0; i < 10; i++) {
+    assert.equal((await attempt()).status, 403, `attempt ${i + 1} passes the gate`);
+  }
+  assert.equal((await attempt()).status, 429, "11th attempt within the minute is rate-limited");
+});
+
 test("tunnel-token: valid key returns the CF token once, then feeds register via grant", async () => {
   __clearCaches();
   const env = makeEnv([]);
