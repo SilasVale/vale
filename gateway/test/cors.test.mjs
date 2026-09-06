@@ -255,3 +255,29 @@ test("/mcp plugin: disallowed origin gets no ACAO (default-closed)", async () =>
   assert.equal(res.status, 401);
   assert.equal(res.headers.get("Access-Control-Allow-Origin"), null);
 });
+
+// ── http.ts response/body helpers (round-428: zero direct pins — every
+// plugin builds on these, so their shape is foundation) ──
+
+test("jsonOk: 200 + JSON content type; extraHeaders merge", async () => {
+  const res = jsonOk({ ok: true }, { "X-Test": "1" });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type"), /application\/json/);
+  assert.equal(res.headers.get("X-Test"), "1");
+  assert.deepEqual(await res.json(), { ok: true });
+});
+
+test("jsonError: status + {type:error,{type,message}} envelope", async () => {
+  const res = jsonError(403, "nope", "authentication_error");
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { type: "error", error: { type: "authentication_error", message: "nope" } });
+});
+
+test("readJson: valid parses, empty/invalid degrade to {}", async () => {
+  const good = new Request("https://x/", { method: "POST", body: JSON.stringify({ a: 1 }) });
+  assert.deepEqual(await readJson(good), { a: 1 });
+  const empty = new Request("https://x/", { method: "POST" });
+  assert.deepEqual(await readJson(empty), {});
+  const bad = new Request("https://x/", { method: "POST", body: "{oops" });
+  assert.deepEqual(await readJson(bad), {});
+});
