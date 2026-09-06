@@ -1,7 +1,7 @@
 //! Path resolution — ONE source of truth for where Vale lives on Windows.
 //!
 //! C1 (2026-08-28): `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}` (written by
-//! vale setup (retired: NSIS/setup.ps1)) is authoritative. Resolution order:
+//! `vale setup`; retired predecessors: NSIS/setup.ps1) is authoritative. Resolution order:
 //!   1. registry InstallDir (Windows, when readable)
 //!   2. the running exe's directory (self-contained installs, dev builds,
 //!      and non-Windows) — the historic behavior
@@ -66,8 +66,8 @@ pub fn exe_dir() -> PathBuf {
 }
 
 /// The install dir — registry first, then the exe dir. No legacy directory
-/// probing: a fresh install always writes the registry (written by vale setup
-/// (retired: NSIS/setup.ps1)/vale.js), and self-contained/dev installs are
+/// probing: a fresh install always writes the registry (via `vale setup`;
+/// retired predecessors NSIS/setup.ps1), and self-contained/dev installs are
 /// exe-relative. The exe dir is the ONLY fallback so there is exactly one
 /// resolution path.
 ///
@@ -193,5 +193,58 @@ mod harden_tests {
             0o600
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn harden_file_on_missing_path_errors() {
+        let missing =
+            std::env::temp_dir().join(format!("vale-harden-missing-{}", std::process::id()));
+        let _ = std::fs::remove_file(&missing);
+        assert!(harden_file(&missing).is_err());
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    //! round-380: the registry-first resolution chain (the single source of
+    //! truth for install/data/sessions dirs) had zero tests. The public
+    //! fns are OnceLock-cached (boot-invariant — untestable repeatedly),
+    //! so these pin the private compute_* fns + the structural contracts.
+    //! On machines without a Vale install (all CI runners, this box) the
+    //! registry reads None and every dir falls back to the exe dir.
+    use super::*;
+
+    #[test]
+    fn exe_dir_is_non_empty() {
+        assert!(!exe_dir().as_os_str().is_empty());
+    }
+
+    #[test]
+    fn install_falls_back_to_exe_dir_without_registry() {
+        if registry_value("InstallDir").is_some() {
+            return; // a real install: registry wins by design, nothing to pin
+        }
+        assert_eq!(compute_install_dir(), exe_dir());
+    }
+
+    #[test]
+    fn data_dir_defaults_to_install_dir_without_registry() {
+        if registry_value("DataDir").is_some() {
+            return;
+        }
+        assert_eq!(compute_data_dir(), compute_install_dir());
+    }
+
+    #[test]
+    fn sessions_dir_nests_under_data_dir() {
+        assert_eq!(sessions_dir(), data_dir().join("sessions"));
+    }
+
+    #[test]
+    fn node_path_is_none_without_registry() {
+        if registry_value("NodePath").is_some() {
+            return;
+        }
+        assert_eq!(node_path(), None);
     }
 }
