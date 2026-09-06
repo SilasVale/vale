@@ -1732,6 +1732,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ZERO pins. Added 1 in translate-vision.test.mjs (shared env proves no
   failure caching). Suite 531->532; gates clean; snapshot updated;
   pushed.
+  ROUND-490 (2026-09-06): choice audit — the lone-web_search auto-choice
+  arm had ZERO pins (explicit choice was covered). Added 1 in
+  gateway.test.mjs. Suite 532->533; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
