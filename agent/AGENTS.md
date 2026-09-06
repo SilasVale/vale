@@ -1454,6 +1454,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   create required-fields + memory_save, export lines + copy toast,
   backend-error surface. Panel 155->162 (29->30 files); rebuilt,
   panel.js identical; pushed.
+  ROUND-431 (2026-09-06): panel EmbeddedBrowserPane audit — the real-
+  browser controller had ZERO tests. Added 7 (mocked valeEmbedded):
+  init state + bounds report, nav-event sync, https-default submit +
+  scheme reject, back/fwd wiring, crash banner + recover, zoom factor,
+  bridgeless placeholder. Panel 162->169 (30->31 files); rebuilt,
+  panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
