@@ -147,3 +147,158 @@ pub fn load_or_create(path: &Path, log: &dyn Fn(&str)) -> anyhow::Result<(Config
     }
     Ok((config, token))
 }
+
+#[cfg(test)]
+mod bootstrap_tests {
+    //! round-374: the boot path (create/quarantine/token-recovery) carries
+    //! six incident fixes (rounds 57/104/119/121/138/140) and had ZERO
+    //! tests — every claim below is one of those fixes, pinned.
+    use super::*;
+
+    const TOK_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const TOK_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const SEC: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const NOOP: &dyn Fn(&str) = &|_| {};
+
+    fn dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("vale-boot-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn valid_yaml(token: Option<&str>) -> String {
+        let mut cfg = Config::default();
+        cfg.server.device_token = token.map(|t| t.to_string());
+        serde_yaml::to_string(&cfg).unwrap()
+    }
+
+    fn is_hex64(s: &str) -> bool {
+        s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+    }
+
+    #[test]
+    fn missing_file_creates_default_and_mints_token_once() {
+        let d = dir("missing");
+        let path = d.join("config.yaml");
+        let (cfg, token) = load_or_create(&path, NOOP).unwrap();
+        let t = token.expect("first boot must mint a token");
+        assert!(is_hex64(&t));
+        assert!(path.exists());
+        // Second boot: the minted token persisted — no rotation.
+        let (cfg2, token2) = load_or_create(&path, NOOP).unwrap();
+        assert_eq!(token2, None);
+        assert_eq!(cfg2.server.device_token, cfg.server.device_token);
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn valid_config_with_token_is_untouched() {
+        let d = dir("valid");
+        let path = d.join("config.yaml");
+        std::fs::write(&path, valid_yaml(Some(TOK_A))).unwrap();
+        let (cfg, token) = load_or_create(&path, NOOP).unwrap();
+        assert_eq!(token, None);
+        assert_eq!(cfg.server.device_token.as_deref(), Some(TOK_A));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn missing_token_is_generated_and_persisted() {
+        // round-104: the fresh secret/token must hit the disk NOW, not just
+        // memory — otherwise the next boot rotates again.
+        let d = dir("notoken");
+        let path = d.join("config.yaml");
+        std::fs::write(&path, valid_yaml(None)).unwrap();
+        let (cfg, token) = load_or_create(&path, NOOP).unwrap();
+        let t = token.expect("missing token must be minted");
+        assert!(is_hex64(&t));
+        let disk = Config::load(&path).unwrap();
+        assert_eq!(disk.server.device_token, cfg.server.device_token);
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn corrupt_file_quarantines_and_recovers_token_by_line() {
+        // round-57/119: quarantine as .yaml.bad; recover the token by
+        // direct line extraction (the SAME parser just failed on it).
+        let d = dir("corrupt");
+        let path = d.join("config.yaml");
+        std::fs::write(&path, format!("{{{{{{ not yaml\ndevice_token: {TOK_A}\n")).unwrap();
+        let (cfg, token) = load_or_create(&path, NOOP).unwrap();
+        assert_eq!(token, None, "recovered token is already in place");
+        assert_eq!(cfg.server.device_token.as_deref(), Some(TOK_A));
+        assert!(d.join("config.yaml.bad").exists(), "bad file must be kept");
+        // The rewritten file loads cleanly on the next boot.
+        let (cfg2, _) = load_or_create(&path, NOOP).unwrap();
+        assert_eq!(cfg2.server.device_token.as_deref(), Some(TOK_A));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn recovery_prefers_device_token_space_colon_last_and_strips_comments() {
+        // round-121 (device_token > auth_token, strip # comments) +
+        // round-138 (space before colon legal; LAST occurrence wins).
+        let d = dir("recover");
+        let path = d.join("config.yaml");
+        let bad = format!(
+            "{{{{{{ broken\nauth_token: {TOK_B}\ndevice_token : {TOK_A} # stale inline\ndevice_token: {SEC}\n"
+        );
+        std::fs::write(&path, bad).unwrap();
+        let (cfg, _) = load_or_create(&path, NOOP).unwrap();
+        assert_eq!(
+            cfg.server.device_token.as_deref(),
+            Some(SEC),
+            "last device_token line wins over auth_token and the older line"
+        );
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn recovery_carries_proxy_secret() {
+        // round-138: the secret must survive the recovery boot or gateway
+        // /panel/ injection dies (round-104 class).
+        let d = dir("secret");
+        let path = d.join("config.yaml");
+        let bad = format!("{{{{{{ broken\ndevice_token: {TOK_A}\nproxy_secret: {SEC}\n");
+        std::fs::write(&path, bad).unwrap();
+        let (cfg, _) = load_or_create(&path, NOOP).unwrap();
+        assert_eq!(cfg.server.device_token.as_deref(), Some(TOK_A));
+        assert_eq!(cfg.server.proxy_secret.as_deref(), Some(SEC));
+        let disk = Config::load(&path).unwrap();
+        assert_eq!(disk.server.proxy_secret.as_deref(), Some(SEC));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn recovery_without_secret_mints_and_persists_one() {
+        // round-140: token recovered but the secret line lost → mint NOW
+        // and persist (not a silent future rotation).
+        let d = dir("nosecret");
+        let path = d.join("config.yaml");
+        std::fs::write(&path, format!("{{{{{{ broken\ndevice_token: {TOK_A}\n")).unwrap();
+        let (cfg, _) = load_or_create(&path, NOOP).unwrap();
+        let sec = cfg
+            .server
+            .proxy_secret
+            .clone()
+            .expect("secret must be minted");
+        assert!(is_hex64(&sec));
+        let disk = Config::load(&path).unwrap();
+        assert_eq!(disk.server.proxy_secret.as_deref(), Some(sec.as_str()));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn atomic_write_roundtrips() {
+        let d = dir("atomic");
+        let path = d.join("config.yaml");
+        atomic_write(&path, b"hello").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello");
+        assert!(
+            !d.join(".config.yaml.tmp").exists(),
+            "temp must be renamed away"
+        );
+        std::fs::remove_dir_all(&d).ok();
+    }
+}
