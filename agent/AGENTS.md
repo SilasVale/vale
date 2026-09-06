@@ -1509,6 +1509,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   budget checked (16 < 30/min shared IP bucket). Suite 447->449
   (counting model from 437 holds exactly); gates clean; snapshot
   updated; pushed.
+  ROUND-439 (2026-09-06): settings write-path audit — setGlobalSetting
+  had ZERO pins. REAL FIND while pinning: boolean true persisted as "0"
+  (String(true)="true" ≠ "1") — a silent toggle inversion for any
+  boolean caller. Fixed truthfully (no live bytes change: sole caller
+  passes "1"/"0"). Added 2 in store.cache.test.mjs: 1/0/null/""/delete
+  canonical chain + write-through read + env-var fallback. Suite
+  449->451; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
