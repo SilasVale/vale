@@ -1133,6 +1133,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   4 live files stay byte-identical, empty-dir noop, manifest URL shape.
   Matrix: lib 270 (+3), feat-gated 276, clippy x2 + fmt + xwin clean;
   snapshot 304->307.
+  ROUND-382 (2026-09-06): playwright supervisor audit — manager + bundle
+  discovery had ZERO tests (spawning untestable in CI, but the no-spawn
+  paths weren't pinned either). Added 8: one sequential status test
+  (fresh→stopped→external-running→released, round-132 branch),
+  stop-noop, bundle/node resolution errors, now_ms, pw_version shapes,
+  node path join, 2-tool build. Caught my own 9229 parallel flake
+  pre-commit (merged + documented). Stable 9/9 x5. Matrix: lib 278
+  (+8), feat-gated 284, clippy x2 + fmt + xwin clean; snapshot 307->315.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
