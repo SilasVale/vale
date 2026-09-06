@@ -235,6 +235,52 @@ test("getUserRoute / setUserRoute: isolated per user", async () => {
   assert.equal(await store.getUserRoute(env, "bob"), "qw/qwen3.8-max-preview");
 });
 
+// ── RouteDO outage fallback (DO 401 plain text when DO_AUTH unset) ──
+// RouteDO answers 401 "unauthorized" (plain text, not JSON) without DO_AUTH,
+// so a bare res.json() threw SyntaxError at resolveAutoModel (which only
+// handles null). Both functions now fall back to the legacy KV route:<id>.
+
+function make401RouteDO() {
+  return {
+    idFromName: () => ({}),
+    get: () => ({ fetch: async () => new Response("unauthorized", { status: 401 }) }),
+  };
+}
+
+test("getUserRoute: DO 401 → legacy KV fallback, KV copy kept while DO down", async () => {
+  const env = { ...makeKV({ "route:u1": "qw/qwen3.8-max-preview" }), ROUTE: make401RouteDO() };
+  assert.equal(await store.getUserRoute(env, "u1"), "qw/qwen3.8-max-preview");
+  // DO unreachable → no migrate-and-delete; the KV copy must survive so the
+  // NEXT read still finds it (a delete here would drop the only copy).
+  assert.equal(env._kv.get("route:u1"), "qw/qwen3.8-max-preview");
+  assert.equal(await store.getUserRoute(env, "u1"), "qw/qwen3.8-max-preview");
+});
+
+test("getUserRoute: DO 401 + no legacy key → null (no throw)", async () => {
+  const env = { ...makeKV({}), ROUTE: make401RouteDO() };
+  assert.equal(await store.getUserRoute(env, "nobody"), null);
+});
+
+test("getUserRoute: missing ROUTE binding → legacy KV fallback (no throw)", async () => {
+  const env = { ...makeKV({ "route:u2": "ds/deepseek-v4-flash" }) };
+  assert.equal(await store.getUserRoute(env, "u2"), "ds/deepseek-v4-flash");
+});
+
+test("setUserRoute: DO 401 → persists to legacy KV (no bare throw)", async () => {
+  const env = { ...makeKV({}), ROUTE: make401RouteDO() };
+  await store.setUserRoute(env, "u3", "og/deepseek-v4-flash");
+  assert.equal(env._kv.get("route:u3"), "og/deepseek-v4-flash");
+  assert.equal(await store.getUserRoute(env, "u3"), "og/deepseek-v4-flash");
+  await store.setUserRoute(env, "u3", null);
+  assert.equal(env._kv.has("route:u3"), false);
+  assert.equal(await store.getUserRoute(env, "u3"), null);
+});
+
+test("setUserRoute: DO down + no KV → identifiable config_error (not a bare TypeError)", async () => {
+  const env = { ROUTE: make401RouteDO() };
+  await assert.rejects(() => store.setUserRoute(env, "u4", "ds/deepseek-v4-flash"), /config_error/);
+});
+
 test("getGlobalSetting: auth keys expire after 60s (not 24h)", async () => {
   const kv = makeKV({ "settings:US_PROXY": "1" });
   const realNow = Date.now;

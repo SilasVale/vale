@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
-import { getPluginByToken, removePluginLink, __clearCaches, setAdminPassword } from "../src/store.ts";
+import { getPluginByToken, removePluginLink, __clearCaches, setAdminPassword, maskKey } from "../src/store.ts";
 import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 // Full worker fetch: pair/claim + ws-ticket are public (no admin session) —
@@ -64,7 +64,7 @@ test("plugin link: expires after 30 days, getPluginByToken drops it", async () =
 // round-88: /api/plugins/status is admin-session-gated — no cookie → 401,
 // a copied pre-logout cookie (sess-revoked blacklist) → 401, a valid admin
 // session → 200. The R83 hand-rolled gate must match requireSession.
-import { issueSessionToken } from "../src/auth.ts";
+import { issueSessionToken, SESSION_COOKIE } from "../src/auth.ts";
 
 test("plugins/status: no cookie → 401 (R83 gate)", async () => {
   const env = makeEnv();
@@ -296,4 +296,37 @@ test("keys reveal: session-gated, name-validated, full value only when configure
   const ok = await worker.fetch(req("DEEPSEEK_API_KEY"), env);
   assert.equal(ok.status, 200);
   assert.deepEqual(await ok.json(), { ok: true, name: "DEEPSEEK_API_KEY", value: "sk-full-secret-abcdef123456" });
+});
+
+// ── GET /api/admin/users: gateway tokens masked, never raw ──
+// Same rule as the devices list (maskKey on device tokens): a console
+// session holder must not harvest every user's credential. No reveal
+// endpoint by design — rotation lives in /api/me.
+test("admin/users: user tokens are masked, raw values never leave the server", async () => {
+  __clearCaches();
+  const env = makeBaseEnv({
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "ADMIN_RAW_TOKEN_1234567890" },
+      bob: { id: "bob", username: "bob", role: "user", enabled: true, token: "BOB_RAW_TOKEN_1234567890" },
+    },
+    kv: {
+      _admin_seeded: "1",
+      "auth:admin_password": "pw",
+      "token:ADMIN_RAW_TOKEN_1234567890": "admin",
+      "token:BOB_RAW_TOKEN_1234567890": "bob",
+    },
+  });
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  const res = await worker.fetch(
+    new Request("https://x/api/admin/users", { headers: { cookie: `${SESSION_COOKIE}=${cookie}` } }),
+    env,
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const raw = JSON.stringify(body);
+  assert.ok(!raw.includes("ADMIN_RAW_TOKEN_1234567890"), "admin raw token must not leak");
+  assert.ok(!raw.includes("BOB_RAW_TOKEN_1234567890"), "user raw token must not leak");
+  const byId = Object.fromEntries(body.users.map((u) => [u.id, u]));
+  assert.equal(byId.admin.token, maskKey("ADMIN_RAW_TOKEN_1234567890"));
+  assert.equal(byId.bob.token, maskKey("BOB_RAW_TOKEN_1234567890"));
 });

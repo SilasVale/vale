@@ -18,7 +18,7 @@
 import { handleMcp } from "../mcp.ts";
 import { listDevices, touchDeviceSeen, type Device } from "../store.ts";
 import { deviceFetch } from "../device-fetch.ts";
-import { jsonOk, jsonError } from "../http.ts";
+import { jsonOk, jsonError, withCors } from "../http.ts";
 import { requireSession } from "../session.ts";
 import type { Plugin, PluginContext } from "./registry.ts";
 
@@ -125,7 +125,11 @@ export default {
     // index.js had no method filter here (GET = SSE stream, POST = JSON-RPC).
     ctx.routes.push({
       match: (_m, p) => p === "/mcp",
-      handler: (request, env) => handleMcp(request, env),
+      // withCors at the plugin exit: handleMcp's own 401/405/parse-error
+      // responses are built bare (no CORS stamp); the front-door dispatch
+      // re-stamps idempotently, but direct plugin consumers get CORS here.
+      handler: async (request: Request, env: any) =>
+        withCors(request, await handleMcp(request, env)),
     });
     // ---- GET /api/plugins/status (was inside handleConsole, admin-gated) ----
     // round-83: the migration dropped the admin gate — the plugin route runs

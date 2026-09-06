@@ -53,6 +53,24 @@ test("mcp: valid token but non-admin role → 401", async () => {
   assert.equal(res.status, 401);
 });
 
+test("mcp: disabled admin token → 401 (enabled check, cf. translate/session gates)", async () => {
+  const env = makeBaseEnv({
+    devices: [DEVICE],
+    users: {
+      // Distinct id/token: store.ts caches token→user module-wide.
+      dadmin: { id: "dadmin", username: "dadmin", role: "admin", enabled: false, token: "disablet-admin-tok" },
+    },
+    kv: { "token:disablet-admin-tok": "dadmin" },
+  });
+  const res = await handleMcp(
+    post({ jsonrpc: "2.0", method: "ping", id: 1 }, "Bearer disablet-admin-tok"),
+    env,
+  );
+  assert.equal(res.status, 401);
+  const data = await res.json();
+  assert.equal(data.error.code, -32001);
+});
+
 // ── initialize ─────────────────────────────────────────────────
 
 test("mcp: initialize echoes protocolVersion + vale-gate serverInfo", async () => {

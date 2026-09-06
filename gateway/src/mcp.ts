@@ -33,7 +33,7 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
   const auth = String(request.headers.get("authorization") || "");
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const user = token ? await findUserByToken(env, token) : null;
-  if (!user || user.role !== "admin") {
+  if (!user || !user.enabled || user.role !== "admin") {
     return new Response(
       JSON.stringify({
         jsonrpc: "2.0",

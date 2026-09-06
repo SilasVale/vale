@@ -15,11 +15,16 @@ import {
   corsHeadersFor,
   isAllowedOrigin,
   isLoopbackOrigin,
+  jsonError,
+  jsonOk,
+  readJson,
   stampCors,
   withCors,
 } from "../src/http.ts";
 import { issueSessionToken, SESSION_COOKIE } from "../src/auth.ts";
 import { makeEnv as makeBaseEnv } from "./helpers.mjs";
+import { createPluginContext, registerPlugins, dispatch } from "../src/plugins/registry.ts";
+import mcpPlugin from "../src/plugins/mcp.ts";
 
 const ADMIN_PW = "test-admin-password";
 const AI = "https://ai.saisi.online";
@@ -210,4 +215,43 @@ test("device proxy: ACAO reflected for console origin, absent for disallowed", a
     assert.equal(denied.status, 200);
     assert.equal(denied.headers.get("Access-Control-Allow-Origin"), null);
   });
+});
+
+/* ---- /mcp plugin exit: internal 401 carries CORS without the front door ---- */
+// handleMcp builds its 401/405/parse-error responses bare; the plugin exit
+// wraps them with withCors (the front-door re-stamp is idempotent). Drive
+// the plugin dispatch directly — no outer withCors — so the stamp here is
+// what the test pins.
+
+function mcpPluginCtx() {
+  const ctx = createPluginContext(null, { jsonOk, jsonError, readJson, CORS_HEADERS });
+  registerPlugins(ctx, [mcpPlugin]);
+  return ctx;
+}
+
+test("/mcp plugin: bare 401 (bad token) is stamped with CORS for console origin", async () => {
+  const ctx = mcpPluginCtx();
+  const env = corsEnv();
+  const req = new Request("https://ai.saisi.online/mcp", {
+    method: "POST",
+    headers: { origin: AI, authorization: "Bearer bad", "content-type": "application/json" },
+    body: "{}",
+  });
+  const res = await dispatch(ctx, "POST", "/mcp", req, env, new URL(req.url));
+  assert.equal(res.status, 401);
+  assert.equal(res.headers.get("Access-Control-Allow-Origin"), AI);
+  assert.equal(res.headers.get("Vary"), "Origin");
+});
+
+test("/mcp plugin: disallowed origin gets no ACAO (default-closed)", async () => {
+  const ctx = mcpPluginCtx();
+  const env = corsEnv();
+  const req = new Request("https://ai.saisi.online/mcp", {
+    method: "POST",
+    headers: { origin: EVIL, authorization: "Bearer bad", "content-type": "application/json" },
+    body: "{}",
+  });
+  const res = await dispatch(ctx, "POST", "/mcp", req, env, new URL(req.url));
+  assert.equal(res.status, 401);
+  assert.equal(res.headers.get("Access-Control-Allow-Origin"), null);
 });

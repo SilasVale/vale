@@ -267,16 +267,32 @@ function routeHeaders(env: any, extra: Record<string, string> = {}): Record<stri
 }
 
 export async function getUserRoute(env: Env, id: string): Promise<string | null> {
-  const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
-    headers: routeHeaders(env),
-  });
-  const data: any = await res.json();
-  if (data.model != null) return data.model;
+  // RouteDO answers 401 PLAIN TEXT when DO_AUTH is unset/mismatched (so a
+  // bare res.json() throws SyntaxError), and the stub throws outright when
+  // the ROUTE binding is missing — either way fall back to the legacy KV key
+  // instead of throwing at callers that only handle null (resolveAutoModel).
+  let doReachable = false;
+  try {
+    const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
+      headers: routeHeaders(env),
+    });
+    if (res.ok) {
+      doReachable = true;
+      const data: any = await res.json().catch(() => null);
+      if (data && data.model != null) return data.model;
+    }
+  } catch {
+    /* DO unavailable — legacy KV fallback below */
+  }
   // Legacy KV fallback (one-time migration).
   const legacy = env.KEYS ? await env.KEYS.get(`route:${id}`) : null;
   if (legacy) {
-    await setUserRoute(env, id, legacy);
-    await env.KEYS.delete(`route:${id}`).catch(() => {});
+    // Migrate into the DO only while it is reachable — otherwise the
+    // copy-back + KV delete below would drop the only surviving copy.
+    if (doReachable) {
+      await setUserRoute(env, id, legacy).catch(() => {});
+      await env.KEYS.delete(`route:${id}`).catch(() => {});
+    }
     return legacy;
   }
   return null;
@@ -287,18 +303,34 @@ export async function setUserRoute(
   id: string,
   model: string | null | undefined,
 ): Promise<void> {
-  if (model === null || model === undefined || model === "") {
-    await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      headers: routeHeaders(env),
-    });
-    return;
+  // Same DO-unavailable cases as getUserRoute: never throw a bare fetch /
+  // SyntaxError at console callers — persist to the legacy KV key so the
+  // choice survives and migrates into the DO on the next reachable read.
+  try {
+    if (model === null || model === undefined || model === "") {
+      const res = await routeStub(env).fetch(`https://route/route?uid=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: routeHeaders(env),
+      });
+      if (res.ok) return;
+    } else {
+      const res = await routeStub(env).fetch("https://route/route", {
+        method: "PUT",
+        headers: routeHeaders(env, { "content-type": "application/json" }),
+        body: JSON.stringify({ uid: id, model: String(model) }),
+      });
+      if (res.ok) return;
+    }
+  } catch {
+    /* DO unavailable — legacy KV fallback below */
   }
-  await routeStub(env).fetch("https://route/route", {
-    method: "PUT",
-    headers: routeHeaders(env, { "content-type": "application/json" }),
-    body: JSON.stringify({ uid: id, model: String(model) }),
-  });
+  if (!env.KEYS)
+    throw new Error("config_error: route store unavailable (RouteDO unreachable, no KV)");
+  if (model === null || model === undefined || model === "") {
+    await env.KEYS.delete(`route:${id}`);
+  } else {
+    await env.KEYS.put(`route:${id}`, String(model));
+  }
 }
 
 /* ---- Invites ---- */

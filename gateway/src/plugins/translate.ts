@@ -731,6 +731,7 @@ async function handleGatewayImpl(
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     // Direct passthrough — upstream returns OpenAI format, return it as-is.
+    // NOTE: a 200 with an in-band {"error":...} SSE frame is forwarded verbatim — no gateway-side guard (sse-guard.ts removed: peekSseOutcome had zero call sites; do not re-add without wiring every passthrough branch).
     const headers = new Headers(upstream.headers);
     stampCors(request, headers);
     // OpenRouter's per-generation id — the correlation key for the upstream
@@ -949,7 +950,7 @@ async function handleGatewayImpl(
       return jsonError(
         upStatus,
         message,
-        upStatus === 429 ? "rate_limit_error" : upStatus >= 500 ? "upstream_error" : "api_error",
+        upStatus === 429 ? "rate_limit_error" : "api_error",
         extra,
       );
     }
@@ -1208,7 +1209,7 @@ async function handleGatewayImpl(
     return jsonError(
       upStatus,
       `${translateLabel}: ${detail || `upstream ${upStatus}`}`,
-      upStatus === 429 ? "rate_limit_error" : upStatus >= 500 ? "upstream_error" : "api_error",
+      upStatus === 429 ? "rate_limit_error" : "api_error",
     );
   }
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure
