@@ -503,3 +503,66 @@ test("me/keys PUT: saves trimmed, echoes masked, reveal reads back full", async 
   const reveal = await authed("/api/me/keys/reveal", "POST", { name: "OPENROUTER_API_KEY" });
   assert.equal((await reveal.json()).value, "or-secret-value");
 });
+
+// round-438 (coverage-driven): POST /api/auth/register had ZERO route
+// pins — the invite-gated account creation front door.
+function regEnv() {
+  return makeBaseEnv({
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" },
+    },
+    kv: { _admin_seeded: "1", "auth:admin_password": "pw" },
+    extra: { SESSION_SECRET: "test-session-secret-0123456789abcdef" },
+  });
+}
+
+async function mintInvite(env, adminH) {
+  const r = await worker.fetch(new Request("https://x/api/admin/invite", {
+    method: "POST", headers: adminH,
+  }), env);
+  assert.equal(r.status, 200);
+  return (await r.json()).code;
+}
+
+test("register: invite → 200 with session cookie; new creds log in", async () => {
+  __clearCaches();
+  const env = regEnv();
+  const adminH = { cookie: `ag_session=${await issueSessionToken("pw", "admin", "admin")}`, "content-type": "application/json" };
+  const code = await mintInvite(env, adminH);
+  const res = await worker.fetch(new Request("https://x/api/auth/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "cara", password: "s3cret-long", inviteCode: code }),
+  }), env);
+  assert.equal(res.status, 200);
+  const j = await res.json();
+  assert.equal(j.username, "cara");
+  assert.equal(j.role, "user");
+  assert.ok(j.token, "new user gets a device token");
+  assert.ok(String(res.headers.get("set-cookie") || "").includes("ag_session="));
+  const login = await worker.fetch(new Request("https://x/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "cara", password: "s3cret-long" }),
+  }), env);
+  assert.equal(login.status, 200);
+});
+
+test("register: bad invite / short password / duplicate name → 400; no secret → 500", async () => {
+  __clearCaches();
+  const env = regEnv();
+  const reg = (body) => worker.fetch(new Request("https://x/api/auth/register", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }), env);
+  assert.equal((await reg({ username: "dave", password: "s3cret-long", inviteCode: "WRONG" })).status, 400);
+  const adminH = { cookie: `ag_session=${await issueSessionToken("pw", "admin", "admin")}`, "content-type": "application/json" };
+  const code = await mintInvite(env, adminH);
+  assert.equal((await reg({ username: "erin", password: "short", inviteCode: code })).status, 400);
+  assert.equal((await reg({ username: "frank", password: "s3cret-long", inviteCode: code })).status, 200);
+  assert.equal((await reg({ username: "frank", password: "s3cret-long", inviteCode: code })).status, 400);
+  delete env.SESSION_SECRET;
+  const code2 = await mintInvite(env, adminH);
+  assert.equal((await reg({ username: "gail", password: "s3cret-long", inviteCode: code2 })).status, 500);
+});
