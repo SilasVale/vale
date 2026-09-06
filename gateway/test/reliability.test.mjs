@@ -454,6 +454,26 @@ test("stream encoder: PARALLEL tool calls each get their own block, args not con
 
 // ── streamOgToAnthropic: upstream dies mid-stream → graceful close ──
 
+// round-486 (coverage-driven): the empty/non-SSE-stream error arm had ZERO
+// pins (only the mid-stream-death arm was covered).
+test("stream: empty upstream → explicit empty-stream error event, no fabricated message", async () => {
+  const { streamOgToAnthropic } = await import("../src/anthropic-translate.ts");
+  const empty = new ReadableStream({
+    start(controller) { controller.close(); },
+  });
+  const out = streamOgToAnthropic(empty, "auto", "deepseek-v4-flash");
+  const reader = out.getReader();
+  const chunks = [];
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(new TextDecoder().decode(value));
+  }
+  const text = chunks.join("");
+  assert.match(text, /upstream returned an empty\/non-SSE stream/);
+  assert.ok(!text.includes("message_start"), "no message_start for zero upstream bytes");
+});
+
 test("stream: upstream throw closes the stream gracefully (no hang)", async () => {
   const { streamOgToAnthropic } = await import("../src/anthropic-translate.ts");
   // A body whose reader.read() throws once.
