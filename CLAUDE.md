@@ -62,7 +62,8 @@ running every downstream test gate.
 - gateway: `http.ts` (jsonOk/jsonError/CORS), `auth.ts` (safeEq/randomHex/HMAC
   sessions/CSRF), `session.ts` (requireSession), `reliability.ts`
   (fetchWithTimeout/Retry/BreakerDO), `upstream.ts` (route table), `channels.ts`
-  (channel registry), `body-scan.ts`, `store/` (cache.ts is the single
+  (channel registry), `body-scan.ts`, `device-fetch.ts` (device dialing + SSRF
+  guard stack), `store/` (cache.ts is the single
   process-global KV cache), `lib/ratelimit.ts` (per-IP limiter factory),
   `mcp-errors.ts` (tool-failure code family)
 - agent: `vale-command-core` (Plugin/ToolDef/Config/EventBus contract — import
