@@ -200,3 +200,86 @@ function makeEnv() {
     kv: { "token:admintoken": "admin" },
   });
 }
+
+// ── Bridge guardrails (round-369: semaphore, timeout clamp, unknown-tool
+// passthrough, hostname gate — all had zero pins) ──
+
+test("timeout_secs clamps to 1..300 before reaching the device (M2 audit)", async () => {
+  const { calls, impl } = makeFetch(() => okJson({}));
+  const bodies = [];
+  const saving = async (url, init) => {
+    bodies.push(JSON.parse(init.body).arguments);
+    return impl(url, init);
+  };
+  await withFetch(saving, () =>
+    callTool({ name: "browser_snapshot" }, {}, DEVICE, { timeout_secs: 99999 }),
+  );
+  await withFetch(saving, () =>
+    callTool({ name: "browser_snapshot" }, {}, DEVICE, { timeout_secs: 0 }),
+  );
+  await withFetch(saving, () =>
+    callTool({ name: "browser_snapshot" }, {}, DEVICE, { timeout_secs: 12.9 }),
+  );
+  assert.equal(bodies[0].timeout_secs, 300, "huge timeout clamps to the 300s ceiling");
+  assert.equal(bodies[1].timeout_secs, 1, "zero timeout floors to 1s");
+  assert.equal(bodies[2].timeout_secs, 12, "fractional timeout truncates");
+});
+
+test("unknown browser tool name passes through verbatim (toolMap fallback)", async () => {
+  const { calls, impl } = makeFetch(() => okJson({}));
+  await withFetch(impl, () =>
+    callTool({ name: "browser_future_tool" }, {}, DEVICE, { foo: 1 }),
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(JSON.parse(calls[0].init.body).tool, "browser_future_tool");
+});
+
+test("private device hostname → DEVICE_UNREACHABLE before any fetch", async () => {
+  const evil = { name: "evil", hostname: "169.254.169.254", token: "tok" };
+  let fetched = false;
+  await withFetch(
+    async () => {
+      fetched = true;
+      throw new Error("must not be called");
+    },
+    async () => {
+      const err = await callTool({ name: "browser_snapshot" }, {}, evil, {}).catch((e) => e);
+      assert.equal(err?.code, "DEVICE_UNREACHABLE");
+    },
+  );
+  assert.equal(fetched, false, "SSRF guard must fire before the first fetch");
+});
+
+test("5th concurrent browser call on one device → SESSION_BUSY (semaphore of 4)", async () => {
+  // Gate stub: hold all 4 slots until released — no timers, fully
+  // deterministic (each call parks on the pending fetch synchronously
+  // until the 5th is rejected).
+  let release;
+  const gate = new Promise((res) => {
+    release = res;
+  });
+  const failJson = () =>
+    new Response(JSON.stringify({ ok: false, error: "boom" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  const impl = () => gate.then(() => failJson());
+  const run = () =>
+    callTool({ name: "browser_snapshot" }, {}, DEVICE, {}).catch((e) => e);
+  await withFetch(impl, async () => {
+    const flying = [run(), run(), run(), run()];
+    // Let the four calls park inside their slots (microtask drain, no sleep).
+    await Promise.resolve();
+    await Promise.resolve();
+    const fifth = await run();
+    assert.equal(fifth?.code, "SESSION_BUSY", "5th concurrent call must back off");
+    assert.match(String(fifth?.message || fifth), /too many concurrent/);
+    release();
+    const settled = await Promise.all(flying);
+    assert.equal(settled.length, 4);
+    assert(
+      settled.every((e) => String(e?.message || e).includes("boom")),
+      "the parked four fail with the device error once released",
+    );
+  });
+});
