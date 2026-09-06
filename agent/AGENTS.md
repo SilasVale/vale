@@ -985,7 +985,8 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   no-session → 401, non-admin → 403, plus a no-mutation assertion on the
   shared env. Fixed my own undici GET-with-body slip before committing.
   Suite 306->307; snapshot count updated.
-  ROUND-365 (2026-09-06): mcp_client framing audit — every MCP call flows  through parse_envelope/check_envelope/is_session_gone/truncate, all four
+  ROUND-365 (2026-09-06): mcp_client framing audit — every MCP call flows
+  through parse_envelope/check_envelope/is_session_gone/truncate, all four
   had ZERO tests. Added 7 (direct result, SSE id-match + stale-only miss,
   error/garbage/notification, check arms, session-gone signals,
   char-boundary truncate). REAL FIND: the direct arm never checked the
@@ -993,6 +994,17 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   accepted. Fixed with the same id discipline both arms + regression
   test. Matrix: lib 211 (+7), feat-gated 217, clippy x2 + fmt + xwin
   clean; snapshot 240->247.
+  ROUND-366 (2026-09-06): panel-auth TokenGate review — found a latent
+  split: TokenGate held a BOOT-time token clone while /api/* reads the
+  live snapshot (audit A4), so a runtime rotation would stale-accept the
+  old token on /mcp and reject the new one. Verified no production path
+  rotates the token today (PUT/gateway-connect preserve by construction),
+  then removed the hazard anyway: TokenGate now holds Arc<AppState> and
+  reads config_snapshot() per request. Proof: new
+  mcp_gate_follows_runtime_token_rotation integration test (ephemeral
+  bind, old works → update_config rotate → old 401s + new works; fails
+  on the old code by construction). Matrix: integration 6->7, clippy x2
+  + fmt + xwin clean; snapshot 247->248.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
