@@ -1349,6 +1349,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   persist+body+event+unsub, toggle both ways, storage-throw fail-safe.
   Self-caught: vitest toEqual takes no message arg (tsc gate). Panel
   98->103 (18->19 files); rebuilt, panel.js identical; pushed.
+  ROUND-414 (2026-09-06): panel ErrorBoundary audit — the round-161
+  white-panel fix had ZERO tests. Added 4: healthy passthrough, crash
+  card + message, empty-message fallback, reload wiring + state reset
+  (reload mock clears the fault, standing in for the remount). REAL
+  FIND (test-caught React behavior): React retries a once-throwing
+  mount before the fallback commits — transient first-render throws
+  self-heal, boundary trips only on persistent throws. Panel 103->107
+  (19->20 files); rebuilt, panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
