@@ -621,6 +621,35 @@ test("login: unknown user 401s (timing-burn), 11th rapid attempt 429s", async ()
   assert.equal((await login()).status, 429, "11th rapid attempt trips the burst gate");
 });
 
+// round-454 (coverage-driven): GET /api/me had ZERO success-path pins,
+// and the logout malformed-cookie catch arm was unpinned.
+test("me: 401 unauth; authed returns identity + key status", async () => {
+  __clearCaches();
+  const env = meEnv();
+  assert.equal((await meReq(env, null, "/api/me", "GET")).status, 401);
+  const bob = await issueSessionToken("pw", "bob", "user");
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ DEEPSEEK_API_KEY: "ds-k" }));
+  __clearCaches();
+  const me = await (await meReq(env, bob, "/api/me", "GET")).json();
+  assert.equal(me.id, "bob");
+  assert.equal(me.username, "bob");
+  assert.equal(me.role, "user");
+  assert.equal(me.enabled, true);
+  assert.equal(me.token, "bob-tok-1", "device token surfaced for the console");
+  assert.deepEqual(me.keys.DEEPSEEK_API_KEY, { configured: true, masked: "d…-k" });
+  assert.deepEqual(me.keys.OPENCODE_GO_API_KEY, { configured: false, masked: "not configured" });
+});
+
+test("logout: malformed cookie still 200s and clears the cookie", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const res = await worker.fetch(new Request("https://x/api/auth/logout", {
+    method: "POST",
+    headers: { cookie: "ag_session=not-a-jwt" },
+  }), env);
+  assert.equal(res.status, 200);
+  assert.ok(String(res.headers.get("set-cookie") || "").includes("ag_session=;"), "cookie cleared");
+});
 // round-442 (coverage-driven): the logout blacklist write had ZERO direct
 // pins — only its verify side was tested. Round-122 (*1000 ms-unit bug)
 // and round-124 (<60s floor) both lived exactly here.
