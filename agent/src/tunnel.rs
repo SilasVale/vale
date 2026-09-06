@@ -247,56 +247,6 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
     //    `tunnel list` output; `tunnel create` prints the full ID on success,
     //    so if the list parse fails (table truncation etc.) grab it from the
     //    create output directly.
-    fn parse_tunnel_id(text: &str) -> Option<String> {
-        // Canonical UUID with dashes: 8-4-4-4-12 hex. Scan char windows to
-        // avoid pulling in the regex crate (cargo-xwin build stays lean).
-        let bytes = text.as_bytes();
-        let is_hex = |c: u8| c.is_ascii_hexdigit();
-        let mut i = 0;
-        while i + 36 <= bytes.len() {
-            let seg = [8usize, 4, 4, 4, 12];
-            let mut ok = true;
-            let mut pos = i;
-            for (si, len) in seg.iter().enumerate() {
-                for _ in 0..*len {
-                    if !is_hex(bytes[pos]) {
-                        ok = false;
-                        break;
-                    }
-                    pos += 1;
-                }
-                if !ok {
-                    break;
-                }
-                if si < seg.len() - 1 {
-                    if bytes[pos] != b'-' {
-                        ok = false;
-                        break;
-                    }
-                    pos += 1;
-                }
-            }
-            if ok {
-                return Some(text[i..i + 36].to_string());
-            }
-            i += 1;
-        }
-        None
-    }
-    // `tunnel list` WITHOUT --name: the --name filter behaves differently
-    // across cloudflared versions and can return empty — match the NAME
-    // column ourselves (ID is col 1, NAME is col 2 in the table).
-    fn find_tunnel_id_by_name(text: &str, name: &str) -> Option<String> {
-        for line in text.lines() {
-            let toks: Vec<&str> = line.split_whitespace().collect();
-            if toks.len() >= 2 && toks[1] == name {
-                if let Some(id) = parse_tunnel_id(toks[0]) {
-                    return Some(id);
-                }
-            }
-        }
-        None
-    }
     let list = tokio::process::Command::new(&cf)
         .args(["tunnel", "list"])
         .output()
@@ -363,6 +313,60 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
     let _ = crate::bootstrap::atomic_write(&cfg_path, yml.as_bytes());
     crate::tunnel_ctl::request_restart();
     format!("ok ({hostname})")
+}
+
+// Tunnel-ID output parsers (round-426: hoisted to module level from
+// provision_tunnel verbatim so the hand-rolled scanner is unit-testable;
+// the only callers are the two spots above).
+fn parse_tunnel_id(text: &str) -> Option<String> {
+    // Canonical UUID with dashes: 8-4-4-4-12 hex. Scan char windows to
+    // avoid pulling in the regex crate (cargo-xwin build stays lean).
+    let bytes = text.as_bytes();
+    let is_hex = |c: u8| c.is_ascii_hexdigit();
+    let mut i = 0;
+    while i + 36 <= bytes.len() {
+        let seg = [8usize, 4, 4, 4, 12];
+        let mut ok = true;
+        let mut pos = i;
+        for (si, len) in seg.iter().enumerate() {
+            for _ in 0..*len {
+                if !is_hex(bytes[pos]) {
+                    ok = false;
+                    break;
+                }
+                pos += 1;
+            }
+            if !ok {
+                break;
+            }
+            if si < seg.len() - 1 {
+                if bytes[pos] != b'-' {
+                    ok = false;
+                    break;
+                }
+                pos += 1;
+            }
+        }
+        if ok {
+            return Some(text[i..i + 36].to_string());
+        }
+        i += 1;
+    }
+    None
+}
+// `tunnel list` WITHOUT --name: the --name filter behaves differently
+// across cloudflared versions and can return empty — match the NAME
+// column ourselves (ID is col 1, NAME is col 2 in the table).
+fn find_tunnel_id_by_name(text: &str, name: &str) -> Option<String> {
+    for line in text.lines() {
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        if toks.len() >= 2 && toks[1] == name {
+            if let Some(id) = parse_tunnel_id(toks[0]) {
+                return Some(id);
+            }
+        }
+    }
+    None
 }
 
 /// Make sure the SYSTEM agent's cloudflared credentials exist. `tunnel
@@ -562,5 +566,50 @@ mod tests {
             "staged bytes must equal the verified download"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_tunnel_id_finds_canonical_uuid() {
+        let id = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
+        assert_eq!(
+            parse_tunnel_id(&format!("created tunnel {id} with id")),
+            Some(id.to_string())
+        );
+        // table row shape
+        assert_eq!(
+            parse_tunnel_id(&format!("{id}  vale-d1  2026-01-01")),
+            Some(id.to_string())
+        );
+    }
+
+    #[test]
+    fn parse_tunnel_id_rejects_non_uuid() {
+        assert_eq!(parse_tunnel_id("no uuid here"), None);
+        assert_eq!(parse_tunnel_id(""), None);
+        // dashless 32-hex is not canonical
+        assert_eq!(parse_tunnel_id("f47ac10b58cc4372a5670e02b2c3d479"), None);
+        // truncated
+        assert_eq!(parse_tunnel_id("f47ac10b-58cc-4372-a567"), None);
+        // non-hex in a dash-shaped slot
+        assert_eq!(
+            parse_tunnel_id("f47ac10b-58cc-4372-a567-0e02b2c3d47z"),
+            None
+        );
+    }
+
+    #[test]
+    fn find_tunnel_id_by_name_matches_name_column() {
+        let id = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
+        let other = "aaaaaaaa-1111-2222-3333-444444444444";
+        let table = format!("ID  NAME  CREATED\n{other}  other-tunnel  x\n{id}  vale-d1  y\n");
+        assert_eq!(
+            find_tunnel_id_by_name(&table, "vale-d1"),
+            Some(id.to_string())
+        );
+        assert_eq!(find_tunnel_id_by_name(&table, "missing"), None);
+        // header row itself never matches (NAME != a real name… unless asked)
+        assert_eq!(find_tunnel_id_by_name("ID  NAME\n", "NAME"), None);
+        // name match with a garbage id column is skipped, not returned
+        assert_eq!(find_tunnel_id_by_name("oops  vale-d1\n", "vale-d1"), None);
     }
 }
