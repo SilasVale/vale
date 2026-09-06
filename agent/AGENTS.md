@@ -1644,6 +1644,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   admin-email, provision-race had ZERO pins. Added 3 in
   access.test.mjs. Suite 498->501; gates clean; snapshot updated;
   pushed.
+  ROUND-469 (2026-09-06): proxy-nav audit — 302 mint, non-nav 401,
+  HTML expiry page, cookie auth/malformed had ZERO pins. Added 4 in
+  proxy-auth.test.mjs. Suite 501->505; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
