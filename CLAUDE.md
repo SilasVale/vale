@@ -51,7 +51,7 @@ vale tunnel status|install|start|stop|update   # tunnel management (boxed compon
 - **Commits**: conventional commits with stage tags (`fix(stage-x)`, `feat(stage-x)`, …); each commit leaves the tree green. Format gates exist only per-subproject where configured (gateway: prettier via `npm run format:check`; agent: `cargo fmt --check` + `cargo clippy -D warnings` (rustfmt adopted 2026-09-05, see .git-blame-ignore-revs)) — no husky hooks (deliberately heavy; manual until a later round).
 - **Subproject changes**: verify inside that subdir (agent: cargo test/clippy/xwin check; gateway/index: wrangler deploy).
 - **Worker name**: the gateway worker is `vale-gate`. If the Cloudflare dashboard still binds the console domain to an old-named worker, rebind it to `vale-gate`.
-- **Design docs**: `docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md` (desktop/core); `gateway/DEVICE-INTEGRATION.md` is SUPERSEDED (2026-08 extension era, history only).
+- **Design docs**: `docs/ARCHITECTURE.md` (the maintained layering snapshot — every module boundary verdict with evidence, the placement rules, and the documented trade-offs); `docs/superpowers/specs/2026-08-28-vale-desktop-core-design.md` (desktop/core); `gateway/DEVICE-INTEGRATION.md` is SUPERSEDED (2026-08 extension era, history only).
 
 ## Foundation modules (the named base layer)
 
