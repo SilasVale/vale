@@ -1256,6 +1256,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   restarts count). Caught my own shared-bucket slip pre-commit (fresh
   instance for fail-open probes). Suite 383->387; gates clean; snapshot
   updated; pushed. CI: 396 run SUCCESS.
+  ROUND-398 (2026-09-06): MCP resolution audit. REAL FIX (small): no-name
+  + several devices answered "No devices registered" — wrong guidance.
+  Now names them ("specify device: d1, d2", round-160 spirit). Added 5:
+  single-device fallback executes, typo'd name never executes (I6a),
+  multi-device guidance (regression), tools/list shape, dial failure →
+  -32603 + {code} data (corrected my data-shape assumption pre-commit).
+  Suite 387->392; gates clean; snapshot updated; pushed. CI: 397 SUCCESS.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
