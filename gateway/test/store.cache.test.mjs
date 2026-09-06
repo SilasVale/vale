@@ -294,3 +294,71 @@ test("getGlobalSetting: auth keys expire after 60s (not 24h)", async () => {
     Date.now = realNow;
   }
 });
+
+// ── User helpers (round-390: token shape, username lookup, invites,
+// masking, registration guards had zero direct pins) ──
+
+test("generateGatewayToken: 48 lowercase hex, unique", () => {
+  const a = store.generateGatewayToken();
+  assert.match(a, /^[0-9a-f]{48}$/);
+  assert.notEqual(a, store.generateGatewayToken());
+});
+
+test("findUserByUsername trims and caches like getUser", async () => {
+  const kv = makeKV({ "user:ann": user("ann") });
+  const found = await store.findUserByUsername(kv, "  ann ");
+  assert.equal(found?.id, "ann");
+  assert.equal(await store.findUserByUsername(kv, "ghost"), null);
+  assert.equal(kv.counters.get, 2, "one KV get per distinct name");
+  await store.findUserByUsername(kv, "ann");
+  assert.equal(kv.counters.get, 2, "repeat served from cache");
+});
+
+test("createInvite mints a 10-char code with a 7-day TTL", async () => {
+  let captured = null;
+  const kv = makeKV();
+  const origPut = kv.KEYS.put;
+  kv.KEYS.put = async (k, v, opts) => {
+    captured = { k, v, opts };
+    return origPut(k, v, opts);
+  };
+  const code = await store.createInvite(kv);
+  assert.match(code, /^[0-9A-Z]{10}$/);
+  assert.equal(captured.k, `invite:${code}`);
+  assert.equal(captured.opts?.expirationTtl, 7 * 24 * 60 * 60);
+});
+
+test("maskKey shapes: empty/short/long", () => {
+  assert.equal(store.maskKey(""), "not configured");
+  assert.equal(store.maskKey(null), "not configured");
+  assert.equal(store.maskKey("ab"), "a…ab");
+  assert.equal(store.maskKey("abcdef"), "a…ef");
+  assert.equal(store.maskKey("sk-ant-1234567890"), "sk-…7890");
+});
+
+test("userKeysStatus covers every managed key with parity", () => {
+  const names = store.USER_KEY_NAMES;
+  assert.ok(names.length >= 8, "BYOK pool keeps growing; pin the floor");
+  const st = store.userKeysStatus({ DEEPSEEK_API_KEY: "sk-1234567890" });
+  assert.deepEqual(Object.keys(st).sort(), [...names].sort());
+  assert.equal(st.DEEPSEEK_API_KEY.configured, true);
+  assert.equal(st.DEEPSEEK_API_KEY.masked, "sk-…7890");
+  assert.equal(st.OPENAI_API_KEY, undefined, "unmanaged keys never appear");
+  const empty = store.userKeysStatus({});
+  assert.ok(names.every((n) => empty[n].configured === false));
+  assert.ok(names.every((n) => empty[n].masked === "not configured"));
+});
+
+test("createUser rejects bad names, short passwords, duplicates, keyless non-admin", async () => {
+  const kv = makeKV();
+  await assert.rejects(() => store.createUser(kv, { username: "x", password: "longenough" }), /2-32/);
+  await assert.rejects(() => store.createUser(kv, { username: "bad name!", password: "longenough" }), /2-32/);
+  await assert.rejects(() => store.createUser(kv, { username: "bob", password: "short" }), /at least 6/);
+  await assert.rejects(() => store.createUser(kv, { username: "bob", password: "longenough" }), /invite/i);
+  // Admins skip the invite gate; then the name is taken.
+  await store.createUser(kv, { username: "root", password: "longenough", role: "admin" });
+  await assert.rejects(
+    () => store.createUser(kv, { username: "root", password: "longenough", role: "admin" }),
+    /already taken/,
+  );
+});
