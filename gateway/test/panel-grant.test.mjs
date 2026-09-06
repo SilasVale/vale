@@ -13,6 +13,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { issueSessionToken, SESSION_COOKIE } from "../src/auth.ts";
+import { createPanelGrant, getPanelGrant, deletePanelGrant } from "../src/store/grants.ts";
 import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
 const ADMIN_PW = "test-admin-password";
@@ -213,4 +214,68 @@ test("panel-grant end-to-end: minted url never carries the device token; grant i
     body: { grant: new URL(j.url).searchParams.get("grant") },
   }), env);
   assert.equal(right.status, 200);
+});
+
+// ── store-level edge cases (round-388: shape validation + TTL + delete
+// semantics had only indirect handler coverage) ──
+
+test("store: mint writes panelgrant:<code> with a ~120s TTL", async () => {
+  const env = makeBaseEnv({});
+  const code = await createPanelGrant(env, "d1");
+  assert.match(code, /^[0-9a-f]{32}$/);
+  const ttl = env._expiry.get(`panelgrant:${code}`) - Math.floor(Date.now() / 1000);
+  assert.ok(ttl > 100 && ttl <= 120, `TTL ~120s, got ${ttl}`);
+  const rec = JSON.parse(env._kv.get(`panelgrant:${code}`));
+  assert.equal(rec.device, "d1");
+});
+
+test("store: mint without KEYS still returns a code (no throw)", async () => {
+  const code = await createPanelGrant({}, "d1");
+  assert.match(code, /^[0-9a-f]{32}$/);
+});
+
+test("store: get normalizes uppercase codes to the lowercase record", async () => {
+  const env = makeBaseEnv({});
+  const code = await createPanelGrant(env, "d1");
+  const got = await getPanelGrant(env, code.toUpperCase());
+  assert.equal(got?.device, "d1");
+});
+
+test("store: get rejects malformed codes without a KV read", async () => {
+  const env = makeBaseEnv({});
+  let reads = 0;
+  const origGet = env.KEYS.get;
+  env.KEYS.get = async (...a) => {
+    reads++;
+    return origGet(...a);
+  };
+  for (const bad of ["", "xyz", "g".repeat(32), "a".repeat(31), "a".repeat(33), null, undefined]) {
+    assert.equal(await getPanelGrant(env, bad), null, `${bad} must be null`);
+  }
+  assert.equal(reads, 0, "shape rejects must not cost KV reads");
+});
+
+test("store: get treats corrupt/empty records as missing", async () => {
+  const env = makeBaseEnv({});
+  env._kv.set("panelgrant:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "not json{{{");
+  assert.equal(await getPanelGrant(env, "a".repeat(32)), null);
+  env._kv.set("panelgrant:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", JSON.stringify({ device: "" }));
+  assert.equal(await getPanelGrant(env, "b".repeat(32)), null);
+  env._kv.set("panelgrant:cccccccccccccccccccccccccccccccc", JSON.stringify({ device: "d1" }));
+  const got = await getPanelGrant(env, "c".repeat(32));
+  assert.equal(got?.device, "d1");
+  assert.equal(got?.mintedAt, 0, "missing mintedAt defaults to 0, never NaN");
+});
+
+test("store: get without KEYS returns null (no throw)", async () => {
+  assert.equal(await getPanelGrant({}, "a".repeat(32)), null);
+});
+
+test("store: delete removes the record; empty code is a no-op", async () => {
+  const env = makeBaseEnv({});
+  const code = await createPanelGrant(env, "d1");
+  await deletePanelGrant(env, code.toUpperCase());
+  assert.equal(await getPanelGrant(env, code), null);
+  await deletePanelGrant(env, "");
+  await deletePanelGrant({}, "a".repeat(32));
 });
