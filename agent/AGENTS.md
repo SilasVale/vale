@@ -1110,6 +1110,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   the non-Windows all-None degradation contract (was vacuously covered).
   xwin confirms the refactor compiles on Windows. Matrix: lib 255 (+2),
   feat-gated 261, clippy x2 + fmt + xwin clean; snapshot 290->292.
+  ROUND-379 (2026-09-06): web/panel.rs surface audit — whitelist, hash
+  stamping, token escaping, grant shape/redeem had zero DIRECT tests
+  (only endpoint-level). Added 6: content-type map, 6 known files 200 +
+  8 hostile names 404 (traversal/query/whitespace), exactly-once hash
+  stamp with vendor css untouched, token shape (200/html/no-store) +
+  </script> breakout escape, grant 16..128 hex bounds, redeem true ONLY
+  on explicit ok:true (false/missing/500/dead-gateway all false). All
+  green first try. Matrix: lib 261 (+6), feat-gated 267, clippy x2 +
+  fmt + xwin clean; snapshot 292->298.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
