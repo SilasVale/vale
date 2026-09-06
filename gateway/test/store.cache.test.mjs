@@ -362,3 +362,50 @@ test("createUser rejects bad names, short passwords, duplicates, keyless non-adm
     /already taken/,
   );
 });
+
+// ── Regkeys + settings edges (round-391) ──
+
+test("createRegKey mints 16-hex with a 1h TTL", async () => {
+  const kv = makeKV();
+  let captured = null;
+  const origPut = kv.KEYS.put;
+  kv.KEYS.put = async (k, v, opts) => {
+    captured = { k, v, opts };
+    return origPut(k, v, opts);
+  };
+  const code = await store.createRegKey(kv);
+  assert.match(code, /^[0-9a-f]{16}$/);
+  assert.equal(captured.k, `regkey:${code}`);
+  assert.equal(captured.opts?.expirationTtl, 3600);
+});
+
+test("deleteRegKey removes; empty code and keyless env are no-ops", async () => {
+  const kv = makeKV({ "regkey:abc": "1" });
+  await store.deleteRegKey(kv, "ABC");
+  assert.equal(await store.hasRegKey(kv, "abc"), false);
+  await store.deleteRegKey(kv, "");
+  await store.deleteRegKey({}, "abc");
+  await store.hasRegGrant({}, "x");
+});
+
+test("listRegKeys returns only live keys with ms expiry", async () => {
+  const { makeEnv } = await import("./helpers.mjs");
+  const env = makeEnv({});
+  await env.KEYS.put("regkey:live", "1", { expirationTtl: 3600 });
+  await env.KEYS.put("regkey:dead", "1", { expirationTtl: 3600 });
+  env._expiry.set("regkey:dead", Math.floor(Date.now() / 1000) - 10);
+  const keys = await store.listRegKeys(env);
+  assert.equal(keys.length, 1);
+  assert.equal(keys[0].code, "live");
+  assert.ok(keys[0].expiresAt > Date.now(), "ms epoch in the future");
+  assert.deepEqual(await store.listRegKeys({}), []);
+});
+
+test("globalSettingEnabled: only real on-values are on", () => {
+  for (const off of [null, undefined, "", "0", "false"]) {
+    assert.equal(store.globalSettingEnabled(off), false, `${off} must be off`);
+  }
+  for (const on of ["1", "true", "yes", "anything"]) {
+    assert.equal(store.globalSettingEnabled(on), true, `${on} must be on`);
+  }
+});
