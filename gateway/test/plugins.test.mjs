@@ -750,3 +750,23 @@ test("me/route: 401 unauth; PUT validates whitelist; GET shows stored + effectiv
   const clear = await meReq(env, bob, "/api/me/route", "PUT", { model: null });
   assert.deepEqual(await clear.json(), { ok: true, model: null });
 });
+
+// round-448 (coverage-driven): the sweep-lock's corrupt-fresh-read arm
+// (store/plugins.ts) had ZERO pins — first read yields an expired link,
+// the locked re-read races corrupt.
+test("plugin link: corrupt fresh read inside the sweep lock returns null, never throws", async () => {
+  __clearCaches();
+  const expired = JSON.stringify({ "tok-r": { device: "d1", createdAt: 1, expiresAt: Date.now() - 1000 } });
+  let gets = 0;
+  const kv = new Map([["plugins:v1", expired]]);
+  const env = {
+    KEYS: {
+      async get(k) { gets++; return gets === 1 ? kv.get(k) ?? null : "corrupt{{{Leeroy"; },
+      async put(k, v) { kv.set(k, v); },
+      async delete(k) { kv.delete(k); },
+    },
+  };
+  assert.equal(await getPluginByToken(env, "tok-r"), null);
+  assert.equal(gets, 2, "initial read + locked fresh re-read");
+  assert.equal(kv.get("plugins:v1"), expired, "corrupt fresh blob must not be written back");
+});
