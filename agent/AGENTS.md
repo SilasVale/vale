@@ -1119,6 +1119,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   on explicit ok:true (false/missing/500/dead-gateway all false). All
   green first try. Matrix: lib 261 (+6), feat-gated 267, clippy x2 +
   fmt + xwin clean; snapshot 292->298.
+  ROUND-380 (2026-09-06): paths.rs resolution audit — the registry-first
+  chain (install/data/sessions/node) had only the unix harden pin.
+  Added 6: exe-dir non-empty, install→exe fallback, data→install
+  default, sessions nesting, node None, harden-missing errors (plus two
+  doc lines that read as if `vale setup` itself were retired). Cached
+  public fns untestable repeatedly → pins target compute_* + structure.
+  Matrix: lib 267 (+6), feat-gated 273, clippy x2 + fmt + xwin clean;
+  snapshot 298->304.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
