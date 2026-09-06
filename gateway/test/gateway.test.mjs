@@ -1719,6 +1719,8 @@ test("or/ without the user's own key → 502, upstream never called", async () =
 
 // round-496 (coverage-driven): the nv/gmi/amd/cm keyless 502 arms had ZERO
 // pins (isoEnv users carry none of those keys by default).
+// round-504 correction: the cm case pins the shared PRE-BRANCH guard — the
+// translate-path cm arm is shadowed by it (same !cmdKey) and unreachable.
 test("nv/gmi/amd/cm without the user's own key → 502, upstream never called", async () => {
   const { env, a } = isoEnv();
   const cases = [
@@ -1815,6 +1817,8 @@ test("og translate with an open breaker fails fast (502), upstream never called"
 // round-503 (coverage-driven): the /v1/chat/completions-path keyless guards
 // had ZERO pins — rounds 488/496/499 only exercised the /v1/messages ladder.
 // Same arms, OpenAI-format body on the chat path.
+// round-504 correction: the cm/or cases pin the shared PRE-BRANCH guards —
+// the chat-path cm arm doesn't exist and the or arm is shadowed (same var).
 test("chat/completions without the user's own key → 502, upstream never called", async () => {
   const { env, a } = isoEnv({ aKeys: { DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined, OPENROUTER_API_KEY: undefined } });
   const cases = [

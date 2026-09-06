@@ -1144,6 +1144,9 @@ async function handleGatewayImpl(
   // minimax-m3 on og never get here — they were switched to passthrough above.
   // cm/ always gets here on /v1/messages: the Command Code Anthropic endpoint
   // serves claude-* only, deepseek & co. live on chat/completions.
+  // round-504: shadowed by the pre-branch commandgoat guard (same !cmdKey,
+  // same message) — unreachable, kept as defense-in-depth like the chat-path
+  // openrouter arm. Not pinned: keyless-cm tests land on the live guard.
   if (route.kind === "commandgoat" && !cmdKey) {
     return jsonError(
       502,
