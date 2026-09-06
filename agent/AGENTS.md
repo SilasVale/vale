@@ -1282,6 +1282,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   non-mapping/missing/invalid/list safe). Full matrix: lib 283 + bin 5
   + 27+2+7+1, core 15, feat 289, clippy x2 + fmt + xwin clean; snapshot
   335->340; pushed.
+  ROUND-402 (2026-09-06): upstream route-table audit — pickRoute/
+  stripBracket/passthroughHeaders (every /v1 call flows through) had
+  ZERO direct tests. Added 5 in upstream.test.mjs: bracket strip,
+  per-prefix kind/upstream incl. qw/ format split + default no-strip,
+  amd/ always direct under egress, F4 injection encoding, header modes.
+  Fixed my own via()-base slip pre-commit (usProxyBase, not the param).
+  Suite 399->404; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
