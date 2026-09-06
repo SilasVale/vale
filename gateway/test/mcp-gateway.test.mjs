@@ -144,3 +144,89 @@ test("secret_get routes to the DEVICE agent, not the browser extension", async (
     // No PluginHubDO in env — an extension route would have thrown instead of succeeding.
   } finally { globalThis.fetch = real; }
 });
+
+// ── Heal remainder + result shaping (round-399: zero-live / multi-live
+// guidance, data-URL unwrap, timeout-vs-unreachable had no direct pins) ──
+
+test("stale session with zero live sessions points at terminal_open", async () => {
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" }]);
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.includes("/api/tools/terminal_execute")) {
+      return new Response(JSON.stringify({ ok: false, code: "session_not_found", error: "Session not found: term-old" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (u.includes("/api/tools/terminal_list")) {
+      return new Response(JSON.stringify({ ok: true, result: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const j = await callTool(env, "terminal_execute", { session_id: "term-old", input: "ls" });
+    assert.equal(j.error?.code, -32603);
+    assert.match(j.error.message, /no live sessions/);
+    assert.match(j.error.message, /terminal_open/);
+    assert.equal(j.error.data?.code, "SESSION_NOT_FOUND");
+  } finally { globalThis.fetch = real; }
+});
+
+test("stale session with several live sessions lists them (no guessing)", async () => {
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" }]);
+  const real = globalThis.fetch;
+  const execSids = [];
+  globalThis.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.includes("/api/tools/terminal_execute")) {
+      execSids.push(JSON.parse(init.body).session_id);
+      return new Response(JSON.stringify({ ok: false, code: "session_not_found", error: "Session not found: term-old" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (u.includes("/api/tools/terminal_list")) {
+      return new Response(JSON.stringify({ ok: true, result: [{ id: "term-a" }, { id: "term-b" }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const j = await callTool(env, "terminal_execute", { session_id: "term-old", input: "ls" });
+    assert.equal(j.error?.code, -32603);
+    assert.match(j.error.message, /term-a, term-b/);
+    assert.deepEqual(execSids, ["term-old"], "must NOT retry on a guessed session");
+  } finally { globalThis.fetch = real; }
+});
+
+test("data-URL string result unwraps to an MCP image block (round-118)", async () => {
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" }]);
+  const real = globalThis.fetch;
+  const png = `data:image/png;base64,${"A".repeat(64)}`;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/api/tools/terminal_execute")) {
+      return new Response(JSON.stringify({ ok: true, result: png }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const j = await callTool(env, "terminal_execute", { session_id: "s", input: "shot" });
+    assert.equal(j.error, undefined, JSON.stringify(j).slice(0, 200));
+    const block = j.result?.content?.[0];
+    assert.equal(block?.type, "image");
+    assert.equal(block?.mimeType, "image/png");
+    assert.equal(block?.data, "A".repeat(64));
+  } finally { globalThis.fetch = real; }
+});
+
+test("dial timeout vs refusal map to TIMEOUT vs DEVICE_UNREACHABLE (round-55)", async () => {
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" }]);
+  const real = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      throw new Error("fetch timeout after 10000ms");
+    };
+    let j = await callTool(env, "terminal_list", { device: "d1" });
+    assert.equal(j.error?.code, -32603);
+    assert.equal(j.error?.data?.code, "TIMEOUT");
+    globalThis.fetch = async () => {
+      throw new Error("connection refused");
+    };
+    j = await callTool(env, "terminal_list", { device: "d1" });
+    assert.equal(j.error?.data?.code, "DEVICE_UNREACHABLE");
+  } finally { globalThis.fetch = real; }
+});
