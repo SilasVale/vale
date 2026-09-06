@@ -566,3 +566,28 @@ test("register: bad invite / short password / duplicate name → 400; no secret 
   const code2 = await mintInvite(env, adminH);
   assert.equal((await reg({ username: "gail", password: "s3cret-long", inviteCode: code2 })).status, 500);
 });
+
+// round-442 (coverage-driven): the logout blacklist write had ZERO direct
+// pins — only its verify side was tested. Round-122 (*1000 ms-unit bug)
+// and round-124 (<60s floor) both lived exactly here.
+test("logout: session cookie lands on the sess-revoked blacklist with a capped TTL", async () => {
+  __clearCaches();
+  const env = regEnv();
+  const cookie = await issueSessionToken("test-session-secret-0123456789abcdef", "admin", "admin");
+  const before = Math.floor(Date.now() / 1000);
+  const res = await worker.fetch(new Request("https://x/api/auth/logout", {
+    method: "POST",
+    headers: { cookie: `ag_session=${cookie}` },
+  }), env);
+  assert.equal(res.status, 200);
+  assert.ok(String(res.headers.get("set-cookie") || "").includes("ag_session=;"), "client cookie cleared");
+  const rec = `sess-revoked:${cookie}`;
+  assert.equal(await env.KEYS.get(rec), "1");
+  const exp = env._expiry.get(rec);
+  assert.ok(exp && exp - before <= 86400 && exp - before > 86000, `TTL capped at 24h, got ${exp - before}s`);
+  // And the blacklisted cookie now dies on a gated route.
+  const gated = await worker.fetch(new Request("https://x/api/plugins/status", {
+    headers: { cookie: `ag_session=${cookie}` },
+  }), env);
+  assert.equal(gated.status, 401);
+});
