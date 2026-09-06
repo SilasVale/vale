@@ -1709,6 +1709,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   gain was 1 test, not 2. Suite 523->525; gates clean; snapshot updated;
   pushed. LESSON: grep-read existing tests before pinning an "uncovered"
   arm.
+  ROUND-484 (2026-09-06): reasoning audit — reasonTextOf sources +
+  tool_use fallback arms had ZERO pins. Added 2 in
+  reliability.test.mjs: reasoning/reasoning_details, tool_calls incl.
+  malformed/unknown. Suite 525->527; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
