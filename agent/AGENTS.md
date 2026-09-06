@@ -1776,6 +1776,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-499 (2026-09-06): dsqw audit — the ds/qw passthrough keyless arms
   had ZERO pins. Added 1 matrix test in gateway.test.mjs (2 arms, no
   upstream). Suite 543->544; gates clean; snapshot updated; pushed.
+  ROUND-500 (2026-09-06): REAL FIND — translate-path og-key guard was
+  unscoped: cm/ with valid CMD key but no og key 502'd (branch only sends
+  cmdKey). Fix: scope to opencode kind. Proven by stash-revert (89/90
+  without, 90/90 with). Mirror resynced. Suite 544->545; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
