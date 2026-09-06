@@ -1582,6 +1582,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   burn arms had ZERO pins. Added 1 in plugins.test.mjs: 10×401 then
   11th 429. Self-caught: jsonError nests the message under
   error.message. Suite 469->470; gates clean; snapshot updated; pushed.
+  ROUND-453 (2026-09-06): reset-limiter audit — the 429 arm had ZERO
+  pins. Added 1 in plugins.test.mjs: 30×400 then 429 on a fresh
+  per-IP bucket. Suite 470->471; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
