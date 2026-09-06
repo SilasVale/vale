@@ -1387,6 +1387,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   (command/status/exit/duration/params/output/copy), running
   placeholders, failed exit+reason. Panel 129->133 (24->25 files);
   rebuilt, panel.js identical; pushed.
+  ROUND-420 (2026-09-06): panel Shell audit — density layout + page
+  contract had ZERO tests. Added 4: PAGES/labels, panel rails +
+  bottom-bar status (round-161), optional-rail omission, desktop hides
+  ctx/status. Panel 133->137 (25->26 files); rebuilt, panel.js
+  identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
