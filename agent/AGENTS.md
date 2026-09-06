@@ -1736,6 +1736,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   arm had ZERO pins (explicit choice was covered). Added 1 in
   gateway.test.mjs. Suite 532->533; gates clean; snapshot updated;
   pushed.
+  ROUND-491 (2026-09-06): REAL FIND — getGlobalSetting US_PROXY read threw
+  on KV outage, failing all vision preprocessing (every other KV read on
+  the path is best-effort). Fix: .catch(()=>null) at the caller (direct
+  default). Added 1 test (KV-down describe still succeeds). BONUS: mirror
+  resync caught 4 files of prior-round drift (access/mcp/store-admin/
+  store-settings). Suite 533->534; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
