@@ -201,3 +201,43 @@ fn tool_browser_run_script() -> ToolDef {
 pub(super) fn build() -> Vec<ToolDef> {
     vec![tool_browser_pw_info(), tool_browser_run_script()]
 }
+
+#[cfg(test)]
+mod tools_tests {
+    //! round-382: the bundled-playwright discovery helpers had zero tests.
+    use super::*;
+
+    #[test]
+    fn node_exe_path_joins_under_pw_dir() {
+        let pw = std::path::Path::new("/opt/vale/playwright");
+        assert_eq!(node_exe_path(pw), pw.join("node.exe"));
+    }
+
+    #[test]
+    fn pw_version_reads_bundled_package_json() {
+        let dir = std::env::temp_dir().join(format!("vale-pwver-{}", std::process::id()));
+        let core = dir.join("node_modules").join("playwright-core");
+        std::fs::create_dir_all(&core).unwrap();
+        std::fs::write(
+            core.join("package.json"),
+            r#"{"name":"playwright-core","version":"1.2.3"}"#,
+        )
+        .unwrap();
+        assert_eq!(pw_version(&dir).as_deref(), Some("1.2.3"));
+        assert_eq!(
+            pw_version(std::path::Path::new("/definitely/not/here")),
+            None
+        );
+        std::fs::write(core.join("package.json"), "not json").unwrap();
+        assert_eq!(pw_version(&dir), None);
+        std::fs::write(core.join("package.json"), r#"{"version":42}"#).unwrap();
+        assert_eq!(pw_version(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn build_exposes_two_browser_tools() {
+        let names: Vec<String> = build().iter().map(|t| t.name.clone()).collect();
+        assert_eq!(names, vec!["browser_pw_info", "browser_run_script"]);
+    }
+}

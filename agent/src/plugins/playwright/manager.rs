@@ -536,3 +536,72 @@ impl PlaywrightManager {
         Ok(serde_json::json!({ "status": "stopped" }))
     }
 }
+
+#[cfg(test)]
+mod manager_tests {
+    //! round-382: the playwright supervisor (fresh/stopped/external status,
+    //! node + bundle resolution) had zero tests. Spawning is never
+    //! exercised — only the no-spawn paths (status/stop on a fresh
+    //! manager, resolution errors).
+    use super::*;
+
+    #[tokio::test]
+    async fn status_tracks_fresh_external_and_released() {
+        // ONE sequential test (not three): status() probes the FIXED port
+        // 9229, so parallel tests holding it would flake each other.
+        // Assumes 9229 starts free (true on CI and this box).
+        let m = PlaywrightManager::new();
+        let st = m.status().await;
+        assert_eq!(st.get("running"), Some(&serde_json::json!(false)));
+
+        // round-132 branch: an instance we did NOT spawn (scheduled task,
+        // panel, manual) still reports Running — hold the port ourselves.
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", MCP_PORT))
+            .await
+            .expect("9229 must be free in the test env");
+        let st = m.status().await;
+        assert_eq!(st.get("running"), Some(&serde_json::json!(true)));
+        assert_eq!(st.get("external"), Some(&serde_json::json!(true)));
+
+        drop(listener);
+        let st = m.status().await;
+        assert_eq!(st.get("running"), Some(&serde_json::json!(false)));
+    }
+
+    #[tokio::test]
+    async fn stop_on_fresh_manager_is_a_clean_noop() {
+        // No trailing status() assert: status probes the fixed 9229 port
+        // and the test above may hold it concurrently.
+        let m = PlaywrightManager::new();
+        let out = m.stop().await.unwrap();
+        assert_eq!(out.get("status"), Some(&serde_json::json!("stopped")));
+    }
+
+    #[test]
+    fn bundled_entry_missing_errors_loud() {
+        match bundled_mcp_entry() {
+            Err(e) => assert!(e.to_string().contains("playwright-mcp not found"), "{e:?}"),
+            Ok(p) => assert!(p.ends_with("cli.js"), "bundle present: {}", p.display()),
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn resolve_node_without_runtime_errors_loud() {
+        // Linux CI/box: no registry, no bundled node.exe, no PATH arm —
+        // the error must name the remedy, not just "not found".
+        match resolve_node() {
+            Err(e) => assert!(e.to_string().contains("vale setup"), "{e:?}"),
+            Ok(p) => assert!(
+                p.ends_with("node.exe"),
+                "legacy bundle present: {}",
+                p.display()
+            ),
+        }
+    }
+
+    #[test]
+    fn now_ms_is_monotonic() {
+        assert!(now_ms() <= now_ms());
+    }
+}
