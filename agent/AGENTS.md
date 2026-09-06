@@ -1460,6 +1460,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   scheme reject, back/fwd wiring, crash banner + recover, zoom factor,
   bridgeless placeholder. Panel 162->169 (30->31 files); rebuilt,
   panel.js identical; pushed.
+  ROUND-432 (2026-09-06): panel TerminalPane audit — mount/wiring plus
+  overlays had ZERO tests. Added 5 (real xterm, mocked callTool):
+  registerWrite + adopt read, write callback reaches terminal, font
+  persist + 9/22 clamp + reset, searchbar open/Esc close, inactive
+  hides + drops overlays. tsc gate caught 2 slips (Session fields,
+  mock.calls tuple) before commit. Panel 169->174 (31->32 files);
+  rebuilt, panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
