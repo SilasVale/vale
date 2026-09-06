@@ -947,3 +947,52 @@ test("me/keys/usage: throwing upstream is safe (Usage query failed)", async () =
     globalThis.fetch = real;
   }
 });
+
+// round-456 (coverage-driven): the AMD + OG usage-mapping arms had ZERO
+// pins — the console renders these shapes directly.
+test("me/keys/usage: amd maps spend caps, og maps windows", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const bob = await issueSessionToken("pw", "bob", "user");
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ AMD_API_KEY: "amd-k", OPENCODE_GO_API_KEY: "og-k" }));
+  __clearCaches();
+  const usage = (name) => worker.fetch(new Request("https://x/api/me/keys/usage", {
+    method: "POST",
+    headers: { cookie: `ag_session=${bob}`, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  }), env);
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("radeon")) return new Response(JSON.stringify({
+      daily_cost_used_usd: 0.5, daily_cost_limit_usd: 2, rpm_limit: 60,
+      daily_reset_at: "2026-09-07T00:00:00Z", organization_id: "org1",
+      all_time: { requests: 10, total_tokens: 5000 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({
+      used: 3, limit: 100, balance: 97, plan: "pro",
+      windows: {
+        "5h": { used: 1, limit: 20, remaining: 19, reset_at: "t1", junk: true },
+        weekly: { used: 2, limit: 50 },
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    assert.deepEqual(await (await usage("AMD_API_KEY")).json(), {
+      ok: true, name: "AMD_API_KEY", status: 200,
+      usage: 0.5, limit: 2,
+      rateLimit: { limit: 60, interval: "minute", reset: "2026-09-07T00:00:00Z" },
+      label: "org1 · 10 req · 5000 tok",
+    });
+    assert.deepEqual(await (await usage("OPENCODE_GO_API_KEY")).json(), {
+      ok: true, name: "OPENCODE_GO_API_KEY", status: 200,
+      usage: 3, limit: 100, balance: 97, label: "pro",
+      windows: {
+        "5h": { used: 1, limit: 20, remaining: 19, resetAt: "t1" },
+        weekly: { used: 2, limit: 50 },
+      },
+    });
+  } finally {
+    globalThis.fetch = real;
+  }
+});
