@@ -1781,6 +1781,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   cmdKey). Fix: scope to opencode kind. Proven by stash-revert (89/90
   without, 90/90 with). Mirror resynced. Suite 544->545; gates clean;
   snapshot updated; pushed.
+  ROUND-501 (2026-09-06): breaker audit — the translate-path circuit-open
+  arm had ZERO pins. Added 1 in gateway.test.mjs (open breaker → 502,
+  no dial; degraded-cache cleared first). Suite 545->546; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
