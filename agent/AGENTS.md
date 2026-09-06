@@ -1328,6 +1328,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Added 2 (feat-gated): torn file lists empty + remember heals, 3-entry
   sort order + kind/target/id shape. Full matrix: feat lib 289->291,
   clippy x2 + fmt + xwin clean; snapshot 340->342; pushed.
+  ROUND-410 (2026-09-06): panel stripAnsi audit — the ANSI scrubber all
+  text surfaces depend on had ZERO tests. Added 5: SGR, cursor/clear,
+  OSC titles + 133 markers, unterminated-OSC-at-EOF, stray ESC +
+  undefined. Panel suite 93->98 (17->18 files); test-only, no panel.js
+  rebuild; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
