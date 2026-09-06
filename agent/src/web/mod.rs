@@ -30,9 +30,9 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tower::Service;
 
+use crate::plugins::memory::store::MemoryLimits;
 use crate::state::AppState;
 use vale_agent_core::EventBus;
-
 mod panel;
 mod sse;
 
@@ -761,12 +761,18 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
     })
     .await
     .unwrap_or(false);
+    // Round-358: live memory capacity (Settings page Memory card edits it
+    // via PUT below; bytes reported in MiB for the UI).
+    let mem = state.memory.limits();
     serde_json::json!({
         "ok": true,
         "buffer_mb": state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024),
         "console_url": console_url,
         "tunnel_configured": tunnel_configured,
         "tunnel_running": tunnel_running,
+        "memory_max_entries": mem.max_entries,
+        "memory_max_bytes_mb": mem.max_bytes / (1024 * 1024),
+        "memory_retention_days": mem.retention_days,
     })
 }
 
@@ -805,6 +811,25 @@ fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, B
             .map(|x| x.trim().to_string())
             .filter(|x| !x.is_empty())
     });
+    // Round-358: memory capacity (Settings page Memory card). Same
+    // missing-key convention: absent = unchanged. Entries/bytes clamp to
+    // >= 1 (0 would evict everything); retention accepts a positive day
+    // count, while null/""/0 CLEARS it back to keep-forever.
+    let mem_entries = v
+        .get("memory_max_entries")
+        .and_then(|b| b.as_u64())
+        .map(|x| (x as usize).max(1));
+    let mem_bytes = v
+        .get("memory_max_bytes_mb")
+        .and_then(|b| b.as_u64())
+        .map(|x| (x as usize).max(1) * 1024 * 1024);
+    let mem_retention: Option<Option<u64>> = v.get("memory_retention_days").map(|val| {
+        val.as_u64().filter(|&n| n > 0).or_else(|| {
+            val.as_str()
+                .and_then(|s| s.trim().parse::<u64>().ok().filter(|&n| n > 0))
+        })
+    });
+    let mem_changed = mem_entries.is_some() || mem_bytes.is_some() || mem_retention.is_some();
     // Write-through (audit A4): merge onto the CURRENT in-process snapshot
     // and persist via update_config — the runtime buffer cap, the in-process
     // config and config.yaml all move together (the old code rewrote the
@@ -813,7 +838,7 @@ fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, B
     // the PUT — the runtime value already took effect. With no config_path
     // (dev invocations), update_config still updates memory and writes
     // nothing.
-    if mb.is_some() || console_url.is_some() {
+    if mb.is_some() || console_url.is_some() || mem_changed {
         let mut cfg = state.config_snapshot();
         if let Some(mb) = mb {
             cfg.terminal.buffer_mb = mb as u32;
@@ -821,12 +846,31 @@ fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, B
         if let Some(url) = console_url {
             cfg.platform.console_url = url;
         }
+        if mem_changed {
+            // Live-first: retune the running store (enforces immediately),
+            // then persist the same values so a restart agrees.
+            let cur = state.memory.limits();
+            let new = MemoryLimits {
+                max_entries: mem_entries.unwrap_or(cur.max_entries),
+                max_bytes: mem_bytes.unwrap_or(cur.max_bytes),
+                retention_days: mem_retention.unwrap_or(cur.retention_days),
+            };
+            state.memory.set_limits(new);
+            cfg.memory.max_entries = Some(new.max_entries);
+            cfg.memory.max_bytes = Some(new.max_bytes);
+            cfg.memory.retention_days = new.retention_days;
+        }
         let _ = state.update_config(cfg, true);
     }
+    let mem = state.memory.limits();
     Ok(
         serde_json::json!({ "ok": true, "buffer_mb": mb.unwrap_or_else(|| {
-        state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024)
-    }) }),
+            state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024)
+        }),
+            "memory_max_entries": mem.max_entries,
+            "memory_max_bytes_mb": mem.max_bytes / (1024 * 1024),
+            "memory_retention_days": mem.retention_days,
+        }),
     )
 }
 
@@ -1942,6 +1986,79 @@ mod tests {
         assert_eq!(
             disk.platform.console_url.as_deref(),
             Some("https://mem.example")
+        );
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn settings_memory_roundtrip_live_and_persisted() {
+        // Round-358: memory capacity joins GET/PUT /api/settings. This test
+        // is the SOLE writer of memory limits in the suite, so its
+        // GET-defaults asserts cannot race with another test.
+        let (st, cfg_path) = state_with_cfg("put-memlim", CFG_YAML_TOKEN_ONLY);
+        // Defaults first (GET shape carries the memory fields).
+        let resp = handle_request(req("GET", "/api/settings"), st.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["memory_max_entries"].as_u64(), Some(10_000));
+        assert_eq!(v["memory_max_bytes_mb"].as_u64(), Some(64));
+        assert!(
+            v["memory_retention_days"].is_null(),
+            "default retention is keep-forever: {v}"
+        );
+        // PUT: live limits retune immediately + persist to config.yaml.
+        let resp = handle_request(
+            req_with_json(
+                "PUT",
+                "/api/settings",
+                r#"{"memory_max_entries": 50, "memory_max_bytes_mb": 16, "memory_retention_days": 30}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["memory_max_entries"].as_u64(), Some(50));
+        assert_eq!(v["memory_max_bytes_mb"].as_u64(), Some(16));
+        assert_eq!(v["memory_retention_days"].as_u64(), Some(30));
+        let live = st.memory.limits();
+        assert_eq!(live.max_entries, 50);
+        assert_eq!(live.max_bytes, 16 * 1024 * 1024);
+        assert_eq!(live.retention_days, Some(30));
+        let disk = Config::load(&cfg_path).unwrap();
+        assert_eq!(disk.memory.max_entries, Some(50));
+        assert_eq!(disk.memory.max_bytes, Some(16 * 1024 * 1024));
+        assert_eq!(disk.memory.retention_days, Some(30));
+        assert_eq!(disk.server.device_token.as_deref(), Some(TEST_TOKEN));
+        // Clear retention back to keep-forever with 0; other keys untouched.
+        let resp = handle_request(
+            req_with_json("PUT", "/api/settings", r#"{"memory_retention_days": 0}"#),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(st.memory.limits().retention_days, None);
+        assert_eq!(
+            st.memory.limits().max_entries,
+            50,
+            "retention-only PUT must not reset entries"
+        );
+        // Restore shared defaults — AppState::new shares the default memory
+        // dir across web tests; a lowered cap must not leak into others.
+        let resp = handle_request(
+            req_with_json(
+                "PUT",
+                "/api/settings",
+                r#"{"memory_max_entries": 10000, "memory_max_bytes_mb": 64}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let live = st.memory.limits();
+        assert_eq!(
+            (live.max_entries, live.max_bytes),
+            (10_000, 64 * 1024 * 1024)
         );
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }

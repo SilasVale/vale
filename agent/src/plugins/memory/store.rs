@@ -12,7 +12,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -82,7 +82,11 @@ impl Default for MemoryLimits {
 /// file appends are best-effort (a disk failure must not break queries).
 pub struct MemoryStore {
     dir: PathBuf,
-    limits: MemoryLimits,
+    /// Live capacity limits — RwLock (not part of the inner Mutex) so the
+    /// Settings page can retune capacity at runtime (round-358). Reads use
+    /// the same poison-recovery as recover_guard; see set_limits for the
+    /// lock-ordering rule.
+    limits: RwLock<MemoryLimits>,
     inner: Mutex<Inner>,
 }
 
@@ -104,7 +108,7 @@ impl MemoryStore {
         let _ = std::fs::create_dir_all(&dir);
         let store = Self {
             dir,
-            limits,
+            limits: RwLock::new(limits),
             inner: Mutex::new(Inner {
                 by_id: HashMap::new(),
                 order: Vec::new(),
@@ -130,6 +134,21 @@ impl MemoryStore {
     /// ledger).
     pub fn total_bytes_live(&self) -> usize {
         recover_guard(&self.inner).total_bytes
+    }
+
+    /// Live capacity limits (Copy snapshot) — what GET /api/settings reports.
+    pub fn limits(&self) -> MemoryLimits {
+        *self.limits.read().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Replace the live capacity limits (PUT /api/settings) and enforce
+    /// immediately. Assign-then-enforce WITHOUT holding the write guard
+    /// across enforce_limits: that fn takes the inner Mutex and then reads
+    /// the limits lock, so nesting would invert the lock order against the
+    /// insert()/update() path (inner → limits) and could deadlock.
+    pub fn set_limits(&self, limits: MemoryLimits) {
+        *self.limits.write().unwrap_or_else(|p| p.into_inner()) = limits;
+        self.enforce_limits();
     }
 
     /// Path of the JSONL file.
@@ -592,7 +611,7 @@ impl MemoryStore {
     fn enforce_limits(&self) {
         self.rebuild_order();
         let mut guard = recover_guard(&self.inner);
-        let limits = self.limits;
+        let limits = self.limits();
         // Evicted/retired tombstones must be PERSISTED (append their record
         // line) — memory-only flips resurrect on restart (they were observed
         // live again after a process bounce).

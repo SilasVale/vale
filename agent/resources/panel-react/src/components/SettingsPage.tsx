@@ -9,6 +9,14 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
   const [bufferMb, setBufferMb] = useState("8");
   const [status, setStatus] = useState("");
 
+  // Memory capacity card (round-358: server-wired since round-357, editable
+  // here — previously config.yaml-only). Retention "" = keep forever.
+  const [memEntries, setMemEntries] = useState("10000");
+  const [memBytesMb, setMemBytesMb] = useState("64");
+  const [memRetention, setMemRetention] = useState("");
+  const [memStatus, setMemStatus] = useState("");
+  const [memBusy, setMemBusy] = useState(false);
+
   // Desktop-app card (Electron shell only): auto-launch on login.
   const desktopBridge = (window as any).valeDesktop;
   const [hasDesktopBridge] = useState(!!desktopBridge?.getAutoLaunch);
@@ -58,6 +66,9 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
           if (j.tunnel_configured) parts.push(j.tunnel_running ? "tunnel: running" : "tunnel: configured");
           setGwStatus(parts.join(" · "));
         }
+        if (j && typeof j.memory_max_entries === "number") setMemEntries(String(j.memory_max_entries));
+        if (j && typeof j.memory_max_bytes_mb === "number") setMemBytesMb(String(j.memory_max_bytes_mb));
+        if (j && typeof j.memory_retention_days === "number") setMemRetention(String(j.memory_retention_days));
       })
       .catch(() => setStatus("read failed"));
   }, []);
@@ -75,6 +86,31 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
       else setStatus("save failed");
     } catch { setStatus("save failed"); }
     finally { setSaveBusy(false); }
+  }
+
+  // Save memory capacity: entries + MiB required (>= 1); retention empty =
+  // keep forever, otherwise >= 1 day. Applies immediately server-side.
+  async function saveMemory() {
+    const entries = Number(memEntries);
+    const mb = Number(memBytesMb);
+    const ret = memRetention.trim() === "" ? null : Number(memRetention);
+    if (!Number.isInteger(entries) || entries < 1) { setMemStatus("entries must be >= 1"); return; }
+    if (!Number.isInteger(mb) || mb < 1) { setMemStatus("MiB must be >= 1"); return; }
+    if (ret !== null && (!Number.isInteger(ret) || ret < 1)) { setMemStatus("retention must be empty or >= 1 day"); return; }
+    setMemBusy(true);
+    try {
+      const j = await callApi("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          memory_max_entries: entries,
+          memory_max_bytes_mb: mb,
+          memory_retention_days: ret,
+        }),
+      });
+      if (j && j.ok) setMemStatus("saved — applies immediately");
+      else setMemStatus("save failed");
+    } catch { setMemStatus("save failed"); }
+    finally { setMemBusy(false); }
   }
 
   // Save gateway config + register + optional tunnel, one click.
@@ -224,11 +260,43 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
         <h3>Memory</h3>
         <p className="muted">
           Memory entries live in <code>&lt;install&gt;/memory/memory.jsonl</code>, shared across
-          AI clients (Claude Code / DSH / this desktop). Capacity is configured in
-          config.yaml <code>memory:</code> (max_entries / max_bytes / retention_days).
-          AI clients save knowledge via <code>memory_save</code> and query via
-          <code> memory_search</code>.
+          AI clients (Claude Code / DSH / this desktop). Capacity applies
+          immediately and persists across restarts; retention empty = keep
+          forever. AI clients save knowledge via <code>memory_save</code> and
+          query via <code> memory_search</code>.
         </p>
+        <div className="settings-row-bar">
+          <input
+            className="settings-input settings-input-narrow"
+            type="number"
+            min={1}
+            step={1}
+            value={memEntries}
+            onChange={(e) => setMemEntries(e.target.value)}
+            aria-label="Memory max entries"
+          />
+          <input
+            className="settings-input settings-input-narrow"
+            type="number"
+            min={1}
+            step={1}
+            value={memBytesMb}
+            onChange={(e) => setMemBytesMb(e.target.value)}
+            aria-label="Memory max MiB"
+          />
+          <input
+            className="settings-input settings-input-narrow"
+            type="number"
+            min={1}
+            step={1}
+            value={memRetention}
+            onChange={(e) => setMemRetention(e.target.value)}
+            placeholder="retention days (empty = forever)"
+            aria-label="Memory retention days"
+          />
+          <button className="btn btn-ghost btn-mini" onClick={saveMemory} disabled={memBusy} aria-label="Save memory capacity">Save</button>
+        </div>
+        {memStatus && <p className="hint">{memStatus}</p>}
         {onOpenMemory && <button className="btn btn-ghost btn-mini" onClick={onOpenMemory}>Open Memory</button>}
       </div>
 
