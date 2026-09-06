@@ -517,6 +517,41 @@ test("register: existing device name refuses with 409 (round-68 anti-takeover)",
   assert.equal(devs.find((d) => d.name === "d1").token, T64("c"), "production record untouched");
 });
 
+// round-461 (coverage-driven): register-with-key 400, rename bad-hostname
+// 400, tunnel-token claim 403 + vanishing-key cleanup had ZERO pins.
+test("register: valid key with bad body 400s; rename rejects a bad hostname", async () => {
+  __clearCaches();
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("c") }]);
+  await env.KEYS.put("regkey:kk44", "1");
+  const bad = await regPost(env, "/api/register", { key: "kk44", name: "bad name!", hostname: "d9.agent.saisi.online", token: T64("a") });
+  assert.equal(bad.status, 400);
+  const admin = await adminCookie();
+  const ren = await worker.fetch(req("POST", "/api/devices/d1/rename", {
+    body: { name: "d1", hostname: "not a host!!" }, cookie: admin,
+  }), env);
+  assert.equal(ren.status, 400);
+});
+
+test("tunnel-token: claimed key 403s; vanishing key releases the claim", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  await env.KEYS.put("regkey:kk55", "1");
+  await env.KEYS.put("cf:api_token", "CFTOKEN");
+  await env.KEYS.put("regclaim:kk55", "1");
+  assert.equal((await regPost(env, "/api/install/tunnel-token", { key: "kk55" })).status, 403);
+  await env.KEYS.delete("regclaim:kk55");
+  // Vanishing key: present at the gate, gone at the re-check — the claim
+  // must be released (else the key is bricked for 60s).
+  let regkeyGets = 0;
+  const innerGet = env.KEYS.get.bind(env.KEYS);
+  env.KEYS.get = async (k) => {
+    if (k === "regkey:kk55") return ++regkeyGets === 1 ? "1" : null;
+    return innerGet(k);
+  };
+  assert.equal((await regPost(env, "/api/install/tunnel-token", { key: "kk55" })).status, 403);
+  assert.equal(await innerGet("regclaim:kk55"), null, "claim released on re-check failure");
+});
+
 test("tunnel-token: valid key returns the CF token once, then feeds register via grant", async () => {
   __clearCaches();
   const env = makeEnv([]);
