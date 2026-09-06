@@ -1067,6 +1067,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   guarantee), poisoned-writer recovery. All green first try. Matrix:
   lib 231 (+6), feat-gated 237, clippy x2 + fmt + xwin clean; snapshot
   262->268.
+  ROUND-374 (2026-09-06): bootstrap.rs boot-path audit — create/quarantine/
+  token-recovery carries SIX incident fixes (57/104/119/121/138/140) with
+  ZERO tests. Added 8: missing→create+mint-once (second boot no rotation),
+  valid untouched, missing-token mint+persist, corrupt→quarantine+line
+  recovery, device_token>auth_token + space-colon + last-wins + comment
+  strip, proxy_secret carried, secret-less recovery mints+persists,
+  atomic_write roundtrip. All 8 green first try — every incident claim
+  holds. Matrix: lib 239 (+8), feat-gated 245, clippy x2 + fmt + xwin
+  clean; snapshot 268->276.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
