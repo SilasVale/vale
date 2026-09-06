@@ -129,6 +129,19 @@ test("reset-password: too-short new password → 400", async () => {
   assert.equal(res.status, 400);
 });
 
+// round-453 (coverage-driven): the reset-password rate-limit 429 arm had
+// ZERO pins. 30 malformed attempts (400s, still counted) then 31st → 429.
+test("reset-password: 30 attempts then 429 (per-IP rate limit)", async () => {
+  __clearCaches();
+  const env = makeResetEnv();
+  const headers = { "content-type": "application/json", "cf-connecting-ip": "192.0.2.99" };
+  for (let i = 0; i < 30; i++) {
+    const r = await apiFetch(env, "/api/auth/reset-password", { headers, body: JSON.stringify({}) });
+    assert.equal(r.status, 400, `attempt ${i + 1} passes the gate`);
+  }
+  assert.equal((await apiFetch(env, "/api/auth/reset-password", { headers, body: JSON.stringify({}) })).status, 429);
+});
+
 // SESSION_SECRET fail-closed issuance: correct credentials but no signing
 // secret → 500 config_error and NO session cookie (never fall back to the
 // admin password as HMAC key — it would be offline-brute-forceable).
