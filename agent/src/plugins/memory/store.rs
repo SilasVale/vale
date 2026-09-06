@@ -114,6 +114,11 @@ impl MemoryStore {
             }),
         };
         store.load();
+        // Round-357: enforce capacity on open, not just on mutation. Before
+        // this, a quiet device (no inserts/updates) kept expired records
+        // visible forever — retention only ran inside insert()/update().
+        // No-op for default limits (retention None, huge caps).
+        store.enforce_limits();
         // stage-n: physically drop tombstones from the previous process —
         // the append-only JSONL would otherwise keep every soft-deleted
         // record forever (disk + memory growth with no reclaim path).
@@ -1043,6 +1048,112 @@ mod tests {
             !rec.content
                 .contains(&"x".repeat(DEFAULT_MAX_CONTENT_BYTES + 1)),
             "long tail removed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Twin-pin: MemoryLimits::default() must equal a default MemoryConfig's
+    /// effective() — the literals live in two crates (core cannot import the
+    /// agent), so this test is the only thing keeping them in step.
+    #[test]
+    fn memory_limits_default_matches_config_effective() {
+        use vale_agent_core::Config;
+        let d = MemoryLimits::default();
+        let cfg = Config::default();
+        let (e, b, r) = cfg.memory.effective();
+        assert_eq!(d.max_entries, e, "max_entries twin drifted");
+        assert_eq!(d.max_bytes, b, "max_bytes twin drifted");
+        assert_eq!(d.retention_days, r, "retention_days twin drifted");
+    }
+
+    fn old_rec(title: &str, age_secs: u64) -> MemoryRecord {
+        let mut r = rec(title, "stale body");
+        let old = unix_now().saturating_sub(age_secs);
+        r.created_at = old;
+        r.updated_at = old;
+        r
+    }
+
+    fn retention_store(name: &str, days: u64) -> (MemoryStore, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("vale-mem-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        (
+            MemoryStore::new(
+                dir.clone(),
+                MemoryLimits {
+                    retention_days: Some(days),
+                    ..Default::default()
+                },
+            ),
+            dir,
+        )
+    }
+
+    #[test]
+    fn retention_soft_deletes_stale_on_insert() {
+        // Round-357: the retention branch had ZERO tests — the policy was
+        // documented but unreachable in production (config never wired).
+        let (s, dir) = retention_store("retention_on_insert", 30);
+        let stale = s.insert(old_rec("stale", 40 * 86400));
+        let fresh = s.insert(rec("fresh", "live body"));
+        assert!(
+            s.get(&stale, false).is_none(),
+            "40d-old record must retire under 30d retention"
+        );
+        assert!(
+            s.get(&stale, true).is_some(),
+            "retired record stays soft-deleted (restorable, on disk)"
+        );
+        assert!(
+            s.get(&fresh, false).is_some(),
+            "fresh record survives retention"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retention_enforced_on_open() {
+        // Round-357: before enforce-on-open, a quiet device kept expired
+        // records visible forever (retention only ran on mutation).
+        let dir = std::env::temp_dir().join(format!(
+            "vale-mem-test-retention-open-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Seed under default limits (no retention): the old record is live.
+        let id = {
+            let s = MemoryStore::new(dir.clone(), MemoryLimits::default());
+            let id = s.insert(old_rec("stale", 40 * 86400));
+            assert!(
+                s.get(&id, false).is_some(),
+                "no retention → old record live"
+            );
+            id
+        };
+        // Reopen WITH retention: boot enforcement retires it, and the
+        // startup compact reaps the tombstone — gone live AND gone deleted.
+        let s2 = MemoryStore::new(
+            dir.clone(),
+            MemoryLimits {
+                retention_days: Some(30),
+                ..Default::default()
+            },
+        );
+        assert!(
+            s2.get(&id, false).is_none(),
+            "reopen must retire the expired record"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retention_none_keeps_old_records() {
+        // Opt-in documented: default config (retention None) never retires.
+        let (s, dir) = tmp_store("retention_none");
+        let id = s.insert(old_rec("ancient", 400 * 86400));
+        assert!(
+            s.get(&id, false).is_some(),
+            "without retention even year-old records stay live"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

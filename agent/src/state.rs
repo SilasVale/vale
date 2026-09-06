@@ -107,10 +107,17 @@ impl AppState {
         let playwright = PlaywrightManager::new();
         // Device-local memory store — lives under the DATA dir
         // (data_dir()/memory). Capacity from config `memory:`
-        // (defaults when absent). Shared Arc with the MemoryPlugin.
+        // (defaults when absent; round-357 finally wires it — the block
+        // used to be documented-but-never-read). Shared Arc with the
+        // MemoryPlugin.
+        let (mem_entries, mem_bytes, mem_retention) = config.memory.effective();
         let memory = Arc::new(MemoryStore::new(
             crate::plugins::memory::default_memory_dir(),
-            MemoryLimits::default(),
+            MemoryLimits {
+                max_entries: mem_entries,
+                max_bytes: mem_bytes,
+                retention_days: mem_retention,
+            },
         ));
         // round-163: runner start/stop pushes `playwright-changed` over the
         // SSE bus — the panel dropped its 5s status poll for this event.

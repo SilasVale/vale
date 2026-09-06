@@ -10,6 +10,7 @@ pub struct Config {
     pub terminal: TerminalConfig,
     pub browser: BrowserConfig,
     pub platform: PlatformConfig,
+    pub memory: MemoryConfig,
 }
 
 /// Deployment endpoints — where this agent finds the console and the
@@ -73,6 +74,40 @@ pub struct ServerConfig {
 pub struct SerialConfig {
     pub default_baud_rate: u32,
     pub default_timeout_ms: u64,
+}
+
+/// Device-local memory store capacity (`memory:` block in config.yaml).
+/// ALL fields optional — absent means the compiled default. Round-357:
+/// this block used to be documented-but-never-read (state.rs always passed
+/// MemoryLimits::default()), so retention_days could never take effect in
+/// production. state.rs now builds limits from effective().
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// Max live entries before oldest-first eviction. 0/absent = 10_000.
+    pub max_entries: Option<usize>,
+    /// Max live content bytes before oldest-first eviction. 0/absent = 64 MiB.
+    pub max_bytes: Option<usize>,
+    /// Soft-delete records older than this on open + every mutation.
+    /// Absent = keep forever.
+    pub retention_days: Option<u64>,
+}
+
+impl MemoryConfig {
+    /// Resolve to concrete limits. Zero entries/bytes are treated as absent
+    /// (a `max_entries: 0` config would otherwise evict EVERYTHING on boot).
+    /// The literals twin vale-agent's MemoryLimits::default — pinned by the
+    /// `memory_limits_default_matches_config_effective` test over in the
+    /// agent crate (this crate cannot import it; core is the dependency).
+    pub fn effective(&self) -> (usize, usize, Option<u64>) {
+        (
+            self.max_entries.filter(|&n| n > 0).unwrap_or(10_000),
+            self.max_bytes
+                .filter(|&n| n > 0)
+                .unwrap_or(64 * 1024 * 1024),
+            self.retention_days,
+        )
+    }
 }
 
 /// DEAD CONFIG — browser automation (CDP/headless-Chrome) was retired; the
@@ -230,5 +265,20 @@ mod tests {
             "rejection must mention port: {err}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn memory_block_parses_partial_and_defaults() {
+        // Absent block → all None → compiled defaults via effective().
+        let cfg: Config = serde_yaml::from_str("server:\n  port: 18080\n").unwrap();
+        assert_eq!(cfg.memory.effective(), (10_000, 64 * 1024 * 1024, None));
+        // Partial block → set fields win, the rest default.
+        let cfg: Config =
+            serde_yaml::from_str("memory:\n  max_entries: 50\n  retention_days: 30\n").unwrap();
+        assert_eq!(cfg.memory.effective(), (50, 64 * 1024 * 1024, Some(30)));
+        // Zero entries/bytes are treated as absent (never "evict everything").
+        let cfg: Config =
+            serde_yaml::from_str("memory:\n  max_entries: 0\n  max_bytes: 0\n").unwrap();
+        assert_eq!(cfg.memory.effective(), (10_000, 64 * 1024 * 1024, None));
     }
 }
