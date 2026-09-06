@@ -1811,3 +1811,56 @@ test("og translate with an open breaker fails fast (502), upstream never called"
   assert.equal(res.status, 502);
   assert.match((await res.json()).error.message, /circuit open/);
 });
+
+// round-503 (coverage-driven): the /v1/chat/completions-path keyless guards
+// had ZERO pins — rounds 488/496/499 only exercised the /v1/messages ladder.
+// Same arms, OpenAI-format body on the chat path.
+test("chat/completions without the user's own key → 502, upstream never called", async () => {
+  const { env, a } = isoEnv({ aKeys: { DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined, OPENROUTER_API_KEY: undefined } });
+  const cases = [
+    ["nv/nvidia/nemotron-3-ultra-550b-a55b", /NVAPI_KEY not configured/],
+    ["gmi/MiniMaxAI/MiniMax-M3", /GMI_API_KEY not configured/],
+    ["amd/DeepSeek-V4-Flash", /AMD_API_KEY not configured/],
+    ["cm/deepseek/deepseek-v4-flash", /CMD_API_KEY not configured/],
+    ["ds/deepseek-v4-flash", /DEEPSEEK_API_KEY not configured/],
+    ["qw/qwen3.8-max-preview", /QWEN_API_KEY not configured/],
+    ["or/openai/gpt-5.6-luna:floor[1m]", /OPENROUTER_API_KEY not configured/],
+  ];
+  await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    async () => {
+      for (const [model, re] of cases) {
+        const res = await post(env, a.token, { model, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions");
+        assert.equal(res.status, 502, model);
+        assert.match((await res.json()).error.message, re, model);
+      }
+    },
+  );
+});
+
+// round-503b: the two remaining reachable chat-path arms — og keyless +
+// og breaker-open. NOTE: the chat-path openrouter arm is defensive-only:
+// the pre-branch or/ guard (same openRouterKey) always fires first.
+test("chat/completions og keyless and breaker-open → 502, upstream never called", async () => {
+  const { __clearDegradedCache } = await import("../src/reliability.ts");
+  const chatBody = (model) => ({ model, messages: [{ role: "user", content: "hi" }] });
+  await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    async () => {
+      const { env, a } = isoEnv({ aKeys: { OPENCODE_GO_API_KEY: undefined } });
+      const keyless = await post(env, a.token, chatBody("og/deepseek-v4-flash"), "/v1/chat/completions");
+      assert.equal(keyless.status, 502);
+      assert.match((await keyless.json()).error.message, /OPENCODE_GO_API_KEY not configured/);
+
+      __clearDegradedCache();
+      const { env: env2, token } = gwEnv({ breakerOpen: true });
+      const open = await post(env2, token, chatBody("og/deepseek-v4-flash"), "/v1/chat/completions");
+      assert.equal(open.status, 502);
+      assert.match((await open.json()).error.message, /circuit open/);
+    },
+  );
+});
