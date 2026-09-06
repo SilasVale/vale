@@ -930,6 +930,16 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Matrix: agent lib 202, clippy x2 + fmt + xwin clean, panel 93/93 (17
   files) + build clean incl. committed panel.js; snapshot 237->238.
   Round-7 CI (memory wiring) SUCCESS on GitHub.
+  ROUND-359 (2026-09-06): terminal error-propagation audit. Production
+  terminal code has zero unwrap/expect (all in tests); SFTP IO as Internal
+  is legitimate; one misclassification found: terminal_connect_saved
+  "unknown saved connection" used Internal for a caller error (exec's
+  "unknown job_id" correctly uses InvalidParams). Fix: InvalidParams +
+  known-id list for self-recovery (mirrors ctx::session_lost), incl. the
+  empty-store hint. Tests: 2 feature-gated cases via a new
+  #[cfg(all(test, feature))] TEST_DIR re-export (follows the file's cfg
+  boundary rule); default suite unaffected (202), feat-gated 206->208,
+  clippy x2 + xwin clean; snapshot feat count updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
