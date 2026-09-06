@@ -1725,6 +1725,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   failure strip leaves a trailing ")" on all messages (pre-existing
   cosmetic wart, out of scope). Suite 529->530; gates clean; snapshot
   updated; pushed.
+  ROUND-488 (2026-09-06): byok audit — the or/ keyless 502 arm had ZERO
+  pins. Added 1 in gateway.test.mjs (isoEnv undefined-key trick). Suite
+  530->531; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
