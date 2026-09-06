@@ -22,6 +22,23 @@ export function frameUrlOk(url: string): boolean {
   return isBaseOrigin(url || "");
 }
 
+// Main-window tripwire allow-list (did-navigate backstop): the desktop SPA
+// subtree of the base origin. STRING-PREFIX check (startsWith(BASE +
+// "/desktop")) was the exact class IPC audit #1 flagged — compare the PARSED
+// origin and the parsed pathname instead. data: (the wait page) and
+// about:blank are handled by the caller.
+export function isDesktopSpaUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.origin !== BASE_ORIGIN) return false;
+    // Segment semantics: /desktop and /desktop/* — /desktopx is a different
+    // path, not the SPA mount.
+    return u.pathname === "/desktop" || u.pathname.startsWith("/desktop/");
+  } catch {
+    return false;
+  }
+}
+
 // AI-opened browser windows must never reach file://, javascript: or
 // arbitrary schemes through the CDP-driven session windows.
 export function sanitizeBrowserUrl(url?: string): string {

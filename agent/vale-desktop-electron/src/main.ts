@@ -22,7 +22,7 @@ import * as net from "net";
 
 // url-policy.ts (shipped alongside, staged by vale update): pure
 // origin/URL predicates, unit-tested in test/url-policy.test.mjs.
-import { BASE, isBaseOrigin, frameUrlOk, sanitizeBrowserUrl } from "./url-policy";
+import { BASE, isBaseOrigin, frameUrlOk, isDesktopSpaUrl, sanitizeBrowserUrl } from "./url-policy";
 // IPC audit #3: /api/status is TOKEN-GATED (same fact the watchdog fix cites);
 // credential-less fetches got 401 -> version title + tray vitals were DEAD on
 // every configured device. The shell runs as the interactive admin, and the
@@ -612,15 +612,6 @@ ipcMain.handle("desktop:set-auto-launch", async (e, enabled: boolean) =>
   frameOk(e) ? autoLaunchTaskSet(!!enabled) : { ok: false, error: "forbidden frame" });
 
 // --- Agent lifecycle (stage-m: Rust owns it; the shell only probes/triggers) ---
-/** True if ANY process is listening on 127.0.0.1:18080 (TCP probe). */
-function portBusy(port: number, timeoutMs = 1000): Promise<boolean> {
-  return new Promise((res) => {
-    const sock = net.connect({ host: "127.0.0.1", port }, () => { sock.destroy(); res(true); });
-    sock.on("error", () => res(false));
-    sock.setTimeout(timeoutMs, () => { sock.destroy(); res(false); });
-  });
-}
-
 // review #2 (HIGH): a raw TCP connect only proves the PORT is held — an
 // agent that is wedged (deadlock / OOM-parked) but still listening keeps the
 // connect succeeding, so the watchdog's miss counter NEVER reached the gate,
@@ -782,7 +773,10 @@ if (gotTheLock) {
     let snappingBack = false;
     win.webContents.on("did-navigate", (_e, url) => {
       if (snappingBack) return;
-      if (url.startsWith(`${BASE}/desktop`) || url.startsWith("data:")) return;
+      // Parsed-origin + parsed-pathname allow-list (url-policy): the string
+      // startsWith was the exact class IPC audit #1 flagged. The data: wait
+      // page and about:blank stay allowed at the caller.
+      if (isDesktopSpaUrl(url) || url.startsWith("data:") || url === "about:blank") return;
       if (url === "about:blank") return;
       console.log(`[vale] main-window tripwire: blocked stray navigation to ${url.slice(0, 80)}`);
       snappingBack = true;
@@ -801,7 +795,14 @@ if (gotTheLock) {
     // (startup race, crash, update mid-swap); poll 18080 and retry with
     // exponential backoff (2s → 4s → 8s → 30s cap) so a dead agent doesn't
     // spam retries.
-    const agentReady = async (): Promise<boolean> => portBusy(18080, 800);
+    // stage-n: load /desktop/ only when the agent is actually LISTENING AND
+    // ANSWERING. The probe must be HTTP liveness (agentResponds), not the raw
+    // TCP connect (portBusy): review #2 established that a wedged-but-
+    // listening agent holds the port yet never answers — with portBusy here
+    // agentReady() stayed true, so the miss counter below NEVER incremented
+    // and the watchdog could not fire (the device stayed stuck in silence,
+    // the exact failure the watchdog exists to prevent).
+    const agentReady = async (): Promise<boolean> => agentResponds(800);
     // stage-n: the wait page now carries a "Start Agent" action — the
     // header comment promised it but it never existed. The button calls the
     // shell's own /api/shell/start-agent (schtasks /run ValeAgent — the
@@ -980,7 +981,9 @@ if (gotTheLock) {
       return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
     };
     const refreshTray = async (): Promise<void> => {
-      const running = await portBusy(18080, 600);
+      // HTTP liveness, not the TCP probe (see agentReady above): a wedged-
+      // but-listening agent must show as STOPPED, not "running".
+      const running = await agentResponds(1000);
       let version = trayAgentVersion;
       let uptime = trayAgentUptime;
       let sessions = trayAgentSessions;

@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BASE_ORIGIN = exports.BASE = void 0;
 exports.isBaseOrigin = isBaseOrigin;
 exports.frameUrlOk = frameUrlOk;
+exports.isDesktopSpaUrl = isDesktopSpaUrl;
 exports.sanitizeBrowserUrl = sanitizeBrowserUrl;
 exports.BASE = "http://127.0.0.1:18080";
 exports.BASE_ORIGIN = new URL(exports.BASE).origin;
@@ -28,6 +29,24 @@ function isBaseOrigin(url) {
 // event.senderFrame.url).
 function frameUrlOk(url) {
     return isBaseOrigin(url || "");
+}
+// Main-window tripwire allow-list (did-navigate backstop): the desktop SPA
+// subtree of the base origin. STRING-PREFIX check (startsWith(BASE +
+// "/desktop")) was the exact class IPC audit #1 flagged — compare the PARSED
+// origin and the parsed pathname instead. data: (the wait page) and
+// about:blank are handled by the caller.
+function isDesktopSpaUrl(url) {
+    try {
+        const u = new URL(url);
+        if (u.origin !== exports.BASE_ORIGIN)
+            return false;
+        // Segment semantics: /desktop and /desktop/* — /desktopx is a different
+        // path, not the SPA mount.
+        return u.pathname === "/desktop" || u.pathname.startsWith("/desktop/");
+    }
+    catch {
+        return false;
+    }
 }
 // AI-opened browser windows must never reach file://, javascript: or
 // arbitrary schemes through the CDP-driven session windows.

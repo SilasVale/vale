@@ -30,3 +30,20 @@ test("sanitizeBrowserUrl: http/https/about:blank only", () => {
   assert.equal(sanitizeBrowserUrl("https://ok.example/a?x=1"), "https://ok.example/a?x=1");
   assert.equal(sanitizeBrowserUrl(undefined), "about:blank");
 });
+
+// Main-window tripwire allow-list: parsed-origin + parsed-pathname (the
+// string-prefix startsWith(BASE + "/desktop") it replaced was the exact
+// class IPC audit #1 flagged).
+test("isDesktopSpaUrl: parsed origin + /desktop subtree only", async () => {
+  const { isDesktopSpaUrl } = await import("../src/url-policy.js");
+  assert.equal(isDesktopSpaUrl("http://127.0.0.1:18080/desktop"), true);
+  assert.equal(isDesktopSpaUrl("http://127.0.0.1:18080/desktop/settings"), true);
+  assert.equal(isDesktopSpaUrl("http://127.0.0.1:18080/desktopx"), false, "/desktop must be a path segment");
+  assert.equal(isDesktopSpaUrl("http://127.0.0.1:18080/"), false);
+  assert.equal(isDesktopSpaUrl("http://127.0.0.1:18080.evil.com/desktop"), false, "sibling-host lookalike");
+  assert.equal(isDesktopSpaUrl("http://127.0.0.1:18080@evil.com/desktop"), false, "userinfo trick");
+  assert.equal(isDesktopSpaUrl("https://127.0.0.1:18080/desktop"), false, "scheme is part of the origin");
+  assert.equal(isDesktopSpaUrl("data:text/html,wait"), false);
+  assert.equal(isDesktopSpaUrl("about:blank"), false);
+  assert.equal(isDesktopSpaUrl("not a url"), false);
+});
