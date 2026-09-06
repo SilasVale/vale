@@ -1467,6 +1467,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   hides + drops overlays. tsc gate caught 2 slips (Session fields,
   mock.calls tuple) before commit. Panel 169->174 (31->32 files);
   rebuilt, panel.js identical; pushed.
+  ROUND-433 (2026-09-06): panel remainder sweep — StatusBar + BrowserPage
+  were the last two components with ZERO tests (all others covered).
+  Added 4: live count singular/plural/hidden, error styling + reconnect
+  chip, bridge→embedded controller, bridgeless→desktop hint. Panel
+  174->178 (32->33 files); rebuilt, panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
