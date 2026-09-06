@@ -66,11 +66,22 @@ test("posix installer executes and installs a working, byte-identical CLI", asyn
   assert.equal(fs.readFileSync(installed, "utf8"), cli, "decoded payload is byte-identical");
   // The decoded copy RUNS: a check against a refused gateway exits non-zero
   // with the health error (proves execution, not just presence on disk).
+  // Isolate from the ambient ~/.claude/settings.json: vale check reads
+  // settings FIRST (VALE_SETTINGS, else ~/.claude/settings.json) and exits
+  // before the health probe when the file is missing — on machines without
+  // that file (CI runners) this assertion saw the settings error instead
+  // of the health error. A temp VALE_SETTINGS makes it deterministic.
+  const settings = path.join(dest, "settings.json");
+  await fsp.writeFile(settings, JSON.stringify({ env: {} }));
   let code = 0;
   let out = "";
   try {
     execFileSync(process.execPath, [installed, "check"], {
-      env: { ...process.env, VALE_GATEWAY: "http://127.0.0.1:1" },
+      env: {
+        ...process.env,
+        VALE_GATEWAY: "http://127.0.0.1:1",
+        VALE_SETTINGS: settings,
+      },
       stdio: "pipe",
     });
   } catch (e) {
