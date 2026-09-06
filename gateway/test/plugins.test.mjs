@@ -655,6 +655,82 @@ test("me/keys DELETE: 401 unauth, 400 unknown name, deletes by query param", asy
   assert.deepEqual(JSON.parse(await env.KEYS.get("ukeys:bob")), {});
 });
 
+// round-446 (coverage-driven): POST /api/me/keys/test had ZERO route pins
+// — the per-provider live-probe arms (incl. the og SSE first-chunk read).
+test("me/keys/test: 401/400 gates, missing key, provider ok/fail shapes", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const post = (cookie, body) => worker.fetch(new Request("https://x/api/me/keys/test", {
+    method: "POST",
+    headers: { ...(cookie ? { cookie: `ag_session=${cookie}` } : {}), "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }), env);
+  assert.equal((await post(null, { name: "DEEPSEEK_API_KEY" })).status, 401);
+  const bob = await issueSessionToken("pw", "bob", "user");
+  assert.equal((await post(bob, { name: "NOPE_KEY" })).status, 400);
+  assert.deepEqual(await (await post(bob, { name: "DEEPSEEK_API_KEY" })).json(),
+    { ok: false, name: "DEEPSEEK_API_KEY", detail: "Key not configured" });
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ DEEPSEEK_API_KEY: "ds-k", AMD_API_KEY: "amd-k" }));
+  __clearCaches();
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("api.deepseek.com")) return new Response("{}", { status: 200 });
+    if (u.includes("radeon")) return new Response(JSON.stringify({ data: [{ id: "m1" }, { id: "m2" }] }), { status: 200 });
+    return new Response("no", { status: 401 });
+  };
+  try {
+    const ds = await (await post(bob, { name: "DEEPSEEK_API_KEY" })).json();
+    assert.deepEqual(ds, { ok: true, name: "DEEPSEEK_API_KEY", status: 200, detail: "DeepSeek auth OK" });
+    const amd = await (await post(bob, { name: "AMD_API_KEY" })).json();
+    assert.equal(amd.ok, true);
+    assert.ok(amd.detail.includes("2 models: m1, m2"), `model list surfaced: ${amd.detail}`);
+    const or = await (await post(bob, { name: "OPENROUTER_API_KEY" })).json();
+    assert.deepEqual(or, { ok: false, name: "OPENROUTER_API_KEY", detail: "Key not configured" });
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("me/keys/test: og SSE arm ok on first data chunk, fail without it; throw is safe", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const bob = await issueSessionToken("pw", "bob", "user");
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ OPENCODE_GO_API_KEY: "og-k" }));
+  __clearCaches();
+  const post = (body) => worker.fetch(new Request("https://x/api/me/keys/test", {
+    method: "POST",
+    headers: { cookie: `ag_session=${bob}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }), env);
+  const real = globalThis.fetch;
+  const sse = (chunk) => new Response(chunk, { status: 200, headers: { "content-type": "text/event-stream" } });
+  globalThis.fetch = async () => sse('data: {"x":1}\n\n');
+  try {
+    const ok = await (await post({ name: "OPENCODE_GO_API_KEY" })).json();
+    assert.equal(ok.ok, true);
+    assert.equal(ok.detail, "OpenCode Go auth OK");
+  } finally {
+    globalThis.fetch = real;
+  }
+  globalThis.fetch = async () => sse(': comment only\n\n');
+  try {
+    const bad = await (await post({ name: "OPENCODE_GO_API_KEY" })).json();
+    assert.equal(bad.ok, false);
+    assert.ok(bad.detail.includes("no stream data"), bad.detail);
+  } finally {
+    globalThis.fetch = real;
+  }
+  globalThis.fetch = async () => { throw new Error("boom"); };
+  try {
+    const err = await (await post({ name: "OPENCODE_GO_API_KEY" })).json();
+    assert.equal(err.ok, false);
+    assert.ok(err.detail.includes("Test failed"), err.detail);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 // round-445 (coverage-driven): GET/PUT /api/me/route had ZERO route pins.
 test("me/route: 401 unauth; PUT validates whitelist; GET shows stored + effective", async () => {
   __clearCaches();
