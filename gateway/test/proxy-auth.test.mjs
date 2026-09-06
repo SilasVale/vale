@@ -155,6 +155,35 @@ test("proxy cookie: minted per-device cookie authenticates; malformed value is a
   });
 });
 
+// round-470 (coverage-driven): the JSON proxy_secret-strip arms had ZERO
+// pins (round-104 escalation guard: a plugin-token holder must never read
+// the secret off /api/status).
+test("proxy json: proxy_secret stripped, other json intact, non-json falls through", async () => {
+  const bodies = [
+    JSON.stringify({ proxy_secret: "s3cret", version: "1.0" }),
+    JSON.stringify({ version: "1.0" }),
+    "not-json{{{",
+  ];
+  for (const [i, body] of bodies.entries()) {
+    const real = globalThis.fetch;
+    globalThis.fetch = async () => new Response(body, {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+    try {
+      const res = await worker.fetch(new Request(PROXY_URL, {
+        headers: { authorization: "Bearer tok-d1" },
+      }), makeEnv());
+      assert.equal(res.status, 200);
+      const text = await res.text();
+      assert.ok(!text.includes("s3cret"), `case ${i}: secret never leaks`);
+      if (i === 1) assert.ok(text.includes('"version":"1.0"'), "clean json passes through");
+      if (i === 2) assert.equal(text, body, "non-json falls through verbatim");
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+});
+
 // ── Session path (unchanged admin behavior) ───────────────────
 
 test("proxy: admin session cookie still works", async () => {
