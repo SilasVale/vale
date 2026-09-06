@@ -232,3 +232,53 @@ test("proxy: metadata/unspec/mapped hostnames refused without dialing (SSRF gate
     assert.equal(calls.length, 0, "no upstream dial for blocked hosts");
   });
 });
+
+// ── Proxy pure helpers (round-404: rewriteDeviceBody/decodeDeviceName had
+// zero direct tests — only indirect handler exercise) ──
+
+test("decodeDeviceName: decodes, passes plain through, null on bad escapes", async () => {
+  const { decodeDeviceName } = await import("../src/plugins/device-proxy.ts");
+  assert.equal(decodeDeviceName("d1"), "d1");
+  assert.equal(decodeDeviceName("my%20device"), "my device");
+  assert.equal(decodeDeviceName("%zz"), null);
+  assert.equal(decodeDeviceName("%"), null);
+});
+
+test("rewriteDeviceBody via proxy: mount insert, token scrub, no double-prefix", async () => {
+  // rewriteDeviceBody is module-private; exercise it through the admin
+  // proxy path (static imports above) with a device serving crafted HTML.
+  const env = makeBaseEnv({
+    devices: [DEVICE],
+    users: { admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "" } },
+    kv: { _admin_seeded: "1", "auth:admin_password": ADMIN_PW },
+  });
+  const cookie = await issueSessionToken(ADMIN_PW, "admin", "admin");
+  const html = [
+    '<script src="/app.js"></script>',
+    '<link href="/styles.css">',
+    "<script>fetch(`/api/events`).then()</script>",
+    '<script src="/api/devices/d1/proxy/app.js"></script>',
+    '<script>window.__PANEL_TOKEN__ = "PERMANENT-SECRET";</script>',
+    "<script>window.__PANEL_TOKEN__='SINGLE-SECRET';</script>",
+    "<p>plain /api/ mention without a quote stays</p>",
+  ].join("");
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+  try {
+    const res = await worker.fetch(
+      new Request("https://x/api/devices/d1/proxy/panel/", { headers: { cookie: `${SESSION_COOKIE}=${cookie}` } }),
+      env,
+    );
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    assert.match(text, /"\/api\/devices\/d1\/proxy\/app\.js"/);
+    assert.match(text, /"\/api\/devices\/d1\/proxy\/styles\.css"/);
+    assert.match(text, /`\/api\/devices\/d1\/proxy\/api\/events`/);
+    assert.ok(!text.includes("/api/devices/d1/proxy/api/devices/d1/proxy/"), "already-mounted path must not double-prefix");
+    assert.ok(!text.includes("PERMANENT-SECRET") && !text.includes("SINGLE-SECRET"), "panel token scrubbed");
+    assert.match(text, /window\.__PANEL_TOKEN__=""/);
+    assert.match(text, /plain \/api\/ mention without a quote stays/);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
