@@ -1534,6 +1534,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   sess-revoked record + 24h-capped TTL (round-122/124 lessons) +
   client-cookie clear + revoked cookie 401s a gated route. Suite
   458->459; gates clean; snapshot updated; pushed.
+  ROUND-443 (2026-09-06): me-routes audit — /api/me/usproxy +
+  /api/me/token/regenerate had ZERO route pins. Added 2 in
+  plugins.test.mjs: 401/403 + toggle roundtrip + explicit-OFF persist
+  (round-94 e2e), rotate-kills-old. Self-caught: helper dropped env
+  (500s, isolated-probe comparison found it). Suite 459->461; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
