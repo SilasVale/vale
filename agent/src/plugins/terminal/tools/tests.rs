@@ -797,3 +797,70 @@ fn execute_result_timeout_has_no_note() {
         "timeout must not carry the partial note: {text}"
     );
 }
+
+// ── terminal_connect_saved unknown-id (round-359) ──────────────
+// Unknown saved-connection id is a CALLER error (InvalidParams with the
+// known-id list for self-recovery), not Internal. Feature-gated: the
+// lookup path only exists with the real terminal backend.
+
+#[cfg(feature = "terminal")]
+fn isolated_conns(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("vale-conn-tool-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::tools::terminal::TEST_DIR.with(|d| *d.borrow_mut() = Some(dir.clone()));
+    dir
+}
+
+#[cfg(feature = "terminal")]
+fn unisolate_conns(dir: &std::path::Path) {
+    crate::tools::terminal::TEST_DIR.with(|d| *d.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[cfg(feature = "terminal")]
+#[tokio::test]
+async fn connect_saved_unknown_id_is_invalid_params_with_known_list() {
+    use vale_agent_core::DeviceError;
+    let dir = isolated_conns("unknown");
+    crate::tools::terminal::conn_remember("ssh", "u@h:22", "seeded", &serde_json::Map::new())
+        .unwrap();
+    let (tools, _buf) = seeded_tools();
+    let err = find(&tools, "terminal_connect_saved")
+        .handler
+        .call(json!({"id": "ssh:nobody@nowhere:22"}))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, DeviceError::InvalidParams { .. }),
+        "unknown id must be InvalidParams, got: {err}"
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("unknown saved connection: ssh:nobody@nowhere:22"),
+        "must name the bad id: {msg}"
+    );
+    assert!(
+        msg.contains("ssh:u@h:22"),
+        "must list the known id for recovery: {msg}"
+    );
+    unisolate_conns(&dir);
+}
+
+#[cfg(feature = "terminal")]
+#[tokio::test]
+async fn connect_saved_unknown_id_empty_store_hint() {
+    let dir = isolated_conns("empty");
+    let (tools, _buf) = seeded_tools();
+    let err = find(&tools, "terminal_connect_saved")
+        .handler
+        .call(json!({"id": "ssh:nobody@nowhere:22"}))
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("none saved yet"),
+        "empty store must say so: {msg}"
+    );
+    unisolate_conns(&dir);
+}

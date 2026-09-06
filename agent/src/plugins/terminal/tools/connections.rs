@@ -104,10 +104,35 @@ pub(super) fn tool_connect_saved(
                 // round-108: saved connections are terminal-feature only.
                 #[cfg(feature = "terminal")]
                 {
-                    let conn = crate::tools::terminal::conn_list()
-                        .into_iter()
+                    // Round-359: unknown id is a CALLER error, not an internal
+                    // one (was DeviceError::Internal — same class as exec's
+                    // "unknown job_id", which correctly uses InvalidParams).
+                    // Enrich like ctx::session_lost so the caller can
+                    // self-recover from terminal_saved_connections.
+                    let conns = crate::tools::terminal::conn_list();
+                    let conn = conns
+                        .iter()
                         .find(|c| c.get("id").and_then(|v| v.as_str()) == Some(id.as_str()))
-                        .ok_or_else(|| DeviceError::Internal { message: format!("unknown saved connection: {id}") })?;
+                        .cloned()
+                        .ok_or_else(|| {
+                            let known = conns
+                                .iter()
+                                .filter_map(|c| {
+                                    c.get("id").and_then(|v| v.as_str())
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            let known = if known.is_empty() {
+                                "(none saved yet — successful terminal_open calls save automatically; list via terminal_saved_connections)".to_string()
+                            } else {
+                                known
+                            };
+                            DeviceError::InvalidParams {
+                                message: format!(
+                                    "unknown saved connection: {id}. Saved connections: [{known}]."
+                                ),
+                            }
+                        })?;
                     let mut open_params = conn.get("params").and_then(|p| p.as_object()).cloned().unwrap_or_default();
                     // Overrides: rows/cols from the caller win.
                     if let Some(r) = params.get("rows") { open_params.insert("rows".into(), r.clone()); }

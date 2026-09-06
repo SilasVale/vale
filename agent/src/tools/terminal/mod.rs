@@ -30,6 +30,11 @@ mod stub;
 
 #[cfg(feature = "terminal")]
 pub use connections::{forget as conn_forget, list as conn_list, remember as conn_remember};
+// Test-only store isolation (round-359): plugin-layer tool tests seed the
+// saved-connection file through this thread-local, mirroring the
+// secrets.rs harness. cfg(test) keeps it out of every shipped build.
+#[cfg(all(test, feature = "terminal"))]
+pub(crate) use connections::TEST_DIR;
 pub use secrets::{secret_delete, secret_get, secret_list, secret_set};
 
 use serde::{Deserialize, Serialize};
