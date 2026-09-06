@@ -1103,6 +1103,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   to exactly 3 (newest priors + live stamp survive), day_bucket UTC
   boundaries. Matrix: lib 253 (+3), feat-gated 259, clippy x2 + fmt +
   xwin clean; snapshot 287->290.
+  ROUND-378 (2026-09-06): metrics audit — the CPU-delta math lived inline
+  in cfg(windows) code (untestable on Linux; xwin only compiles).
+  Extracted pure cpu_busy_pct (same saturating semantics) + tests: 50%/
+  0%/100% bounds, zero-tick→None (not NaN), counter-regress→None; plus
+  the non-Windows all-None degradation contract (was vacuously covered).
+  xwin confirms the refactor compiles on Windows. Matrix: lib 255 (+2),
+  feat-gated 261, clippy x2 + fmt + xwin clean; snapshot 290->292.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
