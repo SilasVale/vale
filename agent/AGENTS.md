@@ -1544,6 +1544,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ZERO route pins (store-level covered, handler not). Added 1 in
   plugins.test.mjs: 401/400 + query-param delete empties the key map.
   Suite 461->462; gates clean; snapshot updated; pushed.
+  ROUND-445 (2026-09-06): me-route audit — GET/PUT /api/me/route had
+  ZERO route pins. Added 1 in plugins.test.mjs: 401s, whitelist 400,
+  store→GET→clear roundtrip, effective-mirrors-stored. Self-caught:
+  effective is null without stored route (no resolver wiring in test).
+  Suite 462->463; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
