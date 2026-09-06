@@ -22,8 +22,7 @@ import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { issueSessionToken, verifySessionToken, SESSION_COOKIE } from "../src/auth.ts";
 import { callTool, DEVICE_UNREACHABLE } from "../src/mcp.ts";
-import { __clearCaches } from "../src/store.ts";
-
+import { __clearCaches, __resetSeedForTests } from "../src/store.ts";
 const ADMIN_PW = "test-admin-password";
 
 /* ---- 4. fresh-deploy seed + bootstrap (runs first, see note above) ---- */
@@ -84,6 +83,74 @@ test("fresh deploy (no CLIENT_KEY): seed mints admin token; bootstrap + login wo
   );
   assert.equal(login.status, 200);
   assert.ok(String(login.headers.get("set-cookie") || "").includes(`${SESSION_COOKIE}=`));
+});
+
+// round-464 (coverage-driven): GET /api/admin/public, GET /api/admin/password
+// set-status, and the session-gated password-CHANGE arms had ZERO pins.
+test("admin public route info needs no session; password set-status is admin-gated", async () => {
+  __resetSeedForTests(); // seedAdmin is process-once; the file's first test already spent it
+  const env = freshEnv();
+  const pub = await worker.fetch(new Request("https://x/api/admin/public"), env);
+  assert.equal(pub.status, 200);
+  const info = await pub.json();
+  assert.ok(Array.isArray(info.routes) && info.routes.length > 0);
+  assert.ok(Array.isArray(info.models) && info.models.length > 0);
+  assert.equal((await worker.fetch(new Request("https://x/api/admin/password"), env)).status, 401);
+  const admin = JSON.parse(env._kv.get("user:admin"));
+  const boot = await worker.fetch(
+    new Request("https://x/api/admin/password", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "newpass123", adminKey: admin.token }),
+    }),
+    env,
+  );
+  assert.equal(boot.status, 200);
+  const sess = `${SESSION_COOKIE}=${await issueSessionToken(env.SESSION_SECRET, "admin", "admin")}`;
+  assert.deepEqual(
+    await (await worker.fetch(new Request("https://x/api/admin/password", { headers: { cookie: sess } }), env)).json(),
+    { set: true },
+  );
+});
+
+test("admin password change: session gate, short 400, wrong-current 403, success rotates", async () => {
+  __resetSeedForTests();
+  const env = freshEnv();
+  await worker.fetch(new Request("https://x/api/admin/public"), env); // triggers seed
+  const admin = JSON.parse(env._kv.get("user:admin"));
+  await worker.fetch(
+    new Request("https://x/api/admin/password", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "newpass123", adminKey: admin.token }),
+    }),
+    env,
+  );
+  const put = (headers, body) =>
+    worker.fetch(
+      new Request("https://x/api/admin/password", {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...headers },
+        body: JSON.stringify(body),
+      }),
+      env,
+    );
+  assert.equal((await put({}, { password: "another123", currentPassword: "newpass123" })).status, 401);
+  const sess = { cookie: `${SESSION_COOKIE}=${await issueSessionToken(env.SESSION_SECRET, "admin", "admin")}` };
+  assert.equal((await put(sess, { password: "short", currentPassword: "newpass123" })).status, 400);
+  assert.equal((await put(sess, { password: "another123", currentPassword: "wrongpass" })).status, 403);
+  const ok = await put(sess, { password: "another123", currentPassword: "newpass123" });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { ok: true, changed: true });
+  const login = await worker.fetch(
+    new Request("https://x/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "another123" }),
+    }),
+    env,
+  );
+  assert.equal(login.status, 200, "rotated password logs in");
 });
 
 /* ---- 1. /api/register suffix allowlist ---- */
