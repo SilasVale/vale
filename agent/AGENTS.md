@@ -1597,6 +1597,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   mappings had ZERO pins. Added 1 in plugins.test.mjs: exact mapped
   shapes incl. junk-field stripping. Suite 475->476; gates clean;
   snapshot updated; pushed.
+  ROUND-457 (2026-09-06): final-arms audit — logout 429+clear, AMD/OG
+  usage throws, AMD non-JSON had ZERO pins. Added 2 in
+  plugins.test.mjs. plugins/auth.ts now ~98% (rest is route-unreachable
+  defense). Suite 476->478; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
