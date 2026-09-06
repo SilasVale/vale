@@ -1173,6 +1173,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   wrong-secret/tamper/malformed/expiry-distinct, padding restore,
   cookie parse/headers. Suite 317->330; tsc/eslint/prettier clean;
   snapshot updated.
+  ROUND-387 (2026-09-06): gateway session.ts flow audit — secret
+  preference, fail-closed issuance, cookie accept/revoke/tamper/
+  disabled/rotation, admin triple had zero DIRECT tests. Added 11 in
+  session.test.mjs (distinct ids for the module cache). Suite 330->341;
+  tsc clean; snapshot updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
