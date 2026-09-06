@@ -1529,6 +1529,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   mid-round: shared 10/min/IP gate 429'd my own tests — per-test IPs
   via cf-connecting-ip (req() gained an ip option). Suite 455->458;
   gates clean; snapshot updated; pushed.
+  ROUND-442 (2026-09-06): logout-write audit — the blacklist write had
+  ZERO direct pins (only verify-side). Added 1 in plugins.test.mjs:
+  sess-revoked record + 24h-capped TTL (round-122/124 lessons) +
+  client-cookie clear + revoked cookie 401s a gated route. Suite
+  458->459; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
