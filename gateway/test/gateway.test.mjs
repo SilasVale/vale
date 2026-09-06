@@ -1670,3 +1670,27 @@ test("or/ without the user's own key → 502, upstream never called", async () =
   assert.equal(res.status, 502);
   assert.match((await res.json()).error.message, /OPENROUTER_API_KEY not configured/);
 });
+
+// round-496 (coverage-driven): the nv/gmi/amd/cm keyless 502 arms had ZERO
+// pins (isoEnv users carry none of those keys by default).
+test("nv/gmi/amd/cm without the user's own key → 502, upstream never called", async () => {
+  const { env, a } = isoEnv();
+  const cases = [
+    ["nv/nvidia/nemotron-3-ultra-550b-a55b", /NVAPI_KEY not configured/],
+    ["gmi/MiniMaxAI/MiniMax-M3", /GMI_API_KEY not configured/],
+    ["amd/DeepSeek-V4-Flash", /AMD_API_KEY not configured/],
+    ["cm/deepseek/deepseek-v4-flash", /CMD_API_KEY not configured/],
+  ];
+  await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    async () => {
+      for (const [model, re] of cases) {
+        const res = await post(env, a.token, { ...ogBody(), model });
+        assert.equal(res.status, 502, model);
+        assert.match((await res.json()).error.message, re, model);
+      }
+    },
+  );
+});
