@@ -14,6 +14,14 @@
  * (The parallel container.ts/types.ts "lifecycle" implementation was removed:
  * it was never wired in — its dispatch was a placeholder returning null — and
  * the duplicated PluginContext type let plugins drift between two contracts.)
+ *
+ * DIRECTORY CONTRACT (layering review 2026-09-06): plugins/ holds (1) the
+ * route plugins themselves, (2) this framework, and (3) each plugin's
+ * EXCLUSIVE collaborator modules — device-proxy.ts (devices only),
+ * translate-vision.ts + model-route.ts (translate only). A module with two
+ * live consumers is NOT a private collaborator: it belongs in src/ as
+ * foundation. Currently every collaborator has exactly one consumer, which
+ * is what keeps them here; revisit on the first second consumer.
  */
 
 /** Workers env bindings — the shape we touch (typed loosely; full bindings live in wrangler config). */

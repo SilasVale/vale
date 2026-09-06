@@ -411,3 +411,32 @@ test("resolveAutoModel: chosen model not in whitelist → falls back to default 
   const env = routeEnv("xx/nope", false, "u-nope");
   assert.equal(await resolveAutoModel(env, "u-nope"), "ds/deepseek-v4-flash");
 });
+
+// ── lib/ratelimit.ts factory security semantics ──────────────────────
+// Pin the round-104 KV-quota invariant at the factory level: a memory-only
+// limiter NEVER writes KV (the historical per-site implementations could
+// drift toward "helpful" persistence — that would reopen the write-quota
+// exhaustion vector on public endpoints).
+test("createIpRateLimiter: kvSeed=false never touches KV; kvSeed=true persists once per bucket", async () => {
+  const { createIpRateLimiter } = await import("../src/lib/ratelimit.ts");
+  const kv = new Map();
+  const writes = [];
+  const env = {
+    KEYS: {
+      async get(k) { return kv.has(k) ? kv.get(k) : null; },
+      async put(k, v) { writes.push([k, v]); kv.set(k, v); },
+      async delete(k) { kv.delete(k); },
+    },
+  };
+  const req = () => new Request("https://x/api", { headers: { "cf-connecting-ip": "1.2.3.4" } });
+
+  const memoryOnly = createIpRateLimiter({ name: "mem-rate", limit: 2, windowMs: 60_000 });
+  for (let i = 0; i < 5; i++) await memoryOnly(req(), env);
+  assert.equal(writes.length, 0, "kvSeed=false must not write KV");
+  assert.equal(kv.size, 0);
+
+  const seeded = createIpRateLimiter({ name: "seed-rate", limit: 100, windowMs: 60_000, kvSeed: true });
+  for (let i = 0; i < 3; i++) await seeded(req(), env);
+  assert.equal(writes.length, 1, "kvSeed=true persists exactly once per bucket per IP (not per request)");
+  assert.equal(kv.get("seed-rate:1.2.3.4:" + Math.floor(Date.now() / 60000)), "1");
+});
