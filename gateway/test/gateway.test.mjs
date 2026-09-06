@@ -119,6 +119,27 @@ test("og/deepseek-v4-flash goes to zen chat/completions with Bearer (translate p
   assert.equal(body.content[0].text, "ok");
 });
 
+// round-478 (coverage-driven): the stream-ignored upstream arms (JSON
+// instead of SSE → one-shot SSE / 502 error envelope) had ZERO pins.
+test("og stream:true with a JSON upstream → one-shot Anthropic SSE, not an empty message", async () => {
+  const { env, token } = gwEnv();
+  const res = await withFetch(async () => new Response(JSON.stringify({ choices: [{ message: { content: "streamed-ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }), () =>
+    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: true, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") || "", /text\/event-stream/);
+  assert.match(await res.text(), /streamed-ok/);
+});
+
+test("og stream:true with a 200-wrapped upstream error → 502, never an empty message", async () => {
+  const { env, token } = gwEnv();
+  const res = await withFetch(async () => new Response(JSON.stringify({ error: { message: "upstream boom" } }), { status: 200, headers: { "content-type": "application/json" } }), () =>
+    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: true, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error.message, /upstream boom/);
+});
+
 test("og/minimax-m3 also goes to chat/completions (translate path)", async () => {
   const { env, token } = gwEnv();
   let seen;
