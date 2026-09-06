@@ -1762,6 +1762,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Added 1 in gateway.test.mjs. Found the route-kind arm unreachable
   (og恒opencode, defensive-only — documented in-test, not pinned).
   Suite 539->540; gates clean; snapshot updated; pushed.
+  ROUND-496 (2026-09-06): keyless audit — nv/gmi/amd/cm 502 arms had ZERO
+  pins. Added 1 matrix test in gateway.test.mjs (4 arms, no upstream).
+  Suite 540->541; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
