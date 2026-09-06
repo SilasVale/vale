@@ -1400,6 +1400,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   never fires — click the enabled one), helper missed top-level
   playwright field (tsc gate). Panel 137->143 (26->27 files);
   rebuilt, panel.js identical; pushed.
+  ROUND-422 (2026-09-06): panel ContextRail audit — side rail had ZERO
+  tests. Added 6: null on context-less pages, plugins inventory +
+  loading, open-first/newest sort + closed no-op + Enter, 4-kind menu,
+  inline rename (commit/cancel/blank), archive + relTime. Self-caught:
+  button/input share aria-label — locate inputs by display value.
+  Panel 143->149 (27->28 files); rebuilt, panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
