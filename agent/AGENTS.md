@@ -1141,6 +1141,16 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   node path join, 2-tool build. Caught my own 9229 parallel flake
   pre-commit (merged + documented). Stable 9/9 x5. Matrix: lib 278
   (+8), feat-gated 284, clippy x2 + fmt + xwin clean; snapshot 307->315.
+  ROUND-383 (2026-09-06): design plugin audit — REAL DRIFT FOUND: the
+  page_view schema enum + description still advertised the 10
+  round-262-deleted extension pages (every selection a guaranteed
+  "unknown page" error). Fixed enum + description + stale doc line to
+  the 9 live pages. Added 5 tests: loopback-only gate (incl. IPv6/empty
+  rejects), token redaction (multi/unterminated), table uniqueness +
+  schema-enum parity (fails on any future drift), HTTP truncation +
+  redaction over a stub, unknown/remote-unconfigured fail-closed.
+  Matrix: lib 283 (+5), feat-gated 289, clippy x2 + fmt + xwin clean;
+  snapshot 315->320.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
