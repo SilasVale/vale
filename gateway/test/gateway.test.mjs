@@ -205,6 +205,26 @@ test("og/muse-spark-1.2-contributor on /v1/responses works (US exit, Bearer)", a
   assert.equal(res.status, 200);
 });
 
+// round-495 (coverage-driven): the /v1/responses model guard had ZERO pins
+// (only the happy path was covered). NOTE: the route.kind!=="opencode" arm
+// is defensive-only — og/ always resolves kind "opencode" — so both cases
+// land on the model guard.
+test("/v1/responses rejects non-muse-spark and non-og models with 400", async () => {
+  const { env, token } = gwEnv();
+  await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    async () => {
+      for (const model of ["og/deepseek-v4-flash", "ds/deepseek-v4-flash"]) {
+        const res = await post(env, token, { model, input: "hi" }, "/v1/responses");
+        assert.equal(res.status, 400, model);
+        assert.match((await res.json()).error.message, /only og\/muse-spark-\* Contributor models/, model);
+      }
+    },
+  );
+});
+
 test("og/muse-spark-1.3-contributor rides the zen-us CF exit when MUSE_RESPONSES_EXIT=zen-us", async () => {
   __clearCaches();
   const { env, token } = gwEnv();
