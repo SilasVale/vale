@@ -279,7 +279,16 @@ async fn rpc_ref_http(
 fn parse_envelope(body: &str, id: Option<u64>) -> Result<Value, DeviceError> {
     let trimmed = body.trim();
     if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
-        return check_envelope(v, id);
+        // Round-365: the direct arm never checked the response id (the SSE
+        // arm below does) — a stale/buffered frame with the WRONG id was
+        // accepted as our response. Same discipline both arms: mismatch
+        // falls through to the SSE scan, then the terminal error.
+        if id
+            .map(|i| v.get("id").and_then(|x| x.as_u64()) == Some(i))
+            .unwrap_or(true)
+        {
+            return check_envelope(v, id);
+        }
     }
     // SSE frames: concatenate consecutive "data:" lines into candidate
     // payloads and try each in turn.
@@ -1572,5 +1581,86 @@ mod one_browser_tests {
         // Empty -> None.
         assert!(extract_tool_text(&serde_json::json!({})).is_none());
         assert!(extract_tool_text(&serde_json::json!({ "content": [] })).is_none());
+    }
+
+    #[test]
+    fn parse_envelope_direct_json_result() {
+        let v =
+            parse_envelope(r#"{"jsonrpc":"2.0","id":7,"result":{"tools":[]}}"#, Some(7)).unwrap();
+        assert_eq!(v, serde_json::json!({"tools": []}));
+    }
+
+    #[test]
+    fn parse_envelope_rejects_wrong_id_on_direct_arm() {
+        // Round-365: the direct arm used to accept ANY id. A stale frame
+        // must fall through to the terminal error, like the SSE arm.
+        let err = parse_envelope(r#"{"jsonrpc":"2.0","id":8,"result":{"tools":[]}}"#, Some(7))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("usable JSON-RPC"),
+            "wrong-id direct body must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_envelope_sse_frames_pick_matching_id() {
+        let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":6,\"result\":{\"stale\":true}}\n\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"fresh\":true}}\n\n";
+        let v = parse_envelope(body, Some(7)).unwrap();
+        assert_eq!(v, serde_json::json!({"fresh": true}));
+        // Only the stale frame present → no match → terminal error.
+        let stale_only =
+            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":6,\"result\":{\"stale\":true}}\n\n";
+        assert!(parse_envelope(stale_only, Some(7)).is_err());
+    }
+
+    #[test]
+    fn parse_envelope_error_garbage_and_notification() {
+        let err = parse_envelope(
+            r#"{"jsonrpc":"2.0","id":7,"error":{"code":-32601,"message":"Method not found"}}"#,
+            Some(7),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("Method not found"), "{err}");
+        let bad = parse_envelope("not json at all", Some(7)).unwrap_err();
+        assert!(bad.to_string().contains("usable JSON-RPC"), "{bad}");
+        // Notification without id and without result → Null (no response).
+        let n = parse_envelope(
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            None,
+        )
+        .unwrap();
+        assert_eq!(n, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn check_envelope_result_error_missing() {
+        assert_eq!(
+            check_envelope(serde_json::json!({"result": 42}), Some(1)).unwrap(),
+            serde_json::json!(42)
+        );
+        let e =
+            check_envelope(serde_json::json!({"error": {"message": "boom"}}), Some(1)).unwrap_err();
+        assert!(e.to_string().contains("boom"), "{e}");
+        assert!(check_envelope(serde_json::json!({"something": 1}), None)
+            .unwrap()
+            .is_null());
+        assert!(check_envelope(serde_json::json!({"something": 1}), Some(1)).is_err());
+    }
+
+    #[test]
+    fn is_session_gone_matches_recycle_signals_only() {
+        assert!(is_session_gone("Session not found: abc"));
+        assert!(is_session_gone("HTTP 404 from upstream"));
+        assert!(!is_session_gone("connection refused"));
+        assert!(!is_session_gone(""));
+    }
+
+    #[test]
+    fn truncate_is_char_boundary_safe() {
+        assert_eq!(truncate("abc", 200), "abc");
+        let cjk = "一".repeat(100);
+        let out = truncate(&cjk, 10);
+        assert!(out.ends_with('…'), "{out}");
+        assert!(out.is_char_boundary(out.len()), "must end on a boundary");
     }
 }
