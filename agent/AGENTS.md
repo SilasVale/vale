@@ -1344,6 +1344,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   rebuilt, panel.js byte-identical, gate honest. Matrix: lib 283->284,
   feat 291->292, clippy x2 + fmt + xwin clean; snapshot 342->343;
   pushed.
+  ROUND-413 (2026-09-06): panel theme audit — get/set/toggle/subscribe
+  had ZERO tests. Added 5: default light, stored dark, garbage→light,
+  persist+body+event+unsub, toggle both ways, storage-throw fail-safe.
+  Self-caught: vitest toEqual takes no message arg (tsc gate). Panel
+  98->103 (18->19 files); rebuilt, panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
