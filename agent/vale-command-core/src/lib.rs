@@ -62,6 +62,15 @@ pub trait ToolHandler: Send + Sync {
     /// (rmcp routes it to the request context token) must abort a long tool
     /// call instead of running to its deadline. Default = plain call; tools
     /// that can observe cancellation override this.
+    ///
+    /// Dependency note (audit follow-up, decided 2026-09-06): taking
+    /// tokio_util's CancellationToken in the CONTRACT was evaluated for
+    /// removal and deliberately KEPT — rmcp (a hard dep of the agent) already
+    /// pulls tokio-util into the tree, so this adds zero new crates while
+    /// keeping the contract's cancellation vocabulary identical to what the
+    /// MCP layer speaks. No tool overrides this today; the hook stays wired
+    /// (server.rs wraps it in panic isolation) for the first tool that needs
+    /// cooperative cancellation.
     fn call_cancellable(
         &self,
         params: serde_json::Value,

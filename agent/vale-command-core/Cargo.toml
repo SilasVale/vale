@@ -11,5 +11,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
+# Contract-level cancellation vocabulary (call_cancellable) — already in the
+# dependency tree via rmcp; declared here so the contract is explicit.
 tokio-util = "0.7"
 anyhow = "1"
