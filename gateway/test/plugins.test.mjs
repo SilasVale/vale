@@ -636,3 +636,21 @@ test("token/regenerate: 401 unauth; authed rotates and kills the old token", asy
   assert.ok(token && token !== "bob-tok-1", "fresh token issued");
   assert.equal(await env.KEYS.get("token:bob-tok-1"), null, "old token revoked");
 });
+
+// round-444 (coverage-driven): DELETE /api/me/keys had ZERO route pins
+// (store-level deleteUserKey covered, handler not).
+test("me/keys DELETE: 401 unauth, 400 unknown name, deletes by query param", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const del = (cookie, qs) => worker.fetch(new Request(`https://x/api/me/keys${qs}`, {
+    method: "DELETE",
+    headers: { ...(cookie ? { cookie: `ag_session=${cookie}` } : {}) },
+  }), env);
+  assert.equal((await del(null, "?name=OPENROUTER_API_KEY")).status, 401);
+  const bob = await issueSessionToken("pw", "bob", "user");
+  assert.equal((await del(bob, "?name=NOPE_KEY")).status, 400);
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ OPENROUTER_API_KEY: "or-secret" }));
+  const res = await del(bob, "?name=OPENROUTER_API_KEY");
+  assert.equal(res.status, 200);
+  assert.deepEqual(JSON.parse(await env.KEYS.get("ukeys:bob")), {});
+});
