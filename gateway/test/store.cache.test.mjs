@@ -409,3 +409,33 @@ test("globalSettingEnabled: only real on-values are on", () => {
     assert.equal(store.globalSettingEnabled(on), true, `${on} must be on`);
   }
 });
+
+// round-439 (coverage-driven): setGlobalSetting had ZERO pins — the
+// round-94/95/96 explicit-OFF chain (canonical persist, delete-vs-"0",
+// same-isolate write-through).
+test("setGlobalSetting: true persists 1, falsy canonicalizes to 0, null deletes", async () => {
+  store.__clearCaches();
+  const kv = makeKV({});
+  await store.setGlobalSetting(kv, "T439_FLAG", true);
+  assert.equal(kv._kv.get("settings:T439_FLAG"), "1");
+  assert.equal(await store.getGlobalSetting(kv, "T439_FLAG"), "1");
+  await store.setGlobalSetting(kv, "T439_FLAG", "1");
+  assert.equal(kv._kv.get("settings:T439_FLAG"), "1");
+  await store.setGlobalSetting(kv, "T439_FLAG", false);
+  assert.equal(kv._kv.get("settings:T439_FLAG"), "0");
+  // round-95/96: the read normalizes (also on the writing isolate).
+  assert.equal(await store.getGlobalSetting(kv, "T439_FLAG"), null);
+  await store.setGlobalSetting(kv, "T439_FLAG", null);
+  assert.equal(kv._kv.has("settings:T439_FLAG"), false);
+  assert.equal(await store.getGlobalSetting(kv, "T439_FLAG"), null);
+  await store.setGlobalSetting(kv, "T439_FLAG", "");
+  assert.equal(kv.counters.del, 2, "empty string deletes like null");
+});
+
+test("setGlobalSetting: delete falls back to the worker var", async () => {
+  store.__clearCaches();
+  const kv = makeKV({});
+  kv.US_PROXY = "1"; // wrangler var fallback
+  await store.setGlobalSetting(kv, "US_PROXY", null);
+  assert.equal(await store.getGlobalSetting(kv, "US_PROXY"), "1");
+});
