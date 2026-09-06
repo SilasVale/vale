@@ -73,6 +73,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | Muse defaults to the Vercel exit | CF egress fails zen's Meta RegionError; only Vercel's ORD edge verified (proxies/README.md) |
 | Studio WS/e2e tests are live-only | real PTY + browser deps; CI runs the HTTP contract tier (README tiering) |
 | Electron main.ts not split further | no testability gain — electron is unimportable under plain node |
+| code-server replaces studio's editor for code VIEWING (2026-09-06 migration) | studio's Monaco ceiling (no LSP/command palette/split view) + the user wants the WHOLE home dir — code-server's default shape. Live behind Access (vscode.saisi.online, aud-gated); studio stays on 7780 in parallel trial. Note: the tunnel is DASHBOARD-managed (local ingress ignored), and dashboard configs don't accept unix sockets — hence TCP 127.0.0.1:8080 despite the socket preference |
 
 ## Test gates (per subproject)
 
