@@ -1302,6 +1302,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   bare-text untouched. Rewrote my own convoluted draft pre-commit (use
   the file's static imports). Suite 409->411; gates clean; snapshot
   updated; pushed.
+  ROUND-405 (2026-09-06): front-door audit — bare /models + /chat/
+  completions aliases, http→https 308, never-leak 500 had zero direct
+  pins. Added 4 in frontdoor.test.mjs: alias parity (list deep-equal,
+  chat status+body identical), 308 Location shape, 500 message + no
+  CONSOLE_HOST leak. Suite 411->415; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
