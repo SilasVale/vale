@@ -239,6 +239,23 @@ test("mcp: agent error (200 + ok:false) → SESSION_BUSY code", async () => {
   }
 });
 
+// round-474 (coverage-driven): the message-text TIMEOUT fallback arm had
+// ZERO pins (typed-code and not-found/busy message arms were covered).
+test("mcp: agent error (200 + ok:false) → TIMEOUT code on 'timed out' text", async () => {
+  const env = makeEnv();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    return new Response(JSON.stringify({ ok: false, error: "SSH command timed out after 30s" }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls" } }, id: 12 }), env);
+    const data = await res.json();
+    assert.equal(data.error.data.code, "TIMEOUT");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 test("mcp: agent typed error (200 + ok:false + code) → TOOL_ERROR not DEVICE_UNREACHABLE (round-64)", async () => {
   const env = makeEnv();
   const realFetch = globalThis.fetch;
