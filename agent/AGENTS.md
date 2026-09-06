@@ -1714,6 +1714,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   reliability.test.mjs: reasoning/reasoning_details, tool_calls incl.
   malformed/unknown. Suite 525->527; gates clean; snapshot updated;
   pushed.
+  ROUND-485 (2026-09-06): dispatch audit — the unknown-/v1/-path 404 arm
+  had ZERO pins. Added 1 in gateway.test.mjs. Suite 527->528; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
