@@ -1494,6 +1494,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   index style) — `node --test test/` dies MODULE_NOT_FOUND. Pre-existing
   nit noted, untouched: ui/package.json lacks trailing newline (gate only
   covers src/). Pushed.
+  ROUND-437 (2026-09-06): coverage-driven auth audit — node coverage
+  flagged plugins/auth.ts (45%). PUT /api/me/keys (BYOK save) had ZERO
+  pins. Added 2 in plugins.test.mjs: 401/400×3 validation, save-trimmed
+  + masked echo + reveal roundtrip. Suite 444->447; gates clean.
+  COUNTING CLARIFIED (worktree-verified): bare `npm test` also counts
+  test/helpers.mjs as a pseudo-test and now discovers ui/test/ — 447 =
+  445 files + helpers + ui. True file sum HEAD 443 -> 445 (+2 mine).
+  Snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
