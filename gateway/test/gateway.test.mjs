@@ -1734,3 +1734,25 @@ test("og chat/completions: upstream 429 retry-after surfaces as a response heade
   assert.equal(res.headers.get("retry-after"), "1");
   assert.equal((await res.json()).error.type, "rate_limit_error");
 });
+
+// round-499 (coverage-driven): the ds/qw passthrough keyless 502 arms had
+// ZERO pins.
+test("ds/qw passthrough without the user's own key → 502, upstream never called", async () => {
+  const { env, a } = isoEnv({ aKeys: { DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined } });
+  const cases = [
+    ["ds/deepseek-v4-flash", /DEEPSEEK_API_KEY not configured/],
+    ["qw/qwen3.8-max-preview", /QWEN_API_KEY not configured/],
+  ];
+  await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    async () => {
+      for (const [model, re] of cases) {
+        const res = await post(env, a.token, { ...ogBody(), model });
+        assert.equal(res.status, 502, model);
+        assert.match((await res.json()).error.message, re, model);
+      }
+    },
+  );
+});
