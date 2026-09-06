@@ -1050,6 +1050,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   (term_sse_streams_output) hold real guards. Stable 37/37 web x3.
   Matrix: lib 222 (+6), feat-gated 228, clippy x2 + fmt + xwin clean;
   snapshot 253->259.
+  ROUND-372 (2026-09-06): memory sanitize audit — strategies partly
+  unpinned + docs overstated. Added 3 (bare Bearer arm, trailing-newline
+  contract, JSON arrays + typed values) and split a weak || into per-arm
+  asserts — which immediately caught TWO stale claims: "authtoken abc123"
+  (space, no separator) never redacted, and "masterkey" is NOT matched
+  by compact-ends-with ("key" alone can't be a signal — monkey/turkey).
+  Fixed both comments to the honest contract (prose-safe by design,
+  precision over recall). Matrix: lib 225 (+3), feat-gated 231, clippy
+  x2 + fmt + xwin clean; snapshot 259->262.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
