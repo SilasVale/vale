@@ -1748,6 +1748,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   caught myself starting a pointless async-probe edit twice — reverted
   both, did the real work read-first. Suite 534->536; gates clean;
   snapshot updated; pushed.
+  ROUND-493 (2026-09-06): sse-build audit — toSSE thinking +
+  server_tool_use arms had ZERO pins (zero direct tests). Added 2 in
+  reliability.test.mjs. Slipped into the no-op-probe habit once more
+  (trailing-space edit) — reverted before the real edit; the committed
+  diff is clean (verified via git diff --stat). Suite 536->538; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
