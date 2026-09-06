@@ -1059,6 +1059,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Fixed both comments to the honest contract (prose-safe by design,
   precision over recall). Matrix: lib 225 (+3), feat-gated 231, clippy
   x2 + fmt + xwin clean; snapshot 259->262.
+  ROUND-373 (2026-09-06): state.rs A4 audit — config_snapshot/update_config
+  are load-bearing for TokenGate + PUT /api/settings yet had ZERO tests.
+  Added 6: boot snapshot, memory-only swap, persist-without-path no-op,
+  file roundtrip (disk yaml matches memory), failed-persist atomicity
+  (dead dir → Err + memory stays at old value — the write-through
+  guarantee), poisoned-writer recovery. All green first try. Matrix:
+  lib 231 (+6), feat-gated 237, clippy x2 + fmt + xwin clean; snapshot
+  262->268.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
