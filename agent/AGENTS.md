@@ -1225,6 +1225,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   version-change/hour-stale (put-counter pinned), cf roundtrip/clear/
   keyless, keyless save no-op. Suite 362->370; tsc/eslint/prettier
   clean; snapshot updated.
+  ROUND-394 (2026-09-06): admin-seed audit. REAL FIND (test-caught):
+  seedAdmin's v1 migration moved user:u-admin → user:admin + remapped
+  the token + moved ukeys, then fell through to the fresh-mint block
+  (no marker on v1 upgrades) which CLOBBERED it all — new random token,
+  ukeys reset to {}, orphaned token:V1TOK mapping still authenticating.
+  Fix: mint only when no user:admin exists post-migration/backfill.
+  Added 4: legacy CLIENT_KEY honored, random mint, v1 migration keeps
+  token + keys (regression), process-once + keyless no-op. Suite
+  370->374; tsc/eslint/prettier clean; snapshot updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
