@@ -1663,4 +1663,214 @@ mod one_browser_tests {
         assert!(out.ends_with('…'), "{out}");
         assert!(out.is_char_boundary(out.len()), "must end on a boundary");
     }
+
+    // ── rpc_ref_http transport contract (round-376) ──
+
+    type CapturedReqs = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
+    /// Single-shot HTTP stub: captures (head, body), answers once.
+    async fn stub_mcp(
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        cap: CapturedReqs,
+    ) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 65536];
+            let mut req = Vec::new();
+            loop {
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let head = String::from_utf8_lossy(&req).to_string();
+            let len: usize = head
+                .lines()
+                .find_map(|l| {
+                    let low = l.trim().to_lowercase();
+                    low.strip_prefix("content-length:")?.trim().parse().ok()
+                })
+                .unwrap_or(0);
+            let bs = req
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|i| i + 4)
+                .unwrap_or(req.len());
+            let mut body_req = req[bs..].to_vec();
+            while body_req.len() < len {
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                body_req.extend_from_slice(&buf[..n]);
+            }
+            cap.lock().unwrap().push((head, body_req));
+            let mut resp = format!(
+                "HTTP/1.1 {status} OK\r\ncontent-length: {}\r\nconnection: close\r\n",
+                body.len()
+            );
+            for (k, v) in &headers {
+                resp.push_str(&format!("{k}: {v}\r\n"));
+            }
+            resp.push_str("\r\n");
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.write_all(&body).await;
+        });
+        port
+    }
+
+    fn http_sess(port: u16, headers: Vec<(String, String)>) -> McpSession {
+        McpSession::Http {
+            url: format!("http://127.0.0.1:{port}"),
+            session_id: Some("sess-1".into()),
+            last_url: None,
+            next_id: AtomicU64::new(1),
+            http: reqwest::Client::new(),
+            headers,
+        }
+    }
+
+    fn last_head(cap: &CapturedReqs) -> String {
+        cap.lock()
+            .unwrap()
+            .last()
+            .cloned()
+            .unwrap()
+            .0
+            .to_lowercase()
+    }
+
+    #[tokio::test]
+    async fn rpc_http_captures_session_id_on_initialize() {
+        let cap: CapturedReqs = Default::default();
+        let port = stub_mcp(
+            200,
+            vec![("mcp-session-id".to_string(), "srv-9".to_string())],
+            br#"{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{}}}"#.to_vec(),
+            cap,
+        )
+        .await;
+        let mut sess = http_sess(port, vec![]);
+        let out = rpc_ref_http(&mut sess, Some(1), "initialize", json!({"a": 1}), 5)
+            .await
+            .unwrap();
+        assert!(out.get("serverInfo").is_some(), "{out}");
+        let McpSession::Http { session_id, .. } = &sess else {
+            panic!("still http");
+        };
+        assert_eq!(session_id.as_deref(), Some("srv-9"));
+    }
+
+    #[tokio::test]
+    async fn rpc_http_forwards_caller_headers_but_never_protocol_ones() {
+        let cap: CapturedReqs = Default::default();
+        let port = stub_mcp(
+            200,
+            vec![],
+            br#"{"jsonrpc":"2.0","id":7,"result":{"tools":[]}}"#.to_vec(),
+            cap.clone(),
+        )
+        .await;
+        let mut sess = http_sess(
+            port,
+            vec![
+                ("authorization".into(), "Bearer caller".into()),
+                ("mcp-session-id".into(), "forged".into()),
+                ("content-type".into(), "text/evil".into()),
+                ("x-custom".into(), "keep".into()),
+            ],
+        );
+        rpc_ref_http(&mut sess, Some(7), "tools/list", json!({}), 5)
+            .await
+            .unwrap();
+        let head = last_head(&cap);
+        assert!(head.contains("authorization: bearer caller"), "{head}");
+        assert!(head.contains("x-custom: keep"), "{head}");
+        assert!(
+            head.contains("mcp-session-id: sess-1"),
+            "real session must win: {head}"
+        );
+        assert!(
+            !head.contains("forged"),
+            "forged session id must not ride: {head}"
+        );
+        assert!(
+            !head.contains("text/evil"),
+            "caller content-type must not ride: {head}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_http_empty_body_is_null() {
+        let cap: CapturedReqs = Default::default();
+        let port = stub_mcp(200, vec![], vec![], cap).await;
+        let mut sess = http_sess(port, vec![]);
+        let out = rpc_ref_http(&mut sess, None, "notifications/initialized", Value::Null, 5)
+            .await
+            .unwrap();
+        assert_eq!(out, Value::Null);
+    }
+
+    #[tokio::test]
+    async fn rpc_http_non_success_maps_to_truncated_error() {
+        let cap: CapturedReqs = Default::default();
+        let port500 = stub_mcp(500, vec![], vec![b'E'; 500], cap).await;
+        let mut sess = http_sess(port500, vec![]);
+        let err = rpc_ref_http(&mut sess, Some(3), "tools/call", json!({}), 5)
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("HTTP 500"), "{msg}");
+        assert!(
+            msg.len() < 400,
+            "detail must be truncated, got {} chars",
+            msg.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_http_rejects_oversize_body() {
+        let cap: CapturedReqs = Default::default();
+        let port = stub_mcp(200, vec![], vec![b'x'; 17 * 1024 * 1024], cap).await;
+        let mut sess = http_sess(port, vec![]);
+        let err = rpc_ref_http(&mut sess, Some(1), "tools/list", json!({}), 10)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("exceeds 16 MiB cap"), "{err:?}");
+    }
+
+    #[test]
+    fn track_page_url_sets_http_last_url_on_marker() {
+        let mut sess = http_sess(9, vec![]);
+        track_page_url(
+            &mut sess,
+            &json!({"text": "- Page URL: https://example.com/a"}),
+        );
+        let McpSession::Http { last_url, .. } = &sess else {
+            panic!("still http");
+        };
+        assert_eq!(last_url.as_deref(), Some("https://example.com/a"));
+    }
+
+    #[test]
+    fn track_page_url_ignores_non_url_schemes_and_absent_markers() {
+        let mut sess = http_sess(9, vec![]);
+        track_page_url(&mut sess, &json!({"text": "- Page URL: ftp://x/y"}));
+        track_page_url(&mut sess, &json!({"text": "nothing here"}));
+        let McpSession::Http { last_url, .. } = &sess else {
+            panic!("still http");
+        };
+        assert_eq!(last_url, &None);
+    }
 }
