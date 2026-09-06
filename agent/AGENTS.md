@@ -1178,6 +1178,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   disabled/rotation, admin triple had zero DIRECT tests. Added 11 in
   session.test.mjs (distinct ids for the module cache). Suite 330->341;
   tsc clean; snapshot updated.
+  ROUND-388 (2026-09-06): panel-grant store audit — handler paths dense
+  but store edges (TTL, uppercase, shape-no-read, corrupt records,
+  delete) had only indirect coverage. Added 7: ~120s TTL on the KV
+  record, keyless mint no-throw, uppercase normalization, malformed
+  codes cost zero KV reads, corrupt/empty records → null (mintedAt 0),
+  keyless get/delete no-throw, delete removes. Suite 341->348;
+  tsc/eslint/prettier clean; snapshot updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
