@@ -1694,6 +1694,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   direct pins. Added 3 pure-function tests in reliability.test.mjs:
   system-array/tool_result-array, thinking+tool_use, tools+tool_choice.
   Suite 517->520; gates clean; snapshot updated; pushed.
+  ROUND-481 (2026-09-06): retry audit — the billing-guard no-retry arm +
+  the trip-failure swallow arm had ZERO pins. Added 2 in
+  reliability.test.mjs. Suite 520->522; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
