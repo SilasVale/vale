@@ -96,3 +96,57 @@ test("vision describe failure THROWS (round-119) and caches nothing", async () =
     globalThis.fetch = real;
   }
 });
+
+// round-479 (coverage-driven): the or/ passthrough failure arms had ZERO
+// pins (only the og/zen path was exercised).
+function orEnv() {
+  __clearCaches();
+  const e = makeBaseEnv({});
+  e.VISION_MODEL = "or/some-vision-model";
+  return e;
+}
+
+function stubAnthropic(status, json) {
+  const calls = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), body: init?.body });
+    return new Response(JSON.stringify(json), {
+      status, headers: { "content-type": "application/json" },
+    });
+  };
+  return { calls, restore: () => { globalThis.fetch = real; } };
+}
+
+test("vision passthrough: missing backend key fails instead of fabricating", async () => {
+  const e = orEnv();
+  await assert.rejects(
+    preprocessImages([imageMessage], e, {}, "m", "up-model", "uP"),
+    /视觉模型后端未配置/,
+  );
+});
+
+test("vision passthrough: upstream !ok fails with the status; success inserts the description", async () => {
+  const ukeys = { OPENROUTER_API_KEY: "user-or-key" };
+  const e1 = orEnv();
+  const s1 = stubAnthropic(500, { error: "boom" });
+  try {
+    await assert.rejects(
+      preprocessImages([imageMessage], e1, ukeys, "m", "up-model", "uP1"),
+      /500/,
+    );
+  } finally {
+    s1.restore();
+  }
+  const e2 = orEnv();
+  const s2 = stubAnthropic(200, { content: [{ type: "text", text: "a red door" }] });
+  try {
+    const out = await preprocessImages([imageMessage], e2, ukeys, "m", "up-model", "uP2");
+    assert.equal(out.changed, true);
+    assert.match(out.messages[0].content[0].text, /a red door/);
+    assert.equal(s2.calls.length, 1);
+    assert.match(s2.calls[0].url, /openrouter\.ai/);
+  } finally {
+    s2.restore();
+  }
+});
