@@ -1430,6 +1430,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   canonical find (create + table shapes), 5 reject shapes, name-column
   match/miss/header/garbage-id. Matrix: lib 285->288, feat 293->296,
   clippy x2 + fmt + xwin clean; snapshot 344->347; pushed.
+  ROUND-427 (2026-09-06): filelog remainder — day-change rotation arm +
+  flush path had ZERO pins (cap/prune/resume/bucket covered). Added 2:
+  backdated-bucket rotates under cap + live content intact, flush
+  persists. Self-caught a bad edit mid-round (deleted 2 comment lines
+  — restored immediately, diff-verified no-op). Matrix: lib 288->290,
+  feat 296->298, clippy x2 + fmt + xwin clean; snapshot 347->349;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
