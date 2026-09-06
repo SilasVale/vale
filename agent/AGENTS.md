@@ -1323,6 +1323,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   error paths (roundtrip, null-delete, 400s, 404, 500, unauth) had zero
   direct pins. Added 5 in route-do.test.mjs. Suite 424->429; gates
   clean; snapshot updated; pushed.
+  ROUND-409 (2026-09-06): saved-connection edges — corrupt-file recovery
+  + list sort/id shape unpinned (3 tests covered dedup/scrub/forget).
+  Added 2 (feat-gated): torn file lists empty + remember heals, 3-entry
+  sort order + kind/target/id shape. Full matrix: feat lib 289->291,
+  clippy x2 + fmt + xwin clean; snapshot 340->342; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
