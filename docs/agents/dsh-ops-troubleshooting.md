@@ -41,8 +41,8 @@ bash patch-dsh-trusted-host.sh /home/zhengsaisi/.nvm/versions/node/v24.20.0/lib/
 ```
 
 > 位置说明：本文件的 `ecosystem.config.js` 均指仓库根的 `./ecosystem.config.js`
-> （gitignored、机器本地，只含 dsh 应用）；vale-studio 的 pm2 定义在入库的
-> `studio/ecosystem.config.js`。
+> （gitignored、机器本地，只含 dsh 应用）。vale-studio 已于 2026-09-06 退役
+> （ADR 0006，code-server 取代），其 pm2 进程与配置一并移除。
 
 **注意**：pm2 daemon 必须用新 node 启动（`pm2 kill` 后用 v24 的 pm2 重新 resurrect），
 否则 daemon 的 PATH 仍指向旧 node，子进程还是旧版本。

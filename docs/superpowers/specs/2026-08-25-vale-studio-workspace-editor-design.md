@@ -1,3 +1,9 @@
+# Vale Studio Workspace Editor — Design
+
+> **SUPERSEDED (2026-09-06, ADR 0006):** Vale Studio was retired and replaced by
+> code-server (vscode.saisi.online, behind Cloudflare Access). This spec is kept
+> for history. The code lived in `studio/` and was removed with ADR 0006.
+
 # Vale Studio — The saisi.online Workspace Code Editor with DSH Deep-Link Integration · Design
 
 Date: 2026-08-25
