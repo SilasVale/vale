@@ -608,4 +608,72 @@ mod tests {
         assert_eq!(hex_encode(&[0x00, 0xab, 0xff]), "00abff");
         assert_eq!(hex_encode(b""), "");
     }
+
+    #[test]
+    fn version_url_trims_slashes_and_appends_manifest() {
+        assert_eq!(
+            version_url("https://agent.saisi.online"),
+            "https://agent.saisi.online/api/version"
+        );
+        assert_eq!(
+            version_url("https://agent.saisi.online///"),
+            "https://agent.saisi.online/api/version"
+        );
+    }
+
+    #[test]
+    fn cleanup_staged_removes_only_staged_leftovers() {
+        // The swap script applies staged .new files — after a FAILED update
+        // they must be gone (no mixed-version apply later), while every
+        // LIVE file stays byte-identical.
+        let dir = std::env::temp_dir().join(format!("vale-cleanup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("tools")).unwrap();
+        let live = [
+            dir.join("vale-agent.exe"),
+            dir.join("vale-playwright.zip"),
+            dir.join("tools").join("cloudflared.exe"),
+            dir.join(".vale-release"),
+        ];
+        for p in &live {
+            std::fs::write(p, b"live").unwrap();
+        }
+        let staged = [
+            dir.join("vale-agent.new.exe"),
+            dir.join("vale-playwright.new.zip"),
+            dir.join("tools").join("cloudflared.new.exe"),
+        ];
+        for p in &staged {
+            std::fs::write(p, b"staged").unwrap();
+        }
+        let extract = dir.join(".vale-update");
+        std::fs::create_dir_all(extract.join("package")).unwrap();
+        std::fs::write(extract.join("package").join("junk"), b"x").unwrap();
+
+        cleanup_staged(&dir);
+
+        for p in &staged {
+            assert!(!p.exists(), "staged leftover must go: {}", p.display());
+        }
+        assert!(!extract.exists(), ".vale-update extract dir must go");
+        for p in &live {
+            assert_eq!(
+                std::fs::read(p).unwrap(),
+                b"live",
+                "live file touched: {}",
+                p.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cleanup_staged_on_empty_dir_is_a_noop() {
+        let dir = std::env::temp_dir().join(format!("vale-cleanup-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        cleanup_staged(&dir); // must not error or create anything
+        assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
