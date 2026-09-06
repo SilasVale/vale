@@ -185,7 +185,21 @@ export default function Keys() {
                 <code className="token" style={{ flex: 1 }}>
                   {info?.masked || t("key.notConfigured")}
                 </code>
-                {configured && <CopyButton text={info?.masked || ""} small />}
+                {configured && (
+                  <CopyButton
+                    text={info?.masked || ""}
+                    // The list carries only the masked display value — fetch
+                    // the FULL key at click time (session-gated reveal) so
+                    // the clipboard gets the real credential, not the mask.
+                    // Failures (reveal or clipboard) toast once via onFailed.
+                    getText={async () => {
+                      const { value } = await api.revealKey(name);
+                      return value;
+                    }}
+                    onFailed={() => toast(t("key.revealFail"), true)}
+                    small
+                  />
+                )}
               </div>
 
               <div className="key-card-actions">

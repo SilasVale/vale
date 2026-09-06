@@ -62,10 +62,14 @@ export function Badge({ tone = "muted", dot, children }: { tone?: BadgeTone; dot
 
 /* ── Copy button (with transient ✓ feedback + toast hook) ── */
 
-export function CopyButton({ text, label, onCopied, tone = "ghost", small, disabled }: {
+export function CopyButton({ text, getText, label, onCopied, onFailed, tone = "ghost", small, disabled }: {
   text: string;
+  // Async text source (e.g. fetch the full credential at click time instead
+  // of copying a masked display value). When provided it wins over `text`.
+  getText?: () => Promise<string>;
   label?: string;
   onCopied?: () => void;
+  onFailed?: () => void;
   tone?: "primary" | "ghost" | "secondary";
   small?: boolean;
   disabled?: boolean;
@@ -74,12 +78,14 @@ export function CopyButton({ text, label, onCopied, tone = "ghost", small, disab
   const [copied, setCopied] = useState(false);
   const handle = async () => {
     try {
-      await navigator.clipboard.writeText(text);
+      const value = getText ? await getText() : text;
+      await navigator.clipboard.writeText(value);
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
       onCopied?.();
     } catch {
-      /* clipboard unavailable — user selects manually */
+      /* clipboard unavailable or getText failed — user selects manually */
+      onFailed?.();
     }
   };
   return (

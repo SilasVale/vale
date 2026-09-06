@@ -151,6 +151,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ name, value }),
     }),
+  // Session-gated full-key read for the Keys page copy button (the /api/me
+  // list only carries masked values — copying the mask was the bug).
+  revealKey: (name: string) =>
+    request<{ ok: boolean; name: string; value: string }>("/api/me/keys/reveal", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
   deleteKey: (name: string) =>
     request<unknown>(`/api/me/keys?name=${encodeURIComponent(name)}`, {
       method: "DELETE",

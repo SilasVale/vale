@@ -360,6 +360,27 @@ async function mePutKeys(request: Request, env: any): Promise<Response> {
   return jsonOk({ ok: true, name, masked: maskKey(v) });
 }
 
+// POST /api/me/keys/reveal {name} — the session-gated full-key read for the
+// Keys page's copy button. The /api/me list deliberately returns only
+// maskKey() output (display hygiene — masks survive screenshots and DOM
+// scrapes), which made the old copy button copy the MASK instead of the
+// credential. This route is the explicit-intent counterpart: one key per
+// click, same session trust as save/delete (a session holder can already
+// rotate or clear the key; the value is the caller's OWN BYOK credential).
+// Kept POST-with-body like its sibling routes (no key names in URLs/logs).
+async function meRevealKey(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const body = await readJson(request);
+  const name = body?.name;
+  if (!USER_KEY_NAMES.includes(name))
+    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  const ukeys = await getUserKeys(env, user.id);
+  const key = ukeys[name];
+  if (!key) return jsonError(404, "Key not configured", "not_found_error");
+  return jsonOk({ ok: true, name, value: key });
+}
+
 async function meDeleteKeys(request: Request, env: any, url: URL): Promise<Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
@@ -707,5 +728,6 @@ export default {
     add("DELETE", `${ME_BASE}/keys`, meDeleteKeys);
     add("POST", `${ME_BASE}/keys/test`, meTestKeys);
     add("POST", `${ME_BASE}/keys/usage`, meKeyUsage);
+    add("POST", `${ME_BASE}/keys/reveal`, meRevealKey);
   },
 };

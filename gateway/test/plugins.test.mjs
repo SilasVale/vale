@@ -263,3 +263,37 @@ test("plugin link: revoke never resurrects or wipes fresh-KV links (stale-cache 
   assert.equal(await getPluginByToken(e, "tokB"), null);
   assert.deepEqual(await listPluginLinks(e), {});
 });
+
+// ── POST /api/me/keys/reveal (session-gated full-key read for the Keys page
+// copy button — the /api/me list only carries maskKey() output, so the old
+// copy button copied the MASK, not the credential).
+test("keys reveal: session-gated, name-validated, full value only when configured", async () => {
+  __clearCaches();
+  const env = makeEnv();
+  // No session → 401 (fail-closed: this endpoint returns a real credential).
+  const unauth = await apiFetch(env, "/api/me/keys/reveal", { body: JSON.stringify({ name: "DEEPSEEK_API_KEY" }) });
+  assert.equal(unauth.status, 401);
+
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  const req = (name) =>
+    new Request("https://x/api/me/keys/reveal", {
+      method: "POST",
+      headers: { cookie: `ag_session=${cookie}`, "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+
+  // Unknown key name → 400.
+  const bad = await worker.fetch(req("NOT_A_KEY"), env);
+  assert.equal(bad.status, 400);
+
+  // Unconfigured → 404 (no mask, no empty-string value).
+  const missing = await worker.fetch(req("DEEPSEEK_API_KEY"), env);
+  assert.equal(missing.status, 404);
+
+  // Configured → the FULL value, not the mask.
+  await env.KEYS.put("ukeys:admin", JSON.stringify({ DEEPSEEK_API_KEY: "sk-full-secret-abcdef123456" }));
+  __clearCaches();
+  const ok = await worker.fetch(req("DEEPSEEK_API_KEY"), env);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(await ok.json(), { ok: true, name: "DEEPSEEK_API_KEY", value: "sk-full-secret-abcdef123456" });
+});
