@@ -59,6 +59,25 @@ test("browser tool routes to the device mcp_client_call API with mapped name + b
   assert.equal(calls[0].init.headers.Authorization, "Bearer devtok");
 });
 
+// round-475 (coverage-driven): the device-tool divert arm (browser_pw_info /
+// browser_run_script go to the DEVICE agent, not the playwright bridge)
+// had ZERO pins.
+test("device tools bypass the bridge: browser_run_script/pw_info hit the device API", async () => {
+  for (const name of ["browser_run_script", "browser_pw_info"]) {
+    const { calls, impl } = makeFetch((url) => {
+      assert.equal(url, `https://d1.example.com/api/tools/${name}`);
+      return new Response(JSON.stringify({ ok: true, result: { ran: true } }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    });
+    // deviceFetch injects the device Bearer internally (device-fetch.test.mjs
+    // pins the hygiene); here the URL proves the bridge was bypassed.
+    const out = await withFetch(impl, () => callTool({ name }, {}, DEVICE, { device: "d1" }));
+    assert.equal(calls.length, 1, `${name} dialed the device directly`);
+    assert.deepEqual(out, { ok: true, result: { ran: true } });
+  }
+});
+
 test("self-heal: not connected → playwright/start + mcp_client_connect → retry succeeds", async () => {
   let n = 0;
   const { calls, impl } = makeFetch((url, init) => {
