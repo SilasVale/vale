@@ -1333,6 +1333,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   OSC titles + 133 markers, unterminated-OSC-at-EOF, stray ESC +
   undefined. Panel suite 93->98 (17->18 files); test-only, no panel.js
   rebuild; pushed.
+  ROUND-411 (2026-09-06): BreakerDO remainder — half-open single-failure
+  re-trip (round-118), stale-window re-anchor, storage-throw 500 had
+  zero pins. Added 3 in reliability.test.mjs. Suite 429->432; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
