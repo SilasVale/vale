@@ -859,6 +859,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   lib/ explicitly and redacts the new path; mirror verified byte-identical
   except the 3 intended comment redactions (error-copy strings keep the
   real host by design). Manifest 39 files, sse-guard gone.
+  ROUND-353 (2026-09-06): full-repo matrix sweep, zero code changes — every
+  suite green: index 54/54, panel vitest 90/90 (16 files, up from 82),
+  proxies 12+7+7 (zen-go/zen-us/openrouter), npm CLI 3/3, extension
+  node --check 3/3 + vercel-proxy gate 5/5 (mirrored from ci.yml),
+  gateway/ui build + render smoke + devices render smoke OK, tree clean
+  after builds. Combined with rounds 350-352 (agent 197/201 + xwin,
+  gateway 295 + gates), ALL CI jobs now have a same-day local green.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
