@@ -1209,6 +1209,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Self-caught a whitespace-merge slip mid-round (reverted clean, tree
   verified). Suite 354->358; tsc/eslint/prettier clean; snapshot
   updated.
+  ROUND-392 (2026-09-06): plugin-link map audit — lifecycle covered but
+  sweep persistence, legacy expiry, corrupt blobs, write-through only
+  had return-value pins. Added 4: expired get DELETES the KV record
+  (30d const pinned), missing-expiresAt legacy sweeps (round-122 hole),
+  corrupt blob → all five helpers safe, save write-through serves
+  post-KV-yank. Fixed a dynamic-import slip pre-commit. Suite 358->362;
+  tsc/eslint/prettier clean; snapshot updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
