@@ -440,3 +440,55 @@ test("createIpRateLimiter: kvSeed=false never touches KV; kvSeed=true persists o
   assert.equal(writes.length, 1, "kvSeed=true persists exactly once per bucket per IP (not per request)");
   assert.equal(kv.get("seed-rate:1.2.3.4:" + Math.floor(Date.now() / 60000)), "1");
 });
+
+// ── Limiter boundary behavior (round-397: trip point, window rollover,
+// per-IP isolation, fail-open, capacity cap had no direct pins) ──
+
+test("createIpRateLimiter: trips exactly at limit+1, per IP", async () => {
+  const { createIpRateLimiter } = await import("../src/lib/ratelimit.ts");
+  const lim = createIpRateLimiter({ name: "trip-rate", limit: 2, windowMs: 60_000 });
+  const req = (ip) => new Request("https://x/api", { headers: { "cf-connecting-ip": ip } });
+  assert.equal(await lim(req("9.9.9.9")), false);
+  assert.equal(await lim(req("9.9.9.9")), false);
+  assert.equal(await lim(req("9.9.9.9")), true, "3rd call over limit 2 trips");
+  assert.equal(await lim(req("9.9.9.9")), true, "stays tripped in-window");
+  assert.equal(await lim(req("8.8.8.8")), false, "other IPs unaffected");
+  assert.equal(lim.keyPrefix, "trip-rate");
+});
+
+test("createIpRateLimiter: new window resets the budget", async () => {
+  const { createIpRateLimiter } = await import("../src/lib/ratelimit.ts");
+  const lim = createIpRateLimiter({ name: "win-rate", limit: 1, windowMs: 60_000 });
+  const req = new Request("https://x/api", { headers: { "cf-connecting-ip": "7.7.7.7" } });
+  assert.equal(await lim(req), false);
+  assert.equal(await lim(req), true);
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 61_000;
+    assert.equal(await lim(req), false, "next window starts fresh");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("createIpRateLimiter: missing IP header shares the unknown bucket; errors fail open", async () => {
+  const { createIpRateLimiter } = await import("../src/lib/ratelimit.ts");
+  const lim = createIpRateLimiter({ name: "open-rate", limit: 1, windowMs: 60_000 });
+  const noIp = new Request("https://x/api");
+  assert.equal(await lim(noIp), false);
+  assert.equal(await lim(noIp), true, "headerless requests share one unknown bucket");
+  const open = createIpRateLimiter({ name: "fail-rate", limit: 1, windowMs: 60_000 });
+  assert.equal(await open(null), false, "null request fails open, never throws");
+  assert.equal(await open({ headers: { get() { throw new Error("boom"); } } }), false);
+});
+
+test("createIpRateLimiter: capacity capped at 4096 buckets", async () => {
+  const { createIpRateLimiter } = await import("../src/lib/ratelimit.ts");
+  const lim = createIpRateLimiter({ name: "cap-rate", limit: 1_000_000, windowMs: 60_000 });
+  for (let i = 0; i < 4100; i++) {
+    await lim(new Request("https://x/api", { headers: { "cf-connecting-ip": `10.0.${i >> 8}.${i & 255}` } }));
+  }
+  // First IP's bucket must have been evicted (insertion order): a repeat
+  // call counts from zero instead of tripping on a stale accumulated count.
+  assert.equal(await lim(new Request("https://x/api", { headers: { "cf-connecting-ip": "10.0.0.0" } })), false);
+});
