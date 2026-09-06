@@ -1661,6 +1661,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   arm had ZERO pins. Added 1 in health.test.mjs: KV outage → unusable,
   never throws. Self-caught: ds has an env-key fallback, assert on qw.
   Suite 507->508; gates clean; snapshot updated; pushed.
+  ROUND-473 (2026-09-06): probe-route audit — the /api/vale-probe 429
+  arm had ZERO route pins. Added 1 in health.test.mjs: 60×200 then 429
+  on a fixed IP. Suite 508->509; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
