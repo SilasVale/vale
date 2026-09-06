@@ -1667,6 +1667,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-474 (2026-09-06): timeout-fallback audit — the "timed out"→TIMEOUT
   message arm had ZERO pins. Added 1 in mcp-handler.test.mjs. Suite
   509->510; gates clean; snapshot updated; pushed.
+  ROUND-475 (2026-09-06): divert audit — browser_run_script/pw_info
+  device path (not the bridge) had ZERO pins. Added 1 in
+  mcp-browser.test.mjs. Self-caught×3: real Response stub, Bearer lives
+  in deviceFetch, callTool returns the envelope. Suite 510->511; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
