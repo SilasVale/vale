@@ -1602,3 +1602,16 @@ test("disabled user → 401 on translate, upstream never called", async () => {
   );
   assert.equal(res.status, 401);
 });
+
+// round-485 (coverage-driven): the unknown-/v1/-path 404 arm had ZERO pins.
+test("POST /v1/<unknown> with a valid token → 404, upstream never called", async () => {
+  const { env, token } = gwEnv();
+  const res = await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    () => post(env, token, { model: "og/deepseek-v4-flash", messages: [] }, "/v1/nope"),
+  );
+  assert.equal(res.status, 404);
+  assert.equal((await res.json()).error.type, "not_found_error");
+});
