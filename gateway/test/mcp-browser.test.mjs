@@ -269,6 +269,27 @@ test("private device hostname → DEVICE_UNREACHABLE before any fetch", async ()
   assert.equal(fetched, false, "SSRF guard must fire before the first fetch");
 });
 
+// round-482 (coverage-driven): the URL round-trip mismatch arm (hostname
+// smuggling a port/userinfo/path past the IP guards) had ZERO pins.
+test("hostname with port/userinfo/path → DEVICE_UNREACHABLE before any fetch", async () => {
+  for (const hostname of ["d1.example.com:8443", "u@d1.example.com", "d1.example.com/evil"]) {
+    const evil = { name: "evil", hostname, token: "tok" };
+    let fetched = false;
+    await withFetch(
+      async () => {
+        fetched = true;
+        throw new Error("must not be called");
+      },
+      async () => {
+        const err = await callTool({ name: "browser_snapshot" }, {}, evil, {}).catch((e) => e);
+        assert.equal(err?.code, "DEVICE_UNREACHABLE", hostname);
+        assert.match(String(err?.message || ""), /invalid device hostname/, hostname);
+      },
+    );
+    assert.equal(fetched, false, `no dial for ${hostname}`);
+  }
+});
+
 test("5th concurrent browser call on one device → SESSION_BUSY (semaphore of 4)", async () => {
   // Gate stub: hold all 4 slots until released — no timers, fully
   // deterministic (each call parks on the pending fetch synchronously
