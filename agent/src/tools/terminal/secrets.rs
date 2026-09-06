@@ -463,4 +463,19 @@ mod file_store_tests {
         assert_eq!(file_impl::get("a@b").unwrap().as_deref(), Some("legacy"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn key_of_normalizes_identity() {
+        // round-101: the SAME connection under different spellings must map
+        // to one key, or a stored password is unfindable (panel always
+        // builds 'user@host:22'; MCP AI commonly stores 'user@host').
+        assert_eq!(file_impl::key_of("u@h:22"), "ssh:u@h:22");
+        assert_eq!(file_impl::key_of("u@h"), "ssh:u@h:22");
+        assert_eq!(file_impl::key_of("  u@h  "), "ssh:u@h:22");
+        // a non-default port is a DIFFERENT connection
+        assert_eq!(file_impl::key_of("u@h:2222"), "ssh:u@h:2222");
+        assert_ne!(file_impl::key_of("u@h:22"), file_impl::key_of("u@h:2222"));
+        // userless target defaults to root (parse_ssh_target contract)
+        assert_eq!(file_impl::key_of("h"), "ssh:root@h:22");
+    }
 }
