@@ -905,6 +905,19 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   recommended; 3 explicit questions for the human. No behavior changed —
   implementation waits for sign-off. Also fixed ADR README drift (missing
   0006 row, singular proposal-* wording) and repointed the F3 Next line.
+  ROUND-357 (2026-09-06): memory capacity policy actually works end to end.
+  Found: config `memory:` (max_entries/max_bytes/retention_days) was
+  documented-but-never-read (state.rs always passed MemoryLimits::default)
+  AND the retention branch had zero tests AND retention only ran on
+  mutation (quiet devices kept expired records forever). Fix:
+  MemoryConfig{all-Option}+effective() in core (0 treated as absent),
+  state.rs builds limits from it, new() enforces on open before compact.
+  Tests: config parse/partial/zero + cross-crate default-twin pin +
+  retention on insert/on open/None-keeps-old. Matrix: lib 201 (+4),
+  feat-gated 205, clippy x2 + fmt + xwin clean; snapshot count 233->237.
+  Self-caught mid-round: a truncated edit fragment (fixed immediately) and
+  clippy derivable_impls on the manual Default (derived instead). OPEN
+  (later round): memory limits not yet in GET/PUT /api/settings panel GUI.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
