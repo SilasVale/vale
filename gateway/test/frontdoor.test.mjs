@@ -54,8 +54,7 @@ test("unhandled throw answers 500 Internal error without internals", async () =>
 
 // round-471 (coverage-driven): the index.ts CSRF-gate 403 arm had ZERO
 // route pins (only unit pins on csrfCookieViolation itself).
-test("cross-site cookie-authed mutation 403s at the front door", async () => {
-  const csrfEnv = () => makeBaseEnv({ kv: { "auth:admin_password": "pw", _admin_seeded: "1" } });
+test("cross-site cookie-authed mutation 403s at the front door", async () => {  const csrfEnv = () => makeBaseEnv({ kv: { "auth:admin_password": "pw", _admin_seeded: "1" } });
   const mk = (site) =>
     new Request("https://x/api/me/keys", {
       method: "POST",
@@ -87,4 +86,21 @@ test("cross-site cookie-authed mutation 403s at the front door", async () => {
     csrfEnv(),
   );
   assert.equal(get.status, 401, "reads are never CSRF-gated");
+});
+
+// round-476 (coverage-driven): the static-asset branch arms had ZERO pins.
+test("static page: off-host path 404s; page host proxies ASSETS or 404s", async () => {
+  const offHost = await worker.fetch(
+    new Request("https://x/some-page"),
+    makeBaseEnv({ extra: { CONSOLE_HOST: "other.example" } }),
+  );
+  assert.equal(offHost.status, 404, "non-/v1/ on a non-page host");
+  const noAssets = await worker.fetch(new Request("https://x/some-page"), env());
+  assert.equal(noAssets.status, 404, "page host without ASSETS binding");
+  const proxied = await worker.fetch(
+    new Request("https://x/some-page"),
+    makeBaseEnv({ extra: { ASSETS: { fetch: async () => new Response("landing", { status: 200 }) } } }),
+  );
+  assert.equal(proxied.status, 200);
+  assert.equal(await proxied.text(), "landing");
 });
