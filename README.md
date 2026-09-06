@@ -46,7 +46,7 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 | `agent/` | **Vale Agent** | Windows (Rust) | headless MCP server + `/api/tools` + panel + Electron desktop shell (`vale-desktop-electron/`) + npm distribution (`vale-agent-npm/`) |
 | `index/` | **Vale Index** | Cloudflare Worker | download distribution (`vale-dist`; hosts the npm tgz, see Quick start) |
 | `extension/` | **Vale Studio Links** | Chrome/Edge (MV3) | rewrites DSH panel file paths into Vale Studio deep links (unpacked; no build) |
-| `studio/` | **Vale Studio** | Node 22, pm2 (satellite) | workspace code editor + terminal for code.saisi.online (zero-build frontend, `npm test` contract tests) |
+| ~~`studio/`~~ | RETIRED 2026-09-06 | — | replaced by code-server (vscode.saisi.online, behind Access); see docs/adr/0006 |
 | `proxies/` | **Satellite proxies** | Cloudflare Worker + Vercel (satellite) | zen-go / zen-us / openrouter AI egress + vercel-proxy (`./scripts/build.sh proxies|vercel-proxy`) |
 | `brand/` | **Brand assets** | static (satellite) | sunrise favicon / icon source (no build) |
 | `docs/` | docs | — | design decisions (`docs/adr/`), agent build guide (`agent/AGENTS.md`) |

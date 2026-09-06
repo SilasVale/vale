@@ -243,35 +243,6 @@ jobs:
   # gitignored vendor/ — test 17 fetches them, so --omit=dev breaks it),
   # --ignore-scripts skips the node-pty native build (server falls back
   # to script(1)), then vendor, then test.
-  studio:
-    name: studio (api contract tests)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: studio/package-lock.json
-      - name: Install deps (devDeps needed for vendored assets)
-        run: npm ci --ignore-scripts --no-audit --no-fund
-        working-directory: studio
-      - name: Vendor browser assets (monaco/xterm, gitignored)
-        # Single-sourced in studio/scripts/vendor.sh (same script build.sh
-        # studio calls) — the script self-locates the studio dir, so this
-        # runs from the repo root with no working-directory override.
-        run: bash studio/scripts/vendor.sh
-      - name: API contract tests
-        run: npm test
-        working-directory: studio
-
-  # satellite proxies: zero-dep behavior tests (node --test over the worker
-  # default export with a stubbed fetch — CORS gates, CLIENT_KEY/BYOK auth,
-  # protocol conversion, upstream error shaping) + a compile/config check
-  # without uploading (wrangler v4 --dry-run; verified locally; never needs
-  # secrets). vercel-proxy is a Vercel project, not a Worker — no dry-run
-  # exists for it, so its api files get node --check instead (syntax gate;
-  # smoke it before deploy as well).
   proxies:
     name: proxies (node --test + wrangler dry-run)
     runs-on: ubuntu-latest

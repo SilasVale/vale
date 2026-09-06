@@ -8,7 +8,6 @@
 #   ./scripts/build.sh index           # deploy the Vale Index worker
 #   ./scripts/build.sh proxies         # deploy the satellite proxy workers (zen-go / zen-us / openrouter)
 #   ./scripts/build.sh vercel-proxy    # deploy the Vercel exit proxy (v.saisi.online, needs vercel CLI)
-#   ./scripts/build.sh studio          # build + test + restart vale-studio (code.saisi.online)
 #   ./scripts/build.sh deploy          # build agent + deploy gateway/index
 #
 # Dependencies: cargo-xwin, wrangler (global v4), CLOUDFLARE_API_TOKEN (deploy
@@ -157,37 +156,6 @@ deploy_vercel_proxy() {
   echo "  ok: vercel-proxy deployed"
 }
 
-build_studio() {
-  # Vale Studio (studio/): install deps, vendor the browser assets out of
-  # node_modules (monaco AMD loader + xterm UMD — gitignored, generated here),
-  # run the API contract tests, then restart the pm2 app.
-  echo "=== [studio] npm install ==="
-  ( cd "$ROOT/studio" \
-      && npm install --include=dev --no-audit --no-fund )
-  echo "=== [studio] vendor browser assets ==="
-  # Single-sourced in studio/scripts/vendor.sh (ci.yml's studio job runs the
-  # same script after its own npm ci) — the cp sequence must not drift.
-  bash "$ROOT/studio/scripts/vendor.sh" "$ROOT/studio"
-  echo "=== [studio] API contract tests ==="
-  ( cd "$ROOT/studio" && npm test )
-  # Fail-fast vendor check: vendor/ is gitignored and generated above — a
-  # missing loader means a silent broken editor (Monaco never ready).
-  # The server also warns at boot and reports /api/boot vendor status.
-  [ -f "$ROOT/studio/vendor/monaco/vs/loader.js" ] \
-    || { echo "  !! studio vendor missing: monaco loader.js"; exit 1; }
-  [ -f "$ROOT/studio/vendor/xterm/xterm.js" ] \
-    || { echo "  !! studio vendor missing: xterm.js"; exit 1; }
-  echo "=== [studio] pm2 restart ==="
-  pm2 start "$ROOT/studio/ecosystem.config.js" --only vale-studio >/dev/null 2>&1 || true
-  pm2 restart vale-studio >/dev/null
-  sleep 1
-  local code
-  code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7780/api/boot || true)"
-  [ "$code" = "404" ] || [ "$code" = "200" ] \
-    || { echo "  !! studio not answering on :7780 (got $code)"; exit 1; }
-  echo "  ok: vale-studio serving on 127.0.0.1:7780 (public: code.saisi.online)"
-}
-
 cmd="${1:-agent}"
 case "$cmd" in
   agent|command)  build_agent "${2:-release}" ;;
@@ -195,12 +163,11 @@ case "$cmd" in
   index)    deploy_worker index "Vale Index" ;;
   proxies)  deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   vercel-proxy) deploy_vercel_proxy ;;
-  studio)   build_studio ;;
   # round-320: build-installer.sh retired (it staged the dead Vercel mirror
   # + rewrote index.js + required retired Tauri exes — it always failed).
   # Releases use scripts/publish-release.sh (CDN publish + last-5 prune);
   # `deploy` builds agent + deploys gateway/index + the three Cloudflare
-  # proxies (not studio/vercel-proxy).
+  # proxies and vercel-proxy are NOT deployed by `deploy` (deploy manually).
   deploy)   build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
-  *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|studio|deploy]"; exit 1 ;;
+  *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
 esac

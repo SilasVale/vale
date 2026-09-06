@@ -9,19 +9,15 @@
 <body>
 <main class="card">
   <h1>Vale Studio Links</h1>
+  <h1 style="margin-top:28px;font-size:16px">DSH 路径改写 → code-server</h1>
+  <label for="studioOrigin">code-server origin</label>
+  <input id="studioOrigin" type="url" placeholder="https://vscode.saisi.online" spellcheck="false">
+  <label class="chk"><input id="studioLinksEnabled" type="checkbox" checked> 在 DSH 页面把文件路径改成 code-server 目录链接</label>
+  <p class="hint">改写后的链接在新标签打开 code-server 对应目录（认证走 Cloudflare Access + code-server 密码，扩展不再持 token）。</p>
   <div class="row">
     <button id="save">Save</button>
-    <span id="saved" class="saved hidden">Saved</span>
+    <span id="status" class="hint"></span>
   </div>
-  <p id="check" class="hint hidden"></p>
-
-  <h1 style="margin-top:28px;font-size:16px">Vale Studio 链接改写</h1>
-  <label for="studioOrigin">Studio origin</label>
-  <input id="studioOrigin" type="url" placeholder="https://code.saisi.online" spellcheck="false">
-  <label for="studioToken">Studio token</label>
-  <input id="studioToken" type="password" placeholder="token from ~/.vale-studio/config.json" spellcheck="false" autocomplete="off">
-  <label class="chk"><input id="studioLinksEnabled" type="checkbox" checked> 在 DSH 页面把文件路径改成 Studio 深链</label>
-  <p class="hint">改写后的链接在新标签打开 code.saisi.online 并定位到对应行。</p>
 </main>
 <script src="../shared.js"></script>
 <script src="options.js"></script>

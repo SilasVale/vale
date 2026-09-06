@@ -20,10 +20,3 @@ function httpsOrigin(v) {
   }
 }
 
-// Authorization headers for the Studio API — {} when there is no token or the
-// origin fails the https guard (e.g. a stale/synced stored value that predates
-// the options-page check).
-function studioAuthHeaders(origin, token) {
-  if (!token || !httpsOrigin(origin)) return {};
-  return { authorization: "Bearer " + token };
-}

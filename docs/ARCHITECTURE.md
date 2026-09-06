@@ -51,8 +51,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | agent state.rs | write-through ConfigHandle: file before swap under one guard (ADR 0005) | c579b311 |
 | index single file | appropriate at current size; page template + claim logic extracted | 81b1c40f |
 | extension | clean: no stale endpoints, least-privilege manifest, shared.js for constants | abb541ce review |
-| studio lib/fsapi.mjs | cohesive (path safety/atomic write/search/git); the ripgrep-less searchJs fallback engine and the trash-quota eviction were the last zero-coverage seams — now pinned (3c9f2620) | 3c9f2620 |
-| studio lib/terminals.mjs | hub owns the WS data path's pure logic: bounded broadcast (stalled viewers force-dropped at 1 MB buffered), per-terminal viewer cap (16) — pinned with stub-viewer unit tests (hub.test.mjs) | this batch |
+| ~~studio~~ | RETIRED 2026-09-06 (ADR 0006): replaced by code-server behind Access (vscode.saisi.online → 127.0.0.1:7739, password + Access double gate); the extension deep-link target switched to code-server folder-open. Its 41-test suite and lib/ modules are preserved in git history | ADR 0006 |
 
 ## Foundation layers (features build on these; changes run every downstream gate)
 
@@ -73,7 +72,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | Muse defaults to the Vercel exit | CF egress fails zen's Meta RegionError; only Vercel's ORD edge verified (proxies/README.md) |
 | Studio WS/e2e tests are live-only | real PTY + browser deps; CI runs the HTTP contract tier (README tiering) |
 | Electron main.ts not split further | no testability gain — electron is unimportable under plain node |
-| code-server replaces studio's editor for code VIEWING (2026-09-06 migration) | studio's Monaco ceiling (no LSP/command palette/split view) + the user wants the WHOLE home dir — code-server's default shape. Live behind Access (vscode.saisi.online, aud-gated); studio stays on 7780 in parallel trial. Note: the tunnel is DASHBOARD-managed (local ingress ignored), and dashboard configs don't accept unix sockets — hence TCP 127.0.0.1:8080 despite the socket preference |
+| code-server replaces studio (2026-09-06, ADR 0006) | Monaco ceiling + whole-home workspace need; live on vscode.saisi.online → 127.0.0.1:7739 with password + Access double gate (the tunnel is DASHBOARD-managed; its remote config evolved: socket → 7739 HTTP by the operator) |
 
 ## Test gates (per subproject)
 

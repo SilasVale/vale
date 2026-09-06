@@ -1,6 +1,6 @@
 # Vale — monorepo guide
 
-Vale = one repo + one front door — core: `gateway/` (Vale Gate worker), `agent/` (Vale Agent, Windows), `index/` (Vale Index worker), `docs/`; satellites: `proxies/`, `studio/`, `extension/`, `brand/` (see README layout table). (Header difference vs AGENTS.md is by design: AGENTS.md carries the DSH paragraph + extra architecture facts; this file stays shorter.)
+Vale = one repo + one front door — core: `gateway/` (Vale Gate worker), `agent/` (Vale Agent, Windows), `index/` (Vale Index worker), `docs/`; satellites: `proxies/`, `extension/`, `brand/` (see README layout table). (Header difference vs AGENTS.md is by design: AGENTS.md carries the DSH paragraph + extra architecture facts; this file stays shorter.)
 
 ## Build
 
@@ -11,8 +11,7 @@ Unified entry `scripts/build.sh`:
 ./scripts/build.sh gateway|index     # wrangler deploy the worker (needs CLOUDFLARE_API_TOKEN)
 ./scripts/build.sh proxies           # deploy satellite proxy workers (zen-go / zen-us / openrouter; needs CLOUDFLARE_API_TOKEN)
 ./scripts/build.sh vercel-proxy      # deploy the Vercel exit proxy (v.saisi.online; needs vercel CLI)
-./scripts/build.sh studio            # build + test + restart vale-studio (code.saisi.online; see studio/README.md)
-./scripts/build.sh deploy            # build agent + deploy gateway/index + 3 CF proxies (not studio/vercel-proxy)
+./scripts/build.sh deploy            # build agent + deploy gateway/index + 3 CF proxies (not vercel-proxy)
 ```
 
 Subprojects have their own build docs:
@@ -70,8 +69,6 @@ running every downstream test gate.
   via `vale_agent_core::`), `paths.rs`, `state.rs` (ConfigHandle), `web/`
   helpers, `tunnel.rs`, `lib/ratelimit`-equivalent: bounded subprocess runners
   (`runSchtasks`/`run_bounded`)
-- studio: `lib/fsapi.mjs` (path safety/atomic writes/git), `lib/auth.mjs`,
-  `lib/pty.mjs`, `lib/watch.mjs`, `lib/terminals.mjs`
 - vale CLI: network calls go through the bounded-fetch layer (see vale.ts) —
   no bare `fetch` in feature code
 
