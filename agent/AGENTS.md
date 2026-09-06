@@ -1486,6 +1486,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   exit 0; rebuilt artifacts byte-identical = zero drift). Replay otherwise
   green: electron url-policy 4/4, npm CLI 3/3, pack dry-run 6/6 files,
   stale local tgz 293-296 cleaned; pushed.
+  ROUND-436 (2026-09-06): console UI audit — zero unit tests (CI only
+  tsc+build+smoke). Beachhead: maskToken pin in ui/test/format.test.mjs
+  (empty/short/long/no-middle-leak; self-caught a wrong short-shape
+  expectation) + `"test": "node --test"` script + CI ui job unit step.
+  Caught the repo convention along the way: bare `node --test` (gateway/
+  index style) — `node --test test/` dies MODULE_NOT_FOUND. Pre-existing
+  nit noted, untouched: ui/package.json lacks trailing newline (gate only
+  covers src/). Pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
