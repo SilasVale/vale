@@ -412,6 +412,66 @@ test("resolveAutoModel: chosen model not in whitelist → falls back to default 
   assert.equal(await resolveAutoModel(env, "u-nope"), "ds/deepseek-v4-flash");
 });
 
+// ── resolveAutoModel fallback chain (round-407: only the default-ds path
+// was pinned; the round-100 first-usable loop was not) ──
+
+// NOTE: distinct uids per case — getUserKeys caches ukeys:<uid> module-wide,
+// and getUserRoute caches route:<uid> for 60s.
+function chainEnv({ ukeys = {}, uid = "u", choice = null, breakerOpen = false, extra = {} } = {}) {
+  const kv = new Map([[`ukeys:${uid}`, JSON.stringify(ukeys)]]);
+  const routes = new Map();
+  if (choice !== null) routes.set(uid, choice);
+  return {
+    KEYS: {
+      async get(k) { return kv.has(k) ? kv.get(k) : null; },
+      async put(k, v) { kv.set(k, String(v)); },
+      async delete(k) { kv.delete(k); },
+    },
+    BREAKER: {
+      idFromName: () => ({}),
+      get: () => ({ fetch: async () => new Response(breakerOpen ? "1" : "0") }),
+    },
+    ROUTE: {
+      idFromName: () => ({}),
+      get: () => ({
+        fetch: async (req, init) => {
+          const method = init?.method || "GET";
+          const url = new URL(typeof req === "string" ? req : req.url);
+          const u = url.searchParams.get("uid");
+          if (method === "GET") return new Response(JSON.stringify({ model: routes.get(u) || null }));
+          return new Response("not found", { status: 404 });
+        },
+      }),
+    },
+    ...extra,
+  };
+}
+
+test("resolveAutoModel: no ds key → first usable is qw", async () => {
+  const env = chainEnv({ uid: "u-ch1", ukeys: { QWEN_API_KEY: "u-qw" } });
+  assert.equal(await resolveAutoModel(env, "u-ch1"), "qw/qwen3.8-max-preview");
+});
+
+test("resolveAutoModel: only og key + closed breaker → og flash", async () => {
+  const env = chainEnv({ uid: "u-ch2", ukeys: { OPENCODE_GO_API_KEY: "u-og" } });
+  assert.equal(await resolveAutoModel(env, "u-ch2"), "og/deepseek-v4-flash");
+});
+
+test("resolveAutoModel: only or key → or luna", async () => {
+  const env = chainEnv({ uid: "u-ch3", ukeys: { OPENROUTER_API_KEY: "u-or" } });
+  assert.equal(await resolveAutoModel(env, "u-ch3"), "or/openai/gpt-5.6-luna:floor[1m]");
+});
+
+test("resolveAutoModel: keyless user still gets the default (last-line guarantee)", async () => {
+  const env = chainEnv({ uid: "u-ch4" });
+  assert.equal(await resolveAutoModel(env, "u-ch4"), "ds/deepseek-v4-flash");
+});
+
+test("resolveAutoModel: chosen-but-unusable falls into the chain (round-100)", async () => {
+  const env = chainEnv({ uid: "u-ch5", choice: "og/deepseek-v4-flash", ukeys: { QWEN_API_KEY: "u-qw" } });
+  assert.equal(await resolveAutoModel(env, "u-ch5"), "qw/qwen3.8-max-preview");
+});
+
 // ── isModelUsable key matrix (round-406: zero direct pins — only
 // indirect resolveAutoModel exercise; the round-68 user-not-admin-keys
 // rule and the nv/gmi pure-BYOK no-env-fallback are the teeth) ──
