@@ -208,4 +208,33 @@ mod conn_tests {
         assert!(list().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn corrupt_file_lists_empty_and_remember_recovers() {
+        // round-109's atomic rename made torn writes rare, but a corrupt
+        // file (disk bit-rot, hand-edit) must degrade to empty, never panic
+        // — and the next remember() must heal the file, not append to garbage.
+        let dir = isolated("corrupt");
+        std::fs::write(dir.join("vale-connections.json"), "{torn json{{{").unwrap();
+        assert!(list().is_empty());
+        remember("ssh", "u@h:22", "healed", &serde_json::Map::new()).unwrap();
+        let got = list();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0]["label"], "healed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_sorted_by_id_with_injected_id_field() {
+        let dir = isolated("sorted");
+        remember("ssh", "z@h:22", "zee", &serde_json::Map::new()).unwrap();
+        remember("pty", "pwsh", "shell", &serde_json::Map::new()).unwrap();
+        remember("ssh", "a@h:22", "aye", &serde_json::Map::new()).unwrap();
+        let got = list();
+        let ids: Vec<&str> = got.iter().map(|e| e["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["pty:pwsh", "ssh:a@h:22", "ssh:z@h:22"]);
+        assert_eq!(got[1]["kind"], "ssh");
+        assert_eq!(got[1]["target"], "a@h:22");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
