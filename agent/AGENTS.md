@@ -1676,6 +1676,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   proxy arms had ZERO pins. Added 1 in frontdoor.test.mjs. Self-caught:
   a no-op edit merged two lines (fixed immediately after). Suite
   511->512; gates clean; snapshot updated; pushed.
+  ROUND-477 (2026-09-06): bootstrap audit — the no-password short-pw 400
+  arm had ZERO pins + freshEnv never reset the seed flag (my new test ate
+  the next test's seed). Added 1 in security-fixes.test.mjs, freshEnv now
+  calls __resetSeedForTests. Suite 512->513; gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
