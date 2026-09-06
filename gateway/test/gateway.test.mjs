@@ -1756,3 +1756,19 @@ test("ds/qw passthrough without the user's own key → 502, upstream never calle
     },
   );
 });
+
+// round-500 (REAL FIND): the translate-path og-key guard was unscoped — a
+// cm/ request with a valid CMD key but no og key 502'd on an unrelated
+// credential (the branch only ever sends cmdKey). Scoped to opencode kind.
+test("cm/ with CMD key but no og key reaches the upstream (no og-key gate)", async () => {
+  const { env, a } = isoEnv({ aKeys: { CMD_API_KEY: "sk-cm", OPENCODE_GO_API_KEY: undefined } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url: String(url), init };
+    return okChoices();
+  }, () => post(env, a.token, { ...ogBody(), model: "cm/deepseek/deepseek-v4-flash" }));
+  assert.equal(res.status, 200);
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-cm", "cm translate sends the CMD key, not an og key");
+  assert.equal((await res.json()).content[0].text, "ok");
+});

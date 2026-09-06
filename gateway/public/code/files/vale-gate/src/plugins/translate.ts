@@ -1151,7 +1151,10 @@ async function handleGatewayImpl(
       "config_error",
     );
   }
-  if (!opencodeGoKey) {
+  // round-500: this guard was unscoped — a cm/ request (Bearer cmdKey,
+  // cm upstream; opencodeGoKey unused below) was 502'd for lacking an
+  // unrelated og key. Scope to the opencode kind it actually protects.
+  if (route.kind === "opencode" && !opencodeGoKey) {
     return jsonError(
       502,
       "OPENCODE_GO_API_KEY not configured — add your own key in the console",
