@@ -452,6 +452,21 @@ test("stream encoder: PARALLEL tool calls each get their own block, args not con
   assert.equal(byTool[1], '{"path":"/etc"}'); // tool 1's fragments joined alone
 });
 
+// round-494 (coverage-driven): the late id/name backfill arm had ZERO pins
+// (round-116: id/name arriving AFTER the first args chunk must not stick
+// the client with id:""/name:"unknown").
+test("stream encoder: late-arriving tool id/name backfills the delayed start", async () => {
+  const { AnthropicStreamEncoder } = await import("../src/anthropic-translate.ts");
+  const enc = new AnthropicStreamEncoder("og/m", "m");
+  const tc = (index, id, name, args) => ({ choices: [{ index, delta: { tool_calls: [{ index, id, function: { name, arguments: args } }] } }] });
+  enc.push(tc(0, undefined, undefined, '{"c'));
+  enc.push(tc(0, "toolu_0", "bash", 'md":"ls"}'));
+  const sseOut = enc.finish();
+  assert.match(sseOut, /"id":"toolu_0"/);
+  assert.match(sseOut, /"name":"bash"/);
+  assert.ok(!sseOut.includes('"unknown"'), "no unknown-name tool_use emitted");
+});
+
 // ── streamOgToAnthropic: upstream dies mid-stream → graceful close ──
 
 // round-492 (coverage-driven): the encoder mid-stream error arm + the
