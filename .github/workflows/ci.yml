@@ -142,6 +142,10 @@ jobs:
       # release.yml runs post-compile. Here it guards the committed file
       # itself: a src/vale.ts change without recompiling fails the PR, not
       # the release.
+      # Release-lib regression: the last-5-per-minor prune + version.json
+      # writer that publish-release.sh sources (extracted for testability).
+      - name: release-lib regression checks
+        run: bash scripts/test/release-lib.bash
       - name: bin/vale.js round-298 marker
         working-directory: agent
         run: grep -q "vale-release" vale-agent-npm/bin/vale.js || { echo "::error::compiled bin/vale.js missing round-298 marker — recompile src/vale.ts and commit bin/vale.js"; exit 1; }
