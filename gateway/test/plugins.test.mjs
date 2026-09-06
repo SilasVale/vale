@@ -330,3 +330,64 @@ test("admin/users: user tokens are masked, raw values never leave the server", a
   assert.equal(byId.admin.token, maskKey("ADMIN_RAW_TOKEN_1234567890"));
   assert.equal(byId.bob.token, maskKey("BOB_RAW_TOKEN_1234567890"));
 });
+
+// ── Link-map hardening (round-392: sweep persistence, legacy links,
+// corrupt blobs, write-through — only return values were pinned) ──
+
+test("plugin link: expired get sweeps the KV record (not just null)", async () => {
+  const { PLUGIN_LINK_TTL_MS } = await import("../src/store.ts");
+  assert.equal(PLUGIN_LINK_TTL_MS, 30 * 24 * 60 * 60 * 1000);
+  const e = env();
+  __clearCaches();
+  await e.KEYS.put("plugins:v1", JSON.stringify({
+    "tok-old": { device: "d1", createdAt: 1, expiresAt: Date.now() - 1000 },
+    "tok-live": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 },
+  }));
+  assert.equal(await getPluginByToken(e, "tok-old"), null);
+  const raw = JSON.parse(await e.KEYS.get("plugins:v1"));
+  assert.equal(raw["tok-old"], undefined, "expired link must be deleted from KV");
+  assert.ok(raw["tok-live"], "live link must survive the sweep");
+});
+
+test("plugin link: legacy record without expiresAt sweeps as expired (round-122)", async () => {
+  const e = env();
+  __clearCaches();
+  await e.KEYS.put("plugins:v1", JSON.stringify({
+    "tok-legacy": { device: "d1", createdAt: 1 },
+  }));
+  assert.equal(await getPluginByToken(e, "tok-legacy"), null);
+  const raw = JSON.parse(await e.KEYS.get("plugins:v1"));
+  assert.equal(raw["tok-legacy"], undefined, "legacy link must not grant permanent control");
+});
+
+test("plugin link: corrupt blob reads as empty, never throws", async () => {
+  const { listPluginLinks, savePluginLinks, migratePluginLinks, removePluginLinksForDevice } =
+    await import("../src/store.ts");
+  const e = env();
+  __clearCaches();
+  await e.KEYS.put("plugins:v1", "not json{{{");
+  assert.deepEqual(await listPluginLinks(e), {});
+  assert.equal(await getPluginByToken(e, "anything"), null);
+  await removePluginLink(e, "anything");
+  assert.equal(await migratePluginLinks(e, "a", "b"), false);
+  assert.equal(await removePluginLinksForDevice(e, "a"), 0);
+  // savePluginLinks tested below; keep the import used.
+  void savePluginLinks;
+});
+
+test("plugin link: savePluginLinks is write-through (same-isolate reads stay fresh)", async () => {
+  const { listPluginLinks, savePluginLinks } = await import("../src/store.ts");
+  const e = env();
+  __clearCaches();
+  const map = { tokW: { device: "d9", createdAt: 7, expiresAt: Date.now() + 99999 } };
+  await savePluginLinks(e, map);
+  assert.deepEqual(JSON.parse(await e.KEYS.get("plugins:v1")), map);
+  // Yank the KV record out from under the isolate: the write-through
+  // cache still serves the saved map (documented same-isolate behavior).
+  env_scrub(e);
+  assert.deepEqual(await listPluginLinks(e), map);
+});
+
+function env_scrub(e) {
+  e._kv.delete("plugins:v1");
+}
