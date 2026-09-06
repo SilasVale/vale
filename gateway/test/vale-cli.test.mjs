@@ -114,6 +114,9 @@ function run(args, settingsFile, gatewayUrl, providersFile) {
   // NOTE: async spawn, NOT spawnSync — spawnSync blocks the parent's event
   // loop, so the in-process mock gateway could never respond to the CLI's
   // requests (deadlock). Async spawn lets the mock serve the child.
+  // Hard 30s child timeout: a hung CLI child (e.g. a probe without a fetch
+  // timeout hitting a DNS blackhole) must fail the test, never wedge the
+  // whole suite.
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, ...args], {
       env: {
@@ -125,12 +128,16 @@ function run(args, settingsFile, gatewayUrl, providersFile) {
     });
     let stdout = "";
     let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve({ status: -1, stdout, stderr: "test runner timeout: CLI child hung 30s" });
+    }, 30000);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (d) => { stdout += d; });
     child.stderr.on("data", (d) => { stderr += d; });
-    child.on("error", (e) => resolve({ status: -1, stdout, stderr: e.message }));
-    child.on("close", (code) => resolve({ status: code, stdout, stderr }));
+    child.on("error", (e) => { clearTimeout(timer); resolve({ status: -1, stdout, stderr: e.message }); });
+    child.on("close", (code) => { clearTimeout(timer); resolve({ status: code, stdout, stderr }); });
   });
 }
 
@@ -353,7 +360,7 @@ test("provider list: token 打码", async () => {
   try {
     fs.rmSync(file, { force: true });
     const { file: sf } = makeSettings();
-    await run(["provider", "add", "p1", "--base", "https://x.example", "--token", "sk-abcdef123456", "--model", "m1"], sf, gw(1), file);
+    await run(["provider", "add", "p1", "--base", "https://127.0.0.1:1", "--token", "sk-abcdef123456", "--model", "m1"], sf, gw(1), file);
     const r = await run(["provider", "list"], sf, gw(1), file);
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /p1/);
@@ -367,7 +374,7 @@ test("provider rm: 删除提供商", async () => {
   try {
     fs.rmSync(file, { force: true });
     const { file: sf } = makeSettings();
-    await run(["provider", "add", "p1", "--base", "https://x.example", "--token", "sk-t", "--model", "m1"], sf, gw(1), file);
+    await run(["provider", "add", "p1", "--base", "https://127.0.0.1:1", "--token", "sk-t", "--model", "m1"], sf, gw(1), file);
     const r = await run(["provider", "rm", "p1"], sf, gw(1), file);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), {});
