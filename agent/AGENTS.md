@@ -1382,6 +1382,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Added 3: all-19-names completeness, size/stroke contract, BrandMark
   gradients. Panel 126->129 (23->24 files); rebuilt, panel.js
   identical; pushed.
+  ROUND-419 (2026-09-06): panel DetailsPanel audit — inspector rows had
+  ZERO tests. Added 4: empty hint + close wiring, ended-card rows
+  (command/status/exit/duration/params/output/copy), running
+  placeholders, failed exit+reason. Panel 129->133 (24->25 files);
+  rebuilt, panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
