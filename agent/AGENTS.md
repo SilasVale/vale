@@ -1314,6 +1314,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   pure-BYOK ignores env, og breaker + cm/amd keyed/keyless. Fixed my own
   guessed-id tautology pre-commit (real MODELS ids). Suite 415->419;
   gates clean; snapshot updated; pushed.
+  ROUND-407 (2026-09-06): fallback-chain audit — resolveAutoModel's
+  round-100 first-usable loop only had the default-ds path pinned.
+  Added 5 (chainEnv harness): no-ds→qw, og-only→flash, or-only→luna,
+  keyless last-line guarantee, chosen-but-unusable enters the chain.
+  Suite 419->424; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
