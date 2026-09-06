@@ -1337,6 +1337,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   re-trip (round-118), stale-window re-anchor, storage-throw 500 had
   zero pins. Added 3 in reliability.test.mjs. Suite 429->432; gates
   clean; snapshot updated; pushed.
+  ROUND-412 (2026-09-06): secrets key_of audit — normalization only
+  exercised indirectly via CRUD. Added 1 direct pin: :22 collapse both
+  ways + trim, non-22 distinct, userless→root. BONUS: build.rs STALE-
+  panel gate fired on round-410's test file (watches whole src dir) —
+  rebuilt, panel.js byte-identical, gate honest. Matrix: lib 283->284,
+  feat 291->292, clippy x2 + fmt + xwin clean; snapshot 342->343;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
