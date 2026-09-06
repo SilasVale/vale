@@ -1295,6 +1295,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   + DO-error fail-open false, trip invalidates immediately, reset hits
   endpoint + keyless no-throw, upstreamTimeoutMs direct. Suite 404->409;
   gates clean; snapshot updated; pushed.
+  ROUND-404 (2026-09-06): proxy rewriter audit — decodeDeviceName +
+  rewriteDeviceBody (every proxied panel asset flows through) had zero
+  direct pins. Added 2: decode/decoded/malformed, mount insert for
+  quote/backtick/`}` + token scrub both quotes + no double-prefix +
+  bare-text untouched. Rewrote my own convoluted draft pre-commit (use
+  the file's static imports). Suite 409->411; gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
