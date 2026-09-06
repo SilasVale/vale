@@ -1028,6 +1028,17 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   fires pre-fetch with DEVICE_UNREACHABLE, deterministic 5th-call
   SESSION_BUSY via a gated stub (no timers). Suite 313->317; snapshot
   updated.
+  ROUND-370 (2026-09-06): system plugin audit — file_upload (round-341)
+  and process_kill had ZERO tests (only name-presence in the build
+  test). Added 5: upload missing/dir rejects, full POST roundtrip
+  against a single-shot local HTTP stub (Bearer + multipart + bytes +
+  manifest echo), unreachable-gateway fail-closed, kill arg validation +
+  bogus pid/name fail-clean. Caught real issues pre-commit: parallel env
+  cross-talk (fixed with ONE module-level tokio Mutex — fn-local statics
+  would be distinct locks) + clippy type_complexity/await_holding_lock
+  (CapturedUploads alias + async mutex). Stable 15/15 x3. Matrix: lib
+  216 (+5), feat-gated 222, clippy x2 + fmt + xwin clean; snapshot
+  248->253.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
