@@ -378,6 +378,40 @@ test("toAnthropicResponse: prompt_cache_hit_tokens wins when both present", () =
   assert.equal(toAnthropicResponse(up, "m").usage.cache_read_input_tokens, 100);
 });
 
+// round-484 (coverage-driven): the reasoning-source arms + tool_use arms
+// of toAnthropicResponse had ZERO pins.
+test("toAnthropicResponse: reasoning string / reasoning_details segments → thinking block", () => {
+  const reason = { id: "1", choices: [{ message: { content: "done", reasoning: "plain reason" } }], usage: {} };
+  assert.deepEqual(toAnthropicResponse(reason, "m").content[0], { type: "thinking", thinking: "plain reason", signature: "" });
+  const details = {
+    id: "1",
+    choices: [{ message: { content: "done", reasoning_details: ["a", { text: "b" }, 42] } }],
+    usage: {},
+  };
+  assert.equal(toAnthropicResponse(details, "m").content[0].thinking, "ab");
+});
+
+test("toAnthropicResponse: tool_calls → tool_use; malformed args fall back to {}", () => {
+  const up = {
+    id: "1",
+    choices: [{
+      message: {
+        content: "",
+        tool_calls: [
+          { id: "c1", function: { name: "bash", arguments: '{"cmd":"ls"}' } },
+          { id: "c2", function: { name: "bash", arguments: "{oops" } },
+          { id: "c3" },
+        ],
+      },
+    }],
+    usage: {},
+  };
+  const blocks = toAnthropicResponse(up, "m").content;
+  assert.deepEqual(blocks[0], { type: "tool_use", id: "c1", name: "bash", input: { cmd: "ls" } });
+  assert.deepEqual(blocks[1], { type: "tool_use", id: "c2", name: "bash", input: {} });
+  assert.deepEqual(blocks[2], { type: "tool_use", id: "c3", name: "unknown", input: {} });
+});
+
 test("stream encoder: cache hits from last chunk surface in message_start", () => {
   const enc = new AnthropicStreamEncoder("og/m", "m");
   enc.push({
