@@ -67,6 +67,7 @@ import { fetchWithTimeout } from "../reliability.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import { requireSession } from "../session.ts";
 import { route, type Plugin, type PluginContext } from "./registry.ts";
+import { createIpRateLimiter } from "../lib/ratelimit.ts";
 // The device reverse-proxy lives in its own module (extracted verbatim);
 // DEVICE_BASE + decodeDeviceName are shared helpers that moved with it so
 // module deps stay one-way (devices.ts → device-proxy.ts, no cycle).
@@ -700,27 +701,15 @@ export default {
     // firing random codes can exhaust the Free-plan daily KV write quota
     // (the same reason login and probe are gated). Per-IP gate, in-memory
     // like probeRateLimited (no per-request KV writes).
-    const PUBLIC_LIMIT = 10; // per minute, per IP (round-115: 30 let a single IP burn 60 writes/min through the claim+delete pair)
-    const PUBLIC_WINDOW_MS = 60000;
-    const __publicRate = new Map(); // `ip:${bucket}` → count
-    const publicRateLimited = (request: Request) => {
-      try {
-        const ip = request?.headers?.get?.("cf-connecting-ip") || "unknown";
-        const bucket = Math.floor(Date.now() / PUBLIC_WINDOW_MS);
-        const key = `pub-rate:${ip}:${bucket}`;
-        const hit = __publicRate.get(key) || 0;
-        if (hit >= PUBLIC_LIMIT) return true;
-        __publicRate.set(key, hit + 1);
-        if (__publicRate.size > 4096) __publicRate.delete(__publicRate.keys().next().value);
-        return false;
-      } catch {
-        return false;
-      }
-    };
+    const publicRateLimited = createIpRateLimiter({
+      name: "pub-rate",
+      limit: 10, // per minute, per IP (round-115: 30 let a single IP burn 60 writes/min through the claim+delete pair)
+      windowMs: 60_000,
+    });
     const gate =
       (fn: (request: Request, env: any, ...rest: any[]) => Promise<Response>) =>
       async (request: Request, env: any, ...rest: any[]) => {
-        if (publicRateLimited(request)) {
+        if (await publicRateLimited(request)) {
           return jsonError(429, "rate limit exceeded", "rate_limit_error");
         }
         return fn(request, env, ...rest);

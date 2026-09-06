@@ -25,53 +25,25 @@ import {
 import { pickRoute, passthroughHeaders, stripBracket } from "./upstream.ts";
 import { fetchWithTimeout, upstreamTimeoutMs, isChannelDegraded } from "./reliability.ts";
 import { jsonOk, jsonError } from "./http.ts";
+import { createIpRateLimiter } from "./lib/ratelimit.ts";
 
 // Public /api/vale-probe rate limit: each probe costs a real upstream call
 // (real money), so cap probes per-caller via a KV counter. Per-IP (the
 // gateway-wide bucket let one caller exhaust the budget for everyone AND a
 // minute-boundary race double-spent).
-const PROBE_RATE_LIMIT = 60; // probes per minute, per IP
-const PROBE_RATE_WINDOW_MS = 60000;
+const probeLimiter = createIpRateLimiter({
+  name: "probe-rate",
+  limit: 60, // probes per minute, per IP
+  windowMs: 60_000,
+  kvSeed: true, // each bucket's first sight per IP reads/persists KV once —
+  // audit round F2: without persistence every new isolate reseeded from 0
+  // and the ceiling was per-isolate. ONE read+write per bucket per IP, not
+  // per request (KV quota invariant preserved).
+});
 
-// In-memory per-IP probe counters (per isolate) — the KV version cost 1
-// read + 1 write per probe call; probes are user-invoked but this keeps the
-// "no per-request KV writes" invariant (KV quota). Each bucket's first call
-// per IP reads KV once; nothing is written.
-const __probeRate = new Map(); // `ip:${bucket}` → count
-
-export async function probeRateLimited(env: any, request: Request) {
-  try {
-    const ip = request?.headers?.get?.("cf-connecting-ip") || "unknown";
-    const bucket = Math.floor(Date.now() / PROBE_RATE_WINDOW_MS);
-    const key = `probe-rate:${ip}:${bucket}`;
-    const hit = __probeRate.get(key);
-    if (hit !== undefined) {
-      if (hit >= PROBE_RATE_LIMIT) return true;
-      __probeRate.set(key, hit + 1);
-      return false;
-    }
-    let cur = 0;
-    try {
-      cur = Number(await env.KEYS.get(key)) || 0;
-    } catch {
-      /* KV read failed */
-    }
-    __probeRate.set(key, cur + 1);
-    if (__probeRate.size > 4096) __probeRate.delete(__probeRate.keys().next().value);
-    // audit round F2: the counter was NEVER written back to KV — every new
-    // isolate reseeded from 0, so the 60/min/IP ceiling was per-isolate
-    // (trivially multiplied across isolates/egress IPs). Persist it.
-    try {
-      await env.KEYS.put(key, String(cur + 1), {
-        expirationTtl: Math.ceil((PROBE_RATE_WINDOW_MS / 1000) * 2) + 10,
-      });
-    } catch {
-      /* KV write error: isolate-local count still better than nothing */
-    }
-    return cur >= PROBE_RATE_LIMIT;
-  } catch {
-    return false;
-  } // fail-open on KV errors, like the breaker
+/** Historical (env, request) signature preserved for index.ts + tests. */
+export async function probeRateLimited(env: any, request: Request): Promise<boolean> {
+  return probeLimiter(request, env);
 }
 
 /* ---------------- Public endpoints: health / probe / installers ---------------- */

@@ -43,6 +43,7 @@ import {
   SESSION_COOKIE,
 } from "../auth.ts";
 import { fetchWithTimeout } from "../reliability.ts";
+import { createIpRateLimiter } from "../lib/ratelimit.ts";
 import { MODELS, OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import type { PluginContext } from "./registry.ts";
@@ -53,21 +54,7 @@ const ME_BASE = "/api/me";
 // round-104: per-IP gate for registration (2-3 KV writes per attempt — an
 // attacker can exhaust the Free-plan daily KV write quota). In-memory like
 // the devices plugin's public gate; no per-request KV writes.
-const __authRate = new Map(); // `ip:${bucket}` → count
-function authRateLimited(request: Request): boolean {
-  try {
-    const ip = request?.headers?.get?.("cf-connecting-ip") || "unknown";
-    const bucket = Math.floor(Date.now() / 60000);
-    const key = `auth-rate:${ip}:${bucket}`;
-    const hit = __authRate.get(key) || 0;
-    if (hit >= 30) return true;
-    __authRate.set(key, hit + 1);
-    if (__authRate.size > 4096) __authRate.delete(__authRate.keys().next().value);
-    return false;
-  } catch {
-    return false;
-  }
-}
+const authRateLimited = createIpRateLimiter({ name: "auth-rate", limit: 30, windowMs: 60_000 });
 
 // Session HMAC key + session resolution live in the shared session module
 // (one requireSession contract across index + all plugins).
@@ -79,7 +66,7 @@ async function authRegister(request: Request, env: any, secure: boolean): Promis
   // round-104: registration costs 2-3 KV writes per attempt — an attacker
   // can exhaust the Free-plan daily KV write quota (console-wide DoS).
   // Per-IP in-memory gate, same pattern as the devices plugin.
-  if (authRateLimited(request)) {
+  if (await authRateLimited(request)) {
     return jsonError(429, "rate limit exceeded", "rate_limit_error");
   }
   const ap = await getAdminPassword(env);
@@ -203,7 +190,7 @@ async function authLogin(request: Request, env: any, secure: boolean): Promise<R
  * like register so an attacker cannot brute-force the token.
  */
 async function authResetPassword(request: Request, env: any): Promise<Response> {
-  if (authRateLimited(request)) {
+  if (await authRateLimited(request)) {
     return jsonError(429, "rate limit exceeded", "rate_limit_error");
   }
   const admin = await getUser(env, ADMIN_ID);
@@ -238,7 +225,7 @@ async function authLogout(request: Request, env: any, secure: boolean): Promise<
   // round-111: a 429 must STILL clear the client cookie — skipping the
   // whole handler left the browser cookie alive AND skipped the KV
   // blacklist (the endpoint's entire security purpose).
-  if (authRateLimited(request)) {
+  if (await authRateLimited(request)) {
     return jsonError(429, "rate limit exceeded", "rate_limit_error", {
       "set-cookie": clearSessionCookieHeader(secure),
     });

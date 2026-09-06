@@ -64,6 +64,33 @@ vale tunnel status|install|start|stop|update   # tunnel management (boxed compon
   channel (device → gateway persistent WS / DeviceLinkDO) was evaluated and
   REJECTED — Cloudflare DO duration billing makes it ~$36/device/month.
 
+## Foundation modules (the named base layer)
+
+Each subproject has a small set of FOUNDATION modules — shared primitives that
+features build on. They are the single copy of their concern; new features
+MUST reach for them before writing new plumbing, and changes to them require
+running every downstream test gate.
+
+- gateway: `http.ts` (jsonOk/jsonError/CORS), `auth.ts` (safeEq/randomHex/HMAC
+  sessions/CSRF), `session.ts` (requireSession), `reliability.ts`
+  (fetchWithTimeout/Retry/BreakerDO), `upstream.ts` (route table), `channels.ts`
+  (channel registry), `body-scan.ts`, `store/` (cache.ts is the single
+  process-global KV cache), `lib/ratelimit.ts` (per-IP limiter factory),
+  `mcp-errors.ts` (tool-failure code family)
+- agent: `vale-command-core` (Plugin/ToolDef/Config/EventBus contract — import
+  via `vale_agent_core::`), `paths.rs`, `state.rs` (ConfigHandle), `web/`
+  helpers, `tunnel.rs`, `lib/ratelimit`-equivalent: bounded subprocess runners
+  (`runSchtasks`/`run_bounded`)
+- studio: `lib/fsapi.mjs` (path safety/atomic writes/git), `lib/auth.mjs`,
+  `lib/pty.mjs`, `lib/watch.mjs`, `lib/terminals.mjs`
+- vale CLI: network calls go through the bounded-fetch layer (see vale.ts) —
+  no bare `fetch` in feature code
+
+PROMOTION rule — logic joins the foundation layer when ALL three hold: a
+second real consumer exists, an incident lesson needs pinning, and it has no
+environment coupling. Until then it stays feature-local. Cross-deployment
+sharing is OUT of scope (ADR 0003: satellite workers stay autonomous).
+
 ## Agent skills
 
 ### Issue tracker
