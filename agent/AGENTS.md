@@ -1629,6 +1629,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   security-fixes.test.mjs. Self-caught×3: comma-operator paren slip,
   seed process-once re-arm, sessions sign with SESSION_SECRET. Suite
   489->491; gates clean; snapshot updated; pushed.
+  ROUND-465 (2026-09-06): registry-framework audit — dispatch/route/
+  emit/on had ZERO direct pins. Added 2 in registry.test.mjs:
+  first-match/null/skip + delivery/unsub/throw-swallow. Suite 491->493;
+  gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
