@@ -51,3 +51,40 @@ test("unhandled throw answers 500 Internal error without internals", async () =>
     console.error = origErr;
   }
 });
+
+// round-471 (coverage-driven): the index.ts CSRF-gate 403 arm had ZERO
+// route pins (only unit pins on csrfCookieViolation itself).
+test("cross-site cookie-authed mutation 403s at the front door", async () => {
+  const csrfEnv = () => makeBaseEnv({ kv: { "auth:admin_password": "pw", _admin_seeded: "1" } });
+  const mk = (site) =>
+    new Request("https://x/api/me/keys", {
+      method: "POST",
+      headers: {
+        cookie: "ag_session=abc",
+        "content-type": "application/json",
+        "sec-fetch-site": site,
+      },
+      body: "{}",
+    });
+  const blocked = await worker.fetch(mk("cross-site"), csrfEnv());
+  assert.equal(blocked.status, 403);
+  assert.equal((await blocked.json()).error.message, "Cross-site request blocked");
+  const same = await worker.fetch(
+    new Request("https://x/api/auth/login", {
+      method: "POST",
+      headers: {
+        cookie: "ag_session=abc",
+        "content-type": "application/json",
+        "sec-fetch-site": "same-origin",
+      },
+      body: JSON.stringify({ username: "nobody", password: "whatever-long" }),
+    }),
+    csrfEnv(),
+  );
+  assert.equal(same.status, 401, "same-origin passes the gate, fails at auth instead");
+  const get = await worker.fetch(
+    new Request("https://x/api/me", { headers: { cookie: "ag_session=abc", "sec-fetch-site": "cross-site" } }),
+    csrfEnv(),
+  );
+  assert.equal(get.status, 401, "reads are never CSRF-gated");
+});
