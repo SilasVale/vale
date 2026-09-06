@@ -332,3 +332,41 @@ test("upload proxy: forwards a MINIMAL header set — UPLOAD_KEY + multipart fra
     globalThis.fetch = real;
   }
 });
+
+/* ---------------- admin gate matrix (round-364) ---------------- */
+// Every admin-gated devices route must answer 401 with no session and 403
+// for a non-admin session — BEFORE touching devices (reject-only calls, so
+// no mutations happen and one shared env suffices). Rename/install-cmd
+// already pin theirs per-route; the rest are pinned here so a future
+// handler that forgets requireSession fails loudly.
+test("admin gate matrix: no session → 401, non-admin → 403 on every admin devices route", async () => {
+  const env = makeEnv([D1]);
+  const bob = await userCookie();
+  const routes = [
+    ["GET", "/api/devices"],
+    ["POST", "/api/devices"],
+    ["GET", "/api/devices/d1/mcp"],
+    ["DELETE", "/api/devices/d1"],
+    ["POST", "/api/devices/d1/panel-grant"],
+    ["GET", "/api/devices/register-keys"],
+    ["DELETE", "/api/devices/register-keys/abc"],
+    ["GET", "/api/devices/install-cmd"],
+    ["POST", "/api/devices/register-key"],
+  ];
+  for (const [method, path] of routes) {
+    // GET/HEAD must not carry a body (undici throws) — gates run before
+    // body parsing anyway, so omitting it changes nothing under test.
+    const opts = method === "GET" || method === "HEAD" ? {} : { body: {} };
+    const anon = await worker.fetch(req(method, path, opts), env);
+    assert.equal(anon.status, 401, `${method} ${path} without session must be 401`);
+    const nonAdmin = await worker.fetch(req(method, path, { ...opts, cookie: bob }), env);
+    assert.equal(nonAdmin.status, 403, `${method} ${path} for non-admin must be 403`);
+  }
+  // Nothing was mutated by the rejected calls.
+  const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+  assert.deepEqual(
+    devs.map((d) => d.name),
+    ["d1"],
+    "reject-only matrix must not mutate the device list",
+  );
+});
