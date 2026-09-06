@@ -1159,6 +1159,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   term fan-out, wire shape, in-order broadcast. Snapshot formula now
   counts the core binary explicitly (was silently 2): 320->331 (+11
   core). Clippy x2 + fmt + xwin clean.
+  ROUND-385 (2026-09-06): core remainder audit — DeviceError code table
+  (the gateway's retry-routing contract) + recover_guard (the
+  codebase-wide poison path) had zero pins. Added 4: all 9 codes,
+  Display detail, clean lock, poisoned recovery preserving data.
+  Snapshot core 11->15 (total 331->335); agent matrix unchanged green.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
