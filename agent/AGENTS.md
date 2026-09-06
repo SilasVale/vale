@@ -1773,6 +1773,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   had ZERO pins. Added 1 in gateway.test.mjs (503/message/pacing).
   Self-caught: this branch never adopts upstream types (api_error by
   design). Suite 542->543; gates clean; snapshot updated; pushed.
+  ROUND-499 (2026-09-06): dsqw audit — the ds/qw passthrough keyless arms
+  had ZERO pins. Added 1 matrix test in gateway.test.mjs (2 arms, no
+  upstream). Suite 543->544; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
