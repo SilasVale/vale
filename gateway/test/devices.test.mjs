@@ -428,6 +428,38 @@ test("self-register: existing device rejects hostname moves + unproven rotations
   }
 });
 
+// round-460 (coverage-driven): the PROVED rotation arm + the new-device
+// proxySecret capture arm had ZERO pins.
+test("self-register: tunnel-proved rotation accepted, new device captures the secret", async () => {
+  __clearCaches();
+  const OLD = T64("e"), NEW = T64("f");
+  const SECRET = "s".repeat(40);
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: OLD, proxySecret: SECRET, registeredAt: 7 }]);
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const secret = u.includes("d1.agent.saisi.online") ? SECRET : "n".repeat(40);
+    return new Response(JSON.stringify(u.includes("/api/status") ? { proxy_secret: secret } : {}), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const rotated = await selfReg(env, { name: "d1", hostname: "d1.agent.saisi.online", token: NEW });
+    assert.equal(rotated.status, 200, "tunnel proof (secret match) accepts the rotation");
+    const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+    const d1 = devs.find((d) => d.name === "d1");
+    assert.equal(d1.token, NEW);
+    assert.equal(d1.proxySecret, SECRET, "stored secret preserved across rotation");
+    assert.equal(d1.registeredAt, 7, "idempotent refresh keeps the original date");
+    const fresh = await selfReg(env, { name: "d9", hostname: "d9.agent.saisi.online", token: T64("a") });
+    assert.equal(fresh.status, 200);
+    const d9 = JSON.parse(await env.KEYS.get("devices:v1")).find((d) => d.name === "d9");
+    assert.equal(d9.proxySecret, "n".repeat(40), "new device captures the served secret");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("self-register: stored-tunnel proof rotates the token", async () => {
   __clearCaches();
   const OLD = T64("e"), NEW = T64("f");
