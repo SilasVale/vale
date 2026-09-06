@@ -1357,6 +1357,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   mount before the fallback commits — transient first-render throws
   self-heal, boundary trips only on persistent throws. Panel 103->107
   (19->20 files); rebuilt, panel.js identical; pushed.
+  ROUND-415 (2026-09-06): panel CommandCard audit — duration/state
+  helpers + card/stream interactions had ZERO tests. Added 9:
+  fmtDuration edges, cardState matrix, running auto-expand, ended
+  collapsed + toggle, select vs toggle stopPropagation, selected class,
+  clipboard copy + execCommand fallback, stream empty/count/select.
+  Self-caught mid-round: overwrote 414's ErrorBoundary file with my
+  stale draft — reverted immediately, verify-exists-before-write from
+  now on. Panel 107->116 (20->21 files); rebuilt, panel.js identical;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
