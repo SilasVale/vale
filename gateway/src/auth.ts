@@ -1,5 +1,17 @@
 /**
- * auth.js — Password hashing + session signing (zero-dependency, Web Crypto only)
+ * auth.ts — credential PRIMITIVES leaf (zero-dependency, Web Crypto only).
+ *
+ * Which "auth" is which (naming map, security-round clarification):
+ *   src/auth.ts          this file — pure primitives: hashing, safeEq,
+ *                        HMAC session tokens, CSRF predicate. Imports NOTHING.
+ *   src/session.ts       session RESOLUTION flow (requireSession/
+ *                        requireAdmin/issueSessionSecret) — imports this
+ *                        file + store + access.
+ *   src/plugins/auth.ts  the auth PLUGIN's HTTP routes (login/register/
+ *                        keys) — imports both.
+ * New code: reach for these primitives via this file; resolution via
+ * session.ts; never re-implement either (the devices.ts === bug was this
+ * exact reachability failure).
  *
  * Passwords: PBKDF2-SHA256 with a per-user random salt and a fixed iteration count.
  * Sessions: HMAC-SHA256 signed cookie; the signing key is ADMIN_PASSWORD
