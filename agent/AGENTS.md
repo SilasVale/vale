@@ -1540,6 +1540,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   (round-94 e2e), rotate-kills-old. Self-caught: helper dropped env
   (500s, isolated-probe comparison found it). Suite 459->461; gates
   clean; snapshot updated; pushed.
+  ROUND-444 (2026-09-06): keys-DELETE audit — DELETE /api/me/keys had
+  ZERO route pins (store-level covered, handler not). Added 1 in
+  plugins.test.mjs: 401/400 + query-param delete empties the key map.
+  Suite 461->462; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
