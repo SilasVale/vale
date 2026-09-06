@@ -200,3 +200,43 @@ test("malformed JWTs reject as null, never throw (L5 audit pin)", async () => {
   const bare = makeBaseEnv({});
   assert.equal(await verifyAccessJwt(reqWith(good), bare), null);
 });
+
+// round-468 (coverage-driven): the JWKS-throw arm, the disabled ADMIN-email
+// arm, and the provision-race arm had ZERO pins.
+test("JWKS fetch failure verifies as null, never throws", async () => {
+  const env = makeEnv();
+  delete env.ACCESS_JWKS_JSON; // force the network path
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("certs down"); };
+  try {
+    assert.equal(await verifyAccessJwt(reqWith(await signJwt()), env), null);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("disabled admin-email account stays logged out (owner shortcut honors enabled)", async () => {
+  const env = makeEnv({
+    adminEmail: "boss@example.com",
+    users: {
+      "user:admin": { id: "admin", username: "admin", role: "admin", enabled: false },
+    },
+  });
+  assert.equal(await ensureUserByEmail(env, "boss@example.com"), null);
+});
+
+test("provision race: bound-between-checks resolves to the existing account", async () => {
+  const env = makeEnv({
+    users: {
+      "user:ray": { id: "ray", username: "ray", role: "user", enabled: true },
+    },
+  });
+  let emailGets = 0;
+  const innerGet = env.KEYS.get.bind(env.KEYS);
+  env.KEYS.get = async (k) => {
+    if (k === "access-email:ray@example.com") return ++emailGets === 1 ? null : "ray";
+    return innerGet(k);
+  };
+  const u = await ensureUserByEmail(env, "ray@example.com");
+  assert.equal(u?.id, "ray", "second look inside the lock wins, no duplicate minted");
+});
