@@ -1698,6 +1698,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   the trip-failure swallow arm had ZERO pins. Added 2 in
   reliability.test.mjs. Suite 520->522; gates clean; snapshot updated;
   pushed.
+  ROUND-482 (2026-09-06): smuggling audit — the URL round-trip mismatch
+  arm had ZERO pins. Added 1 in mcp-browser.test.mjs: port/userinfo/path
+  hostnames → DEVICE_UNREACHABLE, zero dials. Suite 522->523; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
