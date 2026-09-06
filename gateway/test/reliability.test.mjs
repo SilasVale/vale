@@ -543,17 +543,9 @@ test("recordChannelSuccess hits the DO reset endpoint (never throws)", async () 
   }
 });
 
-// round-481 (coverage-driven): the billing-guard no-retry arm + the
-// breaker-trip-failure swallow arm had ZERO pins.
-test("500 without idempotent is NOT retried (BYOK billing guard)", async () => {
-  await withFetch(async () => ok(500), async () => {
-    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
-    assert.equal(response.status, 500);
-    assert.match(detail, /not retried/);
-    assertFetchCalls(1, "a billed POST must not be re-sent");
-  });
-});
-
+// round-481 (coverage-driven): the breaker-trip-failure swallow arm had
+// ZERO pins. (The billing-guard arm was already pinned below — an earlier
+// duplicate was removed.)
 test("recordChannelFailure swallows a DO trip throw (never throws)", async () => {
   const { recordChannelFailure } = await import("../src/reliability.ts");
   const { env } = breakerEnv(() => { throw new Error("do down"); });
@@ -622,4 +614,71 @@ test("toOpenAIRequest: tools normalize + tool_choice mapping", async () => {
   assert.equal(any.tool_choice, "required");
   const other = toOpenAIRequest({ ...base, tool_choice: { type: "auto" } }, "m");
   assert.equal(other.tool_choice, "auto");
+});
+
+// ── fetchWithRetry inspect hook (round-483: zero pins — rejecting counts
+// as a failed attempt, a throwing inspect is a rejection, an accepted
+// inspect can swap the response) ──
+
+test("inspect: reject-then-accept retries within budget; always-reject reports in-band", async () => {
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    let n = 0;
+    await withFetch(async () => ok(200, { id: "x" }), async () => {
+      const r = await fetchWithRetry("https://zen.example", reqInit, {
+        timeoutMs: 1000,
+        backoffMs: 1,
+        inspect: async () => (++n === 1 ? { accepted: false, detail: "empty stream" } : { accepted: true }),
+      });
+      assert.equal(r.response.status, 200);
+      assert.equal(r.detail, "");
+      assertFetchCalls(2);
+    });
+    await withFetch(async () => ok(200, { id: "x" }), async () => {
+      const r = await fetchWithRetry("https://zen.example", reqInit, {
+        timeoutMs: 1000,
+        backoffMs: 1,
+        attempts: 1,
+        inspect: async () => ({ accepted: false, status: 502, detail: "empty stream" }),
+      });
+      assert.equal(r.response, null);
+      assert.match(r.detail, /in-band upstream error 502: empty stream/);
+      assert.deepEqual(r.inspectFailure, { status: 502 });
+    });
+  } finally {
+    console.error = origErr;
+  }
+});
+
+test("inspect: a throwing inspect is a rejection, never a throw", async () => {
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    await withFetch(async () => ok(200, { id: "x" }), async () => {
+      const r = await fetchWithRetry("https://zen.example", reqInit, {
+        timeoutMs: 1000,
+        backoffMs: 1,
+        attempts: 1,
+        inspect: async () => { throw new Error("inspector down"); },
+      });
+      assert.equal(r.response, null);
+      assert.match(r.detail, /inspection failed: inspector down/);
+    });
+  } finally {
+    console.error = origErr;
+  }
+});
+
+test("inspect: accepted inspect can swap the response", async () => {
+  await withFetch(async () => ok(200, { id: "x" }), async () => {
+    const swapped = ok(200, { id: "swapped" });
+    const r = await fetchWithRetry("https://zen.example", reqInit, {
+      timeoutMs: 1000,
+      inspect: async () => ({ accepted: true, response: swapped }),
+    });
+    assert.equal(await r.response.json().then((j) => j.id), "swapped");
+    assert.equal(r.detail, "");
+    assertFetchCalls(1);
+  });
 });
