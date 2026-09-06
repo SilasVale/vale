@@ -770,3 +770,41 @@ test("plugin link: corrupt fresh read inside the sweep lock returns null, never 
   assert.equal(gets, 2, "initial read + locked fresh re-read");
   assert.equal(kv.get("plugins:v1"), expired, "corrupt fresh blob must not be written back");
 });
+
+// round-450 (coverage-driven): the remaining testKey provider arms
+// (CMD/GMI/NV/QWEN) had ZERO pins.
+test("me/keys/test: cmd/gmi/nv/qwen probes shape ok and upstream failures", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const bob = await issueSessionToken("pw", "bob", "user");
+  await env.KEYS.put("ukeys:bob", JSON.stringify({
+    CMD_API_KEY: "cm-k", GMI_API_KEY: "gmi-k", NVAPI_KEY: "nv-k", QWEN_API_KEY: "qw-k",
+  }));
+  __clearCaches();
+  const post = (name) => worker.fetch(new Request("https://x/api/me/keys/test", {
+    method: "POST",
+    headers: { cookie: `ag_session=${bob}`, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  }), env);
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("commandcode")) return new Response("{}", { status: 200 });
+    if (u.includes("gmi-serving")) return new Response("{}", { status: 401 });
+    if (u.includes("nvidia")) return new Response("{}", { status: 200 });
+    if (u.includes("aliyuncs")) return new Response("{}", { status: 200 });
+    return new Response("{}", { status: 500 });
+  };
+  try {
+    assert.deepEqual(await (await post("CMD_API_KEY")).json(),
+      { ok: true, name: "CMD_API_KEY", status: 200, detail: "Command Code auth OK" });
+    assert.deepEqual(await (await post("GMI_API_KEY")).json(),
+      { ok: false, name: "GMI_API_KEY", status: 401, detail: "Upstream 401" });
+    assert.deepEqual(await (await post("NVAPI_KEY")).json(),
+      { ok: true, name: "NVAPI_KEY", status: 200, detail: "NVIDIA NIM auth OK" });
+    assert.deepEqual(await (await post("QWEN_API_KEY")).json(),
+      { ok: true, name: "QWEN_API_KEY", status: 200, detail: "Qwen MaaS auth OK" });
+  } finally {
+    globalThis.fetch = real;
+  }
+});
