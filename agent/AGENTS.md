@@ -1657,6 +1657,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   403, same-origin 401, reads never gated. Self-caught×2: need a real
   route + seeded password (empty env 500s). Suite 506->507; gates clean;
   snapshot updated; pushed.
+  ROUND-472 (2026-09-06): usable-fallback audit — the getUserKeys-throw
+  arm had ZERO pins. Added 1 in health.test.mjs: KV outage → unusable,
+  never throws. Self-caught: ds has an env-key fallback, assert on qw.
+  Suite 507->508; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
