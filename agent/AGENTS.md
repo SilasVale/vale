@@ -1216,6 +1216,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   corrupt blob → all five helpers safe, save write-through serves
   post-KV-yank. Fixed a dynamic-import slip pre-commit. Suite 358->362;
   tsc/eslint/prettier clean; snapshot updated.
+  ROUND-393 (2026-09-06): device-registry store audit — upsert secret
+  preservation (106), insert takeover guard (122), rename rules,
+  seen write-budget, corrupt KV tolerance, cf token had zero DIRECT
+  tests. Added 8 in devices-store.test.mjs: corrupt/non-array/missing
+  → empty, secret keep/replace, duplicate insert refused, delete
+  booleans, rename preserve + guards, seen writes only on
+  version-change/hour-stale (put-counter pinned), cf roundtrip/clear/
+  keyless, keyless save no-op. Suite 362->370; tsc/eslint/prettier
+  clean; snapshot updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
