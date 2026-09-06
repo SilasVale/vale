@@ -1406,6 +1406,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   inline rename (commit/cancel/blank), archive + relTime. Self-caught:
   button/input share aria-label — locate inputs by display value.
   Panel 143->149 (27->28 files); rebuilt, panel.js identical; pushed.
+  ROUND-423 (2026-09-06): panel TerminalWorkspace audit — the shared
+  terminal page had ZERO tests. Added 6: empty state, reconnect
+  banner, view-switch + notify, Logs drawer select/deselect/close,
+  desktop density (no tab bar), controlled-view honor. Self-caught a
+  vacuous final test pre-commit (replaced with a real controlled-value
+  assertion). Panel 149->155 (28->29 files); rebuilt, panel.js
+  identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
