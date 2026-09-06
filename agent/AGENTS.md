@@ -1617,6 +1617,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   bad-hostname 400, tunnel claim 403 + vanishing-key cleanup had ZERO
   pins. Added 2 in devices.test.mjs. Suite 483->485; gates clean;
   snapshot updated; pushed.
+  ROUND-462 (2026-09-06): race/upload audit — insert-race 409 +
+  admin-session upload had ZERO pins. Added 2 in devices.test.mjs.
+  Suite 485->487; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
