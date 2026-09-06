@@ -1702,6 +1702,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   arm had ZERO pins. Added 1 in mcp-browser.test.mjs: port/userinfo/path
   hostnames → DEVICE_UNREACHABLE, zero dials. Suite 522->523; gates
   clean; snapshot updated; pushed.
+  ROUND-483 (2026-09-06): inspect audit — the retry inspect hook had ZERO
+  pins. Added 3 in reliability.test.mjs: reject-then-accept/in-band,
+  throwing inspect, response swap. CORRECTION: round-481's billing test
+  duplicated an existing pin (lines 62-69) — removed; that round's real
+  gain was 1 test, not 2. Suite 523->525; gates clean; snapshot updated;
+  pushed. LESSON: grep-read existing tests before pinning an "uncovered"
+  arm.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
