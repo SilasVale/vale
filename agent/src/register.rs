@@ -1,3 +1,6 @@
+/// Pure self-register planning seam (boundary review 2026-09-06: the exact
+/// "extract pure logic for testability" pattern — the network call lives in
+/// main.rs's register loop, this fn is trivially unit-testable).
 pub fn self_register_plan(
     console: Option<&str>,
     token: &str,

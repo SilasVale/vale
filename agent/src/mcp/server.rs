@@ -1,3 +1,12 @@
+//! mcp/server.rs — the MCP protocol ADAPTER (boundary review 2026-09-06):
+//! a thin rmcp ↔ plugin-registry bridge. All hardening is in place and
+//! deliberate: -32602 vs -32601 error semantics (round-118), client-cancel
+//! routing scoped to terminal_execute only (round-123/124), handler panic
+//! isolation (MCP audit MED), TokenGate on /mcp, DNS-resolving bind, and the
+//! graceful-shutdown nuance (round-87: never await in-flight SSE). Correctly
+//! layered — imports state + vale_agent_core only; the tool surface itself
+//! lives in the registry, not here.
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 

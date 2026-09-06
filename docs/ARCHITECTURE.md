@@ -48,6 +48,8 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | gateway auth trio | auth.ts = primitives leaf (imports NOTHING) ← session.ts = resolution ← plugins/auth.ts = routes. Physical merge REJECTED (access↔auth cycle) | headers (c81fe8bf) |
 | agent vale-command-core | the contract crate (Plugin/ToolDef/Config/EventBus); canonical import `vale_agent_core::`; tokio-util CancellationToken is the MCP layer's vocabulary (kept, documented) | lib.rs (29c2a575, a64c32d2) |
 | agent paths.rs | single path-resolution truth, OnceLock-cached (boot-invariant) | 584c7669 |
+| agent register.rs / mcp/server.rs | register.rs is a pure-planning seam (network lives in main.rs); mcp/server.rs is a thin rmcp↔registry adapter with the full hardening set (round-118/123/124, panic isolation) — correctly layered | fd7d5c19 review |
+| agent TerminalManager | 1071-line session orchestration over 3 backends — size inherent to owning PTY/SSH/serial lifecycles with the documented lock discipline (round-92/94/55); a split would scatter the lock policy | fd7d5c19 review |
 | agent state.rs | write-through ConfigHandle: file before swap under one guard (ADR 0005) | c579b311 |
 | index single file | appropriate at current size; page template + claim logic extracted | 81b1c40f |
 | extension | clean: no stale endpoints, least-privilege manifest, shared.js for constants | abb541ce review |
