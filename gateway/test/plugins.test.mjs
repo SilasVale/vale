@@ -891,3 +891,59 @@ test("me/keys/test: cmd/gmi/nv/qwen probes shape ok and upstream failures", asyn
     globalThis.fetch = real;
   }
 });
+
+// round-455 (coverage-driven): the testKey OpenRouter live-probe arms,
+// the og !ok arm, and the usage-probe throw arm had ZERO pins.
+test("me/keys/test: openrouter probe ok/fail; og non-ok is safe", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const bob = await issueSessionToken("pw", "bob", "user");
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ OPENROUTER_API_KEY: "or-k", OPENCODE_GO_API_KEY: "og-k" }));
+  __clearCaches();
+  const post = (name) => worker.fetch(new Request("https://x/api/me/keys/test", {
+    method: "POST",
+    headers: { cookie: `ag_session=${bob}`, "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  }), env);
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("openrouter")) return new Response("{}", { status: 200 });
+    return new Response("no", { status: 401 });
+  };
+  try {
+    assert.deepEqual(await (await post("OPENROUTER_API_KEY")).json(),
+      { ok: true, name: "OPENROUTER_API_KEY", status: 200, detail: "OpenRouter auth OK" });
+    assert.deepEqual(await (await post("OPENCODE_GO_API_KEY")).json(),
+      { ok: false, name: "OPENCODE_GO_API_KEY", status: 401, detail: "Upstream 401" });
+  } finally {
+    globalThis.fetch = real;
+  }
+  globalThis.fetch = async () => new Response("{}", { status: 500 });
+  try {
+    assert.deepEqual(await (await post("OPENROUTER_API_KEY")).json(),
+      { ok: false, name: "OPENROUTER_API_KEY", status: 500, detail: "Upstream 500" });
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("me/keys/usage: throwing upstream is safe (Usage query failed)", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const bob = await issueSessionToken("pw", "bob", "user");
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ OPENROUTER_API_KEY: "or-k" }));
+  __clearCaches();
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("down"); };
+  try {
+    const res = await worker.fetch(new Request("https://x/api/me/keys/usage", {
+      method: "POST",
+      headers: { cookie: `ag_session=${bob}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "OPENROUTER_API_KEY" }),
+    }), env);
+    assert.deepEqual(await res.json(), { ok: false, name: "OPENROUTER_API_KEY", detail: "Usage query failed" });
+  } finally {
+    globalThis.fetch = real;
+  }
+});
