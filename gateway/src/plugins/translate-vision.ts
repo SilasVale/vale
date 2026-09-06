@@ -30,6 +30,7 @@ export async function preprocessImages(
   ukeys: any,
   model: string,
   upstreamModel: string,
+  uid: string,
 ): Promise<{ messages: any[]; changed: boolean }> {
   if (!Array.isArray(messages)) return { messages, changed: false };
   if (isVisionCapable(model, upstreamModel, env)) return { messages, changed: false };
@@ -56,7 +57,7 @@ export async function preprocessImages(
     const newContent = [];
     for (const b of m.content) {
       if (b.type === "image") {
-        const desc = await describeImage(env, ukeys, b.source, visionModel);
+        const desc = await describeImage(env, ukeys, b.source, visionModel, uid);
         // round-119: a describe failure was silently injected as
         // "[图片内容描述]\n(图片描述失败…)" — the client believed the image
         // was seen and answered blind. A failed describe must FAIL the
@@ -77,17 +78,6 @@ export async function preprocessImages(
   }
   return { messages: out, changed };
 }
-/** Cheap hex hash (FNV-1a) for the image description cache key. */
-function hashHex(str: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, "0");
-}
-
-/** Cache a successful image description (never cache failures/empties). */
 async function cacheImageDesc(cacheKey: string, env: any, desc: string): Promise<void> {
   if (!cacheKey || !env?.KEYS) return;
   if (!desc || /图片描述失败|图片描述为空/.test(desc)) return;
@@ -102,6 +92,7 @@ async function describeImage(
   ukeys: any,
   source: any,
   visionModel: string,
+  uid: string,
 ): Promise<string> {
   const mediaType = source?.media_type || "image/png";
   const data = source?.data || "";
@@ -114,14 +105,22 @@ async function describeImage(
   const usProxyRaw = await getGlobalSetting(env, "US_PROXY");
   // KV description cache: the client re-sends the same base64 image every
   // turn, so a per-image cache turns N vision calls per follow-up into 1.
-  // Keyed by a short hash of the payload (hex, no special chars).
-  // User-scoped cache key (the shared KEYS namespace must never serve one
-  // user's image content to another — round-45 Medium #1). hashHex is 32-bit,
-  // so use TWO independent FNV passes for ~64 bits of key space (no .slice
-  // illusion — the old slice(0,24) was a no-op on an 8-char hex).
-  const h1 = hashHex(data);
-  const h2 = hashHex(visionModel + ":" + data);
-  const cacheKey = data.length > 16 ? `img-desc:${h1}${h2}` : "";
+  // Key = user id + SHA-256(model ":" data), 32 hex chars. The user prefix
+  // makes round-45 Medium #1's invariant ACTUALLY true (the old comment
+  // claimed user-scoping while the key was content-derived — a foreign
+  // description could be served to another user who sent the same bytes);
+  // SHA-256 replaces the two-pass 64-bit FNV, which is not
+  // collision-resistant (a ~2^32 offline collision could spoof a
+  // description onto a colliding image). Security-regression round fix.
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${visionModel}:${data}`),
+  );
+  const h = [...new Uint8Array(digest)]
+    .slice(0, 16)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  const cacheKey = data.length > 16 ? `img-desc:${uid || "anon"}:${h}` : "";
   if (cacheKey && env.KEYS) {
     try {
       const hit = await env.KEYS.get(cacheKey);

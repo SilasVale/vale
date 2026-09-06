@@ -495,7 +495,7 @@ async function handleGatewayImpl(
     // answer image questions. count_tokens skips this. (body is null when the
     // raw scan found no web_search/image triggers — nothing to preprocess.)
     if (body) {
-      const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel);
+      const prep = await preprocessImages(body.messages, env, ukeys, model, upstreamModel, user?.id || "");
       if (prep.changed) body.messages = prep.messages;
     }
   }
