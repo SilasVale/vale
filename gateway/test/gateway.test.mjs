@@ -1615,3 +1615,16 @@ test("POST /v1/<unknown> with a valid token → 404, upstream never called", asy
   assert.equal(res.status, 404);
   assert.equal((await res.json()).error.type, "not_found_error");
 });
+
+// round-488 (coverage-driven): the or/ keyless 502 arm had ZERO pins.
+test("or/ without the user's own key → 502, upstream never called", async () => {
+  const { env, a } = isoEnv({ aKeys: { OPENROUTER_API_KEY: undefined } });
+  const res = await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    () => post(env, a.token, { ...ogBody(), model: "or/openai/gpt-5.6-luna:floor[1m]" }),
+  );
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error.message, /OPENROUTER_API_KEY not configured/);
+});
