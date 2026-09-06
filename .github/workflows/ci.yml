@@ -46,7 +46,7 @@ jobs:
         working-directory: gateway
 
   ui:
-    name: ui (tsc + build + render smoke)
+    name: ui (tsc + build + test + render smoke)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +57,9 @@ jobs:
           cache-dependency-path: gateway/ui/package-lock.json
       - name: Build
         run: npm ci && npm run build
+        working-directory: gateway/ui
+      - name: Unit tests
+        run: npm test
         working-directory: gateway/ui
       - name: Render smoke (jsdom)
         run: |
