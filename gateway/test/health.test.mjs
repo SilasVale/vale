@@ -412,6 +412,84 @@ test("resolveAutoModel: chosen model not in whitelist → falls back to default 
   assert.equal(await resolveAutoModel(env, "u-nope"), "ds/deepseek-v4-flash");
 });
 
+// ── isModelUsable key matrix (round-406: zero direct pins — only
+// indirect resolveAutoModel exercise; the round-68 user-not-admin-keys
+// rule and the nv/gmi pure-BYOK no-env-fallback are the teeth) ──
+
+// NOTE: distinct uids per case — getUserKeys caches ukeys:<uid> module-wide.
+function usableEnv({ ukeys = {}, breakerOpen = false, uid = "u", extra = {} } = {}) {
+  const kv = new Map([[`ukeys:${uid}`, JSON.stringify(ukeys)]]);
+  return {
+    KEYS: {
+      async get(k) { return kv.has(k) ? kv.get(k) : null; },
+      async put(k, v) { kv.set(k, String(v)); },
+      async delete(k) { kv.delete(k); },
+    },
+    BREAKER: {
+      idFromName: () => ({}),
+      get: () => ({ fetch: async () => new Response(breakerOpen ? "1" : "0") }),
+    },
+    DEEPSEEK_API_KEY: "sk-ds",
+    ...extra,
+  };
+}
+
+test("isModelUsable: whitelist gate + env-key channels", async () => {
+  const { isModelUsable } = await import("../src/plugins/model-route.ts");
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  const env = usableEnv({ uid: "u-use1" });
+  assert.equal(await isModelUsable(env, "xx/nope", "u-use1"), false);
+  assert.equal(await isModelUsable(env, "ds/deepseek-v4-flash", "u-use1"), true);
+  // no qw key anywhere → unusable (would 502 every request)
+  assert.equal(await isModelUsable(env, "qw/qwen3.8-max-preview", "u-use1"), false);
+});
+
+test("isModelUsable: round-68 — the REQUESTING user's key counts, not the admin's", async () => {
+  const { isModelUsable } = await import("../src/plugins/model-route.ts");
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  // No env QWEN key; the user brings their own → usable.
+  const env = usableEnv({ uid: "u-use2", ukeys: { QWEN_API_KEY: "user-qw" } });
+  assert.equal(await isModelUsable(env, "qw/qwen3.8-max-preview", "u-use2"), true);
+});
+
+test("isModelUsable: nv/gmi pure BYOK — user key only, never env", async () => {
+  const { isModelUsable } = await import("../src/plugins/model-route.ts");
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  // Even with env NVAPI_KEY set, a keyless user must NOT route there.
+  const env = usableEnv({ uid: "u-use3", extra: { NVAPI_KEY: "env-nv", GMI_API_KEY: "env-gmi" } });
+  assert.equal(await isModelUsable(env, "nv/nvidia/nemotron-3-ultra-550b-a55b", "u-use3"), false);
+  assert.equal(await isModelUsable(env, "gmi/MiniMaxAI/MiniMax-M3", "u-use3"), false);
+  __clearCaches();
+  const keyed = usableEnv({ uid: "u-use4", ukeys: { NVAPI_KEY: "u-nv", GMI_API_KEY: "u-gmi" } });
+  assert.equal(await isModelUsable(keyed, "nv/nvidia/nemotron-3-ultra-550b-a55b", "u-use4"), true);
+  assert.equal(await isModelUsable(keyed, "gmi/MiniMaxAI/MiniMax-M3", "u-use4"), true);
+});
+
+test("isModelUsable: og/ honors the breaker; cm/amd honor keys", async () => {
+  const { isModelUsable } = await import("../src/plugins/model-route.ts");
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  const shut = usableEnv({ uid: "u-use5", extra: { OPENCODE_GO_API_KEY: "sk-og" }, breakerOpen: true });
+  assert.equal(await isModelUsable(shut, "og/deepseek-v4-flash", "u-use5"), false);
+  __clearDegradedCache();
+  const open = usableEnv({ uid: "u-use6", extra: { OPENCODE_GO_API_KEY: "sk-og" } });
+  assert.equal(await isModelUsable(open, "og/deepseek-v4-flash", "u-use6"), true);
+  __clearCaches();
+  // cm/amd take env keys (unlike nv/gmi) but still require one
+  const ck = usableEnv({ uid: "u-use7", extra: { CMD_API_KEY: "sk-cm", AMD_API_KEY: "sk-amd" } });
+  const cmId = "cm/deepseek/deepseek-v4-flash";
+  const amdId = "amd/DeepSeek-V4-Flash";
+  assert.equal(await isModelUsable(ck, cmId, "u-use7"), true);
+  assert.equal(await isModelUsable(ck, amdId, "u-use7"), true);
+  __clearCaches();
+  const bare = usableEnv({ uid: "u-use8" });
+  assert.equal(await isModelUsable(bare, cmId, "u-use8"), false);
+  assert.equal(await isModelUsable(bare, amdId, "u-use8"), false);
+});
+
 // ── lib/ratelimit.ts factory security semantics ──────────────────────
 // Pin the round-104 KV-quota invariant at the factory level: a memory-only
 // limiter NEVER writes KV (the historical per-site implementations could
