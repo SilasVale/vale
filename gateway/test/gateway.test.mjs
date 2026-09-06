@@ -811,6 +811,29 @@ test("nv Anthropic-format request (/v1/messages) is translated with NVAPI_KEY", 
   assert.equal(body.content[0].text, "ok");
 });
 
+// round-498 (coverage-driven): the nv/gmi translate failure mapping had
+// ZERO pins (only the happy path was covered).
+test("nv translate failure maps status/message and carries retry-after", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { NVAPI_KEY: "sk-nv" } });
+  const res = await withFetch(async () => new Response(JSON.stringify({
+    error: { message: "nim shed", type: "overloaded_error" },
+  }), { status: 503, headers: { "content-type": "application/json", "retry-after": "1" } }), () =>
+    post(env, token, {
+      model: "nv/minimaxai/minimax-m3",
+      max_tokens: 8,
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get("retry-after"), "1");
+  const body = await res.json();
+  assert.equal(body.error.message, "nim shed");
+  // This branch maps status/message/pacing only — no upstream-type adoption.
+  assert.equal(body.error.type, "api_error");
+});
+
 test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {  __clearCaches();
   const { env, token } = gwEnv({
     keys: {
