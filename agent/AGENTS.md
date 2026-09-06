@@ -1624,6 +1624,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   429 had ZERO pins. Added 2 in devices.test.mjs. Self-caught: raw
   Request needs the SESSION_COOKIE name, not the bare token. Suite
   487->489; gates clean; snapshot updated; pushed.
+  ROUND-464 (2026-09-06): admin-surface audit — public route, password
+  set-status, session-gated change arms had ZERO pins. Added 2 in
+  security-fixes.test.mjs. Self-caught×3: comma-operator paren slip,
+  seed process-once re-arm, sessions sign with SESSION_SECRET. Suite
+  489->491; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
