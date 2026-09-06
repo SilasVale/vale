@@ -27,8 +27,25 @@ const ADMIN_PW = "test-admin-password";
 
 /* ---- 4. fresh-deploy seed + bootstrap (runs first, see note above) ---- */
 
+// round-477 (coverage-driven): the bootstrap short-password 400 arm had
+// ZERO pins (the rotation-branch 400 was covered in round-464).
+test("fresh deploy bootstrap rejects a short initial password (length checked first)", async () => {
+  const env = freshEnv();
+  const res = await worker.fetch(
+    new Request("https://x/api/admin/password", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "short", adminKey: "anything" }),
+    }),
+    env,
+  );
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error.message, "Admin password must be at least 8 chars");
+});
+
 function freshEnv() {
   __clearCaches();
+  __resetSeedForTests();
   const kv = new Map();
   return {
     CONSOLE_HOST: "x",
