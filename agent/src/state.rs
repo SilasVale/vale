@@ -197,3 +197,87 @@ impl fmt::Debug for AppState {
             .finish()
     }
 }
+
+#[cfg(test)]
+mod state_tests {
+    //! round-373: the A4 write-through contract (persist-before-swap
+    //! atomicity, no-path no-op, poison recovery) is load-bearing for
+    //! TokenGate + PUT /api/settings yet had zero tests.
+    use super::*;
+
+    fn cfg_with_token(tok: &str) -> Config {
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some(tok.to_string());
+        cfg
+    }
+
+    fn token_of(st: &AppState) -> String {
+        st.config_snapshot().server.device_token.unwrap_or_default()
+    }
+
+    #[test]
+    fn snapshot_returns_boot_config() {
+        let st = AppState::new(cfg_with_token("boot-tok"));
+        assert_eq!(token_of(&st), "boot-tok");
+    }
+
+    #[test]
+    fn update_no_persist_swaps_memory_only() {
+        let st = AppState::new(cfg_with_token("a"));
+        st.update_config(cfg_with_token("b"), false).unwrap();
+        assert_eq!(token_of(&st), "b");
+    }
+
+    #[test]
+    fn persist_without_path_swaps_memory_and_writes_nothing() {
+        // Dev invocations / harnesses never wire config_path: persist=true
+        // must still swap in-memory (and Ok), just write no file.
+        let st = AppState::new(cfg_with_token("a"));
+        st.update_config(cfg_with_token("b"), true).unwrap();
+        assert_eq!(token_of(&st), "b");
+    }
+
+    #[test]
+    fn persist_roundtrips_through_the_loaded_file() {
+        let dir = std::env::temp_dir().join(format!("vale-state-rt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.yaml");
+        let st = AppState::new(cfg_with_token("a"));
+        *st.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(path.clone());
+        st.update_config(cfg_with_token("b"), true).unwrap();
+        assert_eq!(token_of(&st), "b");
+        let disk: Config = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(disk.server.device_token.as_deref(), Some("b"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failed_persist_leaves_memory_untouched() {
+        // Write-through, not write-behind: persist runs BEFORE the swap, so
+        // a dead disk path must leave BOTH sides at the old value.
+        let st = AppState::new(cfg_with_token("a"));
+        let bad =
+            std::env::temp_dir().join(format!("vale-state-no-such-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&bad);
+        *st.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(bad.join("config.yaml"));
+        let err = st.update_config(cfg_with_token("b"), true).unwrap_err();
+        assert!(format!("{err:?}").contains("persist"), "got: {err:?}");
+        assert_eq!(
+            token_of(&st),
+            "a",
+            "memory must not move on persist failure"
+        );
+    }
+
+    #[test]
+    fn snapshot_recovers_from_a_poisoned_writer() {
+        // A panicked writer must never take the config (or the server) down.
+        let st = AppState::new(cfg_with_token("a"));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = st.config.write().unwrap();
+            panic!("boom");
+        }));
+        assert!(st.config.is_poisoned());
+        assert_eq!(token_of(&st), "a");
+    }
+}
