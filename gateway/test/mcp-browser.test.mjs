@@ -283,3 +283,63 @@ test("5th concurrent browser call on one device → SESSION_BUSY (semaphore of 4
     );
   });
 });
+
+// ── Heal-arm + failure-shape remainder (round-400) ──
+
+test("self-heal: 'session not found' (round-132 idle reclaim) heals like 'not connected'", async () => {
+  let n = 0;
+  const { calls, impl } = makeFetch((url) => {
+    if (String(url).endsWith("/api/tools/mcp_client_call")) {
+      n += 1;
+      if (n === 1) {
+        return {
+          status: 200,
+          json: async () => ({ ok: false, error: "Session not found: abc (idle reclaim?)", code: "session_not_found" }),
+        };
+      }
+      return okJson({ elements: [] });
+    }
+    return okJson({ status: "started" });
+  });
+  const result = await withFetch(impl, () =>
+    callTool({ name: "browser_snapshot" }, {}, DEVICE, { device: "d1" }),
+  );
+  assert.deepEqual(result, { ok: true, result: { elements: [] } });
+  const urls = calls.map((c) => c.url.split("/").pop());
+  assert.deepEqual(urls, ["mcp_client_call", "start", "mcp_client_connect", "mcp_client_call"]);
+});
+
+test("non-JSON device body throws mcp_client_call failed with the status", async () => {
+  const { impl } = makeFetch(() => ({
+    status: 502,
+    json: async () => {
+      throw new SyntaxError("Unexpected token");
+    },
+  }));
+  const err = await withFetch(impl, () =>
+    callTool({ name: "browser_snapshot" }, {}, DEVICE, { device: "d1" }).catch((e) => e),
+  );
+  assert.match(String(err?.message || err), /mcp_client_call failed: 502/);
+});
+
+test("slot released after a failed call: same device serves the next call", async () => {
+  let mode = "fail";
+  const { impl } = makeFetch((url) => {
+    if (String(url).endsWith("/api/tools/mcp_client_call")) {
+      if (mode === "fail") return { status: 200, json: async () => ({ ok: false, error: "permanent boom" }) };
+      return okJson({ done: true });
+    }
+    return okJson({ status: "started" });
+  });
+  await withFetch(impl, async () => {
+    // 4 concurrent failures occupy then release all slots …
+    const errs = await Promise.all(
+      [1, 2, 3, 4].map(() => callTool({ name: "browser_snapshot" }, {}, DEVICE, {}).catch((e) => e)),
+    );
+    assert.ok(errs.every((e) => String(e?.message || e).includes("permanent boom")));
+    // … so the next call is NOT SESSION_BUSY and succeeds.
+    mode = "ok";
+    const result = await callTool({ name: "browser_snapshot" }, {}, DEVICE, {});
+    assert.deepEqual(result, { ok: true, result: { done: true } });
+  });
+});
