@@ -101,6 +101,60 @@ test("proxy: garbage token → 401", async () => {
   });
 });
 
+// round-469 (coverage-driven): the navigation arms (302 cookie-mint,
+// expired-nav HTML page, cookie auth, malformed-cookie tolerance) had
+// ZERO pins — no test ever sent sec-fetch-mode or a per-device cookie.
+test("proxy nav: ?token= navigation 302s with the token stripped + cookie minted", async () => {
+  await withDeviceFetch(async (calls) => {
+    const res = await worker.fetch(new Request("https://x/api/devices/d1/proxy/panel/?token=tok-d1", {
+      headers: { "sec-fetch-mode": "navigate" },
+    }), makeEnv());
+    assert.equal(res.status, 302);
+    const loc = res.headers.get("location");
+    assert.ok(loc && !loc.includes("token="), `token stripped from ${loc}`);
+    const setCookie = res.headers.get("set-cookie") || "";
+    assert.ok(setCookie.includes("vale_pt_d1=tok-d1"), `cookie minted: ${setCookie}`);
+    assert.ok(setCookie.includes("Max-Age=2592000"));
+    assert.equal(res.headers.get("cache-control"), "no-store", "302 never cached (round-126)");
+    assert.equal(calls.length, 0, "mint happens before any upstream dial");
+  });
+});
+
+test("proxy nav: ?token= on a non-navigation is a plain 401", async () => {
+  await withDeviceFetch(async (calls) => {
+    const res = await worker.fetch(new Request("https://x/api/devices/d1/proxy/panel/?token=tok-d1"), makeEnv());
+    assert.equal(res.status, 401);
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("proxy nav: expired-token navigation gets the readable HTML page, not JSON", async () => {
+  await withDeviceFetch(async (calls) => {
+    const res = await worker.fetch(new Request(PROXY_URL, {
+      headers: { "sec-fetch-mode": "navigate" },
+    }), makeEnv());
+    assert.equal(res.status, 401);
+    assert.match(res.headers.get("content-type") || "", /text\/html/);
+    assert.match(await res.text(), /session expired/i);
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("proxy cookie: minted per-device cookie authenticates; malformed value is absent (401)", async () => {
+  await withDeviceFetch(async (calls) => {
+    const ok = await worker.fetch(new Request(PROXY_URL, {
+      headers: { cookie: "vale_pt_d1=tok-d1" },
+    }), makeEnv());
+    assert.equal(ok.status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(ok.headers.get("cache-control"), "no-store");
+    const bad = await worker.fetch(new Request(PROXY_URL, {
+      headers: { cookie: "vale_pt_d1=%E0%A4%A" },
+    }), makeEnv());
+    assert.equal(bad.status, 401, "undecodable cookie treated as absent");
+  });
+});
+
 // ── Session path (unchanged admin behavior) ───────────────────
 
 test("proxy: admin session cookie still works", async () => {
