@@ -1385,3 +1385,146 @@ test("chat/completions: per-token limiter trips at ~60/min (F1 coverage)", async
     Date.now = realDateNow;
   }
 });
+
+// ── Per-user key isolation (multi-user BYOK core property, round-360) ──
+// translate.ts resolves the caller by x-api-key and spends THAT user's
+// ukeys. These tests pin the property with two live users: a regression
+// that mixed the key lookup up would let alice spend bob's quota (and bill
+// side-effects to the wrong account). Distinct tokens per test: store.ts
+// keeps a module-level cache AND the F1 limiter holds per-token buckets,
+// so token reuse across tests would cross-contaminate.
+let isoSeq = 0;
+function isoEnv({ aKeys = {}, bKeys = {}, aEnabled = true } = {}) {
+  const mk = (tag, ogKey, enabled) => {
+    const uid = `iso-${tag}-${++isoSeq}`;
+    const token = `tok-${uid}`;
+    return {
+      uid,
+      token,
+      userRec: { id: uid, username: uid, role: "user", enabled, token },
+      ukeys: {
+        DEEPSEEK_API_KEY: "sk-ds",
+        OPENCODE_GO_API_KEY: ogKey,
+        OPENROUTER_API_KEY: "sk-or",
+        QWEN_API_KEY: "sk-qw",
+      },
+    };
+  };
+  const a = mk("a", "sk-og-ALICE", aEnabled);
+  const b = mk("b", "sk-og-BOB", true);
+  Object.assign(a.ukeys, aKeys);
+  Object.assign(b.ukeys, bKeys);
+  const kv = new Map();
+  for (const u of [a, b]) {
+    kv.set(`token:${u.token}`, u.uid);
+    kv.set(`user:${u.uid}`, JSON.stringify(u.userRec));
+    kv.set(`ukeys:${u.uid}`, JSON.stringify(u.ukeys));
+  }
+  const breaker = {
+    idFromName: () => ({}),
+    get: () => ({
+      fetch: async () => new Response("0"),
+    }),
+  };
+  const routeStore = new Map();
+  const routeDo = {
+    idFromName: () => ({}),
+    get: () => ({
+      fetch: async (req, init) => {
+        const method = init?.method || "GET";
+        const url = new URL(typeof req === "string" ? req : req.url);
+        if (method === "GET") {
+          return new Response(
+            JSON.stringify({ model: routeStore.get(url.searchParams.get("uid")) || null }),
+          );
+        }
+        return new Response(JSON.stringify({ ok: true }));
+      },
+    }),
+  };
+  return {
+    env: {
+      KEYS: {
+        get: async (k) => (kv.has(k) ? kv.get(k) : null),
+        put: async () => {},
+        delete: async () => {},
+      },
+      BREAKER: breaker,
+      ROUTE: routeDo,
+    },
+    a,
+    b,
+  };
+}
+
+const ogBody = () => ({
+  model: "og/deepseek-v4-flash",
+  max_tokens: 10,
+  stream: false,
+  messages: [{ role: "user", content: "hi" }],
+});
+const okChoices = () =>
+  new Response(
+    JSON.stringify({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+const upstreamAuth = (seen) =>
+  seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+
+test("per-user isolation: alice's og call carries alice's key", async () => {
+  const { env, a } = isoEnv();
+  let seen;
+  const res = await withFetch(
+    async (url, init) => {
+      seen = { url, init };
+      return okChoices();
+    },
+    () => post(env, a.token, ogBody()),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(upstreamAuth(seen), "Bearer sk-og-ALICE", "must spend the CALLER's key");
+});
+
+test("per-user isolation: bob's og call carries bob's key (same model, same minute)", async () => {
+  const { env, b } = isoEnv();
+  let seen;
+  const res = await withFetch(
+    async (url, init) => {
+      seen = { url, init };
+      return okChoices();
+    },
+    () => post(env, b.token, ogBody()),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(upstreamAuth(seen), "Bearer sk-og-BOB", "must spend the CALLER's key");
+});
+
+test("per-user isolation: alice without a key gets 502 even though bob has one (no borrowing)", async () => {
+  // JSON.stringify drops undefined values — alice genuinely has no og key.
+  const { env, a } = isoEnv({ aKeys: { OPENCODE_GO_API_KEY: undefined } });
+  const stored = JSON.parse((await env.KEYS.get(`ukeys:${a.uid}`)) || "{}");
+  assert(!stored.OPENCODE_GO_API_KEY, "precondition: alice has no og key");
+  const res = await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    () => post(env, a.token, ogBody()),
+  );
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.match(body.error?.message || JSON.stringify(body), /OPENCODE_GO_API_KEY not configured/);
+});
+
+test("disabled user → 401 on translate, upstream never called", async () => {
+  const { env, a } = isoEnv({ aEnabled: false });
+  const res = await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    () => post(env, a.token, ogBody()),
+  );
+  assert.equal(res.status, 401);
+});
