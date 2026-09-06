@@ -1522,6 +1522,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   insert + idempotent refresh, hostname-move/unproven-rotation 409s,
   stored-tunnel proof rotates (date kept). Suite 451->455; gates clean;
   snapshot updated; pushed.
+  ROUND-441 (2026-09-06): register-chain audit — /api/register +
+  /api/install/tunnel-token had ZERO route pins. Added 3 in
+  devices.test.mjs: garbage-403 zero-write + spend-once, existing-name
+  409 (round-68), tunnel-token once-only + grant-fed register. Caught
+  mid-round: shared 10/min/IP gate 429'd my own tests — per-test IPs
+  via cf-connecting-ip (req() gained an ip option). Suite 455->458;
+  gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
