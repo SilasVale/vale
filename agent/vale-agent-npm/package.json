@@ -2,7 +2,7 @@
   "name": "vale-agent",
   "version": "1.2.297",
   "description": "Vale Agent — Windows device MCP server (terminal/SSH/serial) + panel. Self-hosted npm distribution.",
-  "//build": "唯一构建路径：在本目录执行 npm run build。它是自包含的：经 npx 按需拉取 typescript@5，无需预装任何 node_modules（干净检出可跑；旧脚本引用 ../vale-desktop-electron/node_modules/.bin/tsc，干净检出必 ENOENT）。先编 electron TS（--noCheck 纯 emit，与 release.yml 一致）同步两处 src/*.js，再编 src/vale.ts 到 bin/vale.js 并校验 round-298 标记（弱 oracle，只证某次构建发生，新鲜性由 publish-release.sh 的 tsc 重编 + cmp 门保证）。",
+  "//build": "唯一构建路径：在本目录执行 npm run build。它是自包含的：经 npm exec 按需拉取 typescript@5，无需预装任何 node_modules（干净检出可跑；旧脚本引用 ../vale-desktop-electron/node_modules/.bin/tsc，干净检出必 ENOENT）。必须用 npm exec --package … -- tsc 的形式：npx 会吃掉传给 tsc 的 -p/--outDir 等参数（round-435：npx 写法从未真正跑通过）。先编 electron TS（--noCheck 纯 emit，与 release.yml 一致）同步两处 src/*.js，再编 src/vale.ts 到 bin/vale.js 并校验 round-298 标记（弱 oracle，只证某次构建发生，新鲜性由 publish-release.sh 的 tsc 重编 + cmp 门保证）。",
   "bin": {
     "vale": "bin/vale.js"
   },
@@ -24,7 +24,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "npx -y typescript@5 -p ../vale-desktop-electron/tsconfig.json --outDir /tmp/vale-electron-fresh --noCheck && cp /tmp/vale-electron-fresh/main.js ../vale-desktop-electron/src/main.js && cp /tmp/vale-electron-fresh/preload.js ../vale-desktop-electron/src/preload.js && cp /tmp/vale-electron-fresh/url-policy.js ../vale-desktop-electron/src/url-policy.js && cp ../vale-desktop-electron/src/main.js ../vale-desktop-electron/src/preload.js ../vale-desktop-electron/src/url-policy.js ./vale-desktop-electron/src/ && npx -y typescript@5 -p tsconfig.json --outDir /tmp/vale-fresh-bin && cp /tmp/vale-fresh-bin/vale.js bin/vale.js && grep -q \"vale-release\" bin/vale.js && rm -rf /tmp/vale-electron-fresh /tmp/vale-fresh-bin",
+    "build": "npm exec --yes --package typescript@5 -- tsc -p ../vale-desktop-electron/tsconfig.json --outDir /tmp/vale-electron-fresh --noCheck && cp /tmp/vale-electron-fresh/main.js ../vale-desktop-electron/src/main.js && cp /tmp/vale-electron-fresh/preload.js ../vale-desktop-electron/src/preload.js && cp /tmp/vale-electron-fresh/url-policy.js ../vale-desktop-electron/src/url-policy.js && cp ../vale-desktop-electron/src/main.js ../vale-desktop-electron/src/preload.js ../vale-desktop-electron/src/url-policy.js ./vale-desktop-electron/src/ && npm exec --yes --package typescript@5 -- tsc -p tsconfig.json --outDir /tmp/vale-fresh-bin && cp /tmp/vale-fresh-bin/vale.js bin/vale.js && grep -q \"vale-release\" bin/vale.js && rm -rf /tmp/vale-electron-fresh /tmp/vale-fresh-bin",
     "test": "node --test"
   }
 }
