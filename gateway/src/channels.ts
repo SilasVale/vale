@@ -3,6 +3,13 @@
  * MODELS / ROUTE_INFO / HEALTH_CHANNELS / HEALTH_PRIORITY and the og endpoints
  * derive from here; adding a channel touches only this file. Extracted from
  * index.js (2026-08-12).
+ *
+ * Boundary (architecture review 2026-09-06): this module is the DATA registry
+ * — endpoints, whitelists, display/health metadata, and the two env-derived
+ * exit helpers (usProxyBase/museResponsesExit). The routing DECISION layer
+ * (pickRoute/passthroughHeaders) lives in upstream.ts, one-way upstream ->
+ * channels. Reviewed as correctly layered; no split warranted — the muse
+ * exit policy stays beside its registry data for documentation coherence.
  */
 
 // OpenCode Zen/Go endpoints. All og/ models (including deepseek-v4-flash)
