@@ -961,6 +961,16 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   device Bearer injected + other headers pass, uppercase registration
   hostname dials, private hostname 400, unreachable → 502 with reason.
   Suite 299->306, tsc/eslint/prettier clean; snapshot count updated.
+  ROUND-362 (2026-09-06): session_log audit — 8 tests covered torn repair,
+  prune, seq, recovery, writer cap, output cap, but trim_file (rounds
+  98-100/116: streaming tail, last-start preservation, atomic temp+rename)
+  and list_sessions (the /api/sessions surface) had ZERO tests. Added 2:
+  close-trim (first command drained, last start kept, 2002-line cap =
+  header + 2000 + preserved start, head drops from index 1, recovery still
+  flags interrupted) + list_sessions row shape (2 rows, non-jsonl ignored,
+  exit_code/status folded). Caught my own off-by-one in the cap bound
+  (2001 vs 2002) before committing. Matrix: lib 204, feat-gated 210,
+  clippy x2 + fmt + xwin clean; snapshot 238->240.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
