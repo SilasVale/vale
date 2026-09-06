@@ -454,6 +454,26 @@ test("stream encoder: PARALLEL tool calls each get their own block, args not con
 
 // ── streamOgToAnthropic: upstream dies mid-stream → graceful close ──
 
+// round-492 (coverage-driven): the encoder mid-stream error arm + the
+// finish() tail-parse arm had ZERO pins.
+test("stream encoder: mid-stream chunk error → terminal error event, no double-fire", async () => {
+  const { AnthropicStreamEncoder } = await import("../src/anthropic-translate.ts");
+  const enc = new AnthropicStreamEncoder("og/m", "m");
+  enc.push({ error: { message: "boom" } });
+  const first = enc.take();
+  assert.match(first, /upstream mid-stream error: boom/);
+  assert.equal(enc.take(), "", "terminal: nothing queued after the error");
+  const tail = enc.finish();
+  assert.ok(!String(tail || "").includes("empty/non-SSE"), "started suppresses the done-branch error");
+});
+
+test("stream encoder: finish() parses a trailing partial data frame", async () => {
+  const { AnthropicStreamEncoder } = await import("../src/anthropic-translate.ts");
+  const enc = new AnthropicStreamEncoder("og/m", "m");
+  const tail = enc.finish('data: {"choices":[{"index":0,"delta":{"content":"tail-word"}}]}\n');
+  assert.match(String(tail || ""), /tail-word/);
+});
+
 // round-486 (coverage-driven): the empty/non-SSE-stream error arm had ZERO
 // pins (only the mid-stream-death arm was covered).
 test("stream: empty upstream → explicit empty-stream error event, no fabricated message", async () => {
