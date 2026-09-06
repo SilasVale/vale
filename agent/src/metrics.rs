@@ -76,13 +76,12 @@ fn windows_vitals() -> Vitals {
                 .unwrap_or_else(|p| p.into_inner())
                 .replace(cur);
             if let Some(prev) = prev {
-                let d_idle = cur.idle.saturating_sub(prev.idle);
-                let d_total = (cur.kernel.saturating_add(cur.user))
-                    .saturating_sub(prev.kernel.saturating_add(prev.user));
-                if d_total > 0 {
-                    let busy = d_total.saturating_sub(d_idle) as f64 / d_total as f64 * 100.0;
-                    out.cpu_pct = Some(round1(busy));
-                }
+                out.cpu_pct = cpu_busy_pct(
+                    prev.idle,
+                    prev.kernel.saturating_add(prev.user),
+                    cur.idle,
+                    cur.kernel.saturating_add(cur.user),
+                );
             }
         }
     }
@@ -108,6 +107,21 @@ fn round1(x: f64) -> f64 {
     (x * 10.0).round() / 10.0
 }
 
+/// Pure CPU-delta math, extracted for host-independent tests (round-378):
+/// busy% = (total_delta − idle_delta) / total_delta. Counter regress (VM
+/// migrate, wrap) saturates to zero delta → None, never a negative or NaN.
+#[allow(dead_code)] // used by the Windows path; unit-tested on all hosts
+fn cpu_busy_pct(prev_idle: u64, prev_total: u64, cur_idle: u64, cur_total: u64) -> Option<f64> {
+    let d_idle = cur_idle.saturating_sub(prev_idle);
+    let d_total = cur_total.saturating_sub(prev_total);
+    if d_total == 0 {
+        return None;
+    }
+    Some(round1(
+        d_total.saturating_sub(d_idle) as f64 / d_total as f64 * 100.0,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +139,32 @@ mod tests {
         assert_eq!(round1(12.34), 12.3);
         assert_eq!(round1(12.36), 12.4);
         assert_eq!(round1(100.0), 100.0);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn non_windows_sample_is_all_none() {
+        // The graceful-degradation contract: every other platform reports
+        // no vitals (endpoint shape carries nulls, never fabricates).
+        let v = sample();
+        assert_eq!(v.cpu_pct, None);
+        assert_eq!(v.mem_pct, None);
+        assert_eq!(v.mem_total_mb, None);
+    }
+
+    #[test]
+    fn cpu_delta_math() {
+        // Half the delta busy → 50%.
+        assert_eq!(cpu_busy_pct(100, 1000, 200, 1200), Some(50.0));
+        // Fully idle / fully busy bounds.
+        assert_eq!(cpu_busy_pct(0, 0, 100, 100), Some(0.0));
+        assert_eq!(cpu_busy_pct(0, 0, 0, 100), Some(100.0));
+        // No tick between samples → None, not 0/0 NaN.
+        assert_eq!(cpu_busy_pct(50, 500, 50, 500), None);
+        // Counter regress saturates → None, never negative.
+        assert_eq!(cpu_busy_pct(900, 1000, 100, 200), None);
+        // Rounding to one decimal through the shared helper.
+        assert_eq!(cpu_busy_pct(0, 0, 0, 3), Some(100.0));
+        assert_eq!(cpu_busy_pct(1, 0, 2, 3), Some(66.7));
     }
 }
