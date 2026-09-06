@@ -1019,6 +1019,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   §11 Tauri bullet moot (deleted round-330); banner gains the 357/358
   line. Docs-only, no gates affected. (Log hygiene: this entry first
   landed as a duplicate ROUND-367 and was renumbered on sight.)
+  ROUND-369 (2026-09-06): mcp-browser bridge audit — routing/self-heal/
+  click-conversion covered, but the documented guardrails had zero pins:
+  timeout_secs clamp (M2), unknown-tool passthrough, private-hostname
+  gate, and the 4-slot SESSION_BUSY semaphore. Added 4 in
+  mcp-browser.test.mjs (direct callTool harness, existing makeFetch):
+  clamp 99999→300 / 0→1 / 12.9→12, verbatim passthrough, hostname gate
+  fires pre-fetch with DEVICE_UNREACHABLE, deterministic 5th-call
+  SESSION_BUSY via a gated stub (no timers). Suite 313->317; snapshot
+  updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
