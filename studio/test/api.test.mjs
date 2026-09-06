@@ -408,3 +408,60 @@ test("gitTop confines the toplevel inside the given roots", async () => {
   assert.ok((await gitStatus(path.join(sub, "f.txt"), [outer])).top);
   await fsp.rm(outer, { recursive: true, force: true });
 });
+
+test("--help prints usage without generating a config", async () => {
+  // Fresh-machine scenario: `node server.mjs --help` with HOME pointing at an
+  // empty dir and no --config. Flag handling must short-circuit BEFORE
+  // loadConfig, or a 0600 config (with a fresh bearer token) is generated as
+  // a side effect of asking for usage.
+  const fakeHome = await fsp.mkdtemp(path.join(os.tmpdir(), "vale-studio-help-"));
+  const serverPath = path.join(import.meta.dirname, "..", "server.mjs");
+  const result = await new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, [serverPath, "--help"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, HOME: fakeHome },
+    });
+    let out = "";
+    p.stdout.on("data", (d) => (out += d));
+    p.stderr.on("data", (d) => (out += d));
+    p.on("close", (code) => resolve({ code, out }));
+    p.on("error", reject);
+  });
+  assert.equal(result.code, 0);
+  assert.match(result.out, /usage: node server\.mjs/);
+  assert.equal(
+    fs.existsSync(path.join(fakeHome, ".vale-studio", "config.json")),
+    false,
+    "--help must not create a config file",
+  );
+  await fsp.rm(fakeHome, { recursive: true, force: true });
+});
+
+test("tmux adoption validates the reported cwd and keeps the canonical path", async () => {
+  // Regression for the old `safeResolve(p, ROOTS), (cwd = p)` comma-operator
+  // slip in adoptTmuxSessions: the validated path was discarded and the RAW
+  // tmux-reported cwd was adopted. The extracted helper must return the
+  // canonical validated realpath, reject out-of-ROOTS reports, and fall back
+  // to the first root when tmux reports nothing.
+  const { resolveAdoptCwd } = await import("../lib/terminals.mjs");
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "vale-studio-adopt-"));
+  const nested = path.join(root, "nested");
+  await fsp.mkdir(nested);
+  // in-ROOTS report (with a non-canonical raw form): canonical realpath wins
+  const raw = root + "/nested/../nested";
+  assert.equal(resolveAdoptCwd(raw, root, [root]), fs.realpathSync(nested));
+  assert.notEqual(raw, fs.realpathSync(nested), "raw form differs — the fix is observable");
+  // empty report: falls back to the first root (unchanged behavior)
+  assert.equal(resolveAdoptCwd("", root, [root]), root);
+  // out-of-ROOTS report: rejected -> caller skips the session
+  assert.equal(resolveAdoptCwd("/etc", root, [root]), null);
+  // symlink escaping the roots: rejected too
+  const link = path.join(root, "escape-link");
+  try {
+    await fsp.symlink("/etc", link);
+    assert.equal(resolveAdoptCwd(link, root, [root]), null);
+  } catch {
+    /* no symlink permission — the /etc assert above already covers rejection */
+  }
+  await fsp.rm(root, { recursive: true, force: true });
+});

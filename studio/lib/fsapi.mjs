@@ -25,6 +25,38 @@ export function isSubpath(child, parent) {
   return child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
 }
 
+// ASSUMPTION (boot-constant roots): callers pass the same roots array for the
+// life of the process — the server builds ROOTS once at boot (already
+// stat-verified to exist) and never mutates it — so the roots' realpaths are
+// cached per array identity (WeakMap) instead of re-running realpathSync on
+// every root for every request. A roots array handed in per-call (as some
+// callers of gitTop-style APIs do) simply gets its own cache entry.
+const realRootsCache = new WeakMap(); // roots array -> (string|null)[]
+
+function realRoots(roots) {
+  let cached = realRootsCache.get(roots);
+  if (!cached) {
+    cached = roots.map((r) => {
+      try {
+        return fs.realpathSync(r);
+      } catch {
+        return null; // vanished root: skipped by consumers (null-safe below)
+      }
+    });
+    realRootsCache.set(roots, cached);
+  }
+  return cached;
+}
+
+/**
+ * The realpath'ed workspace root that contains `p`, or null when `p` sits
+ * outside every root. `p` must already be a validated real path (the output
+ * of safeResolve, or the client-absolute path checked by the caller).
+ */
+export function owningRoot(p, roots) {
+  return realRoots(roots).find((r) => r && isSubpath(p, r)) || null;
+}
+
 /**
  * Validate that `p` resolves (symlinks included) inside one of `roots`
  * (roots are themselves realpath'ed). Returns the resolved real path.
@@ -36,13 +68,6 @@ export function safeResolve(p, roots, { mustExist = true } = {}) {
     throw new ApiError(400, "bad_path", "absolute path required");
   }
   const norm = path.normalize(p);
-  const realRoots = roots.map((r) => {
-    try {
-      return fs.realpathSync(r);
-    } catch {
-      return null;
-    }
-  });
   let probe = norm;
   if (!mustExist) {
     // Walk up until an existing component is found.
@@ -63,11 +88,8 @@ export function safeResolve(p, roots, { mustExist = true } = {}) {
   } catch {
     throw new ApiError(404, "not_found", "path not found");
   }
-  if (!isSubpath(real, norm) && mustExist) {
-    // symlink walked us somewhere else than requested; re-validate against norm below
-  }
   const finalPath = mustExist ? real : path.join(real, path.relative(probe, norm));
-  for (const r of realRoots) {
+  for (const r of realRoots(roots)) {
     if (r && isSubpath(finalPath, r)) return finalPath;
   }
   throw new ApiError(403, "outside_roots", "path outside allowed workspace roots");
@@ -157,7 +179,6 @@ export async function readFileEntry(p) {
     }
   } else if (!binary) {
     entry.content = buf.toString("utf8");
-    entry.truncated = false;
   } else {
     entry.content = null;
     entry.binaryHint = ext || "bin";

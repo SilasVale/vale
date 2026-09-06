@@ -31,6 +31,7 @@ import { WebSocketServer } from "ws";
 import {
   ApiError,
   safeResolve,
+  owningRoot,
   isSubpath,
   listTree,
   readFileEntry,
@@ -42,9 +43,10 @@ import {
   gitLog,
   gitDiff,
   gitInfo,
-  sha256,
 } from "./lib/fsapi.mjs";
-import { createPty } from "./lib/pty.mjs";
+import { makeAuth } from "./lib/auth.mjs";
+import { createWatcherHub } from "./lib/watch.mjs";
+import { createTerminalHub, MAX_TERMINALS, resolveAdoptCwd } from "./lib/terminals.mjs";
 
 // ── config ───────────────────────────────────────────────────────────────────
 
@@ -55,6 +57,15 @@ function arg(flag) {
 
 function hasFlag(flag) {
   return process.argv.includes(flag);
+}
+
+// Flag handling runs BEFORE loadConfig: `--help` on a fresh machine must print
+// usage without generating a 0600 config (and a fresh bearer token) as a side
+// effect. `--link` cannot move up — it prints the token, so config loading is
+// its prerequisite (see the listen block below).
+if (hasFlag("--help") || hasFlag("-h")) {
+  console.log("usage: node server.mjs [--config PATH] [--port N] [--link]");
+  process.exit(0);
 }
 
 const CONFIG_PATH = arg("--config") || path.join(os.homedir(), ".vale-studio", "config.json");
@@ -150,57 +161,11 @@ if (!VENDOR.monaco || !VENDOR.xterm) {
 
 // ── auth ─────────────────────────────────────────────────────────────────────
 
-const TOKEN_HASH = sha256(Buffer.from(CONFIG.token));
-// Wrong-guess budget: global sliding window. NOTE (auth design): the correct
-// token is ALWAYS accepted regardless of limiter state (checked first below).
-// Per-IP blocking is wrong here — behind the cloudflared tunnel every remote
-// client shares one loopback remoteAddress, so >=10 bad guesses/min from a
-// scanner would lock out the legitimate owner. The 256-bit bearer makes online
-// guessing infeasible; this budget only bounds log/CPU burn from scanners and
-// can never deny the true owner.
-const WRONG_BUDGET_MAX = 100; // wrong guesses per window, server-wide
-const WRONG_BUDGET_WINDOW_MS = 60_000;
-const wrongBudget = { count: 0, resetAt: Date.now() + WRONG_BUDGET_WINDOW_MS };
-const failLog = new Map(); // ip -> {count, resetAt}: diagnostics only, never blocks
-
-function tokenOk(token, ip) {
-  const now = Date.now();
-  // 1) Correct token always wins — checked BEFORE any limiter state.
-  let ok = false;
-  if (typeof token === "string" && token.length > 0) {
-    // constant-time compare over equal-length digests
-    ok = crypto.timingSafeEqual(
-      crypto.createHash("sha256").update(token).digest(),
-      crypto.createHash("sha256").update(CONFIG.token).digest(),
-    );
-  }
-  if (ok) return true;
-  // 2) Wrong guess: account it (global budget + per-IP diagnostics).
-  if (now >= wrongBudget.resetAt) {
-    wrongBudget.count = 0;
-    wrongBudget.resetAt = now + WRONG_BUDGET_WINDOW_MS;
-  }
-  wrongBudget.count++;
-  if (wrongBudget.count === WRONG_BUDGET_MAX + 1) {
-    console.warn(
-      `[studio] auth: wrong-guess budget exceeded (${WRONG_BUDGET_MAX}/${WRONG_BUDGET_WINDOW_MS}ms) — still accepting correct token`,
-    );
-  }
-  const r = failLog.get(ip) || { count: 0, resetAt: now + WRONG_BUDGET_WINDOW_MS };
-  if (now >= r.resetAt) {
-    r.count = 0;
-    r.resetAt = now + WRONG_BUDGET_WINDOW_MS;
-  }
-  r.count++;
-  failLog.set(ip, r);
-  return false;
-}
-
-function bearerOf(req, url) {
-  const h = req.headers.authorization || "";
-  if (h.startsWith("Bearer ")) return h.slice(7);
-  return url.searchParams.get("token");
-}
+// Bearer auth + wrong-guess budget live in lib/auth.mjs (token-first ordering
+// is documented there). The token reference digest is computed once inside
+// makeAuth — loadConfig is awaited at module top level before the server can
+// accept a request, so eager init is safe.
+const { tokenOk, bearerOf } = makeAuth(CONFIG.token);
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -391,9 +356,7 @@ route("POST", "/api/rename", async (req) => {
   const to = safeResolve(body.to, ROOTS, { mustExist: false });
   // Sep-aware: a bare startsWith(root + "/") with a hardcoded "/" breaks on
   // Windows and misses the equality/prefix subtleties isSubpath handles.
-  const rootOf = (p) =>
-    ROOTS.map((r) => fs.realpathSync(r)).find((r) => isSubpath(p, r));
-  const root = rootOf(from);
+  const root = owningRoot(from, ROOTS);
   if (!root || !isSubpath(to, root)) {
     throw new ApiError(403, "outside_roots", "rename must stay inside one root");
   }
@@ -426,7 +389,7 @@ route("DELETE", "/api/file", async (req, url) => {
   assertWritable();
   const p = safeResolve(url.searchParams.get("p"), ROOTS);
   // Equality matters: p may BE a root (a pure prefix check is false then).
-  const root = ROOTS.map((r) => fs.realpathSync(r)).find((r) => isSubpath(p, r));
+  const root = owningRoot(p, ROOTS);
   if (!root) throw new ApiError(403, "outside_roots", "path outside allowed workspace roots");
   const out = await trashFile(p, root);
   watchers.broadcast(p, "delete");
@@ -496,22 +459,10 @@ route("GET", "/api/stat", async (req, url) => {
 
 // ── terminals ────────────────────────────────────────────────────────────────
 
-const RING_MAX = 64 * 1024;
-// Cap live sessions: each spawns a real shell process and ids carry only
-// 24-bit entropy, so unbounded creation is a fork bomb via one API call.
-// 16 is generous for a single-owner studio (typical use: a handful of
-// shells). Shared-token architecture is by design (loopback + tunnel +
-// bearer — any token holder IS the owner), so per-user ACLs are out of scope.
-const MAX_TERMINALS = 16;
-const terminals = new Map(); // id -> {id,name,cwd,backend,ring,viewers:Set,session,exitCode,deadAt}
-let termSeq = 0;
-
-function termBroadcast(t, data) {
-  t.ring.write(data);
-  for (const ws of t.viewers) {
-    if (ws.readyState === 1) ws.send(data, { binary: true });
-  }
-}
+// Session registry lives in lib/terminals.mjs (ring buffer, viewer broadcast,
+// MAX_TERMINALS cap, 60s post-exit reap). The server holds ONE hub instance;
+// the WS term handler and DELETE route operate on the same `terminals` map.
+const { terminals, createTerminalSession } = createTerminalHub();
 
 route("POST", "/api/term", async (req) => {
   if (CONFIG.readOnly || !CONFIG.terminal.enabled) {
@@ -527,57 +478,19 @@ route("POST", "/api/term", async (req) => {
   const body = await readJson(req, 4096);
   let cwd = ROOTS[0];
   if (body.cwd) cwd = safeResolve(String(body.cwd), ROOTS);
-  const id = `t${++termSeq}-${crypto.randomBytes(3).toString("hex")}`;
-  const tmuxWrap = !!CONFIG.terminal.tmuxWrap;
-  // tmux persistence: the pty attaches to `tmux new -A` (attach-or-create).
-  // If vale-studio restarts, the tmux SERVER keeps the session alive and a
-  // recreated terminal with the same name re-attaches with full history.
-  const shellArgs = tmuxWrap
-    ? ["new", "-A", "-s", `vs-${id}`, CONFIG.terminal.shell]
-    : [];
-  const session = await createPty({
-    shell: tmuxWrap ? "tmux" : CONFIG.terminal.shell,
-    args: shellArgs,
+  const { id, backend, name } = await createTerminalSession({
     cwd,
+    shell: CONFIG.terminal.shell,
+    tmuxWrap: !!CONFIG.terminal.tmuxWrap,
     cols: Number(body.cols) || 80,
     rows: Number(body.rows) || 24,
     env: { VSTUDIO_ROOT: cwd },
+    displayName: `bash · ${path.basename(cwd)}`,
+    exitNotice: true,
   });
-  const t = {
-    id,
-    name: `bash · ${path.basename(cwd)}`,
-    cwd,
-    backend: session.backend,
-    tmuxName: tmuxWrap ? `vs-${id}` : null,
-    ring: ringBuffer(RING_MAX),
-    viewers: new Set(),
-    session,
-    exitCode: null,
-    deadAt: null,
-  };
-  terminals.set(id, t);
-  session.onData((d) => termBroadcast(t, Buffer.from(d)));
-  session.onExit((code) => {
-    t.exitCode = code;
-    t.deadAt = Date.now();
-    termBroadcast(t, Buffer.from(`\r\n\x1b[90m[process exited ${code}]\x1b[0m\r\n`));
-    setTimeout(() => terminals.delete(id), 60_000).unref?.();
-  });
-  console.log(`[studio] terminal ${id} (${t.backend}) cwd=${cwd}`);
-  return { id, backend: t.backend, name: t.name };
+  console.log(`[studio] terminal ${id} (${backend}) cwd=${cwd}`);
+  return { id, backend, name };
 });
-
-function ringBuffer(capacity) {
-  let buf = Buffer.alloc(0);
-  return {
-    write(d) {
-      buf = buf.length + d.length <= capacity ? Buffer.concat([buf, d]) : Buffer.concat([buf.subarray(Math.max(0, buf.length - capacity + d.length)), d]);
-    },
-    toString() {
-      return buf;
-    },
-  };
-}
 
 route("GET", "/api/terms", async () => ({
   terms: [...terminals.values()].map((t) => ({
@@ -603,120 +516,12 @@ route("DELETE", "/api/term/:id", async (req, url, params) => {
 
 // ── websockets ───────────────────────────────────────────────────────────────
 
-// Targeted file watching (VS Code-style): instead of recursively watching a
-// whole workspace — which exhausts inotify limits on big trees and crashes the
-// process — the client tells us which files are OPEN, and we watch only those
-// directories non-recursively. Events are filtered back to tracked paths.
-// Max dirs/files one watch client may track: open-file sets are small
-// (dozens); this caps inotify watches from a misbehaving client.
+// Targeted file watching (VS Code-style): the client tells us which files are
+// OPEN and only those directories get non-recursive watches (full design note
+// in lib/watch.mjs). Max dirs/files one watch client may track: open-file sets
+// are small (dozens); this caps inotify watches from a misbehaving client.
 const MAX_WATCH_PER_CLIENT = 128;
-const watchers = (() => {
-  const clients = new Set();          // watch-WS set
-  const tracked = new Map();          // absPath -> refCount
-  const dirs = new Map();             // dirReal -> {watcher, timers:Map, errorNotified}
-  const debounceMs = 150;
-
-  function broadcast(p, event) {
-    for (const ws of clients) {
-      if (ws.readyState === 1) ws.send(JSON.stringify({ path: p, event }));
-    }
-  }
-
-  function onDirEvent(dirReal, event, filename) {
-    if (!filename) return;
-    const p = path.join(dirReal, filename);
-    if (!tracked.has(p)) return;
-    let s = dirs.get(dirReal);
-    const prev = s.timers.get(p);
-    if (prev) clearTimeout(prev);
-    const t = setTimeout(() => {
-      s.timers.delete(p);
-      broadcast(p, event);
-    }, debounceMs);
-    t.unref?.();
-    s.timers.set(p, t);
-  }
-
-  function trackDir(dirReal) {
-    if (dirs.has(dirReal)) return true;
-    try {
-      const w = fs.watch(dirReal, (event, filename) => onDirEvent(dirReal, event, filename));
-      w.on("error", (e) => {
-        // inotify exhaustion etc. — degrade to no-op, never crash
-        console.warn(`[studio] watcher error ${dirReal}: ${e.code || e.message}`);
-      });
-      dirs.set(dirReal, { watcher: w, timers: new Map() });
-      return true;
-    } catch (e) {
-      console.warn(`[studio] cannot watch ${dirReal}: ${e.code || e.message}`);
-      return false;
-    }
-  }
-
-  function trackFile(p) {
-    const n = tracked.get(p) || 0;
-    tracked.set(p, n + 1);
-    if (n === 0) {
-      let dirReal = null;
-      try {
-        dirReal = fs.realpathSync(path.dirname(p));
-      } catch {
-        return;
-      }
-      trackDir(dirReal);
-    }
-  }
-
-  function untrackAllFor(wsPaths) {
-    for (const p of wsPaths) {
-      const n = (tracked.get(p) || 0) - 1;
-      if (n <= 0) tracked.delete(p);
-      else tracked.set(p, n);
-    }
-    // GC dirs with no remaining tracked files
-    for (const [dirReal, s] of dirs) {
-      const stillNeeded = [...tracked.keys()].some((f) => {
-        try {
-          return fs.realpathSync(path.dirname(f)) === dirReal;
-        } catch {
-          return false; // dir deleted mid-iteration (WS close path) — not pinning
-        }
-      });
-      if (!stillNeeded) {
-        try { s.watcher.close(); } catch {}
-        dirs.delete(dirReal);
-      }
-    }
-  }
-
-  return {
-    addClient(ws) {
-      clients.add(ws);
-    },
-    removeClient(ws, openPaths) {
-      clients.delete(ws);
-      if (openPaths && openPaths.length) untrackAllFor(openPaths);
-    },
-    setFiles(ws, paths) {
-      // full reconcile from this client
-      if (ws._tracked) untrackAllFor(ws._tracked);
-      ws._tracked = [];
-      for (const p of paths || []) {
-        // Bound per-client watches: open-file sets are small; this caps
-        // inotify usage from a compromised/malicious client.
-        if (ws._tracked.length >= MAX_WATCH_PER_CLIENT) break;
-        try {
-          // Same confinement as the file APIs — never trust client paths.
-          const real = safeResolve(p, ROOTS);
-          ws._tracked.push(real);
-          trackFile(real);
-        } catch {}
-      }
-      return { tracked: ws._tracked.length };
-    },
-    broadcast,
-  };
-})();
+const watchers = createWatcherHub({ roots: ROOTS, maxPerClient: MAX_WATCH_PER_CLIENT });
 
 const wss = new WebSocketServer({ noServer: true });
 
@@ -725,8 +530,6 @@ function wsAuth(req, url) {
   if (!tokenOk(bearerOf(req, url), ip)) return false;
   return true;
 }
-
-export const __test = { tokenOk, TOKEN_HASH };
 
 // ── server wiring ────────────────────────────────────────────────────────────
 
@@ -837,18 +640,16 @@ server.on("upgrade", async (req, socket, head) => {
   });
 });
 
-if (hasFlag("--help") || hasFlag("-h")) {
-  console.log("usage: node server.mjs [--config PATH] [--port N] [--link]");
-  process.exit(0);
-}
-
 // One-click login link: the public URL + token. `--link` prints it and exits.
+// Host: config `publicHost` (set by loadConfig for existing configs), falling
+// back to the historical literal when unset (e.g. a first-boot config, which
+// is generated without the key).
 function loginLink(host) {
   return `https://${host}/?token=${CONFIG.token}`;
 }
 
 if (hasFlag("--link")) {
-  console.log(loginLink("code.saisi.online"));
+  console.log(loginLink(CONFIG.publicHost || "code.saisi.online"));
   process.exit(0);
 }
 
@@ -880,42 +681,26 @@ async function adoptTmuxSessions() {
   }
   for (const name of out.trim().split("\n")) {
     if (!name?.startsWith("vs-t")) continue;
-    // resolve where the session was last working (falls back to first root)
-    let cwd = ROOTS[0];
+    // resolve where the session was last working (falls back to first root).
+    // FIX: keep the VALIDATED canonical path from safeResolve — the old
+    // `safeResolve(p, ROOTS), (cwd = p)` comma-operator slip discarded the
+    // validated return and adopted the raw tmux-reported string instead.
+    let p;
     try {
-      const p = (
+      p = (
         await run("tmux", ["display-message", "-p", "-t", name, "#{pane_current_path}"])
       ).stdout.trim();
-      if (p) safeResolve(p, ROOTS), (cwd = p);
-      else safeResolve(cwd, ROOTS);
     } catch {
-      continue; // outside allowed roots
+      continue; // session vanished between list and query
     }
-    const id = `t${++termSeq}-${crypto.randomBytes(3).toString("hex")}`;
-    const session = await createPty({
-      shell: "tmux",
-      args: ["new", "-A", "-s", name, CONFIG.terminal.shell],
+    const cwd = resolveAdoptCwd(p, ROOTS[0], ROOTS);
+    if (!cwd) continue; // reported cwd outside allowed roots
+    const { id } = await createTerminalSession({
       cwd,
-      env: {},
-    });
-    const t = {
-      id,
-      name: `bash · ${path.basename(cwd)} (restored)`,
-      cwd,
-      backend: session.backend,
+      shell: CONFIG.terminal.shell,
       tmuxName: name,
-      ring: ringBuffer(RING_MAX),
-      viewers: new Set(),
-      session,
-      exitCode: null,
-      deadAt: null,
-    };
-    terminals.set(id, t);
-    session.onData((d) => termBroadcast(t, Buffer.from(d)));
-    session.onExit((code) => {
-      t.exitCode = code;
-      t.deadAt = Date.now();
-      setTimeout(() => terminals.delete(id), 60_000).unref?.();
+      env: {},
+      displayName: `bash · ${path.basename(cwd)} (restored)`,
     });
     console.log(`[studio] adopted tmux session ${name} -> terminal ${id}`);
   }

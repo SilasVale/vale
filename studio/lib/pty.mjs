@@ -2,7 +2,6 @@
 // Both faces expose: write(data), resize(cols, rows), kill(), onData(cb), onExit(cb).
 
 import { spawn } from "node:child_process";
-import os from "node:os";
 
 let nodePty = null;
 let nodePtyTried = false;
@@ -95,12 +94,4 @@ function scriptSession({ shell, args, cwd, cols, rows, env }) {
     onExit: (cb) =>
       child.on("close", (code) => cb(code ?? 0)),
   };
-}
-
-export function defaultShell() {
-  return process.env.SHELL || "/bin/bash";
-}
-
-export function homeDir() {
-  return os.homedir();
 }
