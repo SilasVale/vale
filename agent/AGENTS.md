@@ -1263,6 +1263,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   multi-device guidance (regression), tools/list shape, dial failure →
   -32603 + {code} data (corrected my data-shape assumption pre-commit).
   Suite 387->392; gates clean; snapshot updated; pushed. CI: 397 SUCCESS.
+  ROUND-399 (2026-09-06): heal-layer remainder audit — zero-live/multi-
+  live guidance, data-URL image unwrap (118), timeout-vs-unreachable
+  mapping had zero direct pins. Added 4: zero-live points at
+  terminal_open, multi-live lists without guessing (no retry asserted),
+  image block shape, TIMEOUT vs DEVICE_UNREACHABLE. Suite 392->396;
+  gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
