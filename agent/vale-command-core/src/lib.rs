@@ -134,3 +134,30 @@ pub struct NavItem {
     /// HTML snippet injected into the dashboard page div
     pub html_snippet: &'static str,
 }
+
+#[cfg(test)]
+mod guard_tests {
+    //! round-385: recover_guard is the codebase-wide poison contract —
+    //! pin the normal path and the poisoned recovery (data preserved,
+    //! no propagated panic).
+    use super::*;
+
+    #[test]
+    fn clean_lock_returns_guard() {
+        let m = std::sync::Mutex::new(41u32);
+        assert_eq!(*recover_guard(&m), 41);
+    }
+
+    #[test]
+    fn poisoned_lock_recovers_data_without_panicking() {
+        let m = std::sync::Mutex::new(vec![1u32, 2]);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut g = m.lock().unwrap();
+            g.push(3);
+            panic!("boom");
+        }));
+        assert!(m.is_poisoned());
+        let g = recover_guard(&m);
+        assert_eq!(*g, vec![1, 2, 3], "recovered guard keeps the data");
+    }
+}
