@@ -70,13 +70,31 @@ function isLoopbackOrigin(origin) {
   }
 }
 
+function isLoopbackHost(hostname) {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+function requestHost(request) {
+  try {
+    return new URL(request.url).hostname;
+  } catch {
+    return "";
+  }
+}
+
 function corsHeaders(request) {
   const origin = request.headers.get("origin") || "";
   const headers = {
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Headers": "*",
   };
-  if (ALLOWED_ORIGINS.has(origin) || isLoopbackOrigin(origin)) {
+  // Loopback origins are a local-dev affordance, not a production grant
+  // (mirrors gateway/src/http.ts isAllowedOrigin; autonomous copy per
+  // ADR 0003 — satellite workers stay autonomous, no shared package): a
+  // loopback Origin is reflected only when the request host is itself
+  // loopback, so the deployed proxy never reflects a foreign page's
+  // http://localhost Origin.
+  if (ALLOWED_ORIGINS.has(origin) || (isLoopbackOrigin(origin) && isLoopbackHost(requestHost(request)))) {
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Vary"] = "Origin";
   }

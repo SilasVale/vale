@@ -37,6 +37,31 @@ export function decideClaim({ exists, expiresAtRaw, nowMs }) {
 
 const FILE_PATH = /^\/files\/([A-Za-z0-9_-]{16,64})$/;
 
+// DO external-address compat gate (has-then-verify / absent-then-pass).
+//
+// TOKEN RANDOMNESS (why compat, not fail-closed, is the correct posture
+// here — unlike gateway BreakerDO/RouteDO, which fail closed): claim IDs
+// are genToken(22) from index.js — crypto.getRandomValues with rejection
+// sampling over a 62-symbol alphabet, i.e. ~22*log2(62) ≈ 131 bits of
+// entropy per token. The token IS an unguessable capability: only the
+// uploader (who received it from the authenticated POST /api/upload) and
+// the party they share the download URL with can address the instance.
+// The x-do-auth header below is defense-in-depth for that residual risk
+// (DO instances have their own external address even with workers_dev:
+// false, so the worker-side upload auth is not the last line — same
+// reasoning as gateway BreakerDO/RouteDO). It activates only when DO_AUTH
+// is configured, so existing deploys without the secret keep working.
+// Deploy hardening: `wrangler secret put DO_AUTH` (worker + DO share env).
+function authorized(request, env) {
+  const expected = (env && env.DO_AUTH) || "";
+  if (!expected) return true;
+  const got = request.headers.get("x-do-auth") || "";
+  if (got.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
 export class TempClaimDO {
   constructor(state, env) {
     this.state = state;
@@ -48,6 +73,12 @@ export class TempClaimDO {
     const m = FILE_PATH.exec(url.pathname);
     if (!m || request.method !== "GET") {
       return new Response("Not Found", { status: 404 });
+    }
+    if (!authorized(request, this.env)) {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
     }
     const key = `files/${m[1]}`;
     // P1-1: R2 get/delete are network I/O — a DO/R2 outage must surface as

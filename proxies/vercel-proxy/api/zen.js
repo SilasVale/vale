@@ -43,13 +43,31 @@ function isLoopbackOrigin(origin) {
   }
 }
 
+function isLoopbackHost(hostname) {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+function requestHost(request) {
+  try {
+    return new URL(request.url).hostname;
+  } catch {
+    return "";
+  }
+}
+
 function corsHeaders(request) {
   const origin = request.headers.get("origin") || "";
   const headers = {
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Headers": "*",
   };
-  if (ALLOWED_ORIGINS.has(origin) || isLoopbackOrigin(origin)) {
+  // Loopback origins are a local-dev affordance, not a production grant
+  // (mirrors gateway/src/http.ts isAllowedOrigin; autonomous copy per
+  // ADR 0003 — satellite workers stay autonomous, no shared package): a
+  // loopback Origin is reflected only when the request host is itself
+  // loopback, so the deployed proxy never reflects a foreign page's
+  // http://localhost Origin.
+  if (ALLOWED_ORIGINS.has(origin) || (isLoopbackOrigin(origin) && isLoopbackHost(requestHost(request)))) {
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Vary"] = "Origin";
   }
@@ -89,20 +107,20 @@ export default async function handler(request) {
     let callerKey = (request.headers.get("x-api-key") || request.headers.get("authorization") || "").trim();
     if (callerKey.toLowerCase().startsWith("bearer ")) callerKey = callerKey.slice(7).trim();
     if (!callerKey) {
-      return new Response(JSON.stringify({ error: "caller key required (x-api-key or Authorization)" }), { status: 401, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: "caller key required (x-api-key or Authorization)" }), { status: 401, headers: { "Content-Type": "application/json", ...cors } });
     }
     const url = new URL(request.url);
     // Explicit target allowlist — unknown targets are rejected (no silent
     // fallback to og; an unlisted target must never ride zen's key).
     const target = url.searchParams.get("target") || "og";
     if (!Object.hasOwn(TARGETS, target)) {
-      return new Response(JSON.stringify({ error: `unknown target: ${target}` }), { status: 400, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: `unknown target: ${target}` }), { status: 400, headers: { "Content-Type": "application/json", ...cors } });
     }
     const base = TARGETS[target];
     const rawPath = url.searchParams.get("path") || "/v1/messages";
     const path = normalizeUpstreamPath(rawPath);
     if (path === null) {
-      return new Response(JSON.stringify({ error: "invalid path" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: "invalid path" }), { status: 400, headers: { "Content-Type": "application/json", ...cors } });
     }
     const upstream = base + path;
     const h = new Headers();

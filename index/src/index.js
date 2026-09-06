@@ -225,7 +225,14 @@ export default {
       // uncaught throw (worker 500 HTML / unhandled rejection).
       try {
         const id = env.TEMP_CLAIM.idFromName(`files/${token}`);
-        return await env.TEMP_CLAIM.get(id).fetch(request);
+        // Compat gate credential (gateway breakerHeaders pattern): attach
+        // the internal DO credential when configured. TempClaimDO verifies
+        // it only when DO_AUTH is set (absent-then-pass), so deploys
+        // without the secret keep working. set() overwrites any
+        // client-supplied x-do-auth value — callers cannot forge it.
+        const headers = new Headers(request.headers);
+        if (env.DO_AUTH) headers.set("x-do-auth", env.DO_AUTH);
+        return await env.TEMP_CLAIM.get(id).fetch(new Request(request, { headers }));
       } catch (err) {
         return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
           status: 503,
