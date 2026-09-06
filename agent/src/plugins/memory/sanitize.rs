@@ -29,8 +29,11 @@ const SECRET_KEYS: &[&str] = &[
 /// `key.contains("token")` style flagged "tokenizer", "secretary", and
 /// similar innocuous words. A key is secret-shaped when it EQUALS a secret
 /// name, is delimited-suffixed/prefixed (`api_token`, `token_value`,
-/// `x-api-key`), or its alphanumeric-compacted form ENDS with it
-/// ("authtoken", "accesstoken", "clientsecret", "masterkey").
+/// `x-api-key`), or its alphanumeric-compacted form ENDS with one
+/// ("authtoken", "accesstoken", "clientsecret"). Bare "key"-suffixed words
+/// ("masterkey", "monkey") are deliberately NOT matched — "key" alone is
+/// too common to be a signal (recall yields to precision; this is a
+/// heuristic, not a boundary).
 fn key_is_secret(key: &str) -> bool {
     let k = key.to_lowercase();
     let compact: String = k.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
@@ -106,9 +109,14 @@ fn redact_line(line: &str) -> String {
     // key=value / key: value with secret-shaped key.
     // The key is the line prefix before the separator (whole-prefix
     // semantics — key_is_secret's compact-ends-with rule catches
-    // "authtoken abc123" and "x-api-key: abc" alike). A secret-shaped key
+    // "api_token=…" and "x-api-key: …" alike). A secret-shaped key
     // redacts from the separator to end of line (safe over-redaction —
     // sanitizers must err on the side of removing too much).
+    // Deliberately NOT matched: a secret word followed by a bare space
+    // ("the password is hunter2", "authtoken abc123") — without a
+    // separator there is no key boundary, and redacting from the first
+    // secret-shaped word would mangle ordinary prose (titles and tags
+    // pass through this same sanitizer).
     // round-245 fix: the 337fb328 "redact EVERY key" loop RESTARTED its scan
     // from position 0 after each replacement and re-matched the SAME
     // separator it had just replaced ("password=…" → "password=<redacted>"
@@ -192,13 +200,23 @@ mod tests {
         assert_eq!(sanitize("gateway timeout: 30s"), "gateway timeout: 30s");
         assert_eq!(sanitize("tokenizer: gpt2"), "tokenizer: gpt2");
         assert_eq!(sanitize("secretary: ann"), "secretary: ann");
-        // …while real shapes still redact:
+        // …while real shapes still redact (each arm asserted separately —
+        // a combined || would let one dead arm hide behind the other):
         assert!(sanitize("auth_token: abc123").contains("<redacted>"));
-        assert!(
-            sanitize("authtoken abc123\n").contains("<redacted>")
-                || sanitize("x-api-key: abc123").contains("<redacted>")
-        );
+        assert!(sanitize("x-api-key: abc123").contains("<redacted>"));
         assert!(sanitize("api_key=supersecretvalue").contains("<redacted>"));
+        // compact-ends-with shapes ("authtoken", "clientsecret" as KEY=…):
+        assert!(sanitize("authtoken=abc123").contains("<redacted>"));
+        assert!(!sanitize("authtoken=abc123").contains("abc123"));
+        assert!(sanitize("clientsecret=x").contains("<redacted>"));
+        // "key"-suffixed words are NOT signals (precision over recall):
+        assert_eq!(sanitize("masterkey=hunter2"), "masterkey=hunter2");
+        // No separator → prose-safe, left alone by design (see redact_line):
+        assert_eq!(sanitize("authtoken abc123"), "authtoken abc123");
+        assert_eq!(
+            sanitize("the password is hunter2"),
+            "the password is hunter2"
+        );
     }
 
     // review #12 regression: JSON-shaped content with NO secrets must be
@@ -269,5 +287,41 @@ mod tests {
     fn leaves_normal_content() {
         let out = sanitize("The quick brown fox jumps over the lazy dog");
         assert_eq!(out, "The quick brown fox jumps over the lazy dog");
+    }
+
+    // strategy 1, second arm: a bare "Bearer <token>" line redacts, but a
+    // bare word "Bearer" in prose (or a short fragment) must not.
+    #[test]
+    fn redacts_bare_bearer_line() {
+        let out = sanitize("Bearer abc123def456789");
+        assert_eq!(out, "Bearer <redacted>");
+        assert_eq!(sanitize("the bearer of bad news"), "the bearer of bad news");
+        assert_eq!(sanitize("Bearer abc"), "Bearer abc");
+    }
+
+    // LOW fix: the trailing-newline contract must match the JSON path
+    // (byte-for-byte when nothing redacts) — export/re-import stability.
+    #[test]
+    fn trailing_newline_preserved_only_when_present() {
+        assert_eq!(sanitize("password=x\n"), "password=<redacted>\n");
+        assert_eq!(sanitize("password=x"), "password=<redacted>");
+        assert_eq!(sanitize("plain line\n"), "plain line\n");
+        assert_eq!(sanitize("plain line"), "plain line");
+    }
+
+    // redact_json Array arm + non-string secret values: nested objects
+    // inside arrays redact, and the value becomes the marker string
+    // regardless of its original type.
+    #[test]
+    fn redacts_json_array_nested_and_typed_values() {
+        let content = r#"[{"user":"ann","password":"hunter2"},{"n":1}]"#;
+        let out = sanitize(content);
+        assert!(!out.contains("hunter2"));
+        assert!(out.contains("ann"));
+        let typed = r#"{"password": 12345, "ok": true}"#;
+        let out = sanitize(typed);
+        assert!(!out.contains("12345"));
+        assert!(out.contains("<redacted>"));
+        assert!(out.contains("\"ok\":true"));
     }
 }
