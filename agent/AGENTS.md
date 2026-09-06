@@ -977,6 +977,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   fresh, npm pack 6/6 subset gate (artifacts cleaned, tree verified
   clean), npm CLI 3/3. No code changes — pure verification round.
   Rounds 10–11 CI SUCCESS on GitHub (round-12 queued at push time).
+  ROUND-364 (2026-09-06): devices TokenGate consistency audit — all 10
+  devices.ts handlers gate uniformly (requireSession + 401/403), verified
+  by reading each head; only rename/install-cmd had per-route gate tests.
+  Added one matrix test over all 9 admin routes (list/add/mcp/delete/
+  panel-grant-mint/register-keys/revoke/install-cmd/register-key):
+  no-session → 401, non-admin → 403, plus a no-mutation assertion on the
+  shared env. Fixed my own undici GET-with-body slip before committing.
+  Suite 306->307; snapshot count updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
