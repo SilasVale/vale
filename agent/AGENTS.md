@@ -1242,6 +1242,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   stays out + no shadow account, JWT malformed matrix (parts/garbage/
   kid/iss/email/unconfigured). Suite 374->376; gates clean; snapshot
   updated; pushed.
+  ROUND-396 (2026-09-06): body-scan injector audit — rawWithTopLevelField
+  + provider/reasoning injectors (hot-path string surgery on every
+  relayed body) had zero DIRECT tests. Added 7: string/object replace,
+  append separators (empty/bare/spaced), nested same-name untouched,
+  in-string field-name trap, non-object passthrough, provider +
+  reasoning shapes incl. client-sent respected. Suite 376->383; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
