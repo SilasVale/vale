@@ -370,3 +370,72 @@ test("admin gate matrix: no session → 401, non-admin → 403 on every admin de
     "reject-only matrix must not mutate the device list",
   );
 });
+
+/* ---------------- self-register (round-158 anti-hijack endpoint) -------- */
+// round-440 (coverage-driven): handleSelfRegister had ZERO route pins.
+const T64 = (c) => c.repeat(64);
+const selfReg = (env, body) => worker.fetch(
+  req("POST", "/api/devices/self-register", { body }),
+  env,
+);
+
+test("self-register: malformed body 400, non-64-hex token 403, off-suffix host 400", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  assert.equal((await selfReg(env, { name: "bad name!", hostname: "d9.agent.saisi.online", token: T64("a") })).status, 400);
+  assert.equal((await selfReg(env, { name: "d9", hostname: "d9.agent.saisi.online", token: "shorttok" })).status, 403);
+  assert.equal((await selfReg(env, { name: "d9", hostname: "evil.example.com", token: T64("a") })).status, 400);
+  assert.deepEqual(JSON.parse(await env.KEYS.get("devices:v1")), [], "rejects mutate nothing");
+});
+
+test("self-register: new device inserts; same-token re-post refreshes idempotently", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  const { restore } = stubFetch("d9.agent.saisi.online", {});
+  try {
+    const body = { name: "d9", hostname: "d9.agent.saisi.online", token: T64("b") };
+    const res = await selfReg(env, body);
+    assert.equal(res.status, 200);
+    assert.deepEqual((await res.json()).device, { name: "d9", hostname: "d9.agent.saisi.online" });
+    const again = await selfReg(env, body);
+    assert.equal(again.status, 200, "same token re-registers idempotently");
+    const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+    assert.equal(devs.filter((d) => d.name === "d9").length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test("self-register: existing device rejects hostname moves + unproven rotations", async () => {
+  __clearCaches();
+  const OLD = T64("c"), NEW = T64("d");
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: OLD, proxySecret: "ps-stored", registeredAt: 7 }]);
+  const { restore } = stubFetch("d1.agent.saisi.online", {});
+  try {
+    const moved = await selfReg(env, { name: "d1", hostname: "moved.agent.saisi.online", token: OLD });
+    assert.equal(moved.status, 409);
+    const rotated = await selfReg(env, { name: "d1", hostname: "d1.agent.saisi.online", token: NEW });
+    assert.equal(rotated.status, 409, "different token without stored-tunnel proof refuses");
+    const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+    assert.equal(devs.find((d) => d.name === "d1").token, OLD);
+  } finally {
+    restore();
+  }
+});
+
+test("self-register: stored-tunnel proof rotates the token", async () => {
+  __clearCaches();
+  const OLD = T64("e"), NEW = T64("f");
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: OLD, proxySecret: "ps-stored", registeredAt: 7 }]);
+  const { restore } = stubFetch("d1.agent.saisi.online", { proxy_secret: "ps-stored" });
+  try {
+    const res = await selfReg(env, { name: "d1", hostname: "d1.agent.saisi.online", token: NEW });
+    assert.equal(res.status, 200);
+    const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+    const d1 = devs.find((d) => d.name === "d1");
+    assert.equal(d1.token, NEW);
+    assert.equal(d1.registeredAt, 7, "rotation keeps the original registration date");
+  } finally {
+    restore();
+  }
+});
