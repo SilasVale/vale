@@ -664,6 +664,16 @@ mod file_tool_tests {
             .unwrap_or_else(|e| json!({"ok": false, "error": e.to_string()}))
     }
 
+    /// Shared by the VALE_GATEWAY_URL-mutating upload tests (round-370):
+    /// fn-local statics would be DISTINCT locks (no exclusion) — one
+    /// module-level lock serializes them. tokio Mutex: the guard is held
+    /// across awaits by design (the env must stay stable for the whole
+    /// test body), and a std guard across await trips await_holding_lock.
+    static UPLOAD_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Captured stub-server requests: (head, body) per POST.
+    type CapturedUploads = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
     #[tokio::test]
     async fn file_stat_reports_size_and_kind() {
         let tmp = std::env::temp_dir().join(format!("vale-stat-test-{}", std::process::id()));
@@ -785,5 +795,176 @@ mod file_tool_tests {
         .await;
         assert_eq!(out["ok"], true);
         assert_eq!(out["tcp_reachable"], false);
+    }
+
+    #[tokio::test]
+    async fn process_kill_requires_target() {
+        let out = run(&tool_process_kill(), json!({})).await;
+        assert_eq!(out["ok"], false);
+        assert!(out["error"].as_str().unwrap().contains("pid or name"));
+    }
+
+    #[tokio::test]
+    async fn process_kill_bogus_pid_and_name_fail_cleanly() {
+        // PID that cannot exist; both taskkill and kill -9 must fail, and
+        // the tool reports ok:false instead of throwing.
+        let out = run(&tool_process_kill(), json!({ "pid": 99999999 })).await;
+        assert_eq!(out["ok"], false);
+        assert!(out["error"].as_str().unwrap().contains("failed"));
+        // A name matching nothing: pgrep finds no pids (and taskkill is
+        // absent outside Windows) → "no process matched", nothing killed.
+        let out = run(
+            &tool_process_kill(),
+            json!({ "name": "vale-definitely-no-such-proc-xyz-123" }),
+        )
+        .await;
+        assert_eq!(out["ok"], false);
+        assert!(out["error"]
+            .as_str()
+            .unwrap()
+            .contains("no process matched"));
+    }
+
+    #[tokio::test]
+    async fn file_upload_rejects_missing_and_directories() {
+        let out = run(
+            &tool_file_upload(),
+            json!({ "path": "/tmp/vale-upload-definitely-missing-xyz.bin" }),
+        )
+        .await;
+        assert_eq!(out["ok"], false);
+        assert!(out["error"].as_str().unwrap().contains("file not found"));
+        let dir = std::env::temp_dir().join(format!("vale-upload-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = run(
+            &tool_file_upload(),
+            json!({ "path": dir.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(out["ok"], false);
+        assert_eq!(out["error"].as_str().unwrap(), "not a file");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Minimal HTTP/1.1 stub for the upload endpoint: reads one request,
+    /// captures head+body, answers a fixed manifest. Single-shot (one test
+    /// drives exactly one upload).
+    async fn stub_upload_server(captured: CapturedUploads) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 65536];
+            let mut req = Vec::new();
+            loop {
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let head = String::from_utf8_lossy(&req).to_string();
+            let len: usize = head
+                .lines()
+                .find_map(|l| {
+                    let low = l.trim().to_lowercase();
+                    low.strip_prefix("content-length:")?.trim().parse().ok()
+                })
+                .unwrap_or(0);
+            let body_start = req
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|i| i + 4)
+                .unwrap_or(req.len());
+            let mut body = req[body_start..].to_vec();
+            while body.len() < len {
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                body.extend_from_slice(&buf[..n]);
+            }
+            captured.lock().unwrap().push((head, body));
+            let payload = r#"{"url":"https://cdn.example/f/abc","size":11}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn file_upload_posts_bearer_multipart_and_reports_manifest() {
+        // Serialize with the unreachable-gateway test below (shared module
+        // lock): both mutate the process-global VALE_GATEWAY_URL /
+        // VALE_DEVICE_TOKEN and cargo runs tests on parallel threads —
+        // without this, the URLs cross and this test dials 127.0.0.1:1
+        // (or vice versa).
+        let _env_guard = UPLOAD_ENV_LOCK.lock().await;
+        // Sole VALE_GATEWAY_URL/VALE_DEVICE_TOKEN writer in the suite; set +
+        // removed inside this one test so parallel tests cannot cross-talk.
+        let captured: CapturedUploads = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let port = stub_upload_server(captured.clone()).await;
+        std::env::set_var("VALE_GATEWAY_URL", format!("http://127.0.0.1:{port}"));
+        std::env::set_var("VALE_DEVICE_TOKEN", "tok-test");
+        let path = std::env::temp_dir().join(format!("vale-upload-ok-{}", std::process::id()));
+        std::fs::write(&path, b"hello world").unwrap();
+        let out = run(
+            &tool_file_upload(),
+            json!({ "path": path.to_string_lossy() }),
+        )
+        .await;
+        std::env::remove_var("VALE_GATEWAY_URL");
+        std::env::remove_var("VALE_DEVICE_TOKEN");
+        assert_eq!(out["ok"], true, "upload must succeed: {out}");
+        assert_eq!(out["url"], "https://cdn.example/f/abc");
+        assert_eq!(out["bytes"], 11);
+        let got = captured.lock().unwrap();
+        assert_eq!(got.len(), 1, "exactly one upstream POST");
+        let (head, body) = &got[0];
+        let low = head.to_lowercase();
+        assert!(
+            low.contains("authorization: bearer tok-test"),
+            "device Bearer must ride: {head}"
+        );
+        assert!(
+            low.contains("multipart/form-data"),
+            "must be multipart: {head}"
+        );
+        assert!(
+            String::from_utf8_lossy(body).contains("hello world"),
+            "file bytes must ride the multipart body"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
+    async fn file_upload_unreachable_gateway_fails_closed() {
+        let _env_guard = UPLOAD_ENV_LOCK.lock().await;
+        std::env::set_var("VALE_GATEWAY_URL", "http://127.0.0.1:1");
+        std::env::set_var("VALE_DEVICE_TOKEN", "tok-test");
+        let path = std::env::temp_dir().join(format!("vale-upload-down-{}", std::process::id()));
+        std::fs::write(&path, b"hi").unwrap();
+        let out = run(
+            &tool_file_upload(),
+            json!({ "path": path.to_string_lossy() }),
+        )
+        .await;
+        std::env::remove_var("VALE_GATEWAY_URL");
+        std::env::remove_var("VALE_DEVICE_TOKEN");
+        assert_eq!(out["ok"], false);
+        assert!(
+            out["error"].as_str().unwrap().contains("upload failed"),
+            "{out}"
+        );
+        std::fs::remove_file(&path).ok();
     }
 }
