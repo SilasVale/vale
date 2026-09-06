@@ -1234,6 +1234,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Added 4: legacy CLIENT_KEY honored, random mint, v1 migration keeps
   token + keys (regression), process-once + keyless no-op. Suite
   370->374; tsc/eslint/prettier clean; snapshot updated.
+  ROUND-395 (2026-09-06): Access SSO audit. REAL FIND: disabled
+  Access-bound users still resolved — bound path fell through to the
+  provision re-check with no enabled check (cookie path rejects
+  disabled; Access users unsuspendable). Fix: null on disabled, no
+  re-provision (fresh suffix would defeat suspension). Added 2: disabled
+  stays out + no shadow account, JWT malformed matrix (parts/garbage/
+  kid/iss/email/unconfigured). Suite 374->376; gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
