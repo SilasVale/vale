@@ -290,10 +290,13 @@ export async function trashFile(p, root) {
 
 // Trash quota: the trash dir is operator-disk, never client-unbounded.
 // Evict oldest-first down to the caps (best-effort; never fail the trash op).
-const TRASH_MAX_FILES = 200;
-const TRASH_MAX_BYTES = 512 * 1024 * 1024;
+export const TRASH_MAX_FILES = 200;
+export const TRASH_MAX_BYTES = 512 * 1024 * 1024;
 
-async function enforceTrashQuota(trashRoot) {
+export async function enforceTrashQuota(trashRoot, limits = {}) {
+  // Limits injectable for tests; production uses the exported constants.
+  const maxFiles = limits.maxFiles ?? TRASH_MAX_FILES;
+  const maxBytes = limits.maxBytes ?? TRASH_MAX_BYTES;
   try {
     const names = await fsp.readdir(trashRoot);
     if (!names.length) return;
@@ -308,11 +311,11 @@ async function enforceTrashQuota(trashRoot) {
         /* vanished mid-scan */
       }
     }
-    if (stats.length <= TRASH_MAX_FILES && total <= TRASH_MAX_BYTES) return;
+    if (stats.length <= maxFiles && total <= maxBytes) return;
     stats.sort((a, b) => a.mtimeMs - b.mtimeMs); // oldest first
     let remaining = stats.length;
     for (const s of stats) {
-      if (remaining <= TRASH_MAX_FILES && total <= TRASH_MAX_BYTES) break;
+      if (remaining <= maxFiles && total <= maxBytes) break;
       try {
         await fsp.rm(path.join(trashRoot, s.name), { recursive: true, force: true });
         total -= s.size;
@@ -432,7 +435,7 @@ function searchRipgrep({ root, q, regex, ignoreCase }) {
   });
 }
 
-async function searchJs({ root, q, regex, ignoreCase }) {
+export async function searchJs({ root, q, regex, ignoreCase }) {
   const { walk } = await import("./walk.mjs");
   const needle = regex ? null : q.toLowerCase();
   let re = null;
