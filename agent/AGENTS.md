@@ -1308,6 +1308,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   chat status+body identical), 308 Location shape, 500 message + no
   CONSOLE_HOST leak. Suite 411->415; gates clean; snapshot updated;
   pushed.
+  ROUND-406 (2026-09-06): model-usability audit — isModelUsable (every
+  model=auto resolution flows through it) had zero DIRECT tests. Added
+  4: whitelist + env-key channels, round-68 user-key-counts, nv/gmi
+  pure-BYOK ignores env, og breaker + cm/amd keyed/keyless. Fixed my own
+  guessed-id tautology pre-commit (real MODELS ids). Suite 415->419;
+  gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
