@@ -294,6 +294,55 @@ test("BreakerDO: a single failure NEVER trips regardless of elapsed time", async
   }
 });
 
+test("BreakerDO: half-open probe re-trips on ONE failure (round-118)", async () => {
+  // The opened-state 'fail' record is KEPT (not deleted) so that after the
+  // 60s window a still-dead channel re-opens on a single probe failure —
+  // without this a dead channel needs 3 fresh full-timeout probes (~6 min
+  // of 120s hangs) to re-trip.
+  const do_ = breakerDO();
+  const realNow = Date.now;
+  try {
+    for (let i = 0; i < 3; i++) await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    assert.equal(await check(do_), "1");
+    Date.now = () => realNow() + 61 * 1000; // window over → half-open
+    assert.equal(await check(do_), "0");
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    assert.equal(await check(do_), "1", "one probe failure must re-open a still-dead channel");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("BreakerDO: failures outside the 10-min window restart the count", async () => {
+  const do_ = breakerDO();
+  const realNow = Date.now;
+  try {
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    assert.equal(await check(do_), "0"); // 2/3, still closed
+    Date.now = () => realNow() + 11 * 60 * 1000; // stale window — re-anchor
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    assert.equal(await check(do_), "0", "stale count must not combine with fresh failures");
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+    assert.equal(await check(do_), "1", "3 fresh failures still trip");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("BreakerDO: storage throw → 500, never a hang", async () => {
+  const bad = {
+    async get() { throw new Error("kv down"); },
+    async put() { throw new Error("kv down"); },
+    async delete() { throw new Error("kv down"); },
+  };
+  const do_ = new BreakerDO({ storage: bad }, { DO_AUTH: "sekret" });
+  const res = await do_.fetch(new Request("https://breaker/trip", { headers: { "x-do-auth": "sekret" } }));
+  assert.equal(res.status, 500);
+  assert.match(await res.text(), /breaker error/);
+});
+
 // ── count_tokens estimate ───────────────────────────────────────
 
 test("estimateTokens: ascii ~4 chars/token", () => {
