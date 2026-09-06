@@ -187,20 +187,30 @@ function probeHeaders(auth, token) {
   if (auth === "bearer") return { Authorization: `Bearer ${token}` };
   return { "x-api-key": token, Authorization: `Bearer ${token}` }; // legacy/unknown
 }
+// boundedFetch — the CLI's single network primitive (structure refactor:
+// six verbatim copies of the AbortController+setTimeout+finally dance
+// collapse here). Every network call in this file MUST go through it —
+// a bare fetch has no bound and a DNS-blackholed host hangs forever.
+async function boundedFetch(url, init = {}, timeoutMs = PROBE_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
 // Generic probe for any provider base: fire a real max_tokens=1 request with
 // that provider's own token (works for the gateway AND direct APIs).
 async function probeTarget(base, token, model, auth) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const r = await fetch(`${base}/v1/messages`, {
+    const r = await boundedFetch(`${base}/v1/messages`, {
       method: "POST",
       headers: { ...probeHeaders(auth, token), "content-type": "application/json", "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "ping" }] }),
-      signal: ctrl.signal,
     });
     return r.status === 200;
-  } catch { return false; } finally { clearTimeout(t); }
+  } catch { return false; }
 }
 // Auto-detect the auth header a provider accepts. Bearer first (the official
 // Anthropic-compatible convention), then x-api-key (gateway-style). Returns
@@ -255,58 +265,43 @@ function switchEnv(settings, model) {
   return settings;
 }
 async function fetchHealth() {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const r = await fetch(`${gatewayBase()}/api/health`, { signal: ctrl.signal });
+    const r = await boundedFetch(`${gatewayBase()}/api/health`);
     if (!r.ok) return null;
     return await r.json();
-  } catch { return null; } finally { clearTimeout(t); }
+  } catch { return null; }
 }
 // Channel probe via the gateway's public /api/vale-probe (the gateway fires
 // the real max_tokens=1 request with its own provider keys — no client token
 // needed, works from any settings state).
 async function probeChannel(model) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  const r = await boundedFetch(`${gatewayBase()}/api/vale-probe`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model }),
+  });
   try {
-    const r = await fetch(`${gatewayBase()}/api/vale-probe`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model }),
-      signal: ctrl.signal,
-    });
     if (!r.ok) return false;
     const j = await r.json();
     return j.ok === true;
-  } catch { return false; } finally { clearTimeout(t); }
+  } catch { return false; }
 }
 // The settings token must be the gateway's x-api-key AFTER the switch, or
 // Claude Code gets 401. Verify against a cheap authenticated endpoint.
 async function tokenValid(token) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
-    const r = await fetch(`${gatewayBase()}/v1/models`, {
-      headers: { "x-api-key": token },
-      signal: ctrl.signal,
-    });
+    const r = await boundedFetch(`${gatewayBase()}/v1/models`, { headers: { "x-api-key": token } });
     return r.status === 200;
-  } catch { return false; } finally { clearTimeout(t); }
+  } catch { return false; }
 }
 // Full model list from the gateway (also validates the token).
 async function listModels(token) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  const r = await boundedFetch(`${gatewayBase()}/v1/models`, { headers: { "x-api-key": token } });
   try {
-    const r = await fetch(`${gatewayBase()}/v1/models`, {
-      headers: { "x-api-key": token },
-      signal: ctrl.signal,
-    });
     if (r.status !== 200) return null;
     const j = await r.json();
     return (j.data || []).map((m) => m.id).filter((id) => typeof id === "string");
-  } catch { return null; } finally { clearTimeout(t); }
+  } catch { return null; }
 }
 // `use <arg>`: a channel name resolves to its default model; anything else
 // must be a full model id present in the gateway's whitelist.
