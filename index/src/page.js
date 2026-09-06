@@ -307,7 +307,11 @@ export function safePageUrl(u, fallback) {
     const parsed = new URL(s, "https://placeholder.local");
     if (parsed.protocol === "https:") return s;
     const host = parsed.hostname.toLowerCase();
-    if (parsed.protocol === "http:" && (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1")) return s;
+    // round-449: dropped the `host === "::1"` disjunct — a bare ::1 is not
+    // a valid URL host (browsers/node require brackets), so the WHATWG
+    // parser never yields it; only "[::1]" can occur. Dead branch removed
+    // rather than pinned.
+    if (parsed.protocol === "http:" && (host === "localhost" || host === "127.0.0.1" || host === "[::1]")) return s;
     return fallback;
   } catch {
     return fallback;
