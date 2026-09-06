@@ -180,3 +180,25 @@ test("vision: non-image blocks ride along; empty image data fails, never fabrica
     /vision preprocessing failed/,
   );
 });
+
+// round-489 (coverage-driven): the og-path fetch-throw + bad-JSON arms had
+// ZERO pins (both must fail the request, never fabricate).
+test("vision og path: network throw + unparsable body fail the request", async () => {
+  const real = globalThis.fetch;
+  const e = env();
+  try {
+    globalThis.fetch = async () => { throw new Error("conn reset"); };
+    await assert.rejects(
+      preprocessImages([imageMessage], e, { OPENCODE_GO_API_KEY: "up-key" }, "m", "up-model", "uN"),
+      /vision preprocessing failed/,
+    );
+    globalThis.fetch = async () => new Response("not-json{{{", { status: 200 });
+    await assert.rejects(
+      preprocessImages([imageMessage], e, { OPENCODE_GO_API_KEY: "up-key" }, "m", "up-model", "uN"),
+      /vision preprocessing failed/,
+    );
+    assert.equal([...e._kv.keys()].filter((k) => k.startsWith("img-desc:")).length, 0, "failures never cache");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
