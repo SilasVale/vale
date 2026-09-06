@@ -1289,6 +1289,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   amd/ always direct under egress, F4 injection encoding, header modes.
   Fixed my own via()-base slip pre-commit (usProxyBase, not the param).
   Suite 399->404; gates clean; snapshot updated; pushed.
+  ROUND-403 (2026-09-06): degraded-cache audit — isChannelDegraded TTL,
+  trip invalidation, fail-open, reset/success paths unpinned (only the
+  classifier had unit pins). Added 5: 5s verdict cache + re-read, closed
+  + DO-error fail-open false, trip invalidates immediately, reset hits
+  endpoint + keyless no-throw, upstreamTimeoutMs direct. Suite 404->409;
+  gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
