@@ -1754,6 +1754,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   (trailing-space edit) — reverted before the real edit; the committed
   diff is clean (verified via git diff --stat). Suite 536->538; gates
   clean; snapshot updated; pushed.
+  ROUND-494 (2026-09-06): backfill audit — the late id/name arm had ZERO
+  pins. Added 1 in reliability.test.mjs (args-first chunk, meta later;
+  no "unknown"). Clean round: no probe edits, diff verified. Suite
+  538->539; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
