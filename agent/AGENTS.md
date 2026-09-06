@@ -1605,6 +1605,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   paths had ZERO pins (only gates). Added 1 in devices.test.mjs:
   empty→add→masked list→mcp 404/200 (raw token only in the snippet).
   Suite 478->479; gates clean; snapshot updated; pushed.
+  ROUND-459 (2026-09-06): delete/redeem audit — DELETE revocation +
+  grant-redeem matrix + KV-fail-closed had ZERO pins. Added 3 in
+  devices.test.mjs. Self-caught: req() already prefixes Bearer.
+  Suite 479->482; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
