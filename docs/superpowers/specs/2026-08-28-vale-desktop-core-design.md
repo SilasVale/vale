@@ -6,7 +6,9 @@
 > the live view, no screenshot stream; round-330: the Tauri shell
 > (`vale-desktop/`) was DELETED (Electron shell only); round-341/342:
 > the gateway browser-extension + PluginHubDO path was removed
-> (playwright bridge only). INSTALL: the installer entry points this
+> (playwright bridge only); round-357/358: the Settings Memory card is
+> now EDITABLE (entries/MiB/retention via GET/PUT /api/settings —
+> §3/§7 below updated, was config.yaml-only). INSTALL: the installer entry points this
 > spec describes (NSIS installer, setup.ps1, run-setup.bat) were
 > RETIRED to `agent/deploy/retired/` after this spec was written —
 > npm is now THE single install/update channel (root `AGENTS.md`).
@@ -50,11 +52,11 @@ that redirects to `http://127.0.0.1:18080/desktop/`.
 ## 2. Decisions (user-confirmed)
 
 | Decision | Choice |
-|---|---|
+|---|---|---|
 | Scope | Frontend refactor (A+B) + install layout unification (C1) + dependency containment for Playwright (B2) and cloudflared (C2). NO self-built CDP, NO cloud replacement. |
 | UI language | English |
 | Visual baseline | dsh style (light, icon rail, capsules, brand `#d9480f` amber) |
-| Backend contract | `/api/*`, SSE, `/api/browser/*`, `/api/sessions/{sid}` and `web.rs` whitelist unchanged |
+| Backend contract | `/api/*`, SSE, `/api/browser/*`, `/api/sessions`, `/api/sessions/{sid}` and the `web/` dispatch whitelist unchanged |
 | New frontend deps | ZERO (no router, no state library, no SDKs) |
 
 ## 3. Capability model
@@ -67,7 +69,7 @@ Vale Desktop = a device console over the agent service's capability domains:
 | Browser (real embedded browser) | Electron WebContentsView on CDP 9333, playwright-mcp driven; `/api/browser/{pwshots,pwshot,actions}` (AI evidence) | Live view in the SPA (no screenshot stream) + Evidence AI screenshot timeline |
 | Memory (device memory) | `/api/tools/memory_*` | search/browse/delete/export, shared with AI clients |
 | Plugins (tool catalog) | `/api/spec`, `/api/plugins/status`, `/api/plugins/playwright/start\|stop` | plugin inventory + playwright start/stop |
-| Settings (device config) | `/api/settings` | session buffer, transport info, memory notes |
+| Settings (device config) | `/api/settings` | session buffer, memory capacity (max entries / MiB / retention days — editable since round-358, was config.yaml-only), transport info |
 | Connection (bootstrap) | boot + `lib/api` | host/token bootstrap, proxy token rules (round-122/124), 401 fallback |
 
 Design rule: one capability domain = one page + one domain hook + one page
@@ -150,7 +152,7 @@ App
 4. Browser page: Live interactive + Evidence timeline; bridge down → reconnect
    indicator, never blank/crash.
 5. Memory: search/browse/delete/export, shared with Claude Code / DSH clients.
-6. Plugins: inventory dots + playwright start/stop; Settings: buffer save.
+6. Plugins: inventory dots + playwright start/stop; Settings: buffer + memory capacity save.
 7. Disconnect/401 → conn form; recovery → SSE reconnect with backoff.
 
 ## 8. Dependency containment (B2/C2) — "boxed, not self-built"
@@ -229,7 +231,7 @@ vale uninstall [--purge-data]       # remove (data kept unless --purge-data)
 
 ```
 HKLM\SOFTWARE\Vale\Agent
-    InstallDir  (REG_SZ)  ← written by NSIS installer; read by everything
+    InstallDir  (REG_SZ)  ← written by `vale setup` (NSIS retired — see §8b); read by everything
     DataDir     (REG_SZ)
 
 InstallDir default  C:\Program Files\Vale   (vale-agent.exe,
@@ -265,7 +267,8 @@ DataDir    default  %ProgramData%\Vale      (sessions\, memory\, logs\,
 
 ## 11. Out of scope (later, separate)
 
-Tauri shell enhancement (IPC URL, error page, tray deep links, window state),
+~~Tauri shell enhancement (IPC URL, error page, tray deep links, window
+state)~~ — MOOT since round-330 (Tauri shell DELETED; Electron shell only).
 i18n bilingual, self-built CDP or cloud replacement, gateway/worker changes,
 `vale-desktop.exe` repackaging (shell unchanged; release chain `build.sh agent`
 follows agent/CLAUDE.md npm flow).
