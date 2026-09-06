@@ -501,3 +501,33 @@ test("tunnel-token: valid key returns the CF token once, then feeds register via
   const reg = await regPost(env, "/api/register", { key: "kk33", name: "d9", hostname: "d9.agent.saisi.online", token: T64("e") });
   assert.equal(reg.status, 200);
 });
+
+// round-458 (coverage-driven): the list/add/mcp SUCCESS paths had ZERO
+// pins (only the 401/403 gate matrix). Covers the list mapping (masked
+// token + mcp snippet), add validation + registeredAt keep, mcp 404/200.
+test("devices list/add/mcp: admin success paths", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  const admin = await adminCookie();
+  const call = (method, path, body) =>
+    worker.fetch(req(method, path, { cookie: admin, body }), env);
+  const empty = await (await call("GET", "/api/devices")).json();
+  assert.deepEqual(empty.devices, []);
+  const bad = await call("POST", "/api/devices", { name: "!!", hostname: "d1.agent.saisi.online", token: "tok12345" });
+  assert.equal(bad.status, 400);
+  const add = await call("POST", "/api/devices", { name: "d1", hostname: "d1.agent.saisi.online", token: "tok12345" });
+  assert.equal(add.status, 200);
+  const added = await add.json();
+  assert.equal(added.ok, true);
+  assert.equal(added.device.name, "d1");
+  assert.ok(!added.device.token.includes("tok12345"), "list/add surfaces never leak the raw token");
+  const list = await (await call("GET", "/api/devices")).json();
+  assert.equal(list.devices.length, 1);
+  assert.equal(list.devices[0].name, "d1");
+  assert.ok(list.devices[0].mcp.url.includes("d1.agent.saisi.online/mcp"));
+  assert.ok(list.devices[0].mcp.json.includes("tok12345"), "mcp snippet is the one place with the raw token");
+  assert.equal((await call("GET", "/api/devices/nope/mcp")).status, 404);
+  const mcp = await call("GET", "/api/devices/d1/mcp");
+  assert.equal(mcp.status, 200);
+  assert.equal((await mcp.json()).name, "d1");
+});
