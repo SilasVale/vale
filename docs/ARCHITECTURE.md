@@ -52,6 +52,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | index single file | appropriate at current size; page template + claim logic extracted | 81b1c40f |
 | extension | clean: no stale endpoints, least-privilege manifest, shared.js for constants | abb541ce review |
 | studio lib/fsapi.mjs | cohesive (path safety/atomic write/search/git); the ripgrep-less searchJs fallback engine and the trash-quota eviction were the last zero-coverage seams — now pinned (3c9f2620) | 3c9f2620 |
+| studio lib/terminals.mjs | hub owns the WS data path's pure logic: bounded broadcast (stalled viewers force-dropped at 1 MB buffered), per-terminal viewer cap (16) — pinned with stub-viewer unit tests (hub.test.mjs) | this batch |
 
 ## Foundation layers (features build on these; changes run every downstream gate)
 
@@ -80,7 +81,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | gateway | tsc + eslint(src+ui) + prettier + node --test | 295 |
 | agent | cargo test + clippy -D warnings + fmt --check + xwin check | 221 |
 | proxies (×3) | node --test behavior suites + wrangler dry-run | 26 |
-| studio | node --test (api/terms/terms-readonly/fsapi; e2e live-only) | 41 |
+| studio | node --test (api/terms/terms-readonly/fsapi/hub; e2e live-only) | 44 |
 | electron | node --test (url-policy) + tsc build | 4 |
 | extension | node --check all JS | — |
 | release chain | release-lib regression + bin/electron freshness + tgz content gate + fail-closed smoke/reconcile | 11 checks |

@@ -27,16 +27,40 @@ function ringBuffer(capacity) {
   };
 }
 
-function termBroadcast(t, data) {
+// A viewer whose socket stops reading (paused tab, network stall) buffers
+// every broadcast in the ws send queue — unbounded memory growth on the
+// server. Same failure class the agent's bounded SSE send guards; here the
+// guard is bufferedAmount-based: over the budget the viewer is force-closed
+// and dropped (the SPA reconnects with a fresh ring replay).
+const MAX_VIEWER_BUFFERED = 1024 * 1024;
+
+export function termBroadcast(t, data) {
   t.ring.write(data);
   for (const ws of t.viewers) {
-    if (ws.readyState === 1) ws.send(data, { binary: true });
+    if (ws.readyState !== 1) continue;
+    if ((ws.bufferedAmount || 0) > MAX_VIEWER_BUFFERED) {
+      // Stalled consumer: force-drop instead of buffering forever.
+      try { ws.terminate ? ws.terminate() : ws.close(); } catch {}
+      t.viewers.delete(ws);
+      continue;
+    }
+    ws.send(data, { binary: true });
   }
 }
 
-export function createTerminalHub() {
+export function createTerminalHub({ maxViewers = 16 } = {}) {
   const terminals = new Map(); // id -> {id,name,cwd,backend,ring,viewers:Set,session,exitCode}
   let termSeq = 0;
+  // Viewer cap per terminal: creation is capped (MAX_TERMINALS); without a
+  // viewer cap one terminal could accumulate unbounded fan-out sockets.
+  const cap = maxViewers;
+  /** Attach a viewer; false when the terminal is at its viewer cap (caller
+   *  closes the socket). Removal stays with the ws close handler. */
+  const addViewer = (t, ws) => {
+    if (t.viewers.size >= cap) return false;
+    t.viewers.add(ws);
+    return true;
+  };
 
   /**
    * Create and register a terminal session: PTY + ring buffer + viewer
@@ -98,7 +122,7 @@ export function createTerminalHub() {
     return { id, backend: session.backend, name: displayName };
   }
 
-  return { terminals, createTerminalSession };
+  return { terminals, createTerminalSession, addViewer };
 }
 
 /**

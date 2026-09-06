@@ -462,7 +462,7 @@ route("GET", "/api/stat", async (req, url) => {
 // Session registry lives in lib/terminals.mjs (ring buffer, viewer broadcast,
 // MAX_TERMINALS cap, 60s post-exit reap). The server holds ONE hub instance;
 // the WS term handler and DELETE route operate on the same `terminals` map.
-const { terminals, createTerminalSession } = createTerminalHub();
+const { terminals, createTerminalSession, addViewer } = createTerminalHub();
 
 route("POST", "/api/term", async (req) => {
   if (CONFIG.readOnly || !CONFIG.terminal.enabled) {
@@ -613,7 +613,12 @@ server.on("upgrade", async (req, socket, head) => {
         ws.close();
         return;
       }
-      t.viewers.add(ws);
+      // Viewer cap (asymmetry guard: MAX_TERMINALS caps creation, this caps
+      // fan-out per terminal); a refused viewer gets a clean close.
+      if (!addViewer(t, ws)) {
+        ws.close();
+        return;
+      }
       ws.send(t.ring.toString(), { binary: true }); // replay backlog
       if (t.exitCode != null) {
         ws.send(JSON.stringify({ exited: t.exitCode }));
