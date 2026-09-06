@@ -1005,6 +1005,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   bind, old works → update_config rotate → old 401s + new works; fails
   on the old code by construction). Matrix: integration 6->7, clippy x2
   + fmt + xwin clean; snapshot 247->248.
+  ROUND-367 (2026-09-06): desktop-core spec currency pass — verified the
+  cited backend contract first (/api/sessions/{sid} exists and is live).
+  Fixed 5 drift items: §3 Settings row (memory "notes" → editable
+  entries/MiB/retention, round-358), §7 journey 6, §2 contract (web.rs →
+  web/ + /api/sessions list), §9 registry writer (NSIS → vale setup),
+  §11 Tauri bullet moot (deleted round-330); banner gains the 357/358
+  line. Docs-only, no gates affected.
   ROUND-367 (2026-09-06): gateway mcp.ts dispatch audit — auth/initialize/
   call-mapping/error-codes deeply covered but 6 dispatch arms had zero
   pins: ping echo, unknown method (-32601), unknown tool (-32602, no
