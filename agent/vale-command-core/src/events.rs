@@ -272,3 +272,137 @@ impl EventBus for AppEventBus {
         }
     }
 }
+
+#[cfg(test)]
+mod event_tests {
+    //! round-384: the seq/ring/eviction/epoch contract (gap detection,
+    //! poll_after atomicity, the RING_CAP>=broadcast-cap invariant) is
+    //! load-bearing for /api/events + SSE yet had zero tests.
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn nav(n: u64) -> AgentEvent {
+        AgentEvent::BrowserNavigate {
+            url: format!("https://example.com/{n}"),
+            title: format!("t{n}"),
+        }
+    }
+
+    #[test]
+    fn emit_assigns_monotonic_seq_from_one() {
+        let bus = AppEventBus::new();
+        assert_eq!(bus.emit(&nav(0)), 1);
+        assert_eq!(bus.emit(&nav(1)), 2);
+        assert_eq!(bus.last_seq(), 2);
+        assert_eq!(bus.first_seq(), 1);
+    }
+
+    #[test]
+    fn recent_filters_by_cursor_and_empty_bus_is_zeroed() {
+        let bus = AppEventBus::new();
+        assert_eq!(bus.last_seq(), 0);
+        assert_eq!(bus.first_seq(), 0);
+        assert!(bus.recent(0).is_empty());
+        for i in 0..5 {
+            bus.emit(&nav(i));
+        }
+        let got: Vec<u64> = bus.recent(3).iter().map(|e| e.seq).collect();
+        assert_eq!(got, vec![4, 5]);
+        assert!(bus.recent(99).is_empty());
+    }
+
+    #[test]
+    fn poll_after_is_a_consistent_snapshot() {
+        let bus = AppEventBus::new();
+        for i in 0..3 {
+            bus.emit(&nav(i));
+        }
+        let (events, first, last) = bus.poll_after(1);
+        assert_eq!(events.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!((first, last), (1, 3));
+        assert_eq!((bus.first_seq(), bus.last_seq()), (first, last));
+    }
+
+    #[test]
+    fn ring_evicts_oldest_and_gap_stays_detectable() {
+        // RING_CAP (256) must cover the broadcast cap so a Lagged
+        // subscriber can always catch up by polling — pinned here.
+        assert!(RING_CAP >= 256);
+        let bus = AppEventBus::new();
+        for i in 0..(RING_CAP as u64 + 44) {
+            bus.emit(&nav(i));
+        }
+        assert_eq!(bus.last_seq(), RING_CAP as u64 + 44);
+        assert_eq!(
+            bus.first_seq(),
+            45,
+            "oldest 44 evicted, first retained is 45"
+        );
+        assert_eq!(bus.recent(0).len(), RING_CAP);
+        // A cursor below first_seq sees the gap instead of silent loss.
+        assert!(bus.first_seq() > 1);
+        assert!(bus.recent(44).iter().all(|e| e.seq >= 45));
+    }
+
+    #[test]
+    fn hook_fires_with_seq_and_event() {
+        let bus = AppEventBus::new();
+        let seen: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        bus.set_hook(move |seq, _| seen2.lock().unwrap().push(seq));
+        bus.emit(&nav(0));
+        bus.emit(&nav(1));
+        assert_eq!(*seen.lock().unwrap(), vec![1, 2]);
+    }
+
+    #[test]
+    fn epoch_is_a_per_boot_nonce() {
+        let a = AppEventBus::new();
+        let b = AppEventBus::new();
+        assert_eq!(a.epoch(), a.epoch(), "stable within a process");
+        assert_ne!(a.epoch(), b.epoch(), "a restart must look different");
+    }
+
+    #[test]
+    fn term_output_reaches_subscribers_and_hook() {
+        let bus = AppEventBus::new();
+        let mut rx = bus.subscribe_term_output();
+        let seen: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        bus.set_term_hook(move |v| seen2.lock().unwrap().push(v));
+        bus.emit_term_output(serde_json::json!({"sid": "s1"}));
+        let got = rx.try_recv().expect("broadcast must carry term output");
+        assert_eq!(got, serde_json::json!({"sid": "s1"}));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![serde_json::json!({"sid": "s1"})]
+        );
+    }
+
+    #[test]
+    fn seq_event_serializes_with_seq_and_tagged_type() {
+        // The /api/events/poll + SSE wire shape.
+        let e = SeqEvent {
+            seq: 7,
+            event: AgentEvent::BrowserScreenshot,
+        };
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["seq"], 7);
+        assert_eq!(v["event"]["type"], "BrowserScreenshot");
+    }
+
+    #[test]
+    fn broadcast_carries_emits_in_seq_order() {
+        // The round-120 invariant: send-inside-lock keeps SSE order == seq.
+        let bus = AppEventBus::new();
+        let mut rx = bus.subscribe();
+        for i in 0..10 {
+            bus.emit(&nav(i));
+        }
+        let mut seqs = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            seqs.push(e.seq);
+        }
+        assert_eq!(seqs, (1..=10).collect::<Vec<_>>());
+    }
+}
