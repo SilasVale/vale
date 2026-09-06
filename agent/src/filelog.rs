@@ -242,4 +242,44 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn day_change_rotates_even_under_the_cap() {
+        // The day-change arm needs no time mocking: backdate the in-memory
+        // bucket (same trick as a midnight rollover) and a tiny write must
+        // still rotate.
+        use tracing_subscriber::fmt::MakeWriter;
+        let dir = day_dir("daychange");
+        let path = dir.join("agent.log");
+        let w = RotatingFile::new(path.clone()).unwrap();
+        {
+            let mut g = w.inner.lock().unwrap_or_else(|p| p.into_inner());
+            g.day = day_bucket(unix_now()).saturating_sub(1);
+        }
+        let mut s = w.make_writer();
+        s.write_all(b"next-day").unwrap();
+        drop(s);
+        let rotated = std::fs::read_dir(&dir).unwrap().flatten().any(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            n.starts_with("agent.log.") && n.ends_with(".old")
+        });
+        assert!(rotated, "day change must rotate even under the size cap");
+        assert_eq!(std::fs::read(&path).unwrap(), b"next-day");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn flush_persists_without_rotation() {
+        use tracing_subscriber::fmt::MakeWriter;
+        let dir = day_dir("flush");
+        let path = dir.join("agent.log");
+        let w = RotatingFile::new(path.clone()).unwrap();
+        let mut s = w.make_writer();
+        s.write_all(b"hello").unwrap();
+        s.flush().unwrap();
+        drop(s);
+        drop(w);
+        assert_eq!(std::fs::read(&path).unwrap(), b"hello");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
