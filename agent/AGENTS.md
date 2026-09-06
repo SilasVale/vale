@@ -1424,6 +1424,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   (/mcp, stub inner). Fix verified still in place (live snapshot).
   Matrix: lib 284->285, feat 292->293, clippy x2 + fmt + xwin clean;
   snapshot 343->344; pushed.
+  ROUND-426 (2026-09-06): tunnel parser audit — hand-rolled UUID scanner
+  + NAME-column matcher were nested inside provision_tunnel (ZERO
+  tests, unreachable). Hoisted both to module level verbatim, added 3:
+  canonical find (create + table shapes), 5 reject shapes, name-column
+  match/miss/header/garbage-id. Matrix: lib 285->288, feat 293->296,
+  clippy x2 + fmt + xwin clean; snapshot 344->347; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
