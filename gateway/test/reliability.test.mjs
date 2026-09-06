@@ -494,6 +494,26 @@ test("stream: empty upstream → explicit empty-stream error event, no fabricate
   assert.ok(!text.includes("message_start"), "no message_start for zero upstream bytes");
 });
 
+// round-493 (coverage-driven): the toSSE thinking + server_tool_use
+// emission arms had ZERO pins (toSSE itself had zero direct tests).
+test("toSSE: thinking block emits thinking_delta + signature_delta, start stays empty", async () => {
+  const { toSSE } = await import("../src/anthropic-translate.ts");
+  const out = toSSE({ content: [{ type: "thinking", thinking: "hmm", signature: "sig1" }] });
+  assert.match(out, /"thinking_delta"/);
+  assert.match(out, /"thinking":"hmm"/);
+  assert.match(out, /"signature_delta"/);
+  // round-96: start initializes the block EMPTY (no double-emit).
+  const start = out.split("\n\n").find((e) => e.includes("content_block_start"));
+  assert.ok(start && !start.includes("hmm"), "start block carries no thinking text");
+});
+
+test("toSSE: server_tool_use emits input_json_delta with its input", async () => {
+  const { toSSE } = await import("../src/anthropic-translate.ts");
+  const out = toSSE({ content: [{ type: "server_tool_use", id: "s1", name: "web_search", input: { query: "x" } }] });
+  assert.match(out, /"input_json_delta"/);
+  assert.match(out, /\\"query\\":\\"x\\"/);
+});
+
 test("stream: upstream throw closes the stream gracefully (no hang)", async () => {
   const { streamOgToAnthropic } = await import("../src/anthropic-translate.ts");
   // A body whose reader.read() throws once.
