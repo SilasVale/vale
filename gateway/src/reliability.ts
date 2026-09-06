@@ -2,6 +2,14 @@
  * Reliability cluster: fetchWithTimeout / fetchWithRetry, per-channel timeouts,
  * BreakerDO (Durable Object circuit breaker) + breaker helpers.
  * Extracted from index.js (2026-08-12 refactor). Behavior unchanged.
+ *
+ * Boundary (architecture review 2026-09-06): one cohesive cluster — the
+ * bounded-fetch primitive (fetchWithTimeout), the retry ladder layered ON it
+ * (fetchWithRetry: Retry-After honoring, billing guards, in-band SSE
+ * inspection), the per-channel timeout POLICY, and the BreakerDO +
+ * channel-degradation state those policies feed. Every upstream call in the
+ * codebase goes through this module's primitives. Reviewed as correctly
+ * layered; no split warranted (the breaker and its feeders share semantics).
  */
 
 /**
