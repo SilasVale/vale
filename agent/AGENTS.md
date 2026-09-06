@@ -1559,6 +1559,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   admin-seed-backfill.test.mjs: empty→"", secret→legacy:hash +
   verify roundtrip true/false. Suite 465->466; gates clean; snapshot
   updated; pushed.
+  ROUND-448 (2026-09-06): sweep-lock audit — the corrupt-fresh-read arm
+  had ZERO pins. Added 1 in plugins.test.mjs: racing corrupt re-read →
+  null, 2 KV gets, no writeback. Suite 466->467; gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
