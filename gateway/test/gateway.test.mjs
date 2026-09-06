@@ -1772,3 +1772,19 @@ test("cm/ with CMD key but no og key reaches the upstream (no og-key gate)", asy
   assert.equal(auth, "Bearer sk-cm", "cm translate sends the CMD key, not an og key");
   assert.equal((await res.json()).content[0].text, "ok");
 });
+
+// round-501 (coverage-driven): the translate-path circuit-open arm had ZERO
+// pins (only the passthrough-branch breaker test existed).
+test("og translate with an open breaker fails fast (502), upstream never called", async () => {
+  const { __clearDegradedCache } = await import("../src/reliability.ts");
+  __clearDegradedCache();
+  const { env, token } = gwEnv({ breakerOpen: true });
+  const res = await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    () => post(env, token, ogBody()),
+  );
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error.message, /circuit open/);
+});
