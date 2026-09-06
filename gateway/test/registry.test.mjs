@@ -6,6 +6,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  createPluginContext,
+  registerPlugins,
+  dispatch,
+  route,
+  emit,
+  on,
+} from "../src/plugins/registry.ts";
+import {
   MODELS,
   ROUTE_INFO,
   HEALTH_CHANNELS,
@@ -59,4 +67,39 @@ test("ROUTE_INFO prefixes cover every model prefix", () => {
   const prefixes = new Set(ROUTE_INFO.map((r) => r.prefix.replace(/\/$/, "")));
   const used = new Set(MODELS.map((m) => m.id.split("/")[0]));
   for (const p of used) assert.ok(prefixes.has(p), `no ROUTE_INFO entry for ${p}/ models`);
+});
+
+// round-465 (coverage-driven): the framework helpers (dispatch/route/
+// registerPlugins/emit/on) had ZERO direct pins — only indirect exercise
+// through worker.fetch.
+test("registry framework: dispatch first-match, no-match null, bad plugins skipped", () => {
+  const ctx = createPluginContext(null, {});
+  route(ctx, "GET", "/api/a", () => "a");
+  route(ctx, ["GET", "POST"], "/api/b", () => "b");
+  registerPlugins(ctx, [
+    { name: "good", setup: (c) => route(c, "GET", "/api/c", () => "c") },
+    null,
+    { name: "broken" },
+  ]);
+  assert.equal(dispatch(ctx, "GET", "/api/a"), "a");
+  assert.equal(dispatch(ctx, "POST", "/api/b"), "b");
+  assert.equal(dispatch(ctx, "GET", "/api/c"), "c");
+  assert.equal(dispatch(ctx, "DELETE", "/api/a"), null, "method mismatch → null");
+  assert.equal(dispatch(ctx, "GET", "/nope"), null, "no match → null");
+});
+
+test("registry events: emit delivers, unsubscribe stops, throwers/rejecters swallowed", async () => {
+  const ctx = createPluginContext(null, {});
+  const seen = [];
+  const off = on(ctx, "ev", (p) => seen.push(p));
+  on(ctx, "ev", () => { throw new Error("sync boom"); });
+  on(ctx, "ev", async () => { throw new Error("async boom"); });
+  emit(ctx, "missing", 1); // no listeners → no-op, never throws
+  emit(ctx, "ev", 42);
+  await new Promise((r) => setTimeout(r, 10)); // let the async listener settle
+  assert.deepEqual(seen, [42], "good listener got the payload despite the throwers");
+  off();
+  emit(ctx, "ev", 43);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(seen, [42], "unsubscribed listener stays silent");
 });
