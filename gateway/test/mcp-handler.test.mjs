@@ -254,3 +254,86 @@ test("mcp: agent typed error (200 + ok:false + code) → TOOL_ERROR not DEVICE_U
     globalThis.fetch = realFetch;
   }
 });
+
+// ── JSON-RPC edge methods (round-367: dispatch arms with zero pins) ──
+
+test("mcp: ping → empty result echoing the id", async () => {
+  const res = await handleMcp(post({ jsonrpc: "2.0", method: "ping", id: 42 }), makeEnv());
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.id, 42);
+  assert.deepEqual(data.result, {});
+});
+
+test("mcp: unknown method → -32601 with the id echoed", async () => {
+  const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/brew-coffee", id: 7 }), makeEnv());
+  const data = await res.json();
+  assert.equal(data.error.code, -32601);
+  assert.match(data.error.message, /brew-coffee/);
+  assert.equal(data.id, 7);
+});
+
+test("mcp: tools/call unknown tool → -32602 without touching the network", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("must not be called");
+  };
+  try {
+    const res = await handleMcp(
+      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "teleport", arguments: {} }, id: 9 }),
+      makeEnv(),
+    );
+    const data = await res.json();
+    assert.equal(data.error.code, -32602);
+    assert.match(data.error.message, /Unknown tool: teleport/);
+    assert.equal(data.id, 9);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("mcp: tools/call with no devices registered → -32602 guidance (not a dial)", async () => {
+  const env = makeBaseEnv({
+    devices: [],
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" },
+    },
+    kv: { "token:admintoken": "admin" },
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error("must not be called");
+  };
+  try {
+    const res = await handleMcp(
+      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: {} }, id: 3 }),
+      env,
+    );
+    const data = await res.json();
+    assert.equal(data.error.code, -32602);
+    assert.match(data.error.message, /No devices registered/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("mcp: unparseable body → -32700 parse error", async () => {
+  const res = await handleMcp(
+    new Request("https://x/mcp", {
+      method: "POST",
+      headers: { authorization: "Bearer admintoken", "content-type": "application/json" },
+      body: "{not json",
+    }),
+    makeEnv(),
+  );
+  const data = await res.json();
+  assert.equal(data.error.code, -32700);
+});
+
+test("mcp: non-GET/POST method → 405", async () => {
+  const res = await handleMcp(
+    new Request("https://x/mcp", { method: "PUT", headers: { authorization: "Bearer admintoken" } }),
+    makeEnv(),
+  );
+  assert.equal(res.status, 405);
+});
