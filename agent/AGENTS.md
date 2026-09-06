@@ -1392,6 +1392,14 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   bottom-bar status (round-161), optional-rail omission, desktop hides
   ctx/status. Panel 133->137 (25->26 files); rebuilt, panel.js
   identical; pushed.
+  ROUND-421 (2026-09-06): panel PluginsPage audit — catalog + playwright
+  card had ZERO tests. Added 6: loading, search + filtered pill
+  (round-161), singular/plural + enabled, load error, card states
+  (pending/stopped/running + port + Start wiring), busy labels +
+  verbatim error log. Self-caught x2: clicked disabled Start (mock
+  never fires — click the enabled one), helper missed top-level
+  playwright field (tsc gate). Panel 137->143 (26->27 files);
+  rebuilt, panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
