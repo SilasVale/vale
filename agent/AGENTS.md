@@ -880,6 +880,19 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   would never have received via vale update, which swaps these files).
   Synced from the tsc-fresh src/ copies; release-lib 11/11, bin marker +
   freshness + pack 6/6 all OK.
+  ROUND-355 (2026-09-06): 65-commit stack PUSHED to GitHub (direct token
+  URL, HTTP/1.1; ls-remote confirms main == local HEAD) — CI immediately
+  paid off: 8/9 green incl. xwin check (round-351 fix validated) but
+  gateway FAILED on install-chain test 140. Root cause: the posix test
+  runs `vale check` with ambient HOME — vale reads settings FIRST and the
+  box HAS ~/.claude/settings.json, so locally it reached the health probe
+  while CI runners (no such file) died at the settings read. Fix: temp
+  VALE_SETTINGS ({env:{}}) in the check-run env; verified locally AND
+  with empty HOME (CI simulation), full gateway 295 green. Pushed via the
+  proxy (small increment) and discovered the sync is BIDIRECTIONAL —
+  GitHub picked it up without a second push. Re-run CI: SUCCESS (9/9).
+  LESSON: any CLI test that reaches past readSettings must pin
+  VALE_SETTINGS — ambient HOME is a hidden test dependency.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
