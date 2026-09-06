@@ -1076,6 +1076,16 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   atomic_write roundtrip. All 8 green first try — every incident claim
   holds. Matrix: lib 239 (+8), feat-gated 245, clippy x2 + fmt + xwin
   clean; snapshot 268->276.
+  ROUND-375 (2026-09-06): mcp/server.rs surface audit — get_info, tool
+  conversion, bind DNS had only get_tool presence pins. Added 4: handshake
+  identity (name/version/instructions/static-tools cap), schema
+  passthrough on a real tool, localhost→loopback bind, unresolvable host
+  fails loud (the dark-device fix). Also corrected a FALSE comment
+  claiming panic isolation was "verified by list_tools_via_http" (it
+  never exercised call_tool; the arm is defensive-only — zero unwrap in
+  production per round-359). Fixed my own Cow as_ref ambiguity
+  pre-commit. Matrix: lib 243 (+4), feat-gated 249, clippy x2 + fmt +
+  xwin clean; snapshot 276->280.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
