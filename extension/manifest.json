@@ -21,6 +21,7 @@
         "https://dsh.saisi.online/*"
       ],
       "js": [
+        "shared.js",
         "content/studio-links.js"
       ],
       "run_at": "document_idle"

@@ -7,18 +7,24 @@
 // Design notes:
 // - Relative paths are resolved against the server's whitelist roots via a
 //   cheap /api/stat probe (no file contents transferred); results cached.
+// - Studio API outages are never permanent: a failed fetch warns once and
+//   leaves text unflagged so a later scan retries; only a scan that ran and
+//   genuinely resolved nothing is marked data-vs-processed (the perf flag).
 // - The original text node is replaced wholesale with a single <span> wrapper
 //   so streaming appends never fight us; React-safe enough for chat surfaces,
 //   and the options toggle turns the whole thing off if anything looks off.
 
 (() => {
-  const DEFAULT_ORIGIN = "https://code.saisi.online";
   const RX_TTL_MS = 5 * 60 * 1000;
   const ROOTS_TTL_MS = 60 * 1000;
+  // Distinct from null: "the Studio API could not be asked" (network error or
+  // non-OK status), where null means a definitive "no link here". Never cached.
+  const UNREACHABLE = Symbol("vs-unreachable");
 
-  let cfg = { origin: DEFAULT_ORIGIN, token: "", enabled: true };
+  let cfg = { origin: DEFAULT_STUDIO_ORIGIN, token: "", enabled: true };
   let roots = null;
   let rootsAt = 0;
+  let rootsWarned = false; // warn-once latch for the current /api/roots outage
   /** path candidate -> { abs: string|null, at: number } */
   const resolvedCache = new Map();
 
@@ -41,58 +47,86 @@
 
   // Defensive: never attach the Bearer token to a non-https origin — a
   // stale/synced stored value could predate the options-page https check.
+  // The canonical guard lives in shared.js (single copy).
   function authHeaders() {
-    if (!cfg.token) return {};
-    try {
-      if (new URL(cfg.origin).protocol !== "https:") return {};
-    } catch {
-      return {};
-    }
-    return { authorization: "Bearer " + cfg.token };
+    return studioAuthHeaders(cfg.origin, cfg.token);
   }
 
+  // A failed /api/roots fetch tells the user once per outage, not per node.
+  function warnRootsDown(reason) {
+    if (rootsWarned) return;
+    rootsWarned = true;
+    console.warn(
+      `[Vale Studio Links] cannot reach ${cfg.origin}/api/roots (${reason}) — ` +
+        "path linking is paused; text is left unmarked and will be re-scanned " +
+        "once the Studio API answers again."
+    );
+  }
+
+  // Returns the whitelisted roots, or null when the server could not be asked
+  // (network error / non-OK status), so callers can tell "no roots configured"
+  // from "couldn't ask" and never memorize an outage as a definitive answer.
   async function getRoots() {
     if (roots && Date.now() - rootsAt < ROOTS_TTL_MS) return roots;
     try {
       const r = await fetch(cfg.origin + "/api/roots", { headers: authHeaders() });
-      if (!r.ok) return (roots = []);
+      if (!r.ok) {
+        warnRootsDown(r.status === 401 ? "HTTP 401 — token rejected" : `HTTP ${r.status}`);
+        return null;
+      }
       const data = await r.json();
-      rootsAt = Date.now();
       roots = (data.roots || []).map((x) => x.path);
-    } catch {
-      roots = [];
+      rootsAt = Date.now();
+      rootsWarned = false; // recovered — a later outage warns again
+      return roots;
+    } catch (e) {
+      warnRootsDown(e && e.message ? e.message : "network error");
+      return null;
     }
-    return roots;
   }
 
+  // Definitive true/false, or null when the server could not be asked —
+  // "unknown" must never be read as "missing".
   async function exists(abs) {
+    let r;
     try {
-      const r = await fetch(`${cfg.origin}/api/stat?p=${encodeURIComponent(abs)}`, {
+      r = await fetch(`${cfg.origin}/api/stat?p=${encodeURIComponent(abs)}`, {
         headers: authHeaders(),
       });
-      if (!r.ok) return false;
+    } catch {
+      return null;
+    }
+    if (!r.ok) return null;
+    try {
       return !!(await r.json()).exists;
     } catch {
-      return false;
+      return null; // malformed body — unknown, not missing
     }
   }
 
-  /** Resolve a raw path mention to an absolute workspace path, or null. */
+  /** Resolve a raw path mention to an absolute workspace path.
+   * null = definitive "no link"; UNREACHABLE = couldn't ask (not cached, so
+   * the next scan retries instead of memorizing the outage). */
   async function resolve(raw) {
     const hit = resolvedCache.get(raw);
     if (hit && Date.now() - hit.at < RX_TTL_MS) return hit.abs;
-    let abs = null;
     const rs = await getRoots();
+    if (rs === null) return UNREACHABLE;
+    let abs = null;
     if (raw.startsWith("/")) {
       // absolute: must live under one of the roots (or be reachable through them)
       if (rs.some((r) => raw === r || raw.startsWith(r.endsWith("/") ? r : r + "/"))) {
-        abs = (await exists(raw)) ? raw : null;
+        const there = await exists(raw);
+        if (there === null) return UNREACHABLE;
+        abs = there ? raw : null;
       }
     } else if (rs.length) {
       // relative: probe root candidates, longest prefix first
       const candidates = [...rs].sort((a, b) => b.length - a.length).map((r) => `${r}/${raw}`);
       for (const cand of candidates.slice(0, 4)) {
-        if (await exists(cand)) {
+        const there = await exists(cand);
+        if (there === null) return UNREACHABLE;
+        if (there) {
           abs = cand;
           break;
         }
@@ -160,20 +194,29 @@
       if (!jobs.length) continue;
 
       // resolve all candidates first (cached), then assemble once
+      let couldAsk = true; // did every Studio probe for this node get an answer?
       const parts = [];
       for (const job of jobs) {
         const abs = await resolve(job.bare);
+        if (abs === UNREACHABLE) {
+          couldAsk = false; // couldn't ask — never mark this node as done
+          continue;
+        }
         if (!abs) continue;
         parts.push({ job, abs });
       }
       if (!parts.length) {
-        node.nodeValue = text; // mark nothing; skip re-scan via parent flag
-        node.parentElement?.setAttribute("data-vs-processed", "1");
+        if (couldAsk) {
+          // The scan ran and genuinely resolved nothing — flag the parent so
+          // shouldSkip() never re-walks it (the perf mechanism).
+          node.parentElement?.setAttribute("data-vs-processed", "1");
+        }
+        // else: the API was unreachable — leave unflagged so a later scan retries.
         continue;
       }
 
       const span = document.createElement("span");
-      span.setAttribute("data-vs-processed", "1");
+      if (couldAsk) span.setAttribute("data-vs-processed", "1");
       let cursor = 0;
       for (const { job, abs } of parts) {
         if (job.index > cursor) span.append(document.createTextNode(text.slice(cursor, job.index)));
