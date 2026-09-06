@@ -1640,6 +1640,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   arms had ZERO direct pins. New http.test.mjs (loopback matrix +
   allowlist/P2 rule). Suite 496->498; gates clean; snapshot updated;
   pushed.
+  ROUND-468 (2026-09-06): access-arms audit — JWKS-throw, disabled
+  admin-email, provision-race had ZERO pins. Added 3 in
+  access.test.mjs. Suite 498->501; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
