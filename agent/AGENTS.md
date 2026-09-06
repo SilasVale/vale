@@ -1516,6 +1516,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   passes "1"/"0"). Added 2 in store.cache.test.mjs: 1/0/null/""/delete
   canonical chain + write-through read + env-var fallback. Suite
   449->451; gates clean; snapshot updated; pushed.
+  ROUND-440 (2026-09-06): self-register audit — handleSelfRegister
+  (round-158 anti-hijack endpoint) had ZERO route pins. Added 4 in
+  devices.test.mjs: 400/403/400 validation + no-mutation, new-device
+  insert + idempotent refresh, hostname-move/unproven-rotation 409s,
+  stored-tunnel proof rotates (date kept). Suite 451->455; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
