@@ -543,6 +543,29 @@ test("recordChannelSuccess hits the DO reset endpoint (never throws)", async () 
   }
 });
 
+// round-481 (coverage-driven): the billing-guard no-retry arm + the
+// breaker-trip-failure swallow arm had ZERO pins.
+test("500 without idempotent is NOT retried (BYOK billing guard)", async () => {
+  await withFetch(async () => ok(500), async () => {
+    const { response, detail } = await fetchWithRetry("https://zen.example", reqInit, { timeoutMs: 1000 });
+    assert.equal(response.status, 500);
+    assert.match(detail, /not retried/);
+    assertFetchCalls(1, "a billed POST must not be re-sent");
+  });
+});
+
+test("recordChannelFailure swallows a DO trip throw (never throws)", async () => {
+  const { recordChannelFailure } = await import("../src/reliability.ts");
+  const { env } = breakerEnv(() => { throw new Error("do down"); });
+  const origErr = console.error;
+  console.error = () => {};
+  try {
+    await recordChannelFailure(env); // must not throw
+  } finally {
+    console.error = origErr;
+  }
+});
+
 test("upstreamTimeoutMs: default 30s, env override wins, invalid falls back", async () => {
   const { upstreamTimeoutMs } = await import("../src/reliability.ts");
   assert.equal(upstreamTimeoutMs({}), 30000);
