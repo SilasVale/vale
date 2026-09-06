@@ -1477,6 +1477,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   mcp.test.mjs: codes distinct + UPPER shape, ToolErr instanceof Error
   with code + message. Suite 443->444; gates clean; snapshot updated;
   pushed.
+  ROUND-435 (2026-09-06): pack-chain periodic replay (last 363) — REAL
+  FIND: `npm run build` (the documented sole build path, born 4.5h ago
+  in 3825c0df) NEVER worked: `npx -y typescript@5 -p <proj>` lets npx
+  eat tsc's -p/outDir flags (npm 11: "must supply a command"; --package
+  form can't resolve the tsc bin either). Only bash -n had ever checked
+  it. Fix: `npm exec --yes --package typescript@5 -- tsc -p …` (verified
+  exit 0; rebuilt artifacts byte-identical = zero drift). Replay otherwise
+  green: electron url-policy 4/4, npm CLI 3/3, pack dry-run 6/6 files,
+  stale local tgz 293-296 cleaned; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
