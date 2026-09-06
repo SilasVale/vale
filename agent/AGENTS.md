@@ -1472,6 +1472,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Added 4: live count singular/plural/hidden, error styling + reconnect
   chip, bridge→embedded controller, bridgeless→desktop hint. Panel
   174->178 (32->33 files); rebuilt, panel.js identical; pushed.
+  ROUND-434 (2026-09-06): gateway mcp-errors audit — the stable failure
+  code family clients retry on had ZERO direct pins. Added 1 in
+  mcp.test.mjs: codes distinct + UPPER shape, ToolErr instanceof Error
+  with code + message. Suite 443->444; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
