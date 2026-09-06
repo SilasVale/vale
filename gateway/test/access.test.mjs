@@ -151,3 +151,52 @@ test("accepts aud as an array containing the configured AUD (RFC 7519 §4.1.3)",
   const wrongArr = await signJwtRaw({ aud: ["other-app", "yet-another"], email: "dave@example.com", exp: now + 600 });
   assert.equal(await verifyAccessJwt(reqWith(wrongArr), env), null);
 });
+
+// ── Disabled-account + malformed-token hardening (round-395) ──
+
+test("disabled Access-bound user stays logged out (no silent re-provision)", async () => {
+  const env = makeEnv({
+    users: {
+      "access-email:zed@example.com": "zed",
+      "user:zed": { id: "zed", username: "zed", role: "user", enabled: false },
+    },
+  });
+  assert.equal(await ensureUserByEmail(env, "zed@example.com"), null);
+  // suspension must not mint a fresh suffixed account around itself
+  assert.equal(await env.KEYS.get("access-email:zed@example.com"), "zed");
+  const list = await env.KEYS.list({ prefix: "user:zed" });
+  assert.equal(list.keys.length, 1, "only the disabled record exists");
+});
+
+test("malformed JWTs reject as null, never throw (L5 audit pin)", async () => {
+  const env = makeEnv();
+  const good = await signJwt();
+  const [h, p] = good.split(".");
+  // not three parts
+  assert.equal(await verifyAccessJwt(reqWith("abc"), env), null);
+  assert.equal(await verifyAccessJwt(reqWith("a.b.c.d"), env), null);
+  // garbage signature characters: atob throws inside verify → null, not 500
+  assert.equal(await verifyAccessJwt(reqWith(`${h}.${p}.!!!`), env), null);
+  // garbage header/payload segments
+  assert.equal(await verifyAccessJwt(reqWith(`!!!.${p}.${good.split(".")[2]}`), env), null);
+  assert.equal(await verifyAccessJwt(reqWith(`${h}.!!!.${good.split(".")[2]}`), env), null);
+  // missing kid
+  const noKid = `${b64url(JSON.stringify({ alg: "RS256" }))}.${p}.${good.split(".")[2]}`;
+  assert.equal(await verifyAccessJwt(reqWith(noKid), env), null);
+  // unknown kid
+  assert.equal(await verifyAccessJwt(reqWith(await signJwt({ kid: "nope" })), env), null);
+  // wrong issuer (cross-team token under the same aud)
+  const wrongIss = await signJwtRaw({
+    iss: "https://evil.cloudflareaccess.com",
+    aud: AUD,
+    email: "x@example.com",
+    exp: Math.floor(Date.now() / 1000) + 600,
+  });
+  assert.equal(await verifyAccessJwt(reqWith(wrongIss), env), null);
+  // missing / non-email claims
+  assert.equal(await verifyAccessJwt(reqWith(await signJwtRaw({ aud: AUD, exp: Math.floor(Date.now() / 1000) + 600 })), env), null);
+  assert.equal(await verifyAccessJwt(reqWith(await signJwt({ email: "not-an-email" })), env), null);
+  // unconfigured deployment: inert
+  const bare = makeBaseEnv({});
+  assert.equal(await verifyAccessJwt(reqWith(good), bare), null);
+});
