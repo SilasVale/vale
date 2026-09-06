@@ -589,6 +589,25 @@ test("register: 30 attempts then 429 (per-IP rate limit)", async () => {
   assert.equal(limited.status, 429, "31st attempt within the minute is rate-limited");
 });
 
+// round-452 (coverage-driven): the login burst-gate 429 arm + the
+// unknown-user PBKDF2-burn arm had ZERO pins. Unknown usernames never
+// touch the KV lock counter, so 10×401 then the 11th → burst 429.
+test("login: unknown user 401s (timing-burn), 11th rapid attempt 429s", async () => {
+  __clearCaches();
+  const env = regEnv();
+  const login = () => worker.fetch(new Request("https://x/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.44" },
+    body: JSON.stringify({ username: "ghost", password: "whatever-long" }),
+  }), env);
+  for (let i = 0; i < 10; i++) {
+    const r = await login();
+    assert.equal(r.status, 401, `attempt ${i + 1} is a plain auth failure`);
+    assert.ok((await r.json()).error.message.includes("Incorrect username"), "no user-exists oracle");
+  }
+  assert.equal((await login()).status, 429, "11th rapid attempt trips the burst gate");
+});
+
 // round-442 (coverage-driven): the logout blacklist write had ZERO direct
 // pins — only its verify side was tested. Round-122 (*1000 ms-unit bug)
 // and round-124 (<60s floor) both lived exactly here.
