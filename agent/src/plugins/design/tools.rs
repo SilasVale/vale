@@ -109,16 +109,14 @@ fn redact_tokens(s: &str) -> String {
 /// The device has no browser, so "seeing" the design means reading the source.
 /// Local pages: / (status), /panel/ (terminal panel HTML), /panel/panel.js,
 /// /panel/panel.css. Remote pages: the console (gateway) and download site
-/// (index worker) so production design is inspectable. Embedded: the browser
-/// extension's popup/options CSS, which is not served by any HTTP surface.
+/// (index worker) so production design is inspectable.
 pub fn page_view(console_url: Option<String>, download_url: Option<String>) -> ToolDef {
     ToolDef::new(
         "page_view",
         "View a Vale page's design by fetching its HTML/CSS. \
          Pages: status (/), panel (/panel/), panel-js, panel-css, panel-html, \
          console (gateway page), console-css (gateway style.css), console-js, \
-         download (download site), popup-css, popup-html, options-css, \
-         options-html, terminal-css, terminal-html, terminal-js, popup-js, options-js \
+         download (download site). \
          Returns up to 64KB of source — read the CSS tokens (--accent, --bg, \
          radii, glass) and HTML structure to evaluate the design. Use target \
          '127.0.0.1:18080' (default) or a remote host. Remote pages fail \
@@ -129,9 +127,7 @@ pub fn page_view(console_url: Option<String>, download_url: Option<String>) -> T
                 "page": {
                     "type": "string",
                     "enum": ["status", "panel", "panel-js", "panel-css", "panel-html",
-                             "console", "console-css", "console-js", "download",
-                             "popup-css", "popup-html", "options-css", "options-html",
-                             "terminal-css", "terminal-html", "terminal-js", "popup-js", "options-js"],
+                             "console", "console-css", "console-js", "download"],
                     "description": "Which page to fetch."
                 },
                 "target": {
@@ -242,4 +238,154 @@ pub fn page_view(console_url: Option<String>, download_url: Option<String>) -> T
             }
         },
     )
+}
+
+#[cfg(test)]
+mod design_tests {
+    //! round-383: the loopback gate, token redaction, and the page table
+    //! had zero tests — including a REAL drift the tests caught on write:
+    //! the schema enum still advertised the round-262-deleted extension
+    //! pages (every one a guaranteed "unknown page" error).
+    use super::*;
+
+    #[test]
+    fn parse_target_allows_loopback_only() {
+        assert_eq!(
+            parse_target("127.0.0.1").unwrap(),
+            ("127.0.0.1".into(), 18080)
+        );
+        assert_eq!(
+            parse_target("127.0.0.1:9999").unwrap(),
+            ("127.0.0.1".into(), 9999)
+        );
+        assert_eq!(
+            parse_target("localhost:1").unwrap(),
+            ("localhost".into(), 1)
+        );
+        for bad in [
+            "example.com",
+            "192.168.1.1",
+            "10.0.0.1:80",
+            "::1",
+            "[::1]",
+            "",
+        ] {
+            assert!(parse_target(bad).is_err(), "{bad:?} must be rejected");
+        }
+        assert!(parse_target("127.0.0.1:notaport").is_err());
+    }
+
+    #[test]
+    fn redact_tokens_scrubs_injected_panel_token() {
+        let clean = "<html><head></head><body>hi</body></html>";
+        assert_eq!(redact_tokens(clean), clean);
+        let injected = r#"<script>window.__PANEL_TOKEN__="deadbeef";</script>"#;
+        let out = redact_tokens(injected);
+        assert!(!out.contains("deadbeef"), "{out}");
+        assert!(out.contains("__PANEL_TOKEN__=\"<redacted>\""), "{out}");
+        // Multiple occurrences, all scrubbed.
+        let two = format!("{injected} mid {injected}");
+        assert!(!redact_tokens(&two).contains("deadbeef"));
+        // Unterminated value: tail kept verbatim, no hang, no panic.
+        let unterminated = r#"x __PANEL_TOKEN__="abc"#;
+        assert_eq!(redact_tokens(unterminated), unterminated);
+    }
+
+    #[test]
+    fn page_table_is_unique_wellformed_and_matches_schema() {
+        let mut names: Vec<&str> = PAGES.iter().map(|(n, _)| *n).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), PAGES.len(), "page names must be unique");
+        for (name, src) in PAGES {
+            match src {
+                PageSource::Local(p) => assert!(p.starts_with('/'), "{name}: {p}"),
+                PageSource::Remote(u) => assert!(u.starts_with("https://"), "{name}: {u}"),
+            }
+        }
+        // Schema enum parity: every advertised page must resolve (and every
+        // resolvable page must be advertised) — the round-262 deletion left
+        // 10 dead enum entries that always errored.
+        let def = page_view(None, None);
+        let enums: Vec<String> = def.input_schema["properties"]["page"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        let mut table: Vec<String> = PAGES.iter().map(|(n, _)| n.to_string()).collect();
+        let mut enums_sorted = enums.clone();
+        enums_sorted.sort();
+        table.sort();
+        assert_eq!(enums_sorted, table, "schema enum must equal PAGES");
+    }
+
+    #[tokio::test]
+    async fn page_view_truncates_and_redacts_over_http() {
+        // End-to-end through the tool handler against a local stub: a 100 KiB
+        // CJK body (multi-byte truncation hazard) carrying an injected token.
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut body = String::from(r#"<script>window.__PANEL_TOKEN__="tok123";</script>"#);
+        body.push_str(&"界".repeat(40 * 1024));
+        let body_bytes = body.as_bytes().to_vec();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 8192];
+            let mut req = Vec::new();
+            loop {
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body_bytes.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.write_all(&body_bytes).await;
+        });
+
+        let def = page_view(None, None);
+        let out = def
+            .handler
+            .call(serde_json::json!({ "page": "panel-js", "target": format!("127.0.0.1:{port}") }))
+            .await
+            .unwrap();
+        assert_eq!(out["truncated"], true);
+        assert_eq!(out["bytes"], body.len());
+        assert!(out["url"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("127.0.0.1:{port}")));
+        let content = out["content"].as_str().unwrap();
+        assert!(content.len() <= MAX_PAGE_BYTES);
+        assert!(content.is_char_boundary(content.len()), "CJK-safe cut");
+        assert!(!content.contains("tok123"), "injected token must not leak");
+    }
+
+    #[tokio::test]
+    async fn page_view_unknown_page_and_remote_without_config_fail_closed() {
+        let def = page_view(None, None);
+        let err = def
+            .handler
+            .call(serde_json::json!({ "page": "nope" }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown page"), "{err:?}");
+        let err = def
+            .handler
+            .call(serde_json::json!({ "page": "console" }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("console_url"), "{err:?}");
+    }
 }
