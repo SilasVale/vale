@@ -276,7 +276,20 @@ echo "== reconcile CDN vs GitHub release asset (P0 dual-build audit) =="
 # verify post-tag via the checklist. No network / no gh → same abort.
 CDN_BASE="${SMOKE_BASE_URL:-https://agent.saisi.online}"
 if [ "$SKIP_RECONCILE" -eq 1 ]; then
-  echo "-- WARN: --skip-reconcile given, CDN/asset audit SKIPPED — verify post-tag via the checklist below"
+  # P0-1 fail-closed: --skip-reconcile exists ONLY for first publishes (no
+  # GitHub release/asset exists yet — release.yml builds it after the tag
+  # push below). If the asset ALREADY exists, an audit is possible and
+  # skipping it would put unaudited bytes on the CDN silently — refuse.
+  # (List-to-file first, then grep — never `gh ... | grep -q` under
+  # pipefail: SIGPIPE false-fails even on a match, round-288 lesson.)
+  SKIP_LIST="/tmp/reconcile-assets-skip-${VER}.txt"
+  if command -v gh >/dev/null 2>&1 \
+    && gh release view "v$VER" --json assets --jq '.assets[].name' >"$SKIP_LIST" 2>/dev/null \
+    && grep -qx "vale-agent-${VER}.tgz" "$SKIP_LIST"; then
+    echo "::error::--skip-reconcile refused: GitHub release v$VER already ships vale-agent-$VER.tgz — rerun WITHOUT the flag so the CDN/asset audit executes" >&2
+    exit 1
+  fi
+  echo "-- WARN: --skip-reconcile given and no GitHub asset v$VER exists yet (first publish) — CDN/asset audit SKIPPED, verify post-tag via the checklist below"
 else
   command -v gh >/dev/null 2>&1 || { echo "::error::gh CLI not found — install it (gh auth login), or --skip-reconcile for a first publish (then verify post-tag)" >&2; exit 1; }
   ASSET_LIST="/tmp/reconcile-assets-${VER}.txt"

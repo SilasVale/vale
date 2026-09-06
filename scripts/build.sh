@@ -25,6 +25,59 @@ cf_token() {
   else echo ""; fi
 }
 
+# --- P0-2 deploy/agent preflights (fail-closed, fail EARLY) ---
+# `deploy` chains five steps with && — a missing toolchain piece used to
+# abort MID-CHAIN, leaving a half-deployed stack with no manifest. Check
+# everything up front instead. Each check is local (no network) and prints
+# the fix, so a healthy env passes through with zero behavior change.
+preflight_agent_toolchain() {
+  # cargo-xwin present AND runnable (a broken install fails here, not mid-build)
+  command -v cargo-xwin >/dev/null 2>&1 \
+    || { echo "  !! cargo-xwin not found — install: cargo install cargo-xwin" >&2; return 1; }
+  cargo xwin --version >/dev/null 2>&1 \
+    || { echo "  !! cargo-xwin not runnable — reinstall: cargo install cargo-xwin" >&2; return 1; }
+  # Windows MSVC target installed (build_agent cross-compiles to it)
+  if command -v rustup >/dev/null 2>&1; then
+    rustup target list --installed 2>/dev/null | grep -q "^x86_64-pc-windows-msvc" \
+      || { echo "  !! rust target x86_64-pc-windows-msvc not installed — run: rustup target add x86_64-pc-windows-msvc" >&2; return 1; }
+  else
+    echo "  !! rustup not found — cannot verify the x86_64-pc-windows-msvc target" >&2
+    return 1
+  fi
+}
+
+preflight_deploy() {
+  # Full-stack gate for the `deploy` chain: agent toolchain + wrangler +
+  # Cloudflare token. Individual targets keep their own token checks (a direct
+  # `./scripts/build.sh gateway` must fail closed too); this one fails the
+  # whole chain BEFORE the first step runs.
+  preflight_agent_toolchain || return 1
+  command -v wrangler >/dev/null 2>&1 \
+    || { echo "  !! wrangler not found — install: npm i -g wrangler@4" >&2; return 1; }
+  wrangler --version >/dev/null 2>&1 \
+    || { echo "  !! wrangler not runnable — reinstall: npm i -g wrangler@4" >&2; return 1; }
+  [[ -n "$(cf_token)" ]] \
+    || { echo "  !! CLOUDFLARE_API_TOKEN (or ~/.cloudflare-token) missing — deploy would fail at every worker" >&2; return 1; }
+}
+
+# Run `npm run format:check` only when the subproject DEFINES it. gateway has
+# it (prettier); index / panel-react do not, and their package.jsons are out
+# of scope for this script — invoking a missing script under `set -e` would
+# fail every build. Missing = skip with a note, never a silent pass.
+maybe_format_check() {
+  # $1 = repo-relative dir, $2 = display label
+  if [[ ! -f "$ROOT/$1/package.json" ]]; then
+    echo "  -- $2: no package.json, skipping format:check"
+    return 0
+  fi
+  if grep -q '"format:check"' "$ROOT/$1/package.json"; then
+    echo "=== [format:check] $2 ==="
+    ( cd "$ROOT/$1" && npm run format:check )
+  else
+    echo "  -- $2: no format:check script, skipping (add one to enable the gate)"
+  fi
+}
+
 build_agent() {
   local profile="${1:-release}"
   local flags=""
@@ -34,6 +87,12 @@ build_agent() {
     *) echo "usage: $0 agent [release|debug]"; exit 1 ;;
   esac
   echo "=== [agent] vale-agent (${profile}) ==="
+  # P0-2: toolchain + format gates BEFORE the expensive panel/exe builds.
+  # (clippy -D warnings stays in CI — minutes per local build; fmt is local
+  # and fast, and AGENTS.md names cargo fmt as the agent-side format gate.)
+  preflight_agent_toolchain || exit 1
+  ( cd "$ROOT/agent" && cargo fmt --all -- --check )
+  maybe_format_check "agent/resources/panel-react" "panel-react"
   # panel.js is include_str!-embedded at compile time (agent/src/web.rs
   # reads ../resources/panel/panel.js; panel-react vite outDir is ../panel)
   # — building the exe without rebuilding the SPA bakes a STALE UI into the
@@ -68,6 +127,9 @@ deploy_worker() {
     return 1
   fi
   echo "=== [deploy] ${name} (${dir}/) ==="
+  # P0-2: format gate before the deploy (runs only where the script exists —
+  # gateway/prettier runs, index skips with a note).
+  maybe_format_check "$dir" "$name"
   # round-324: the gateway's public /code/ viewer mirrors gateway/src —
   # build-installer.sh used to sync it (round-320 deleted that script).
   # Sync before deploy so the served sources never drift from live.
@@ -75,6 +137,9 @@ deploy_worker() {
     # Gateway deploy preflight (fail-closed): DO_AUTH / SESSION_SECRET /
     # ADMIN_PASSWORD 任一缺失即 abort，不带病上线 (secrets live in the
     # worker, never in wrangler.jsonc — see its Secrets comment).
+    # DO_AUTH is required because RouteDO denies every caller when it is
+    # unset (fail-closed) while the store path still forwards — deploying
+    # without it turns route calls into 401s surfacing as store-side 500s.
     # NOTE: wrangler resolves the worker from the cwd's wrangler.jsonc —
     # this MUST run inside $ROOT/$dir (repo root has no config and the
     # command fails silently into 2>/dev/null, aborting every deploy).
@@ -150,10 +215,30 @@ deploy_vercel_proxy() {
     echo "     install: npm i -g vercel  &&  vercel login  (or set VERCEL_TOKEN)"
     return 1
   fi
+  # P2-5b preflight: `vercel --prod` without auth fails mid-deploy (and
+  # --yes suppresses the login prompt, so it just dies). Require an explicit
+  # token OR a linked project (proxies/vercel-proxy/.vercel/project.json).
+  if [[ -z "${VERCEL_TOKEN:-}" && ! -f "$ROOT/proxies/vercel-proxy/.vercel/project.json" ]]; then
+    echo "  !! neither VERCEL_TOKEN nor a linked .vercel/project.json — set VERCEL_TOKEN or run: (cd proxies/vercel-proxy && vercel link)" >&2
+    return 1
+  fi
   echo "=== [deploy] vercel-proxy (proxies/vercel-proxy/) ==="
   ( cd "$ROOT/proxies/vercel-proxy" \
       && vercel --prod --yes )
   echo "  ok: vercel-proxy deployed"
+  # P2-5b smoke (keyless, mirrors the index-smoke pattern): /api/zen is
+  # BYOK-gated, so a keyless GET must answer 401 — that proves the deployment
+  # serves AND the auth gate is intact, without spending an upstream call.
+  # Any other status (404/500/...) fails the deploy, not the next caller.
+  echo "=== [smoke] vercel-proxy ==="
+  local smoke_base="${VERCEL_SMOKE_URL:-https://v.saisi.online}"
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 "${smoke_base}/api/zen?target=og&path=/v1/models" || true)"
+  if [[ "$code" != "401" ]]; then
+    echo "  !! vercel-proxy smoke FAILED: keyless /api/zen want 401, got ${code:-<curl error>} (${smoke_base})" >&2
+    return 1
+  fi
+  echo "  ok: vercel-proxy smoke 401-gate intact (${smoke_base}/api/zen)"
 }
 
 cmd="${1:-agent}"
@@ -168,6 +253,8 @@ case "$cmd" in
   # Releases use scripts/publish-release.sh (CDN publish + last-5 prune);
   # `deploy` builds agent + deploys gateway/index + the three Cloudflare
   # proxies and vercel-proxy are NOT deployed by `deploy` (deploy manually).
-  deploy)   build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  # P0-2: full-stack preflight FIRST — a missing toolchain piece or token
+  # aborts here, never mid-chain as a half-deployed stack (&& serial).
+  deploy)   preflight_deploy && build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
 esac

@@ -13,6 +13,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Coverage scope (intentional gaps): extension/ gets a syntax-check-only job
+# (MV3 static scripts — no build/test tooling upstream); brand/ has NO job
+# (static icon assets, no build, no tests). Either is deliberately uncovered
+# beyond that because neither produces a build artifact. Trigger: the PR that
+# adds a build/pack step to either directory MUST add a matching CI job.
 jobs:
   gateway:
     name: gateway (test + typecheck + lint + format)
