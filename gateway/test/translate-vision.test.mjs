@@ -150,3 +150,33 @@ test("vision passthrough: upstream !ok fails with the status; success inserts th
     s2.restore();
   }
 });
+
+// round-487 (coverage-driven): the mixed-block passthrough + empty-data
+// arms had ZERO pins.
+test("vision: non-image blocks ride along; empty image data fails, never fabricates", async () => {
+  const e = env();
+  const s = stubVision("mixed desc");
+  try {
+    const mixed = {
+      role: "user",
+      content: [
+        { type: "text", text: "look at this" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: IMG } },
+      ],
+    };
+    const out = await preprocessImages([mixed], e, { OPENCODE_GO_API_KEY: "up-key" }, "m", "up-model", "uM");
+    assert.equal(out.changed, true);
+    assert.equal(out.messages[0].content[0].text, "look at this", "text block passes through verbatim");
+    assert.match(out.messages[0].content[1].text, /mixed desc/);
+  } finally {
+    s.restore();
+  }
+  const empty = {
+    role: "user",
+    content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "" } }],
+  };
+  await assert.rejects(
+    preprocessImages([empty], e, { OPENCODE_GO_API_KEY: "up-key" }, "m", "up-model", "uM"),
+    /vision preprocessing failed/,
+  );
+});
