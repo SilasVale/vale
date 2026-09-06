@@ -1652,6 +1652,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   strip arms (round-104 escalation guard) had ZERO pins. Added 1 in
   proxy-auth.test.mjs: stripped/intact/verbatim. Suite 505->506; gates
   clean; snapshot updated; pushed.
+  ROUND-471 (2026-09-06): csrf-gate audit — the frontdoor 403 arm had
+  ZERO route pins (unit-only). Added 1 in frontdoor.test.mjs: cross-site
+  403, same-origin 401, reads never gated. Self-caught×2: need a real
+  route + seeded password (empty env 500s). Suite 506->507; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
