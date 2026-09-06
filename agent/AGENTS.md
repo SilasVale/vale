@@ -1249,6 +1249,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   in-string field-name trap, non-object passthrough, provider +
   reasoning shapes incl. client-sent respected. Suite 376->383; gates
   clean; snapshot updated; pushed.
+  ROUND-397 (2026-09-06): limiter boundary audit — factory KV semantics
+  pinned but trip point, window reset, unknown-bucket, fail-open, 4096
+  cap unpinned. Added 4 (limit+1 trips + per-IP isolation, rollover
+  resets, headerless shares unknown + null/throw fail open, eviction
+  restarts count). Caught my own shared-bucket slip pre-commit (fresh
+  instance for fail-open probes). Suite 383->387; gates clean; snapshot
+  updated; pushed. CI: 396 run SUCCESS.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
