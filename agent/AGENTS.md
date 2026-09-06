@@ -1448,6 +1448,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   known-prefix ids, health cards ⊆ whitelist, US-proxy ⊆ whitelist,
   priority coverage + https endpoints, ROUTE_INFO prefix cover. Suite
   438->443; gates clean; snapshot updated; pushed.
+  ROUND-430 (2026-09-06): panel MemoryPage audit — the knowledge UI had
+  ZERO tests. Added 7 (mocked callTool): mount list, search tag-pass
+  (round-161) + empty→list, two-step delete + toast, inline edit save,
+  create required-fields + memory_save, export lines + copy toast,
+  backend-error surface. Panel 155->162 (29->30 files); rebuilt,
+  panel.js identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
