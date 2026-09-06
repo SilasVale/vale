@@ -287,7 +287,66 @@ mod tests {
         assert!(server().get_tool("does_not_exist").is_none());
     }
 
+    // round-375: get_info is the client-visible handshake (name, caps,
+    // static tool list) — pin it so a rename/capability drift breaks here,
+    // not in a confused AI client.
+    #[test]
+    fn server_info_names_vale_agent_with_static_tools() {
+        let info = server().get_info();
+        assert_eq!(info.server_info.name, "vale-agent");
+        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+        assert!(info.instructions.unwrap().contains("Terminal"));
+        assert_eq!(info.capabilities.tools.unwrap().list_changed, Some(false));
+    }
+
+    // to_mcp_tool conversion: name/description/schema ride through for a
+    // real registry tool.
+    #[test]
+    fn tool_conversion_carries_schema() {
+        let t = server().get_tool("terminal_open").expect("terminal_open");
+        assert_eq!(t.name, "terminal_open");
+        assert!(t.description.is_some());
+        assert!(t.input_schema.contains_key("properties"));
+    }
+
+    // bind() DNS resolution (the `host: localhost` dark-device fix): a DNS
+    // name must resolve and serve, an unresolvable one must fail LOUD at
+    // bind — never 5 futile retries + silence.
+    #[tokio::test]
+    async fn bind_resolves_localhost_to_loopback() {
+        let mut cfg = Config::default();
+        cfg.server.host = "localhost".into();
+        cfg.server.port = 0;
+        let state = Arc::new(AppState::new(cfg.clone()));
+        let ct = CancellationToken::new();
+        let (addr, handle) = bind(cfg, state, ct.clone())
+            .await
+            .expect("localhost must resolve");
+        assert!(
+            addr.ip().is_loopback(),
+            "localhost must dial loopback, got {addr}"
+        );
+        assert_ne!(addr.port(), 0, "port 0 must resolve to a real port");
+        ct.cancel();
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn bind_unresolvable_host_fails_loud() {
+        let mut cfg = Config::default();
+        cfg.server.host = "definitely-not-a-host-xyz.invalid".into();
+        cfg.server.port = 0;
+        let state = Arc::new(AppState::new(cfg.clone()));
+        let err = bind(cfg, state, CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("cannot resolve"), "got: {err:?}");
+    }
+
     // stage-n MCP audit: a panicking tool handler must return isError (not
     // crash the /mcp task). catch_unwind maps the panic to DeviceError::Internal.
-    // Verified by the integration test in tests/mcp_integration.rs (list_tools_via_http).
+    // No registry tool panics (production handlers carry zero unwrap/expect —
+    // round-359 audit), so the arm is defensive-only and has no live trigger;
+    // it is intentionally NOT covered by a test (a fake panicking tool would
+    // require registry injection the fixed AppState build does not offer).
 }
