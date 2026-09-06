@@ -985,8 +985,7 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   no-session → 401, non-admin → 403, plus a no-mutation assertion on the
   shared env. Fixed my own undici GET-with-body slip before committing.
   Suite 306->307; snapshot count updated.
-  ROUND-365 (2026-09-06): mcp_client framing audit — every MCP call flows
-  through parse_envelope/check_envelope/is_session_gone/truncate, all four
+  ROUND-365 (2026-09-06): mcp_client framing audit — every MCP call flows  through parse_envelope/check_envelope/is_session_gone/truncate, all four
   had ZERO tests. Added 7 (direct result, SSE id-match + stale-only miss,
   error/garbage/notification, check arms, session-gone signals,
   char-boundary truncate). REAL FIND: the direct arm never checked the
