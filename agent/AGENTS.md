@@ -1785,6 +1785,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   arm had ZERO pins. Added 1 in gateway.test.mjs (open breaker → 502,
   no dial; degraded-cache cleared first). Suite 545->546; gates clean;
   snapshot updated; pushed.
+  ROUND-502 (2026-09-06): count audit — the count_tokens keyless guards
+  had ZERO pins. Added 1 matrix test in gateway.test.mjs (ds/qw/amd, no
+  upstream). Suite 546->547; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
