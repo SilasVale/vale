@@ -1418,6 +1418,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   token shape 400s + masked roundtrip + clear, invite code + 401,
   malformed-id/admin/bob enable guards. Suite 432->435; gates clean;
   snapshot updated; pushed.
+  ROUND-425 (2026-09-06): round-366 follow-up — the TokenGate boot-clone
+  FIX had zero regression pins. Added 1: rotate via update_config →
+  old Bearer 401 + new 200 on BOTH check_auth (/api) and TokenGate
+  (/mcp, stub inner). Fix verified still in place (live snapshot).
+  Matrix: lib 284->285, feat 292->293, clippy x2 + fmt + xwin clean;
+  snapshot 343->344; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
