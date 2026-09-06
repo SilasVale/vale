@@ -654,3 +654,23 @@ test("me/keys DELETE: 401 unauth, 400 unknown name, deletes by query param", asy
   assert.equal(res.status, 200);
   assert.deepEqual(JSON.parse(await env.KEYS.get("ukeys:bob")), {});
 });
+
+// round-445 (coverage-driven): GET/PUT /api/me/route had ZERO route pins.
+test("me/route: 401 unauth; PUT validates whitelist; GET shows stored + effective", async () => {
+  __clearCaches();
+  const env = meEnv();
+  assert.equal((await meReq(env, null, "/api/me/route", "GET")).status, 401);
+  assert.equal((await meReq(env, null, "/api/me/route", "PUT", { model: "og/deepseek-v4-flash" })).status, 401);
+  const bob = await issueSessionToken("pw", "bob", "user");
+  const fresh = await (await meReq(env, bob, "/api/me/route", "GET")).json();
+  assert.equal(fresh.model, null);
+  assert.equal(fresh.effective, null, "no stored route and no resolver wiring → null");
+  assert.equal((await meReq(env, bob, "/api/me/route", "PUT", { model: "nope/model" })).status, 400);
+  const put = await meReq(env, bob, "/api/me/route", "PUT", { model: "og/deepseek-v4-flash" });
+  assert.deepEqual(await put.json(), { ok: true, model: "og/deepseek-v4-flash" });
+  const after = await (await meReq(env, bob, "/api/me/route", "GET")).json();
+  assert.equal(after.model, "og/deepseek-v4-flash");
+  assert.equal(after.effective, "og/deepseek-v4-flash", "effective mirrors the stored route");
+  const clear = await meReq(env, bob, "/api/me/route", "PUT", { model: null });
+  assert.deepEqual(await clear.json(), { ok: true, model: null });
+});
