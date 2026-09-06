@@ -1291,6 +1291,28 @@ test("og web_search: forced to deepseek-v4-flash native (translate models can't 
   assert.equal(text.text, "search answer");
 });
 
+// round-490 (coverage-driven): the single-web_search auto-tool_choice arm
+// had ZERO pins (the explicit-choice path was covered above).
+test("og web_search: lone search tool without tool_choice gets it injected", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  await withFetch(async (url, init) => {
+    sent = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({
+      type: "message",
+      content: [{ type: "text", text: "search answer" }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "og/mimo-v2.5", max_tokens: 100, stream: false,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: "query: what's new" }],
+    }),
+  );
+  assert.deepEqual(sent.tool_choice, { type: "tool", name: "web_search" });
+});
+
 // ── scanTopLevelModel / rawWithModel (CPU-safe model extraction) ──
 
 test("scanTopLevelModel: extracts top-level model", () => {
