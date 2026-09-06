@@ -552,6 +552,53 @@ test("tunnel-token: claimed key 403s; vanishing key releases the claim", async (
   assert.equal(await innerGet("regclaim:kk55"), null, "claim released on re-check failure");
 });
 
+// round-462 (coverage-driven): the insert-race 409 arm (round-122: pre-check
+// passes, locked insert loses) + the admin-session upload arm had ZERO pins.
+test("register: lost insert race 409s (pre-check passed, lock lost)", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  await env.KEYS.put("regkey:kk66", "1");
+  const raced = JSON.stringify([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("q") }]);
+  let devGets = 0;
+  const innerGet = env.KEYS.get.bind(env.KEYS);
+  env.KEYS.get = async (k) => {
+    if (k === "devices:v1") return ++devGets === 1 ? "[]" : raced;
+    return innerGet(k);
+  };
+  const { restore } = stubFetch("d1.agent.saisi.online", {});
+  try {
+    const res = await regPost(env, "/api/register", { key: "kk66", name: "d1", hostname: "d1.agent.saisi.online", token: T64("w") });
+    assert.equal(res.status, 409);
+  } finally {
+    restore();
+  }
+});
+
+test("upload proxy: admin session is proxied with the upload key", async () => {
+  __clearCaches();
+  const env = {
+    ...makeEnv([]),
+    UPLOAD_KEY: "test-upload-key",
+    INDEX_WORKER_URL: "https://idx.example",
+  };
+  const seen = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push(String(url));
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const res = await worker.fetch(req("POST", "/api/upload", {
+      cookie: await adminCookie(),
+      body: "pretend-file-bytes",
+    }), env);
+    assert.equal(res.status, 200);
+    assert.deepEqual(seen, ["https://idx.example/api/upload"]);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("tunnel-token: valid key returns the CF token once, then feeds register via grant", async () => {
   __clearCaches();
   const env = makeEnv([]);
