@@ -514,6 +514,19 @@ test("isModelUsable: round-68 — the REQUESTING user's key counts, not the admi
   assert.equal(await isModelUsable(env, "qw/qwen3.8-max-preview", "u-use2"), true);
 });
 
+// round-472 (coverage-driven): the getUserKeys-throw defensive arm had ZERO
+// pins — a KV outage must read as "unusable" (safe fallback), never throw.
+test("isModelUsable: KV outage degrades to unusable, never throws", async () => {
+  const { isModelUsable } = await import("../src/plugins/model-route.ts");
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  const env = usableEnv({ uid: "u-use9" });
+  env.KEYS.get = async () => { throw new Error("kv down"); };
+  // qw has no env-key fallback: with keys unreadable it must read unusable.
+  assert.equal(await isModelUsable(env, "qw/qwen3.8-max-preview", "u-use9"), false);
+  assert.equal(await isModelUsable(env, "xx/nope", "u-use9"), false);
+});
+
 test("isModelUsable: nv/gmi pure BYOK — user key only, never env", async () => {
   const { isModelUsable } = await import("../src/plugins/model-route.ts");
   const { __clearCaches } = await import("../src/store.ts");
