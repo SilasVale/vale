@@ -1039,6 +1039,17 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   (CapturedUploads alias + async mutex). Stable 15/15 x3. Matrix: lib
   216 (+5), feat-gated 222, clippy x2 + fmt + xwin clean; snapshot
   248->253.
+  ROUND-371 (2026-09-06): web/sse.rs contract audit — the loss-tolerant
+  stream (epoch-first, lagged fallback, headers) + guard cycle had ZERO
+  tests. Added 6 (pre-queued broadcast + sender-drop, zero timers; the
+  30s heartbeat arm stays untested by design): SSE headers, epoch-first
+  then Closed ends stream, FIFO order, lagged(3) + surviving tail
+  (corrected my broadcast assumption pre-commit: lagged receivers keep
+  the newest 2), guard acquire/release + dual-hold. Deliberately no
+  drain-to-None test — the pool is process-global and endpoint tests
+  (term_sse_streams_output) hold real guards. Stable 37/37 web x3.
+  Matrix: lib 222 (+6), feat-gated 228, clippy x2 + fmt + xwin clean;
+  snapshot 253->259.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
