@@ -869,4 +869,82 @@ mod tests {
         assert!(text.len() < 5000, "capped text too long: {}", text.len());
         assert!(text.contains("truncated"));
     }
+
+    #[test]
+    fn close_trims_to_last_start_plus_tail_within_cap() {
+        // Round-362: trim_file (rounds 98-100, 116) had ZERO tests despite
+        // being the most intricate logic here (streaming tail, last-start
+        // preservation, atomic temp+rename). First command: start + 2100
+        // outputs + end. Second command: start + 2100 outputs (no end —
+        // still running at close). After close: the first command's events
+        // must be gone, the last start kept, total within header + 2000.
+        let dir = temp_dir("trim");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_command_start("s1", "first-cmd");
+        for i in 0..2100 {
+            logger.log_output("s1", format!("old-{i:04}"));
+        }
+        logger.log_command_end("s1", Some(0), None, None);
+        logger.log_command_start("s1", "second-cmd");
+        for i in 0..2100 {
+            logger.log_output("s1", format!("new-{i:04}"));
+        }
+        logger.close_session("s1");
+        let content = std::fs::read_to_string(dir.join("s1.jsonl")).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        // Header + at most 2000 audit lines + the preserved last start
+        // (the cap loop keeps MAX+1 so line 0 — the start — is never the
+        // victim; drops come from index 1).
+        assert!(
+            lines.len() <= 2002,
+            "trimmed file must fit the cap, got {} lines",
+            lines.len()
+        );
+        assert!(!content.contains("first-cmd"), "pre-start history drained");
+        assert!(!content.contains("old-0000"), "old outputs drained");
+        assert!(
+            content.contains("second-cmd"),
+            "last command/start MUST survive (recovery needs it)"
+        );
+        assert!(
+            !content.contains("new-0000"),
+            "over-cap head outputs dropped from index 1"
+        );
+        assert!(
+            content.contains("new-2099"),
+            "most recent tail outputs kept"
+        );
+        // Recovery still sees the running command as interrupted.
+        drop(logger);
+        let logger2 = SessionLogger::new(dir.clone());
+        let recovered = logger2.recover_interrupted();
+        assert!(
+            recovered.contains(&"s1".to_string()),
+            "trim must not eat the interrupted marker: {recovered:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_sessions_reports_last_event_state_per_file() {
+        // /api/sessions surface: one row per .jsonl file, non-jsonl
+        // ignored, last event folded to kind/ts. Previously untested.
+        let dir = temp_dir("list");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_command_start("a", "echo a");
+        logger.log_command_end("a", Some(3), None, None);
+        logger.log_status("b", "opened");
+        std::fs::write(dir.join("notes.txt"), b"not a session").unwrap();
+        logger.flush_all();
+        let mut rows = logger.list_sessions();
+        rows.sort_by(|x, y| x.0.cmp(&y.0));
+        assert_eq!(rows.len(), 2, "only .jsonl files listed: {rows:?}");
+        assert_eq!(rows[0].0, "a");
+        assert_eq!(rows[0].1["kind"].as_str(), Some("command/end"));
+        assert_eq!(rows[0].1["exit_code"].as_i64(), Some(3));
+        assert_eq!(rows[1].0, "b");
+        assert_eq!(rows[1].1["kind"].as_str(), Some("status"));
+        assert_eq!(rows[1].1["status"].as_str(), Some("opened"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
