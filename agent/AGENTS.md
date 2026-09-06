@@ -1743,6 +1743,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   resync caught 4 files of prior-round drift (access/mcp/store-admin/
   store-settings). Suite 533->534; gates clean; snapshot updated;
   pushed.
+  ROUND-492 (2026-09-06): encoder audit — mid-stream error + tail-parse
+  arms had ZERO pins. Added 2 in reliability.test.mjs. Discipline slip:
+  caught myself starting a pointless async-probe edit twice — reverted
+  both, did the real work read-first. Suite 534->536; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
