@@ -1573,6 +1573,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   arms had ZERO pins. Added 1 in plugins.test.mjs: ok shapes +
   upstream-401 shape. Suite 467->468; gates clean; snapshot updated;
   pushed.
+  ROUND-451 (2026-09-06): register-limiter audit — the 429 arm had ZERO
+  pins. Added 1 in plugins.test.mjs: 30×400 then 429 on a fresh
+  per-IP bucket. Self-caught: garbage invite is 400 here (403 is the
+  devices self-register path). Suite 468->469; gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
