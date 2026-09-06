@@ -242,12 +242,10 @@ jobs:
         run: npm test
         working-directory: index
 
-  # studio API contract tests — black-box spawn of the real server
-  # (test/api.test.mjs). Mirrors build.sh studio: full install (the
-  # monaco/xterm browser assets are devDeps that get VENDORED into
-  # gitignored vendor/ — test 17 fetches them, so --omit=dev breaks it),
-  # --ignore-scripts skips the node-pty native build (server falls back
-  # to script(1)), then vendor, then test.
+  # satellite proxy behavior suites (CORS/gates/BYOK/protocol conversion)
+  # + wrangler dry-run per worker + the vercel-proxy syntax gate below.
+  # (Studio retired 2026-09-06, ADR 0006 — its contract-test comment block
+  # that sat here was removed; the suite lives in git history.)
   proxies:
     name: proxies (node --test + wrangler dry-run)
     runs-on: ubuntu-latest

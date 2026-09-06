@@ -1,6 +1,6 @@
 # Vale Architecture — layering snapshot
 
-> Status: maintained ｜ Last full review: 2026-09-06 (fsapi coverage refresh) ｜ Scope: the whole repo
+> Status: maintained ｜ Last full review: 2026-09-06 (round-354 snapshot-vs-tree audit) ｜ Scope: the whole repo
 >
 > Single-page map of every module's boundary verdict. Each entry carries the
 > evidence (file-header note, ADR, or audit round). When a boundary verdict
@@ -16,11 +16,11 @@ extension ────►   │                               └─ proxies: ze
 vale CLI ─────►   │
                   ▼
 devices (Windows) ◄── cloudflared tunnel (agent-supervised, free path)
-  ├─ vale-agent (Rust): web/ + mcp + plugins (terminal/playwright/memory/update)
+  ├─ vale-agent (Rust): web/ + mcp + plugins (terminal 26 / memory 6 / system 9 / mcp-client 4 / playwright 2 / update 1 / design 1 = 49 tools)
   └─ vale-desktop-electron: CDP 9333 + control 9444 + tray/watchdog
 
 install/update: npm tgz ONLY (vale-dist worker; one-time file drop = R2 + TempClaimDO)
-studio (pm2, code.saisi.online): code/term/git workspace for the human + extension deep links
+~~studio~~ RETIRED 2026-09-06 (ADR 0006) — code-server behind Access (vscode.saisi.online) is the code-viewing surface; zero tracked files remain under studio/ (untracked node_modules/test/vendor leftovers only)
 ```
 
 ## Directory contracts (the placement rules)
@@ -49,6 +49,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | agent vale-command-core | the contract crate (Plugin/ToolDef/Config/EventBus); canonical import `vale_agent_core::`; tokio-util CancellationToken is the MCP layer's vocabulary (kept, documented) | lib.rs (29c2a575, a64c32d2) |
 | agent paths.rs | single path-resolution truth, OnceLock-cached (boot-invariant) | 584c7669 |
 | agent register.rs / mcp/server.rs | register.rs is a pure-planning seam (network lives in main.rs); mcp/server.rs is a thin rmcp↔registry adapter with the full hardening set (round-118/123/124, panic isolation) — correctly layered | ece266d4 review |
+| agent winmain.rs | Windows-only boot plumbing (self-heal, child-reaper job, SCM service, tunnel supervisor) behind `#![cfg(windows)]`; main.rs keeps only `winmain::…` call sites. SCM dispatch wrapped as `started_by_scm()` (the macro-generated fn can't carry visibility); Linux test/clippy never compile this file — xwin check is its gate | header note (d35873b0, round-351) |
 | agent TerminalManager | 1071-line session orchestration over 3 backends — size inherent to owning PTY/SSH/serial lifecycles with the documented lock discipline (round-92/94/55); a split would scatter the lock policy | ece266d4 review |
 | agent state.rs | write-through ConfigHandle: file before swap under one guard (ADR 0005) | c579b311 |
 | index single file | appropriate at current size; page template + claim logic extracted | 81b1c40f |
@@ -57,11 +58,11 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 
 ## Foundation layers (features build on these; changes run every downstream gate)
 
-- **gateway**: http.ts, auth.ts (safeEq/randomHex/HMAC/CSRF), session.ts, reliability.ts, upstream.ts, channels.ts, body-scan.ts, store/cache.ts, lib/ratelimit.ts, mcp-errors.ts
+- **gateway**: http.ts, auth.ts (safeEq/randomHex/HMAC/CSRF), session.ts, reliability.ts, upstream.ts, channels.ts, body-scan.ts, device-fetch.ts (device dialing + SSRF guard stack), store/cache.ts, lib/ratelimit.ts, mcp-errors.ts
 - **agent**: vale-command-core, paths.rs, state.rs ConfigHandle, web/ helpers, session_log.rs (audit trail), bounded subprocess runners
-- **studio**: lib/fsapi.mjs (path safety/atomic writes/git), lib/auth.mjs, lib/pty.mjs, lib/watch.mjs, lib/terminals.mjs
+- ~~studio~~: RETIRED with the code (ADR 0006) — lib/fsapi.mjs, lib/auth.mjs, lib/pty.mjs, lib/watch.mjs, lib/terminals.mjs live in git history only
 - **vale CLI**: boundedFetch — every network call goes through it (6cd81347)
-- **test harnesses**: gateway test/helpers.mjs, studio test/helpers.mjs, proxies per-file stubs
+- **test harnesses**: gateway test/helpers.mjs, proxies per-file stubs (studio test/helpers.mjs retired with the code)
 
 ## Documented trade-offs (deliberate, not defects)
 
@@ -72,7 +73,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | keys/reveal returns the full key to a session | session holders can already rotate/clear; explicit-intent counterpart to the masked list (6c034e44) |
 | Device-proxy console-origin HTML can read console APIs | round-133/134 accepted limitation — the sandbox alternative breaks the panel |
 | Muse defaults to the Vercel exit | CF egress fails zen's Meta RegionError; only Vercel's ORD edge verified (proxies/README.md) |
-| Studio WS/e2e tests are live-only | real PTY + browser deps; CI runs the HTTP contract tier (README tiering) |
+| ~~Studio WS/e2e tests are live-only~~ | retired with the code (ADR 0006) — was: real PTY + browser deps; CI ran the HTTP contract tier |
 | Electron main.ts not split further | no testability gain — electron is unimportable under plain node |
 | code-server replaces studio (2026-09-06, ADR 0006) | Monaco ceiling + whole-home workspace need; live on vscode.saisi.online → 127.0.0.1:7739 with password + Access double gate (the tunnel is DASHBOARD-managed; its remote config evolved: socket → 7739 HTTP by the operator) |
 
@@ -81,9 +82,9 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | Subproject | Gate | Count (2026-09-06) |
 |---|---|---|
 | gateway | tsc + eslint(src+ui) + prettier + node --test | 295 |
-| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 221 |
+| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 233 (197 lib + 27 + 2 + 6 + 1 integration; 201 lib feat-gated) |
 | proxies (×3) | node --test behavior suites + wrangler dry-run | 26 |
-| studio | node --test (api/terms/terms-readonly/fsapi/hub; e2e live-only) | 44 |
+| ~~studio~~ | retired (ADR 0006); CI studio job dropped, suite lives in git history | — |
 | electron | node --test (url-policy) + tsc build | 4 |
 | extension | node --check all JS | — |
 | release chain | release-lib regression + bin/electron freshness + tgz content gate + fail-closed smoke/reconcile | 11 checks |
