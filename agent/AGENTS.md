@@ -918,6 +918,18 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Self-caught mid-round: a truncated edit fragment (fixed immediately) and
   clippy derivable_impls on the manual Default (derived instead). OPEN
   (later round): memory limits not yet in GET/PUT /api/settings panel GUI.
+  ROUND-358 (2026-09-06): closed the round-357 OPEN item — memory capacity
+  editable in Settings end to end. Agent: MemoryStore.limits behind RwLock
+  (+limits()/set_limits() with documented no-nesting lock order), GET
+  reports memory_max_entries/_bytes_mb/_retention_days, PUT accepts the
+  same keys (absent = unchanged, 0/null/"" clears retention) with live
+  retune + config.yaml persist in one step; web test covers roundtrip +
+  clear + restore (sole-writer discipline, restores shared defaults).
+  Panel: Memory card gains 3 inputs + validated Save (PUTs retention null
+  when cleared), GET prefill, copy updated; new SettingsPage.test.tsx 3/3.
+  Matrix: agent lib 202, clippy x2 + fmt + xwin clean, panel 93/93 (17
+  files) + build clean incl. committed panel.js; snapshot 237->238.
+  Round-7 CI (memory wiring) SUCCESS on GitHub.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
