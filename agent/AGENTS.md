@@ -866,6 +866,20 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   gateway/ui build + render smoke + devices render smoke OK, tree clean
   after builds. Combined with rounds 350-352 (agent 197/201 + xwin,
   gateway 295 + gates), ALL CI jobs now have a same-day local green.
+  ROUND-354 (2026-09-06): ARCHITECTURE.md snapshot-vs-tree audit — 6 drift
+  items fixed: +winmain.rs verdict row (A7 never updated the snapshot, rule
+  breach), +device-fetch.ts to the gateway foundation list (5a54a804 only
+  updated AGENTS/CLAUDE), studio retirement leftovers (overview line,
+  foundation row, harness row, trade-off row, gate count all still
+  described it as live; studio/ has zero tracked files), agent gate count
+  221->233 (197 lib + 27 + 2 + 6 + 1), plugin breakdown 49 tools in the
+  overview, orphaned studio comment in ci.yml above the proxies job.
+  BONUS CATCH from mirroring the pack-chain job locally: npm-package
+  electron copies of main.js/url-policy.js were STALE — missing the
+  parsed-origin tripwire fix + portBusy probe (a security fix devices
+  would never have received via vale update, which swaps these files).
+  Synced from the tsc-fresh src/ copies; release-lib 11/11, bin marker +
+  freshness + pack 6/6 all OK.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
