@@ -951,6 +951,16 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   prettier clean; snapshot count updated. Round-9 CI SUCCESS on GitHub.
   Tooling note: a heredoc append silently went nowhere once this round —
   file-tool edits only for test appends from now on.
+  ROUND-361 (2026-09-06): device-proxy domain audit — deviceHostError IP
+  forms had 5 tests but deviceFetch ITSELF (the round-120/121 SSRF fix:
+  authority-prefix gate, hostname-equality, header hygiene) had zero
+  direct tests (only indirect mcp-handler exercise). Added 7 in
+  device-fetch.test.mjs via a globalThis.fetch stub (works through
+  fetchWithTimeout): @evil + scheme → 400 with upstream never called,
+  query-@ passes verbatim (round-121 narrowing), host/cookie stripped +
+  device Bearer injected + other headers pass, uppercase registration
+  hostname dials, private hostname 400, unreachable → 502 with reason.
+  Suite 299->306, tsc/eslint/prettier clean; snapshot count updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
