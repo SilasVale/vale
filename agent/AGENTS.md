@@ -1366,6 +1366,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   stale draft — reverted immediately, verify-exists-before-write from
   now on. Panel 107->116 (20->21 files); rebuilt, panel.js identical;
   pushed.
+  ROUND-416 (2026-09-06): panel TabBar audit — tab activate/export/
+  close-confirm/view-switch had ZERO tests. Added 5: closed-tab no-op
+  + honest title, export stopPropagation, two-step close arm/execute/
+  cancel, no close affordance for savedOnly/closed, view-switch gated
+  on active session. Panel 116->121 (21->22 files); rebuilt, panel.js
+  identical; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
