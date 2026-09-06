@@ -1502,6 +1502,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   test/helpers.mjs as a pseudo-test and now discovers ui/test/ — 447 =
   445 files + helpers + ui. True file sum HEAD 443 -> 445 (+2 mine).
   Snapshot updated; pushed.
+  ROUND-438 (2026-09-06): register-route audit — POST /api/auth/register
+  had ZERO route pins (store-level createUser covered, handler not).
+  Added 2 in plugins.test.mjs: invite→200 + cookie + login roundtrip,
+  bad-invite/short-pw/duplicate→400, no-secret→500 fail-closed. Rate
+  budget checked (16 < 30/min shared IP bucket). Suite 447->449
+  (counting model from 437 holds exactly); gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
