@@ -1681,6 +1681,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   the next test's seed). Added 1 in security-fixes.test.mjs, freshEnv now
   calls __resetSeedForTests. Suite 512->513; gates clean; snapshot
   updated; pushed.
+  ROUND-478 (2026-09-06): coverage-table audit — translate.ts lowest at
+  76.5%. Pinned the stream-ignored arms in gateway.test.mjs: JSON
+  upstream → one-shot SSE, error envelope → 502. Lesson: no exploratory
+  edits (a no-op probe merged lines again — reverted, then read-then-
+  edit). Suite 513->515; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
