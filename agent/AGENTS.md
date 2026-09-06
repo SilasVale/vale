@@ -1202,6 +1202,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   all managed keys (unmanaged never appear), registration fail-closed
   chain (name/password/duplicate/invite). Suite 348->354;
   tsc/eslint/prettier clean; snapshot updated.
+  ROUND-391 (2026-09-06): regkeys/settings edges audit — create shape/
+  TTL, delete edges, listRegKeys live-filter, globalSettingEnabled
+  matrix unpinned. Added 4 (TTL opts captured, empty/keyless no-ops,
+  expired-but-unreaped filtered via _expiry backdate, on/off matrix).
+  Self-caught a whitespace-merge slip mid-round (reverted clean, tree
+  verified). Suite 354->358; tsc/eslint/prettier clean; snapshot
+  updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
