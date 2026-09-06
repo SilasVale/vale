@@ -48,22 +48,12 @@ pub(crate) fn serve_panel_file(file: &str, content_type: &'static str) -> Respon
             )
         }
     };
-    // Version-query the bundle URLs on the HTML: Cloudflare overrides our
-    // no-cache with Browser-Cache-TTL 4h for .js/.css, so after an update
-    // browsers kept running the PREVIOUS panel for hours (blank page if it
-    // was a broken build). Per-release query strings give each build a
-    // distinct cache key; the ?v= is stripped below before whitelist match.
-    let html_ver = if file == "index.html" {
-        Some(env!("CARGO_PKG_VERSION"))
+    // The host page carries content-hash bundle URLs (each panel rebuild is
+    // a distinct cache key); the raw assets serve byte-identical.
+    let body = if file == "index.html" {
+        Body::from(apply_bundle_hash(body))
     } else {
-        None
-    };
-    let body = match html_ver {
-        Some(ver) => Body::from(
-            body.replacen("panel.css", &format!("panel.css?v={ver}"), 1)
-                .replacen("panel.js", &format!("panel.js?v={ver}"), 1),
-        ),
-        None => Body::from(body),
+        Body::from(body)
     };
     let mut resp = built_response(StatusCode::OK, content_type, body);
     resp.headers_mut().insert(
@@ -71,6 +61,31 @@ pub(crate) fn serve_panel_file(file: &str, content_type: &'static str) -> Respon
         axum::http::HeaderValue::from_static("no-cache"),
     );
     resp
+}
+
+/// Content hash of the served panel bundle (`panel.js` + `panel.css`),
+/// computed at compile time by `agent/build.rs` (FNV-1a-64, 16 hex chars).
+/// Every panel rebuild yields a new value even when the Cargo crate version
+/// (frozen at 1.0.x while the npm release rides 1.2.x) does not — the old
+/// `?v=<crate-version>` key never changed between releases, so Cloudflare's
+/// 4h Browser-Cache-TTL override for .js/.css kept serving the PREVIOUS
+/// panel for hours after an update.
+pub(crate) fn panel_bundle_hash() -> &'static str {
+    env!("PANEL_BUNDLE_HASH")
+}
+
+/// Stamp the bundle URLs in the served `index.html` with the content hash.
+/// Cloudflare overrides our no-cache with Browser-Cache-TTL 4h for .js/.css,
+/// so after an update browsers kept running the PREVIOUS panel for hours
+/// (blank page if it was a broken build). A content-hash query string gives
+/// each build a distinct cache key; the `?v=` is stripped before whitelist
+/// matching on the asset routes. Exactly one replacement per bundle — the
+/// vendor `xterm.css` link carries no `?v=` (third-party, changes with the
+/// bundle rebuild) and must be left untouched.
+pub(crate) fn apply_bundle_hash(html: &str) -> String {
+    let ver = panel_bundle_hash();
+    html.replacen("panel.css", &format!("panel.css?v={ver}"), 1)
+        .replacen("panel.js", &format!("panel.js?v={ver}"), 1)
 }
 
 pub(crate) fn panel_content_type(file: &str) -> &'static str {
@@ -98,7 +113,10 @@ pub(crate) fn panel_token_response(token: &str) -> Response {
         .replace('<', "\\u003c")
         .replace('>', "\\u003e");
     let inject = format!("<script>window.__PANEL_TOKEN__={escaped};</script>");
-    let html = include_str!("../../resources/panel/index.html").replacen(
+    // Same content-hash bundle URLs as the plain panel path above: this
+    // no-store page is always fresh, but without `?v=` its subresources
+    // would still resolve to the 4h-cached PREVIOUS bundle after an update.
+    let html = apply_bundle_hash(include_str!("../../resources/panel/index.html")).replacen(
         "</head>",
         &format!("{inject}</head>"),
         1,

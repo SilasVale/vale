@@ -6,6 +6,147 @@
 //! single child; this module rewrites tunnel.yml and signals the restart via
 //! [`crate::tunnel_ctl`].
 
+use sha2::{Digest, Sha256};
+use std::path::Path;
+
+// ── Pinned cloudflared release (on-demand download integrity) ────────────
+//
+// The agent downloads cloudflared.exe on demand, but ONLY when
+// InstallDir\tools\cloudflared.exe is absent. NOTE (verified 2026-09-06):
+// the published npm tgz currently boxes NO binary (1.2.297 tgz holds only
+// the exe + electron shell + vale.js), so THIS download is the live channel
+// devices actually use — `vale setup` / `agent_update`'s boxed-staging arms
+// are dormant until the release flow packs the binary. That makes the pin
+// below load-bearing, not belt-and-braces: a wrong constant breaks ALL
+// tunnel provisioning, so it was measured against the exact bytes the
+// gateway proxy serves (see CLOUDFLARED_SHA256). The old gate — a
+// versionless `latest` URL plus a "bigger than 1MB" size check — is NOT an
+// integrity story: upstream can ship new bytes under the same URL at any
+// time, and a compromised proxy would hand us an executable we then run at
+// SYSTEM. So the download
+// is pinned AND hash-gated, mirroring `agent_update`'s ver&&sha double bar
+// (round-119): a versioned immutable URL + a sha256 constant, verified
+// BEFORE the bytes are written or executed. ANY mismatch fails CLOSED
+// (clear error string + error log, no write, no spawn).
+//
+// HOW TO UPDATE THE PIN (release flow — do all three together):
+//   1. On a trusted machine, download the versioned asset for the new
+//      release and record its hash:
+//        curl -sL -o cloudflared-windows-amd64.exe \
+//          https://github.com/cloudflare/cloudflared/releases/download/<NEW_VERSION>/cloudflared-windows-amd64.exe
+//        sha256sum cloudflared-windows-amd64.exe
+//   2. Set CLOUDFLARED_VERSION to <NEW_VERSION> and CLOUDFLARED_SHA256 to the
+//      hash below.
+//   3. If the release flow boxes the binary (gitignored staging file
+//      `agent/vale-agent-npm/cloudflared.exe`, packed into the tgz),
+//      stage the EXACT same bytes and confirm `cloudflared --version`
+//      prints the pinned version (today the tgz carries no binary, so
+//      this step is a no-op — the download path below is the channel).
+//   4. `cargo test` — the unit tests below cover match, mismatch-rejection,
+//      and the versioned-URL shape; `cargo clippy -- -D warnings` must stay
+//      clean.
+///
+/// Pinned cloudflared release (`main.Version=2026.8.3`,
+/// `BuildTime=2026-08-31T02:48 UTC` per its ldflags).
+const CLOUDFLARED_VERSION: &str = "2026.8.3";
+/// sha256 of the pinned `cloudflared-windows-amd64.exe` asset, measured
+/// 2026-09-06 from the bytes the gateway proxy serves TODAY (the proxy
+/// streams the upstream `latest` asset unmodified, so this equals the
+/// versioned-asset bytes while `latest` stays 2026.8.3). Re-measure per the
+/// steps above whenever CLOUDFLARED_VERSION moves — a stale pin fails CLOSED
+/// (that refusal IS the drift signal, not a bug).
+const CLOUDFLARED_SHA256: &str = "83e726ed18ea78c5ad5213c4c3a3a27051393950d2bc8ed4de69bec12d14eaae";
+
+/// Immutable upstream asset for the pinned release (GitHub release assets
+/// never change under a versioned path — unlike `.../releases/latest/...`).
+fn cloudflared_download_url() -> String {
+    format!(
+        "https://github.com/cloudflare/cloudflared/releases/download/{CLOUDFLARED_VERSION}/cloudflared-windows-amd64.exe"
+    )
+}
+
+/// Reachability fallback for devices where GitHub is blocked (GFW etc.) —
+/// the pre-existing gateway proxy of the official release. STILL hash-gated:
+/// it tracks `latest`, so once upstream moves past the pin a proxied
+/// download fails CLOSED with the mismatch log below (the signal to run the
+/// HOW-TO-UPDATE steps above), exactly like a tampered binary would.
+const CLOUDFLARED_PROXY_URL: &str = "https://agent.saisi.online/vale-agent/cloudflared.exe";
+
+/// Lowercase hex encoding (sha256 digest display/comparison — same shape as
+/// the update plugin's helper; kept local so this module has no cross-plugin
+/// coupling).
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// True only when `bytes` hash to `expected_hex`. Malformed expectations
+/// (wrong length, non-hex) NEVER match — fail closed, never fail open.
+pub(crate) fn verify_cloudflared_bytes(bytes: &[u8], expected_hex: &str) -> bool {
+    if expected_hex.len() != 64 || !expected_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    hex_encode(&Sha256::digest(bytes)).eq_ignore_ascii_case(expected_hex)
+}
+
+/// Download one candidate URL and gate it: 2xx + sane size + pinned sha256.
+/// Err carries the human-readable reason (surfaced in the API status string
+/// and the error log — an operator must see WHY provisioning refused).
+async fn download_and_verify(client: &reqwest::Client, url: &str) -> Result<bytes::Bytes, String> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    let resp = resp
+        .error_for_status()
+        .map_err(|e| format!("bad status: {e}"))?;
+    let bytes = resp.bytes().await.map_err(|e| format!("read error: {e}"))?;
+    if bytes.len() <= 1_000_000 {
+        return Err(format!("unexpected small payload ({} bytes)", bytes.len()));
+    }
+    if !verify_cloudflared_bytes(&bytes, CLOUDFLARED_SHA256) {
+        tracing::error!(
+            "[vale-agent] provision_tunnel: cloudflared sha256 MISMATCH from {url} \
+             (want pinned {CLOUDFLARED_VERSION} {CLOUDFLARED_SHA256}, got {}) — \
+             refusing unverifiable binary (no write, no spawn)",
+            hex_encode(&Sha256::digest(&bytes)),
+        );
+        return Err("sha256 mismatch — refusing unverifiable binary".to_string());
+    }
+    Ok(bytes)
+}
+
+/// Write already-verified bytes into place (atomic: a kill mid-write must not
+/// leave a half-written exe that the supervisor would then spawn). The hash
+/// is re-checked here so NO caller can stage unverified bytes by accident —
+/// production passes CLOUDFLARED_SHA256; tests pass their fixture digest.
+pub(crate) fn write_verified_bytes(
+    dest: &Path,
+    bytes: &[u8],
+    expected_sha256_hex: &str,
+) -> Result<(), String> {
+    if !verify_cloudflared_bytes(bytes, expected_sha256_hex) {
+        tracing::error!(
+            "[vale-agent] provision_tunnel: refusing to write {} — \
+             integrity check failed (no write performed)",
+            dest.display(),
+        );
+        return Err(
+            "cloudflared integrity check failed — refusing unverifiable binary".to_string(),
+        );
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("tools dir create failed: {e}"))?;
+    }
+    crate::bootstrap::atomic_write(dest, bytes)
+        .map_err(|e| format!("cloudflared download write failed: {e}"))?;
+    Ok(())
+}
+
 /// Provision the free cloudflared tunnel from the Settings-page Gateway card:
 /// login with the token, create the tunnel, route DNS, write tunnel.yml, and
 /// spawn cloudflared (agent-owned, spawn-if-absent model). Returns a status
@@ -14,16 +155,14 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
     let install_dir = crate::paths::install_dir();
     let cf = install_dir.join("tools").join("cloudflared.exe");
     if !cf.exists() {
-        // cloudflared is NOT bundled (the npm package stays small) — download
-        // the official Windows binary on demand (same source the installer
-        // used; ~54MB, one-time).
+        // tools\cloudflared.exe absent (the boxed tgz binary normally covers
+        // this) — download the PINNED official Windows binary on demand
+        // (one-time). Pinned version + sha256 (see the constants above): the
+        // bytes are verified BEFORE they are written or executed, mirroring
+        // agent_update's ver&&sha bar. Fail closed on any mismatch.
         tracing::info!(
-            "[vale-agent] provision_tunnel: downloading cloudflared via the gateway proxy"
+            "[vale-agent] provision_tunnel: downloading pinned cloudflared {CLOUDFLARED_VERSION}"
         );
-        // Download through the vale-gate proxy (agent.saisi.online) — the
-        // device can reach our worker even when GitHub is blocked (GFW etc.).
-        // The worker streams the official GitHub release back to us.
-        let url = "https://agent.saisi.online/vale-agent/cloudflared.exe";
         let client = match reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()
@@ -31,26 +170,38 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
             Ok(c) => c,
             Err(_) => return "cloudflared download client build failed".to_string(),
         };
-        let resp = match client.get(url).send().await {
-            Ok(r) => r,
-            Err(_) => {
-                return "cloudflared download failed (official GitHub release unreachable)"
-                    .to_string()
+        // Versioned upstream first; the gateway proxy (same host the old
+        // code used) as the reachability fallback. EVERY candidate is
+        // hash-gated inside download_and_verify — an unverified binary can
+        // never reach the write below.
+        let mut verified: Option<bytes::Bytes> = None;
+        let mut last_err = String::new();
+        for url in [
+            cloudflared_download_url(),
+            CLOUDFLARED_PROXY_URL.to_string(),
+        ] {
+            match download_and_verify(&client, &url).await {
+                Ok(b) => {
+                    verified = Some(b);
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[vale-agent] provision_tunnel: cloudflared candidate failed ({url}): {e}"
+                    );
+                    last_err = format!("{url}: {e}");
+                }
             }
-        };
-        let bytes = match resp.bytes().await {
-            Ok(b) => b,
-            Err(_) => return "cloudflared download failed (read error)".to_string(),
-        };
-        if bytes.len() <= 1_000_000 {
-            return "cloudflared download failed (unexpected small payload)".to_string();
         }
-        let _ = std::fs::create_dir_all(install_dir.join("tools"));
-        if std::fs::write(&cf, &bytes).is_err() {
-            return "cloudflared download write failed".to_string();
+        let bytes = match verified {
+            Some(b) => b,
+            None => return format!("cloudflared download failed ({last_err})"),
+        };
+        if let Err(e) = write_verified_bytes(&cf, &bytes, CLOUDFLARED_SHA256) {
+            return e;
         }
         tracing::info!(
-            "[vale-agent] provision_tunnel: cloudflared downloaded ({} bytes)",
+            "[vale-agent] provision_tunnel: cloudflared {CLOUDFLARED_VERSION} verified (sha256 ok, {} bytes)",
             bytes.len()
         );
     }
@@ -313,5 +464,103 @@ async fn update_remote_config(cf_token: &str, tunnel_id: &str, hostname: &str) {
         Err(_) => {
             tracing::warn!("[vale-agent] provision_tunnel: remote config update failed (network)")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// sha256("abc") — FIPS vector. Hardcodes the digest so the hex-encode +
+    /// compare path is NOT tautological (a test that recomputes the expected
+    /// with the same code could never catch an encoding bug).
+    const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    #[test]
+    fn verify_accepts_exact_digest() {
+        assert!(verify_cloudflared_bytes(b"abc", ABC_SHA256));
+    }
+
+    #[test]
+    fn verify_is_case_insensitive_on_hex() {
+        assert!(verify_cloudflared_bytes(b"abc", &ABC_SHA256.to_uppercase()));
+    }
+
+    #[test]
+    fn verify_rejects_tampered_and_malformed() {
+        // One-bit payload change.
+        assert!(!verify_cloudflared_bytes(b"abd", ABC_SHA256));
+        // All-zero digest (wrong value, right shape).
+        assert!(!verify_cloudflared_bytes(
+            b"abc",
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        ));
+        // Malformed expectations fail CLOSED, never open.
+        assert!(!verify_cloudflared_bytes(b"abc", ""));
+        assert!(!verify_cloudflared_bytes(b"abc", "not-hex"));
+        assert!(!verify_cloudflared_bytes(b"abc", &ABC_SHA256[..63]));
+    }
+
+    #[test]
+    fn pinned_constants_are_well_formed() {
+        // A malformed constant would fail CLOSED on every provision (brick
+        // the tunnel path) — pin the shape here so a bad edit fails `cargo
+        // test`, not a device at midnight.
+        assert!(!CLOUDFLARED_VERSION.is_empty());
+        assert!(!CLOUDFLARED_VERSION.contains("latest"));
+        assert_eq!(CLOUDFLARED_SHA256.len(), 64);
+        assert!(CLOUDFLARED_SHA256.bytes().all(|b| b.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn download_url_is_versioned_and_immutable() {
+        let url = cloudflared_download_url();
+        assert!(
+            url.contains(CLOUDFLARED_VERSION),
+            "versioned URL must name the pin: {url}"
+        );
+        assert!(
+            url.ends_with("cloudflared-windows-amd64.exe"),
+            "official asset name: {url}"
+        );
+        assert!(!url.contains("latest"), "never the mutable latest: {url}");
+    }
+
+    fn test_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("vale-tunnel-cf-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn write_rejects_tampered_bytes_without_touching_disk() {
+        let dir = test_dir("reject");
+        let dest = dir.join("tools").join("cloudflared.exe");
+        let err = write_verified_bytes(&dest, b"tampered-bytes", ABC_SHA256).unwrap_err();
+        assert!(
+            err.contains("integrity check failed"),
+            "clear fail-closed message: {err}"
+        );
+        assert!(!dest.exists(), "mismatched bytes must never be written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_stores_verified_bytes_intact() {
+        // Happy path: the expected digest is the TRUE digest of the fixture
+        // (computed with sha2 directly — this test covers the write + the
+        // verify-then-write wiring, while verify_* above covers the digest
+        // itself against the hardcoded FIPS vector).
+        let dir = test_dir("accept");
+        let dest = dir.join("tools").join("cloudflared.exe");
+        let fixture = b"vale-test-cloudflared-fixture-bytes";
+        let expected = hex_encode(&Sha256::digest(fixture));
+        write_verified_bytes(&dest, fixture, &expected).expect("matching bytes must stage");
+        assert_eq!(
+            std::fs::read(&dest).expect("staged file readable"),
+            fixture,
+            "staged bytes must equal the verified download"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

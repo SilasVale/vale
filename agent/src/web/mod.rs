@@ -1102,6 +1102,7 @@ fn api_spec(state: &AppState) -> serde_json::Value {
 }
 #[cfg(test)]
 mod tests {
+    use super::panel::{apply_bundle_hash, panel_bundle_hash};
     use super::*;
     use crate::state::AppState;
     use axum::http::Request;
@@ -1300,6 +1301,80 @@ mod tests {
         // Static asset route: /desktop/panel.js serves the bundle.
         let r = handle_request(req_with_host("/desktop/panel.js", "127.0.0.1:18080"), st).await;
         assert_eq!(r.status(), StatusCode::OK, "desktop panel.js must serve");
+    }
+
+    // ── Panel bundle cache key (content hash, not crate version) ──────
+    //
+    // Cloudflare overrides no-cache with a 4h Browser-Cache-TTL for .js/.css:
+    // the `?v=` on the bundle URLs is the ONLY thing that retires the old
+    // panel after an update, so both serve paths (plain + token-injected)
+    // must stamp the SAME content hash.
+
+    #[test]
+    fn bundle_hash_is_content_key_not_crate_version() {
+        // The cache key must move with panel rebuilds, not with the Cargo
+        // version (frozen at 1.0.x while the npm release rides 1.2.x — the
+        // old `?v=<crate-version>` never changed between releases).
+        let h = panel_bundle_hash();
+        assert_eq!(h.len(), 16, "FNV-1a-64 hex: {h}");
+        assert!(
+            h.chars().all(|c| c.is_ascii_hexdigit()),
+            "lowercase hex: {h}"
+        );
+        assert_ne!(h, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn apply_bundle_hash_stamps_once_and_spares_vendor() {
+        let html = r#"<link rel="stylesheet" href="vendor/xterm.css"><link rel="stylesheet" href="panel.css"><script type="module" src="panel.js"></script>"#;
+        let out = apply_bundle_hash(html);
+        let h = panel_bundle_hash();
+        assert!(out.contains(&format!("panel.css?v={h}")));
+        assert!(out.contains(&format!("panel.js?v={h}")));
+        assert!(
+            out.contains("vendor/xterm.css"),
+            "vendor link untouched: {out}"
+        );
+        assert!(!out.contains("xterm.css?v="), "no vendor stamp: {out}");
+        assert_eq!(
+            out.matches("?v=").count(),
+            2,
+            "exactly one stamp per bundle"
+        );
+    }
+
+    #[tokio::test]
+    async fn panel_plain_and_token_paths_carry_content_hash() {
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some(TEST_TOKEN.into());
+        let st = Arc::new(AppState::new(cfg));
+        let h = panel_bundle_hash();
+        // Plain panel (non-allowlisted host, no grant → no injection).
+        let r = handle_request(req_with_host("/panel/", "d1.example.com:18080"), st.clone()).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let html = String::from_utf8_lossy(&b);
+        assert!(
+            html.contains(&format!("panel.js?v={h}")),
+            "plain panel stamps js: {html}"
+        );
+        assert!(
+            html.contains(&format!("panel.css?v={h}")),
+            "plain panel stamps css: {html}"
+        );
+        // Token-injected panel (loopback) — same cache key shape + token.
+        let r = handle_request(req_with_host("/panel/", "127.0.0.1:18080"), st).await;
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        let html = String::from_utf8_lossy(&b);
+        assert!(html.contains("__PANEL_TOKEN__"));
+        assert!(
+            html.contains(&format!("panel.js?v={h}")),
+            "token panel stamps js: {html}"
+        );
+        assert!(
+            html.contains(&format!("panel.css?v={h}")),
+            "token panel stamps css: {html}"
+        );
     }
 
     // ── One-time panel grants (?grant=) ──────────────────────────────────
