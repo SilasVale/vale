@@ -1686,6 +1686,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   upstream → one-shot SSE, error envelope → 502. Lesson: no exploratory
   edits (a no-op probe merged lines again — reverted, then read-then-
   edit). Suite 513->515; gates clean; snapshot updated; pushed.
+  ROUND-479 (2026-09-06): vision audit — the or/ passthrough arms had ZERO
+  pins (only og/zen exercised). Added 2 in translate-vision.test.mjs:
+  no-key throw, !ok throw + success insert. Suite 515->517; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
