@@ -1442,6 +1442,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   3 in cors.test.mjs: shape + header merge, error envelope, valid/
   empty/invalid bodies. Suite 435->438; gates clean; snapshot updated;
   pushed.
+  ROUND-429 (2026-09-06): gateway registry audit — the MODELS whitelist
+  + health/US-proxy/route tables had ZERO structural pins (a typo'd id
+  misroutes silently). Added 5 in registry.test.mjs: unique/owned/
+  known-prefix ids, health cards ⊆ whitelist, US-proxy ⊆ whitelist,
+  priority coverage + https endpoints, ROUTE_INFO prefix cover. Suite
+  438->443; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
