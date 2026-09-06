@@ -52,8 +52,10 @@ Usage evidence gathered across the 2026-09 review rounds shifted the calculus:
 
 - One less pm2 process, one less test gate, one less surface in every security
   regression round; ARCHITECTURE.md drops the studio rows.
-- `code.saisi.online` (tunnel ingress → studio's 7780) is now dangling — remove its
-  public hostname in the dashboard at leisure; the DNS record dies with it.
+- `code.saisi.online` (tunnel ingress → studio's 7780) is now dangling — verified
+  post-retirement: it answers with its OWN Cloudflare Access login (302, separate
+  aud), so there is no unauthenticated exposure; an authenticated user sees an
+  origin error. Remove the public hostname + Access app in the dashboard at leisure.
 - The extension needs no tokens; the code-server password + Access SSO are entered in
   the browser once per session as usual.
 - Rollback: `git revert` this decision's commits and restore the studio tree from

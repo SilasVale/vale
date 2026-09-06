@@ -51,7 +51,7 @@ studio (pm2, code.saisi.online): code/term/git workspace for the human + extensi
 | agent state.rs | write-through ConfigHandle: file before swap under one guard (ADR 0005) | c579b311 |
 | index single file | appropriate at current size; page template + claim logic extracted | 81b1c40f |
 | extension | clean: no stale endpoints, least-privilege manifest, shared.js for constants | abb541ce review |
-| ~~studio~~ | RETIRED 2026-09-06 (ADR 0006): replaced by code-server behind Access (vscode.saisi.online → 127.0.0.1:7739, password + Access double gate); the extension deep-link target switched to code-server folder-open. Its 41-test suite and lib/ modules are preserved in git history | ADR 0006 |
+| ~~studio~~ | RETIRED 2026-09-06 (ADR 0006): replaced by code-server behind Access (vscode.saisi.online → 127.0.0.1:7739, password + Access double gate); the extension deep-link target switched to code-server folder-open. Its 41-test suite and lib/ modules are preserved in git history. Post-retirement sweep: code.saisi.online still resolves but is Access-gated with its own app (no unauthenticated exposure) | ADR 0006 |
 
 ## Foundation layers (features build on these; changes run every downstream gate)
 
