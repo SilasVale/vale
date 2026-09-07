@@ -1090,7 +1090,10 @@ async function handleGatewayImpl(
     }
     if (!upstream.ok) {
       let message = `Upstream ${upstream.status}`;
-      let type = "api_error";
+      // round-512: default by status BEFORE body sniffing (parity with the
+      // chat/completions + og-messages arms) — a non-JSON 429 collapsed to
+      // api_error told clients to give up instead of backing off.
+      let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
       let extra = {};
       try {
         const rawErr: any = await upstream.json();

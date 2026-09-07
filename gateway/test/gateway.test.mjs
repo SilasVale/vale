@@ -1994,3 +1994,19 @@ test("og chat/completions: upstream 500 with a text body keeps status + default 
   assert.equal(body.error.message, "Upstream 500");
   assert.equal(body.error.type, "api_error");
 });
+
+// round-512 (REAL FIND): the passthrough !ok arm had no status-based 429
+// default — a non-JSON 429 collapsed to api_error (give up) instead of
+// rate_limit_error (back off). One-line parity fix with the chat + og arms.
+// Self-caught×2: og failures take the translate branch; fast 500s aren't
+// retried — a retried ds 429 reaches this arm.
+test("ds passthrough: retried 429 with a text body keeps status + rate_limit type", async () => {
+  const { env, token } = gwEnv({ timeout: 1000 });
+  const res = await withFetch(async () => new Response("slow down", { status: 429 }), () =>
+    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+  );
+  assert.equal(res.status, 429);
+  const body = await res.json();
+  assert.equal(body.error.message, "Upstream 429");
+  assert.equal(body.error.type, "rate_limit_error");
+});
