@@ -760,12 +760,7 @@ async function handleGatewayImpl(
           : { timeoutMs: ogTimeoutMs(env) },
     );
     if (!upstream) {
-      // Slow-failure / in-band-failure path shared by every /v1
-      // arm (chat, responses, messages) — see
-      // upstreamFetchFailedResponse: status digits when the inspect
-      // failure is a real HTTP status, else 502, so classifiers see
-      // a transient, not fatal, error. og timeouts count toward the
-      // breaker there too.
+      // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
       return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
     }
     if (!upstream.ok) {
@@ -775,10 +770,7 @@ async function handleGatewayImpl(
       if (route.kind === "opencode" && isChannelDownFailure(detail)) {
         await recordChannelFailure(env);
       }
-      // Normalize the upstream error body — unwrap {"detail":{…}}, scrub
-      // keys, keep the upstream's own known error.type, carry
-      // Retry-After. Shared by every /v1 arm (was three copies that
-      // had to be walked to parity by hand, round-512).
+      // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
       return upstreamBodyErrorResponse(upstream);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
@@ -865,12 +857,7 @@ async function handleGatewayImpl(
       { timeoutMs: ogTimeoutMs(env) },
     );
     if (!upstream) {
-      // Slow-failure / in-band-failure path shared by every /v1
-      // arm (chat, responses, messages) — see
-      // upstreamFetchFailedResponse: status digits when the inspect
-      // failure is a real HTTP status, else 502, so classifiers see
-      // a transient, not fatal, error. og timeouts count toward the
-      // breaker there too.
+      // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
       return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
     }
     if (!upstream.ok) {
@@ -879,10 +866,7 @@ async function handleGatewayImpl(
       if (route.kind === "opencode" && isChannelDownFailure(detail)) {
         await recordChannelFailure(env);
       }
-      // Normalize the upstream error body — unwrap {"detail":{…}}, scrub
-      // keys, keep the upstream's own known error.type, carry
-      // Retry-After. Shared by every /v1 arm (was three copies that
-      // had to be walked to parity by hand, round-512).
+      // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
       return upstreamBodyErrorResponse(upstream);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
@@ -1056,19 +1040,11 @@ async function handleGatewayImpl(
           : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
     );
     if (!upstream) {
-      // Slow-failure / in-band-failure path shared by every /v1
-      // arm (chat, responses, messages) — see
-      // upstreamFetchFailedResponse: status digits when the inspect
-      // failure is a real HTTP status, else 502, so classifiers see
-      // a transient, not fatal, error. og timeouts count toward the
-      // breaker there too.
+      // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
       return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
     }
     if (!upstream.ok) {
-      // Normalize the upstream error body — unwrap {"detail":{…}}, scrub
-      // keys, keep the upstream's own known error.type, carry
-      // Retry-After. Shared by every /v1 arm (was three copies that
-      // had to be walked to parity by hand, round-512).
+      // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
       return upstreamBodyErrorResponse(upstream);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
