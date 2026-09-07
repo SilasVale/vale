@@ -908,3 +908,70 @@ fn spill_rotate_discard_past_end_removes_file() {
     assert!(crate::plugins::terminal::tools::ctx::rotate_spill(sid, 100));
     assert!(!p.exists(), "discard >= len must delete the file");
 }
+
+#[test]
+fn session_lost_empty_store_offers_reopen_hint() {
+    let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
+    let serial = Arc::new(SerialPool::new(115200, 1000));
+    let mgr = Arc::new(TerminalManager::new(serial.clone()));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let err = super::ctx::session_lost(&mgr, "term-none-1").await;
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Session not found: term-none-1"),
+            "must name the session: {msg}"
+        );
+        assert!(
+            msg.contains("(none — agent restarted? re-open with terminal_open)"),
+            "empty store must offer the reopen path: {msg}"
+        );
+        assert!(
+            format!("{err:?}").contains("InvalidParams"),
+            "must be InvalidParams: {err:?}"
+        );
+    });
+}
+
+#[test]
+fn session_lost_unknown_session_has_no_restart_note() {
+    let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
+    let serial = Arc::new(SerialPool::new(115200, 1000));
+    let mgr = Arc::new(TerminalManager::new(serial.clone()));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let err = super::ctx::session_lost(&mgr, "term-never-seen").await;
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("existed before the last agent restart"),
+            "no restart note for an unknown id: {msg}"
+        );
+    });
+}
+
+#[test]
+fn session_lost_pre_restart_record_explains_vanished_session() {
+    let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
+    let serial = Arc::new(SerialPool::new(115200, 1000));
+    let mgr = Arc::new(TerminalManager::new(serial.clone()));
+    // Inject the record into the process-wide pre-restart map IN MEMORY
+    // only (no disk writes anywhere): persist_pre_restart is the only
+    // disk writer and this test never calls it, so the real data dir
+    // stays untouched. Removed afterwards (sole-writer discipline).
+    let map = super::ctx::pre_restart_map();
+    map.lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert("term-gone-9".to_string(), serde_json::json!({}));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let err = super::ctx::session_lost(&mgr, "term-gone-9").await;
+        let msg = err.to_string();
+        assert!(
+            msg.contains("existed before the last agent restart - PTYs cannot survive restarts."),
+            "restart context must explain the vanished session: {msg}"
+        );
+    });
+    map.lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove("term-gone-9");
+}
