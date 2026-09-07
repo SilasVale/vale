@@ -2568,6 +2568,16 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   keep distinct messages inline. Gateway 592 pass; tsc/prettier clean;
   mirror synced.
 
+### 2026-09-08 SOLID round 35 (store/users key-map mutation skeleton)
+- **updateUserKeys (DRY, gateway store/users.ts)** — setUserKey and
+  deleteUserKey each inlined the same locked read-modify-write
+  skeleton (withKeyLock → getJSON → mutate → KV put + cache set →
+  return), differing only in the mutation line. Extracted
+  `updateUserKeys(env, id, mutate)`; both call it with a one-line
+  closure. Gateway 592 pass (user-key isolation tests cover the
+  paths); tsc/prettier clean. Store/ + admin + auth files all clean
+  after this.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
