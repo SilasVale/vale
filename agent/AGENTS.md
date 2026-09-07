@@ -1894,6 +1894,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   pins. Added 1 in reliability.test.mjs (garbage frame skipped, valid
   chunks + message_stop flow). Clean round. Suite 572->573; gates clean;
   snapshot updated; pushed.
+  ROUND-529 (2026-09-06): upstream audit — the install-cmd fetch-throw arm
+  had ZERO pins (only non-ok covered). Added 1 in devices.test.mjs
+  (throw → 200 null fallback). Phantom rule hardened: 409 path proven
+  executing in isolation yet still listed. Suite 573->574; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
