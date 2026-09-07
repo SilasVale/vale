@@ -423,6 +423,27 @@ test("toSSE: server_tool_use block emits input_json_delta (input defaults to {})
   assert.match(out, /"type":"input_json_delta","partial_json":"\{\}"/);
 });
 
+// round-520 (coverage-driven): the mid-stream death arm had ZERO pins — a
+// torn upstream must emit an error event, not a clean completed message.
+test("streamOgToAnthropic: upstream death after content emits an error event", async () => {
+  const { streamOgToAnthropic } = await import("../src/anthropic-translate.ts");
+  const enc = new TextEncoder();
+  let n = 0;
+  const dying = new ReadableStream({
+    pull(c) {
+      if (n++ === 0) {
+        c.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}\n\n'));
+      } else {
+        c.error(new Error("torn"));
+      }
+    },
+  });
+  const out = streamOgToAnthropic(dying, "og/m", "m");
+  const text = await new Response(out).text();
+  assert.match(text, /upstream stream died mid-response/);
+  assert.match(text, /event: error/);
+});
+
 test("stream encoder: cache hits from last chunk surface in message_start", () => {
   const enc = new AnthropicStreamEncoder("og/m", "m");
   enc.push({
