@@ -1881,3 +1881,24 @@ test("og translate stream:true, upstream 200 with garbage JSON → 502 invalid J
   assert.equal(res.status, 502);
   assert.match((await res.json()).error.message, /upstream returned invalid JSON/);
 });
+
+// round-506 (coverage-driven): the developer→system role normalization had
+// ZERO pins (zen/go rejects the developer role with [1214]).
+test("og chat/completions: developer role is normalized to system upstream", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  const res = await withFetch(async (url, init) => {
+    sent = JSON.parse(init.body);
+    return okChoices();
+  }, () => post(env, token, {
+    model: "og/deepseek-v4-flash",
+    messages: [
+      { role: "developer", content: "be brief" },
+      { role: "user", content: "hi" },
+    ],
+  }, "/v1/chat/completions"));
+  assert.equal(res.status, 200);
+  assert.ok(!JSON.stringify(sent.messages).includes('"developer"'));
+  assert.equal(sent.messages[0].role, "system");
+  assert.equal(sent.messages[0].content, "be brief");
+});
