@@ -13,6 +13,25 @@
  *   PUT    /route               → body { uid, model }   → { ok: true }
  *   DELETE /route?uid=xxx       → { ok: true }
  */
+
+/**
+ * DO external-address defense-in-depth, shared by every DO class (BreakerDO
+ * and RouteDO used to each carry a byte-identical copy). A Durable Object
+ * has its own external address even with workers_dev:false + no routes, so
+ * the main router's auth is not the last line. FAIL CLOSED (Auth-core audit
+ * MED-2): an unconfigured DO_AUTH must DENY every caller — never wave the
+ * gate open. Constant-time compare on the x-do-auth header.
+ */
+export function authorizeDoRequest(request: Request, expectedSecret: string): boolean {
+  const expected = expectedSecret || "";
+  if (!expected) return false;
+  const got = request.headers.get("x-do-auth") || "";
+  if (got.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
 export class RouteDO {
   state: any;
   env: any;
@@ -26,16 +45,7 @@ export class RouteDO {
   // router's auth is NOT the last line. When DO_AUTH is configured, any
   // request without the shared secret is rejected (constant-time compare).
   authorized(request: Request): boolean {
-    const expected = this.env?.DO_AUTH || "";
-    // Auth-core audit MED-2: FAIL CLOSED — a DO has its own external
-    // address; an unconfigured DO_AUTH must DENY every caller, not wave
-    // the route table gate open. Deploy: wrangler secret put DO_AUTH.
-    if (!expected) return false;
-    const got = request.headers.get("x-do-auth") || "";
-    if (got.length !== expected.length) return false;
-    let diff = 0;
-    for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
-    return diff === 0;
+    return authorizeDoRequest(request, this.env?.DO_AUTH || "");
   }
 
   async fetch(request: Request): Promise<Response> {

@@ -17,6 +17,7 @@
  * to the caller. Used by the SSE in-band error guard: an OpenRouter-style
  * upstream can accept the request (HTTP 200) and THEN fail inside the stream.
  */
+import { authorizeDoRequest } from "./route-do.ts";
 export interface RetryInspection {
   /** false → treat this 2xx as a failed attempt and run the retry ladder. */
   accepted: boolean;
@@ -263,18 +264,11 @@ export class BreakerDO {
     this.state = state;
     this.env = env;
   }
-  // DO external-address defense-in-depth (see RouteDO).
+  // DO external-address defense-in-depth (see RouteDO). Shared
+  // authorizeDoRequest helper (route-do.ts) — both DO classes used to
+  // carry byte-identical copies of this fail-closed constant-time check.
   authorized(request: Request): boolean {
-    const expected = this.env?.DO_AUTH || "";
-    // Auth-core audit MED-2: FAIL CLOSED — a DO has its own external
-    // address; an unconfigured DO_AUTH must DENY every caller, not wave
-    // the breaker gate open. Deploy: wrangler secret put DO_AUTH.
-    if (!expected) return false;
-    const got = request.headers.get("x-do-auth") || "";
-    if (got.length !== expected.length) return false;
-    let diff = 0;
-    for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
-    return diff === 0;
+    return authorizeDoRequest(request, this.env?.DO_AUTH || "");
   }
 
   async fetch(request: Request): Promise<Response> {
