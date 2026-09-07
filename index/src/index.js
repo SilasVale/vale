@@ -19,6 +19,19 @@ import { unavailableResponse } from "./claim.js";
 // helpers) lives in ./page.js — structure refactor, content verbatim.
 import { PAGE } from "./page.js";
 
+/// 413 envelope for uploads over the size cap — used by the claim
+/// upload's content-length precheck and its post-parse size check (the
+/// two checks used to inline the same Response construction).
+function tooLargeResponse(maxBytes) {
+  return new Response(
+    JSON.stringify({ error: `file too large (max ${maxBytes} bytes)` }),
+    {
+      status: 413,
+      headers: { "content-type": "application/json" },
+    },
+  );
+}
+
 // P2-9 helper: build a hardened Content-Disposition for an uploaded
 // filename. Strips quotes/backslashes/controls (header-split defence),
 // returns null when nothing survives (caller answers 400 — an illegal name
@@ -134,10 +147,7 @@ export default {
         }
         const declared = Number(declaredRaw);
         if (declared > MAX_BYTES + CL_MARGIN) {
-          return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), {
-            status: 413,
-            headers: { "content-type": "application/json" },
-          });
+          return tooLargeResponse(MAX_BYTES);
         }
         // A malformed framing (e.g. a quote-breaking filename) makes
         // formData() throw — answer 400, not the 500 catch-all below.
@@ -158,10 +168,7 @@ export default {
           });
         }
         if (file.size > MAX_BYTES) {
-          return new Response(JSON.stringify({ error: `file too large (max ${MAX_BYTES} bytes)` }), {
-            status: 413,
-            headers: { "content-type": "application/json" },
-          });
+          return tooLargeResponse(MAX_BYTES);
         }
         // P2-9: illegal filenames (nothing survives header sanitizing) are
         // rejected 400 here — never forwarded into the R2 put as a forged
