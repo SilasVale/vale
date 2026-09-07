@@ -1921,6 +1921,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   --test directly), npm CLI 3/3, extension node --check 3/3, vercel-proxy
   5/5 gate. All snapshot counts confirmed current. No code changes —
   pure verification round.
+  ROUND-535 (2026-09-07): flake watch closed — round-533's one-off
+  feat-gated failure never reproduced: 5x lib + 2x full feat-gated runs
+  all green (298 lib + 5 + 27 + 2 + 7 + 1 each). 11 consecutive greens
+  since the single failure; verdict = cold-build environment noise, not
+  a product flake. No code changes — verification round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
