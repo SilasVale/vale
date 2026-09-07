@@ -3229,6 +3229,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   result flattening + screenshot refs, memory store — every pure-logic
   layer reached in the recent extraction rounds has direct pins.
 
+### 2026-09-08 SOLID round 80 (round-80 matrix snapshot)
+- **Verification round (no code changes)** — round-80 milestone.
+  Top-level agent test-distribution census: web/mod.rs 35, tunnel 12,
+  session_log 11, bootstrap 9, paths 8, sse/panel/state/mcp-server 7
+  each, filelog 7, main 6, metrics 4 — only winmain.rs is 0 (pure
+  cfg(windows) service code — platform-restricted, cannot run on the
+  Linux dev box; acceptable and recorded). FULL matrix re-verified in
+  one pass: agent full suite 365 (incl. integration), feature 330,
+  zen-us 8, zen-go 12, index 56, CLI 9, gateway 592, clippy x2 + fmt
+  clean, xwin check green (openrouter-proxy absent = the retired
+  2026-09-07 worker; only zen-go/zen-us + vercel-proxy remain under
+  proxies/). Tree clean after every commit.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
