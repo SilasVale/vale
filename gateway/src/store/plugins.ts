@@ -41,6 +41,24 @@ export async function savePluginLinks(env: Env, map: Record<string, PluginLink>)
   await env.KEYS.put(PLUGIN_KEY, JSON.stringify(map));
   cset(PLUGIN_KEY, map); // write-through — same-isolate reads stay fresh
 }
+
+/**
+ * Fresh KV read of the plugin map INSIDE the caller's withKeyLock, bypassing
+ * the isolate cache. Every mutating path (sweep / remove / migrate / revoke-
+ * for-device) used to hand-roll the same lock + read + parse prologue; a
+ * stale cached blob rewritten inside the lock resurrects links another
+ * isolate revoked (the round-122 class). Returns null when the stored blob
+ * is corrupt — callers MUST abort without writing (a null treated as {}
+ * would delete every link).
+ */
+async function readFreshPluginLinks(env: Env): Promise<Record<string, PluginLink> | null> {
+  const raw = await env.KEYS.get(PLUGIN_KEY);
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return null;
+  }
+}
 // Plugin links expire after PLUGIN_LINK_TTL_MS (30 days) — a leaked extension
 // token must not grant permanent remote control of a device's browser
 // (chrome.debugger can read/write/click/type on any tab).
@@ -61,13 +79,8 @@ export async function getPluginByToken(env: Env, token: string): Promise<PluginL
     // in the cache window. Sweep inside the lock against a FRESH KV read,
     // re-checking expiry before deleting.
     await withKeyLock(PLUGIN_KEY, async () => {
-      const raw = await env.KEYS.get(PLUGIN_KEY);
-      let fresh: Record<string, PluginLink>;
-      try {
-        fresh = raw ? JSON.parse(raw) : {};
-      } catch {
-        return;
-      }
+      const fresh = await readFreshPluginLinks(env);
+      if (!fresh) return;
       const cand = fresh[token];
       if (cand && (!cand.expiresAt || cand.expiresAt < Date.now())) {
         delete fresh[token];
@@ -84,15 +97,8 @@ export async function removePluginLink(env: Env, token: string): Promise<void> {
   // links another isolate had revoked/paired in the cache window — the
   // same class the getPluginByToken sweep fixed. Same shape below.
   return withKeyLock(PLUGIN_KEY, async () => {
-    const raw = await env.KEYS.get(PLUGIN_KEY);
-    let fresh: Record<string, PluginLink> = {};
-    if (raw) {
-      try {
-        fresh = JSON.parse(raw);
-      } catch {
-        return;
-      }
-    }
+    const fresh = await readFreshPluginLinks(env);
+    if (!fresh) return;
     if (fresh[token]) {
       delete fresh[token];
       await env.KEYS.put(PLUGIN_KEY, JSON.stringify(fresh));
@@ -109,15 +115,8 @@ export async function migratePluginLinks(
   newName: string,
 ): Promise<boolean> {
   return withKeyLock(PLUGIN_KEY, async () => {
-    const raw = await env.KEYS.get(PLUGIN_KEY);
-    let fresh: Record<string, PluginLink> = {};
-    if (raw) {
-      try {
-        fresh = JSON.parse(raw);
-      } catch {
-        return false;
-      }
-    }
+    const fresh = await readFreshPluginLinks(env);
+    if (!fresh) return false;
     let migrated = false;
     for (const l of Object.values(fresh)) {
       if (l.device === oldName) {
@@ -139,15 +138,8 @@ export async function migratePluginLinks(
 /// leave their 30-day browser control alive after the device is gone.
 export async function removePluginLinksForDevice(env: Env, device: string): Promise<number> {
   return withKeyLock(PLUGIN_KEY, async () => {
-    const raw = await env.KEYS.get(PLUGIN_KEY);
-    let fresh: Record<string, PluginLink> = {};
-    if (raw) {
-      try {
-        fresh = JSON.parse(raw);
-      } catch {
-        return 0;
-      }
-    }
+    const fresh = await readFreshPluginLinks(env);
+    if (!fresh) return 0;
     let n = 0;
     for (const [token, l] of Object.entries(fresh)) {
       if (l.device === device) {
