@@ -50,6 +50,130 @@ pub struct PlaywrightManager {
 }
 
 /// A running playwright-mcp instance.
+/// Poll the MCP handshake until the child answers a REAL JSON-RPC
+/// initialize (round-129: the old probe passed on any HTTP status —
+/// GET /mcp is designed to return 4xx; only a valid initialize result
+/// counts) or the child dies (port taken → bind failure → instant
+/// death). Budget 30s (round-163: post-update Defender passes make
+/// cold starts exceed 10s; the old 10s budget killed a runner that was
+/// about to become healthy). Each probe has a 2s timeout; streamable
+/// HTTP keeps the response open, so only the first chunks are read.
+/// On failure the last 500 stderr chars are folded into the error and
+/// the child is killed.
+async fn wait_healthy(child: &mut tokio::process::Child, port: u16) -> Result<(), DeviceError> {
+    // Health poll (up to 10s): POST a JSON-RPC initialize to /mcp and verify the
+    // body is a valid JSON-RPC result. round-129: the old probe.is_ok() passed on
+    // any HTTP status (GET /mcp is designed to return 4xx) — only an instance
+    // that truly completes the MCP handshake counts as healthy; a squatter cannot
+    // answer with a valid JSON-RPC initialize response. The poll also checks
+    // whether the child exited (port taken → bind failure → instant death). Each
+    // probe has a 2s timeout.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .map_err(|e| DeviceError::Internal {
+            message: format!("http client: {e}"),
+        })?;
+    let mut ok = false;
+    // round-163: 30s of patience, not 10s — right after an update the
+    // freshly-extracted node.exe + node_modules get a full Defender pass
+    // and the first cold start legitimately exceeds 10s; the old budget
+    // made the manager KILL a runner that was about to become healthy
+    // (observed d1: stderr said "Listening" while the probe gave up).
+    for _ in 0..60 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // Child died (bind failure on an occupied port) — fail fast.
+        if child
+            .try_wait()
+            .map_err(|e| DeviceError::Internal {
+                message: format!("child wait: {e}"),
+            })?
+            .is_some()
+        {
+            break;
+        }
+        let probe = client
+        // round-118: 127.0.0.1 rather than localhost — the child's --host 127.0.0.1
+        // binds IPv4 only; localhost resolving to [::1] would make the
+        // health poll fail forever.
+        .post(format!("http://127.0.0.1:{port}/mcp"))
+        .header("content-type", "application/json")
+        // round-131: MCP transport requires Accept: application/json,
+        // text/event-stream — missing it returns 406 and the probe
+        // always fails.
+        .header("accept", "application/json, text/event-stream")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"vale-agent","version":"1"}}}"#)
+        .send()
+        .await;
+        if let Ok(resp) = probe {
+            // Streamable HTTP keeps the response open for server-sent
+            // events, so `resp.text().await` waits for EOF and always
+            // times out after a successful initialize. Read only the
+            // first response chunks; the initialize result is sent at
+            // the beginning of the stream.
+            let mut stream = resp.bytes_stream();
+            let mut body = Vec::new();
+            for _ in 0..4 {
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    futures::StreamExt::next(&mut stream),
+                )
+                .await
+                {
+                    Ok(Some(Ok(chunk))) => {
+                        body.extend_from_slice(&chunk);
+                        if body.windows(10).any(|w| w == b"serverInfo")
+                            && body.windows(8).any(|w| w == b"jsonrpc")
+                        {
+                            ok = true;
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            if ok {
+                break;
+            }
+        }
+    }
+    if !ok {
+        let stderr_hint = {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            if let Some(mut s) = child.stderr.take() {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    s.read_to_end(&mut buf),
+                )
+                .await;
+            }
+            String::from_utf8_lossy(&buf)
+                .chars()
+                .rev()
+                .take(500)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect::<String>()
+        };
+        let _ = child.kill().await;
+        #[cfg(not(windows))]
+        let _ = child.wait().await;
+        return Err(DeviceError::Internal {
+            message: format!(
+                "playwright-mcp did not become healthy on localhost:{port}{}",
+                if stderr_hint.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", stderr_hint)
+                }
+            ),
+        });
+    }
+    Ok(())
+}
+
 struct ManagedPlaywright {
     child: Child,
     /// round-163: HELD OPEN for the child's lifetime. Under a session-0
@@ -369,116 +493,9 @@ impl PlaywrightManager {
         let mut child = child.spawn().map_err(|e| DeviceError::Internal {
             message: format!("spawn playwright-mcp: {e}"),
         })?;
-        // Health poll (up to 10s): POST a JSON-RPC initialize to /mcp and verify the
-        // body is a valid JSON-RPC result. round-129: the old probe.is_ok() passed on
-        // any HTTP status (GET /mcp is designed to return 4xx) — only an instance
-        // that truly completes the MCP handshake counts as healthy; a squatter cannot
-        // answer with a valid JSON-RPC initialize response. The poll also checks
-        // whether the child exited (port taken → bind failure → instant death). Each
-        // probe has a 2s timeout.
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(2))
-            .build()
-            .map_err(|e| DeviceError::Internal {
-                message: format!("http client: {e}"),
-            })?;
-        let mut ok = false;
-        // round-163: 30s of patience, not 10s — right after an update the
-        // freshly-extracted node.exe + node_modules get a full Defender pass
-        // and the first cold start legitimately exceeds 10s; the old budget
-        // made the manager KILL a runner that was about to become healthy
-        // (observed d1: stderr said "Listening" while the probe gave up).
-        for _ in 0..60 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            // Child died (bind failure on an occupied port) — fail fast.
-            if child
-                .try_wait()
-                .map_err(|e| DeviceError::Internal {
-                    message: format!("child wait: {e}"),
-                })?
-                .is_some()
-            {
-                break;
-            }
-            let probe = client
-                // round-118: 127.0.0.1 rather than localhost — the child's --host 127.0.0.1
-                // binds IPv4 only; localhost resolving to [::1] would make the
-                // health poll fail forever.
-                .post(format!("http://127.0.0.1:{port}/mcp"))
-                .header("content-type", "application/json")
-                // round-131: MCP transport requires Accept: application/json,
-                // text/event-stream — missing it returns 406 and the probe
-                // always fails.
-                .header("accept", "application/json, text/event-stream")
-                .body(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"vale-agent","version":"1"}}}"#)
-                .send()
-                .await;
-            if let Ok(resp) = probe {
-                // Streamable HTTP keeps the response open for server-sent
-                // events, so `resp.text().await` waits for EOF and always
-                // times out after a successful initialize. Read only the
-                // first response chunks; the initialize result is sent at
-                // the beginning of the stream.
-                let mut stream = resp.bytes_stream();
-                let mut body = Vec::new();
-                for _ in 0..4 {
-                    match tokio::time::timeout(
-                        std::time::Duration::from_millis(500),
-                        futures::StreamExt::next(&mut stream),
-                    )
-                    .await
-                    {
-                        Ok(Some(Ok(chunk))) => {
-                            body.extend_from_slice(&chunk);
-                            if body.windows(10).any(|w| w == b"serverInfo")
-                                && body.windows(8).any(|w| w == b"jsonrpc")
-                            {
-                                ok = true;
-                                break;
-                            }
-                        }
-                        _ => break,
-                    }
-                }
-                if ok {
-                    break;
-                }
-            }
-        }
-        if !ok {
-            let stderr_hint = {
-                use tokio::io::AsyncReadExt;
-                let mut buf = Vec::new();
-                if let Some(mut s) = child.stderr.take() {
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_millis(500),
-                        s.read_to_end(&mut buf),
-                    )
-                    .await;
-                }
-                String::from_utf8_lossy(&buf)
-                    .chars()
-                    .rev()
-                    .take(500)
-                    .collect::<String>()
-                    .chars()
-                    .rev()
-                    .collect::<String>()
-            };
-            let _ = child.kill().await;
-            #[cfg(not(windows))]
-            let _ = child.wait().await;
-            return Err(DeviceError::Internal {
-                message: format!(
-                    "playwright-mcp did not become healthy on localhost:{port}{}",
-                    if stderr_hint.is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {}", stderr_hint)
-                    }
-                ),
-            });
-        }
+        // Poll until the child answers a real MCP initialize
+        // (30s budget — round-163 Defender cold starts).
+        wait_healthy(&mut child, port).await?;
         // Win/lose decided atomically under the lock; the loser's child is
         // taken OUT of the block and killed after the guard is released —
         // no await anywhere in the guard's scope (clippy await_holding_lock).
