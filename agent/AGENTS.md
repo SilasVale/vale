@@ -3033,6 +3033,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   agent-side residual review: every listed file now has an explicit
   kept-class record at 6-line depth.
 
+### 2026-09-08 SOLID round 67 (test-file + 5-line-depth sweep)
+- **Verification round (no code changes)** — ran the more sensitive
+  5-line window restricted to 3+ hit blocks (true-copy signal): the
+  hits are (1) studio/vendor/monaco (third-party, excluded by roots in
+  the regular scan), (2) TEST files — gateway.test.mjs 33 blocks are
+  upstream-mock stubs (chat.completion Response shapes at 5+ sites)
+  and assertion skeletons, deliberately inlined per-test so a failing
+  assertion reads self-contained without helper hops — test
+  self-containment beats DRY in verification assets, kept with
+  evidence (same class: plugins.test.mjs / mcp-handler / health /
+  vale-cli / mcp_integration.rs / e2e.js), (3) production hits are
+  ToolDef registration-head framework shapes (system/tools.rs 5 file
+  tools share the schema-tail + closure-head + require_str("path")
+  skeleton with per-tool differing descriptions). No production
+  copy exists below the 6-line floor either.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
