@@ -2639,6 +2639,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   is clean (`git status` shows no public/code/files change) before
   closing the round — same discipline as the electron/panel products.
 
+### 2026-09-08 SOLID round 40 (agent cross-file verification)
+- **Verification round (no code changes)** — ran the codified scanner's
+  --cross mode over agent/src (first systematic agent cross-file pass
+  since round 14). All four hit-groups classified: (1) session tool
+  handlers carry per-tool MINIMAL dependency signatures (tool_open 5
+  params vs tool_write 1 — not copies); (2) write_async in
+  pty/serial/ssh share the TermBackend trait signature (contract, not
+  duplication) with deliberately DIVERGENT bodies — each is the product
+  of its own device-incident history (pty round-106 spawn_blocking+
+  timeout, serial round-107 try_send+retry, ssh round-103..105 await+
+  bounded+propagated), intentionally not unified; (3+4) brace noise.
+  Agent trees confirmed fully converged at both intra and cross file
+  levels.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
