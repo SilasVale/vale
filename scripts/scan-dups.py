@@ -83,7 +83,17 @@ def main():
         print("missing roots:", ", ".join(missing))
         sys.exit(1)
 
-    files = collect_files(args.roots, (".rs", ".ts", ".tsx", ".js", ".mjs"))
+    # Rust integration/test-only files (tests.rs, *_test.rs) and their
+    # in-tree fixtures are scaffolding, not production signal — excluded
+    # the same way JS *.test.* files are (round-50).
+    def is_test_file(p: str) -> bool:
+        base = p.rsplit("/", 1)[-1]
+        return base.endswith("tests.rs") or base.endswith("_test.rs")
+
+    files = [
+        p for p in collect_files(args.roots, (".rs", ".ts", ".tsx", ".js", ".mjs"))
+        if not is_test_file(p)
+    ]
     per_file = []
     cross = defaultdict(list)
     for p in files:
