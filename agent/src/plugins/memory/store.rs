@@ -606,6 +606,38 @@ impl MemoryStore {
         self.len() == 0
     }
 
+    /// Soft-delete the OLDEST live record (smallest updated_at; ties by
+    /// smallest id — NOT `order`, which is newest-first for display) and
+    /// append its tombstone line to `persist` (so the deletion survives a
+    /// restart). Returns the evicted record's content length (callers keep
+    /// their own total_bytes accounting: full recompute vs exact subtract),
+    /// or None when there is no live record left.
+    ///
+    /// Shared by enforce_limits' entry-cap and byte-cap eviction loops —
+    /// the victim-selection + tombstone logic used to be copy-pasted
+    /// between them and would have drifted apart on any eviction-policy
+    /// change.
+    fn evict_oldest_live(guard: &mut Inner, persist: &mut Vec<String>) -> Option<usize> {
+        let victim = guard
+            .by_id
+            .iter()
+            .filter(|(_, r)| !r.deleted)
+            .min_by(|(ia, ra), (ib, rb)| {
+                ra.updated_at.cmp(&rb.updated_at).then_with(|| ia.cmp(ib))
+            })
+            .map(|(id, _)| id.clone())?;
+        let content_len = guard.by_id.get(&victim).map(|r| r.content.len()).unwrap_or(0);
+        if let Some(rec) = guard.by_id.get_mut(&victim) {
+            rec.deleted = true;
+            rec.updated_at = unix_now();
+            if let Ok(line) = serde_json::to_string(&*rec) {
+                persist.push(line);
+            }
+        }
+        guard.dirty = true;
+        Some(content_len)
+    }
+
     /// Enforce capacity limits: LRU evict (soft-delete) oldest-updated first
     /// until under max_entries / max_bytes.
     fn enforce_limits(&self) {
@@ -620,63 +652,23 @@ impl MemoryStore {
         // record (smallest updated_at; ties by smallest id) — NOT the last
         // of `order`, which is newest-first for query display.
         while guard.by_id.values().filter(|r| !r.deleted).count() > limits.max_entries {
-            let victim = guard
-                .by_id
-                .iter()
-                .filter(|(_, r)| !r.deleted)
-                .min_by(|(ia, ra), (ib, rb)| {
-                    ra.updated_at.cmp(&rb.updated_at).then_with(|| ia.cmp(ib))
-                })
-                .map(|(id, _)| id.clone());
-            match victim {
-                Some(id) => {
-                    if let Some(rec) = guard.by_id.get_mut(&id) {
-                        rec.deleted = true;
-                        rec.updated_at = unix_now();
-                        if let Ok(line) = serde_json::to_string(&*rec) {
-                            persist.push(line);
-                        }
-                    }
-                    guard.total_bytes = guard
-                        .by_id
-                        .values()
-                        .filter(|r| !r.deleted)
-                        .map(|r| r.content.len())
-                        .sum();
-                    guard.dirty = true;
-                }
-                None => break,
+            if Self::evict_oldest_live(&mut guard, &mut persist).is_none() {
+                break;
             }
+            guard.total_bytes = guard
+                .by_id
+                .values()
+                .filter(|r| !r.deleted)
+                .map(|r| r.content.len())
+                .sum();
         }
         // Evict while over byte cap (same oldest-first victim).
         while guard.total_bytes > limits.max_bytes {
-            let victim = guard
-                .by_id
-                .iter()
-                .filter(|(_, r)| !r.deleted)
-                .min_by(|(ia, ra), (ib, rb)| {
-                    ra.updated_at.cmp(&rb.updated_at).then_with(|| ia.cmp(ib))
-                })
-                .map(|(id, _)| id.clone());
-            match victim {
-                Some(id) => {
-                    // Compute the new total BEFORE mutating the record, so we
-                    // never hold a &mut into by_id while reading
-                    // guard.total_bytes.
-                    let content_len = guard.by_id.get(&id).map(|r| r.content.len()).unwrap_or(0);
-                    let new_total = guard.total_bytes.saturating_sub(content_len);
-                    if let Some(rec) = guard.by_id.get_mut(&id) {
-                        rec.deleted = true;
-                        rec.updated_at = unix_now();
-                        if let Ok(line) = serde_json::to_string(&*rec) {
-                            persist.push(line);
-                        }
-                    }
-                    guard.total_bytes = new_total;
-                    guard.dirty = true;
-                }
-                None => break,
-            }
+            // Exact subtract keeps the ledger in sync without a full recount.
+            let Some(content_len) = Self::evict_oldest_live(&mut guard, &mut persist) else {
+                break;
+            };
+            guard.total_bytes = guard.total_bytes.saturating_sub(content_len);
         }
         // Retention days: soft-delete records older than retention_days.
         if let Some(days) = limits.retention_days {
