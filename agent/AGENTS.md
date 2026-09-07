@@ -3257,6 +3257,16 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   unextracted duplication. Library-wide convergence continues to
   hold at every audit angle attempted.
 
+### 2026-09-08 SOLID round 82 (feature full-suite gate)
+- **Verification round (no code changes)** — the feature-gated
+  COMPLETE suite (`cargo test -p vale-agent --features
+  terminal,keyring`, incl. integration tests) was never run as a
+  whole — only the feature lib (330). Full feature suite: 373 passed
+  (+8 over the default 365 = the feature-only integration branches),
+  zero failures. Completeness numbers now on record: full default
+  365, full feature 373, lib 322/330, feature lib 330 — plus the
+  stable per-change gates (clippy -D warnings ×2, fmt, xwin check).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
