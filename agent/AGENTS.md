@@ -2302,6 +2302,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   `sessions_logger()` owning both. Web tests 44/44, lib 299 pass;
   clippy/fmt clean.
 
+### 2026-09-08 SOLID round 16 (SSE guard + playwright op handlers dedup)
+- **acquire_sse_guard (DRY, agent web)** — the /api/events and
+  /api/events/term handlers each inlined the same SseConnectionGuard
+  acquire-match with the "too many SSE viewers (max 64)" 503. Extracted
+  `acquire_sse_guard() -> Result<_, Box<Response>>` in sse.rs (Err boxed
+  like check_auth's — clippy result_large_err caught the unboxed form
+  first). Web tests 44/44, lib 299 pass; clippy/fmt clean.
+- **run_playwright_op (DRY, agent web/mod.rs)** — api_playwright_start
+  and api_playwright_stop were two near-identical copies (run manager op
+  → merge {ok:true, ...payload} → 500 JSON envelope on error). Extracted
+  one generic runner; both handlers are one-liners. Web tests 44/44, lib
+  299 pass; clippy/fmt clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
