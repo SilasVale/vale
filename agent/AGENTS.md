@@ -3075,6 +3075,23 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   screenshot-resolution block stays — it needs early returns + fs
   access). 309 lib (+3) / 317 feature; fmt + clippy clean.
 
+### 2026-09-08 SOLID round 70 (parse_screenshot_ref + regression pins)
+- **parse_screenshot_ref (SRP, agent mcp_client/tools.rs)** — the
+  screenshot-resolution block inlined the text-reference scan (~28
+  lines incl. the round-246 markdown-bugfix commentary: bare
+  extension match + paren terminator). Extracted pure
+  `parse_screenshot_ref(&str) -> Option<String>`; the round-246 fix
+  now has 3 regression pins: plain paren reference, markdown-style
+  reference (the formerly-NEVER-firing branch), no-reference /
+  other-extension None. 312 lib (+3) / 320 feature; fmt + clippy
+  clean. ALSO examined tool_open's ~150-line drainer spawn for the
+  same treatment and KEPT it: its captures include a &SessionLogger
+  reference whose lifetime is tied to plugin registration —
+  module-level extraction would need 'static restructuring for a
+  readability-only gain (recorded; revisit only if the drainer grows).
+  Self-caught: first test append silently failed (python \U escape in
+  a non-raw heredoc string) — raw-string retry fixed.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
