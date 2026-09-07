@@ -254,6 +254,290 @@ pub(super) fn tool_jobs(jobs: &JobsMap) -> ToolDef {
 
 // ── Execute ──────────────────────────────────────
 
+/// Local shell mode with enforced timeout (tokio::process) — a separate
+/// module-level fn so the tool_execute closure stays a router between the
+/// session wait-loop and this path. Self-contained: spawn (own process
+/// group on Unix so a timeout kills shell AND descendants), bounded 1 MB
+/// tail capture with truncation, kill-on-timeout, same {kind, text,
+/// truncated} shape as the session mode.
+async fn execute_local(
+    command: &str,
+    timeout_secs: u64,
+    bus: &Arc<dyn EventBus>,
+) -> Result<serde_json::Value, DeviceError> {
+    // ── Local shell mode with enforced timeout (tokio::process) ──
+    let (shell, flag) = if cfg!(target_os = "windows") {
+        ("cmd", "/C")
+    } else {
+        ("sh", "-c")
+    };
+    let mut cmd = tokio::process::Command::new(shell);
+    cmd.arg(flag)
+        .arg(command)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    // The command runs in its own process group (Unix) so a
+    // timeout can kill the WHOLE tree — shell AND descendants.
+    // Without this a timed-out `make` / `agent_update`
+    // installer kept running orphaned on the device after
+    // only the direct child died (round-54).
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let mut child = cmd.spawn().map_err(|e| DeviceError::Internal {
+        message: format!("spawn failed: {e}"),
+    })?;
+    let pid = child.id();
+
+    // BOUNDED capture (round-55): wait_with_output buffered
+    // stdout+stderr into RAM WITHOUT limit — a `yes`-style
+    // command OOM'd the device. Two reader tasks stream both
+    // pipes into a bounded channel; the main loop keeps only
+    // the TAIL (1 MB cap, oldest half dropped on overflow).
+    // stdout/stderr are merged to preserve interleaving.
+    use tokio::io::AsyncReadExt as _;
+    fn pipe_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
+        mut stream: R,
+        tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut buf = [0u8; 8192];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
+    // round-n: never panic on a missing pipe — tokio spawn
+    // with Stdio::piped() normally guarantees both, but a
+    // defensive take() keeps a platform quirk from killing
+    // the whole execute handler (MCP request) with an
+    // unwrap panic. Missing stdout → no output capture;
+    // missing stderr just drops stderr. Both reader tasks
+    // are still spawned so the wait loop below behaves the
+    // same (an empty reader just ends immediately).
+    let reader_stdout = match child.stdout.take() {
+        Some(out) => pipe_reader(out, tx.clone()),
+        None => tokio::task::spawn(async {}),
+    };
+    let reader_stderr = match child.stderr.take() {
+        Some(err) => pipe_reader(err, tx.clone()),
+        None => tokio::task::spawn(async {}),
+    };
+    drop(tx); // main loop is the last receiver
+
+    const MAX_LOCAL_BYTES: usize = 1_048_576; // 1 MB tail cap
+    let mut captured: Vec<u8> = Vec::new();
+    let mut truncated = false;
+    let mut timed_out = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    // Capture tail append + truncation — shared by the live
+    // receive path and the final drain before exit (round-57).
+    let append_chunk = |captured: &mut Vec<u8>, truncated: &mut bool, c: Vec<u8>| {
+        if captured.len() + c.len() > MAX_LOCAL_BYTES {
+            let keep = MAX_LOCAL_BYTES / 2;
+            if captured.len() > keep {
+                captured.drain(..captured.len() - keep);
+            }
+            *truncated = true;
+        }
+        captured.extend_from_slice(&c);
+        if captured.len() > MAX_LOCAL_BYTES {
+            captured.drain(..captured.len() - MAX_LOCAL_BYTES);
+            *truncated = true;
+        }
+    };
+    loop {
+        tokio::select! {
+            chunk = rx.recv() => {
+                if let Some(c) = chunk {
+                    append_chunk(&mut captured, &mut truncated, c);
+                } else {
+                    // Both pipes closed but the child still runs
+                    // (`sh -c 'exec >/dev/null 2>&1; sleep 100'`)
+                    // — recv() returns None IMMEDIATELY every
+                    // round, and select! keeps picking the only
+                    // ready branch, starving the 50ms probe and
+                    // hot-spinning try_wait at full core. Yield
+                    // briefly (round-58: round-57 dropped the
+                    // old is_closed throttle and re-opened the
+                    // burn).
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
+            // Periodic wakeup so the exit probe below runs even
+            // when NO output ever arrives — a daemonized
+            // grandchild holding the pipes open keeps rx.recv()
+            // pending forever (round-57: the probe sat AFTER the
+            // select, which never woke in pure-silent daemon
+            // cases — `sh -c 'sleep 100 & exit 0'` was falsely
+            // reported as TIMEOUT).
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+        }
+        // Deadline check OUTSIDE the select (round-59): select!
+        // picks the FIRST ready branch in declaration order —
+        // after both pipes EOF, rx.recv() is Ready(None) every
+        // round, so the None branch always wins and a sleep
+        // branch declared after it NEVER fires (verified: the
+        // timeout branch did not trigger once in 60 rounds).
+        // The timeout contract ("kill the command at the
+        // deadline") was silently broken for pipe-closed
+        // commands; a plain instant compare cannot starve.
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            break;
+        }
+        // Exit probe — the authoritative done signal (round-56):
+        // the child exited but a daemon grandchild keeps rx
+        // open forever.
+        if let Ok(Some(_)) = child.try_wait() {
+            // round-107/108: the exit-flush drain used
+            // try_recv — the pipe_reader tasks may still hold
+            // the final bytes, so a fast exit lost the tail.
+            // Give the readers one bounded tick to flush and
+            // APPEND the received chunk (the R107 fix
+            // discarded it with `let _`).
+            if let Ok(Some(c)) =
+                tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await
+            {
+                append_chunk(&mut captured, &mut truncated, c);
+            }
+            // Drain whatever the exit flushed out (round-57):
+            // skipping this silently dropped up to 16 chunks
+            // (~128KB) of tail output with truncated unset.
+            while let Ok(c) = rx.try_recv() {
+                append_chunk(&mut captured, &mut truncated, c);
+            }
+            // round-115: the readers block in stream.read(),
+            // NOT tx.send — closing rx only fails future sends
+            // and does NOT wake the pending reads (round-55's
+            // "Close rx so the two pipe_reader tasks stop
+            // blocking" was wrong for the daemon case: a
+            // grandchild inherits the pipe write ends, so the
+            // reads never EOF and 2 tasks + 2 fds leaked per
+            // execute forever). Abort them explicitly.
+            rx.close();
+            reader_stdout.abort();
+            reader_stderr.abort();
+            break;
+        }
+    }
+
+    if timed_out {
+        // Graceful first, then SIGKILL (round-55): kill -9
+        // straight away left databases/build caches half
+        // written. Unix: SIGTERM to the process group;
+        // Windows: taskkill /T (graceful tree kill).
+        if child.try_wait().map(|s| s.is_none()).unwrap_or(false) {
+            if let Some(pid) = pid {
+                let pid_str = pid.to_string();
+                #[cfg(unix)]
+                {
+                    let _ = tokio::process::Command::new("kill")
+                        .args(["-15", "--", &format!("-{pid_str}")])
+                        .output()
+                        .await;
+                }
+                #[cfg(windows)]
+                {
+                    let _ = tokio::process::Command::new("taskkill")
+                        .args(["/T", "/PID", &pid_str])
+                        .output()
+                        .await;
+                }
+            }
+            // Grace window: let the tree exit on its own.
+            let graceful = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    if child.try_wait().ok().flatten().is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            })
+            .await;
+            if graceful.is_err() {
+                // Still alive — SIGKILL the tree.
+                if let Some(pid) = pid {
+                    let pid_str = pid.to_string();
+                    #[cfg(unix)]
+                    {
+                        let _ = tokio::process::Command::new("kill")
+                            .args(["-9", "--", &format!("-{pid_str}")])
+                            .output()
+                            .await;
+                    }
+                    #[cfg(windows)]
+                    {
+                        let _ = tokio::process::Command::new("taskkill")
+                            .args(["/F", "/T", "/PID", &pid_str])
+                            .output()
+                            .await;
+                    }
+                }
+                // Bounded re-await (round-55): a group stuck in
+                // D-state (uninterruptible IO) would hang the
+                // tool forever. Wait up to 5s, then return
+                // with the partial output either way.
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        if child.try_wait().ok().flatten().is_some() {
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                })
+                .await;
+            }
+        }
+        // Drain whatever the kill flushed out (bounded).
+        while let Ok(c) = rx.try_recv() {
+            append_chunk(&mut captured, &mut truncated, c);
+        }
+    }
+    // Reap whatever exited (may be None if the group is stuck).
+    let exit_code = child
+        .try_wait()
+        .ok()
+        .flatten()
+        .and_then(|s| s.code())
+        .unwrap_or(-1);
+    let text = String::from_utf8_lossy(&captured);
+    let mut result = format!("Exit: {exit_code}\nOutput:\n{text}");
+    if timed_out {
+        // Explicit TIMEOUT marker: the output above is
+        // PARTIAL — the model must not read it as a complete
+        // result (round-54).
+        result.push_str(&format!(
+            "\nTIMEOUT: killed after {timeout_secs}s — output above is partial"
+        ));
+    }
+    if truncated {
+        result.push_str("\n[output truncated — tail only]");
+    }
+    // Strip ANSI/OSC noise for the model — the MCP text path
+    // must be printable text, the panel keeps raw bytes via
+    // its own SSE stream (round-54, dsh sanitize.ts).
+    let result = clean_terminal_output(result.as_bytes());
+    bus.emit(&AgentEvent::ShellExec {
+        command: command.to_string(),
+    });
+    // Unified shape (round-60): same `kind`/`output`/truncated
+    // contract as the session mode; stdout/stderr stay as
+    // attached fields for old parsers.
+    Ok(json!({
+        "kind": "local",
+        "text": result,
+        "truncated": truncated,
+    }))
+}
+
 pub(super) fn tool_execute(
     terminal_mgr: &Arc<TerminalManager>,
     bus: &Arc<dyn EventBus>,
@@ -845,7 +1129,9 @@ pub(super) fn tool_execute(
                     // Release the per-session execute lock (round-55) — the
                     // only exit path from the wait loop.
                     terminal_mgr.term_release_execute(&sid).await;
-                    bus.emit(&AgentEvent::ShellExec { command });
+                    bus.emit(&AgentEvent::ShellExec {
+                    command: command.to_string(),
+                });
                     // stage-m: no wrapper → nothing to strip. The 633
                     // sequences are invisible on the terminal and were already
                     // consumed during the wait.
@@ -869,239 +1155,7 @@ pub(super) fn tool_execute(
                         state, result, truncated, timed_out, wait_reason, marker_code, read_abs,
                     ))
                 } else {
-                    // ── Local shell mode with enforced timeout (tokio::process) ──
-                    let (shell, flag) = if cfg!(target_os = "windows") {
-                        ("cmd", "/C")
-                    } else {
-                        ("sh", "-c")
-                    };
-                    let mut cmd = tokio::process::Command::new(shell);
-                    cmd.arg(flag)
-                        .arg(&command)
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped());
-                    // The command runs in its own process group (Unix) so a
-                    // timeout can kill the WHOLE tree — shell AND descendants.
-                    // Without this a timed-out `make` / `agent_update`
-                    // installer kept running orphaned on the device after
-                    // only the direct child died (round-54).
-                    #[cfg(unix)]
-                    cmd.process_group(0);
-                    let mut child = cmd.spawn().map_err(|e| DeviceError::Internal {
-                        message: format!("spawn failed: {e}"),
-                    })?;
-                    let pid = child.id();
-
-                    // BOUNDED capture (round-55): wait_with_output buffered
-                    // stdout+stderr into RAM WITHOUT limit — a `yes`-style
-                    // command OOM'd the device. Two reader tasks stream both
-                    // pipes into a bounded channel; the main loop keeps only
-                    // the TAIL (1 MB cap, oldest half dropped on overflow).
-                    // stdout/stderr are merged to preserve interleaving.
-                    use tokio::io::AsyncReadExt as _;
-                    fn pipe_reader<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
-                        mut stream: R,
-                        tx: tokio::sync::mpsc::Sender<Vec<u8>>,
-                    ) -> tokio::task::JoinHandle<()> {
-                        tokio::spawn(async move {
-                            let mut buf = [0u8; 8192];
-                            loop {
-                                match stream.read(&mut buf).await {
-                                    Ok(0) | Err(_) => break,
-                                    Ok(n) => { if tx.send(buf[..n].to_vec()).await.is_err() { break; } }
-                                }
-                            }
-                        })
-                    }
-                    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
-                    // round-n: never panic on a missing pipe — tokio spawn
-                    // with Stdio::piped() normally guarantees both, but a
-                    // defensive take() keeps a platform quirk from killing
-                    // the whole execute handler (MCP request) with an
-                    // unwrap panic. Missing stdout → no output capture;
-                    // missing stderr just drops stderr. Both reader tasks
-                    // are still spawned so the wait loop below behaves the
-                    // same (an empty reader just ends immediately).
-                    let reader_stdout = match child.stdout.take() {
-                        Some(out) => pipe_reader(out, tx.clone()),
-                        None => tokio::task::spawn(async {}),
-                    };
-                    let reader_stderr = match child.stderr.take() {
-                        Some(err) => pipe_reader(err, tx.clone()),
-                        None => tokio::task::spawn(async {}),
-                    };
-                    drop(tx); // main loop is the last receiver
-
-                    const MAX_LOCAL_BYTES: usize = 1_048_576; // 1 MB tail cap
-                    let mut captured: Vec<u8> = Vec::new();
-                    let mut truncated = false;
-                    let mut timed_out = false;
-                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-                    // Capture tail append + truncation — shared by the live
-                    // receive path and the final drain before exit (round-57).
-                    let append_chunk = |captured: &mut Vec<u8>, truncated: &mut bool, c: Vec<u8>| {
-                        if captured.len() + c.len() > MAX_LOCAL_BYTES {
-                            let keep = MAX_LOCAL_BYTES / 2;
-                            if captured.len() > keep {
-                                captured.drain(..captured.len() - keep);
-                            }
-                            *truncated = true;
-                        }
-                        captured.extend_from_slice(&c);
-                        if captured.len() > MAX_LOCAL_BYTES {
-                            captured.drain(..captured.len() - MAX_LOCAL_BYTES);
-                            *truncated = true;
-                        }
-                    };
-                    loop {
-                        tokio::select! {
-                            chunk = rx.recv() => {
-                                if let Some(c) = chunk {
-                                    append_chunk(&mut captured, &mut truncated, c);
-                                } else {
-                                    // Both pipes closed but the child still runs
-                                    // (`sh -c 'exec >/dev/null 2>&1; sleep 100'`)
-                                    // — recv() returns None IMMEDIATELY every
-                                    // round, and select! keeps picking the only
-                                    // ready branch, starving the 50ms probe and
-                                    // hot-spinning try_wait at full core. Yield
-                                    // briefly (round-58: round-57 dropped the
-                                    // old is_closed throttle and re-opened the
-                                    // burn).
-                                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                                }
-                            }
-                            // Periodic wakeup so the exit probe below runs even
-                            // when NO output ever arrives — a daemonized
-                            // grandchild holding the pipes open keeps rx.recv()
-                            // pending forever (round-57: the probe sat AFTER the
-                            // select, which never woke in pure-silent daemon
-                            // cases — `sh -c 'sleep 100 & exit 0'` was falsely
-                            // reported as TIMEOUT).
-                            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
-                        }
-                        // Deadline check OUTSIDE the select (round-59): select!
-                        // picks the FIRST ready branch in declaration order —
-                        // after both pipes EOF, rx.recv() is Ready(None) every
-                        // round, so the None branch always wins and a sleep
-                        // branch declared after it NEVER fires (verified: the
-                        // timeout branch did not trigger once in 60 rounds).
-                        // The timeout contract ("kill the command at the
-                        // deadline") was silently broken for pipe-closed
-                        // commands; a plain instant compare cannot starve.
-                        if std::time::Instant::now() >= deadline {
-                            timed_out = true;
-                            break;
-                        }
-                        // Exit probe — the authoritative done signal (round-56):
-                        // the child exited but a daemon grandchild keeps rx
-                        // open forever.
-                        if let Ok(Some(_)) = child.try_wait() {
-                            // round-107/108: the exit-flush drain used
-                            // try_recv — the pipe_reader tasks may still hold
-                            // the final bytes, so a fast exit lost the tail.
-                            // Give the readers one bounded tick to flush and
-                            // APPEND the received chunk (the R107 fix
-                            // discarded it with `let _`).
-                            if let Ok(Some(c)) = tokio::time::timeout(
-                                std::time::Duration::from_millis(50),
-                                rx.recv(),
-                            ).await {
-                                append_chunk(&mut captured, &mut truncated, c);
-                            }
-                            // Drain whatever the exit flushed out (round-57):
-                            // skipping this silently dropped up to 16 chunks
-                            // (~128KB) of tail output with truncated unset.
-                            while let Ok(c) = rx.try_recv() {
-                                append_chunk(&mut captured, &mut truncated, c);
-                            }
-                            // round-115: the readers block in stream.read(),
-                            // NOT tx.send — closing rx only fails future sends
-                            // and does NOT wake the pending reads (round-55's
-                            // "Close rx so the two pipe_reader tasks stop
-                            // blocking" was wrong for the daemon case: a
-                            // grandchild inherits the pipe write ends, so the
-                            // reads never EOF and 2 tasks + 2 fds leaked per
-                            // execute forever). Abort them explicitly.
-                            rx.close();
-                            reader_stdout.abort();
-                            reader_stderr.abort();
-                            break;
-                        }
-                    }
-
-                    if timed_out {
-                        // Graceful first, then SIGKILL (round-55): kill -9
-                        // straight away left databases/build caches half
-                        // written. Unix: SIGTERM to the process group;
-                        // Windows: taskkill /T (graceful tree kill).
-                        if child.try_wait().map(|s| s.is_none()).unwrap_or(false) {
-                            if let Some(pid) = pid {
-                                let pid_str = pid.to_string();
-                                #[cfg(unix)]
-                                { let _ = tokio::process::Command::new("kill").args(["-15", "--", &format!("-{pid_str}")]).output().await; }
-                                #[cfg(windows)]
-                                { let _ = tokio::process::Command::new("taskkill").args(["/T", "/PID", &pid_str]).output().await; }
-                            }
-                            // Grace window: let the tree exit on its own.
-                            let graceful = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                                loop {
-                                    if child.try_wait().ok().flatten().is_some() { break; }
-                                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                                }
-                            }).await;
-                            if graceful.is_err() {
-                                // Still alive — SIGKILL the tree.
-                                if let Some(pid) = pid {
-                                    let pid_str = pid.to_string();
-                                    #[cfg(unix)]
-                                    { let _ = tokio::process::Command::new("kill").args(["-9", "--", &format!("-{pid_str}")]).output().await; }
-                                    #[cfg(windows)]
-                                    { let _ = tokio::process::Command::new("taskkill").args(["/F", "/T", "/PID", &pid_str]).output().await; }
-                                }
-                                // Bounded re-await (round-55): a group stuck in
-                                // D-state (uninterruptible IO) would hang the
-                                // tool forever. Wait up to 5s, then return
-                                // with the partial output either way.
-                                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                                    loop {
-                                        if child.try_wait().ok().flatten().is_some() { break; }
-                                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                                    }
-                                }).await;
-                            }
-                        }
-                        // Drain whatever the kill flushed out (bounded).
-                        while let Ok(c) = rx.try_recv() {
-                            append_chunk(&mut captured, &mut truncated, c);
-                        }
-                    }
-                    // Reap whatever exited (may be None if the group is stuck).
-                    let exit_code = child.try_wait().ok().flatten().and_then(|s| s.code()).unwrap_or(-1);
-                    let text = String::from_utf8_lossy(&captured);
-                    let mut result = format!("Exit: {exit_code}\nOutput:\n{text}");
-                    if timed_out {
-                        // Explicit TIMEOUT marker: the output above is
-                        // PARTIAL — the model must not read it as a complete
-                        // result (round-54).
-                        result.push_str(&format!("\nTIMEOUT: killed after {timeout_secs}s — output above is partial"));
-                    }
-                    if truncated {
-                        result.push_str("\n[output truncated — tail only]");
-                    }
-                    // Strip ANSI/OSC noise for the model — the MCP text path
-                    // must be printable text, the panel keeps raw bytes via
-                    // its own SSE stream (round-54, dsh sanitize.ts).
-                    let result = clean_terminal_output(result.as_bytes());
-                    bus.emit(&AgentEvent::ShellExec { command });
-                    // Unified shape (round-60): same `kind`/`output`/truncated
-                    // contract as the session mode; stdout/stderr stay as
-                    // attached fields for old parsers.
-                    Ok(json!({
-                        "kind": "local",
-                        "text": result,
-                        "truncated": truncated,
-                    }))
+                    Ok(execute_local(&command, timeout_secs, &bus).await?)
                 }
             }
         },
@@ -1113,7 +1167,6 @@ mod tests {
     use super::poll_output_chunk;
     use crate::plugins::terminal::SessionBuf;
     use crate::plugins::terminal::SessionStore;
-    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
     fn store_with(sid: &str, buf: SessionBuf) -> Arc<Mutex<SessionStore>> {
