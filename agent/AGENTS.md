@@ -3242,6 +3242,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   2026-09-07 worker; only zen-go/zen-us + vercel-proxy remain under
   proxies/). Tree clean after every commit.
 
+### 2026-09-08 SOLID round 81 (debt + description-consistency sweep)
+- **Verification round (no code changes)** — three consistency
+  sweeps, all clean: (1) TODO/FIXME/XXX/HACK inventory across every
+  production tree (agent/src, gateway/src, index/src, proxies, the
+  electron src) is EMPTY — no accumulated debt markers anywhere;
+  (2) terminal_execute's tool description ("idle window scales: ssh
+  3s, serial 4s, pty 1s") matches the code exactly (idle_confirm
+  match: ssh 3000ms / serial 4000ms / default 1000ms — the AI-client
+  contract is truthful); (3) translate-vision.ts (243 lines, 2
+  window-sites = call adjacency) already shares its describeImage
+  tails via finishDescribe(resp, cacheKey, env, extract) +
+  cacheImageDesc with the round-119 failure-marker contract — no
+  unextracted duplication. Library-wide convergence continues to
+  hold at every audit angle attempted.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
