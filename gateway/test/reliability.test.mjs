@@ -462,6 +462,22 @@ test("streamOgToAnthropic: cancelling the output stops the upstream reader", asy
   assert.equal(cancelled, true);
 });
 
+// round-528 (coverage-driven): the malformed-frame catch had ZERO pins — a
+// garbage frame must be skipped, not kill the stream.
+test("streamOgToAnthropic: malformed JSON frame is skipped, valid chunks flow", async () => {
+  const { streamOgToAnthropic } = await import("../src/anthropic-translate.ts");
+  const enc = new TextEncoder();
+  const src = new ReadableStream({
+    start(c) {
+      c.enqueue(enc.encode("data: not-json{{{\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"Yo\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"));
+      c.close();
+    },
+  });
+  const text = await new Response(streamOgToAnthropic(src, "og/m", "m")).text();
+  assert.match(text, /"text":"Yo"/);
+  assert.match(text, /message_stop/);
+});
+
 test("stream encoder: cache hits from last chunk surface in message_start", () => {
   const enc = new AnthropicStreamEncoder("og/m", "m");
   enc.push({
