@@ -2068,3 +2068,15 @@ test("/v1/responses muse-spark: retried 429 text keeps status + rate_limit type"
   assert.equal(body.error.message, "Upstream 429");
   assert.equal(body.error.type, "rate_limit_error");
 });
+
+// round-516 (coverage-driven): the glm-5.2:free retry config had ZERO pins —
+// its Decart pool needs 10 rapid attempts where every other or/ model gets 4.
+test("or glm-5.2:free on 502 retries past the generic 4-attempt budget", async () => {
+  const { env, token } = gwEnv({ timeout: 1000 });
+  let calls = 0;
+  const res = await withFetch(async () => (++calls, new Response("shed", { status: 502 })), () =>
+    post(env, token, { model: "or/z-ai/glm-5.2:free", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions"),
+  );
+  assert.ok(calls >= 5, `glm arm retries 10x, got ${calls}`);
+  assert.equal(res.status, 502);
+});
