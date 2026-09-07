@@ -22,6 +22,19 @@ interface McpTool {
   };
 }
 
+/**
+ * The device-selector field shared by every MCP tool schema (a tool runs
+ * against ONE registered device; omit when only one is registered). Used to
+ * be copy-pasted into every inputSchema — one source now.
+ */
+const DEVICE_PARAM: Record<string, unknown> = {
+  device: {
+    type: "string",
+    description:
+      "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
+  },
+};
+
 const TERMINAL_TOOLS: McpTool[] = [
   {
     name: "terminal_open",
@@ -76,11 +89,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         session_id: { type: "string" },
         lines: { type: "integer", description: "Number of lines from the tail. Default 60." },
       },
@@ -94,11 +103,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         session_id: { type: "string" },
         input: { type: "string", description: "The command to run in the session" },
         timeout_secs: { type: "integer", description: "Max wait time in seconds. Default 30." },
@@ -118,11 +123,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         session_id: { type: "string" },
         data: {
           type: "string",
@@ -144,11 +145,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         session_id: { type: "string" },
         offset: {
           type: "integer",
@@ -169,11 +166,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         session_id: { type: "string" },
         rows: { type: "integer" },
         cols: { type: "integer" },
@@ -188,11 +181,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         session_id: { type: "string" },
       },
       required: ["session_id"],
@@ -204,7 +193,9 @@ const TERMINAL_TOOLS: McpTool[] = [
       "List closed sessions retained in history with their byte ranges (for terminal_read on finished sessions).",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
@@ -213,7 +204,9 @@ const TERMINAL_TOOLS: McpTool[] = [
     description: "List open terminal sessions on a device.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
@@ -222,7 +215,9 @@ const TERMINAL_TOOLS: McpTool[] = [
     description: "List available serial ports on a device.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
@@ -232,11 +227,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         session_id: { type: "string" },
       },
       required: ["session_id"],
@@ -249,11 +240,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         line: { type: "string" },
       },
       required: ["line"],
@@ -264,7 +251,9 @@ const TERMINAL_TOOLS: McpTool[] = [
     description: "Read the panel diagnostic ring buffer (newest last).",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
@@ -275,11 +264,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         target: { type: "string", description: "SSH target (user@host:port)" },
         password: { type: "string" },
       },
@@ -293,11 +278,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         target: { type: "string" },
       },
       required: ["target"],
@@ -310,11 +291,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         target: { type: "string" },
       },
       required: ["target"],
@@ -326,7 +303,9 @@ const TERMINAL_TOOLS: McpTool[] = [
       "List saved terminal connections on the device (successfully-opened sessions). Each entry: id (kind:target), kind, target, label, params — reconnect with terminal_connect_saved.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
@@ -337,11 +316,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         id: { type: "string" },
       },
       required: ["id"],
@@ -353,7 +328,9 @@ const TERMINAL_TOOLS: McpTool[] = [
       "Environment info for driving the device's terminal (default shell, install dir, bundled node, guidance). Run before opening sessions.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
@@ -363,7 +340,9 @@ const TERMINAL_TOOLS: McpTool[] = [
       "Info about the device's BUNDLED Playwright runtime (paths, versions, template) — AI should reuse it instead of installing its own.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
@@ -374,11 +353,7 @@ const TERMINAL_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         script: { type: "string" },
         timeout_secs: { type: "integer" },
       },
@@ -394,11 +369,7 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         url: { type: "string" },
       },
       required: ["url"],
@@ -409,7 +380,9 @@ const BROWSER_TOOLS: McpTool[] = [
     description: "Get the interactive element tree of the controlled tab.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
@@ -419,11 +392,7 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         full_page: { type: "boolean" },
       },
       required: [],
@@ -436,11 +405,7 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         element_ref: {
           type: "integer",
           description: "snapshot ref number (rendered as e<N> target)",
@@ -455,11 +420,7 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         element_ref: { type: "integer" },
         text: { type: "string" },
       },
@@ -472,11 +433,7 @@ const BROWSER_TOOLS: McpTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        device: {
-          type: "string",
-          description:
-            "Device name. OPTIONAL — omit when only one device is registered (it is used automatically).",
-        },
+        ...DEVICE_PARAM,
         condition: { type: "string" },
         timeout_s: { type: "integer" },
       },
@@ -488,7 +445,9 @@ const BROWSER_TOOLS: McpTool[] = [
     description: "Close the controlled tab for a device.",
     inputSchema: {
       type: "object",
-      properties: { device: { type: "string" } },
+      properties: {
+        ...DEVICE_PARAM,
+      },
       required: [],
     },
   },
