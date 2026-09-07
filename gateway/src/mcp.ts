@@ -34,38 +34,21 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const user = token ? await findUserByToken(env, token) : null;
   if (!user || !user.enabled || user.role !== "admin") {
-    return new Response(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: { code: -32001, message: "Unauthorized: admin token required" },
-        id: null,
-      }),
-      { status: 401, headers: { "content-type": "application/json" } },
-    );
+    return mcpStatusError(-32001, "Unauthorized: admin token required", 401);
   }
 
   if (request.method === "GET") {
     return mcpSseStream();
   }
   if (request.method !== "POST") {
-    return new Response(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        error: { code: -32600, message: "Method not allowed" },
-        id: null,
-      }),
-      { status: 405, headers: { "content-type": "application/json" } },
-    );
+    return mcpStatusError(-32600, "Method not allowed", 405);
   }
 
   let body: any;
   try {
     body = await request.json();
   } catch {
-    return new Response(
-      JSON.stringify({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null }),
-      { status: 400, headers: { "content-type": "application/json" } },
-    );
+    return mcpStatusError(-32700, "Parse error", 400);
   }
 
   const { method, params, id } = body;
@@ -331,6 +314,16 @@ function mcpJson(result: any, id: any): Response {
     headers: { "content-type": "application/json" },
   });
 }
+/// JSON-RPC error envelope with an explicit HTTP status — the 401/405/400
+/// transport-level rejections used to each inline the same Response
+/// construction (protocol-level tool errors stay on mcpError's 200).
+function mcpStatusError(code: number, message: string, status: number): Response {
+  return new Response(JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 function mcpError(code: number, message: string, id: any, data?: any): Response {
   const error: any = { code, message };
   if (data) error.data = { code: data };
