@@ -52,6 +52,20 @@ impl Drop for SseConnectionGuard {
     }
 }
 
+/// Acquire an SSE viewer slot, or the 503 response to return when the
+/// 64-viewer pool is full. The /api/events and /api/events/term handlers in
+/// mod.rs used to each inline the same acquire-match-503 block.
+pub(crate) fn acquire_sse_guard() -> Result<SseConnectionGuard, Box<Response>> {
+    match SseConnectionGuard::acquire() {
+        Some(g) => Ok(g),
+        None => Err(Box::new(built_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "text/plain",
+            Body::from("too many SSE viewers (max 64)"),
+        ))),
+    }
+}
+
 /// Adapter: tokio mpsc::Receiver → futures::Stream for axum Body::from_stream
 struct MpscStream {
     rx: mpsc::Receiver<Result<Bytes, Infallible>>,

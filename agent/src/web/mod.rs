@@ -40,7 +40,7 @@ pub use panel::WebPanel;
 pub(crate) use panel::{
     panel_content_type, panel_token_response, plausible_grant, redeem_panel_grant, serve_panel_file,
 };
-pub(crate) use sse::{sse_stream, sse_term_stream, SseConnectionGuard};
+pub(crate) use sse::{acquire_sse_guard, sse_stream, sse_term_stream};
 
 /// Minimal self-contained status page — the panel SPA is retired, but the
 /// device URL should still answer something readable in a browser. Apple-style
@@ -253,16 +253,11 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
             return *resp;
         }
         // stage-n SSE audit LOW: bound concurrent SSE connections so a flood
-        // of viewers can't exhaust tasks/memory. Reserve a slot; if full, 503.
-        let _guard = match SseConnectionGuard::acquire() {
-            Some(g) => g,
-            None => {
-                return built_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "text/plain",
-                    Body::from("too many SSE viewers (max 64)"),
-                )
-            }
+        // of viewers can't exhaust tasks/memory. Reserve a slot; if full, 503
+        // (shared acquire_sse_guard — see sse.rs).
+        let _guard = match acquire_sse_guard() {
+            Ok(g) => g,
+            Err(resp) => return *resp,
         };
         return sse_stream(state).await;
     }
@@ -272,15 +267,9 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
         if let Err(resp) = check_auth(&req, &state) {
             return *resp;
         }
-        let _guard = match SseConnectionGuard::acquire() {
-            Some(g) => g,
-            None => {
-                return built_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "text/plain",
-                    Body::from("too many SSE viewers (max 64)"),
-                )
-            }
+        let _guard = match acquire_sse_guard() {
+            Ok(g) => g,
+            Err(resp) => return *resp,
         };
         return sse_term_stream(state).await;
     }
