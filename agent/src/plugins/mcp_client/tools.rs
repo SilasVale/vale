@@ -754,18 +754,7 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
         .map_err(|e| DeviceError::Internal {
             message: format!("MCP stdio list_tools failed: {e}"),
         })?;
-    let names: Vec<(String, String)> = tools
-        .iter()
-        .map(|t| {
-            (
-                t.name.to_string(),
-                t.description
-                    .clone()
-                    .map(|c| c.to_string())
-                    .unwrap_or_default(),
-            )
-        })
-        .collect();
+    let names = tool_name_desc_pairs(tools.iter());
 
     Ok((
         McpSession::Stdio {
@@ -1176,6 +1165,25 @@ async fn handshake(sess: &mut McpSession) -> Result<Value, DeviceError> {
     }
 }
 
+/// Map an rmcp tool iterator onto the (name, description-string) pairs the
+/// connect/list responses expose. connect_stdio and list_tools_ref used to
+/// each inline this shape.
+fn tool_name_desc_pairs<'a>(
+    tools: impl Iterator<Item = &'a rmcp::model::Tool>,
+) -> Vec<(String, String)> {
+    tools
+        .map(|t| {
+            (
+                t.name.to_string(),
+                t.description
+                    .clone()
+                    .map(|c| c.to_string())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
 async fn list_tools_ref(sess: &mut McpSession) -> Result<Vec<(String, String)>, DeviceError> {
     match sess {
         McpSession::Stdio { client, .. } => {
@@ -1186,19 +1194,7 @@ async fn list_tools_ref(sess: &mut McpSession) -> Result<Vec<(String, String)>, 
                     .map_err(|e| DeviceError::Internal {
                         message: format!("MCP stdio list failed: {e}"),
                     })?;
-            Ok(tools
-                .tools
-                .iter()
-                .map(|t| {
-                    (
-                        t.name.to_string(),
-                        t.description
-                            .clone()
-                            .map(|c| c.to_string())
-                            .unwrap_or_default(),
-                    )
-                })
-                .collect())
+            Ok(tool_name_desc_pairs(tools.tools.iter()))
         }
         McpSession::Http { next_id, .. } => {
             let id = next_id.fetch_add(1, Ordering::Relaxed);
