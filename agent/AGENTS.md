@@ -2953,6 +2953,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   per-tool bodies (each file op distinct) — no further extraction
   warranted at this window.
 
+### 2026-09-08 SOLID round 61 (terminal-domain clean-slate check)
+- **Verification round (no code changes)** — (1) ctx.rs (168) /
+  exec.rs (652) / sessions.rs (311) stripped lines: ZERO dup windows
+  — the terminal tools directory is fully clean after the round-46/55/
+  58 extractions; (2) feature-gated suite 314 + feature clippy clean
+  re-verified after find_backend; (3) mcp_client has no client.rs (all
+  session logic lives in the 1107-line cohesive tools.rs — round-51
+  judgment stands); (4) find_backend unit-testing judged not worth the
+  harness: the stub TerminalManager is an empty shell (no feature),
+  testing the desktop_impl path needs feature + tokio runtime +
+  sweeper setup for one SessionNotFound branch — terminal behavior is
+  covered by the device e2e suite instead. Kept with evidence.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
