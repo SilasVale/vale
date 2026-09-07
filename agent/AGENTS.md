@@ -1845,6 +1845,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   had ZERO pins. Added 1 in gateway.test.mjs (muse-spark 429 text →
   status + rate_limit kept). Clean round. Suite 559->560; gates clean;
   snapshot updated; pushed.
+  ROUND-516 (2026-09-06): glm audit — the glm-5.2:free retry config had ZERO
+  pins. Added 1 in gateway.test.mjs (502 → ≥5 calls, proves the 10x arm
+  over the generic 4x). Clean round. Suite 560->561; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
