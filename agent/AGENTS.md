@@ -2868,6 +2868,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   no-retry semantics are the safe default. Round-359's classification
   discipline now covers the whole plugin surface.
 
+### 2026-09-08 SOLID round 55 (exec.rs wait-loop buffer read)
+- **poll_output_chunk (DRY, agent exec.rs — closes a long-Deferred
+  class)** — the foreground + background execute wait loops each
+  inlined the same buffer-read pair (dropped-cursor jump + slice_from +
+  chunk length). The round-94 cursor-jump lesson was commented at only
+  ONE site — the background loop carried the same semantics silently.
+  Shared `poll_output_chunk(buf, sid, read_abs, truncated)`; the
+  foreground loop passes Some(&mut truncated) to keep its 1MB-burst
+  truncation reporting, the background wait passes None. The
+  slice_from window class is now fully resolved (one remaining
+  exec.rs scan-site is a distinct scan-from usage). 301 lib pass; fmt
+  + clippy clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
