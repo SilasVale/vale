@@ -1925,3 +1925,20 @@ test("og chat/completions: developer role is normalized to system upstream", asy
   assert.equal(sent.messages[0].role, "system");
   assert.equal(sent.messages[0].content, "be brief");
 });
+
+// round-508 (coverage-driven): the model=auto resolution arm had ZERO pins.
+test('model "auto" resolves to the first usable channel (ds) and serves', async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  const res = await withFetch(async (url, init) => {
+    sent = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({
+      type: "message",
+      content: [{ type: "text", text: "auto ok" }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, { model: "auto", max_tokens: 8, messages: [{ role: "user", content: "hi" }] }));
+  assert.equal(res.status, 200);
+  assert.equal(sent.model, "deepseek-v4-flash");
+  assert.equal((await res.json()).content[0].text, "auto ok");
+});
