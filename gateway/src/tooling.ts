@@ -82,6 +82,18 @@ export function encodeBase64Utf8(text: string) {
   return btoa(bin);
 }
 
+/** Probe-result envelope for valeProbe's channel branches: {ok, channel,
+ * status} with the upstream status as detail on failure. The og and
+ * passthrough branches used to each inline this shape. */
+function probeResultJson(prefix: string, res: Response) {
+  return jsonOk({
+    ok: res.ok,
+    channel: prefix,
+    status: res.status,
+    detail: res.ok ? "" : `upstream ${res.status}`,
+  });
+}
+
 /**
  * Channel probe for the vale CLI's `use` command (public POST /api/vale-probe).
  *
@@ -180,12 +192,7 @@ export async function valeProbe(env: any, model: string) {
   } catch (e) {
     return jsonOk({ ok: false, channel: prefix, detail: (e as any).message });
   }
-  return jsonOk({
-    ok: res.ok,
-    channel: prefix,
-    status: res.status,
-    detail: res.ok ? "" : `upstream ${res.status}`,
-  });
+  return probeResultJson(prefix, res);
 }
 
 // POSIX one-liner installer — embeds the vale CLI as base64 (no quoting issues).
