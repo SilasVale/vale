@@ -45,22 +45,24 @@ pub struct CommandLine {
 const BEL: u8 = 0x07;
 const ESC: u8 = 0x1b;
 
-/// Find the first `633;D[;rc]` completion in `data` (raw bytes, may contain
-/// partial sequences). Returns the parsed record; the caller should drain
-/// `end` bytes and keep scanning.
-pub fn find_finished(data: &[u8]) -> Option<CommandFinished> {
+/// Shared OSC scanner. Walks `data` byte-by-byte; at each `ESC ]` boundary
+/// asks `parse` to match one specific 633 sequence (returning its total
+/// length + value). A non-matching OSC is skipped whole via osc_skip_len —
+/// but NEVER past a partial/malformed `633;` sequence (a marker split
+/// across chunks, or a literal `633;D;` echo, must stay scannable so a real
+/// marker after it is still found). Returns the first hit as an absolute
+/// end offset + value.
+///
+/// find_finished / find_command_line / find_prompt_started used to each
+/// hand-roll this scan loop; the skip rule is the subtle part and must not
+/// drift between finders.
+fn scan_osc<T>(data: &[u8], parse: impl Fn(&[u8]) -> Option<(usize, T)>) -> Option<(usize, T)> {
     let mut i = 0;
     while i + 1 < data.len() {
         if data[i] == ESC && data[i + 1] == b']' {
-            // Is this an OSC 633;D... sequence?
-            if let Some((rel_end, rc)) = parse_osc_633_d(&data[i..]) {
-                let end = i + rel_end;
-                return Some(CommandFinished { exit_code: rc, end });
+            if let Some((rel_end, value)) = parse(&data[i..]) {
+                return Some((i + rel_end, value));
             }
-            // Not a 633;D — skip past this OSC entirely (any ESC ] ... ST),
-            // but only if it isn't a partial/malformed 633; sequence (those
-            // must stay scannable — a split marker or a literal 633;D; echo
-            // must not swallow a real marker after it).
             if let Some(n) = osc_skip_len(data, i) {
                 i += n;
                 continue;
@@ -69,66 +71,52 @@ pub fn find_finished(data: &[u8]) -> Option<CommandFinished> {
         i += 1;
     }
     None
+}
+
+/// Find the first `633;D[;rc]` completion in `data` (raw bytes, may contain
+/// partial sequences). Returns the parsed record; the caller should drain
+/// `end` bytes and keep scanning.
+pub fn find_finished(data: &[u8]) -> Option<CommandFinished> {
+    scan_osc(data, parse_osc_633_d).map(|(end, rc)| CommandFinished { exit_code: rc, end })
 }
 
 /// Find the first `633;E;cmd[;nonce]` record.
 #[allow(dead_code)]
 pub fn find_command_line(data: &[u8]) -> Option<CommandLine> {
-    let mut i = 0;
-    while i + 1 < data.len() {
-        if data[i] == ESC && data[i + 1] == b']' {
-            if let Some((rel_end, cmd, nonce)) = parse_osc_633_e(&data[i..]) {
-                let end = i + rel_end;
-                return Some(CommandLine {
-                    command: cmd,
-                    nonce,
-                    end,
-                });
-            }
-            // Same rule: skip only non-633; OSCs.
-            if let Some(n) = osc_skip_len(data, i) {
-                i += n;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    None
+    scan_osc(data, |seq| {
+        parse_osc_633_e(seq).map(|(len, cmd, nonce)| (len, (cmd, nonce)))
+    })
+    .map(|(end, (cmd, nonce))| CommandLine {
+        command: cmd,
+        nonce,
+        end,
+    })
 }
 
 /// Find the first `633;A` (prompt started) in `data`. Returns the offset
 /// just past the sequence (caller drains up to here), or None.
 pub fn find_prompt_started(data: &[u8]) -> Option<usize> {
-    let mut i = 0;
-    while i + 1 < data.len() {
-        if data[i] == ESC && data[i + 1] == b']' {
-            // Literal "633;A"
-            let mut pos = i + 2;
-            for expect in b"633;A" {
-                if data.get(pos) != Some(expect) {
-                    break;
-                }
-                pos += 1;
-            }
-            // If we matched all 5 chars ("633;A"), expect a terminator.
-            if pos == i + 7 {
-                match data.get(pos) {
-                    Some(&BEL) => return Some(pos + 1),
-                    Some(&ESC) if data.get(pos + 1) == Some(&b'\\') => return Some(pos + 2),
-                    _ => {}
-                }
-            }
-            // Skip past any complete OSC to avoid re-scanning inside it —
-            // but never past a partial/malformed 633; sequence (it may be
-            // the A marker split across chunks, or a literal 633;A; echo).
-            if let Some(n) = osc_skip_len(data, i) {
-                i += n;
-                continue;
-            }
-        }
-        i += 1;
+    scan_osc(data, |seq| parse_osc_633_a(seq).map(|len| (len, ()))).map(|(end, _)| end)
+}
+
+/// Parse a literal `ESC ] 633 ; A <ST>` starting at `data[0] == ESC`.
+/// Returns the total length INCLUDING the terminator (BEL or ESC \).
+fn parse_osc_633_a(data: &[u8]) -> Option<usize> {
+    if data.first() != Some(&ESC) || data.get(1) != Some(&b']') {
+        return None;
     }
-    None
+    let mut pos = 2;
+    for expect in b"633;A" {
+        if data.get(pos) != Some(expect) {
+            return None;
+        }
+        pos += 1;
+    }
+    match data.get(pos) {
+        Some(&BEL) => Some(pos + 1),
+        Some(&ESC) if data.get(pos + 1) == Some(&b'\\') => Some(pos + 2),
+        _ => None,
+    }
 }
 
 /// Parse `ESC ] 633 ; D [; <digits>] ST` starting at `data[0] == ESC`.
