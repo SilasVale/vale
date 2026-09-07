@@ -10,6 +10,8 @@
 //! `playwright/node_modules/playwright-core`), which `vale update` keeps in
 //! sync with the agent binary.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use serde_json::{json, Value};
 
 use crate::plugins::to_value_or_empty;
@@ -18,6 +20,19 @@ use vale_agent_core::ToolDef;
 /// Install dir — registry-first, then exe dir (crate::paths::install_dir).
 fn install_dir() -> std::path::PathBuf {
     crate::paths::install_dir()
+}
+
+/// Per-run script stem: millisecond time + pid + process-wide counter.
+/// Concurrent browser_run_script calls run as independent node processes
+/// with NO runner lock (headless runs are fully parallel) — a bare
+/// timestamp filename collides when two calls land in the same millisecond
+/// and one process would execute the other's script. The stem doubles as
+/// VALE_RUN_ID so screenshots can be namespaced per run.
+static SCRIPT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn next_run_stem(ts_ms: u128) -> String {
+    let seq = SCRIPT_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{ts_ms}_{}_{seq}", std::process::id())
 }
 
 /// Read playwright-core's version from the bundled package.json.
@@ -103,6 +118,7 @@ let has_core = md.map(|m| m.is_dir()).unwrap_or(false);
                         "VALE_PW_OUT": out_dir.to_string_lossy(),
                         "VALE_CDP_ENDPOINT": "(desktop CDP when up, else empty — the helper reads it)",
                         "VALE_BROWSER_HELPER": "(absolute path of the acquireBrowser() helper module)",
+                        "VALE_RUN_ID": "(unique per call — prefix screenshot names with it for exact attribution under concurrency)",
                         "VALE_PW_URL": "(set by AI — any URL, e.g. https://192.168.1.1:8000/?Role=Gpon)",
                     }
                 })))
@@ -116,7 +132,7 @@ let has_core = md.map(|m| m.is_dir()).unwrap_or(false);
 fn tool_browser_run_script() -> ToolDef {
     ToolDef::new(
         "browser_run_script",
-        "Run a self-contained Node/Playwright script with the device's BUNDLED node + playwright-core (never install your own). Scripts run with VALE_BROWSER_HELPER set (acquireBrowser(): attaches to the visible embedded view when present so actions show live, else private headless) — prefer it over launching your own browser; headless only for batch jobs that must not disturb the watched screen. Params: script (JS source, CommonJS; follow the browser_pw_info template), timeout_secs (default 120, max 600). Screenshots saved to the pwout dir are listed in the result. Returns exit_code, stdout, stderr (each capped), screenshots, timed_out.",
+        "Run a self-contained Node/Playwright script with the device's BUNDLED node + playwright-core (never install your own). Scripts run with VALE_BROWSER_HELPER set (acquireBrowser(): attaches to the visible embedded view when present so actions show live, else private headless) — prefer it over launching your own browser; headless only for batch jobs that must not disturb the watched screen. Concurrency: calls run as independent processes with NO runner lock — headless runs are fully parallel, but attached runs SHARE the single visible tab (one view shows one page; parallel visible drivers interleave, so keep interactive work serial). Screenshot namespacing: pass shots as \"<VALE_RUN_ID>-*.png\" (env, unique per call) for exact attribution under concurrency; the returned list is otherwise a best-effort before/after diff. Params: script (JS source, CommonJS; follow the browser_pw_info template), timeout_secs (default 120, max 600). Screenshots saved to the pwout dir are listed in the result. Returns exit_code, stdout, stderr (each capped), screenshots, timed_out.",
         json!({
             "type": "object",
             "properties": {
@@ -151,7 +167,8 @@ fn tool_browser_run_script() -> ToolDef {
                 }
                 let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(120).min(600);
                 let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-                let script_path = out_dir.join(format!("pwai_{ts}.js"));
+                let run_stem = next_run_stem(ts);
+                let script_path = out_dir.join(format!("pwai_{run_stem}.js"));
                 if let Err(e) = std::fs::write(&script_path, &script_src) {
                     return Ok(to_value_or_empty(json!({"error": format!("write script failed: {e}")})));
                 }
@@ -168,6 +185,13 @@ fn tool_browser_run_script() -> ToolDef {
                                 "VALE_BROWSER_HELPER",
                                 helper.to_string_lossy().to_string(),
                             )
+                            // Run identity for screenshot namespacing: the
+                            // screenshots list is a before/after diff over
+                            // the shared pwout dir, so under concurrency a
+                            // sibling run's shot can be misattributed.
+                            // Naming shots "<VALE_RUN_ID>-*.png" makes
+                            // attribution exact; without it, best-effort.
+                            .env("VALE_RUN_ID", run_stem.clone())
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped());
                         let output = cmd.output().await;
@@ -273,6 +297,22 @@ mod tools_tests {
     fn build_exposes_two_browser_tools() {
         let names: Vec<String> = build().iter().map(|t| t.name.clone()).collect();
         assert_eq!(names, vec!["browser_pw_info", "browser_run_script"]);
+    }
+
+    #[test]
+    fn run_stems_are_unique_within_a_millisecond() {
+        // The concurrency fix: same-ms stems must still differ (pid+seq).
+        let a = next_run_stem(1_700_000_000_000);
+        let b = next_run_stem(1_700_000_000_000);
+        assert_ne!(a, b, "same-ms stems collided");
+        assert!(
+            a.starts_with("1700000000000_") && b.starts_with("1700000000000_"),
+            "stem carries the timestamp: {a} / {b}"
+        );
+        assert!(
+            a.contains(&std::process::id().to_string()),
+            "stem carries the pid: {a}"
+        );
     }
 
     #[test]
