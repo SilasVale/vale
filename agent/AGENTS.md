@@ -2907,6 +2907,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   feature-gated suite 314 (306 lib + 8 feature-only), xwin check
   green, tree clean.
 
+### 2026-09-08 SOLID round 58 (terminal manager find_backend)
+- **find_backend (DRY, agent tools/terminal/mod.rs)** — term_resize /
+  term_write_bytes / terminate each inlined the same lock →
+  iter_mut().find(sid) → SessionNotFound → clone-backend block, with
+  round-49's heartbeat touch duplicated at two of them. Shared
+  `find_backend(sid, touch)`: clones the Arc inside the lock so the
+  caller operates the backend OUTSIDE it (review-#10 discipline — a
+  blocked write stalls only its own call; the cloned Arc also survives
+  a concurrent sweeper removal). Behavior unchanged (resize/write touch
+  last_output as before; terminate does not). 306 lib pass; fmt +
+  clippy clean. terminal/mod.rs residual windows now are the
+  if-let-style find sites (close/try_execute — they mutate session
+  state in place, not clone-able; kept) plus the SessionInfo map tail.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
