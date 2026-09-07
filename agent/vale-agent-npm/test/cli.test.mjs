@@ -83,3 +83,27 @@ test("firewallPs: idempotent Vale-scoped rule for the port", () => {
   assert.match(body, /'Vale Agent'/, "DisplayName-scoped, never foreign rules");
   assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });
+
+test("writeReleaseMarker: fresh-install parity with the round-298 update marker", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { writeReleaseMarker } = require("../bin/vale.js");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "vale-relmark-"));
+  try {
+    // Writes the package.json version (same source `vale update` uses).
+    writeReleaseMarker(d);
+    const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    assert.equal(fs.readFileSync(path.join(d, ".vale-release"), "utf8"), pkg.version);
+    // Idempotent (re-run overwrites with the same value).
+    writeReleaseMarker(d);
+    assert.equal(fs.readFileSync(path.join(d, ".vale-release"), "utf8"), pkg.version);
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("writeReleaseMarker: missing dir stays silent (best-effort, never throws)", () => {
+  const { writeReleaseMarker } = require("../bin/vale.js");
+  assert.doesNotThrow(() => writeReleaseMarker("Z:\\definitely\\not\\here"));
+});

@@ -229,6 +229,22 @@ export function writeBoxedVersions(installDir: string, pkgDir: string): void {
   }
 }
 
+// round-298 parity: record this package's release version next to the install
+// dir as `.vale-release` — the file agent_update reads as the LOCAL version
+// (fallback: Cargo 1.0.x, which never changes, so remote always looks newer
+// and every agent_update call re-downloads + swaps). `vale update` writes it
+// from the swap script after a provable copy; `vale setup` (fresh install)
+// copies THIS package's exe, so the provable-success point is right after the
+// boot task registers — the caller invokes this only once setup succeeded.
+// Best-effort, never fail-closed (a marker failure must not block install).
+export function writeReleaseMarker(installDir: string): void {
+  try {
+    const v = String(require("../package.json").version || "");
+    if (!v) return;
+    fs.writeFileSync(path.join(installDir, ".vale-release"), v, "utf8");
+  } catch { /* best-effort */ }
+}
+
 function svc(action) {
   sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
 }
@@ -426,6 +442,11 @@ const commands = {
     }
     // P2-4: record the boxed-component versions (never fail-closed).
     writeBoxedVersions(DIR, path.join(__dirname, ".."));
+    // round-298 parity: a FRESH install must also carry the release marker —
+    // without it agent_update compares against the Cargo 1.0.x fallback and
+    // re-downloads + swaps on every call. Write after the exe copy + task
+    // registration (setup provably succeeded). Best-effort.
+    writeReleaseMarker(DIR);
     // round-330: Tauri vale-desktop staging removed (retired).
     // stage-l: stage the Electron shell sources (main/preload) so the desktop
     // app picks up menu/command features on a fresh install too.
