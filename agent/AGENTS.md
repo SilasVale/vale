@@ -1930,6 +1930,16 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   login render smoke OK, devices-dashboard smoke OK, code-viewer mirror
   resync produces zero changes (fresh since round-526). Tree clean. No
   code changes — verification round.
+  ROUND-537 (2026-09-07): STALE DEPLOY FOUND + FIXED — live gateway
+  predated the 2026-09-05 mcp.ts split (proved via /code/ mcp.ts import
+  shape): 19 src commits undeployed incl. behavior fixes (429
+  rate_limit_error default, og-key scoping, vision KV-outage degrade,
+  seedAdmin no-clobber, /mcp enabled gate, per-IP limiter, disabled-user
+  logout). Pre-deploy gates green (577 + tsc + prettier); deployed via
+  build.sh gateway (Version 3b991d38); live-verified 21/21 channels ok,
+  /code/ 3/3 byte-identical, /mcp 401 gate. LESSON: test-only rounds
+  never trigger deploys — schedule a live-vs-repo parity probe
+  periodically, not just after code changes.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
