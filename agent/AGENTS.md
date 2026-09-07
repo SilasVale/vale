@@ -2328,6 +2328,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   og SSE first-chunk, AMD model-list parse, qwen MaaS anthropic-version
   header…; previously judged not-worth-it).
 
+### 2026-09-08 SOLID round 18 (mcp_client: now_millis + envelope predicate)
+- **now_millis centralization (DRY, agent)** — record_mcp_action and
+  record_mcp_screenshot each inlined the same epoch-millis timestamp
+  construction. Moved one pub(crate) now_millis() into lib.rs next to
+  unix_now/hex_encode; both call sites repointed. (system/tools.rs's
+  as_millis is a file-mtime conversion, not a clock read — left alone.)
+  mcp_client 21/21, lib 299 pass; clippy/fmt clean.
+- **envelope_id_matches (DRY, agent mcp_client)** — parse_envelope's
+  direct-JSON arm and its SSE-candidate loop each inlined the same
+  id-matching predicate (round-365 added the direct-arm check by copying
+  the SSE arm). Extracted one predicate; wrong-id-reject tests pin the
+  semantics. mcp_client 21/21, lib 299 pass; clippy/fmt clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
