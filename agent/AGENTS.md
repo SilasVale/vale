@@ -1992,6 +1992,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   parity 0 drift, vercel/zen-go/zen-us keyless 401s intact, d1 401
   (alive, tunnel up). Every deployed surface consistent with repo. No
   code changes — verification round.
+  ROUND-547 (2026-09-07): completed the prescribed hardening — the Sep 7
+  TempClaimDO commit said `wrangler secret put DO_AUTH` but live index
+  had only UPLOAD_KEY (gate dormant). Generated + stored DO_AUTH (value
+  lives only in Cloudflare; loss = regenerate + re-put, no sync needed).
+  Verified no worker/DO env skew (well-formed claims 404, never 401) and
+  reviewed both sides (server-side overwrite kills forgery, constant-time
+  compare, claim-auth tests green in the 56). By construction the compat
+  gate shows no external change — dormant/active indistinguishable
+  through the worker path. No repo changes — ops round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
