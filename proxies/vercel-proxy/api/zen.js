@@ -10,6 +10,20 @@ const TARGETS = {
 };
 const SAFE = ["accept","accept-encoding","accept-language","anthropic-version","content-type","user-agent"];
 
+// opencode zen/go (target=og) requires a stable per-conversation
+// x-opencode-session header on every request (2026-09-05+; 400 "Request is
+// missing x-opencode-session" otherwise). The gateway now always sends one
+// on og requests; this relay must not drop it — and standalone callers may
+// send any of the conversation-id spellings, which we map to the upstream's
+// expected name. Non-og targets never receive these (their upstreams do not
+// speak the zen session contract).
+const SESSION_SOURCE_HEADERS = [
+  "x-opencode-session",
+  "x-client-request-id",
+  "session_id",
+  "x-session-id",
+];
+
 // Upstream fetch budget: fail fast instead of hanging a client. The timeout
 // covers WAITING FOR RESPONSE HEADERS only — once the upstream answers, the
 // response body (possibly a long SSE stream: muse-spark generations run
@@ -143,6 +157,13 @@ export default async function handler(request) {
       } else {
         // Non-AI paths (e.g. /v1/models): zen's native scheme is x-api-key.
         h.set("x-api-key", callerKey);
+      }
+      // zen/go per-conversation session header: forward the caller's session
+      // id under the name zen expects (the gateway and DSH both send one of
+      // the spellings above on og requests; standalone callers may too).
+      for (const n of SESSION_SOURCE_HEADERS) {
+        const v = request.headers.get(n);
+        if (v) { h.set("x-opencode-session", v.trim()); break; }
       }
     } else {
       h.set("Authorization", `Bearer ${callerKey}`);

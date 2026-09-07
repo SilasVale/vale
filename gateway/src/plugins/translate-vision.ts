@@ -14,7 +14,7 @@
 import { getGlobalSetting, globalSettingEnabled } from "../store.ts";
 import { toOpenAIRequest } from "../anthropic-translate.ts";
 import { fetchWithTimeout, upstreamTimeoutMs } from "../reliability.ts";
-import { pickRoute, passthroughHeaders, stripBracket } from "../upstream.ts";
+import { pickRoute, passthroughHeaders, stripBracket, opencodeSessionHeader } from "../upstream.ts";
 
 export function isVisionCapable(model: string, upstreamModel: string, env: any): boolean {
   const list = String(env.VISION_CAPABLE_MODELS || "")
@@ -137,6 +137,11 @@ async function describeImage(
   const upstreamModel = stripBracket(
     route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel,
   );
+  // zen/go per-conversation session header (og vision model only — see
+  // opencodeSessionHeader in upstream.ts; zen 400s without it since
+  // 2026-09-05). No client headers ride this internal call, so the value is
+  // the stable per-user digest.
+  const ogSession = route.kind === "opencode" ? opencodeSessionHeader(undefined, uid) : {};
   const content = [
     { type: "image", source: { type: "base64", media_type: mediaType, data } },
     {
@@ -195,6 +200,8 @@ async function describeImage(
         headers: {
           Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`,
           "Content-Type": "application/json",
+          // zen/go per-conversation session header (see ogSession above).
+          ...ogSession,
         },
         body: JSON.stringify(openaiReq),
       },

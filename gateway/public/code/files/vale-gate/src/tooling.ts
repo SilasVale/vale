@@ -22,7 +22,7 @@ import {
   OG_ZEN_CHAT,
   OG_NATIVE_ANTHROPIC,
 } from "./channels.ts";
-import { pickRoute, passthroughHeaders, stripBracket } from "./upstream.ts";
+import { pickRoute, passthroughHeaders, stripBracket, opencodeSessionHeader } from "./upstream.ts";
 import { fetchWithTimeout, upstreamTimeoutMs, isChannelDegraded } from "./reliability.ts";
 import { jsonOk, jsonError } from "./http.ts";
 import { createIpRateLimiter } from "./lib/ratelimit.ts";
@@ -112,10 +112,13 @@ export async function valeProbe(env: any, model: string) {
     let res;
     try {
       // Native models hit zen /v1/messages with x-api-key; translate models
-      // hit chat/completions with Bearer.
+      // hit chat/completions with Bearer. zen/go requires the per-conversation
+      // x-opencode-session header (2026-09-05+; probe model is arbitrary, so
+      // use the stable anonymous digest).
+      const session = opencodeSessionHeader(undefined, "probe");
       const headers = native
-        ? { "x-api-key": key, "Content-Type": "application/json" }
-        : { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+        ? { "x-api-key": key, "Content-Type": "application/json", ...session }
+        : { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...session };
       res = await fetchWithTimeout(
         native ? OG_ZEN_ANTHROPIC : OG_ZEN_CHAT,
         {

@@ -34,6 +34,18 @@
 // The /v1/messages caller gate stays CLIENT_KEY (that endpoint spends the
 // worker's own paid OPENCODE_GO_API_KEY, so it must stay default-closed).
 
+// zen/go requires a stable per-conversation x-opencode-session header on
+// every request (2026-09-05+; 400 "Request is missing x-opencode-session"
+// otherwise — the muse-spark breakage). The /v1/responses BYOK relay must
+// forward the caller's conversation id under the name zen expects; the
+// gateway and DSH both send one of these spellings on og requests.
+const SESSION_SOURCE_HEADERS = [
+  "x-opencode-session",
+  "x-client-request-id",
+  "session_id",
+  "x-session-id",
+];
+
 const VERIFY_PATH = "/v1/messages";
 const RESPONSES_PATH = "/v1/responses";
 
@@ -184,6 +196,9 @@ export default {
             headers: {
               Authorization: `Bearer ${callerKey}`,
               "Content-Type": "application/json",
+              // zen/go per-conversation session header — forward the
+              // caller's session id (see SESSION_SOURCE_HEADERS).
+              ...sessionHeader(request),
             },
             body: request.body,
           },
@@ -264,6 +279,16 @@ export default {
     }
   },
 };
+
+// Pick the caller's conversation-id header (in zen/go preference order) for
+// forwarding as x-opencode-session. Empty → {} so the spread adds nothing.
+function sessionHeader(request) {
+  for (const n of SESSION_SOURCE_HEADERS) {
+    const v = (request.headers.get(n) || "").trim();
+    if (v) return { "x-opencode-session": v };
+  }
+  return {};
+}
 
 function jsonError(status, message, type, cors = {}) {
   return new Response(JSON.stringify({ type: "error", error: { type, message } }), {

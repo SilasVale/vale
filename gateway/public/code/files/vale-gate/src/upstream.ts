@@ -181,7 +181,10 @@ export function pickRoute(
 
 export function passthroughHeaders(
   bearerKey: string | null,
-  { apiKeyHeader = false }: { apiKeyHeader?: string | false } = {},
+  {
+    apiKeyHeader = false,
+    extra = {},
+  }: { apiKeyHeader?: string | false; extra?: Record<string, string> } = {},
 ): Headers {
   const h = new Headers();
   h.set("Content-Type", "application/json");
@@ -196,5 +199,68 @@ export function passthroughHeaders(
     if (apiKeyHeader) h.set(apiKeyHeader, bearerKey);
     else h.set("Authorization", `Bearer ${bearerKey}`);
   }
+  // Extra per-request headers (e.g. x-opencode-session for zen/go routing).
+  for (const [name, value] of Object.entries(extra)) {
+    if (value) h.set(name, value);
+  }
   return h;
+}
+
+// Stable per-conversation session id for opencode zen/go requests.
+//
+// zen/go requires x-opencode-session on every request since 2026-09-05 and
+// 400s without it ("Request is missing x-opencode-session and cannot be
+// routed efficiently" — the muse-spark 1.3 breakage; the same gate hits the
+// og chat-completions/search paths). It wants a stable per-conversation
+// identifier so it can route requests and reuse prompt caches.
+//
+// The gateway relays the CLIENT's own per-conversation identifiers when a
+// client sends one (keeping one cache namespace per real conversation):
+//   - x-opencode-session — native opencode clients / future DSH builds;
+//   - x-client-request-id — DSH's pi-ai adapter stamps the per-conversation
+//     session uuid on every openai-responses request (vale-muse today);
+//   - session_id / x-session-id — OpenAI/OpenRouter-style conversation ids.
+// Otherwise it synthesizes a stable per-user value derived WITHOUT KV (no
+// extra reads/writes): a digest of the uid under a constant application
+// salt. Stable across isolates and deploys (cache reuse), never a secret —
+// zen treats the value as a routing hint, not a gate.
+//
+// Only attached to requests actually destined for zen/go (route.kind ===
+// "opencode"), so ds/qw/or/nv/gmi/cm/amd wires stay untouched and no foreign
+// header leaks to other upstreams.
+const SESSION_SALT = "vale-og-session-v1";
+export function opencodeSessionHeader(
+  incoming: Headers | HeadersInit | undefined,
+  uid: string,
+): { "x-opencode-session": string } | Record<string, never> {
+  const fromClient =
+    headerValue(incoming, "x-opencode-session") ||
+    headerValue(incoming, "x-client-request-id") ||
+    headerValue(incoming, "session_id") ||
+    headerValue(incoming, "x-session-id");
+  if (fromClient) return { "x-opencode-session": fromClient };
+  return { "x-opencode-session": `vale-${fnvHex(`${SESSION_SALT}:${uid}`)}` };
+}
+
+// FNV-1a 64-bit fold into 16 hex chars. Deliberately non-cryptographic: the
+// value is a routing/cache key, not a secret — see opencodeSessionHeader.
+function fnvHex(s: string): string {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x85ebca6b) >>> 0;
+  }
+  return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
+}
+
+function headerValue(headers: Headers | HeadersInit | undefined, name: string): string {
+  if (!headers) return "";
+  try {
+    const h = headers instanceof Headers ? headers : new Headers(headers as HeadersInit);
+    return h.get(name)?.trim() || "";
+  } catch {
+    return "";
+  }
 }

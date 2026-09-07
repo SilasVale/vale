@@ -97,6 +97,28 @@ const post = (env, token, body, path = "/v1/messages") =>
     new URL(`https://g${path}`),
   );
 
+// POST with extra request headers (e.g. a client-sent conversation id).
+const postH = (env, token, body, path, extraHeaders = {}) =>
+  handleGateway(
+    new Request(`https://g${path}`, {
+      method: "POST",
+      headers: { "x-api-key": token, "content-type": "application/json", ...extraHeaders },
+      body: JSON.stringify(body),
+    }),
+    env,
+    new URL(`https://g${path}`),
+  );
+
+// Read an outbound header off the recorded fetch init (Headers or plain).
+function sentHeader(seen, name) {
+  if (seen.init.headers instanceof Headers) return seen.init.headers.get(name);
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(seen.init.headers || {})) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return null;
+}
+
 // ── og models: ALL route via zen chat/completions (OpenAI translate path) ──
 // (2026-08: OG_NATIVE_ANTHROPIC emptied — zen natively speaks OpenAI format
 // for every model, so the /v1/messages native passthrough is gone.)
@@ -223,6 +245,101 @@ test("/v1/responses rejects non-muse-spark and non-og models with 400", async ()
       }
     },
   );
+});
+
+// ── x-opencode-session (zen/go 2026-09-05 requirement) ──
+// zen/go 400s every request without a per-conversation x-opencode-session
+// ("Request is missing x-opencode-session and cannot be routed
+// efficiently" — the muse-spark 1.3 breakage). The gateway must send one on
+// every og/ upstream call: relayed from the client's conversation id when
+// present, else a stable per-user digest, and never on non-og wires.
+
+test("og muse /v1/responses carries x-opencode-session (client id relayed when sent)", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv();
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url: String(url), init };
+    return new Response(JSON.stringify({
+      id: "resp_1", object: "response", created_at: 1, status: "completed",
+      model: "muse-spark-1.3-contributor", output: [],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    postH(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi" }, "/v1/responses", {
+      "x-client-request-id": "conv-abc-123",
+    }),
+  );
+  assert.equal(res.status, 200);
+  // DSH's pi-ai stamps x-client-request-id per conversation — it must reach
+  // zen as x-opencode-session (the upstream rejects the request without it).
+  assert.equal(sentHeader(seen, "x-opencode-session"), "conv-abc-123");
+});
+
+test("og muse /v1/responses synthesizes a stable per-user session when the client sends none", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv();
+  const seen1 = [];
+  const seen2 = [];
+  const ok = () => new Response(JSON.stringify({ object: "response", output: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  await withFetch(async (url, init) => { seen1.push({ url: String(url), init }); return ok(); }, () =>
+    post(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi" }, "/v1/responses"),
+  );
+  await withFetch(async (url, init) => { seen2.push({ url: String(url), init }); return ok(); }, () =>
+    post(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi again" }, "/v1/responses"),
+  );
+  const a = sentHeader(seen1[0], "x-opencode-session");
+  const b = sentHeader(seen2[0], "x-opencode-session");
+  assert.ok(a && a.startsWith("vale-"), `synthesized session expected, got ${a}`);
+  assert.equal(a, b, "session must be stable across requests for the same user");
+});
+
+test("non-og wires never carry x-opencode-session", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { GMI_API_KEY: "sk-gmi" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url: String(url), init };
+    return new Response(JSON.stringify({
+      id: "x", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    postH(env, token, {
+      model: "gmi/MiniMaxAI/MiniMax-M3",
+      max_tokens: 8,
+      messages: [{ role: "user", content: "hi" }],
+    }, "/v1/chat/completions", { "x-client-request-id": "conv-abc" }),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(seen.url, "https://api.gmi-serving.com/v1/chat/completions");
+  assert.equal(sentHeader(seen, "x-opencode-session"), null, "gmi wire must not get a zen session header");
+});
+
+test("og chat/completions carries x-opencode-session (zen requires it on every og call)", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv();
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url: String(url), init };
+    return new Response(JSON.stringify({
+      id: "x", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "og/deepseek-v4-flash",
+      max_tokens: 10,
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    }, "/v1/chat/completions"),
+  );
+  assert.equal(res.status, 200);
+  assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
+  const sess = sentHeader(seen, "x-opencode-session");
+  assert.ok(sess && sess.startsWith("vale-"), `synthesized session expected on og chat, got ${sess}`);
 });
 
 test("og/muse-spark-1.3-contributor rides the zen-us CF exit when MUSE_RESPONSES_EXIT=zen-us", async () => {

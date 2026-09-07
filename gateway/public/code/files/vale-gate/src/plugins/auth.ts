@@ -45,6 +45,7 @@ import {
 import { fetchWithTimeout } from "../reliability.ts";
 import { createIpRateLimiter } from "../lib/ratelimit.ts";
 import { MODELS, OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
+import { opencodeSessionHeader } from "../upstream.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import type { PluginContext } from "./registry.ts";
 
@@ -555,7 +556,13 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
         : OG_ZEN_CHAT;
       const res = await fetchWithTimeout(probeUrl, {
         method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+          // zen/go requires x-opencode-session (2026-09-05+); this is the
+          // worker-level key probe, so use the anonymous digest.
+          ...opencodeSessionHeader(undefined, "key-probe"),
+        },
         body: JSON.stringify({
           model: "deepseek-v4-flash",
           messages: [{ role: "user", content: "ping" }],

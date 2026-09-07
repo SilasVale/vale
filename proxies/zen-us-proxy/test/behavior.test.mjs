@@ -158,6 +158,41 @@ test("/v1/responses upstream errors pass through with upstream message", async (
   }
 });
 
+test("/v1/responses forwards the caller's conversation id as x-opencode-session (zen 2026-09-05 requirement)", async () => {
+  const { calls, respond, restore } = stubFetch();
+  try {
+    respond(200, "data: {}\n\n", { "content-type": "text/event-stream" });
+    // pi-ai/DSH-style spelling
+    await worker.fetch(
+      req("POST", "/v1/responses", {
+        bearer: "caller-key",
+        body: {},
+        headers: { "x-client-request-id": "conv-dsh-uuid" },
+      }),
+      env,
+    );
+    assert.equal(calls[0].init.headers["x-opencode-session"], "conv-dsh-uuid");
+    // native spelling wins when both are present
+    await worker.fetch(
+      req("POST", "/v1/responses", {
+        bearer: "caller-key",
+        body: {},
+        headers: { "x-opencode-session": "conv-native", "x-client-request-id": "conv-dsh-uuid" },
+      }),
+      env,
+    );
+    assert.equal(calls[1].init.headers["x-opencode-session"], "conv-native");
+    // absent → no header at all (never fabricate on a BYOK relay)
+    await worker.fetch(
+      req("POST", "/v1/responses", { bearer: "caller-key", body: {} }),
+      env,
+    );
+    assert.equal(calls[2].init.headers["x-opencode-session"], undefined);
+  } finally {
+    restore();
+  }
+});
+
 test("unknown path 404s (gated paths first, then the envelope)", async () => {
   const { respond, restore } = stubFetch();
   try {

@@ -56,7 +56,7 @@ import {
 } from "../channels.ts";
 // Route table lives in the shared upstream module (also used by index.ts's
 // valeProbe — the copies had drifted on the or/ US_PROXY behavior).
-import { pickRoute, passthroughHeaders, stripBracket } from "../upstream.ts";
+import { pickRoute, passthroughHeaders, stripBracket, opencodeSessionHeader } from "../upstream.ts";
 import { preprocessImages } from "./translate-vision.ts";
 import { isModelUsable, resolveAutoModel } from "./model-route.ts";
 // Keep the old import paths working for the moved fns' external consumers.
@@ -312,6 +312,14 @@ async function handleGatewayImpl(
     baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel) && !usProxy
       ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
       : baseRoute;
+
+  // zen/go requires a stable per-conversation x-opencode-session on every
+  // request (2026-09-05+; 400 "Request is missing x-opencode-session"
+  // otherwise — the muse-spark 1.3 breakage). Relayed from the client's own
+  // conversation id when present (x-opencode-session / x-client-request-id /
+  // session_id), else a stable per-user digest. Only the og wire carries it.
+  const ogSession =
+    route.kind === "opencode" ? opencodeSessionHeader(request.headers, user?.id || "") : {};
 
   // The full body object is only needed on the og translate path (web_search
   // detection, image pre-processing, toOpenAIRequest). Passthrough routes
@@ -646,7 +654,11 @@ async function handleGatewayImpl(
       route.upstream,
       {
         method: "POST",
-        headers: passthroughHeaders(bearerKey),
+        // zen/go (og) gets the per-conversation session header; every other
+        // passthrough channel keeps its existing wire untouched.
+        headers: passthroughHeaders(bearerKey, {
+          ...(route.kind === "opencode" ? { extra: ogSession } : {}),
+        }),
         body: forwardBody,
       },
       // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
@@ -797,10 +809,15 @@ async function handleGatewayImpl(
     const forwardBody = rawWithModel(rawText, upstreamModel, scanned);
     // zen's responses endpoint is OpenAI-native: Bearer auth, no
     // anthropic-version header (passthroughHeaders would add one; zen ignores
-    // it on chat/completions but keep the responses wire clean).
+    // it on chat/completions but keep the responses wire clean). Carry the
+    // per-conversation session header — zen/go 400s muse requests without
+    // x-opencode-session (2026-09-05+).
     const responsesHeaders = new Headers();
     responsesHeaders.set("Content-Type", "application/json");
     if (bearerKey) responsesHeaders.set("Authorization", `Bearer ${bearerKey}`);
+    if (ogSession["x-opencode-session"]) {
+      responsesHeaders.set("x-opencode-session", ogSession["x-opencode-session"]);
+    }
     const {
       response: upstream,
       detail,
@@ -1043,6 +1060,7 @@ async function handleGatewayImpl(
         method: "POST",
         headers: passthroughHeaders(bearerKey, {
           apiKeyHeader: route.kind === "opencode" || route.kind === "amd" ? "x-api-key" : false,
+          ...(route.kind === "opencode" ? { extra: ogSession } : {}),
         }),
         body: forwardBody,
       },
@@ -1192,6 +1210,8 @@ async function handleGatewayImpl(
       headers: {
         Authorization: `Bearer ${translateKey}`,
         "Content-Type": "application/json",
+        // zen/go per-conversation session header (see ogSession above).
+        ...(route.kind === "opencode" ? ogSession : {}),
       },
       body: JSON.stringify(openaiReq),
     },
