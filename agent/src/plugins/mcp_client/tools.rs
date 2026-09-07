@@ -875,11 +875,27 @@ fn embedded_view_index(text: &str) -> Option<usize> {
     None
 }
 
+/// Next JSON-RPC id for an ad-hoc call on a live session (http arm only —
+/// stdio ids are managed inside rmcp). Shared by the auto-select path so it
+/// sends real ids like every other call site.
+fn take_rpc_id(sess: &mut McpSession) -> u64 {
+    match sess {
+        McpSession::Http { next_id, .. } => next_id.fetch_add(1, Ordering::Relaxed),
+        McpSession::Stdio { .. } => 0,
+    }
+}
+
 async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceError> {
     diag_log("[select] auto-selecting the embedded-view tab (desktop CDP attached)");
+    // A tools/call WITHOUT an id is a protocol notification — a strict
+    // Streamable-HTTP server (playwright-mcp 1.63) answers 202 + empty body
+    // and the list/select silently never happens (device-caught: every list
+    // returned "empty", the heal loop chased a ghost session, selection
+    // stayed on the SPA tab). Allocate a real id like every other call site.
+    let list_id = take_rpc_id(sess);
     let list = match rpc_ref(
         sess,
-        None,
+        Some(list_id),
         "tools/call",
         json!({
             "name": "browser_tabs",
@@ -926,9 +942,10 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
             "[select] retry {}/4 — tab list not ready yet",
             attempt + 1
         ));
+        let retry_id = take_rpc_id(sess);
         match rpc_ref(
             sess,
-            None,
+            Some(retry_id),
             "tools/call",
             json!({
                 "name": "browser_tabs",
@@ -941,11 +958,11 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
             Ok(v) => {
                 text = extract_tool_text(&v).unwrap_or_default();
                 if text.is_empty() && matches!(sess, McpSession::Http { .. }) {
-                    // round-300b device-caught: the http arm's session gets
-                    // recycled by the server (round-137 reap); a call on the
-                    // dead session returns null/empty forever — manual
-                    // mcp_client_call works because it heals first. Heal
-                    // here too, then the NEXT retry lists on a fresh session.
+                    // The http arm's session can be recycled by the server
+                    // (round-137 reap); a call on the dead session returns
+                    // null/empty forever — manual mcp_client_call works
+                    // because it heals first. Heal here too, then the NEXT
+                    // retry lists on a fresh session.
                     diag_log("[select] empty http result — re-handshaking (session recycled?)");
                     let _ = heal_and_restore(sess).await;
                 }
@@ -958,9 +975,10 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
     }
     if let Some(idx) = embedded_idx {
         diag_log(&format!("[select] selecting embedded-view tab {idx}"));
+        let select_id = take_rpc_id(sess);
         let _ = rpc_ref(
             sess,
-            None,
+            Some(select_id),
             "tools/call",
             json!({
                 "name": "browser_tabs",
