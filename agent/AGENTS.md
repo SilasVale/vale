@@ -1982,6 +1982,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   auth intact, zero upstream spend). openrouter-proxy skips: idle/
   off-path, workers.dev TLS-dead, no reachable URL. Proved with a real
   `build.sh proxies` run (all 3 deployed, both smokes green). Pushed.
+  ROUND-545 (2026-09-07): INDEX ALSO STALE — same class as 537: newest
+  index deploy Sep 5 15:36 (+0800) but 3 src commits after (page.js
+  extract, CORS parity, TempClaimDO auth fix, safePageUrl pins).
+  Suite 56/56 green; deployed via build.sh index (Version 475540f3,
+  built-in version smoke passed v1.2.297 + sha); live-verified landing
+  200 + version match. No repo changes — deploy-only round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
