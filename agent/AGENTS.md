@@ -1803,6 +1803,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   pins. Added 1 in gateway.test.mjs. Self-caught×2: breaker-cache residue
   + the arm needs stream:true/JSON-ctype (stream:false takes the one-shot
   path). Suite 549->550; gates clean; snapshot updated; pushed.
+  ROUND-506 (2026-09-06): role audit — the developer→system normalization
+  had ZERO pins. Added 1 in gateway.test.mjs (chat path, upstream sees
+  system). Clean round. Suite 550->551; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
