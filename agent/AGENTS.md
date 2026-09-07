@@ -1926,6 +1926,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   all green (298 lib + 5 + 27 + 2 + 7 + 1 each). 11 consecutive greens
   since the single failure; verdict = cold-build environment noise, not
   a product flake. No code changes — verification round.
+  ROUND-536 (2026-09-07): gateway UI sweep — build clean, tests 1/1,
+  login render smoke OK, devices-dashboard smoke OK, code-viewer mirror
+  resync produces zero changes (fresh since round-526). Tree clean. No
+  code changes — verification round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
