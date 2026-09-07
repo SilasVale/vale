@@ -356,13 +356,32 @@ async function mePutKeys(request: Request, env: any): Promise<Response> {
 // click, same session trust as save/delete (a session holder can already
 // rotate or clear the key; the value is the caller's OWN BYOK credential).
 // Kept POST-with-body like its sibling routes (no key names in URLs/logs).
-async function meRevealKey(request: Request, env: any): Promise<Response> {
+
+/**
+ * Shared prologue of the /api/me/keys/{save,reveal,test,usage} handlers:
+ * resolve the session, read the JSON body's `name` and validate it against
+ * `allowed`. Returns the {user, name} pair, or a Response the caller should
+ * return directly (401 / 400). The per-handler prologues used to be
+ * copy-pasted; meKeyUsage passes its narrower 3-name set.
+ */
+async function sessionAndKeyName(
+  request: Request,
+  env: any,
+  allowed: readonly string[],
+): Promise<{ user: any; name: string } | Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const body = await readJson(request);
   const name = body?.name;
-  if (!USER_KEY_NAMES.includes(name))
+  if (!allowed.includes(name))
     return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  return { user, name };
+}
+
+async function meRevealKey(request: Request, env: any): Promise<Response> {
+  const r = await sessionAndKeyName(request, env, USER_KEY_NAMES);
+  if (r instanceof Response) return r;
+  const { user, name } = r;
   const ukeys = await getUserKeys(env, user.id);
   const key = ukeys[name];
   if (!key) return jsonError(404, "Key not configured", "not_found_error");
@@ -380,23 +399,21 @@ async function meDeleteKeys(request: Request, env: any, url: URL): Promise<Respo
 }
 
 async function meTestKeys(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  const body = await readJson(request);
-  const name = body?.name;
-  if (!USER_KEY_NAMES.includes(name))
-    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  const r = await sessionAndKeyName(request, env, USER_KEY_NAMES);
+  if (r instanceof Response) return r;
+  const { user, name } = r;
   const ukeys = await getUserKeys(env, user.id);
   return testKey(env, name, ukeys[name]);
 }
 
 async function meKeyUsage(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  const body = await readJson(request);
-  const name = body?.name;
-  if (name !== "OPENROUTER_API_KEY" && name !== "OPENCODE_GO_API_KEY" && name !== "AMD_API_KEY")
-    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  const r = await sessionAndKeyName(request, env, [
+    "OPENROUTER_API_KEY",
+    "OPENCODE_GO_API_KEY",
+    "AMD_API_KEY",
+  ]);
+  if (r instanceof Response) return r;
+  const { user, name } = r;
   const ukeys = await getUserKeys(env, user.id);
   const key = ukeys[name];
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
