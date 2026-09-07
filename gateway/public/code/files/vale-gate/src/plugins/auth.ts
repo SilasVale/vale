@@ -548,6 +548,18 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
 
 /* ---- Connectivity tests ---- */
 
+/// testKey probe response: {ok, name, status} plus a per-provider success
+/// text or the upstream status on failure. The six probe branches used to
+/// each inline this jsonOk shape.
+function keyProbeResult(name: string, res: Response, okText: string): Response {
+  return jsonOk({
+    ok: res.ok,
+    name,
+    status: res.status,
+    detail: res.ok ? okText : `Upstream ${res.status}`,
+  });
+}
+
 async function testKey(env: any, name: string, key: string): Promise<Response> {
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
   try {
@@ -555,23 +567,13 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
       const res = await fetchWithTimeout("https://api.deepseek.com/models", {
         headers: { Authorization: `Bearer ${key}` },
       });
-      return jsonOk({
-        ok: res.ok,
-        name,
-        status: res.status,
-        detail: res.ok ? "DeepSeek auth OK" : `Upstream ${res.status}`,
-      });
+      return keyProbeResult(name, res, "DeepSeek auth OK");
     }
     if (name === "OPENROUTER_API_KEY") {
       const res = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", {
         headers: { Authorization: `Bearer ${key}` },
       });
-      return jsonOk({
-        ok: res.ok,
-        name,
-        status: res.status,
-        detail: res.ok ? "OpenRouter auth OK" : `Upstream ${res.status}`,
-      });
+      return keyProbeResult(name, res, "OpenRouter auth OK");
     }
     if (name === "OPENCODE_GO_API_KEY") {
       // Do not send the literal "[1m]" suffix — zen rejects it with 401
@@ -635,24 +637,14 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
           }),
         },
       );
-      return jsonOk({
-        ok: res.ok,
-        name,
-        status: res.status,
-        detail: res.ok ? "Command Code auth OK" : `Upstream ${res.status}`,
-      });
+      return keyProbeResult(name, res, "Command Code auth OK");
     }
     if (name === "GMI_API_KEY") {
       // GMI Cloud Inference Engine — GET /v1/models is a cheap auth check.
       const res = await fetchWithTimeout("https://api.gmi-serving.com/v1/models", {
         headers: { Authorization: `Bearer ${key}` },
       });
-      return jsonOk({
-        ok: res.ok,
-        name,
-        status: res.status,
-        detail: res.ok ? "GMI Cloud auth OK" : `Upstream ${res.status}`,
-      });
+      return keyProbeResult(name, res, "GMI Cloud auth OK");
     }
     if (name === "AMD_API_KEY") {
       // AMD Radeon Cloud — GET /v1/models is a cheap auth check (it also tells
@@ -681,12 +673,7 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
       const res = await fetchWithTimeout("https://integrate.api.nvidia.com/v1/models", {
         headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
       });
-      return jsonOk({
-        ok: res.ok,
-        name,
-        status: res.status,
-        detail: res.ok ? "NVIDIA NIM auth OK" : `Upstream ${res.status}`,
-      });
+      return keyProbeResult(name, res, "NVIDIA NIM auth OK");
     }
     if (name === "QWEN_API_KEY") {
       const res = await fetchWithTimeout(
@@ -705,12 +692,7 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
           }),
         },
       );
-      return jsonOk({
-        ok: res.ok,
-        name,
-        status: res.status,
-        detail: res.ok ? "Qwen MaaS auth OK" : `Upstream ${res.status}`,
-      });
+      return keyProbeResult(name, res, "Qwen MaaS auth OK");
     }
   } catch (e: any) {
     return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
