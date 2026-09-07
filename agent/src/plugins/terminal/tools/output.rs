@@ -15,6 +15,29 @@ use crate::plugins::terminal::{
 use crate::tools::terminal::TerminalManager;
 use vale_agent_core::{recover_guard, ToolDef};
 
+/// Byte range of the last `lines` CONTENT lines in `data`: trailing blank
+/// lines (`\r\n`/`\n`) are skipped first so the Nth-from-end scan counts
+/// content, not an empty tail — otherwise screen came back blank whenever
+/// the buffer ended in a newline. Returns (start, end); with fewer than
+/// `lines` content lines start is 0. Shared by tool_screen's live and
+/// history branches (used to copy-paste this tail scan).
+fn tail_n_lines(data: &[u8], lines: usize) -> (usize, usize) {
+    let mut end = data.len();
+    while end > 0 && (data[end - 1] == b'\n' || data[end - 1] == b'\r') {
+        end -= 1;
+    }
+    let mut seen = 0;
+    let mut i = end;
+    while i > 0 && seen < lines {
+        i -= 1;
+        if data[i] == b'\n' {
+            seen += 1;
+        }
+    }
+    let start = if seen >= lines { i + 1 } else { 0 };
+    (start, end)
+}
+
 // ── History ───────────────────────────────────────
 
 pub(super) fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> ToolDef {
@@ -179,25 +202,10 @@ pub(super) fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
                     let entry = store.live.get_mut(&session_id);
                     match entry {
                         Some(entry) => {
-                            // Tail: find the start of the Nth-from-end line.
+                            // Tail: find the start of the Nth-from-end line
+                            // (shared tail_n_lines helper).
                             let data = &entry.data;
-                            // Skip trailing blank lines (`\r\n`/`\n` at the end of
-                            // the buffer) so the Nth-from-end scan counts content
-                            // lines, not an empty tail — otherwise screen came back
-                            // blank whenever the buffer ended in a newline.
-                            let mut end = data.len();
-                            while end > 0 && (data[end - 1] == b'\n' || data[end - 1] == b'\r') {
-                                end -= 1;
-                            }
-                            let mut seen = 0;
-                            let mut i = end;
-                            while i > 0 && seen < lines {
-                                i -= 1;
-                                if data[i] == b'\n' {
-                                    seen += 1;
-                                }
-                            }
-                            let start = if seen >= lines { i + 1 } else { 0 };
+                            let (start, end) = tail_n_lines(data, lines);
                             (clean_terminal_output(&data[start..end]), entry.dropped)
                         }
                         // round-105: a closed session lives in history —
@@ -206,17 +214,7 @@ pub(super) fn tool_screen(output_buf: &OutputBuf) -> ToolDef {
                         None => match store.history.get(&session_id) {
                             Some(h) => {
                                 let data = &h.buf.data;
-                                let mut end = data.len();
-                                while end > 0 && (data[end - 1] == b'\n' || data[end - 1] == b'\r') {
-                                    end -= 1;
-                                }
-                                let mut seen = 0;
-                                let mut i = end;
-                                while i > 0 && seen < lines {
-                                    i -= 1;
-                                    if data[i] == b'\n' { seen += 1; }
-                                }
-                                let start = if seen >= lines { i + 1 } else { 0 };
+                                let (start, end) = tail_n_lines(data, lines);
                                 (clean_terminal_output(&data[start..end]), h.buf.dropped)
                             }
                             None => (String::new(), 0u64),
