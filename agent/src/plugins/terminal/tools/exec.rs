@@ -1170,7 +1170,7 @@ pub(super) fn tool_execute(
 
 #[cfg(test)]
 mod tests {
-    use super::{poll_output_chunk, tail_append};
+    use super::{find_prompt_marker, poll_output_chunk, tail_append};
     use crate::plugins::terminal::SessionBuf;
     use crate::plugins::terminal::SessionStore;
     use std::sync::{Arc, Mutex};
@@ -1301,5 +1301,30 @@ mod tests {
         // (< cap — no post-trim). Semantics: newest half + the new chunk.
         assert_eq!(cap.len(), 80);
         assert!(truncated);
+    }
+    #[test]
+    fn prompt_marker_complete_sequence() {
+        // ESC ]133;D;42 BEL → (start, end, 42)
+        let data = b"out\x1b]133;D;42\x07more";
+        let (s, e, code) = find_prompt_marker(data).unwrap();
+        assert_eq!(&data[s..e], b"\x1b]133;D;42\x07");
+        assert_eq!(code, 42);
+    }
+
+    #[test]
+    fn prompt_marker_incomplete_returns_none() {
+        // Marker split across chunks (no BEL yet) — caller keeps waiting.
+        assert_eq!(find_prompt_marker(b"\x1b]133;D;4"), None);
+        assert_eq!(find_prompt_marker(b"no marker here"), None);
+    }
+
+    #[test]
+    fn prompt_marker_false_prefix_then_real_marker() {
+        // round-100: a literal \x1b]133;D; with no digits/BEL must not
+        // poison the search — a REAL marker later still matches.
+        let data = b"log \x1b]133;D; text\n\x1b]133;D;7\x07";
+        let (s, e, code) = find_prompt_marker(data).unwrap();
+        assert_eq!(code, 7);
+        assert_eq!(&data[s..e], b"\x1b]133;D;7\x07");
     }
 }
