@@ -2881,6 +2881,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   exec.rs scan-site is a distinct scan-from usage). 301 lib pass; fmt
   + clippy clean.
 
+### 2026-09-08 SOLID round 56 (poll_output_chunk unit tests)
+- **poll_output_chunk semantics pinned (test-only, agent exec.rs)** —
+  the round-55 extraction's behavior had zero direct pins: the
+  round-94 dropped-jump, the foreground truncation report vs the
+  background None, unknown-session empty, cursor-past-end window, and
+  the caller-advances contract. 5 unit tests cover all five (the jump
+  + report path, the bg no-report path, empty session, past-end
+  window, cursor-left-for-caller). One self-caught wrong expectation:
+  the helper does NOT advance read_abs on a normal read (the caller
+  does read_abs += chunk_len) — corrected in-test. 306 lib pass (+5);
+  fmt + clippy clean. DPAPI seal/unseal re-examined and kept:
+  symmetric FFI scaffolding with windows-only, locally-unverifiable
+  behavior.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
