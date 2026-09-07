@@ -2829,6 +2829,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   that CI's identical invocation has always tolerated). Matrix stays
   green.
 
+### 2026-09-08 SOLID round 52 (top-level sweep + new baseline)
+- **Verification round (no code changes)** — (1) gateway/src top-level
+  fully walked: store.ts is the intended post-split re-export shim
+  (12 importers, export * — kept by design, removing is diff without
+  gain); anthropic-translate.ts (788 lines, second-largest, zero dup)
+  has healthy function sizes (largest 149-line streamOgToAnthropic —
+  single-domain converter); (2) post-test-file-exclusion full-repo
+  baseline exposes no new files of concern: sse.rs + web/mod.rs
+  windows are brace/adjacent artifacts, exec.rs slice_from windows
+  are the long-classified Deferred class, electron main.js windows
+  exist ONLY in the compiled artifact (main.ts source: zero) — tsc
+  output noise. Full matrix unchanged green.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
