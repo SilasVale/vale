@@ -2980,6 +2980,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   guards serves a different flow) — nothing further extractable at
   this window.
 
+### 2026-09-08 SOLID round 63 (residual-window full classification)
+- **Verification round (no code changes)** — post-ox-alpha baseline:
+  translate.ts 46→41 sites; index worker (all index/src/*.js)
+  ZERO dup windows (never scanned before — clean). mcp-tools.ts
+  15 blocks re-walked: every window is the inputSchema/DEVICE_PARAM
+  declaration skeleton (9 identical shape sites + schema heads —
+  round-39/45 kept-class, DEVICE_PARAM already shared). Remaining
+  small windows newly examined: web/sse.rs (`}}` adjacency artifacts),
+  gateway/src/index.ts (import + call-shape artifacts), web/mod.rs
+  (check_auth return shapes), system/tools.rs ("required": ["path"]
+  schema tails) — all kept classes with recorded evidence. 14
+  residual files fully classified; nothing extractable at this
+  window.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
