@@ -1107,3 +1107,106 @@ pub(super) fn tool_execute(
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::poll_output_chunk;
+    use crate::plugins::terminal::SessionBuf;
+    use crate::plugins::terminal::SessionStore;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    fn store_with(sid: &str, buf: SessionBuf) -> Arc<Mutex<SessionStore>> {
+        let mut st = SessionStore::new();
+        st.live.insert(sid.to_string(), buf);
+        Arc::new(Mutex::new(st))
+    }
+
+    #[test]
+    fn poll_chunk_reads_from_cursor() {
+        let buf = store_with(
+            "s1",
+            SessionBuf {
+                data: b"hello world".to_vec(),
+                ..Default::default()
+            },
+        );
+        let mut read_abs = 6;
+        let mut truncated = false;
+        let (chunk, len) = poll_output_chunk(&buf, "s1", &mut read_abs, Some(&mut truncated));
+        assert_eq!(len, 5);
+        assert_eq!(chunk, b"world");
+        assert_eq!(
+            read_abs, 6,
+            "helper leaves the cursor for the caller to advance (read_abs += chunk_len)"
+        );
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn poll_chunk_jumps_past_eviction_and_reports_truncation() {
+        // round-94 semantics: eviction advanced `dropped` past the cursor;
+        // the cursor must jump to `dropped` and the foreground loop must
+        // learn the output was truncated (1MB burst).
+        let buf = store_with(
+            "s1",
+            SessionBuf {
+                data: b"tail-after-burst".to_vec(),
+                dropped: 100,
+                ..Default::default()
+            },
+        );
+        let mut read_abs = 40; // stale cursor, eviction already at 100
+        let mut truncated = false;
+        let (chunk, len) = poll_output_chunk(&buf, "s1", &mut read_abs, Some(&mut truncated));
+        assert!(truncated, "foreground loop must be told about the drop");
+        assert_eq!(read_abs, 100, "cursor jumps to the eviction mark");
+        assert_eq!(len, b"tail-after-burst".len(), "window tail is returned");
+        assert_eq!(chunk, b"tail-after-burst");
+    }
+
+    #[test]
+    fn poll_chunk_bg_loop_ignores_truncation_reporting() {
+        // The background wait loop passes None: same jump semantics, no
+        // truncation flag (nothing to report it to).
+        let buf = store_with(
+            "s1",
+            SessionBuf {
+                data: b"xy".to_vec(),
+                dropped: 7,
+                ..Default::default()
+            },
+        );
+        let mut read_abs = 0;
+        let (chunk, len) = poll_output_chunk(&buf, "s1", &mut read_abs, None);
+        assert_eq!(read_abs, 7);
+        assert_eq!(len, 2);
+        assert_eq!(chunk, b"xy");
+    }
+
+    #[test]
+    fn poll_chunk_unknown_session_returns_empty() {
+        let buf = store_with("s1", SessionBuf::default());
+        let mut read_abs = 0;
+        let (chunk, len) = poll_output_chunk(&buf, "nope", &mut read_abs, None);
+        assert_eq!(len, 0);
+        assert!(chunk.is_empty());
+        assert_eq!(read_abs, 0);
+    }
+
+    #[test]
+    fn poll_chunk_cursor_past_end_returns_empty_window() {
+        let buf = store_with(
+            "s1",
+            SessionBuf {
+                data: b"abc".to_vec(),
+                ..Default::default()
+            },
+        );
+        let mut read_abs = 99; // beyond end (no eviction)
+        let (chunk, len) = poll_output_chunk(&buf, "s1", &mut read_abs, None);
+        assert_eq!(len, 0);
+        assert!(chunk.is_empty());
+        assert_eq!(read_abs, 99, "no eviction → cursor unchanged");
+    }
+}
