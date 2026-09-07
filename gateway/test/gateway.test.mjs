@@ -1924,6 +1924,22 @@ test("og chat/completions: upstream 429 retry-after surfaces as a response heade
   assert.equal((await res.json()).error.type, "rate_limit_error");
 });
 
+// round-2026-09-08: the /v1/responses arm now normalizes upstream error
+// bodies through the shared upstreamBodyErrorResponse helper — before that
+// it dropped Retry-After (only chat/completions + messages passed it). Pin
+// the parity so the responses wire carries the header like the other arms.
+test("og /v1/responses: upstream 429 retry-after surfaces as a response header", async () => {
+  const { env, token } = gwEnv();
+  const res = await withFetch(async () => new Response(JSON.stringify({
+    error: { message: "slow down", type: "rate_limit_error" },
+  }), { status: 429, headers: { "content-type": "application/json", "retry-after": "1" } }), () =>
+    post(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi" }, "/v1/responses"),
+  );
+  assert.equal(res.status, 429);
+  assert.equal(res.headers.get("retry-after"), "1");
+  assert.equal((await res.json()).error.type, "rate_limit_error");
+});
+
 // round-499 (coverage-driven): the ds/qw passthrough keyless 502 arms had
 // ZERO pins.
 test("ds/qw passthrough without the user's own key → 502, upstream never called", async () => {

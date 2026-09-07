@@ -178,6 +178,76 @@ export function keyMissingError(kind: string): Response | null {
   return msg ? jsonError(502, msg, "config_error") : null;
 }
 
+/**
+ * Error response when the upstream call itself failed (network throw /
+ * fetchWithRetry exhaustion): surface the in-band inspect failure's status
+ * digits when it is a real HTTP status, else 502, so downstream classifiers
+ * (DSH/Claude Code) recognize the failure as transient, not fatal. Records
+ * the channel failure for og. Shared by the chat/completions, og-translate
+ * and /v1/responses arms (used to be copy-pasted at all three sites).
+ */
+async function upstreamFetchFailedResponse(
+  env: any,
+  kind: string,
+  inspectFailure: any,
+  detail: string,
+): Promise<Response> {
+  if (kind === "opencode") await recordChannelFailure(env);
+  const failStatus =
+    typeof inspectFailure?.status === "number" &&
+    inspectFailure.status >= 400 &&
+    inspectFailure.status <= 599
+      ? inspectFailure.status
+      : 502;
+  return jsonError(
+    failStatus,
+    `upstream ${failStatus} (${kind}): ${detail}`,
+    failStatus === 429 ? "rate_limit_error" : "api_error",
+  );
+}
+
+/**
+ * Normalize a non-OK upstream body into a gateway jsonError: unwrap
+ * {"detail":{...}} (AMD Radeon's FastAPI envelope), scrub any leaked key,
+ * keep the upstream's OWN error.type when it is a known Anthropic type
+ * (Claude Code keys retry/auth flows off it), and carry Retry-After when
+ * present. Shared by the three /v1 arms' !upstream.ok handlers — they used
+ * to each maintain a copy of the unwrap + KNOWN-whitelist logic (round-512
+ * fixed one arm and the others had to be walked to parity by hand).
+ */
+async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
+  let message = `Upstream ${upstream.status}`;
+  // Default by status BEFORE body sniffing: OpenRouter's error envelope
+  // carries no Anthropic-style type, and a bare api_error on a 429 told
+  // clients to give up instead of backing off.
+  let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
+  let extra: Record<string, string> = {};
+  try {
+    const rawErr: any = await upstream.json();
+    const err: any = rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
+    message =
+      scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) || message;
+    const upType = err.error?.type || err.type;
+    const KNOWN = [
+      "rate_limit_error",
+      "overloaded_error",
+      "authentication_error",
+      "invalid_request_error",
+      "permission_error",
+      "not_found_error",
+      "request_too_large",
+      "api_error",
+    ];
+    if (upType && KNOWN.includes(upType)) type = upType;
+    // Pace the client against the upstream limit.
+    const ra = upstream.headers?.get?.("retry-after");
+    if (ra) extra = { "retry-after": ra };
+  } catch {
+    /* non-JSON error body */
+  }
+  return jsonError(upstream.status, message, type, extra);
+}
+
 // get-then-put counters cost 2 reads + 2 writes per /v1/messages request —
 // that alone burned the Free-plan daily KV WRITE quota (1000/day) at ~250
 // requests. Never written; each window's first request per token reads KV
@@ -676,61 +746,26 @@ async function handleGatewayImpl(
           : { timeoutMs: ogTimeoutMs(env) },
     );
     if (!upstream) {
-      if (route.kind === "opencode") await recordChannelFailure(env);
-      // In-band failures surface with status digits so downstream classifiers
-      // (DSH/Claude Code) recognize them as transient, not fatal.
-      const failStatus =
-        typeof inspectFailure?.status === "number" &&
-        inspectFailure.status >= 400 &&
-        inspectFailure.status <= 599
-          ? inspectFailure.status
-          : 502;
-      return jsonError(
-        failStatus,
-        `upstream ${failStatus} (${route.kind}): ${detail}`,
-        failStatus === 429 ? "rate_limit_error" : "api_error",
-      );
+      // Slow-failure / in-band-failure path shared by every /v1
+      // arm (chat, responses, messages) — see
+      // upstreamFetchFailedResponse: status digits when the inspect
+      // failure is a real HTTP status, else 502, so classifiers see
+      // a transient, not fatal, error. og timeouts count toward the
+      // breaker there too.
+      return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
     }
     if (!upstream.ok) {
+      // A down-shaped 5xx body on og counts toward the breaker too (the
+      // !upstream arm records fetch failures; body failures are equally a
+      // channel-down signal).
       if (route.kind === "opencode" && isChannelDownFailure(detail)) {
         await recordChannelFailure(env);
       }
-      let message = `Upstream ${upstream.status}`;
-      // Default by status BEFORE body sniffing: OpenRouter's error envelope
-      // carries no Anthropic-style type, and a bare api_error on a 429 told
-      // clients to give up instead of backing off.
-      let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
-      let extra = {};
-      try {
-        const rawErr: any = await upstream.json();
-        // Radeon Cloud (FastAPI-style) nests its payload as
-        // {"detail":{"error":{…}}} — unwrap it, or AMD's concurrency 429 would
-        // surface with a stringified body and a bare api_error type.
-        const err: any =
-          rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
-        message =
-          scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) ||
-          message;
-        const upType = err.error?.type || err.type;
-        const KNOWN = [
-          "rate_limit_error",
-          "overloaded_error",
-          "authentication_error",
-          "invalid_request_error",
-          "permission_error",
-          "not_found_error",
-          "request_too_large",
-          "api_error",
-        ];
-        if (upType && KNOWN.includes(upType)) type = upType;
-        // Pace the client against the upstream limit (parity with the
-        // /v1/messages passthrough branch).
-        const ra = upstream.headers?.get?.("retry-after");
-        if (ra) extra = { "retry-after": ra };
-      } catch {
-        /* non-JSON error body */
-      }
-      return jsonError(upstream.status, message, type, extra);
+      // Normalize the upstream error body — unwrap {"detail":{…}}, scrub
+      // keys, keep the upstream's own known error.type, carry
+      // Retry-After. Shared by every /v1 arm (was three copies that
+      // had to be walked to parity by hand, round-512).
+      return upstreamBodyErrorResponse(upstream);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     // Direct passthrough — upstream returns OpenAI format, return it as-is.
@@ -819,48 +854,25 @@ async function handleGatewayImpl(
       { timeoutMs: ogTimeoutMs(env) },
     );
     if (!upstream) {
-      if (route.kind === "opencode") await recordChannelFailure(env);
-      const failStatus =
-        typeof inspectFailure?.status === "number" &&
-        inspectFailure.status >= 400 &&
-        inspectFailure.status <= 599
-          ? inspectFailure.status
-          : 502;
-      return jsonError(
-        failStatus,
-        `upstream ${failStatus} (${route.kind}): ${detail}`,
-        failStatus === 429 ? "rate_limit_error" : "api_error",
-      );
+      // Slow-failure / in-band-failure path shared by every /v1
+      // arm (chat, responses, messages) — see
+      // upstreamFetchFailedResponse: status digits when the inspect
+      // failure is a real HTTP status, else 502, so classifiers see
+      // a transient, not fatal, error. og timeouts count toward the
+      // breaker there too.
+      return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
     }
     if (!upstream.ok) {
+      // A down-shaped 5xx body on og counts toward the breaker (same
+      // parity as the chat/completions arm).
       if (route.kind === "opencode" && isChannelDownFailure(detail)) {
         await recordChannelFailure(env);
       }
-      let message = `Upstream ${upstream.status}`;
-      let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
-      try {
-        const rawErr: any = await upstream.json();
-        const err: any =
-          rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
-        message =
-          scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) ||
-          message;
-        const upType = err.error?.type || err.type;
-        const KNOWN = [
-          "rate_limit_error",
-          "overloaded_error",
-          "authentication_error",
-          "invalid_request_error",
-          "permission_error",
-          "not_found_error",
-          "request_too_large",
-          "api_error",
-        ];
-        if (upType && KNOWN.includes(upType)) type = upType;
-      } catch {
-        /* non-JSON error body */
-      }
-      return jsonError(upstream.status, message, type);
+      // Normalize the upstream error body — unwrap {"detail":{…}}, scrub
+      // keys, keep the upstream's own known error.type, carry
+      // Retry-After. Shared by every /v1 arm (was three copies that
+      // had to be walked to parity by hand, round-512).
+      return upstreamBodyErrorResponse(upstream);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
@@ -1036,71 +1048,20 @@ async function handleGatewayImpl(
           : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
     );
     if (!upstream) {
-      // Slow failure (timeout / network error) — single attempt, no retry.
-      // A hard network failure counts toward the og breaker.
-      // A blackholed channel (packet-drop) times out rather than erroring —
-      // previously timeouts NEVER counted, so the circuit never opened and
-      // every request burned the full timeout budget. Count timeouts too:
-      // 3 CONSECUTIVE timeouts within the window means the channel is dead.
-      if (route.kind === "opencode") await recordChannelFailure(env);
-      // In-band failures surface with status digits so downstream classifiers
-      // recognize them as transient.
-      const failStatus =
-        typeof inspectFailure?.status === "number" &&
-        inspectFailure.status >= 400 &&
-        inspectFailure.status <= 599
-          ? inspectFailure.status
-          : 502;
-      return jsonError(
-        failStatus,
-        `upstream ${failStatus} (${route.kind}): ${detail}`,
-        failStatus === 429 ? "rate_limit_error" : "api_error",
-      );
+      // Slow-failure / in-band-failure path shared by every /v1
+      // arm (chat, responses, messages) — see
+      // upstreamFetchFailedResponse: status digits when the inspect
+      // failure is a real HTTP status, else 502, so classifiers see
+      // a transient, not fatal, error. og timeouts count toward the
+      // breaker there too.
+      return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
     }
     if (!upstream.ok) {
-      let message = `Upstream ${upstream.status}`;
-      // round-512: default by status BEFORE body sniffing (parity with the
-      // chat/completions + og-messages arms) — a non-JSON 429 collapsed to
-      // api_error told clients to give up instead of backing off.
-      let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
-      let extra = {};
-      try {
-        const rawErr: any = await upstream.json();
-        // Same unwrap as the chat/completions site: {"detail":{"error":{…}}}
-        // (AMD Radeon Cloud) must keep its message + rate_limit_error type.
-        const err: any =
-          rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
-        message =
-          scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) ||
-          message;
-        // Forward the upstream's OWN error.type (Claude Code keys retry and
-        // auth flows off it) — a DeepSeek 429 rate_limit_error collapsed to
-        // api_error was NON-retryable for the client. Whitelist the known
-        // Anthropic types; unknown → api_error.
-        const upType = err.error?.type || err.type;
-        const KNOWN = [
-          "rate_limit_error",
-          "overloaded_error",
-          "authentication_error",
-          "invalid_request_error",
-          "permission_error",
-          "not_found_error",
-          "request_too_large",
-          "api_error",
-        ];
-        if (upType && KNOWN.includes(upType)) type = upType;
-        // Carry Retry-After so the client paces against the upstream limit.
-        const ra = upstream.headers?.get?.("retry-after");
-        if (ra) extra = { "retry-after": ra };
-      } catch {
-        /* non-JSON error body */
-      }
-      // round-118: this branch is `!upstream.ok` — a 429/5xx is NOT a
-      // success. The old code called recordChannelSuccess here, so a dead
-      // channel alternating hangs with fast 429s never accumulated the 3
-      // consecutive failures to trip (the round-55 alternation hole, re-
-      // introduced at this call site). Only a genuinely ok response resets.
-      return jsonError(upstream.status, message, type, extra);
+      // Normalize the upstream error body — unwrap {"detail":{…}}, scrub
+      // keys, keep the upstream's own known error.type, carry
+      // Retry-After. Shared by every /v1 arm (was three copies that
+      // had to be walked to parity by hand, round-512).
+      return upstreamBodyErrorResponse(upstream);
     }
     if (route.kind === "opencode") await recordChannelSuccess(env);
     const headers = new Headers(upstream.headers);
