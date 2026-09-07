@@ -2936,6 +2936,23 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   discriminants (converged in the store rounds). Gateway 592 baseline
   re-verified.
 
+### 2026-09-08 SOLID round 60 (round-60 convergence snapshot)
+- **Verification round (no code changes)** — round-60 milestone. The
+  system-plugin file tools were re-examined: only 3 identical "path"
+  schema declarations (threshold for a DEVICE_PARAM-style constant is
+  not met — kept). Convergence since the round-50 snapshot: 7 code
+  commits — find_backend + poll_output_chunk (manager/exec helper
+  extraction, the latter closing the long-Deferred slice_from class),
+  poll_chunk unit tests, the gateway-connect HTTP-400 pin (completing
+  the settings-200/400 audit pair), the scan-dups Rust test-file
+  exclusion, ns_matches + tombstone (memory store), updateUserKeys +
+  the earlier gateway guard/relay/schema extractions. Residual windows
+  at 6 lines: 14 files, all explicitly classified kept classes.
+  Matrix: agent 306 lib / 314 feature / clippy+fmt / xwin green,
+  gateway 592, index 56, CLI 9. System tools' remaining windows are
+  per-tool bodies (each file op distinct) — no further extraction
+  warranted at this window.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
