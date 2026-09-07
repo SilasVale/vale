@@ -749,6 +749,25 @@ test("token/regenerate: sweeps a stale survivor mapping for the same user", asyn
   assert.equal(await env.KEYS.get("token:stale-tok"), null, "survivor mapping swept");
 });
 
+// round-531 (coverage-driven): the sweep-list-throw arm had ZERO pins — a
+// KV outage mid-sweep must not fail the rotation (best-effort).
+test("token/regenerate: throwing token-list still rotates (sweep is best-effort)", async () => {
+  __clearCaches();
+  const env = meEnv();
+  const realList = env.KEYS.list.bind(env.KEYS);
+  env.KEYS.list = async () => { throw new Error("kv down"); };
+  try {
+    const bob = await issueSessionToken("pw", "bob", "user");
+    const res = await meReq(env, bob, "/api/me/token/regenerate", "POST", {});
+    assert.equal(res.status, 200);
+    const { token } = await res.json();
+    assert.ok(token && token !== "bob-tok-1", "fresh token issued despite sweep outage");
+  } finally {
+    env.KEYS.list = realList;
+  }
+  assert.equal(await env.KEYS.get("token:bob-tok-1"), null, "old token revoked");
+});
+
 // round-524 (coverage-driven): the corrupt-record arm had ZERO pins — a torn
 // user JSON must read as missing, not throw.
 test("getUser: corrupt user JSON → null (no throw)", async () => {
