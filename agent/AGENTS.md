@@ -2381,6 +2381,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   send; the channel name + send shape now live in one place. Products
   re-emitted, copies verified.
 
+### 2026-09-08 SOLID round 22 (index 413 envelope + gateway probe result)
+- **tooLargeResponse (DRY, index worker)** — the claim upload's
+  content-length precheck and its post-parse size check each inlined the
+  same "file too large" 413 JSON Response. Extracted
+  `tooLargeResponse(maxBytes)`; both checks call it. Index tests 56/56.
+- **keyProbeResult (DRY, gateway auth.ts)** — six of testKey's provider
+  branches (deepseek / openrouter / cmd / gmi / nim / qwen) each inlined
+  the same jsonOk probe envelope, differing only in the success text.
+  Extracted `keyProbeResult(name, res, okText)`; the special branches
+  (og SSE first-chunk, AMD model-count) keep their own logic. Gateway
+  592 pass; tsc/lint/prettier clean; mirror synced. (mcp-tools.ts
+  schema device-prop decls re-verified: 12 distinct shapes with
+  per-tool description tweaks — inline schema stays; system/tools.rs
+  mtime conversions are shape-distinct per site — both remain.)
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
