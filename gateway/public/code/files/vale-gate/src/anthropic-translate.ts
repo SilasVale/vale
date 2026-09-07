@@ -553,6 +553,21 @@ export class AnthropicStreamEncoder {
     );
   }
 
+  /**
+   * Push a content_block_delta for the CURRENT blockIndex. Shared by
+   * ensureBlock's first-chunk and continuation paths — the thinking/text
+   * delta arms used to be copy-pasted between them.
+   */
+  pushContentDelta(delta: Record<string, unknown>): void {
+    this.pending.push(
+      sse("content_block_delta", {
+        type: "content_block_delta",
+        index: this.blockIndex,
+        delta,
+      }),
+    );
+  }
+
   ensureBlock(type: string, block: any): void {
     if (!this.started) this.emitStart();
     if (this.blockType !== type) {
@@ -583,38 +598,14 @@ export class AnthropicStreamEncoder {
         }),
       );
       if (type === "thinking") {
-        this.pending.push(
-          sse("content_block_delta", {
-            type: "content_block_delta",
-            index: this.blockIndex,
-            delta: { type: "thinking_delta", thinking: block.thinking },
-          }),
-        );
+        this.pushContentDelta({ type: "thinking_delta", thinking: block.thinking });
       } else if (type === "text") {
-        this.pending.push(
-          sse("content_block_delta", {
-            type: "content_block_delta",
-            index: this.blockIndex,
-            delta: { type: "text_delta", text: block.text },
-          }),
-        );
+        this.pushContentDelta({ type: "text_delta", text: block.text });
       }
     } else if (type === "thinking") {
-      this.pending.push(
-        sse("content_block_delta", {
-          type: "content_block_delta",
-          index: this.blockIndex,
-          delta: { type: "thinking_delta", thinking: block.thinking },
-        }),
-      );
+      this.pushContentDelta({ type: "thinking_delta", thinking: block.thinking });
     } else if (type === "text") {
-      this.pending.push(
-        sse("content_block_delta", {
-          type: "content_block_delta",
-          index: this.blockIndex,
-          delta: { type: "text_delta", text: block.text },
-        }),
-      );
+      this.pushContentDelta({ type: "text_delta", text: block.text });
     }
   }
 
