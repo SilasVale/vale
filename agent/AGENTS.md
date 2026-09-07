@@ -3294,6 +3294,26 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   near-zero benefit; job boilerplate is conventionally repeated.
   Workflow/tooling layers classified; no changes warranted.
 
+### 2026-09-08 SOLID round 85 (session_lost recovery-contract pins)
+- **Test round (agent ctx.rs)** — session_lost, the enriched
+  "Session not found" error that carries the AI client's self-recovery
+  contract (open-session list + the "(none — agent restarted?
+  re-open with terminal_open)" hint + the round phase-4 pre-restart
+  note), is used by terminal_execute (exec.rs:590) and terminal_screen
+  (sessions.rs:351) and referenced by connections.rs — yet had ZERO
+  direct tests (round-359 pinned only the connect_saved sibling).
+  Added 3: empty-store reopen hint + InvalidParams class; no restart
+  note for never-seen ids; pre-restart record explains a PTY that
+  died with the agent (process-wide OnceLock map injected IN MEMORY
+  only — persist_pre_restart never called, zero disk writes, record
+  removed after, sole-writer discipline). 325 lib (+3) / feature 333;
+  fmt + clippy clean. Self-caught AGAIN: an append pass dropped the
+  closing brace of the round-78 spill_rotate_discard test — the new
+  tests nested inside it as local items (compiled, never collected,
+  count stuck at 322) — closer restored + stray trailing brace
+  removed; brace-depth verification now mandatory after test-file
+  appends (this is the second local-item nesting trap).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
