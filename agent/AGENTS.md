@@ -3267,6 +3267,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   365, full feature 373, lib 322/330, feature lib 330 — plus the
   stable per-change gates (clippy -D warnings ×2, fmt, xwin check).
 
+### 2026-09-08 SOLID round 83 (final-corners duplication sweep)
+- **Verification round (no code changes)** — the last unscanned
+  corners of the repo went through the 6-line window scan: index/src,
+  vale-agent-npm/src, vale-desktop-electron src (main.ts), and
+  gateway/ui/src are ALL clean except two known kept classes
+  (electron main.js's fetch-timeout/schtasks patterns — VERIFIED
+  fresh vs its main.ts source, the round-354 stale-artifact failure
+  mode stays closed by the round-321/322 CI gates; Auth.tsx label
+  JSX adjacency). Every production tree in the monorepo has now been
+  duplication-scanned at 5/6/10/20-line depths with recorded
+  classifications — the copy-detection space is fully closed
+  repo-wide.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
