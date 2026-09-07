@@ -171,6 +171,19 @@ test("valeProbe: upstream 500 → ok false with status", async () => {
   assert.match(body.detail, /upstream 500/);
 });
 
+// round-517 (coverage-driven): the probe network-error catch arms had ZERO
+// pins (only 200/500 responses were covered).
+test("valeProbe: fetch throw → ok false with the error message", async () => {
+  for (const model of ["ds/deepseek-v4-flash", "og/deepseek-v4-flash"]) {
+    const res = await withFetch(async () => { throw new TypeError("fetch failed"); }, () =>
+      valeProbe(keyedEnv, model),
+    );
+    const body = await res.json();
+    assert.equal(body.ok, false, model);
+    assert.match(body.detail, /fetch failed/, model);
+  }
+});
+
 test("valeProbe: unknown model → 400", async () => {
   const res = await valeProbe(keyedEnv, "xx/nope");
   assert.equal(res.status, 400);
