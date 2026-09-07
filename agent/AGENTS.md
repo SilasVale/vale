@@ -2341,6 +2341,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   the SSE arm). Extracted one predicate; wrong-id-reject tests pin the
   semantics. mcp_client 21/21, lib 299 pass; clippy/fmt clean.
 
+### 2026-09-08 SOLID round 19 (memory store recount dedup)
+- **recount_total_bytes (DRY, agent memory/store.rs)** — load, the
+  entry-cap eviction loop and the retention sweep each inlined the same
+  live-only total_bytes recompute. Extracted `recount_total_bytes(guard)`
+  (live-only semantics documented — the old per-line sum inflated the
+  byte cap into premature evictions); the byte-cap loop keeps its exact
+  saturating_sub accounting (different semantics by design). Self-caught
+  mid-round: the blind replace also rewrote the helper's own body into a
+  self-recursive call — fixed immediately (second occurrence of this
+  blind-replace hazard; the pattern is now known-risky). Memory tests
+  34/34, lib 299 pass; clippy/fmt clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
