@@ -244,6 +244,88 @@ where
     }
 }
 
+/// Evidence-feed endpoints (/api/browser/actions, pwshots, pwshot) —
+/// extracted from handle_request (round-28 SRP): the READ side of the
+/// AI-evidence drawer. Returns None when the path is not one of ours.
+async fn handle_browser_evidence(path: &str, query: Option<&str>) -> Option<Response> {
+    // Surface audit D#2 (one-browser round): the READ side resolved
+    // current_exe()'s parent while the WRITE side (playwright tools)
+    // uses the registry install_dir() — the exact 1.2.219 /api/sessions
+    // blindness pattern. Same source of truth now.
+    let pwout = crate::paths::install_dir().join("pwout");
+    // P2: AI-action timeline — the JSONL written by browser_run_script
+    // (one line per execution). Return newest-first, capped at 50.
+    if path == "/api/browser/actions" {
+        let mut actions: Vec<serde_json::Value> = Vec::new();
+        if let Ok(contents) = std::fs::read_to_string(pwout.join("actions.jsonl")) {
+            for line in contents.lines().rev().take(50) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                    actions.push(v);
+                }
+            }
+        }
+        return Some(built_response(
+            StatusCode::OK,
+            "application/json",
+            Body::from(serde_json::json!({"actions": actions}).to_string()),
+        ));
+    }
+    if path == "/api/browser/pwshots" {
+        let mut shots: Vec<serde_json::Value> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&pwout) {
+            for e in rd.filter_map(|e| e.ok()) {
+                let name = e.file_name().to_string_lossy().to_string();
+                if !name.ends_with(".png") {
+                    continue;
+                }
+                let meta = e.metadata().ok();
+                let mtime_ms = meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis())
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                shots.push(serde_json::json!({
+                    "name": name,
+                    "mtime_ms": mtime_ms,
+                    "size": meta.map(|m| m.len()).unwrap_or(0),
+                }));
+            }
+        }
+        shots.sort_by(|a, b| b["mtime_ms"].as_u64().cmp(&a["mtime_ms"].as_u64()));
+        shots.truncate(40);
+        return Some(built_response(
+            StatusCode::OK,
+            "application/json",
+            Body::from(serde_json::json!({"shots": shots}).to_string()),
+        ));
+    }
+    // /api/browser/pwshot?name=xxx — serve one screenshot (basename only)
+    let name = query_param(query, "name").unwrap_or("");
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Some(built_response(
+            StatusCode::BAD_REQUEST,
+            "text/plain",
+            Body::from("bad name"),
+        ));
+    }
+    Some(match std::fs::read(pwout.join(name)) {
+        Ok(bytes) => {
+            let mut resp = built_response(StatusCode::OK, "image/png", Body::from(bytes));
+            set_cache_control(&mut resp, "no-store");
+            resp
+        }
+        Err(_) => built_response(
+            StatusCode::NOT_FOUND,
+            "text/plain",
+            Body::from("no such shot"),
+        ),
+    })
+}
+
 // ── Request handler ──────────────────────────────────────────
 
 pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
@@ -296,82 +378,9 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
         if let Err(resp) = check_auth(&req, &state) {
             return *resp;
         }
-        // Surface audit D#2 (one-browser round): the READ side resolved
-        // current_exe()'s parent while the WRITE side (playwright tools)
-        // uses the registry install_dir() — the exact 1.2.219 /api/sessions
-        // blindness pattern. Same source of truth now.
-        let pwout = crate::paths::install_dir().join("pwout");
-        // P2: AI-action timeline — the JSONL written by browser_run_script
-        // (one line per execution). Return newest-first, capped at 50.
-        if path == "/api/browser/actions" {
-            let mut actions: Vec<serde_json::Value> = Vec::new();
-            if let Ok(contents) = std::fs::read_to_string(pwout.join("actions.jsonl")) {
-                for line in contents.lines().rev().take(50) {
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                        actions.push(v);
-                    }
-                }
-            }
-            return built_response(
-                StatusCode::OK,
-                "application/json",
-                Body::from(serde_json::json!({"actions": actions}).to_string()),
-            );
+        if let Some(resp) = handle_browser_evidence(&path, req.uri().query()).await {
+            return resp;
         }
-        if path == "/api/browser/pwshots" {
-            let mut shots: Vec<serde_json::Value> = Vec::new();
-            if let Ok(rd) = std::fs::read_dir(&pwout) {
-                for e in rd.filter_map(|e| e.ok()) {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    if !name.ends_with(".png") {
-                        continue;
-                    }
-                    let meta = e.metadata().ok();
-                    let mtime_ms = meta
-                        .as_ref()
-                        .and_then(|m| m.modified().ok())
-                        .map(|t| {
-                            t.duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_millis())
-                                .unwrap_or(0)
-                        })
-                        .unwrap_or(0);
-                    shots.push(serde_json::json!({
-                        "name": name,
-                        "mtime_ms": mtime_ms,
-                        "size": meta.map(|m| m.len()).unwrap_or(0),
-                    }));
-                }
-            }
-            shots.sort_by(|a, b| b["mtime_ms"].as_u64().cmp(&a["mtime_ms"].as_u64()));
-            shots.truncate(40);
-            return built_response(
-                StatusCode::OK,
-                "application/json",
-                Body::from(serde_json::json!({"shots": shots}).to_string()),
-            );
-        }
-        // /api/browser/pwshot?name=xxx — serve one screenshot (basename only)
-        let name = query_param(req.uri().query(), "name").unwrap_or("");
-        if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
-            return built_response(
-                StatusCode::BAD_REQUEST,
-                "text/plain",
-                Body::from("bad name"),
-            );
-        }
-        return match std::fs::read(pwout.join(name)) {
-            Ok(bytes) => {
-                let mut resp = built_response(StatusCode::OK, "image/png", Body::from(bytes));
-                set_cache_control(&mut resp, "no-store");
-                resp
-            }
-            Err(_) => built_response(
-                StatusCode::NOT_FOUND,
-                "text/plain",
-                Body::from("no such shot"),
-            ),
-        };
     }
 
     // round-137 Plan C: interactive-browser WebSocket relay. MUST sit before
