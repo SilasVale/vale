@@ -1947,6 +1947,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   device credential from here, so full device e2e stays out of reach.
   Suite 577->578; gates clean; snapshot updated; pushed (test-only —
   no redeploy needed).
+  ROUND-539 (2026-09-07): backfill audit — the seed-failure catch had ZERO
+  pins. Added 1 in admin-seed-backfill.test.mjs (throwing KV → resolves,
+  startup unblocked; verified the throw lands in the backfill try, not
+  an outer guard — fresh path exits early via get). Clean round. Suite
+  578->579; gates clean; snapshot updated; pushed (test-only).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
