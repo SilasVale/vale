@@ -2620,6 +2620,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   re-checked: og's zen headers + stream:false vs passthrough's generic
   headers are real protocol differences — keep stands.
 
+### 2026-09-08 SOLID round 39 (DoAuthBase for the DO classes)
+- **DoAuthBase (DRY, gateway cross-file)** — the first catch by the
+  codified scanner's --cross mode: BreakerDO (reliability.ts) and
+  RouteDO (route-do.ts) each carried a byte-identical 11-line head
+  (state/env fields, constructor, the constant-time DO_AUTH
+  authorized() gate — round-14 had unified only the helper level).
+  Extracted `DoAuthBase` in route-do.ts next to authorizeDoRequest;
+  both DO classes extend it and keep only their fetch bodies.
+  reliability.ts's direct authorizeDoRequest import dropped (now via
+  the base). Gateway 592 pass; tsc/prettier clean; mirror synced.
+  Also swept serial.rs + ssh.rs: zero dups (all agent source trees
+  now verified at multiple windows).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
