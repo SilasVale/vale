@@ -1988,6 +1988,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Suite 56/56 green; deployed via build.sh index (Version 475540f3,
   built-in version smoke passed v1.2.297 + sha); live-verified landing
   200 + version match. No repo changes — deploy-only round.
+  ROUND-546 (2026-09-07): full live chain recheck — gateway 21/21 ok,
+  parity 0 drift, vercel/zen-go/zen-us keyless 401s intact, d1 401
+  (alive, tunnel up). Every deployed surface consistent with repo. No
+  code changes — verification round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
