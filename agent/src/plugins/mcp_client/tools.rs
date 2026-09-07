@@ -271,6 +271,14 @@ async fn rpc_ref_http(
     parse_envelope(&text, id)
 }
 
+/// True when `v`'s id matches the expected id — or no id was expected
+/// (notifications / legacy frames). Shared by parse_envelope's direct-JSON
+/// and SSE-candidate arms, which used to duplicate this predicate.
+fn envelope_id_matches(v: &Value, id: Option<u64>) -> bool {
+    id.map(|i| v.get("id").and_then(|x| x.as_u64()) == Some(i))
+        .unwrap_or(true)
+}
+
 /// Extract the JSON-RPC envelope from the response body. The server may return:
 ///   * bare JSON (application/json)
 ///   * SSE text ("event: message\ndata: {...}\n\n", possibly multiple frames)
@@ -283,10 +291,7 @@ fn parse_envelope(body: &str, id: Option<u64>) -> Result<Value, DeviceError> {
         // arm below does) — a stale/buffered frame with the WRONG id was
         // accepted as our response. Same discipline both arms: mismatch
         // falls through to the SSE scan, then the terminal error.
-        if id
-            .map(|i| v.get("id").and_then(|x| x.as_u64()) == Some(i))
-            .unwrap_or(true)
-        {
+        if envelope_id_matches(&v, id) {
             return check_envelope(v, id);
         }
     }
@@ -306,10 +311,7 @@ fn parse_envelope(body: &str, id: Option<u64>) -> Result<Value, DeviceError> {
     }
     for cand in candidates.iter().rev() {
         if let Ok(v) = serde_json::from_str::<Value>(cand) {
-            if id
-                .map(|i| v.get("id").and_then(|x| x.as_u64()) == Some(i))
-                .unwrap_or(true)
-            {
+            if envelope_id_matches(&v, id) {
                 return check_envelope(v, id);
             }
         }
