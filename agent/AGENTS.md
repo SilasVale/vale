@@ -1799,6 +1799,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   cases never executed it). Verdict comment at the guard + corrected both
   test comments (they pin the live pre-branch guards). Suite stays 549;
   gates clean; mirror resynced; pushed.
+  ROUND-505 (2026-09-06): json audit — the invalid-JSON 502 arm had ZERO
+  pins. Added 1 in gateway.test.mjs. Self-caught×2: breaker-cache residue
+  + the arm needs stream:true/JSON-ctype (stream:false takes the one-shot
+  path). Suite 549->550; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
