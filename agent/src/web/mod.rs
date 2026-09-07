@@ -326,6 +326,108 @@ async fn handle_browser_evidence(path: &str, query: Option<&str>) -> Option<Resp
     })
 }
 
+/// Panel / desktop root page — served with the zero-config token-injection
+/// decision (gateway proxy shared secret / loopback / one-time ?grant=
+/// redemption). Extracted from handle_request (round-29 SRP).
+async fn handle_panel_home(
+    state: &AppState,
+    path: &str,
+    query: Option<&str>,
+    host: Option<String>,
+    auth_header: Option<String>,
+) -> Response {
+    // Write-through (audit A4): one snapshot of the LIVE config for the
+    // whole injection decision (proxy_secret + device_token below).
+    let cfg = state.config_snapshot();
+    let mut resp = serve_panel_file("index.html", "text/html; charset=utf-8");
+    set_cache_control(&mut resp, "no-store");
+    // Zero-config token injection: embed the device token as a script
+    // fragment before </head>. round-102/103: injection requires the
+    // gateway proxy's SHARED SECRET (X-Vale-Auth) — a plain marker
+    // header was client-spoofable end-to-end (any curl could set it and
+    // read the token; the leaked token grants /api/tools RCE). The
+    // secret is generated at agent bootstrap and read by the console;
+    // the gateway proxy sends it only for authenticated (admin session
+    // or plugin link) requests. Localhost/loopback keeps working for
+    // on-device use.
+    let secret = cfg.server.proxy_secret.as_deref().unwrap_or("");
+    // round-104: an EMPTY/absent configured secret must never match — the
+    // old gate accepted an empty header when the secret was "" (quarantine
+    // recovery / pre-secret boot), which is exactly the fail-open RCE.
+    let via_proxy = !secret.is_empty()
+        && auth_header
+            .as_deref()
+            // Constant-time compare (timing-safe for a 64-hex secret).
+            .map(|v| timing_safe_eq(v.as_bytes(), secret.as_bytes()))
+            .unwrap_or(false);
+    if let Some(ref token) = cfg.server.device_token {
+        // EXACT host allowlist. A substring/prefix match here was
+        // bypassable — e.g. Host: evil-agent.saisi.online.evil.com matches
+        // .contains("agent.saisi.online") and the token is handed to the
+        // attacker's page. Only the device's own single-level subdomain
+        // (dN.agent.saisi.online — a multi-level attacker subdomain like
+        // evil.agent.saisi.online is REJECTED), the apex, or loopback.
+        // NOTE: d1.agent.saisi.online has THREE dots — an earlier
+        // "count() == 2" check made the subdomain branch unsatisfiable and
+        // silently killed token injection for real devices (round-19).
+        let host_ok = host
+            .as_deref()
+            .map(|host| {
+                host == "127.0.0.1"
+                    || host == "localhost"
+                    || host == "agent.saisi.online"
+                    || (host.ends_with(".agent.saisi.online")
+                        && host.matches('.').count() == 3
+                        && host
+                            .split('.')
+                            .next()
+                            .map(|d| d.starts_with("d"))
+                            .unwrap_or(false))
+            })
+            .unwrap_or(false);
+        // round-102: token injection only via the gateway proxy OR
+        // loopback — a public direct request must NOT receive the token.
+        let loopback = host
+            .as_deref()
+            .map(|host| host == "127.0.0.1" || host == "localhost")
+            .unwrap_or(false);
+        if host_ok && (via_proxy || loopback) {
+            return panel_token_response(token);
+        }
+        // One-time panel grant (gateway-issued; the fix the console's
+        // openPanel ?token= flow was waiting for): the console mints a
+        // 120s single-use grant bound to THIS device and opens
+        // /panel/?grant=<code> directly at the device origin — the
+        // permanent token never rides in a URL. The grant is redeemed
+        // here (Bearer = our own device token) and on success the panel
+        // is served with the token injected — EXACTLY the response shape
+        // of the authorized injection path above. Panel paths only (the
+        // desktop shell never receives grants).
+        let panel_path = path == "/panel" || path == "/panel/";
+        let grant = query_param(query, "grant").unwrap_or("").trim().to_string();
+        if panel_path && plausible_grant(&grant) {
+            // Pure-local device (no console binding): ?grant= is simply
+            // invalid — fall through to the plain panel, the same
+            // readable state a bad/absent token gets.
+            if let Some(base) = cfg
+                .platform
+                .console_url
+                .as_deref()
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+            {
+                if redeem_panel_grant(base, token, &grant).await {
+                    return panel_token_response(token);
+                }
+            }
+            // Redeem failed (network down, expired/consumed/wrong-device
+            // grant, gateway 4xx): fall through to the plain panel below.
+            // No injection on a maybe — a grant is a claim, not a proof.
+        }
+    }
+    resp
+}
+
 // ── Request handler ──────────────────────────────────────────
 
 pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
@@ -395,99 +497,19 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
     // response, any third-party page could fetch /panel/ and read the token.
     // The token is no longer injected — the user enters it once in the panel
     // (saved to localStorage) instead.
+    // Panel / desktop root: served with the zero-config token-injection
+    // decision (gateway proxy secret / loopback / one-time grant) — extracted
+    // as handle_panel_home (round-29 SRP).
     if method == Method::GET
         && (path == "/panel" || path == "/panel/" || path == "/desktop" || path == "/desktop/")
     {
-        // Write-through (audit A4): one snapshot of the LIVE config for the
-        // whole injection decision (proxy_secret + device_token below).
-        let cfg = state.config_snapshot();
-        let mut resp = serve_panel_file("index.html", "text/html; charset=utf-8");
-        set_cache_control(&mut resp, "no-store");
-        // Zero-config token injection: embed the device token as a script
-        // fragment before </head>. round-102/103: injection requires the
-        // gateway proxy's SHARED SECRET (X-Vale-Auth) — a plain marker
-        // header was client-spoofable end-to-end (any curl could set it and
-        // read the token; the leaked token grants /api/tools RCE). The
-        // secret is generated at agent bootstrap and read by the console;
-        // the gateway proxy sends it only for authenticated (admin session
-        // or plugin link) requests. Localhost/loopback keeps working for
-        // on-device use.
-        let secret = cfg.server.proxy_secret.as_deref().unwrap_or("");
-        // round-104: an EMPTY/absent configured secret must never match — the
-        // old gate accepted an empty header when the secret was "" (quarantine
-        // recovery / pre-secret boot), which is exactly the fail-open RCE.
-        let via_proxy = !secret.is_empty()
-            && req
-                .headers()
-                .get("x-vale-auth")
-                .and_then(|v| v.to_str().ok())
-                // Constant-time compare (timing-safe for a 64-hex secret).
-                .map(|v| timing_safe_eq(v.as_bytes(), secret.as_bytes()))
-                .unwrap_or(false);
-        if let Some(ref token) = cfg.server.device_token {
-            // EXACT host allowlist. A substring/prefix match here was
-            // bypassable — e.g. Host: evil-agent.saisi.online.evil.com matches
-            // .contains("agent.saisi.online") and the token is handed to the
-            // attacker's page. Only the device's own single-level subdomain
-            // (dN.agent.saisi.online — a multi-level attacker subdomain like
-            // evil.agent.saisi.online is REJECTED), the apex, or loopback.
-            // NOTE: d1.agent.saisi.online has THREE dots — an earlier
-            // "count() == 2" check made the subdomain branch unsatisfiable and
-            // silently killed token injection for real devices (round-19).
-            let host_ok = host_no_port(req.headers())
-                .map(|host| {
-                    host == "127.0.0.1"
-                        || host == "localhost"
-                        || host == "agent.saisi.online"
-                        || (host.ends_with(".agent.saisi.online")
-                            && host.matches('.').count() == 3
-                            && host
-                                .split('.')
-                                .next()
-                                .map(|d| d.starts_with("d"))
-                                .unwrap_or(false))
-                })
-                .unwrap_or(false);
-            // round-102: token injection only via the gateway proxy OR
-            // loopback — a public direct request must NOT receive the token.
-            let loopback = host_no_port(req.headers())
-                .map(|host| host == "127.0.0.1" || host == "localhost")
-                .unwrap_or(false);
-            if host_ok && (via_proxy || loopback) {
-                return panel_token_response(token);
-            }
-            // One-time panel grant (gateway-issued; the fix the console's
-            // openPanel ?token= flow was waiting for): the console mints a
-            // 120s single-use grant bound to THIS device and opens
-            // /panel/?grant=<code> directly at the device origin — the
-            // permanent token never rides in a URL. The grant is redeemed
-            // here (Bearer = our own device token) and on success the panel
-            // is served with the token injected — EXACTLY the response shape
-            // of the authorized injection path above. Panel paths only (the
-            // desktop shell never receives grants).
-            let panel_path = path == "/panel" || path == "/panel/";
-            let grant = query_param(req.uri().query(), "grant").unwrap_or("").trim();
-            if panel_path && plausible_grant(grant) {
-                // Pure-local device (no console binding): ?grant= is simply
-                // invalid — fall through to the plain panel, the same
-                // readable state a bad/absent token gets.
-                if let Some(base) = cfg
-                    .platform
-                    .console_url
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|u| !u.is_empty())
-                {
-                    if redeem_panel_grant(base, token, grant).await {
-                        return panel_token_response(token);
-                    }
-                }
-                // Redeem failed (network down, expired/consumed/wrong-device
-                // grant, gateway 4xx): fall through to the plain panel below.
-                // No injection on a maybe — a grant is a claim, not a proof.
-            }
-        }
-        return resp;
+        let host = host_no_port(req.headers()).map(|h| h.to_string());
+        let auth_header = req
+            .headers()
+            .get("x-vale-auth")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
+        return handle_panel_home(&state, &path, req.uri().query(), host, auth_header).await;
     }
     if method == Method::GET && (path.starts_with("/panel/") || path.starts_with("/desktop/")) {
         // Strip any ?v=… cache-buster before whitelist matching.
