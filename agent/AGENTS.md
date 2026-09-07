@@ -2517,6 +2517,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   and order (per-endpoint minimal guards) — the round-25 keep
   decision stands.
 
+### 2026-09-08 SOLID round 31 (build.sh deploy-gate dedup)
+- **require_cf_token (DRY, scripts/build.sh)** — deploy_worker and
+  deploy_proxy each inlined the same cf_token fetch + missing-token
+  bail (8 lines). Extracted `require_cf_token "$name"` setting the
+  CF_TOKEN global; both deploy functions call it and use $CF_TOKEN.
+  bash -n clean.
+- **Sweep updates** — update/tools.rs zero dups; the zen-go and zen-us
+  proxies are NOT near copies (Anthropic→OpenAI translator vs US
+  geo-pinned egress — different architectures, ADR-0003 autonomy);
+  panel-react + gateway ui TSX near-zero dups (JSX coincidence only);
+  translate.ts guard chains confirmed as per-kind checks that share
+  nothing (kind sets differ per endpoint) — all keep decisions stand.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
