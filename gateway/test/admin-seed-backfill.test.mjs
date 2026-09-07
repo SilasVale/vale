@@ -135,3 +135,12 @@ test("getAdminPassword without KEYS: empty without secret, legacy hash with it",
   assert.equal(await verifyAdminPassword({ ADMIN_PASSWORD: "s3cret" }, "s3cret"), true);
   assert.equal(await verifyAdminPassword({ ADMIN_PASSWORD: "s3cret" }, "wrong"), false);
 });
+
+// round-539 (coverage-driven): the backfill-failure catch had ZERO pins —
+// a KV outage mid-backfill must not block startup (no throw).
+test("seedAdmin survives a throwing KV during backfill", async () => {
+  __resetSeedForTests();
+  const env = mockEnv([["user:admin", ADMIN_EMPTY]]);
+  env.KEYS.put = async () => { throw new Error("kv down"); };
+  await seedAdmin(env); // must resolve, never reject
+});
