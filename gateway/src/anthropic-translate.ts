@@ -369,23 +369,13 @@ export class AnthropicStreamEncoder {
   constructor(clientModel: string, upstreamModel: string) {
     this.clientModel = clientModel;
     this.upstreamModel = upstreamModel;
-    this.started = false;
-    this.finished = false;
-    this.blockIndex = -1;
+    // Fields with a declaration-site initializer (started/finished/
+    // blockIndex/nextToolBlockIdx/pending/lastStopReason/id/usage) are NOT
+    // reset here — class-field initializers already ran before this body.
     this.blockType = null; // "thinking" | "text" | "tool_use"
     this.toolIdx = undefined; // current OpenAI tool index (parallel calls)
-    this.nextToolBlockIdx = 0; // running content-block index for tool blocks
     this.toolBlockIdxMap = {}; // tool index → its content-block index
     this.openToolInputs = {}; // tool index → accumulated arguments string
-    this.pending = [];
-    this.lastStopReason = "end_turn";
-    this.id = "";
-    this.usage = {
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-    };
   }
 
   push(chunk: any): void {
