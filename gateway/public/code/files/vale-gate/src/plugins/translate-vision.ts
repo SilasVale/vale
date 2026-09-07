@@ -87,6 +87,30 @@ async function cacheImageDesc(cacheKey: string, env: any, desc: string): Promise
     /* KV write failed */
   }
 }
+
+/**
+ * Shared tail of the two describeImage upstream branches: validate the
+ * response, parse its JSON, pull the description text with `extract`, cache
+ * it and return. Every failure returns the historical "(图片描述失败/为空)"
+ * marker string — preprocessImages treats those as hard errors (round-119).
+ */
+async function finishDescribe(
+  resp: any,
+  cacheKey: string,
+  env: any,
+  extract: (json: any) => string,
+): Promise<string> {
+  if (!resp.ok) return `(图片描述失败：${resp.status})`;
+  let json: any;
+  try {
+    json = await resp.json();
+  } catch {
+    return "(图片描述失败：响应解析失败)";
+  }
+  const desc = extract(json) || "(图片描述为空)";
+  await cacheImageDesc(cacheKey, env, desc);
+  return desc;
+}
 async function describeImage(
   env: any,
   ukeys: any,
@@ -170,21 +194,14 @@ async function describeImage(
     } catch (e: any) {
       return `(图片描述失败：${e.message})`;
     }
-    if (!resp.ok) return `(图片描述失败：${resp.status})`;
-    let json: any;
-    try {
-      json = await resp.json();
-    } catch {
-      return "(图片描述失败：响应解析失败)";
-    }
-    const text = (json.content || [])
-      .filter((b: any) => b.type === "text")
-      .map((b: any) => b.text)
-      .join("\n")
-      .trim();
-    const descPt = text || "(图片描述为空)";
-    await cacheImageDesc(cacheKey, env, descPt);
-    return descPt;
+    // Anthropic-format upstream: text lives in content[] blocks.
+    return finishDescribe(resp, cacheKey, env, (json) =>
+      (json.content || [])
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("\n")
+        .trim(),
+    );
   }
 
   // og/ vision model (opencode zen) — needs the Anthropic→OpenAI translation,
@@ -210,14 +227,8 @@ async function describeImage(
   } catch (e: any) {
     return `(图片描述失败：${e.message})`;
   }
-  if (!resp.ok) return `(图片描述失败：${resp.status})`;
-  let json: any;
-  try {
-    json = await resp.json();
-  } catch {
-    return "(图片描述失败：响应解析失败)";
-  }
-  const desc = (json.choices?.[0]?.message?.content || "").trim() || "(图片描述为空)";
-  await cacheImageDesc(cacheKey, env, desc);
-  return desc;
+  // OpenAI-format upstream: text lives in choices[0].message.content.
+  return finishDescribe(resp, cacheKey, env, (json) =>
+    String(json.choices?.[0]?.message?.content || "").trim(),
+  );
 }
