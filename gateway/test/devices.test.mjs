@@ -460,6 +460,24 @@ test("self-register: existing device rejects hostname moves + unproven rotations
   }
 });
 
+// round-532 (coverage-driven): the dead-tunnel proof catch had ZERO pins —
+// an unreachable tunnel must 409, not 500.
+test("self-register: dead tunnel refuses rotation with 409 (no 500)", async () => {
+  __clearCaches();
+  const OLD = T64("c"), NEW = T64("d");
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: OLD, proxySecret: "ps-stored", registeredAt: 7 }]);
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  try {
+    const res = await selfReg(env, { name: "d1", hostname: "d1.agent.saisi.online", token: NEW });
+    assert.equal(res.status, 409);
+    const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+    assert.equal(devs.find((d) => d.name === "d1").token, OLD, "production record untouched");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 // round-460 (coverage-driven): the PROVED rotation arm + the new-device
 // proxySecret capture arm had ZERO pins.
 test("self-register: tunnel-proved rotation accepted, new device captures the secret", async () => {
