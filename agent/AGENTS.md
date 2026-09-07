@@ -3329,6 +3329,23 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   no direct tests but its input requires a real backgrounded session
   (pipeline-bound, recorded not forced).
 
+### 2026-09-08 SOLID round 87 (uniform session_lost across session tools)
+- **Refactor + test (agent)** — a new headless matrix test exposed a
+  real inconsistency: terminal_write checked session existence in the
+  TOOL layer (enriched session_lost: open list + "(none — agent
+  restarted?)" + reopen instruction) while terminal_resize /
+  terminal_select / terminal_close let the BACKEND answer bare
+  (stub: "backend not enabled"; real: DeviceError::SessionNotFound) —
+  the AI client's recovery experience was tool-dependent. Fix:
+  ensure_session_known(mgr, sid) helper extracted next to session_lost
+  in ctx.rs; write's inline two-line check swapped to it; resize /
+  select / close gained the check (close also reports the closed-
+  session kind instead of failing bare). +1 cfg(not(feature)) matrix
+  test: all four answer session_lost with the reopen hint on unknown
+  ids. 326 lib / 369 full / 333 feature lib; fmt + clippy clean.
+  (Discovery route: files.rs sftp + terminal_jobs were checked first —
+  pipeline-bound real-SSH inputs, recorded not forced.)
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
