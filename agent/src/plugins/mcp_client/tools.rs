@@ -422,17 +422,20 @@ async fn connect_http(
 ) -> Result<serde_json::Value, DeviceError> {
     // Plugin audit MED: connect took ANY caller URL — plain http to internal
     // hosts was an SSRF + sniffable. Policy: https anywhere; http ONLY for
-    // the loopback bundled server (9229).
+    // the loopback bundled server (9229) and private-network hosts
+    // (RFC1918/loopback/.local — LAN MCP, opt-in via 0.0.0.0 binding; every
+    // request stays Bearer-gated so an open LAN port still requires the
+    // token). Public-internet http stays rejected.
     let parsed = reqwest::Url::parse(&url).map_err(|e| DeviceError::InvalidParams {
         message: format!("bad MCP url: {e}"),
     })?;
-    let loopback = matches!(
-        parsed.host_str(),
-        Some("127.0.0.1") | Some("localhost") | Some("::1")
-    );
-    if !(parsed.scheme() == "https" || (parsed.scheme() == "http" && loopback)) {
+    let host_ok = match parsed.host_str() {
+        Some(h) => is_private_host(h),
+        None => false,
+    };
+    if !(parsed.scheme() == "https" || (parsed.scheme() == "http" && host_ok)) {
         return Err(DeviceError::InvalidParams {
-            message: "MCP url must be https, or http to a loopback host".into(),
+            message: "MCP url must be https, or http to a loopback/private-network host".into(),
         });
     }
     // Same URL reuses the existing session; a different URL drops the old
@@ -873,6 +876,48 @@ fn embedded_view_index(text: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Private-network host predicate for the http-MCP policy (LAN clients
+/// must be reachable without TLS; public-internet http stays rejected).
+/// RFC1918 + loopback + link-local + .local — pure + unit-tested.
+pub(crate) fn is_private_host(hostname: &str) -> bool {
+    let h = hostname.trim().to_ascii_lowercase();
+    if h.is_empty() {
+        return false;
+    }
+    if matches!(h.as_str(), "localhost" | "::1" | "[::1]") {
+        return true;
+    }
+    if h.ends_with(".local") || h.ends_with(".local.") {
+        return true;
+    }
+    // Bare IPv6 (non-loopback) and any non-numeric host: reject (no DNS
+    // resolution of http targets — the old policy only dialed literal
+    // hosts, keeping the SSRF surface literal).
+    let parts: Vec<&str> = h.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let mut nums = [0u8; 4];
+    for (i, p) in parts.iter().enumerate() {
+        if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) || p.len() > 3 {
+            return false;
+        }
+        let n: u16 = p.parse().unwrap_or(999);
+        if n > 255 {
+            return false;
+        }
+        nums[i] = n as u8;
+    }
+    match (nums[0], nums[1]) {
+        (10, _) => true,
+        (172, b) => (16..=31).contains(&b),
+        (192, 168) => true,
+        (127, _) => true,
+        (169, 254) => true,
+        _ => false,
+    }
 }
 
 /// Next JSON-RPC id for an ad-hoc call on a live session (http arm only —
@@ -1506,6 +1551,30 @@ mod one_browser_tests {
     //! Coverage audit rows 11+12: the attach-vs-fork contract and the
     //! CJK-safe summary truncation that keep the panel seeing AI browsing.
     use super::*;
+
+    #[test]
+    fn is_private_host_allows_rfc1918_and_loopback_only() {
+        assert!(is_private_host("192.168.1.100"), "LAN (d1)");
+        assert!(is_private_host("192.168.29.110"), "LAN (d1 actual)");
+        assert!(is_private_host("10.0.0.5"));
+        assert!(is_private_host("172.16.0.1"));
+        assert!(is_private_host("172.31.255.255"));
+        assert!(is_private_host("127.0.0.1"));
+        assert!(is_private_host("localhost"));
+        assert!(is_private_host("printer.local"));
+        assert!(
+            is_private_host("169.254.169.254"),
+            "link-local (metadata style)"
+        );
+        assert!(!is_private_host("172.15.0.1"), "just outside 172.16/12");
+        assert!(!is_private_host("172.32.0.1"), "just outside 172.16/12");
+        assert!(!is_private_host("8.8.8.8"), "public stays rejected");
+        assert!(!is_private_host("example.com"), "no DNS names");
+        assert!(!is_private_host("192.168.1.1.evil.com"), "suffix lookalike");
+        assert!(!is_private_host("256.1.1.1"), "octet out of range");
+        assert!(!is_private_host(""), "empty");
+        assert!(!is_private_host("::1x"), "bare IPv6 junk");
+    }
 
     #[test]
     fn mcp_browser_args_attach_arm_carries_cdp_and_output_dir() {
