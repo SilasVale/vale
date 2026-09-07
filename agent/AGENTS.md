@@ -2061,6 +2061,32 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   the empty leftover local dir (gitignored .wrangler tmp only) is gone.
   Source stays in git history (2026-09-07 retirement).
 
+### 2026-09-08 SOLID round (gateway layering — plugin deps, key errors, gates)
+- **Plugin deps now enforced (DIP)** — `registerPlugins` ran setups in
+  caller-array order while index.ts lists auth BEFORE translate despite
+  auth's `deps:["translate"]`; auth's setup read `ctx.api.translate` as
+  undefined, so `/api/me/route`'s `effective` never resolved the usable
+  fallback (UI "current model" wrong for keyless/BYOK users). The registry
+  now does a stable topological sort — a dep registers before its
+  consumers, same-level plugins keep caller order, a dependency cycle
+  throws. Missing-from-list deps (external providers) tolerated.
+  +4 registry tests; me/route test updated to assert the FIXED semantics
+  (keyless no-route → default fallback; keyless stored-og → fallback;
+  with og key → stored route mirrors) — the old assertions pinned the bug.
+- **21 key-missing 502 copies collapsed into one table (SRP/DRY)** —
+  every /v1 flow site hand-rolled `if (kind===X && !keyX) jsonError(502,
+  "<KEY> not configured — <hint>", "config_error")` across four branches;
+  a new channel kind needed its guard + message in four places. New
+  `keyMissingError(kind)` owns the message table (strings byte-identical);
+  call sites keep their own `!key` gate and delegate the 502 shape.
+  +2 unit pins in scrub-keys.test.mjs.
+- **Devices handlers use the shared requireAdmin gate (DRY)** — 10
+  admin-gated handlers hand-rolled requireSession→401 + role→403 pairs;
+  now `requireAdmin` (the gate admin.ts already used) in one line each.
+  handleFileUpload keeps requireSession (session-only). -20 lines.
+- Gateway 590 pass, tsc/lint/prettier clean; code-viewer mirror synced in
+  each commit.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
