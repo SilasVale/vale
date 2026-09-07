@@ -2188,6 +2188,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   keeps its own loop (it also matches .jsonl.tmp litter and needs metadata,
   not sids). cargo fmt; lib 299 pass; clippy clean.
 
+### 2026-09-08 SOLID round 8 (me/keys prologue + circuit-open guard dedup)
+- **/api/me/keys handler prologue dedup (DRY, gateway auth.ts)** —
+  meRevealKey / meTestKeys / meKeyUsage each opened with the same
+  requireSession + readJson + name-whitelist + getUserKeys sequence.
+  Extracted `sessionAndKeyName(request, env, allowed)` returning
+  {user, name} | Response; usage passes its narrower 3-name set. The
+  save/delete siblings keep their own shapes (extra value field / query
+  param — forcing them in would hurt readability). Gateway 592 pass.
+- **og circuit-open guard single-sourced (DRY, gateway translate.ts)** —
+  four /v1 sites (chat/completions, responses, og-native passthrough,
+  messages translate) inlined the same "opencode + breaker open → 502
+  circuit open" check. Extracted `channelDegradedError(env, kind)` — one
+  guard shape, one message, four call sites. Gateway 592 pass;
+  tsc/lint/prettier clean; mirror synced.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
