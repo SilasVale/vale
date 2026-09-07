@@ -2353,6 +2353,23 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   blind-replace hazard; the pattern is now known-risky). Memory tests
   34/34, lib 299 pass; clippy/fmt clean.
 
+### 2026-09-08 SOLID round 20 (CLI desktop-shell staging dedup + stale product sync)
+- **stageDesktopShell (DRY, vale CLI)** — vale setup and vale update each
+  inlined the same Electron desktop-shell staging block (~35 lines: copy
+  main/preload/url-policy + icons into the install dir), differing only in
+  the target suffix (setup writes in place; update stages *.new for the
+  atomic swap). Extracted `stageDesktopShell(installDir, suffix)`; both
+  flows call it. bin/vale.js recompiled from src (round-298 discipline;
+  marker present; CLI tests 9/9).
+- **Stale electron product caught (build-side)** — the recompile surfaced
+  that src/main.ts's round-1 release-first window-title change
+  (a1bf8881) had never been re-emitted into the committed main.js
+  products: devices would have kept showing the frozen Cargo version in
+  the window title. Re-emitted both copies (same class as the round-3
+  panel.js catch; LESSON now doubly confirmed — after touching
+  vale-desktop-electron/src/*.ts, the committed *.js products must be
+  re-emitted, and the npm-package copies re-synced).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
