@@ -2797,6 +2797,24 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   OPEN-decisions block. 300 lib pass (+1); fmt + clippy clean. No
   behavior changed.
 
+### 2026-09-08 SOLID round 50 (milestone convergence snapshot)
+- **Round-50 milestone** — (1) scanner tooling gap fixed: scan-dups.py
+  now excludes Rust test-only files (*tests.rs, *_test.rs) exactly as
+  JS *.test.* were already excluded — agent/src/plugins/terminal/tools/
+  tests.rs (a #[cfg(test)] mod file) had polluted the production
+  duplication signal with scaffold windows; terminal/ report drops 3
+  files → 2 (e29ffc49). (2) Test-stripping verified sound on the
+  largest test-bearing file: web/mod.rs 2219 raw lines → 780 code
+  lines with zero cfg(test) residue. (3) Convergence snapshot at the
+  50-round mark: 6-line window — 10 reporting files, ALL explicitly
+  classified kept classes (schema prefixes, two-flow windows,
+  registration idiom, per-endpoint forwarding evolution, DPAPI mirror,
+  adjacent-function artifacts, protocol-header differences, form
+  scaffolding); 8-line strict window — 6 files; cross-file — 3 known
+  brace/trait windows. Feature-gated suite 308 (+1 from the round-49
+  pin). Full matrix green: agent 300/308, gateway 592 + format,
+  index 56, CLI 9.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
