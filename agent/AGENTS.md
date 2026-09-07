@@ -2895,6 +2895,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   symmetric FFI scaffolding with windows-only, locally-unverifiable
   behavior.
 
+### 2026-09-08 SOLID round 57 (tool-domain coverage sweep)
+- **Verification round (no code changes)** — walked the remaining
+  agent tool domains for unextracted patterns: (1) session-lookup +
+  SessionNotFound is already shared via ctx::session_lost (exec.rs +
+  sessions.rs both use it — no third copy); (2) memory/tools.rs id
+  params: only 2 identical "Entry id" declarations (round-45-scale
+  constant extraction not warranted); (3) files.rs + output.rs small
+  and clean (183/214 stripped lines, zero windows); (4) tunnel.rs (11
+  tests) / metrics.rs (3) / filelog.rs (6) all have coverage. Gates:
+  feature-gated suite 314 (306 lib + 8 feature-only), xwin check
+  green, tree clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
