@@ -2228,6 +2228,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   clippy/fmt clean. exec.rs's find_prompt_marker stays (LEGACY 133;D
   parser for the headless-stub path — different prefix, documented).
 
+### 2026-09-08 SOLID round 11 (screen tail-N + SSE relay headers dedup)
+- **tool_screen tail-N dedup (DRY, agent output.rs)** — the live-session
+  and history branches each copy-pasted the same tail scan (skip trailing
+  \r\n/\n so the Nth-from-end count is content lines, walk back N
+  newlines, slice). Extracted `tail_n_lines(data, lines) -> (start, end)`
+  — one tail semantics for both buffer kinds. Terminal tests 111/111,
+  feature-gated lib 307 pass; clippy/fmt clean.
+- **SSE relay headers single-sourced (DRY, gateway translate.ts)** — the
+  one-shot error-envelope relay and the streaming relay each built the
+  same text/event-stream + no-cache + CORS header Response. Extracted
+  `sseResponse(body)`. Gateway 592 pass; tsc/lint/prettier clean; mirror
+  synced.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
