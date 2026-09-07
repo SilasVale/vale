@@ -81,7 +81,12 @@ export function DesktopShell({
       try {
         const j = await callApi("/api/status");
         if (!alive || !j) return;
-        if (typeof j.version === "string") setAgentVersion(j.version);
+        // npm RELEASE version first (the number that changes per release —
+        // written by update/setup into .vale-release and echoed as `release`);
+        // Cargo protocol `version` (1.0.x, frozen) is the fallback.
+        const v = typeof j.release === "string" && j.release ? j.release
+          : (typeof j.version === "string" ? j.version : "");
+        if (v) setAgentVersion(v);
         if (typeof j.uptime_secs === "number") setAgentUptime(fmtUptime(j.uptime_secs));
         if (typeof j.cpu_pct === "number") setAgentCpu(j.cpu_pct);
         if (typeof j.mem_pct === "number") setAgentMem(j.mem_pct);

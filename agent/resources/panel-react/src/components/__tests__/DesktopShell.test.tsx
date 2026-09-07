@@ -110,6 +110,13 @@ describe("DesktopShell", () => {
     expect(el.textContent).toContain("MEM 49%");
   });
 
+  it("status strip prefers the npm release field over the Cargo protocol version", async () => {
+    (callApi as any).mockResolvedValueOnce({ version: "1.0.145", release: "1.2.304" });
+    render(<DesktopShell {...baseProps} />);
+    await waitFor(() => expect(document.querySelector(".desktop-status-msg")?.textContent).toContain("v1.2.304"));
+    expect(document.querySelector(".desktop-status-msg")?.textContent).not.toContain("v1.0.145");
+  });
+
   it("status strip omits vitals when the fields are absent (graceful degradation)", async () => {
     (callApi as any).mockResolvedValueOnce({ version: "1.0.145" });
     render(<DesktopShell {...baseProps} />);
