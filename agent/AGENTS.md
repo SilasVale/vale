@@ -1794,6 +1794,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   breaker). Chat openrouter arm unreachable (pre-branch guard same var —
   documented, not pinned). translate 86.42->89.18. Suite 547->549;
   gates clean; snapshot updated; pushed.
+  ROUND-504 (2026-09-06): shadow audit — the translate-path cm arm is ALSO
+  shadowed (pre-branch guard same !cmdKey — coverage proved the 496/503 cm
+  cases never executed it). Verdict comment at the guard + corrected both
+  test comments (they pin the live pre-branch guards). Suite stays 549;
+  gates clean; mirror resynced; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
