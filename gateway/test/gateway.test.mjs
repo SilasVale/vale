@@ -2010,3 +2010,23 @@ test("ds passthrough: retried 429 with a text body keeps status + rate_limit typ
   assert.equal(body.error.message, "Upstream 429");
   assert.equal(body.error.type, "rate_limit_error");
 });
+
+// round-513 (coverage-driven): the nv/gmi non-JSON error arm had ZERO pins
+// (the round-498 test covers the JSON envelope variant). A 400 is not
+// retried, so the test stays fast.
+test("nv translate: upstream 400 with a text body keeps status, no retry", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { NVAPI_KEY: "sk-nv" } });
+  let calls = 0;
+  const res = await withFetch(async () => (++calls, new Response("bad request", { status: 400 })), () =>
+    post(env, token, {
+      model: "nv/minimaxai/minimax-m3",
+      max_tokens: 8,
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(calls, 1);
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error.message, /nvidia: upstream 400/);
+});
