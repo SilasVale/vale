@@ -2054,3 +2054,17 @@ test("/v1/responses muse-spark keyless and breaker-open → 502, upstream never 
     },
   );
 });
+
+// round-515 (coverage-driven): the responses-path !ok mapping had ZERO pins.
+test("/v1/responses muse-spark: retried 429 text keeps status + rate_limit type", async () => {
+  const { __clearDegradedCache } = await import("../src/reliability.ts");
+  __clearDegradedCache();
+  const { env, token } = gwEnv({ timeout: 1000 });
+  const res = await withFetch(async () => new Response("slow down", { status: 429 }), () =>
+    post(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi", max_output_tokens: 10 }, "/v1/responses"),
+  );
+  assert.equal(res.status, 429);
+  const body = await res.json();
+  assert.equal(body.error.message, "Upstream 429");
+  assert.equal(body.error.type, "rate_limit_error");
+});
