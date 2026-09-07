@@ -1952,6 +1952,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   startup unblocked; verified the throw lands in the backfill try, not
   an outer guard — fresh path exits early via get). Clean round. Suite
   578->579; gates clean; snapshot updated; pushed (test-only).
+  ROUND-540 (2026-09-07): keepalive audit — the MCP SSE endpoint had ZERO
+  pins. Added 1 in mcp-gateway.test.mjs (GET → event-stream + clean
+  cancel, no leaked interval). Verdict: the 15s tick-vs-cancel race arm
+  is defensive-only (not deterministically triggerable) — documented.
+  Suite 579->580; gates clean; mirror resynced; pushed (comment-only
+  src change rides the next deploy).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
