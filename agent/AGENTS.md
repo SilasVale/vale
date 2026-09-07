@@ -2744,6 +2744,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   residual re-verified: the remaining ox-alpha windows are per-flow
   adjacent-code artifacts, not copies.
 
+### 2026-09-08 SOLID round 47 (store/lib fine-window + full gates)
+- **Verification round (no code changes)** — (1) gateway/src/store +
+  gateway/src/lib scanned at the 6-line window for the FIRST time since
+  the store/ split: ZERO duplication (round-35's "store clean" verdict
+  now proven at the fine window across all sub-files); (2) the
+  round-46 store.rs helpers pass the complete agent matrix: 299 lib +
+  307 feature-gated + clippy/fmt + xwin check all green. Standing
+  residual classes across the whole repo at the 6-line window are
+  unchanged and all classified: mcp-tools structural schema prefix,
+  translate two-flow windows, zen-us per-endpoint forwarding
+  evolution, secrets DPAPI seal/unseal mirror, memory tool
+  registration idiom, mcp_client adjacent-function artifacts, tooling
+  og-vs-passthrough protocol headers.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
