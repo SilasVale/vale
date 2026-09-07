@@ -300,32 +300,41 @@ async function mcpAutoselectProbe(tag, connArgs) {
   // navigate to the example.com HOMEPAGE first so the snapshot has links.
   await tool('mcp_client_call', { tool: 'browser_navigate', arguments: { url: 'https://example.com/' } });
   await sleep(3000);
-  const snap = await tool('mcp_client_call', { tool: 'browser_snapshot', arguments: {} });
-  const snapTxt = JSON.stringify(snap);
-  // Snapshot line: `- link "Learn more" [ref=f1e6] [cursor=pointer]:`
-  // NOTE: snapTxt is JSON.stringify'd, so inner quotes are escaped \" and
-  // the text is double-escaped (\\") — match the ref after "Learn more"
-  // without depending on the exact quote escaping.
-  const lmIdx = snapTxt.indexOf('Learn more');
-  const refMatch = lmIdx >= 0 ? /\[ref=(\w+)\]/.exec(snapTxt.slice(lmIdx, lmIdx + 200)) : null;
-  const clickRef = refMatch && refMatch[1];
+  // Snapshot + click + poll, up to 2 attempts with a FRESH snapshot each
+  // time: under contention (parallel drivers on one box) a click can land
+  // while the view is mid-navigation and silently do nothing (device-caught:
+  // back-to-back misses with valid geometry, manual retry navigates fine).
+  // The proof stays strict — a real click must still drive the navigation.
   let clickOk = false;
-  if (clickRef) {
-    const cl = await tool('mcp_client_call', { tool: 'browser_click', arguments: { target: clickRef } });
-    clickOk = !!(cl && cl.ok);
+  let clickRef = null;
+  let emb2 = null;
+  for (let attempt = 0; attempt < 2 && !(emb2 && emb2.url.includes('iana.org')); attempt++) {
+    if (attempt > 0) await sleep(3000);
+    const snap = await tool('mcp_client_call', { tool: 'browser_snapshot', arguments: {} });
+    const snapTxt = JSON.stringify(snap);
+    // Snapshot line: `- link "Learn more" [ref=f1e6] [cursor=pointer]:`
+    // NOTE: snapTxt is JSON.stringify'd, so inner quotes are escaped \" and
+    // the text is double-escaped (\\") — match the ref after "Learn more"
+    // without depending on the exact quote escaping.
+    const lmIdx = snapTxt.indexOf('Learn more');
+    const refMatch = lmIdx >= 0 ? /\[ref=(\w+)\]/.exec(snapTxt.slice(lmIdx, lmIdx + 200)) : null;
+    clickRef = refMatch && refMatch[1];
+    if (clickRef) {
+      const cl = await tool('mcp_client_call', { tool: 'browser_click', arguments: { target: clickRef } });
+      clickOk = clickOk || !!(cl && cl.ok);
+    }
+    // Poll for the navigation (slow iana.org loads committed after the old
+    // fixed 5s sleep flaked 16/18 on 1.2.297 — same predicate, more time).
+    for (let i = 0; i < 15; i++) {
+      await sleep(1000);
+      try {
+        const list2 = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+        emb2 = list2.find((t) => !t.url.includes('/desktop/'));
+        if (emb2 && emb2.url.includes('iana.org')) break;
+      } catch {}
+    }
   }
   check('mcp ' + tag + ' click learn-more', clickOk, 'ref=' + clickRef);
-  // Poll for the navigation (slow iana.org loads committed after the old
-  // fixed 5s sleep flaked 16/18 on 1.2.297 — same predicate, more time).
-  let emb2 = null;
-  for (let i = 0; i < 15; i++) {
-    await sleep(1000);
-    try {
-      const list2 = await (await fetch('http://127.0.0.1:9333/json/list')).json();
-      emb2 = list2.find((t) => !t.url.includes('/desktop/'));
-      if (emb2 && emb2.url.includes('iana.org')) break;
-    } catch {}
-  }
   if (!(emb2 && emb2.url.includes('iana.org'))) {
     // Geometry triage (diagnostic only, not a check): a physical click
     // that misses for viewport reasons looks identical to a broken click
