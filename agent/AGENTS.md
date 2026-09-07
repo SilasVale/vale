@@ -2632,6 +2632,12 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   the base). Gateway 592 pass; tsc/prettier clean; mirror synced.
   Also swept serial.rs + ssh.rs: zero dups (all agent source trees
   now verified at multiple windows).
+- **Mirror gap caught + lesson** — the round-35 commit (e81c3d49,
+  store/users.ts updateUserKeys) missed its code-viewer mirror sync;
+  the drift surfaced on the round-39 final status check and was fixed
+  (11804d3d). LESSON: after ANY gateway/src commit, verify the mirror
+  is clean (`git status` shows no public/code/files change) before
+  closing the round — same discipline as the electron/panel products.
 
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
