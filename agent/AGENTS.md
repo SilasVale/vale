@@ -2215,6 +2215,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   protocol adaptation — og SSE first-chunk, AMD model-list parse, …).
   Gateway 592 pass; tsc/lint/prettier clean; mirror synced.
 
+### 2026-09-08 SOLID round 10 (one OSC scanner in shell_integration)
+- **find_* scanner dedup (DRY, agent shell_integration.rs)** —
+  find_finished, find_command_line and find_prompt_started each
+  hand-rolled the same byte scan (walk for ESC ], try the specific 633
+  parse, skip whole non-633 OSCs — never past a partial/malformed 633;
+  sequence, the subtle rule that could drift between finders). Extracted
+  `scan_osc(data, parse)` generic over the per-sequence parser, plus a
+  standalone `parse_osc_633_a` (the A-marker match was inlined before).
+  -12 net lines; the partial-prefix + ignore-other-OSC boundary tests
+  (30/30) pin the preserved semantics. Feature-gated lib 307 pass;
+  clippy/fmt clean. exec.rs's find_prompt_marker stays (LEGACY 133;D
+  parser for the headless-stub path — different prefix, documented).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
