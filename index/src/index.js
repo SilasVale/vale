@@ -13,6 +13,7 @@
 // One-time-download claim serializer (Durable Object, see ./claim.js).
 // Re-exported so wrangler binds TEMP_CLAIM to it.
 export { TempClaimDO } from "./claim.js";
+import { unavailableResponse } from "./claim.js";
 
 // Landing page (FAVICON + PAGE template + its URL-whitelist/escape
 // helpers) lives in ./page.js — structure refactor, content verbatim.
@@ -234,10 +235,7 @@ export default {
         if (env.DO_AUTH) headers.set("x-do-auth", env.DO_AUTH);
         return await env.TEMP_CLAIM.get(id).fetch(new Request(request, { headers }));
       } catch (err) {
-        return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
-          status: 503,
-          headers: { "content-type": "application/json" },
-        });
+        return unavailableResponse();
       }
     }
 

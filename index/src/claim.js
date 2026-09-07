@@ -35,6 +35,19 @@ export function decideClaim({ exists, expiresAtRaw, nowMs }) {
   return "serve";
 }
 
+/**
+ * Upstream-outage 503 envelope. R2 / DO calls are network I/O; an outage
+ * must surface as this JSON shape (never an uncaught throw → worker 500
+ * HTML). The claim handler and the index worker used to each inline the
+ * same Response construction.
+ */
+export function unavailableResponse() {
+  return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
+    status: 503,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 const FILE_PATH = /^\/files\/([A-Za-z0-9_-]{16,64})$/;
 
 // DO external-address compat gate (has-then-verify / absent-then-pass).
@@ -88,10 +101,7 @@ export class TempClaimDO {
     try {
       obj = await this.env.TEMP_FILES.get(key);
     } catch (err) {
-      return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
-        status: 503,
-        headers: { "content-type": "application/json" },
-      });
+      return unavailableResponse();
     }
     const decision = decideClaim({
       exists: !!obj,
@@ -108,10 +118,7 @@ export class TempClaimDO {
       try {
         await this.env.TEMP_FILES.delete(key);
       } catch (err) {
-        return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
-          status: 503,
-          headers: { "content-type": "application/json" },
-        });
+        return unavailableResponse();
       }
       return new Response(JSON.stringify({ error: "file expired" }), {
         status: 410,
@@ -126,10 +133,7 @@ export class TempClaimDO {
     try {
       await this.env.TEMP_FILES.delete(key);
     } catch (err) {
-      return new Response(JSON.stringify({ error: "temporarily unavailable" }), {
-        status: 503,
-        headers: { "content-type": "application/json" },
-      });
+      return unavailableResponse();
     }
     return new Response(obj.body, {
       headers: {
