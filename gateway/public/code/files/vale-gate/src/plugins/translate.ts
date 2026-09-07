@@ -264,6 +264,45 @@ async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
   }
   return jsonError(upstream.status, message, type, extra);
 }
+/**
+ * Shared upstream-result relay for the direct-forward arms (chat/
+ * completions, /v1/responses, and the messages passthrough): breaker
+ * failure/success recording for og, CORS stamping, generation-id
+ * capture, and the upstream body streamed back untouched. The three
+ * arms used to each carry a byte-identical copy of this tail (the
+ * round-14 extraction covered only the two failure helpers).
+ * recordOgBodyFailure: a down-shaped 5xx BODY also counts toward the
+ * breaker on the chat/completions + responses arms; the messages
+ * passthrough arm historically did not record body failures (kept
+ * exact — see the arm's channelDegradedError up-front check).
+ */
+async function relayUpstreamResult(
+  env: any,
+  request: Request,
+  routeKind: string,
+  upstream: Response | null,
+  detail: string,
+  inspectFailure: any,
+  ctx: { generationId?: string | undefined },
+  recordOgBodyFailure: boolean,
+): Promise<Response> {
+  if (!upstream) {
+    // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
+    return upstreamFetchFailedResponse(env, routeKind, inspectFailure, detail);
+  }
+  if (!upstream.ok) {
+    if (recordOgBodyFailure && routeKind === "opencode" && isChannelDownFailure(detail)) {
+      await recordChannelFailure(env);
+    }
+    // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
+    return upstreamBodyErrorResponse(upstream);
+  }
+  if (routeKind === "opencode") await recordChannelSuccess(env);
+  const headers = new Headers(upstream.headers);
+  stampCors(request, headers);
+  ctx.generationId = upstream.headers.get("x-generation-id") || undefined;
+  return new Response(upstream.body, { status: upstream.status, headers });
+}
 
 // get-then-put counters cost 2 reads + 2 writes per /v1/messages request —
 // that alone burned the Free-plan daily KV WRITE quota (1000/day) at ~250
@@ -762,30 +801,16 @@ async function handleGatewayImpl(
               }
           : { timeoutMs: ogTimeoutMs(env) },
     );
-    if (!upstream) {
-      // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
-      return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
-    }
-    if (!upstream.ok) {
-      // A down-shaped 5xx body on og counts toward the breaker too (the
-      // !upstream arm records fetch failures; body failures are equally a
-      // channel-down signal).
-      if (route.kind === "opencode" && isChannelDownFailure(detail)) {
-        await recordChannelFailure(env);
-      }
-      // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
-      return upstreamBodyErrorResponse(upstream);
-    }
-    if (route.kind === "opencode") await recordChannelSuccess(env);
-    // Direct passthrough — upstream returns OpenAI format, return it as-is.
-    // NOTE: a 200 with an in-band {"error":...} SSE frame is forwarded verbatim — no gateway-side guard (sse-guard.ts removed: peekSseOutcome had zero call sites; do not re-add without wiring every passthrough branch).
-    const headers = new Headers(upstream.headers);
-    stampCors(request, headers);
-    // OpenRouter's per-generation id — the correlation key for the upstream
-    // dashboard when a client reports EMPTY_RESPONSE (a 200 stream that ended
-    // with no content, typically an in-stream upstream error pi-ai skips).
-    ctx.generationId = upstream.headers.get("x-generation-id") || undefined;
-    return new Response(upstream.body, { status: upstream.status, headers });
+    return relayUpstreamResult(
+      env,
+      request,
+      route.kind,
+      upstream,
+      detail,
+      inspectFailure,
+      ctx,
+      true,
+    );
   }
 
   // ---- POST /v1/responses (OpenAI Responses API) ----
@@ -859,24 +884,16 @@ async function handleGatewayImpl(
       },
       { timeoutMs: ogTimeoutMs(env) },
     );
-    if (!upstream) {
-      // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
-      return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
-    }
-    if (!upstream.ok) {
-      // A down-shaped 5xx body on og counts toward the breaker (same
-      // parity as the chat/completions arm).
-      if (route.kind === "opencode" && isChannelDownFailure(detail)) {
-        await recordChannelFailure(env);
-      }
-      // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
-      return upstreamBodyErrorResponse(upstream);
-    }
-    if (route.kind === "opencode") await recordChannelSuccess(env);
-    const headers = new Headers(upstream.headers);
-    stampCors(request, headers);
-    ctx.generationId = upstream.headers.get("x-generation-id") || undefined;
-    return new Response(upstream.body, { status: upstream.status, headers });
+    return relayUpstreamResult(
+      env,
+      request,
+      route.kind,
+      upstream,
+      detail,
+      inspectFailure,
+      ctx,
+      true,
+    );
   }
 
   // count_tokens — local estimate for EVERY channel (2026-08-12). The upstream
@@ -1043,21 +1060,16 @@ async function handleGatewayImpl(
               }
           : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
     );
-    if (!upstream) {
-      // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
-      return upstreamFetchFailedResponse(env, route.kind, inspectFailure, detail);
-    }
-    if (!upstream.ok) {
-      // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
-      return upstreamBodyErrorResponse(upstream);
-    }
-    if (route.kind === "opencode") await recordChannelSuccess(env);
-    const headers = new Headers(upstream.headers);
-    stampCors(request, headers);
-    // Idle watchdog REMOVED (round-61): it aborted legitimate slow streams
-    // (>60s without bytes during model thinking) with an api_error frame.
-    // The relay is untimed again — dead streams are the client's problem.
-    return new Response(upstream.body, { status: upstream.status, headers });
+    return relayUpstreamResult(
+      env,
+      request,
+      route.kind,
+      upstream,
+      detail,
+      inspectFailure,
+      ctx,
+      false,
+    );
   }
 
   // Translation route (og non-native models, cm): Anthropic → OpenAI →
