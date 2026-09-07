@@ -65,8 +65,12 @@ const results = [];
 function check(name, cond, detail) {
   results.push({ name, pass: !!cond, detail: detail || '' });
   // ASCII-only separator: the device console is GBK (cp936) — a UTF-8
-  // em-dash here mojibakes to `鈥?` in PowerShell transcripts.
-  console.log((cond ? 'PASS ' : 'FAIL ') + name + (detail ? '  -- ' + detail : ''));
+  // em-dash here mojibakes to `鈥?` in PowerShell transcripts. Same for
+  // detail: OS error strings arrive in Chinese ("系统找不到指定的文件")
+  // and PowerShell's `>` redirect decodes node UTF-8 output as GBK,
+  // baking mojibake into the log — sanitize to printable ASCII.
+  const safe = String(detail || '').replace(/[^\x20-\x7E]/g, '?');
+  console.log((cond ? 'PASS ' : 'FAIL ') + name + (detail ? '  -- ' + safe : ''));
 }
 
 // ── 1. terminal: session execute + background collect ──────────────────────
