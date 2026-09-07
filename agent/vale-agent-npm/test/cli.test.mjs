@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh, deskShortcutRepairPs } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -36,4 +36,16 @@ test("deskShortcutRepairPs: stale-shortcut repair is repair-only + sunrise-pinne
   assert.match(body, /start-desktop\.ps1/, "repoints at the Electron onlogon path");
   assert.match(body, /Write-Host/, "uses the caller sink for logging");
   assert.ok(!body.includes("Remove-Item -Recurse"), "never deletes directories, files only");
+});
+
+test("playwrightProbePs: waits for desktop CDP before forking headless", () => {
+  const body = playwrightProbePs().join("\n");
+  assert.match(body, /Test-Port 9333/, "probes the desktop CDP port");
+  assert.match(body, /for \(\$i = 1/, "retries instead of a single check (boot race)");
+  assert.match(body, /Start-Sleep -Seconds 5/, "backs off between probes");
+  assert.match(body, /--cdp-endpoint \$ep/, "attaches to the watched view when up");
+  assert.match(body, /--headless/, "keeps the private-chromium fallback");
+  assert.match(body, /127\.0\.0\.1:9229,localhost:9229/, "keeps the anti-DNS-rebinding hosts");
+  assert.match(body, /--output-dir \$pwout/, "pins screenshots to the evidence dir");
+  assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });

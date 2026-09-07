@@ -88,6 +88,42 @@ export function deskShortcutRepairPs(qq: string, sink: string): string[] {
     `foreach ($dRx in @('vale-desktop.exe','vale-tray.exe')) { $dRp = '${qq}\\' + $dRx; if (Test-Path $dRp) { try { Remove-Item -Force -ErrorAction Stop $dRp; ('desk: removed retired ' + $dRx) | ${sink} } catch { ('desk: retired ' + $dRx + ' locked, kept') | ${sink} } } }`,
   ];
 }
+// exported: the ValePlaywright probe launcher (playwright-probe.ps1).
+// Probe order matches the agent's preferred_cdp_endpoint(): 9333
+// (Electron DESKTOP embedded view — what the user watches) when up, else
+// private --headless. --output-dir pins MCP screenshots where the Evidence
+// drawer lists them (install\pwout). ASCII-only, plain -NoProfile -File
+// (the repo rule: -ExecutionPolicy Bypass / -EncodedCommand die silently
+// under WMI/session-0 launches). unit-tested in test/cli.test.mjs.
+export function playwrightProbePs(): string[] {
+  return [
+    "param([string]$node, [string]$cli)",
+    "$ErrorActionPreference = 'Continue'",
+    "$pwout = Join-Path (Split-Path $node -Parent) '..\\pwout'",
+    "if (!(Test-Path $pwout)) { New-Item -ItemType Directory -Path $pwout -Force | Out-Null }",
+    "$ep = ''",
+    "function Test-Port([int]$port) {",
+    "  try {",
+    "    $c = New-Object System.Net.Sockets.TcpClient",
+    "    $iar = $c.BeginConnect('127.0.0.1', $port, $null, $null)",
+    "    if ($iar.AsyncWaitHandle.WaitOne(1500)) { return $c.Connected }",
+    "    $c.Close()",
+    "  } catch { }",
+    "  return $false",
+    "}",
+    // Boot race: the task can fire before the desktop's CDP is up (Electron
+    // starts at logon, later than the task). A single check then forks a
+    // private headless chromium nobody sees (device-caught: detached 9229
+    // serving about:blank while the user watched the embedded view). Wait
+    // up to ~60s for 9333 before falling back to headless.
+    "for ($i = 1; $i -le 12; $i++) { if (Test-Port 9333) { $ep = 'http://127.0.0.1:9333'; break }; Start-Sleep -Seconds 5 }",
+    "if ($ep) {",
+    "  & $node $cli --port 9229 --host 127.0.0.1 --cdp-endpoint $ep --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
+    "} else {",
+    "  & $node $cli --port 9229 --browser chromium --host 127.0.0.1 --headless --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
+    "}",
+  ];
+}
 // exported: the update mutual-exclusion window (npm audit #10 seam), unit-tested.
 export function busyIsFresh(mtimeMs: number, nowMs: number): boolean {
   return nowMs - mtimeMs < 10 * 60 * 1000;
@@ -534,39 +570,9 @@ const commands = {
           "sh.Run cmd,0,False",
         ].join("\r\n"),
       );
-      // round-246 (C3) + round-257 + round-263: the probe launcher.
-      // ASCII-only, plain -NoProfile -File (the repo rule: -ExecutionPolicy
-      // Bypass / -EncodedCommand die silently under WMI/session-0 launches).
-      // Args: $node $cli. Probe order matches the agent's
-      // preferred_cdp_endpoint(): 9333 (Electron DESKTOP embedded view —
-      // what the user watches) when up, else private --headless (the
-      // bridge/9223 tier was removed in round-263). --output-dir pins MCP
-      // screenshots where the Evidence drawer lists them (install\pwout).
-      fs.writeFileSync(
-        probePath,
-        [
-          "param([string]$node, [string]$cli)",
-          "$ErrorActionPreference = 'Continue'",
-          "$pwout = Join-Path (Split-Path $node -Parent) '..\\pwout'",
-          "if (!(Test-Path $pwout)) { New-Item -ItemType Directory -Path $pwout -Force | Out-Null }",
-          "$ep = ''",
-          "function Test-Port([int]$port) {",
-          "  try {",
-          "    $c = New-Object System.Net.Sockets.TcpClient",
-          "    $iar = $c.BeginConnect('127.0.0.1', $port, $null, $null)",
-          "    if ($iar.AsyncWaitHandle.WaitOne(1500)) { return $c.Connected }",
-          "    $c.Close()",
-          "  } catch { }",
-          "  return $false",
-          "}",
-          "if (Test-Port 9333) { $ep = 'http://127.0.0.1:9333' }",
-          "if ($ep) {",
-          "  & $node $cli --port 9229 --host 127.0.0.1 --cdp-endpoint $ep --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
-          "} else {",
-          "  & $node $cli --port 9229 --browser chromium --host 127.0.0.1 --headless --output-dir $pwout --ignore-https-errors --allowed-hosts '127.0.0.1:9229,localhost:9229'",
-          "}",
-        ].join("\r\n"),
-      );
+      // round-246 (C3) + round-257 + round-263: the probe launcher
+      // (playwrightProbePs, unit-tested).
+      fs.writeFileSync(probePath, playwrightProbePs().join("\r\n"));
     }
     // round-298: record the release version on a PROVABLY successful swap
     // so agent_update (which reads <install>/.vale-release as its local
