@@ -1841,6 +1841,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   breaker arms had ZERO pins. Added 1 in gateway.test.mjs (muse-spark,
   no dial). Clean round. Suite 558->559; gates clean; snapshot updated;
   pushed.
+  ROUND-515 (2026-09-06): resperr audit — the responses-path !ok mapping
+  had ZERO pins. Added 1 in gateway.test.mjs (muse-spark 429 text →
+  status + rate_limit kept). Clean round. Suite 559->560; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
