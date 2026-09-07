@@ -165,6 +165,16 @@ deploy_worker() {
   fi
   ( cd "$ROOT/$dir" \
       && CLOUDFLARE_API_TOKEN="$token" wrangler deploy )
+  # round-542: gateway post-deploy parity — the round-537 stale deploy
+  # proved green tests don't imply a fresh worker (19 src commits sat
+  # undeployed). The /code/ viewer serves the just-deployed mirror, so
+  # live-vs-repo parity is the deploy's own success criterion. Sleep for
+  # edge propagation, then fail the step on any drift.
+  if [[ "$dir" == "gateway" ]]; then
+    sleep 8
+    bash "$ROOT/gateway/scripts/check-live-parity.sh" \
+      || { echo "  !! live parity check failed — live worker differs from repo" >&2; return 1; }
+  fi
   # Post-publish smoke (round-58, reworked round-324): /api/version derives
   # from the version.json asset (round-297) — the OLD smoke grepped static
   # version/sha256 constants out of index.js that no longer exist, so every
