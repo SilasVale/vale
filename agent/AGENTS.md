@@ -2463,6 +2463,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   risk); auto_select_embedded_view's browser_tabs retries are one flow,
   not copies.
 
+### 2026-09-08 SOLID round 27 (web cache-control stamping dedup)
+- **set_cache_control (DRY, agent web module)** — five sites across
+  mod.rs / panel.rs / sse.rs inlined the same cache-control header
+  insert (no-store for token-bearing + panel responses; no-cache for
+  the status page + SSE tails). Extracted `set_cache_control(resp,
+  value)` next to built_response (the web module's shared response
+  helper); all five call it. Web tests 44/44, lib 299 pass; clippy/fmt
+  clean. Cross-file scan (web/) now clean; the cross-file scan also
+  found 4 test-scaffold copies of the same "local HTTP stub server"
+  read-till-headers loop (design/system/mcp_client tools.rs + a
+  panel.rs helper) — test scaffolding stays (consistent with the
+  earlier decision; a shared testutil would couple plugin test modules).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
