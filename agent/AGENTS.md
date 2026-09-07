@@ -3199,6 +3199,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   with no digits/BEL must not poison a later real marker). 318 lib
   (+3) / fmt + clippy clean.
 
+### 2026-09-08 SOLID round 78 (spill persistence layer pins)
+- **Test-only round (agent ctx.rs spill layer)** — append_spill /
+  rotate_spill / read_spill (with spill_base) were only ever exercised
+  INDIRECTLY through terminal_read tests; the round-115 rotation
+  semantics (drop oldest `discard` bytes via atomic temp rewrite,
+  delete when discard >= len, best-effort true on missing file,
+  review-#5 true-only-on-advance contract) had zero direct tests.
+  Added 4 in tests.rs: append/read roundtrip, rotate-then-read with
+  absolute base offsets (bytes [40,100) read as [50,60) via base=40),
+  missing-file → true, discard-past-end removes the file. 322 lib
+  (+4) / feature 330; fmt + clippy clean. Self-caught: the first
+  append landed INSIDE the connect_saved async fn — items inside a fn
+  body compile but are never collected as tests (the count stayed
+  318) — the closer was re-inserted before the new tests.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
