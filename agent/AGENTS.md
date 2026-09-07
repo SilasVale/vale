@@ -3110,6 +3110,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   when a round needs one: playwright manager start or pty spawn
   sub-block review.
 
+### 2026-09-08 SOLID round 72 (wait_healthy extraction)
+- **wait_healthy (SRP, agent playwright/manager.rs)** — the round-71
+  census's top deferred candidate: PlaywrightManager::start inlined
+  the health-poll pipeline (~90 lines: 30s probe loop with a REAL
+  JSON-RPC initialize handshake check (round-129), streamable-HTTP
+  first-chunk read, child-exit fast fail, and the failure path that
+  folds the last 500 stderr chars into the error and kills the child
+  (round-163)). Extracted module-level wait_healthy(&mut child,
+  port) — start now reads: spawn → wait_healthy → register under the
+  lock. Behavior unchanged; fixed the extracted tail's missing Ok(())
+  (if-block as last expression). 312 lib / 320 feature pass; fmt +
+  clippy clean; xwin check green. start shrinks ~90 lines; its
+  stop()/probe helpers were already separate.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
