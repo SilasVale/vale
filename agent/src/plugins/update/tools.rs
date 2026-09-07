@@ -6,15 +6,6 @@ use std::path::PathBuf;
 
 use vale_agent_core::{DeviceError, ToolDef};
 
-/// Lowercase hex encoding (sha256 digest display/comparison).
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
-}
-
 /// Build the release manifest endpoint from the configured download site.
 fn version_url(download_url: &str) -> String {
     format!("{}/api/version", download_url.trim_end_matches('/'))
@@ -536,7 +527,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                     // (index worker hand-maintained) failing every agent_update
                     // forever with zero diagnostics.
                     {
-                        let actual = hex_encode(&Sha256::digest(&bytes));
+                        let actual = crate::hex_encode(&Sha256::digest(&bytes));
                         if actual != expected_sha256 {
                             tracing::error!(
                             "[vale-agent] agent_update sha256 mismatch: want {expected_sha256}, got {actual} — install skipped"
@@ -627,8 +618,8 @@ mod tests {
 
     #[test]
     fn hex_encode_lowercase_padded() {
-        assert_eq!(hex_encode(&[0x00, 0xab, 0xff]), "00abff");
-        assert_eq!(hex_encode(b""), "");
+        assert_eq!(crate::hex_encode(&[0x00, 0xab, 0xff]), "00abff");
+        assert_eq!(crate::hex_encode(b""), "");
     }
 
     #[test]

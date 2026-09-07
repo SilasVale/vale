@@ -23,6 +23,16 @@ pub(crate) fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// Lowercase hex of `bytes` (sha256-digest display). The update plugin and
+/// the tunnel manager each used to carry a private copy.
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
 /// Cross-task control channel for the cloudflared tunnel supervisor
 /// (supervision audit #1): provision_tunnel (tunnel.rs) rewrites tunnel.yml
 /// and then REQUESTS a restart; main.rs's supervisor task owns the single

@@ -72,24 +72,13 @@ fn cloudflared_download_url() -> String {
 /// HOW-TO-UPDATE steps above), exactly like a tampered binary would.
 const CLOUDFLARED_PROXY_URL: &str = "https://agent.saisi.online/vale-agent/cloudflared.exe";
 
-/// Lowercase hex encoding (sha256 digest display/comparison — same shape as
-/// the update plugin's helper; kept local so this module has no cross-plugin
-/// coupling).
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
-}
-
 /// True only when `bytes` hash to `expected_hex`. Malformed expectations
 /// (wrong length, non-hex) NEVER match — fail closed, never fail open.
 pub(crate) fn verify_cloudflared_bytes(bytes: &[u8], expected_hex: &str) -> bool {
     if expected_hex.len() != 64 || !expected_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return false;
     }
-    hex_encode(&Sha256::digest(bytes)).eq_ignore_ascii_case(expected_hex)
+    crate::hex_encode(&Sha256::digest(bytes)).eq_ignore_ascii_case(expected_hex)
 }
 
 /// Download one candidate URL and gate it: 2xx + sane size + pinned sha256.
@@ -113,7 +102,7 @@ async fn download_and_verify(client: &reqwest::Client, url: &str) -> Result<byte
             "[vale-agent] provision_tunnel: cloudflared sha256 MISMATCH from {url} \
              (want pinned {CLOUDFLARED_VERSION} {CLOUDFLARED_SHA256}, got {}) — \
              refusing unverifiable binary (no write, no spawn)",
-            hex_encode(&Sha256::digest(&bytes)),
+            crate::hex_encode(&Sha256::digest(&bytes)),
         );
         return Err("sha256 mismatch — refusing unverifiable binary".to_string());
     }
@@ -576,7 +565,7 @@ mod tests {
         let dir = test_dir("accept");
         let dest = dir.join("tools").join("cloudflared.exe");
         let fixture = b"vale-test-cloudflared-fixture-bytes";
-        let expected = hex_encode(&Sha256::digest(fixture));
+        let expected = crate::hex_encode(&Sha256::digest(fixture));
         write_verified_bytes(&dest, fixture, &expected).expect("matching bytes must stage");
         assert_eq!(
             std::fs::read(&dest).expect("staged file readable"),
