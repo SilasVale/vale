@@ -2701,6 +2701,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   ~46+), mcp-tools schemas + secrets DPAPI remain the only standing
   classes.
 
+### 2026-09-08 SOLID round 44 (relayUpstreamResult for the 3 forward arms)
+- **Shared upstream-result relay (DRY, gateway translate.ts)** — the
+  chat/completions, /v1/responses and messages-passthrough arms each
+  carried a byte-identical ~20-line upstream-result tail (breaker
+  failure/success recording for og, CORS stamping, generation-id
+  capture, body streamed back untouched) — the round-14 extraction
+  covered only the two failure helpers. Extracted
+  `relayUpstreamResult(env, request, routeKind, upstream, detail,
+  inspectFailure, ctx, recordOgBodyFailure)` with the flag so the
+  messages-passthrough arm's historical ABSENCE of body-failure
+  breaker recording is preserved exactly (it relies on the up-front
+  channelDegradedError check only) — a flagged behavior difference
+  observed, not silently unified. 592 pass; tsc/prettier clean;
+  mirror synced. translate.ts drops 37→27 window-sites at the 8-line
+  window — residual is the two-flow ox-alpha/upstream-repick overlap.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
