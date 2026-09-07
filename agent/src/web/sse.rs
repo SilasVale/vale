@@ -18,7 +18,7 @@ use vale_agent_core::EventBus;
 
 use crate::state::AppState;
 
-use super::built_response;
+use super::{built_response, set_cache_control};
 
 /// Bound one mpsc send at 5s. Both SSE streams funnel their frames through
 /// this: a client that stopped reading fills the bounded channel and an
@@ -147,10 +147,7 @@ fn sse_response_from_rx(mpsc_rx: mpsc::Receiver<Result<Bytes, Infallible>>) -> R
     let body = Body::from_stream(MpscStream { rx: mpsc_rx });
 
     let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
+    set_cache_control(&mut resp, "no-cache");
     resp.headers_mut().insert(
         axum::http::HeaderName::from_static("connection"),
         axum::http::HeaderValue::from_static("keep-alive"),

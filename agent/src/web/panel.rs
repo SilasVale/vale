@@ -20,7 +20,7 @@ use tower::Service;
 
 use crate::state::AppState;
 
-use super::built_response;
+use super::{built_response, set_cache_control};
 
 // ── Terminal panel static assets (embedded, public) ──────────
 
@@ -56,10 +56,7 @@ pub(crate) fn serve_panel_file(file: &str, content_type: &'static str) -> Respon
         Body::from(body)
     };
     let mut resp = built_response(StatusCode::OK, content_type, body);
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
+    set_cache_control(&mut resp, "no-cache");
     resp
 }
 
@@ -122,10 +119,7 @@ pub(crate) fn panel_token_response(token: &str) -> Response {
         1,
     );
     let mut resp = built_response(StatusCode::OK, "text/html; charset=utf-8", Body::from(html));
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-store"),
-    );
+    set_cache_control(&mut resp, "no-store");
     resp
 }
 

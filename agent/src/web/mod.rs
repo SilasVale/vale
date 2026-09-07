@@ -65,6 +65,16 @@ const STATUS_PAGE: &str = concat!(
 
 /// Build a response with a fallback that can't panic — the builder only fails
 /// on invalid status/header constants, which ours never are.
+/// Stamp a cache-control header on a response. Token-bearing and panel
+/// responses must never be cached — call sites used to inline the same
+/// 3-line insert with no-store / no-cache values.
+pub(super) fn set_cache_control(resp: &mut Response, value: &'static str) {
+    resp.headers_mut().insert(
+        axum::http::HeaderName::from_static("cache-control"),
+        axum::http::HeaderValue::from_static(value),
+    );
+}
+
 pub(super) fn built_response(
     status: StatusCode,
     content_type: &'static str,
@@ -353,10 +363,7 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
         return match std::fs::read(pwout.join(name)) {
             Ok(bytes) => {
                 let mut resp = built_response(StatusCode::OK, "image/png", Body::from(bytes));
-                resp.headers_mut().insert(
-                    axum::http::HeaderName::from_static("cache-control"),
-                    axum::http::HeaderValue::from_static("no-store"),
-                );
+                set_cache_control(&mut resp, "no-store");
                 resp
             }
             Err(_) => built_response(
@@ -386,10 +393,7 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
         // whole injection decision (proxy_secret + device_token below).
         let cfg = state.config_snapshot();
         let mut resp = serve_panel_file("index.html", "text/html; charset=utf-8");
-        resp.headers_mut().insert(
-            axum::http::HeaderName::from_static("cache-control"),
-            axum::http::HeaderValue::from_static("no-store"),
-        );
+        set_cache_control(&mut resp, "no-store");
         // Zero-config token injection: embed the device token as a script
         // fragment before </head>. round-102/103: injection requires the
         // gateway proxy's SHARED SECRET (X-Vale-Auth) — a plain marker
@@ -494,10 +498,7 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
             "text/html; charset=utf-8",
             Body::from(STATUS_PAGE),
         );
-        resp.headers_mut().insert(
-            axum::http::HeaderName::from_static("cache-control"),
-            axum::http::HeaderValue::from_static("no-cache"),
-        );
+        set_cache_control(&mut resp, "no-cache");
         return resp;
     }
 
