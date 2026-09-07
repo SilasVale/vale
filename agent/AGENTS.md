@@ -1824,6 +1824,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   had ZERO pins. Added 1 in gateway.test.mjs (no client reasoning →
   effort=max upstream). Clean round. Suite 554->555; gates clean;
   snapshot updated; pushed.
+  ROUND-511 (2026-09-06): texterr audit — the chat-path non-JSON error arm
+  had ZERO pins. Added 1 in gateway.test.mjs (500 text body → status +
+  default message kept). Clean round. Suite 555->556; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
