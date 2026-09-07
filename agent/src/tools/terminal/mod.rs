@@ -554,16 +554,8 @@ mod desktop_impl {
             rows: u16,
             cols: u16,
         ) -> Result<(), DeviceError> {
-            let mut inner = self.inner.lock().await;
-            let s = inner.sessions.iter_mut().find(|s| s.id == sid).ok_or(
-                DeviceError::SessionNotFound {
-                    id: sid.to_string(),
-                },
-            )?;
-            s.backend.resize(rows, cols);
-            // Activity = heartbeat: a client actively resizing is alive — the
-            // 15-min idle sweeper must not kill it (round-49).
-            s.last_output = std::time::Instant::now();
+            let backend = self.find_backend(sid, true).await?;
+            backend.resize(rows, cols);
             Ok(())
         }
 
@@ -582,17 +574,7 @@ mod desktop_impl {
             // resize/list all hang, and the wedged session couldn't even be
             // closed. The backend is now Arc'd so the write runs OUTSIDE the
             // lock — a blocked write stalls only its own call, not the system.
-            let backend = {
-                let mut inner = self.inner.lock().await;
-                let s = inner.sessions.iter_mut().find(|s| s.id == sid).ok_or(
-                    DeviceError::SessionNotFound {
-                        id: sid.to_string(),
-                    },
-                )?;
-                // Activity = heartbeat (round-49): typing into a session is liveness.
-                s.last_output = std::time::Instant::now();
-                s.backend.clone()
-            };
+            let backend = self.find_backend(sid, true).await?;
             // round-103: reliable write (SSH overrides with an awaitable
             // send) — terminal_execute's command must not be dropped when
             // the transport is under backpressure.
@@ -603,6 +585,34 @@ mod desktop_impl {
                 .await
                 .map_err(|e| DeviceError::Internal { message: e })?;
             Ok(())
+        }
+
+        /// Clone the live backend for `sid` (the Arc keeps it valid even if
+        /// the idle sweeper removes the session right after), or fail with
+        /// SessionNotFound. `touch` refreshes last_output inside the lock —
+        /// an actively-used session is alive (round-49 heartbeat: resize +
+        /// writes must not be reaped by the 15-min sweeper). term_resize /
+        /// term_write_bytes / terminate used to each inline the
+        /// find + SessionNotFound + clone block; the backend is Arc'd so
+        /// the caller operates it OUTSIDE the lock (a blocked write stalls
+        /// only its own call — review #10 discipline).
+        async fn find_backend(
+            &self,
+            sid: &str,
+            touch: bool,
+        ) -> Result<Arc<dyn TermBackend>, DeviceError> {
+            let mut inner = self.inner.lock().await;
+            let s = inner
+                .sessions
+                .iter_mut()
+                .find(|s| s.id == sid)
+                .ok_or_else(|| DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                })?;
+            if touch {
+                s.last_output = std::time::Instant::now();
+            }
+            Ok(s.backend.clone())
         }
 
         /// Remove a session by id under the lock. The caller must close the
@@ -678,15 +688,7 @@ mod desktop_impl {
             // same hazard R92-H1 fixed for term_write_bytes: holding `inner`
             // across a blocked write would freeze every session op. The
             // backend is Arc'd, so clone + terminate outside the lock.
-            let backend = {
-                let inner = self.inner.lock().await;
-                let s = inner.sessions.iter().find(|s| s.id == sid).ok_or(
-                    DeviceError::SessionNotFound {
-                        id: sid.to_string(),
-                    },
-                )?;
-                s.backend.clone()
-            };
+            let backend = self.find_backend(sid, false).await?;
             backend.terminate();
             Ok(())
         }
