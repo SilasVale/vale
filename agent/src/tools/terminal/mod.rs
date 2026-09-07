@@ -605,16 +605,22 @@ mod desktop_impl {
             Ok(())
         }
 
+        /// Remove a session by id under the lock. The caller must close the
+        /// returned backend AFTER the lock guard drops (review #10) — shared
+        /// by term_close and term_unregister, which used to copy-paste this
+        /// position+remove block.
+        async fn take_session(&self, sid: &str) -> Option<Session> {
+            let mut inner = self.inner.lock().await;
+            inner
+                .sessions
+                .iter()
+                .position(|s| s.id == sid)
+                .map(|pos| inner.sessions.remove(pos))
+        }
+
         pub async fn term_close(&self, sid: &str) -> Result<String, DeviceError> {
             // review #10: remove under the lock, close AFTER it drops.
-            let removed = {
-                let mut inner = self.inner.lock().await;
-                inner
-                    .sessions
-                    .iter()
-                    .position(|s| s.id == sid)
-                    .map(|pos| inner.sessions.remove(pos))
-            };
+            let removed = self.take_session(sid).await;
             match removed {
                 Some(session) => {
                     let kind = session.kind.clone();
@@ -635,15 +641,7 @@ mod desktop_impl {
         /// terminal_write/terminal_resize silently "succeeded" into a void.
         pub async fn term_unregister(&self, sid: &str) {
             // review #10: remove under the lock, close AFTER it drops.
-            let removed = {
-                let mut inner = self.inner.lock().await;
-                inner
-                    .sessions
-                    .iter()
-                    .position(|s| s.id == sid)
-                    .map(|pos| inner.sessions.remove(pos))
-            };
-            if let Some(session) = removed {
+            if let Some(session) = self.take_session(sid).await {
                 session.backend.close();
             }
         }
