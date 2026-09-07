@@ -37,6 +37,27 @@ fn node_exe_path(pw_dir: &std::path::Path) -> std::path::PathBuf {
     pw_dir.join("node.exe")
 }
 
+/// Attach-or-headless helper shipped to every script (single source — the
+/// template below and AI scripts require it via VALE_BROWSER_HELPER).
+/// Decides INSIDE node at run time: CDP up + watchable view -> attach
+/// (actions show live); else private headless (batch-safe).
+const BROWSER_HELPER_JS: &str = include_str!("helper.js");
+const BROWSER_HELPER_NAME: &str = "vale-browser-helper.js";
+
+/// Ensure the helper exists next to the run with current content.
+/// Best-effort (a failed write only means scripts fall back to the
+/// documented manual pattern) — never fail the tool call over it.
+fn ensure_browser_helper(out_dir: &std::path::Path) -> std::path::PathBuf {
+    let dest = out_dir.join(BROWSER_HELPER_NAME);
+    let fresh = std::fs::read_to_string(&dest)
+        .map(|s| s == BROWSER_HELPER_JS)
+        .unwrap_or(false);
+    if !fresh {
+        let _ = std::fs::write(&dest, BROWSER_HELPER_JS);
+    }
+    dest
+}
+
 /// 1) browser_pw_info — what the AI can use, no install needed.
 fn tool_browser_pw_info() -> ToolDef {
     ToolDef::new(
@@ -54,20 +75,19 @@ let has_core = md.map(|m| m.is_dir()).unwrap_or(false);
                 let out_dir = dir.join("pwout");
                 let chromium = pw.join("chromium");
                 let script_template = [
+                    "const { acquireBrowser } = require(process.env.VALE_BROWSER_HELPER);",
                     "const path = require('path');",
-                    "const PW = path.join(process.env.VALE_PW_DIR, 'node_modules', 'playwright-core');",
-                    "const { chromium } = require(PW);",
                     "const OUT = process.env.VALE_PW_OUT;",
                     "const BASE = process.env.VALE_PW_URL || 'https://example.com';",
                     "(async () => {",
-                    "  const browser = await chromium.launch({ headless: true });",
-                    "  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });",
+                    "  const { page, attached, close } = await acquireBrowser();",
+                    "  console.log('ATTACHED=' + attached);",
                     "  await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 30000 });",
                     "  console.log('TITLE:', await page.title());",
                     "  console.log('URL:', page.url());",
                     "  console.log('TEXT:', (await page.evaluate(() => document.body ? document.body.innerText.slice(0, 500) : '')).replace(/\\s+/g, ' '));",
                     "  await page.screenshot({ path: path.join(OUT, 'shot.png') });",
-                    "  await browser.close();",
+                    "  await close();",
                     "})().catch(e => { console.error('FATAL', e); process.exit(1); });",
                 ].join("\n");
                 Ok(to_value_or_empty(json!({
@@ -76,11 +96,13 @@ let has_core = md.map(|m| m.is_dir()).unwrap_or(false);
                     "playwright_core_version": core_ver,
                     "chromium_bundled": chromium.exists(),
                     "screenshot_output_dir": out_dir.to_string_lossy(),
-                    "usage": "Write a standalone Node script (CommonJS), require the bundled core via the exact path, screenshot to the output dir, and hand the SCRIPT SOURCE to browser_run_script — it executes with bundled node and returns stdout/stderr/exit code plus the screenshot list.",
+                    "usage": "Write a standalone Node script (CommonJS) that requires VALE_BROWSER_HELPER and drives acquireBrowser() — it attaches to the visible embedded view when present (actions show live in the desktop Browser panel) and falls back to a private headless chromium otherwise. Screenshot to the output dir, hand the SCRIPT SOURCE to browser_run_script — it executes with bundled node and returns stdout/stderr/exit code plus the screenshot list.",
                     "script_template": script_template,
                     "env_vars": {
                         "VALE_PW_DIR": pw.to_string_lossy(),
                         "VALE_PW_OUT": out_dir.to_string_lossy(),
+                        "VALE_CDP_ENDPOINT": "(desktop CDP when up, else empty — the helper reads it)",
+                        "VALE_BROWSER_HELPER": "(absolute path of the acquireBrowser() helper module)",
                         "VALE_PW_URL": "(set by AI — any URL, e.g. https://192.168.1.1:8000/?Role=Gpon)",
                     }
                 })))
@@ -94,11 +116,11 @@ let has_core = md.map(|m| m.is_dir()).unwrap_or(false);
 fn tool_browser_run_script() -> ToolDef {
     ToolDef::new(
         "browser_run_script",
-        "Run a self-contained Node/Playwright script with the device's BUNDLED node + playwright-core (never install your own). Params: script (JS source, CommonJS; require the bundled core per browser_pw_info), timeout_secs (default 120, max 600). Screenshots saved to the pwout dir are listed in the result. Returns exit_code, stdout, stderr (each capped), screenshots, timed_out.",
+        "Run a self-contained Node/Playwright script with the device's BUNDLED node + playwright-core (never install your own). Scripts run with VALE_BROWSER_HELPER set (acquireBrowser(): attaches to the visible embedded view when present so actions show live, else private headless) — prefer it over launching your own browser; headless only for batch jobs that must not disturb the watched screen. Params: script (JS source, CommonJS; follow the browser_pw_info template), timeout_secs (default 120, max 600). Screenshots saved to the pwout dir are listed in the result. Returns exit_code, stdout, stderr (each capped), screenshots, timed_out.",
         json!({
             "type": "object",
             "properties": {
-                "script": {"type": "string", "description": "JavaScript source (CommonJS). Use require(process.env.VALE_PW_DIR + '/node_modules/playwright-core') per browser_pw_info template."},
+                "script": {"type": "string", "description": "JavaScript source (CommonJS). Follow the browser_pw_info template (VALE_BROWSER_HELPER acquireBrowser) so actions show live when a view is watched."},
                 "timeout_secs": {"type": "integer", "description": "Execution timeout in seconds (default 120, max 600)."}
             },
             "required": ["script"]
@@ -113,6 +135,13 @@ fn tool_browser_run_script() -> ToolDef {
                 }
                 let out_dir = dir.join("pwout");
                 let _ = std::fs::create_dir_all(&out_dir);
+                // The helper + detection inputs every script gets: the
+                // attach-or-headless module (always in sync — rewritten on
+                // content drift) and the desktop CDP endpoint when up
+                // (empty = no watchable view, helper falls back silently).
+                let helper = ensure_browser_helper(&out_dir);
+                let cdp = crate::plugins::mcp_client::tools::preferred_cdp_endpoint()
+                    .unwrap_or_default();
                 let before: std::collections::HashSet<String> = std::fs::read_dir(&out_dir)
                     .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".png")).map(|e| e.file_name().to_string_lossy().to_string()).collect())
                     .unwrap_or_default();
@@ -134,6 +163,11 @@ fn tool_browser_run_script() -> ToolDef {
                             .current_dir(&out_dir)
                             .env("VALE_PW_DIR", pw.to_string_lossy().to_string())
                             .env("VALE_PW_OUT", out_dir.to_string_lossy().to_string())
+                            .env("VALE_CDP_ENDPOINT", cdp)
+                            .env(
+                                "VALE_BROWSER_HELPER",
+                                helper.to_string_lossy().to_string(),
+                            )
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped());
                         let output = cmd.output().await;
@@ -239,5 +273,81 @@ mod tools_tests {
     fn build_exposes_two_browser_tools() {
         let names: Vec<String> = build().iter().map(|t| t.name.clone()).collect();
         assert_eq!(names, vec!["browser_pw_info", "browser_run_script"]);
+    }
+
+    #[test]
+    fn helper_is_ascii_acquire_or_headless() {
+        // The shipped helper is the attach default — pin its contract:
+        // acquire entry, CDP attach first, headless fallback, shared-
+        // browser-safe close, and ASCII-only (system-locale node).
+        for token in [
+            "acquireBrowser",
+            "connectOverCDP",
+            "headless",
+            "module.exports",
+            "VALE_CDP_ENDPOINT",
+            "VALE_PW_DIR",
+        ] {
+            assert!(
+                BROWSER_HELPER_JS.contains(token),
+                "helper must contain {token}"
+            );
+        }
+        assert!(
+            !BROWSER_HELPER_JS.bytes().any(|b| b > 127),
+            "helper must be ASCII-only"
+        );
+        assert_eq!(BROWSER_HELPER_NAME, "vale-browser-helper.js");
+    }
+
+    #[test]
+    fn ensure_browser_helper_writes_and_repairs() {
+        let dir = std::env::temp_dir().join(format!("vale-helper-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = ensure_browser_helper(&dir);
+        assert_eq!(dest, dir.join(BROWSER_HELPER_NAME));
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), BROWSER_HELPER_JS);
+        // Second call is a no-op rewrite-skip (content already fresh).
+        let dest2 = ensure_browser_helper(&dir);
+        assert_eq!(dest2, dest);
+        // Drift (operator edit) is repaired on next run.
+        std::fs::write(&dest, "// stale").unwrap();
+        ensure_browser_helper(&dir);
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), BROWSER_HELPER_JS);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn pw_info_template_prefers_the_helper() {
+        // The default template must drive acquireBrowser (visible view
+        // first), not a private headless launch.
+        let tools = build();
+        let info = tools
+            .iter()
+            .find(|t| t.name == "browser_pw_info")
+            .expect("browser_pw_info");
+        let out = info
+            .handler
+            .call(serde_json::json!({}))
+            .await
+            .expect("pw_info call");
+        let template = out
+            .get("script_template")
+            .and_then(|v| v.as_str())
+            .expect("template string");
+        assert!(
+            template.contains("acquireBrowser"),
+            "template must use the helper"
+        );
+        assert!(
+            !template.contains("chromium.launch"),
+            "template must not default to a private headless browser"
+        );
+        for key in ["VALE_BROWSER_HELPER", "VALE_CDP_ENDPOINT"] {
+            assert!(
+                out.get("env_vars").and_then(|e| e.get(key)).is_some(),
+                "env_vars must document {key}"
+            );
+        }
     }
 }
