@@ -280,6 +280,22 @@ test("upload proxy: device config token accepted (no network on reject paths onl
   assert.equal(bad.status, 401);
 });
 
+// round-527 (coverage-driven): the device-scan catch had ZERO pins — a
+// throwing registry read must deny, not crash.
+test("upload proxy: registry outage denies with 401 (no throw)", async () => {
+  const { __clearCaches } = await import("../src/store.ts");
+  __clearCaches();
+  const env = makeEnv({ d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" } });
+  const realGet = env.KEYS.get.bind(env.KEYS);
+  env.KEYS.get = async (k) => {
+    if (k === "devices:v1") throw new Error("kv down");
+    return realGet(k);
+  };
+  const res = await worker.fetch(req("POST", "/api/upload", { auth: `Bearer ${"c".repeat(64)}` }), env);
+  assert.equal(res.status, 401);
+  assert.match((await res.json()).error.message, /Invalid device token/);
+});
+
 test("upload proxy: forwards a MINIMAL header set — UPLOAD_KEY + multipart framing, never client cookies", async () => {
   const { __clearCaches } = await import("../src/store.ts");
   __clearCaches();
