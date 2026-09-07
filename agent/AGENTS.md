@@ -1863,6 +1863,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   pins. Added 1 direct unit test in reliability.test.mjs (dying stream →
   error event, no clean finish). Clean round. Suite 564->565; gates
   clean; snapshot updated; pushed.
+  ROUND-521 (2026-09-06): cancel audit — the stream cancel arm had ZERO
+  pins. Added 1 direct unit test in reliability.test.mjs (output cancel
+  → upstream reader cancelled). Clean round. Suite 565->566; gates
+  clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
