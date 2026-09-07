@@ -2396,6 +2396,23 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   per-tool description tweaks — inline schema stays; system/tools.rs
   mtime conversions are shape-distinct per site — both remain.)
 
+### 2026-09-08 SOLID round 23 (SSE response tail dedup)
+- **sse_response_from_rx (DRY, agent web/sse.rs)** — sse_response and
+  sse_term_stream each inlined the same 11-line tail: wrap the mpsc
+  receiver into a text/event-stream Response with the no-cache /
+  keep-alive header set. Extracted `sse_response_from_rx(rx)`; both
+  call it. Self-caught mid-round: the blind replace rewrote the
+  helper's own body into a self-recursive call for the THIRD time
+  (rounds 15/19/23 — insert-then-blank-replace ordering hazard;
+  pattern now documented as known-risky: run the replace BEFORE
+  inserting the helper, or scope it to call sites only), and the second
+  call site was confirmed replaced before committing (amended). SSE
+  tests 6/6 (header shape pinned), lib 299 pass; clippy/fmt clean.
+  Introduced a code-only dup-scan (skips #[cfg(test)] blocks) for
+  accurate rankings: mcp_client tools.rs + memory tools.rs remain
+  (tool-registration idiom), secrets.rs/exec.rs small blocks reviewed
+  and left.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
