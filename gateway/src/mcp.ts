@@ -206,35 +206,32 @@ async function callTerminalTool(name: string, env: any, device: any, args: any):
   }
 }
 
+/**
+ * A tool name is DEVICE-DIRECT when the gateway relays it to the agent's own
+ * /api/tools/<name> endpoint (terminal_* / secret_* / the two bundled-
+ * playwright runner tools). Every other registered tool goes through the
+ * playwright-mcp bridge instead. This is the single place that encodes the
+ * device-direct set — the old 21-entry "/api/tools/<name>" path table in
+ * callTerminalToolOnce duplicated mcp-tools.ts's registration list and
+ * drifted silently when one side changed (round-54's 11 missing tools were
+ * exactly that drift).
+ */
+export function isDeviceDirectTool(name: string): boolean {
+  return (
+    name.startsWith("terminal_") ||
+    name.startsWith("secret_") ||
+    name === "browser_pw_info" ||
+    name === "browser_run_script"
+  );
+}
+
 async function callTerminalToolOnce(name: string, env: any, device: any, args: any): Promise<any> {
-  // Every terminal tool on the device is reachable here (round-54: only 5 of
-  // 16 were mapped — write/read/resize/select/history/list_ports/diag/secret
-  // were invisible to MCP clients through the console). Keep in sync with
-  // TERMINAL_TOOLS in mcp-tools.ts.
-  const toolPath: string | undefined = {
-    terminal_open: "/api/tools/terminal_open",
-    terminal_screen: "/api/tools/terminal_screen",
-    terminal_execute: "/api/tools/terminal_execute",
-    terminal_write: "/api/tools/terminal_write",
-    terminal_read: "/api/tools/terminal_read",
-    terminal_resize: "/api/tools/terminal_resize",
-    terminal_select: "/api/tools/terminal_select",
-    terminal_history: "/api/tools/terminal_history",
-    terminal_list: "/api/tools/terminal_list",
-    terminal_list_ports: "/api/tools/terminal_list_ports",
-    terminal_close: "/api/tools/terminal_close",
-    terminal_diag_write: "/api/tools/terminal_diag_write",
-    terminal_diag_read: "/api/tools/terminal_diag_read",
-    secret_set: "/api/tools/secret_set",
-    secret_get: "/api/tools/secret_get",
-    secret_delete: "/api/tools/secret_delete",
-    terminal_saved_connections: "/api/tools/terminal_saved_connections",
-    terminal_connect_saved: "/api/tools/terminal_connect_saved",
-    terminal_env: "/api/tools/terminal_env",
-    browser_pw_info: "/api/tools/browser_pw_info",
-    browser_run_script: "/api/tools/browser_run_script",
-  }[name];
-  if (!toolPath) throw new Error(`Unknown device tool: ${name}`);
+  // The device API path is the mechanical "/api/tools/<name>" for every
+  // device-direct tool; the whitelist above is the one source of truth for
+  // which tools are device-direct vs bridge-routed. callTool already routed
+  // only device-direct names here, so a miss is a programming error.
+  if (!isDeviceDirectTool(name)) throw new Error(`Unknown device tool: ${name}`);
+  const toolPath = `/api/tools/${name}`;
   const body: any = { ...args };
   delete body.device;
   if (name === "terminal_execute") {

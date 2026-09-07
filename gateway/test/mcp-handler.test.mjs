@@ -205,6 +205,38 @@ test("contract: terminal_execute schema/quiet default match the agent", async ()
   assert.equal(t.inputSchema.required.join(","), "session_id,input");
 });
 
+// round-2026-09-08: callTerminalToolOnce's device path is now the mechanical
+// "/api/tools/<name>" guarded by isDeviceDirectTool — the old 21-entry path
+// table duplicated mcp-tools.ts's registration list and drifted silently.
+// Pin the routing partition: every registered tool must be classified as
+// device-direct XOR bridge-routed, matching how callTool dispatches it.
+test("contract: device-direct partition matches the bridge-vs-device dispatch", async () => {
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
+  const { isDeviceDirectTool } = await import("../src/mcp.ts");
+  const BRIDGE_ROUTED = new Set([
+    "browser_open", "browser_snapshot", "browser_screenshot",
+    "browser_click", "browser_type", "browser_wait", "browser_close",
+  ]);
+  for (const t of allMcpTools()) {
+    const n = t.name;
+    if (isDeviceDirectTool(n)) {
+      // Device-direct: terminal_*/secret_* or the two bundled-runner tools —
+      // exactly what callTool routes to callTerminalTool.
+      assert.ok(
+        n.startsWith("terminal_") || n.startsWith("secret_") ||
+          n === "browser_pw_info" || n === "browser_run_script",
+        `device-direct misclassification: ${n}`,
+      );
+    } else {
+      // Bridge-routed: every other browser_* tool.
+      assert.ok(
+        BRIDGE_ROUTED.has(n),
+        `non-device-direct tool without a bridge route: ${n}`,
+      );
+    }
+  }
+});
+
 // round-58: agent tool errors are HTTP 200 + {"ok":false,"error":...} — the
 // gateway must map them to stable codes instead of returning them as success.
 test("mcp: agent error (200 + ok:false) → SESSION_NOT_FOUND code", async () => {
