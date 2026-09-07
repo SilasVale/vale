@@ -3020,6 +3020,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   memory/mcp_client residuals = ToolDef closure-head + schema-tail
   framework shapes. Copy-detection remains closed at 6/10/20 lines.
 
+### 2026-09-08 SOLID round 66 (secrets.rs DPAPI full re-walk)
+- **Verification round (no code changes)** — secrets.rs ALL 6 windows
+  re-examined end to end (not just the round-56 head review): every
+  window is the seal/open mirror of the CryptProtectData /
+  CryptUnprotectData FFI argument layout (~12 shared lines: in_blob/
+  out_blob CRYPT_INTEGER_BLOB construction + the 4-null +
+  UI_FORBIDDEN + &mut out call block). Extraction would need a
+  fn-pointer-typed shared caller across two windows-sys signatures and
+  is windows-only (locally unverifiable beyond xwin check, no tests) —
+  kept with evidence as symmetric FFI scaffolding. This closes the
+  agent-side residual review: every listed file now has an explicit
+  kept-class record at 6-line depth.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
