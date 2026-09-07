@@ -2921,6 +2921,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   if-let-style find sites (close/try_execute — they mutate session
   state in place, not clone-able; kept) plus the SessionInfo map tail.
 
+### 2026-09-08 SOLID round 59 (record-path + connections-domain review)
+- **Verification round (no code changes)** — (1) mcp_client
+  record_mcp_action/screenshot share the timeline row shape (8 keys,
+  parsed by the panel's Evidence drawer) but extraction was judged
+  net-NEGATIVE: a shared base row plus per-record inserts ADDS lines
+  and needs Value-object type gymnastics; the append_action_line
+  helper (round-25) is the right shared seam, the differing keys stay
+  visible. Kept with evidence. (2) connections.rs saved-connection
+  handlers: forget delegates to conn_forget; connect_saved's
+  conn_list + find + enriched InvalidParams is the round-359
+  self-recovery design (single site — not duplicated). (3)
+  store/devices.ts helper layer already returns not_found/name_taken
+  discriminants (converged in the store rounds). Gateway 592 baseline
+  re-verified.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
