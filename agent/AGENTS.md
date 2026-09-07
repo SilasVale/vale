@@ -2203,6 +2203,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   guard shape, one message, four call sites. Gateway 592 pass;
   tsc/lint/prettier clean; mirror synced.
 
+### 2026-09-08 SOLID round 9 (device-body validation wrapper dedup)
+- **validateDevice try/catch dedup (DRY, gateway devices.ts)** — the
+  reg-key, self-register and admin-add handlers each inlined the same
+  try/catch around validateDevice → 400. Extracted
+  `validatedDeviceOrError(body): Device | Response`; three call sites.
+  Deferred (judged not-worth-it): the five "already registered" messages
+  are 3 semantic variants (anti-hijack hint / rename conflict), and the
+  in-function 409 pair is deliberate defense-in-depth (check-then-act +
+  lock-insert fallback); testKey's 8 provider branches stay (each is real
+  protocol adaptation — og SSE first-chunk, AMD model-list parse, …).
+  Gateway 592 pass; tsc/lint/prettier clean; mirror synced.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
