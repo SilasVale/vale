@@ -3280,6 +3280,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   classifications — the copy-detection space is fully closed
   repo-wide.
 
+### 2026-09-08 SOLID round 84 (tooling + workflow-layer review)
+- **Verification round (no code changes)** — extended the sweep to
+  the last non-source layers: (1) mcp-tools.ts's 2 remaining inline
+  device declarations are DELIBERATE enhanced-description variants
+  (terminal_open's "Device name from the console Devices list…" reads
+  better for the tool that needs device choice explained) vs the
+  generic DEVICE_PARAM text — kept; (2) scripts/*.sh + workflows:
+  only ci.yml shows 6-line windows — the job preamble boilerplate
+  (runs-on/checkout/setup-node) — and the node versions deliberately
+  DIFFER per job (22 for gateway/ui, 24 for panel — round-286/287
+  lessons), so YAML-anchor extraction would need parameterization for
+  near-zero benefit; job boilerplate is conventionally repeated.
+  Workflow/tooling layers classified; no changes warranted.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
