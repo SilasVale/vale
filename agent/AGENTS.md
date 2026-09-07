@@ -2653,6 +2653,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   Agent trees confirmed fully converged at both intra and cross file
   levels.
 
+### 2026-09-08 SOLID round 41 (parse-failure envelope audit)
+- **Audit finding, kept as observation (no change)** — four body-JSON
+  parse-failure sites in web/mod.rs use THREE different envelope shapes:
+  api_call_tool returns a Value {ok:false} (MCP tool-error semantics);
+  api_settings_put returns an axum Json envelope via into_response with
+  NO status override (HTTP 200); api_gateway_connect returns a
+  built_response 400. The settings_put 200 is NOT a bug: the round-69
+  extraction comment pins it as the historical pre-extraction shape
+  (byte-identical HTTP-200 envelope — presumably console clients
+  tolerate it). Unifying would be a wire behavior change needing a
+  product decision; recorded here as a candidate, not touched.
+- **Matrix re-verified** — gateway 592, index 56, ui tsc -b clean after
+  the round-39 DoAuthBase change (UI does not type-couple to the DO
+  classes).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
