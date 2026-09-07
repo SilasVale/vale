@@ -2315,6 +2315,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   one generic runner; both handlers are one-liners. Web tests 44/44, lib
   299 pass; clippy/fmt clean.
 
+### 2026-09-08 SOLID round 17 (usage-query skeleton dedup)
+- **usageQuery (DRY, gateway auth.ts)** — meKeyUsage's three provider
+  branches (openrouter / AMD / og) each inlined the same fetch-with-
+  Bearer → !ok failure envelope → parse → out-build skeleton wrapped in
+  a try/catch "Usage query failed". Extracted `usageQuery(url, key,
+  name, map)`; per-provider payload→shape mapping stays in each branch's
+  mapper callback. OpenRouter's distinct "Invalid upstream response"
+  detail preserved via a mapper-thrown {detail} error surfaced by the
+  shared catch. Gateway 592 pass; tsc/lint/prettier clean; mirror synced.
+  testKey's 8 provider branches stay (each is real protocol adaptation —
+  og SSE first-chunk, AMD model-list parse, qwen MaaS anthropic-version
+  header…; previously judged not-worth-it).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
