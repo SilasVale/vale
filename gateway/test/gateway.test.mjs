@@ -2030,3 +2030,27 @@ test("nv translate: upstream 400 with a text body keeps status, no retry", async
   assert.equal(res.status, 400);
   assert.match((await res.json()).error.message, /nvidia: upstream 400/);
 });
+
+// round-514 (coverage-driven): the responses-path og keyless + breaker arms
+// had ZERO pins (rounds 495/501/503b covered other paths/arms).
+test("/v1/responses muse-spark keyless and breaker-open → 502, upstream never called", async () => {
+  const { __clearDegradedCache } = await import("../src/reliability.ts");
+  const respBody = { model: "og/muse-spark-1.3-contributor", input: "hi", max_output_tokens: 10 };
+  await withFetch(
+    async () => {
+      throw new Error("must not be called");
+    },
+    async () => {
+      const { env, a } = isoEnv({ aKeys: { OPENCODE_GO_API_KEY: undefined } });
+      const keyless = await post(env, a.token, respBody, "/v1/responses");
+      assert.equal(keyless.status, 502);
+      assert.match((await keyless.json()).error.message, /OPENCODE_GO_API_KEY not configured/);
+
+      __clearDegradedCache();
+      const { env: env2, token } = gwEnv({ breakerOpen: true });
+      const open = await post(env2, token, respBody, "/v1/responses");
+      assert.equal(open.status, 502);
+      assert.match((await open.json()).error.message, /circuit open/);
+    },
+  );
+});
