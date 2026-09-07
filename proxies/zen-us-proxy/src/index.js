@@ -96,6 +96,20 @@ function requestHost(request) {
   }
 }
 
+// Turn a non-ok upstream response into a client-facing jsonError: parse
+// the upstream error body (best-effort: err.error.message, then plain
+// err.message), fall back to "Upstream {status}". Shared by the /v1/
+// responses and /v1/messages flows — the messages flow adds a 5xx
+// pre-branch (generic client text + server-side detail log) above this.
+async function relayUpstreamError(upstream, cors) {
+  let message = `Upstream ${upstream.status}`;
+  try {
+    const err = await upstream.json();
+    message = err.error?.message || err.message || message;
+  } catch {}
+  return jsonError(upstream.status, message, "api_error", cors);
+}
+
 function corsHeaders(request) {
   const origin = request.headers.get("origin") || "";
   const headers = {
@@ -206,12 +220,7 @@ export default {
           },
         );
         if (!upstream.ok) {
-          let message = `Upstream ${upstream.status}`;
-          try {
-            const err = await upstream.json();
-            message = err.error?.message || err.message || message;
-          } catch {}
-          return jsonError(upstream.status, message, "api_error", cors);
+          return relayUpstreamError(upstream, cors);
         }
         return new Response(upstream.body, {
           status: upstream.status,
@@ -259,12 +268,7 @@ export default {
           console.error(`[zen-us] upstream 5xx: ${detail}`);
           return jsonError(upstream.status, "Upstream unavailable", "api_error", cors);
         }
-        let message = `Upstream ${upstream.status}`;
-        try {
-          const err = await upstream.json();
-          message = err.error?.message || message;
-        } catch {}
-        return jsonError(upstream.status, message, "api_error", cors);
+        return relayUpstreamError(upstream, cors);
       }
       return new Response(upstream.body, {
         status: upstream.status,
