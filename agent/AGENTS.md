@@ -264,13 +264,11 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
-  47 + 24 findings; wave-1 fixes landed — agent fail-loud staging, panel/
-  extension hardening, index latest-alias route + R2 24h expiry + shared
-  publish smoke, gateway allowlist/bridge-guard/session/admin/logout;
-  brand unified on the sunrise favicon; device on 1.2.297).
-  Current release: 1.2.297 on d1; e2e suite 30 checks; all matrices
-  green.)
+Last updated: 2026-09-08 cleanup round — current release **1.2.304
+  (package.json + CDN version.json; last-5-per-minor prune active)**; e2e
+  suite 47 checks; all matrices green. Rounds 273-317 in this log; the
+  round log continues below (ROUND-319..550 inlined under "Current
+  release").
   ROUND-273 (2026-09-04): REPEATABLE E2E SUITE in the repo — the round-
   264..268 device verifications were one-off scripts in D:\Vale\pwout.
   Now agent/scripts/e2e/e2e.js + README: one Node file, sections
@@ -2038,6 +2036,30 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   main:main` (HTTP/1.1, reliable); the proxy push also works for small
   increments (its receive-body cap is ~<725MB → 413 on full repushes).
   GitHub releases via the API as before.
+
+### 2026-09-08 cleanup round (architecture-audit follow-up fixes)
+- **vale setup now writes the .vale-release marker** — fresh installs
+  (update-only devices already had it, round-298/298b) previously made
+  agent_update compare against the frozen Cargo 1.0.x fallback and
+  re-download + swap on every call. New `writeReleaseMarker()` helper
+  (best-effort, package.json source), called after setup's exe copy +
+  boot-task registration succeed. CLI tests 9/9.
+- **UI version reads prefer the npm `release` field** — /api/status has
+  reported `release` (1.2.x) alongside the frozen Cargo `version` since
+  round-304, but electron title/tray and the desktop SPA status strip all
+  showed `version` (v1.0.145 forever on 1.2.x devices). All three now
+  read `release` first, `version` as fallback. +1 vitest pin; DesktopShell
+  9/9.
+- **zen-us-proxy egress US-pinned** — smart placement had parked the
+  worker in AMS (2026-09-07) and zen 403 RegionError'd muse-spark from
+  that EU egress; Vercel clears it but caps bodies at 4.5 MB. Config now
+  uses a WNAM-primary D1 (`zen-us-db-wnam`) + `placement.region:
+  aws:us-east-1`; caveats synced (proxies/README.md, channels.ts muse
+  exit note) + code-viewer mirror.
+- **Retired openrouter-proxy residue removed** — root README +
+  build.sh usage line + zen-us header comment still named it as live;
+  the empty leftover local dir (gitignored .wrangler tmp only) is gone.
+  Source stays in git history (2026-09-07 retirement).
 
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
