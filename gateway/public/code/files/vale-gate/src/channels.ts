@@ -65,17 +65,20 @@ export function usProxyBase(env: any): string {
 // US exit for og/muse-spark-* via POST /v1/responses (translate.ts). The
 // muse Contributor tier is responses-only upstream AND Meta region-blocks it
 // for CN, so it is FORCED through a US exit. The Vercel relay
-// (v.saisi.online/api/zen) is the only verified exit that clears the Meta
-// region policy (its edge runs in ORD/Chicago — a Cloudflare worker exit
-// still returns 403 RegionError, verified 2026-09-05). The relay used to
-// abort every streamed body at 30 s because its fetch carried a whole-request
-// AbortSignal.timeout (regression ff5ad05a, fixed 2026-09-05: the timeout now
-// covers response headers only, so long muse SSE generations stream to
-// completion). MUSE_RESPONSES_EXIT selects the exit:
+// (v.saisi.online/api/zen) is the only exit VERIFIED to clear the Meta
+// region policy (its edge runs in ORD/Chicago — Cloudflare worker exits
+// previously returned 403 RegionError, verified 2026-09-05). The relay used
+// to abort every streamed body at 30 s because its fetch carried a whole-
+// request AbortSignal.timeout (regression ff5ad05a, fixed 2026-09-05: the
+// timeout now covers response headers only, so long muse SSE generations
+// stream to completion). MUSE_RESPONSES_EXIT selects the exit:
 //   - "zen-us"        → the zen-us Cloudflare worker (zen-us.saisi.online/
-//                       v1/responses) — NOTE: currently returns Meta
-//                       RegionError from EU edges; kept as an option for when
-//                       a US-pinned CF egress exists
+//                       v1/responses). 2026-09-07: the worker is now US-
+//                       pinned (WNAM D1 + placement aws:us-east-1 — see
+//                       proxies/README.md) after smart placement parked it
+//                       in AMS and zen RegionError'd; treat as experimental
+//                       until verified live against muse (Vercel remains the
+//                       verified default).
 //   - an https URL    → used verbatim (any US exit speaking the same
 //                       BYOK /v1/responses contract)
 //   - unset / other   → the Vercel relay default

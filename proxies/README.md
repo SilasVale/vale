@@ -30,10 +30,10 @@ Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default
 
 `./scripts/build.sh deploy` also deploys the two Cloudflare proxies.
 
-## D1 bindings (geo-hack — read before touching)
+## D1 bindings + placement (geo-pinning — read before touching)
 
-- `zen-us-proxy` binds the `us-proxy-db` D1 database but **never queries it**. The binding is an intentional geo-hack: pinning a D1 database forces compute onto regions that host D1 (US/Europe), so egress to opencode zen leaves from US/European edges instead of congested Asian ones.
-- ⚠️ **Do NOT remove the `zen-us-proxy` D1 binding** (`wrangler.jsonc` `d1_databases`): unbinding silently re-routes through Asian edges and the latency wins disappear with no error to alert you.
+- `zen-us-proxy` binds the **`zen-us-db-wnam`** (WNAM-primary) D1 database but **never queries it**. The binding is an intentional geo-pin: pinning a D1 database forces compute onto regions that host D1, keeping egress to opencode zen on Meta-permitted US edges. (The previous EU-primary `us-proxy-db` produced `403 RegionError` from EU edges — 2026-09-07; the WNAM primary + explicit `placement.region: aws:us-east-1` both point egress at the US east coast.)
+- ⚠️ **Do NOT remove the `zen-us-proxy` D1 binding** (`wrangler.jsonc` `d1_databases`) **or weaken the placement**: unbinding/reverting silently re-routes through EU/Asian edges and the RegionError + latency wins disappear with no error to alert you.
 
 ## Git automatic URL rewriting
 
