@@ -1820,6 +1820,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   arm had ZERO pins (og tests take the else arm). Added 1 in
   gateway.test.mjs (ds + web_search tools → parsed + forwarded). Clean
   round. Suite 553->554; gates clean; snapshot updated; pushed.
+  ROUND-510 (2026-09-06): ox audit — the ox-alpha-free reasoning default
+  had ZERO pins. Added 1 in gateway.test.mjs (no client reasoning →
+  effort=max upstream). Clean round. Suite 554->555; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
