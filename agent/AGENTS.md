@@ -2104,6 +2104,24 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   added to one side without the other fails the suite, not production.
 - Gateway 591 pass; tsc/lint/prettier clean; code-viewer mirror synced.
 
+### 2026-09-08 SOLID round 3 (agent memory eviction dedup + bundle catch)
+- **Memory eviction dedup (DRY, agent)** — enforce_limits' entry-cap and
+  byte-cap loops each copy-pasted the same oldest-live victim selection
+  (min updated_at, id tiebreak) + soft-delete + persist-tombstone. Extracted
+  `evict_oldest_live()` (returns evicted content length so callers keep
+  their own total_bytes accounting: full recompute vs exact subtract) and
+  used it in both loops; retention branch keeps its own bulk cutoff delete
+  (age-based, different policy). Memory lib tests 28/28, full lib 307
+  feature-gated pass, clippy clean.
+- **Stale panel.js caught + shipped** — while running cargo (build.rs
+  staleness gate) the rebuild revealed the round-1 DesktopShell
+  release-field change (a1bf8881) had modified TS source but never
+  re-emitted the committed panel.js bundle; devices would have kept
+  showing the frozen Cargo version. Rebuilt + committed the bundle
+  (ff856a85). LESSON: after any panel-react source commit, verify
+  resources/panel/ products are committed too (build.rs only catches it
+  at the next cargo build).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
