@@ -78,6 +78,21 @@ export async function preprocessImages(
   }
   return { messages: out, changed };
 }
+
+/**
+ * Upstream fetch for a vision describe with the shared failure wrapper:
+ * a network throw becomes the historical "(图片描述失败：…)" marker string.
+ * Both describeImage branches (passthrough vs og) used to inline the same
+ * try/catch around fetchWithTimeout.
+ */
+async function fetchDescribeOrError(url: string, init: any, env: any): Promise<Response | string> {
+  try {
+    return await fetchWithTimeout(url, init, upstreamTimeoutMs(env));
+  } catch (e: any) {
+    return `(图片描述失败：${e.message})`;
+  }
+}
+
 async function cacheImageDesc(cacheKey: string, env: any, desc: string): Promise<void> {
   if (!cacheKey || !env?.KEYS) return;
   if (!desc || /图片描述失败|图片描述为空/.test(desc)) return;
@@ -180,20 +195,17 @@ async function describeImage(
     const bearerKey =
       route.kind === "openrouter" ? ukeys.OPENROUTER_API_KEY : ukeys.DEEPSEEK_API_KEY;
     if (!bearerKey) return "(图片描述失败：视觉模型后端未配置)";
-    let resp: any;
-    try {
-      resp = await fetchWithTimeout(
-        route.upstream,
-        {
-          method: "POST",
-          headers: passthroughHeaders(bearerKey),
-          body: JSON.stringify({ ...miniReq, model: upstreamModel }),
-        },
-        upstreamTimeoutMs(env),
-      );
-    } catch (e: any) {
-      return `(图片描述失败：${e.message})`;
-    }
+    const fetched = await fetchDescribeOrError(
+      route.upstream,
+      {
+        method: "POST",
+        headers: passthroughHeaders(bearerKey),
+        body: JSON.stringify({ ...miniReq, model: upstreamModel }),
+      },
+      env,
+    );
+    if (typeof fetched === "string") return fetched;
+    const resp = fetched;
     // Anthropic-format upstream: text lives in content[] blocks.
     return finishDescribe(resp, cacheKey, env, (json) =>
       (json.content || [])
@@ -208,25 +220,22 @@ async function describeImage(
   // which now forwards image_url parts (see toOpenAIRequest).
   if (!ukeys.OPENCODE_GO_API_KEY) return "(图片描述失败：OPENCODE_GO_API_KEY 未配置)";
   const openaiReq = toOpenAIRequest(miniReq, upstreamModel);
-  let resp: any;
-  try {
-    resp = await fetchWithTimeout(
-      route.upstream,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`,
-          "Content-Type": "application/json",
-          // zen/go per-conversation session header (see ogSession above).
-          ...ogSession,
-        },
-        body: JSON.stringify(openaiReq),
+  const fetched = await fetchDescribeOrError(
+    route.upstream,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`,
+        "Content-Type": "application/json",
+        // zen/go per-conversation session header (see ogSession above).
+        ...ogSession,
       },
-      upstreamTimeoutMs(env),
-    );
-  } catch (e: any) {
-    return `(图片描述失败：${e.message})`;
-  }
+      body: JSON.stringify(openaiReq),
+    },
+    env,
+  );
+  if (typeof fetched === "string") return fetched;
+  const resp = fetched;
   // OpenAI-format upstream: text lives in choices[0].message.content.
   return finishDescribe(resp, cacheKey, env, (json) =>
     String(json.choices?.[0]?.message?.content || "").trim(),
