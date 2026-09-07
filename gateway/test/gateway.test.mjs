@@ -1868,3 +1868,16 @@ test("chat/completions og keyless and breaker-open → 502, upstream never calle
     },
   );
 });
+
+// round-505 (coverage-driven): the invalid-JSON 502 arm had ZERO pins —
+// it needs stream:true with a JSON (non-SSE) upstream body, not stream:false.
+test("og translate stream:true, upstream 200 with garbage JSON → 502 invalid JSON", async () => {
+  const { __clearDegradedCache } = await import("../src/reliability.ts");
+  __clearDegradedCache();
+  const { env, token } = gwEnv();
+  const res = await withFetch(async () => new Response("not json{{{", {
+    status: 200, headers: { "content-type": "application/json" },
+  }), () => post(env, token, { ...ogBody(), stream: true }));
+  assert.equal(res.status, 502);
+  assert.match((await res.json()).error.message, /upstream returned invalid JSON/);
+});
