@@ -65,7 +65,7 @@ import { safeEq } from "../auth.ts";
 import { deviceFetch } from "../device-fetch.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
-import { requireSession } from "../session.ts";
+import { requireSession, requireAdmin } from "../session.ts";
 import { route, type Plugin, type PluginContext } from "./registry.ts";
 import { createIpRateLimiter } from "../lib/ratelimit.ts";
 // The device reverse-proxy lives in its own module (extracted verbatim);
@@ -401,10 +401,8 @@ async function proxyUploadToWorker(request: Request, env: any): Promise<Response
 // The session gate below is verbatim from handleConsole (requireSession 401
 // check, then the admin 403 check) — the device module sat after both.
 async function handleDevicesList(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   const devices = await listDevices(env);
   return jsonOk({
     devices: devices.map((d) => ({
@@ -420,10 +418,8 @@ async function handleDevicesList(request: Request, env: any): Promise<Response> 
 }
 
 async function handleDevicesAdd(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   const body = await readJson(request);
   let device: Device;
   try {
@@ -443,10 +439,8 @@ async function handleDevicesAdd(request: Request, env: any): Promise<Response> {
 }
 
 async function handleDeviceMcp(request: Request, env: any, url: URL): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   const path = url.pathname;
   const mcpMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/mcp$`))!;
   const devName = decodeDeviceName(mcpMatch[1]!);
@@ -466,10 +460,8 @@ async function handleDeviceMcp(request: Request, env: any, url: URL): Promise<Re
 // endpoint with its own Bearer token and injects the token server-side. The
 // panel URL is derived exactly like mcpConfig() (same hostname source).
 async function handleDevicePanelGrant(request: Request, env: any, url: URL): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   const m = url.pathname.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/panel-grant$`))!;
   const devName = decodeDeviceName(m[1]!);
   if (devName === null) return jsonError(400, "Invalid device name", "invalid_request");
@@ -521,10 +513,8 @@ async function handlePanelGrantRedeem(request: Request, env: any): Promise<Respo
 }
 
 async function handleDeviceDelete(request: Request, env: any, url: URL): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   const path = url.pathname;
   const delMatch = path.match(new RegExp(`^${DEVICE_BASE}/([^/]+)$`))!;
   const delName = decodeDeviceName(delMatch[1]!);
@@ -545,10 +535,8 @@ async function handleDeviceDelete(request: Request, env: any, url: URL): Promise
 // plugin links to the new name and closes the OLD name's hub socket (the
 // DO is keyed by device name — round-84/92 revocation contract).
 async function handleDeviceRename(request: Request, env: any, url: URL): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   const renMatch = url.pathname.match(new RegExp(`^${DEVICE_BASE}/([^/]+)/rename$`))!;
   const oldName = decodeDeviceName(renMatch[1]!);
   if (oldName === null) return jsonError(400, "Invalid device name", "invalid_request");
@@ -580,20 +568,16 @@ async function handleDeviceRename(request: Request, env: any, url: URL): Promise
 // install keys with their KV expiry. They used to be invisible: generate,
 // close the tab, and the key lingered until TTL with no way to see or kill it.
 async function handleRegKeysList(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   return jsonOk({ keys: await listRegKeys(env) });
 }
 
 // DELETE /api/devices/register-keys/<code> — revoke an unused key before
 // its 1h TTL (a key pasted into the wrong chat can be killed immediately).
 async function handleRegKeyRevoke(request: Request, env: any, url: URL): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   const m = url.pathname.match(new RegExp(`^${DEVICE_BASE}/register-keys/([^/]+)$`))!;
   const code = decodeDeviceName(m[1]!);
   if (!code) return jsonError(400, "Invalid key", "invalid_request");
@@ -612,10 +596,8 @@ const INSTALL_CMD_TTL_MS = 5 * 60 * 1000;
 let installCmdCache: { at: number; version: string | null; download: string | null } | null = null;
 
 async function handleInstallCmd(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   if (!installCmdCache || Date.now() - installCmdCache.at > INSTALL_CMD_TTL_MS) {
     let version: string | null = null;
     let download: string | null = null;
@@ -643,10 +625,8 @@ async function handleInstallCmd(request: Request, env: any): Promise<Response> {
 // POST /api/devices/register-key — generate a one-time install key.
 // (the last admin-gated route still served by index.ts's inline chain)
 async function handleRegisterKey(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  if (user.role !== "admin")
-    return jsonError(403, "Admin permission required", "authorization_error");
+  const user = await requireAdmin(request, env);
+  if (user instanceof Response) return user;
   const key = await createRegKey(env);
   return jsonOk({ ok: true, key });
 }
