@@ -2241,6 +2241,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   `sseResponse(body)`. Gateway 592 pass; tsc/lint/prettier clean; mirror
   synced.
 
+### 2026-09-08 SOLID round 12 (vision-describe fetch wrapper dedup)
+- **fetchDescribeOrError (DRY, gateway translate-vision.ts)** —
+  describeImage's passthrough and og branches each inlined the same
+  fetchWithTimeout + try/catch → "(图片描述失败：…)" marker wrapper.
+  Extracted `fetchDescribeOrError(url, init, env): Response | string` —
+  one failure contract for both upstream calls (a future timeout/retry
+  policy lands in one place). translate-vision.ts dup blocks 4 → 1 (the
+  remainder is the shared helper's call-site tail, not duplicable logic).
+  Deferred (judged not-worth-it): valeProbe's 9-line tail (too small),
+  posixInstaller/psInstaller (two platform languages by design), memory
+  tools' id-parse stanzas (the MCP builder idiom — per-tool error text).
+  Gateway 592 pass; tsc/lint/prettier clean; mirror synced.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
