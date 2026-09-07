@@ -137,6 +137,13 @@ where
         }
     });
 
+    sse_response_from_rx(mpsc_rx)
+}
+
+/// Wrap an mpsc receiver into the SSE Response — content-type plus the
+/// no-cache / keep-alive header set. sse_response and sse_term_stream
+/// used to each inline this tail.
+fn sse_response_from_rx(mpsc_rx: mpsc::Receiver<Result<Bytes, Infallible>>) -> Response {
     let body = Body::from_stream(MpscStream { rx: mpsc_rx });
 
     let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
@@ -227,17 +234,7 @@ pub(crate) async fn sse_term_stream(state: Arc<AppState>) -> Response {
         }
     });
 
-    let body = Body::from_stream(MpscStream { rx: mpsc_rx });
-    let mut resp = built_response(StatusCode::OK, "text/event-stream", body);
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("cache-control"),
-        axum::http::HeaderValue::from_static("no-cache"),
-    );
-    resp.headers_mut().insert(
-        axum::http::HeaderName::from_static("connection"),
-        axum::http::HeaderValue::from_static("keep-alive"),
-    );
-    resp
+    sse_response_from_rx(mpsc_rx)
 }
 
 // ── Status ────────────────────────────────────────────────────
