@@ -3214,6 +3214,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   body compile but are never collected as tests (the count stayed
   318) — the closer was re-inserted before the new tests.
 
+### 2026-09-08 SOLID round 79 (coverage-domain closure + full-suite refresh)
+- **Verification round (no code changes)** — secrets.rs store layer
+  checked for the same indirect-only gap the round-76/78 rounds
+  closed elsewhere: NO gap — it already carries isolated-file tests
+  (crud_roundtrip + the round-126 legacy raw-key delete semantics,
+  per-thread store isolation at line 355+). Full-suite total
+  refreshed after the round-76/78 test additions: 365 passed (lib
+  322 + main 5 + integration 27 + autoselect 1 + mcp_client 2 +
+  mcp_integration 7 + stdio env-gated; the +10 delta = tail_append 3
+  + prompt-marker 3 + spill 4). Coverage-domain audit now spans:
+  read/screen/history/retain (tests.rs), marker/pty-stream,
+  execute-result, conns store, spill layer, prompt markers, mcp
+  result flattening + screenshot refs, memory store — every pure-logic
+  layer reached in the recent extraction rounds has direct pins.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
