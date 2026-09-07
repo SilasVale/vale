@@ -3186,6 +3186,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   (4 real call sites, head -3 showed 2) — regex + exact count assert
   fixed it.
 
+### 2026-09-08 SOLID round 77 (prompt-marker regression pins)
+- **Test-only round (agent exec.rs)** — marker-domain audit found the
+  scan logic fully shared (shell_integration.rs find_prompt_started /
+  find_finished with tests; exec.rs wait loops call them exclusively)
+  EXCEPT find_prompt_marker — the LEGACY OSC-133 scan kept for the
+  headless-stub path and backward-compat reads — which carried the
+  round-100 false-prefix fix with ZERO direct tests. Added 3 pins:
+  complete-sequence parsing (start/end/exit-code over the WHOLE
+  sequence), incomplete/missing → None (the cross-chunk caller
+  contract), and the round-100 scenario (a literal \x1b]133;D; prefix
+  with no digits/BEL must not poison a later real marker). 318 lib
+  (+3) / fmt + clippy clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
