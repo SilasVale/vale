@@ -2815,6 +2815,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   pin). Full matrix green: agent 300/308, gateway 592 + format,
   index 56, CLI 9.
 
+### 2026-09-08 SOLID round 51 (large-file cohesion audit)
+- **Verification round (no code changes)** — SRP file-size audit over
+  the largest sources: mcp_client/tools.rs 1107 stripped production
+  lines, web/mod.rs 780, translate.ts 756 — each judged a COHESIVE
+  single-domain file (the mcp-client connection domain, the HTTP
+  service surface, the translate protocol hub respectively), not a
+  multi-responsibility aggregate; splitting by line count would add
+  cross-file pub(crate) noise without SRP gain — kept with evidence.
+- **Gates after the round-49 test commit** — xwin check green;
+  feature-gated clippy exit 0 with ZERO hits in our code (the 2
+  portable-pty "unexpected cfg" warnings are vendor dependency noise
+  that CI's identical invocation has always tolerated). Matrix stays
+  green.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
