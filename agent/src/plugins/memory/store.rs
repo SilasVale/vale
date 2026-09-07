@@ -193,12 +193,7 @@ impl MemoryStore {
         // total_bytes counts LIVE records only — the old per-line sum counted
         // every update revision (store.rs history), inflating the byte cap
         // into premature evictions.
-        guard.total_bytes = guard
-            .by_id
-            .values()
-            .filter(|r| !r.deleted)
-            .map(|r| r.content.len())
-            .sum();
+        Self::recount_total_bytes(&mut guard);
         // order is rebuilt lazily in list/search; mark dirty for the first
         // rebuild.
         guard.dirty = true;
@@ -606,6 +601,19 @@ impl MemoryStore {
         self.len() == 0
     }
 
+    /// Recompute total_bytes from LIVE records only (the old per-line sum
+    /// counted every update revision, inflating the byte cap into premature
+    /// evictions). Shared by load, the entry-cap eviction loop and the
+    /// retention sweep — three copies used to inline this expression.
+    fn recount_total_bytes(guard: &mut Inner) {
+        guard.total_bytes = guard
+            .by_id
+            .values()
+            .filter(|r| !r.deleted)
+            .map(|r| r.content.len())
+            .sum();
+    }
+
     /// Soft-delete the OLDEST live record (smallest updated_at; ties by
     /// smallest id — NOT `order`, which is newest-first for display) and
     /// append its tombstone line to `persist` (so the deletion survives a
@@ -657,12 +665,7 @@ impl MemoryStore {
             if Self::evict_oldest_live(&mut guard, &mut persist).is_none() {
                 break;
             }
-            guard.total_bytes = guard
-                .by_id
-                .values()
-                .filter(|r| !r.deleted)
-                .map(|r| r.content.len())
-                .sum();
+            Self::recount_total_bytes(&mut guard);
         }
         // Evict while over byte cap (same oldest-first victim).
         while guard.total_bytes > limits.max_bytes {
@@ -691,12 +694,7 @@ impl MemoryStore {
                 }
                 guard.dirty = true;
             }
-            guard.total_bytes = guard
-                .by_id
-                .values()
-                .filter(|r| !r.deleted)
-                .map(|r| r.content.len())
-                .sum();
+            Self::recount_total_bytes(&mut guard);
         }
         drop(guard);
         for line in persist {
