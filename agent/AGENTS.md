@@ -2542,6 +2542,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   green. Convergence state confirmed stable, no regression since the
   round-14 baseline.
 
+### 2026-09-08 SOLID round 33 (mcp.ts HTTP-level error envelope)
+- **mcpStatusError (DRY, gateway mcp.ts)** — handleMcp's 401 (admin
+  token), 405 (method) and 400 (parse error) rejections each inlined
+  the same JSON-RPC error Response carrying an HTTP status. Extracted
+  `mcpStatusError(code, message, status)` next to mcpError — which
+  stays 200-only for protocol-level tool errors (the two envelopes have
+  different status semantics, so both helpers remain distinct with
+  documented roles). Gateway 592 pass; tsc/prettier clean; mirror
+  synced. (Function-size survey of index/gateway: remaining large fns
+  — handleMcp 109 / handleSelfRegister 88 / handleRegister 78 /
+  TempClaimDO 69 — checked: register pair shares only the 1-line
+  hostAllowError guard, not copies; claim.js single-shot DO is
+  event-driven by design.)
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
