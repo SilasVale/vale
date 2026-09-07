@@ -1906,6 +1906,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   pins. Added 1 in plugins.test.mjs (KV outage mid-sweep → still 200,
   old token revoked). Clean round. Suite 575->576; gates clean;
   snapshot updated; pushed.
+  ROUND-532 (2026-09-06): tunnel audit — the dead-tunnel proof catch had
+  ZERO pins. Added 1 in devices.test.mjs (throw → 409, record untouched).
+  Clean round. Suite 576->577; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
