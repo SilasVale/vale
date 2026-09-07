@@ -17,7 +17,7 @@
  * to the caller. Used by the SSE in-band error guard: an OpenRouter-style
  * upstream can accept the request (HTTP 200) and THEN fail inside the stream.
  */
-import { authorizeDoRequest } from "./route-do.ts";
+import { DoAuthBase } from "./route-do.ts";
 export interface RetryInspection {
   /** false → treat this 2xx as a failed attempt and run the retry ladder. */
   accepted: boolean;
@@ -257,20 +257,7 @@ const BREAKER_WINDOW_MS = 10 * 60 * 1000;
 const BREAKER_MAX_FAIL_MS = 45_000;
 
 /** Durable Object holding the breaker state (single instance per channel name). */
-export class BreakerDO {
-  state: any;
-  env: any;
-  constructor(state: any, env: any) {
-    this.state = state;
-    this.env = env;
-  }
-  // DO external-address defense-in-depth (see RouteDO). Shared
-  // authorizeDoRequest helper (route-do.ts) — both DO classes used to
-  // carry byte-identical copies of this fail-closed constant-time check.
-  authorized(request: Request): boolean {
-    return authorizeDoRequest(request, this.env?.DO_AUTH || "");
-  }
-
+export class BreakerDO extends DoAuthBase {
   async fetch(request: Request): Promise<Response> {
     if (!this.authorized(request)) return new Response("unauthorized", { status: 401 });
     const action = new URL(request.url).pathname;

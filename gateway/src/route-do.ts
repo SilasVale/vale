@@ -32,7 +32,12 @@ export function authorizeDoRequest(request: Request, expectedSecret: string): bo
   return diff === 0;
 }
 
-export class RouteDO {
+/**
+ * Shared DO skeleton: state/env plumbing + the authorized() gate. RouteDO
+ * and BreakerDO used to each carry byte-identical copies of this head —
+ * only their fetch bodies differ.
+ */
+export class DoAuthBase {
   state: any;
   env: any;
   constructor(state: any, env: any) {
@@ -40,14 +45,16 @@ export class RouteDO {
     this.env = env;
   }
 
-  // Defense-in-depth: a Durable Object has its own
-  // external address even with workers_dev:false + no routes, so the main
-  // router's auth is NOT the last line. When DO_AUTH is configured, any
-  // request without the shared secret is rejected (constant-time compare).
+  // Defense-in-depth: a Durable Object has its own external address even
+  // with workers_dev:false + no routes, so the main router's auth is NOT the
+  // last line. FAIL CLOSED — when DO_AUTH is unset, authorized() denies
+  // every caller (constant-time compare).
   authorized(request: Request): boolean {
     return authorizeDoRequest(request, this.env?.DO_AUTH || "");
   }
+}
 
+export class RouteDO extends DoAuthBase {
   async fetch(request: Request): Promise<Response> {
     if (!this.authorized(request)) return new Response("unauthorized", { status: 401 });
     const url = new URL(request.url);
