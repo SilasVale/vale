@@ -148,12 +148,7 @@ export async function valeProbe(env: any, model: string) {
     } catch (e) {
       return jsonOk({ ok: false, channel: prefix, detail: (e as any).message });
     }
-    return jsonOk({
-      ok: res.ok,
-      channel: prefix,
-      status: res.status,
-      detail: res.ok ? "" : `upstream ${res.status}`,
-    });
+    return probeResultJson(prefix, res);
   }
   // Passthrough channels (ds/qw/or/nv/gmi/amd): reuse the exact route config of
   // /v1/messages.
