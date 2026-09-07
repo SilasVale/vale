@@ -885,14 +885,15 @@ async function handleGatewayImpl(
   // own ±20% accuracy stance and cuts that latency entirely. Missing-key checks
   // are still real config errors and stay.
   if (isCount) {
-    if (route.kind === "deepseek" && !deepseekKey) {
-      return keyMissingError("deepseek") as Response;
-    }
-    if (route.kind === "qwen" && !qwenKey) {
-      return keyMissingError("qwen") as Response;
-    }
-    if (route.kind === "amd" && !amdKey) {
-      return keyMissingError("amd") as Response;
+    const countKeys: [string, string | null][] = [
+      ["deepseek", deepseekKey],
+      ["qwen", qwenKey],
+      ["amd", amdKey],
+    ];
+    for (const [kind, key] of countKeys) {
+      if (route.kind === kind && !key) {
+        return keyMissingError(kind) as Response;
+      }
     }
     return jsonOk({ input_tokens: estimateTokens(rawText) });
   }
