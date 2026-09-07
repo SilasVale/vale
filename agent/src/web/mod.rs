@@ -1973,6 +1973,30 @@ mod tests {
     }
 
     #[tokio::test]
+    // round-41 audit pin: api_settings_put's invalid-JSON envelope returns
+    // HTTP 200 (axum Json into_response with no status override) — a
+    // HISTORICAL wire shape preserved since the round-69 extraction, while
+    // api_gateway_connect 400s the same class of error. Pinned here so an
+    // "obvious" unification cannot silently change the wire without a
+    // product decision (see the OPEN-decisions block in AGENTS.md).
+    async fn settings_put_invalid_json_keeps_http200_envelope() {
+        let (st, _cfg_path) = state_with_cfg("put-bad-json", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(
+            req_with_json("PUT", "/api/settings", "{not json"),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK, "historical 200 envelope");
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["code"], "invalid_params");
+        assert!(
+            v["error"].as_str().unwrap_or("").contains("invalid JSON"),
+            "error mentions the parse failure"
+        );
+    }
+
+    #[tokio::test]
     async fn settings_put_visible_in_memory_and_file() {
         // Audit A4 write-through: a PUT must be visible IN-PROCESS (the live
         // snapshot, no disk reload, no restart — the old state.config was a
