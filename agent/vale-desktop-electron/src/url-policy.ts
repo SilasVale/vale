@@ -11,8 +11,47 @@
 export const BASE = "http://127.0.0.1:18080";
 export const BASE_ORIGIN = new URL(BASE).origin;
 
+// Configurable agent port (custom-port installs): the shell follows the
+// agent's config.yaml server.port (main.ts resolves it at boot via
+// VALE_AGENT_PORT env, else the registry install/data dirs). Predicates
+// below compare against the CONFIGURED origin — a hardcoded 18080 would
+// deafen the IPC bridge and strand the desktop on any custom port.
+// Default stays 18080 (canonical); tests reset via setAgentPort(18080).
+let agentPort: number | null = null;
+export function setAgentPort(port: number): void {
+  if (Number.isInteger(port) && port > 0 && port < 65536) agentPort = port;
+}
+export function getAgentPort(): number {
+  return agentPort ?? 18080;
+}
+export function agentBase(): string {
+  return `http://127.0.0.1:${getAgentPort()}`;
+}
+function agentOrigin(): string {
+  return new URL(agentBase()).origin;
+}
+
+// server.port out of an agent config.yaml (first `port:` inside the
+// top-level `server:` section; null when absent/invalid). Pure so the
+// shell's file/registry glue stays untestable-thin and this stays pinned.
+export function parseAgentPort(yamlText: string): number | null {
+  let inServer = false;
+  for (const raw of String(yamlText || "").split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (/^\S/.test(line)) inServer = /^server\s*:/.test(line);
+    if (!inServer) continue;
+    const m = /^\s*port\s*:\s*"?(\d{1,5})"?\s*(?:#.*)?$/.exec(line);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isInteger(n) && n > 0 && n < 65536) return n;
+      return null;
+    }
+  }
+  return null;
+}
+
 export function isBaseOrigin(url: string): boolean {
-  try { return new URL(url).origin === BASE_ORIGIN; } catch { return false; }
+  try { return new URL(url).origin === agentOrigin(); } catch { return false; }
 }
 
 // IPC audit #2: preload runs in EVERY frame; a frame may invoke the bridge
@@ -30,7 +69,7 @@ export function frameUrlOk(url: string): boolean {
 export function isDesktopSpaUrl(url: string): boolean {
   try {
     const u = new URL(url);
-    if (u.origin !== BASE_ORIGIN) return false;
+    if (u.origin !== agentOrigin()) return false;
     // Segment semantics: /desktop and /desktop/* — /desktopx is a different
     // path, not the SPA mount.
     return u.pathname === "/desktop" || u.pathname.startsWith("/desktop/");

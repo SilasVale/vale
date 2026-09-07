@@ -151,7 +151,9 @@ pub(crate) fn write_verified_bytes(
 /// login with the token, create the tunnel, route DNS, write tunnel.yml, and
 /// spawn cloudflared (agent-owned, spawn-if-absent model). Returns a status
 /// string for the API response. Best-effort — failures are reported, not fatal.
-pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
+/// `port` is the agent's configured bind port — the ingress must point where
+/// the agent actually listens (a hardcoded 18080 502s custom-port installs).
+pub(crate) async fn provision_tunnel(cf_token: &str, port: u16) -> String {
     let install_dir = crate::paths::install_dir();
     let cf = install_dir.join("tools").join("cloudflared.exe");
     if !cf.exists() {
@@ -298,13 +300,14 @@ pub(crate) async fn provision_tunnel(cf_token: &str) -> String {
     //     prefers the remote config when one exists, and a stale remote (old
     //     127.0.0.2 ingress) would override the local tunnel.yml. Point the
     //     remote ingress at 127.0.0.1 so both agree.
-    update_remote_config(cf_token, &id, &hostname).await;
+    update_remote_config(cf_token, &id, &hostname, port).await;
     // 4. write tunnel.yml (single location, agent spawns it on boot)
     let cred = std::env::var("USERPROFILE")
         .map(|u| format!(r"{u}\.cloudflared\{id}.json"))
         .unwrap_or_else(|_| format!(".cloudflared/{id}.json"));
     let yml = format!(
-        "tunnel: {id}\ncredentials-file: {cred}\nallow-remote-config: false\ningress:\n  - hostname: {hostname}\n    service: http://127.0.0.1:18080\n  - service: http_status:404\n"
+        "tunnel: {id}\ncredentials-file: {cred}\nallow-remote-config: false\ningress:\n  - hostname: {hostname}\n    service: {}\n  - service: http_status:404\n",
+        ingress_service(port)
     );
     let cfg_path = install_dir.join("tunnel.yml");
     // Supervision audit #5: atomic (the boot-spawned cloudflared may be
@@ -408,11 +411,18 @@ async fn ensure_cf_credentials() {
     tracing::warn!("[vale-agent] provision_tunnel: no cert.pem found in any user profile — tunnel auth may fail");
 }
 
+/// Ingress service URL for the agent's configured port (custom ports must
+/// reach the agent where it actually listens — a hardcoded 18080 here 502s
+/// every non-default install).
+fn ingress_service(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
 /// Update a tunnel's REMOTE config (Cloudflare API) so its ingress points at
-/// 127.0.0.1:18080. cloudflared prefers the remote config over the local file
+/// the agent's configured port. cloudflared prefers the remote config over the local file
 /// when one exists; a stale remote (e.g. an old 127.0.0.2 ingress) would keep
 /// proxying to a dead address (502) no matter what tunnel.yml says.
-async fn update_remote_config(cf_token: &str, tunnel_id: &str, hostname: &str) {
+async fn update_remote_config(cf_token: &str, tunnel_id: &str, hostname: &str, port: u16) {
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -445,7 +455,7 @@ async fn update_remote_config(cf_token: &str, tunnel_id: &str, hostname: &str) {
     let body = serde_json::json!({
         "config": {
             "ingress": [
-                { "hostname": hostname, "service": "http://127.0.0.1:18080" },
+                { "hostname": hostname, "service": ingress_service(port) },
                 { "service": "http_status:404" }
             ]
         }
@@ -474,6 +484,14 @@ async fn update_remote_config(cf_token: &str, tunnel_id: &str, hostname: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ingress_service_follows_the_configured_port() {
+        assert_eq!(ingress_service(18080), "http://127.0.0.1:18080");
+        assert_eq!(ingress_service(7740), "http://127.0.0.1:7740");
+        // A custom port must never silently fall back to the default.
+        assert!(!ingress_service(7740).contains("18080"));
+    }
 
     /// sha256("abc") — FIPS vector. Hardcodes the digest so the hex-encode +
     /// compare path is NOT tautological (a test that recomputes the expected

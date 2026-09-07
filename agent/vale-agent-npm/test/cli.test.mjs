@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -47,5 +47,39 @@ test("playwrightProbePs: waits for desktop CDP before forking headless", () => {
   assert.match(body, /--headless/, "keeps the private-chromium fallback");
   assert.match(body, /127\.0\.0\.1:9229,localhost:9229/, "keeps the anti-DNS-rebinding hosts");
   assert.match(body, /--output-dir \$pwout/, "pins screenshots to the evidence dir");
+  assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
+});
+
+test("parseAgentPort: server.port only, strict", () => {
+  const { parseAgentPort } = require("../bin/vale.js");
+  assert.equal(parseAgentPort('server:\n  host: "0.0.0.0"\n  port: 7740\n'), 7740);
+  assert.equal(parseAgentPort('server:\n  port: 18080\n'), 18080);
+  assert.equal(parseAgentPort('server:\n  host: "127.0.0.1"\n'), null, "absent port");
+  assert.equal(parseAgentPort('serial:\n  port: 1234\n'), null, "non-server section ignored");
+  assert.equal(parseAgentPort('server:\n  port: 0\n'), null, "ephemeral rejected");
+  assert.equal(parseAgentPort('server:\n  port: 99999\n'), null, "out of range rejected");
+  assert.equal(parseAgentPort(""), null);
+});
+
+test("agentPort: reads dir config, defaults 18080", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const { agentPort } = require("../bin/vale.js");
+  assert.equal(agentPort("/definitely/not/here"), 18080, "missing config");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "vale-port-"));
+  fs.writeFileSync(path.join(d, "config.yaml"), 'server:\n  port: 7740\n');
+  assert.equal(agentPort(d), 7740);
+  fs.rmSync(d, { recursive: true, force: true });
+});
+
+test("firewallPs: idempotent Vale-scoped rule for the port", () => {
+  const { firewallPs } = require("../bin/vale.js");
+  const body = firewallPs(7740).join("\n");
+  assert.match(body, /LocalPort \$fwPort/, "uses the variable, hardcodes nothing else");
+  assert.match(body, /\$fwPort = 7740/, "bakes the configured port");
+  assert.match(body, /New-NetFirewallRule/, "creates the allow rule");
+  assert.match(body, /Remove-NetFirewallRule/, "prunes stale own rules");
+  assert.match(body, /'Vale Agent'/, "DisplayName-scoped, never foreign rules");
   assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });

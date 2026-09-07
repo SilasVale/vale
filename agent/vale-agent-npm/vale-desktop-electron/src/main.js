@@ -39,7 +39,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 // stage-m architecture: agent lifecycle lives in RUST (the agent is managed
 // by the ValeAgent scheduled task; a second agent instance exits immediately
 // via VALE_NO_PAUSE on bind failure — no orphan processes). This shell only:
-//   1. probes 127.0.0.1:18080 (agent health)
+//   1. probes the agent's configured bind port (default 127.0.0.1:18080)
+//      for health (follows config.yaml server.port)
 //   2. loads the SPA when the agent is up; shows a "start agent" action
 //      otherwise (schtasks /run — the ONLY sanctioned spawn path)
 //   3. window / tray / native menu / CDP exposure / browser sessions
@@ -75,6 +76,24 @@ function agentToken() {
 function authHeaders() {
     const t = agentToken();
     return t ? { authorization: `Bearer ${t}` } : {};
+}
+// Agent bind port (custom-port installs): explicit VALE_AGENT_PORT env
+// first, then the agent's config.yaml server.port next to the install dir
+// (same file agentToken() reads — sync fs, same best-effort discipline),
+// else the canonical 18080. Resolved once at boot before any probe/window;
+// url-policy predicates follow via setAgentPort.
+function resolveAgentPort() {
+    const env = Number(process.env.VALE_AGENT_PORT);
+    if (Number.isInteger(env) && env > 0 && env < 65536)
+        return env;
+    try {
+        const raw = fs.readFileSync(path.join(__dirname, "..", "..", "config.yaml"), "utf8");
+        const port = (0, url_policy_1.parseAgentPort)(raw);
+        if (port)
+            return port;
+    }
+    catch { /* no local config — default below */ }
+    return 18080;
 }
 // Remote-verifiable icon facts (GET /api/shell/icon-status on the 9444
 // loopback control server): file blind-flying on icon issues ended here —
@@ -714,7 +733,7 @@ function agentResponds(timeoutMs = 2000) {
             done = true;
             res(v);
         } };
-        const req = http.get(`${url_policy_1.BASE}/api/status`, { timeout: timeoutMs }, (r) => {
+        const req = http.get(`${(0, url_policy_1.agentBase)()}/api/status`, { timeout: timeoutMs }, (r) => {
             r.resume();
             // ANY HTTP response = the accept loop is alive (this is the exact thing
             // the TCP probe could not see). Do NOT require 200: /api/status is
@@ -813,6 +832,9 @@ if (gotTheLock) {
         iconReport["appUserModelId"] = "(set-failed)";
     }
     electron_1.app.whenReady().then(async () => {
+        // Custom-port installs: pin every origin predicate + probe/load URL to
+        // the agent's actual bind port BEFORE any window or probe exists.
+        (0, url_policy_1.setAgentPort)(resolveAgentPort());
         // review #7: with no handler Electron AUTO-GRANTS every permission
         // request (media/geolocation/clipboard) — deny by default for all
         // windows, esp. the remote-browser ones loading arbitrary pages.
@@ -882,7 +904,7 @@ if (gotTheLock) {
                 return;
             console.log(`[vale] main-window tripwire: blocked stray navigation to ${url.slice(0, 80)}`);
             snappingBack = true;
-            win?.loadURL(`${url_policy_1.BASE}/desktop/`).catch(() => { }).finally(() => {
+            win?.loadURL(`${(0, url_policy_1.agentBase)()}/desktop/`).catch(() => { }).finally(() => {
                 setTimeout(() => { snappingBack = false; }, 2000);
             });
         });
@@ -915,7 +937,7 @@ if (gotTheLock) {
       <style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}div{text-align:center}p{color:#999}button{margin-top:18px;padding:10px 22px;font-size:15px;border-radius:8px;border:1px solid #444;background:#222;color:#eee;cursor:pointer}button:hover{background:#333}button:disabled{opacity:.5;cursor:default}</style>
       <div>
         <h2>Vale Agent is not running</h2>
-        <p id="status">waiting for 127.0.0.1:18080…</p>
+        <p id="status">waiting for ${(0, url_policy_1.agentBase)().replace("http://", "")}…</p>
         <button id="start">Start Agent</button>
       </div>
       <script>
@@ -947,7 +969,7 @@ if (gotTheLock) {
             try {
                 const ctrl = new AbortController();
                 const t = setTimeout(() => ctrl.abort(), 3000);
-                const r = await fetch(`${url_policy_1.BASE}/api/status`, { signal: ctrl.signal, headers: authHeaders() });
+                const r = await fetch(`${(0, url_policy_1.agentBase)()}/api/status`, { signal: ctrl.signal, headers: authHeaders() });
                 clearTimeout(t);
                 if (r.ok) {
                     const j = await r.json();
@@ -976,7 +998,7 @@ if (gotTheLock) {
                 agentMissCount = 0;
                 resetRetry();
                 setVersionTitle();
-                win?.loadURL(`${url_policy_1.BASE}/desktop/`).catch(() => { });
+                win?.loadURL(`${(0, url_policy_1.agentBase)()}/desktop/`).catch(() => { });
             }
             else {
                 loadWaitPage();
@@ -1108,7 +1130,7 @@ if (gotTheLock) {
                 try {
                     const ctrl = new AbortController();
                     const t = setTimeout(() => ctrl.abort(), 2500);
-                    const r = await fetch(`${url_policy_1.BASE}/api/status`, { signal: ctrl.signal, headers: authHeaders() });
+                    const r = await fetch(`${(0, url_policy_1.agentBase)()}/api/status`, { signal: ctrl.signal, headers: authHeaders() });
                     clearTimeout(t);
                     if (r.ok) {
                         const j = await r.json();

@@ -225,7 +225,7 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
   OPTIONAL — unset means a purely local install; `agent_update` and
   `page_view` remote pages error explicitly, device self-register skips.
 - **desktop shell**: `vale-desktop-electron/` (Electron) loads
-  `http://127.0.0.1:18080/desktop/` — the same SPA in desktop mode (terminal/
+  `http://127.0.0.1:<port>/desktop/` (`<port>` = config.yaml server.port, default 18080) — the same SPA in desktop mode (terminal/
   browser/memory/plugins/settings rail). Owns CDP 9333 for AI driving, a tray
   with health + vitals, a 60 s AGENT WATCHDOG (`schtasks /run ValeAgent`), and
   a wait page that reappears when the agent dies mid-session. The

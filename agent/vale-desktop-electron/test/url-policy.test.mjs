@@ -73,3 +73,36 @@ test("certBypassAllowed: private http(s) only", async () => {
   assert.equal(certBypassAllowed("file:///C:/Windows/win.ini"), false, "schemes stay gated");
   assert.equal(certBypassAllowed("not a url"), false);
 });
+
+test("agent port: predicates follow setAgentPort, default stays 18080", async () => {
+  const m = await import("../src/url-policy.js");
+  try {
+    assert.equal(m.getAgentPort(), 18080, "default is canonical");
+    assert.equal(m.agentBase(), "http://127.0.0.1:18080");
+    m.setAgentPort(7740);
+    assert.equal(m.getAgentPort(), 7740);
+    assert.equal(m.agentBase(), "http://127.0.0.1:7740");
+    assert.equal(m.isBaseOrigin("http://127.0.0.1:7740/desktop/"), true, "bridge follows the port");
+    assert.equal(m.isBaseOrigin("http://127.0.0.1:18080/desktop/"), false, "old port no longer matches");
+    assert.equal(m.isDesktopSpaUrl("http://127.0.0.1:7740/desktop/settings"), true);
+    m.setAgentPort(0);
+    m.setAgentPort(99999);
+    m.setAgentPort(NaN);
+    assert.equal(m.getAgentPort(), 7740, "invalid ports are ignored");
+  } finally {
+    m.setAgentPort(18080);
+  }
+  assert.equal(m.isBaseOrigin("http://127.0.0.1:18080/desktop/"), true, "default restored");
+});
+
+test("parseAgentPort: server.port only, strict", async () => {
+  const { parseAgentPort } = await import("../src/url-policy.js");
+  assert.equal(parseAgentPort('server:\n  host: "0.0.0.0"\n  port: 7740\n'), 7740);
+  assert.equal(parseAgentPort('server:\n  port: 18080\n'), 18080);
+  assert.equal(parseAgentPort('server:\n  host: "127.0.0.1"\n'), null, "absent port");
+  assert.equal(parseAgentPort('serial:\n  port: 1234\n'), null, "non-server section ignored");
+  assert.equal(parseAgentPort('server:\n  port: 0\n'), null, "ephemeral rejected");
+  assert.equal(parseAgentPort('server:\n  port: 99999\n'), null, "out of range rejected");
+  assert.equal(parseAgentPort('server:\n  port: abc\n'), null, "non-numeric rejected");
+  assert.equal(parseAgentPort(""), null);
+});

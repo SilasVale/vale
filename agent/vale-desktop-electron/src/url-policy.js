@@ -10,6 +10,10 @@
 // compares the PARSED origin.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BASE_ORIGIN = exports.BASE = void 0;
+exports.setAgentPort = setAgentPort;
+exports.getAgentPort = getAgentPort;
+exports.agentBase = agentBase;
+exports.parseAgentPort = parseAgentPort;
 exports.isBaseOrigin = isBaseOrigin;
 exports.frameUrlOk = frameUrlOk;
 exports.isDesktopSpaUrl = isDesktopSpaUrl;
@@ -18,9 +22,50 @@ exports.certBypassAllowed = certBypassAllowed;
 exports.sanitizeBrowserUrl = sanitizeBrowserUrl;
 exports.BASE = "http://127.0.0.1:18080";
 exports.BASE_ORIGIN = new URL(exports.BASE).origin;
+// Configurable agent port (custom-port installs): the shell follows the
+// agent's config.yaml server.port (main.ts resolves it at boot via
+// VALE_AGENT_PORT env, else the registry install/data dirs). Predicates
+// below compare against the CONFIGURED origin — a hardcoded 18080 would
+// deafen the IPC bridge and strand the desktop on any custom port.
+// Default stays 18080 (canonical); tests reset via setAgentPort(18080).
+let agentPort = null;
+function setAgentPort(port) {
+    if (Number.isInteger(port) && port > 0 && port < 65536)
+        agentPort = port;
+}
+function getAgentPort() {
+    return agentPort ?? 18080;
+}
+function agentBase() {
+    return `http://127.0.0.1:${getAgentPort()}`;
+}
+function agentOrigin() {
+    return new URL(agentBase()).origin;
+}
+// server.port out of an agent config.yaml (first `port:` inside the
+// top-level `server:` section; null when absent/invalid). Pure so the
+// shell's file/registry glue stays untestable-thin and this stays pinned.
+function parseAgentPort(yamlText) {
+    let inServer = false;
+    for (const raw of String(yamlText || "").split(/\r?\n/)) {
+        const line = raw.trimEnd();
+        if (/^\S/.test(line))
+            inServer = /^server\s*:/.test(line);
+        if (!inServer)
+            continue;
+        const m = /^\s*port\s*:\s*"?(\d{1,5})"?\s*(?:#.*)?$/.exec(line);
+        if (m) {
+            const n = Number(m[1]);
+            if (Number.isInteger(n) && n > 0 && n < 65536)
+                return n;
+            return null;
+        }
+    }
+    return null;
+}
 function isBaseOrigin(url) {
     try {
-        return new URL(url).origin === exports.BASE_ORIGIN;
+        return new URL(url).origin === agentOrigin();
     }
     catch {
         return false;
@@ -40,7 +85,7 @@ function frameUrlOk(url) {
 function isDesktopSpaUrl(url) {
     try {
         const u = new URL(url);
-        if (u.origin !== exports.BASE_ORIGIN)
+        if (u.origin !== agentOrigin())
             return false;
         // Segment semantics: /desktop and /desktop/* — /desktopx is a different
         // path, not the SPA mount.

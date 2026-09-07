@@ -972,10 +972,13 @@ async fn api_gateway_connect(
         }
     }
     // 3. Optional tunnel: write tunnel.yml + spawn cloudflared with
-    //    the token (free tier). Best-effort; report the outcome.
+    //    the token (free tier). Best-effort; report the outcome. The
+    //    ingress follows the configured bind port (custom ports 502
+    //    otherwise).
     let mut tunnel_status = "skipped".to_string();
     if want_tunnel && !cf_token.is_empty() {
-        tunnel_status = crate::tunnel::provision_tunnel(&cf_token).await;
+        let port = state.config_snapshot().server.port;
+        tunnel_status = crate::tunnel::provision_tunnel(&cf_token, port).await;
     } else if want_tunnel {
         tunnel_status = "no cf token (register first or set CLOUDFLARE_API_TOKEN)".to_string();
     }
@@ -1062,6 +1065,7 @@ async fn api_status(state: &AppState) -> serde_json::Value {
     let mut out = serde_json::json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
+        "port": state.config_snapshot().server.port,
         "uptime_secs": uptime_secs,
         "live_sessions": live_sessions,
         "serial_ports": serial,

@@ -88,6 +88,44 @@ export function deskShortcutRepairPs(qq: string, sink: string): string[] {
     `foreach ($dRx in @('vale-desktop.exe','vale-tray.exe')) { $dRp = '${qq}\\' + $dRx; if (Test-Path $dRp) { try { Remove-Item -Force -ErrorAction Stop $dRp; ('desk: removed retired ' + $dRx) | ${sink} } catch { ('desk: retired ' + $dRx + ' locked, kept') | ${sink} } } }`,
   ];
 }
+// exported: agent bind port plumbing (custom-port installs). server.port
+// out of <dir>/config.yaml (first `port:` under top-level `server:`),
+// canonical 18080 when absent/invalid/missing (fresh installs have no
+// config yet — the agent writes defaults on first boot). Pure core
+// unit-tested; agentPort() is the thin fs wrapper. unit-tested in
+// test/cli.test.mjs.
+export function parseAgentPort(yamlText: string): number | null {
+  let inServer = false;
+  for (const raw of String(yamlText || "").split(/\r?\n/)) {
+    const line = raw.replace(/\s+$/, "");
+    if (/^\S/.test(line)) inServer = /^server\s*:/.test(line);
+    if (!inServer) continue;
+    const m = /^\s*port\s*:\s*"?(\d{1,5})"?\s*(#.*)?$/.exec(line);
+    if (m) {
+      const n = Number(m[1]);
+      return Number.isInteger(n) && n > 0 && n < 65536 ? n : null;
+    }
+  }
+  return null;
+}
+export function agentPort(dir: string): number {
+  try {
+    return parseAgentPort(fs.readFileSync(path.join(dir, "config.yaml"), "utf8")) ?? 18080;
+  } catch {
+    return 18080;
+  }
+}
+// exported: idempotent Windows firewall inbound rule for the agent port
+// (LAN clients are dropped at the firewall otherwise, even bound 0.0.0.0).
+// ASCII-only PS, plain statements (WMI/session-0 rule). Prunes our own
+// stale-port rules, never foreign ones (DisplayName-scoped). unit-tested.
+export function firewallPs(port: number): string[] {
+  return [
+    `$fwPort = ${port};`,
+    `foreach ($fr in @(Get-NetFirewallRule -DisplayName 'Vale Agent' -ErrorAction SilentlyContinue)) { try { $fp = @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $fr | Select-Object -ExpandProperty LocalPort); if ($fp -notcontains "$fwPort") { Remove-NetFirewallRule -Name $fr.Name -Confirm:$false -ErrorAction SilentlyContinue } } catch {} }`,
+    `if (-not (Get-NetFirewallRule -DisplayName 'Vale Agent' -ErrorAction SilentlyContinue | Where-Object { @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $PSItem | Select-Object -ExpandProperty LocalPort) -contains "$fwPort" })) { New-NetFirewallRule -DisplayName 'Vale Agent' -Direction Inbound -LocalPort $fwPort -Protocol TCP -Action Allow | Out-Null }`,
+  ];
+}
 // exported: the ValePlaywright probe launcher (playwright-probe.ps1).
 // Probe order matches the agent's preferred_cdp_endpoint(): 9333
 // (Electron DESKTOP embedded view — what the user watches) when up, else
@@ -233,12 +271,15 @@ function initTunnel(hostname, regKey) {
   const r3 = spawnSync(cf, ["tunnel", "route", "dns", name, host], { stdio: "inherit" });
   if (r3.status !== 0) { console.error("tunnel: dns route failed"); process.exit(1); }
   const cred = path.join(process.env.USERPROFILE || "", ".cloudflared", tunnelId + ".json");
+  // Ingress follows the agent's configured bind port (custom ports 502
+  // otherwise); DIR/config.yaml may not exist on fresh installs → default.
+  const tunPort = agentPort(DIR);
   fs.writeFileSync(cfg, [
     "tunnel: " + tunnelId,
     "credentials-file: " + cred,
     "ingress:",
     "  - hostname: " + host,
-    "    service: http://127.0.0.2:18080",
+    "    service: http://127.0.0.2:" + tunPort,
     "  - service: http_status:404",
     "",
   ].join("\n"));
@@ -435,6 +476,16 @@ const commands = {
     }
     console.log("setup: installed to", DIR);
     console.log("setup: device registers on start — check the console Devices list");
+    // Inbound firewall for the agent port (idempotent; inert when bound to
+    // loopback, required for LAN clients otherwise). Best-effort, never
+    // fail-closed — a locked-down box keeps working locally regardless.
+    try {
+      const fwPort = agentPort(DIR);
+      const fw = ps(firewallPs(fwPort).join("; "));
+      console.log("setup: firewall inbound TCP " + fwPort + (fw && fw.status === 0 ? " ensured" : " (ensure failed — LAN clients may be blocked)"));
+    } catch {
+      console.log("setup: firewall ensure skipped (LAN clients may be blocked)");
+    }
     // Optional: provision the tunnel in the same command (no second step).
     if (wantTunnel) {
       console.log("setup: provisioning cloudflare tunnel...");
@@ -454,7 +505,7 @@ const commands = {
     console.log("install dir:", DIR);
     console.log(
       "panel:",
-      fs.existsSync(EXE_DST) ? "http://127.0.0.1:18080/panel/" : "(not installed)"
+      fs.existsSync(EXE_DST) ? "http://127.0.0.1:" + agentPort(DIR) + "/panel/" : "(not installed)"
     );
   },
 
@@ -602,9 +653,13 @@ const commands = {
       `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,
       `"[$(Get-Date -Format o)] task restarted" | ${log}`,
       `try { Remove-Item -Force (Join-Path $env:ProgramData 'ValeAgent\\update-busy') } catch {}`,
+      // Custom-port installs: the firewall rule must track the configured
+      // bind port (baked at update time from the live config.yaml — the
+      // swap itself runs from a static file and cannot read it).
+      ...firewallPs(agentPort(DIR)),
       // stage-n: restart the Electron shell so newly-synced main/preload
       // sources take effect. The shell is INDEPENDENT of the ValeAgent task —
-      // it only probes 127.0.0.1:18080 and loads /desktop/. Kill + relaunch
+      // it probes the configured port and loads /desktop/. Kill + relaunch
       // via start-desktop.ps1 (the same path ValeDesktop onlogon uses); if
       // the task/script is missing (non-desktop install), skip silently.
       `$deskDir = '${q}\\vale-desktop-electron'`,
