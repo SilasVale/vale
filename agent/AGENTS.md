@@ -2122,6 +2122,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   resources/panel/ products are committed too (build.rs only catches it
   at the next cargo build).
 
+### 2026-09-08 SOLID round 4 (vision describe tail + SSE bounded-send dedup)
+- **Vision describe tail dedup (DRY, gateway)** — describeImage's two
+  upstream branches (passthrough vs og translate) each hand-rolled the
+  same tail: !ok → status marker, JSON parse → "解析失败" marker,
+  extract text, cache, return. Extracted `finishDescribe(resp, cacheKey,
+  env, extract)`; per-upstream difference is now only the text-extraction
+  closure (Anthropic content[] vs OpenAI choices[0].message). All failure
+  markers byte-identical (round-119 fail-loud contract preserved);
+  translate-vision tests 8/8 end-to-end. Gateway 591 pass.
+- **SSE bounded-send dedup (DRY, agent)** — sse_response and
+  sse_term_stream each defined an identical 5s-bounded mpsc send closure
+  (dead-client detection; a full channel means the client is gone).
+  Extracted one module-level `send_bounded(tx, bytes)` used by both
+  streams. Web tests 44/44, full lib 299 pass; clippy clean.
+- Both: code-viewer mirror synced for the gateway change.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
