@@ -991,32 +991,29 @@ async fn api_plugins_status(state: &AppState) -> serde_json::Value {
 /// POST /api/plugins/playwright/start — playwright-mcp process control for
 /// the panel's plugins page.
 async fn api_playwright_start(state: &AppState) -> Result<serde_json::Value, Box<Response>> {
-    match state.playwright.start().await {
+    run_playwright_op(state.playwright.start()).await
+}
+
+/// POST /api/plugins/playwright/stop — playwright-mcp process control for
+/// the panel's plugins page.
+async fn api_playwright_stop(state: &AppState) -> Result<serde_json::Value, Box<Response>> {
+    run_playwright_op(state.playwright.stop()).await
+}
+
+/// Run a playwright manager op: {ok:true, ...payload} on success, a 500
+/// JSON envelope on failure. api_playwright_start/stop used to be two
+/// near-identical copies of this shape.
+async fn run_playwright_op(
+    op: impl std::future::Future<Output = Result<serde_json::Value, impl ToString>>,
+) -> Result<serde_json::Value, Box<Response>> {
+    match op.await {
         Ok(v) => {
-            // {ok:true, ...v} — merge the manager payload at top level
             let mut obj = v.as_object().cloned().unwrap_or_default();
             obj.insert("ok".into(), serde_json::json!(true));
             Ok(serde_json::Value::Object(obj))
         }
         // Dev builds have no bundled node.exe — fail loudly with the
         // path hint instead of pretending the process started.
-        Err(e) => Err(Box::new(built_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "application/json",
-            Body::from(serde_json::json!({ "ok": false, "error": e.to_string() }).to_string()),
-        ))),
-    }
-}
-
-/// POST /api/plugins/playwright/stop — playwright-mcp process control for
-/// the panel's plugins page.
-async fn api_playwright_stop(state: &AppState) -> Result<serde_json::Value, Box<Response>> {
-    match state.playwright.stop().await {
-        Ok(v) => {
-            let mut obj = v.as_object().cloned().unwrap_or_default();
-            obj.insert("ok".into(), serde_json::json!(true));
-            Ok(serde_json::Value::Object(obj))
-        }
         Err(e) => Err(Box::new(built_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "application/json",
