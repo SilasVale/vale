@@ -68,11 +68,18 @@ function check(name, cond, detail) {
 }
 
 // ── 1. terminal: session execute + background collect ──────────────────────
+// + interaction checks: list/resize/write+screen/bad-session/history.
 async function sectionTerminal() {
   const sid = await tool('terminal_open', { kind: 'pty' });
   if (typeof sid !== 'string' && !(sid && sid.sid)) throw new Error('terminal_open bad result');
   const sessionId = typeof sid === 'string' ? sid : sid.sid;
   await sleep(2500); // let the shell boot (first-prompt gate)
+  const ls = await tool('terminal_list', {});
+  const lsArr = Array.isArray(ls) ? ls : (ls && ls.sessions) || [];
+  check('terminal list contains session', lsArr.some((s) => (s && s.id) === sessionId || s === sessionId),
+    'sessions=' + lsArr.length);
+  const rs = await tool('terminal_resize', { session_id: sessionId, rows: 30, cols: 120 });
+  check('terminal resize ok', rs === 'OK', String(rs).slice(0, 20));
   const ex = await tool('terminal_execute', {
     command: 'Write-Output E2E-SESSION-OK',
     session_id: sessionId, timeout_secs: 20,
@@ -89,7 +96,24 @@ async function sectionTerminal() {
   const rd = await tool('terminal_read', { session_id: sessionId });
   const txt = typeof rd === 'string' ? rd : (rd.text || '');
   check('terminal background collect', txt.includes('E2E-BG-DONE'), 'len=' + txt.length);
+  // keystroke path (not execute): write raw text + CRLF, the shell runs it
+  // and terminal_screen (tail view) must show the echo.
+  const wmarker = 'E2E-WRITE-' + Date.now();
+  const wr = await tool('terminal_write', { session_id: sessionId, data: 'Write-Output "' + wmarker + '"\r\n' });
+  check('terminal write ok', wr === 'OK', String(wr).slice(0, 20));
+  await sleep(3000);
+  const sc = await tool('terminal_screen', { session_id: sessionId });
+  const screen = typeof sc === 'string' ? sc : (sc.screen || '');
+  check('terminal screen shows write', screen.includes(wmarker), 'len=' + screen.length);
+  // unknown session must report evicted (not throw, not empty-ok).
+  const bad = await tool('terminal_read', { session_id: 'no-such-session-e2e' });
+  check('terminal read unknown evicted', !!(bad && bad.evicted === true), JSON.stringify(bad).slice(0, 60));
   await tool('terminal_close', { session_id: sessionId }).catch(() => {});
+  // closed sessions stay queryable via history (audit/retain path).
+  const hist = await tool('terminal_history', {});
+  const histArr = Array.isArray(hist) ? hist : [];
+  const hrow = histArr.find((h) => h && h.id === sessionId);
+  check('terminal history retains closed', !!(hrow && hrow.status === 'closed'), hrow ? hrow.status : 'missing');
 }
 
 // ── 2. file: stat + append-up + paged raw read down ────────────────────────
@@ -106,7 +130,22 @@ async function sectionFile() {
   const bytes = Buffer.from(r1.data || '', 'base64');
   check('file single-read download', bytes.length === 300 * 1024 && bytes.every((b) => b === 66),
     'bytes=' + bytes.length);
+  // list must show the uploaded file (same dir the suite writes to).
+  const fl = await tool('system_file_list', { path: 'D:\\Vale\\pwout' });
+  const entries = (fl && fl.entries) || [];
+  check('file list contains upload', entries.some((e) => (e.name || '').includes('e2e_suite_transfer.bin')),
+    'entries=' + entries.length);
+  // missing path is a data-shaped {ok:false}, not a transport error.
+  const miss = await tool('system_file_stat', { path: 'D:\\Vale\\pwout\\e2e_no_such_file_xyz' });
+  check('file stat missing ok:false', !!(miss && miss.ok === false), (miss && miss.error || '').slice(0, 60));
+  // text mode (not just base64 pages): write text, read it back as text.
+  const tpath = 'D:\\Vale\\pwout\\e2e_suite_text.txt';
+  const tw = await tool('system_file_write', { path: tpath, text: 'E2E-TEXT-OK' });
+  check('file text write', !!(tw && tw.ok !== false), '');
+  const tr = await tool('system_file_read', { path: tpath });
+  check('file text read', !!(tr && (tr.text || '').includes('E2E-TEXT-OK')), 'bytes=' + (tr && tr.bytes));
   require('fs').unlinkSync(path);
+  require('fs').unlinkSync(tpath);
 }
 
 // ── 3. workflow: cross-plugin chain ─────────────────────────────────────────
@@ -121,15 +160,34 @@ async function sectionWorkflow() {
   check('workflow file_write', !!(fw && fw.ok !== false), '');
   const st = await tool('system_file_stat', { path: 'D:\\Vale\\pwout\\e2e_wf.json' });
   check('workflow file_stat', st && st.size === Buffer.byteLength(cfg), 'size=' + (st && st.size));
+  const tok = 'toolchain-' + Date.now();
   const ms = await tool('memory_save', {
-    title: 'E2E suite marker', content: 'tool-chain ' + Date.now(), tags: ['e2e', 'suite'],
+    title: 'E2E suite marker', content: tok, tags: ['e2e', 'suite'],
   });
   check('workflow memory_save', !!(ms && ms.ok !== false && ms.id), 'id=' + (ms && ms.id));
   const mq = await tool('memory_search', { query: 'E2E suite marker' });
   check('workflow memory_search', !!(mq && mq.results && mq.results.length > 0), 'hits=' + (mq && mq.results && mq.results.length));
+  // list must enumerate the saved entry (newest-first, no filter).
+  const ml = await tool('memory_list', { limit: 50 });
+  check('workflow memory_list', !!(ml && ml.results && ml.results.some((r) => r && r.id === (ms && ms.id))),
+    'rows=' + (ml && ml.results && ml.results.length));
+  // update the entry, then prove the new token is searchable.
+  const tok2 = 'toolchain-upd-' + Date.now();
+  const mu = await tool('memory_update', { id: ms && ms.id, content: tok2 });
+  check('workflow memory_update', !!(mu && mu.ok !== false), '');
+  const mq2 = await tool('memory_search', { query: tok2 });
+  check('workflow memory_search updated', !!(mq2 && mq2.results && mq2.results.length > 0), 'hits=' + (mq2 && mq2.results && mq2.results.length));
+  // export must include the entry (JSONL backup path).
+  const me = await tool('memory_export', {});
+  check('workflow memory_export', !!(me && me.lines >= 1 && String(me.export || '').includes(ms && ms.id)),
+    'lines=' + (me && me.lines));
   // self-clean: delete the marker so repeated runs don't accumulate entries
   // (device-caught round-294: memory_search hits grew across runs)
   if (ms && ms.id) await tool('memory_delete', { id: ms.id }).catch(() => {});
+  // ... and prove the delete took (search the unique token → zero hits).
+  const mq3 = await tool('memory_search', { query: tok2 });
+  check('workflow memory_delete verified', !!(mq3 && mq3.results && mq3.results.length === 0),
+    'hits=' + (mq3 && mq3.results && mq3.results.length));
   require('fs').unlinkSync('D:\\Vale\\pwout\\e2e_wf.json');
 }
 
@@ -377,6 +435,19 @@ async function sectionEvidence() {
 }
 
 async function sectionBrowser() {
+  // pwinfo: the bundled-runtime discovery every AI client starts from.
+  const pi = await tool('browser_pw_info', {});
+  check('browser pwinfo bundled', !!(pi && pi.pw_dir && pi.playwright_core_version),
+    'core=' + (pi && pi.playwright_core_version));
+  // fail path: a throwing script must report exit_code != 0 (bounded runner
+  // surfaces the error instead of hanging until timeout).
+  const fail = await tool('browser_run_script', {
+    script: "(async () => { console.log('E2E-FAIL-PATH'); throw new Error('e2e-intentional'); })().catch(e => { console.log('FAIL:' + e.message); process.exit(1); });",
+    timeout_secs: 60,
+  });
+  const fout = (fail && fail.stdout || '') + (fail && fail.stderr || '');
+  check('browser_run_script fail path', !!(fail && fail.exit_code !== 0 && fout.includes('FAIL:e2e-intentional')),
+    'exit=' + (fail && fail.exit_code));
   const script = [
     "const { chromium } = require('" + PW_DIR.replace(/\\/g, '/') + "/node_modules/playwright');",
     "(async () => {",
