@@ -3156,6 +3156,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   cohesive single-responsibility; no new extraction. Full-repo
   function census (agent 17 + gateway 7 entries) now on record.
 
+### 2026-09-08 SOLID round 75 (full-suite gate incl. integration tests)
+- **Verification round (no code changes)** — the extraction-burst
+  rounds (68-72) were only ever verified at --lib; per the round-282
+  lesson (lib-only tallies mask integration failures) this round ran
+  the COMPLETE `cargo test -p vale-agent`: 355 passed total — lib
+  312 + main 5 + tests/integration.rs 27 + mcp_autoselect 1 +
+  mcp_client 2 + mcp_integration 7 + stdio integration (env-gated) —
+  zero failures. Also tallied the burst: 25 commits since the round-74
+  anchor, 8 code commits (find_backend, execute_local, flatten_result
+  + tests, parse_screenshot_ref + pins, wait_healthy, oxAlphaReasoning
+  Default, unknown_id_error, poll_chunk tests). Full-suite 355 is the
+  new completeness number alongside lib 312 / feature 320.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
