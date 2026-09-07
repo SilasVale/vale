@@ -1828,6 +1828,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   had ZERO pins. Added 1 in gateway.test.mjs (500 text body → status +
   default message kept). Clean round. Suite 555->556; gates clean;
   snapshot updated; pushed.
+  ROUND-512 (2026-09-06): REAL FIND — the passthrough !ok arm had no 429
+  default: non-JSON 429 → api_error (give up) instead of rate_limit_error
+  (back off). One-line parity fix. Self-caught×2 (translate branch, fast-
+  500 no-retry). Proven by stash-revert (101/102 without, 102/102 with).
+  Mirror resynced. Suite 556->557; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
