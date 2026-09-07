@@ -3169,6 +3169,23 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   Default, unknown_id_error, poll_chunk tests). Full-suite 355 is the
   new completeness number alongside lib 312 / feature 320.
 
+### 2026-09-08 SOLID round 76 (tail_append extraction + cap-semantics pins)
+- **tail_append (SRP + coverage, agent exec.rs)** — round-75's
+  integration inventory showed the local-execute capture loop's
+  nested append_chunk closure (1 MB tail-cap semantics from round-55
+  BOUNDED capture: keep-newest-half pre-drain on overflow + post-trim
+  to cap, truncated flag) was pure logic with ZERO direct tests. Four
+  call sites (live receive path + final drains) existed under one
+  closure. Extracted module-level `tail_append(captured, truncated,
+  chunk, max)` with max parameterized for tests; 3 unit tests pin the
+  semantics (within-cap keep-all; oversized-chunk newest-half
+  retention; accumulated-overflow drain-to-half-then-append = 80 of
+  100 after 5×30 — two self-caught wrong expectations precisely
+  documented the intended behavior). 315 lib (+3) / 323 feature; fmt
+  + clippy clean. NOTE: first attempt failed on my own grep truncation
+  (4 real call sites, head -3 showed 2) — regex + exact count assert
+  fixed it.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
