@@ -2172,6 +2172,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   http passes "server exposes browser_tabs", stdio always true. mcp_client
   21/21, feature-gated lib 307 pass; clippy clean.
 
+### 2026-09-08 SOLID round 7 (store locked-read + session-file traversal dedup)
+- **Locked fresh-read single-sourced (DRY, gateway store/plugins.ts)** —
+  all five mutating plugin-map paths (expiry sweep, remove, migrate,
+  revoke-for-device) hand-rolled the same withKeyLock + fresh-KV-read +
+  parse prologue. Extracted `readFreshPluginLinks(env)` returning null on a
+  corrupt blob — callers abort WITHOUT writing (null-as-{} would delete
+  every link). This aligns plugins.ts with devices.ts's earlier
+  readDevicesRaw precedent (devices intentionally resets to [] on corrupt:
+  array whole-file writes vs map incremental edits). Read-only
+  listPluginLinks keeps its cache-tolerant {} fallback. Gateway 592 pass.
+- **Session-file traversal dedup (DRY, agent session_log.rs)** —
+  list_sessions and recover_interrupted each copy-pasted the read_dir +
+  .jsonl filter + stem-extraction loop → shared `session_ids()`. prune_stale
+  keeps its own loop (it also matches .jsonl.tmp litter and needs metadata,
+  not sids). cargo fmt; lib 299 pass; clippy clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
