@@ -1807,6 +1807,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   had ZERO pins. Added 1 in gateway.test.mjs (chat path, upstream sees
   system). Clean round. Suite 550->551; gates clean; snapshot updated;
   pushed.
+  ROUND-507 (2026-09-06): any audit — the tool_choice:"any" web_search
+  variant had ZERO pins. Added 1 in gateway.test.mjs (explicit any-choice
+  forces deepseek-v4-flash). Also verified the og-native passthrough
+  guards are unreachable (OG_NATIVE_ANTHROPIC empty). Suite 551->552;
+  gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
