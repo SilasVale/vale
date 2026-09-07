@@ -1,15 +1,17 @@
 // zen-us-proxy — Cloudflare Worker US egress proxy → opencode zen
 //
-// Same mechanism as openrouter-proxy: bind D1 (us-proxy-db) to force compute
-// nodes out of Asia, egress from US/Europe edges to opencode.ai/zen/go — so
-// zen sees a US origin, routes to uncongested instances, and stabilizes
-// og/deepseek-v4-flash latency.
+// Geo-pin mechanism: bind a US-primary D1 (zen-us-db-wnam — never queried)
+// + explicit placement region (aws:us-east-1) so egress to opencode.ai/
+// zen/go leaves from Meta-permitted US edges — zen sees a US origin,
+// routes to uncongested instances, and clears the muse-spark RegionError.
+// (The old smart placement parked the worker in AMS and zen 403'd; the
+// earlier EU-primary us-proxy-db did the same from EU edges.)
 //
-// ⚠️ DO NOT REMOVE the D1 binding (wrangler.jsonc `d1_databases`): it is an
-// intentional geo-hack, not a data dependency — this worker never queries
-// the DB. Binding a D1 database pins execution to regions that host D1
-// (US/Europe), keeping egress out of Asia. Unbinding silently re-routes
-// through Asian edges and the latency wins disappear. See proxies/README.md.
+// ⚠️ DO NOT REMOVE the D1 binding (wrangler.jsonc `d1_databases`) or weaken
+// the placement: it is an intentional geo-pin, not a data dependency — this
+// worker never queries the DB. Unbinding/reverting silently re-routes
+// through EU/Asian edges and the RegionError + latency wins disappear. See
+// proxies/README.md.
 //
 // Endpoints:
 //   - POST /v1/messages   — native Anthropic passthrough (deepseek-v4-flash),

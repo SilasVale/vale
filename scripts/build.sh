@@ -6,7 +6,7 @@
 #   ./scripts/build.sh command [debug] # legacy alias for `agent`
 #   ./scripts/build.sh gateway         # deploy the Vale Gate worker
 #   ./scripts/build.sh index           # deploy the Vale Index worker
-#   ./scripts/build.sh proxies         # deploy the satellite proxy workers (zen-go / zen-us / openrouter)
+#   ./scripts/build.sh proxies         # deploy the satellite proxy workers (zen-go / zen-us)
 #   ./scripts/build.sh vercel-proxy    # deploy the Vercel exit proxy (v.saisi.online, needs vercel CLI)
 #   ./scripts/build.sh deploy          # build agent + deploy gateway/index
 #

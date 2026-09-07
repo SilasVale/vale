@@ -47,7 +47,7 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 | `index/` | **Vale Index** | Cloudflare Worker | download distribution (`vale-dist`; hosts the npm tgz, see Quick start) |
 | `extension/` | **Vale Studio Links** | Chrome/Edge (MV3) | rewrites DSH panel file paths into Vale Studio deep links (unpacked; no build) |
 | ~~`studio/`~~ | RETIRED 2026-09-06 | — | replaced by code-server (vscode.saisi.online, behind Access); see docs/adr/0006 |
-| `proxies/` | **Satellite proxies** | Cloudflare Worker + Vercel (satellite) | zen-go / zen-us / openrouter AI egress + vercel-proxy (`./scripts/build.sh proxies|vercel-proxy`) |
+| `proxies/` | **Satellite proxies** | Cloudflare Worker + Vercel (satellite) | zen-go / zen-us AI egress + vercel-proxy (`./scripts/build.sh proxies|vercel-proxy`) |
 | `brand/` | **Brand assets** | static (satellite) | sunrise favicon / icon source (no build) |
 | `scripts/` | build/release | shell | unified build/publish entry (`build.sh`, `publish-release.sh`) |
 | `docs/` | docs | — | ADRs (`docs/adr/`) + agent contracts (`docs/agents/`) + research/superpowers (incl. `specs/`) |
@@ -60,7 +60,7 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 
 # Deploy the workers (needs a Cloudflare API token)
 ./scripts/build.sh gateway|index     # wrangler deploy the worker
-./scripts/build.sh proxies           # deploy satellite proxy workers (zen-go / zen-us / openrouter)
+./scripts/build.sh proxies           # deploy satellite proxy workers (zen-go / zen-us)
 ./scripts/build.sh vercel-proxy      # deploy the Vercel exit proxy (v.saisi.online; needs vercel CLI)
 ./scripts/build.sh deploy            # build agent + deploy gateway/index + 3 CF proxies (not vercel-proxy)
 
