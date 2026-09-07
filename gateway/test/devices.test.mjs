@@ -549,6 +549,22 @@ test("register: existing device name refuses with 409 (round-68 anti-takeover)",
   assert.equal(devs.find((d) => d.name === "d1").token, T64("c"), "production record untouched");
 });
 
+// round-530 (coverage-driven): the proxySecret-probe catch had ZERO pins —
+// a dead device at register time must still register (probe is best-effort).
+test("register: unreachable device still registers without proxySecret", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  await env.KEYS.put("regkey:kkprobe", "1");
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  try {
+    const res = await regPost(env, "/api/register", { key: "kkprobe", name: "d10", hostname: "d10.agent.saisi.online", token: T64("e") });
+    assert.equal(res.status, 200);
+    const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+    assert.equal(devs.find((d) => d.name === "d10")?.proxySecret, undefined, "no secret harvested, registration intact");
+  } finally { globalThis.fetch = real; }
+});
+
 // round-526 (coverage-driven): the post-claim key recheck had ZERO pins — a
 // key consumed by a concurrent request between check and claim must 403.
 test("register: key vanishing after claim 403s (single-flight recheck)", async () => {
