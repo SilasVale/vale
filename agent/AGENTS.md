@@ -1971,6 +1971,11 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   end-to-end with a real deploy (Version dd093b0e): gate ran inside the
   flow, "39 files, 0 drifted" — the 540 comment is now live and the
   known drift is cleared. Mirror re-sync byte-identical no-op. Pushed.
+  ROUND-543 (2026-09-07): post-deploy live chain — parity probe still 0
+  drift (39/39, manifest is 100% vale-gate group, no coverage gap);
+  /api/plugins/status 401, /api/devices 401, removed /api/plugins/pair
+  still 404, /mcp 401 with proper JSON-RPC error. Deployed world fully
+  consistent with repo. No code changes — verification round.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
