@@ -222,6 +222,22 @@ test("install-cmd: upstream failure → null version fallback (UI falls back to 
   } finally { globalThis.fetch = real; undo(); }
 });
 
+// round-529 (coverage-driven): the fetch-THROW arm had ZERO pins (only the
+// non-ok-response fallback was covered) — a dead upstream must still 200.
+test("install-cmd: upstream throw → null version fallback (no 500)", async () => {
+  const env = makeEnv([D1]);
+  // 40 min: strictly beyond the previous tests' cache stamps + TTL.
+  const undo = travelMs(40 * 60 * 1000);
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  try {
+    const res = await worker.fetch(req("GET", "/api/devices/install-cmd", { cookie: await adminCookie() }), env);
+    assert.equal(res.status, 200);
+    const j = await res.json();
+    assert.deepEqual([j.ok, j.version, j.download], [true, null, null]);
+  } finally { globalThis.fetch = real; undo(); }
+});
+
 test("install-cmd: 401 unauth", async () => {
   const env = makeEnv([D1]);
   const res = await worker.fetch(req("GET", "/api/devices/install-cmd"), env);
