@@ -80,6 +80,26 @@ impl Default for MemoryLimits {
 
 /// In-memory store over the JSONL file. All mutations go through the Mutex;
 /// file appends are best-effort (a disk failure must not break queries).
+/// Namespace filter shared by the search/list/export scan loops (they
+/// used to each inline the same if-let pair).
+fn ns_matches(rec: &MemoryRecord, namespace: Option<&str>) -> bool {
+    match namespace {
+        None => true,
+        Some(ns) => rec.namespace == ns,
+    }
+}
+
+/// Mark a record soft-deleted and enqueue its tombstone JSONL line —
+/// shared by the eviction and retention paths (same write used to be
+/// inlined at both sites).
+fn tombstone(rec: &mut MemoryRecord, persist: &mut Vec<String>) {
+    rec.deleted = true;
+    rec.updated_at = crate::unix_now();
+    if let Ok(line) = serde_json::to_string(&*rec) {
+        persist.push(line);
+    }
+}
+
 pub struct MemoryStore {
     dir: PathBuf,
     /// Live capacity limits — RwLock (not part of the inner Mutex) so the
@@ -510,10 +530,8 @@ impl MemoryStore {
             if rec.deleted {
                 continue;
             }
-            if let Some(ns) = namespace {
-                if rec.namespace != ns {
-                    continue;
-                }
+            if !ns_matches(rec, namespace) {
+                continue;
             }
             let hay = format!(
                 "{} {} {}",
@@ -550,10 +568,8 @@ impl MemoryStore {
             if !include_deleted && rec.deleted {
                 continue;
             }
-            if let Some(ns) = namespace {
-                if rec.namespace != ns {
-                    continue;
-                }
+            if !ns_matches(rec, namespace) {
+                continue;
             }
             if let Some(tk) = &tag_key {
                 if !rec.tags.iter().any(|t| t.to_lowercase() == *tk) {
@@ -577,10 +593,8 @@ impl MemoryStore {
         let mut out = String::new();
         for id in &guard.order {
             let rec = &guard.by_id[id];
-            if let Some(ns) = namespace {
-                if rec.namespace != ns {
-                    continue;
-                }
+            if !ns_matches(rec, namespace) {
+                continue;
             }
             if let Ok(line) = serde_json::to_string(rec) {
                 out.push_str(&line);
@@ -638,11 +652,7 @@ impl MemoryStore {
             .map(|r| r.content.len())
             .unwrap_or(0);
         if let Some(rec) = guard.by_id.get_mut(&victim) {
-            rec.deleted = true;
-            rec.updated_at = crate::unix_now();
-            if let Ok(line) = serde_json::to_string(&*rec) {
-                persist.push(line);
-            }
+            tombstone(rec, persist);
         }
         guard.dirty = true;
         Some(content_len)
@@ -686,11 +696,7 @@ impl MemoryStore {
                 .collect();
             for id in ids {
                 if let Some(rec) = guard.by_id.get_mut(&id) {
-                    rec.deleted = true;
-                    rec.updated_at = crate::unix_now();
-                    if let Ok(line) = serde_json::to_string(&*rec) {
-                        persist.push(line);
-                    }
+                    tombstone(rec, &mut persist);
                 }
                 guard.dirty = true;
             }
