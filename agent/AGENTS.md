@@ -3092,6 +3092,24 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   Self-caught: first test append silently failed (python \U escape in
   a non-raw heredoc string) — raw-string retry fixed.
 
+### 2026-09-08 SOLID round 71 (agent big-function census)
+- **Verification round (no code changes)** — census of every agent
+  fn ≥150 lines (17 entries) with per-entry judgment. Deferred
+  candidates (single-responsibility pipelines, kept): tool_execute
+  (session-mode linear pipeline — poll/scan reads already extracted
+  round-55/68), tool_open (drainer extraction deferred round-70),
+  pty spawn (pty-creation pipeline), ssh connect, serial open,
+  sftp_handler, playwright manager start, provision_tunnel,
+  run_server (service assembly), self_heal (win service),
+  update_from_tgz/agent_update (update transaction — tgz step already
+  extracted), term_open (manager method). CLEAN finds: web/mod.rs
+  handle_request is pure dispatch (each api_* already its own fn),
+  connections.rs store (remember/list/forget + tests, small), memory/
+  files/output domains (round-57). mcp_client_call down to 177 from
+  ~240 (flatten + parse extractions rounds 69-70). Next candidates
+  when a round needs one: playwright manager start or pty spawn
+  sub-block review.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
