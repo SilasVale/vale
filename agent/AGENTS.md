@@ -2008,6 +2008,16 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   allow-origin reflected: the CORS fix is live. CORRECTION OWED: never
   verdict drift without an allowlisted probe. Deploy stands as a fresh
   push + verified smoke; no repo changes.
+  ROUND-549 (2026-09-07): RETIRED openrouter-proxy — zero callers
+  (off-path since 2026-08-22), workers.dev URL TLS-dead (verified 2x),
+  yet still deployed/tested/maintained (even got loopback gates in the
+  Sep 7 commit). Remote worker deleted (zero secrets held) + repo
+  removal: worker dir (-315 lines), build.sh + ci.yml wiring, README,
+  upstream.ts comment, ARCHITECTURE (proxies ×2, 19 tests), dead sync-
+  script mirror block. Gates: tsc/eslint/prettier + gateway 580 +
+  proxies 12+7 green; parity shows exactly the expected 1 drift
+  (upstream.ts comment rides next deploy). -348/+16. Pushed. NEXT: new
+  goal objective pivots to agent-module testing.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
