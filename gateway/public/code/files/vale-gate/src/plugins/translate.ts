@@ -663,30 +663,33 @@ async function handleGatewayImpl(
   // without Anthropic↔OpenAI translation. Enables DSH and other OpenAI-native
   // clients to use og/ models without format conversion.
   if (isChatCompletions) {
-    if (route.kind === "nvidia" && !nvKey) {
-      return keyMissingError("nvidia") as Response;
-    }
-    if (route.kind === "gmi" && !gmiKey) {
-      return keyMissingError("gmi") as Response;
-    }
-    if (route.kind === "amd" && !amdKey) {
-      return keyMissingError("amd") as Response;
-    }
-    if (route.kind === "opencode" && !opencodeGoKey) {
-      return keyMissingError("opencode") as Response;
+    // Key-existence guards for the chat/completions flow — one per provider
+    // kind the endpoint serves. Table-driven: identical shape, order matters
+    // only relative to the degraded-channel probe below.
+    const chatKeys: [string, string | null][] = [
+      ["nvidia", nvKey],
+      ["gmi", gmiKey],
+      ["amd", amdKey],
+      ["opencode", opencodeGoKey],
+    ];
+    for (const [kind, key] of chatKeys) {
+      if (route.kind === kind && !key) {
+        return keyMissingError(kind) as Response;
+      }
     }
     {
       const dg = await channelDegradedError(env, route.kind);
       if (dg) return dg;
     }
-    if (route.kind === "deepseek" && !deepseekKey) {
-      return keyMissingError("deepseek") as Response;
-    }
-    if (route.kind === "openrouter" && !openRouterKey) {
-      return keyMissingError("openrouter") as Response;
-    }
-    if (route.kind === "qwen" && !qwenKey) {
-      return keyMissingError("qwen") as Response;
+    const chatKeysAfterProbe: [string, string | null][] = [
+      ["deepseek", deepseekKey],
+      ["openrouter", openRouterKey],
+      ["qwen", qwenKey],
+    ];
+    for (const [kind, key] of chatKeysAfterProbe) {
+      if (route.kind === kind && !key) {
+        return keyMissingError(kind) as Response;
+      }
     }
     // The OpenAI format must hit OpenRouter's chat/completions endpoint — the route.upstream
     // picked by the messages flow is /v1/messages; reusing it directly would stuff an OpenAI body
