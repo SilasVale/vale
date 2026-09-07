@@ -618,14 +618,7 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
         "stdout_tail": "",
         "stderr_tail": "",
     });
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(pwout.join("actions.jsonl"))
-    {
-        let _ = writeln!(f, "{line}");
-    }
+    append_action_line(&line);
     // round-252: event-driven AI-actions feed — panels refresh on this push
     // instead of polling actions.jsonl.
     notify_actions_changed();
@@ -639,6 +632,21 @@ static ACTIONS_BUS: std::sync::OnceLock<std::sync::Arc<dyn vale_agent_core::Even
 
 pub(crate) fn set_actions_bus(bus: std::sync::Arc<dyn vale_agent_core::EventBus>) {
     let _ = ACTIONS_BUS.set(bus);
+}
+
+/// Append one line to pwout/actions.jsonl (create/append) — the Evidence
+/// drawer's action feed. record_mcp_action and record_mcp_screenshot used
+/// to each inline this open/write pair.
+fn append_action_line(line: &impl std::fmt::Display) {
+    use std::io::Write;
+    let pwout = crate::paths::install_dir().join("pwout");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(pwout.join("actions.jsonl"))
+    {
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 fn notify_actions_changed() {
@@ -669,15 +677,7 @@ fn record_mcp_screenshot(dst: &std::path::Path) {
         "stdout_tail": "",
         "stderr_tail": "",
     });
-    use std::io::Write;
-    let pwout = crate::paths::install_dir().join("pwout");
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(pwout.join("actions.jsonl"))
-    {
-        let _ = writeln!(f, "{line}");
-    }
+    append_action_line(&line);
     // round-252: event-driven actions feed (screenshots refresh the drawer).
     notify_actions_changed();
 }
