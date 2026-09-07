@@ -276,6 +276,16 @@ async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
  * passthrough arm historically did not record body failures (kept
  * exact — see the arm's channelDegradedError up-front check).
  */
+/// or/stealth/ox-alpha requests default reasoning.effort=max when the
+/// client sent no top-level reasoning. Applied by BOTH the /v1/messages
+/// and the chat/completions flows — used to be inlined at both sites.
+function oxAlphaReasoningDefault(routeKind: string, upstreamModel: string, body: string): string {
+  if (routeKind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
+    return rawWithOxAlphaReasoningDefault(body);
+  }
+  return body;
+}
+
 async function relayUpstreamResult(
   env: any,
   request: Request,
@@ -760,9 +770,7 @@ async function handleGatewayImpl(
     }
     // or/stealth/ox-alpha: default reasoning.effort=max only when the client
     // sent no top-level reasoning (see the /v1/messages site).
-    if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
-      forwardBody = rawWithOxAlphaReasoningDefault(forwardBody);
-    }
+    forwardBody = oxAlphaReasoningDefault(route.kind, upstreamModel, forwardBody);
     const {
       response: upstream,
       detail,
@@ -1023,9 +1031,7 @@ async function handleGatewayImpl(
     // the unified `reasoning` param on both /v1/messages and chat/completions.
     // 2026-08-22: respect a client-sent top-level reasoning as-is; only
     // default to effort=max when the request carries none.
-    if (route.kind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
-      forwardBody = rawWithOxAlphaReasoningDefault(forwardBody);
-    }
+    forwardBody = oxAlphaReasoningDefault(route.kind, upstreamModel, forwardBody);
     const {
       response: upstream,
       detail,
