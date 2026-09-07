@@ -1981,3 +1981,16 @@ test("og ox-alpha-free without client reasoning gets effort=max upstream", async
   assert.equal(res.status, 200);
   assert.deepEqual(sent.reasoning, { effort: "max" });
 });
+
+// round-511 (coverage-driven): the chat-path non-JSON error arm had ZERO
+// pins (the amd 429 test covers the JSON envelope variant).
+test("og chat/completions: upstream 500 with a text body keeps status + default message", async () => {
+  const { env, token } = gwEnv({ timeout: 1000 });
+  const res = await withFetch(async () => new Response("boom", { status: 500 }), () =>
+    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions"),
+  );
+  assert.equal(res.status, 500);
+  const body = await res.json();
+  assert.equal(body.error.message, "Upstream 500");
+  assert.equal(body.error.type, "api_error");
+});
