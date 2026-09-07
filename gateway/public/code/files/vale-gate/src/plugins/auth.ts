@@ -406,6 +406,40 @@ async function meTestKeys(request: Request, env: any): Promise<Response> {
   return testKey(env, name, ukeys[name]);
 }
 
+/**
+ * Shared usage-query skeleton: GET the provider's usage endpoint with the
+ * user's key, map its payload onto the generic usage shape, and return the
+ * standard envelope — {ok:false, status, detail} on upstream errors,
+ * {ok:false, detail:"Usage query failed"} on network throws. meKeyUsage's
+ * three provider branches used to each inline this fetch/error/parse shape;
+ * only the URL + payload mapping differ per provider.
+ */
+async function usageQuery(
+  url: string,
+  key: string,
+  name: string,
+  map: (payload: any) => Record<string, unknown>,
+): Promise<Response> {
+  try {
+    const res = await fetchWithTimeout(url, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (!res.ok)
+      return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
+    const payload: any = await res.json();
+    return jsonOk({ ok: true, name, status: res.status, ...map(payload) });
+  } catch (e: any) {
+    // A mapper may throw a {detail} error to surface a SPECIFIC upstream
+    // shape problem (e.g. openrouter's missing data object); anything else
+    // is a network/parse failure.
+    return jsonOk({
+      ok: false,
+      name,
+      detail: typeof e?.detail === "string" ? e.detail : "Usage query failed",
+    });
+  }
+}
+
 async function meKeyUsage(request: Request, env: any): Promise<Response> {
   const r = await sessionAndKeyName(request, env, [
     "OPENROUTER_API_KEY",
@@ -419,17 +453,12 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
 
   if (name === "OPENROUTER_API_KEY") {
-    try {
-      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/auth/key", {
-        headers: { Authorization: `Bearer ${key}` },
-      });
-      if (!res.ok)
-        return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
-      const payload = await res.json();
-      const data = (payload as any)?.data;
-      if (!data || typeof data !== "object")
-        return jsonOk({ ok: false, name, status: res.status, detail: "Invalid upstream response" });
-      const out: any = { ok: true, name, status: res.status };
+    return usageQuery("https://openrouter.ai/api/v1/auth/key", key, name, (payload) => {
+      const data = payload?.data;
+      if (!data || typeof data !== "object") {
+        throw Object.assign(new Error("invalid upstream"), { detail: "Invalid upstream response" });
+      }
+      const out: Record<string, unknown> = {};
       for (const field of ["label", "usage", "limit"]) {
         if (
           field in data &&
@@ -441,17 +470,15 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
       }
       if (typeof data.is_free_tier === "boolean") out.isFreeTier = data.is_free_tier;
       if (data.rate_limit && typeof data.rate_limit === "object") {
-        const rateLimit: any = {};
+        const rateLimit: Record<string, unknown> = {};
         if (typeof data.rate_limit.limit === "number") rateLimit.limit = data.rate_limit.limit;
         if (typeof data.rate_limit.interval === "string")
           rateLimit.interval = data.rate_limit.interval;
         if (typeof data.rate_limit.reset === "string") rateLimit.reset = data.rate_limit.reset;
         if (Object.keys(rateLimit).length) out.rateLimit = rateLimit;
       }
-      return jsonOk(out);
-    } catch {
-      return jsonOk({ ok: false, name, detail: "Usage query failed" });
-    }
+      return out;
+    });
   }
 
   if (name === "AMD_API_KEY") {
@@ -460,21 +487,15 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
     // {rpm_limit, daily_cost_limit_usd, daily_cost_used_usd, daily_reset_at,
     //  all_time:{requests,total_tokens,cost}, by_model:[…]}. Mapped onto the
     // generic usage shape the console already renders (USD numbers).
-    try {
-      const res = await fetchWithTimeout("https://developer.amd.com.cn/radeon/api/v1/usage", {
-        headers: { Authorization: `Bearer ${key}` },
-      });
-      if (!res.ok)
-        return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
-      const payload: any = await res.json();
-      const out: any = { ok: true, name, status: res.status };
+    return usageQuery("https://developer.amd.com.cn/radeon/api/v1/usage", key, name, (payload) => {
+      const out: Record<string, unknown> = {};
       if (typeof payload?.daily_cost_used_usd === "number") out.usage = payload.daily_cost_used_usd;
       out.limit =
         typeof payload?.daily_cost_limit_usd === "number" ? payload.daily_cost_limit_usd : null;
       if (typeof payload?.rpm_limit === "number") {
-        out.rateLimit = { limit: payload.rpm_limit, interval: "minute" };
-        if (typeof payload.daily_reset_at === "string")
-          out.rateLimit.reset = payload.daily_reset_at;
+        const rateLimit: Record<string, unknown> = { limit: payload.rpm_limit, interval: "minute" };
+        if (typeof payload.daily_reset_at === "string") rateLimit.reset = payload.daily_reset_at;
+        out.rateLimit = rateLimit;
       }
       const all = payload?.all_time;
       if (all && typeof all === "object") {
@@ -484,25 +505,15 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
         const tokens = typeof all.total_tokens === "number" ? all.total_tokens : 0;
         out.label = `${payload.organization_id || "radeon"} · ${requests} req · ${tokens} tok`;
       }
-      return jsonOk(out);
-    } catch {
-      return jsonOk({ ok: false, name, detail: "Usage query failed" });
-    }
+      return out;
+    });
   }
 
   if (name === "OPENCODE_GO_API_KEY") {
     // OpenCode Go subscription usage endpoint (undocumented, discovered via
     // farion1231/cc-switch#6433). Returns three rolling quota windows.
-    try {
-      const res = await fetchWithTimeout("https://opencode.ai/zen/go/v1/usage", {
-        headers: { Authorization: `Bearer ${key}` },
-      });
-      if (!res.ok)
-        return jsonOk({ ok: false, name, status: res.status, detail: `Upstream ${res.status}` });
-      const payload: any = await res.json();
-      // Expected shape: { used, limit, balance, plan, windows: { "5h": {...}, weekly: {...}, monthly: {...} } }
-      // Surface whatever the API returns, adapting to known shapes.
-      const out: any = { ok: true, name, status: res.status };
+    return usageQuery("https://opencode.ai/zen/go/v1/usage", key, name, (payload) => {
+      const out: Record<string, unknown> = {};
       if (payload && typeof payload === "object") {
         // Single-window flat shape: { used, limit, balance, plan }
         if (typeof payload.used === "number") out.usage = payload.used;
@@ -512,10 +523,10 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
         if (typeof payload.plan === "string") out.label = payload.plan;
         // Multi-window shape: { windows: { "5h": {...}, weekly: {...}, monthly: {...} } }
         if (payload.windows && typeof payload.windows === "object") {
-          out.windows = {};
+          const windows: Record<string, unknown> = {};
           for (const [wk, wv] of Object.entries(payload.windows) as [string, any][]) {
             if (wv && typeof wv === "object") {
-              out.windows[wk] = {
+              windows[wk] = {
                 ...(typeof wv.used === "number" ? { used: wv.used } : {}),
                 ...(typeof wv.limit === "number" || wv.limit === null ? { limit: wv.limit } : {}),
                 ...(typeof wv.remaining === "number" ? { remaining: wv.remaining } : {}),
@@ -525,12 +536,11 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
               };
             }
           }
+          out.windows = windows;
         }
       }
-      return jsonOk(out);
-    } catch {
-      return jsonOk({ ok: false, name, detail: "Usage query failed" });
-    }
+      return out;
+    });
   }
 
   return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
