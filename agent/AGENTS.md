@@ -2490,6 +2490,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   &str/query in. Router now ~290 lines. Web tests 44/44 (evidence
   endpoints covered), lib 299 pass; clippy/fmt clean.
 
+### 2026-09-08 SOLID round 29 (handle_panel_home SRP extraction)
+- **handle_panel_home (SRP, agent web/mod.rs)** — the panel/desktop
+  root branch (~94 lines: config snapshot + the gateway proxy-secret /
+  loopback / one-time ?grant= token-injection decision chain) was the
+  router's largest remaining inline block. Extracted
+  `handle_panel_home(state, path, query, host, auth_header)` — header
+  and query values are extracted at the call site (synchronous, owned)
+  so no &Request borrow crosses the redeem_panel_grant await (Send-
+  future requirement, same lesson as round-28). Router now ~223 lines
+  (376 two rounds ago). Web tests 44/44 (panel token-injection tests
+  cover the moved logic), lib 299 pass; clippy/fmt clean. Tooling note:
+  a two-step python edit partially failed silently twice (asserts under
+  a swallowed stderr) — verified with grep before each retry; the
+  final single-shot script applied cleanly.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
