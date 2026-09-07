@@ -2606,6 +2606,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   Overview.tsx); (4) panel product chain re-verified fresh (src last
   touched round-1, panel.js rebuilt round-3, no drift since).
 
+### 2026-09-08 SOLID round 38 (dup scanner codified as tooling)
+- **scripts/scan-dups.py committed (tooling)** — the window-hash
+  duplication scan methodology used across rounds 23-36 (code-only
+  lines with comments/blanks stripped, Rust #[cfg(test)] block
+  stripping, intra-file ranking + optional cross-file mode, configurable
+  window/min-sites/roots) existed only as ad-hoc inline python each
+  round. Codified as one reusable command for future rounds and
+  reviews. Verified: identical verdicts to the round-32/36 manual
+  scans (secrets.rs DPAPI mirror, memory tool-registration idiom,
+  mcp-tools schemas, translate key-guard chains — all previously
+  classified kinds). Remaining translate.ts fetch-segment similarity
+  re-checked: og's zen headers + stream:false vs passthrough's generic
+  headers are real protocol differences — keep stands.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
