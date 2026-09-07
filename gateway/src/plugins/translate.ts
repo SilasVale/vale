@@ -104,13 +104,7 @@ async function openAIUpstreamToAnthropicResponse(
           );
         }
         const oneShot = toSSE(toAnthropicResponse(json, upstreamModel));
-        return new Response(oneShot, {
-          headers: {
-            "Content-Type": "text/event-stream; charset=utf-8",
-            "Cache-Control": "no-cache",
-            ...CORS_HEADERS,
-          },
-        });
+        return sseResponse(oneShot);
       }
       // Parse failed AND the body was consumed — a fall-through to the SSE
       // translator would read an empty stream and fabricate an empty message.
@@ -121,13 +115,7 @@ async function openAIUpstreamToAnthropicResponse(
       clientModel,
       upstreamModel,
     );
-    return new Response(streamBody, {
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache",
-        ...CORS_HEADERS,
-      },
-    });
+    return sseResponse(streamBody);
   }
   const upJson: any = await upstream.json().catch(() => null);
   // A 200-wrapped OpenAI error envelope must not become an empty assistant
@@ -149,6 +137,18 @@ async function openAIUpstreamToAnthropicResponse(
 // Exported (coverage audit row 3) so the regex is unit-tested.
 export function scrubKeys(msg: string): string {
   return String(msg || "").replace(/\b(?:sk|rc|sc|or|xox[baprs])-[A-Za-z0-9_-]{8,}/g, "***");
+}
+
+/** SSE passthrough response — the one-shot and streaming relay sites used to
+ *  build the same text/event-stream + no-cache + CORS header set twice. */
+function sseResponse(body: BodyInit | null): Response {
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache",
+      ...CORS_HEADERS,
+    },
+  });
 }
 
 // One place owns "which route kind needs which BYOK key + what the missing-
