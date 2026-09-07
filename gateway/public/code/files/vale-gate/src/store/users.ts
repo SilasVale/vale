@@ -218,18 +218,31 @@ export async function getUserKeys(env: Env, id: string): Promise<Record<string, 
   return ukeys;
 }
 
+/// Locked read-modify-write of a user's key map: load under the per-user
+/// key lock, apply `mutate`, persist to KV and refresh the cache. setUserKey
+/// and deleteUserKey used to each inline this skeleton.
+async function updateUserKeys(
+  env: Env,
+  id: string,
+  mutate: (ukeys: Record<string, any>) => void,
+): Promise<Record<string, any>> {
+  return withKeyLock(`ukeys:${id}`, async () => {
+    const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
+    mutate(ukeys);
+    await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
+    cset(`ukeys:${id}`, ukeys);
+    return ukeys;
+  });
+}
+
 export async function setUserKey(
   env: Env,
   id: string,
   name: string,
   value: string,
 ): Promise<Record<string, any>> {
-  return withKeyLock(`ukeys:${id}`, async () => {
-    const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
+  return updateUserKeys(env, id, (ukeys) => {
     ukeys[name] = String(value).trim();
-    await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
-    cset(`ukeys:${id}`, ukeys);
-    return ukeys;
   });
 }
 
@@ -238,12 +251,8 @@ export async function deleteUserKey(
   id: string,
   name: string,
 ): Promise<Record<string, any>> {
-  return withKeyLock(`ukeys:${id}`, async () => {
-    const ukeys = (await getJSON(env, `ukeys:${id}`)) || {};
+  return updateUserKeys(env, id, (ukeys) => {
     delete ukeys[name];
-    await env.KEYS.put(`ukeys:${id}`, JSON.stringify(ukeys));
-    cset(`ukeys:${id}`, ukeys);
-    return ukeys;
   });
 }
 
