@@ -758,6 +758,20 @@ test("getUser: corrupt user JSON → null (no throw)", async () => {
   assert.equal(await getUser(env, "ghost"), null);
 });
 
+// round-525 (coverage-driven): the ADMIN_PASSWORD migration arm had ZERO pins —
+// a Worker-secret password with no KV hash must migrate hashed, never plaintext.
+test("getAdminPassword: migrates ADMIN_PASSWORD to a hashed KV record", async () => {
+  __clearCaches();
+  const { getAdminPassword } = await import("../src/store/admin.ts");
+  const env = meEnv();
+  await env.KEYS.delete("auth:admin_password");
+  env.ADMIN_PASSWORD = "migpw";
+  const v = await getAdminPassword(env);
+  assert.match(v, /^legacy:[0-9a-f]+$/);
+  assert.equal(await env.KEYS.get("auth:admin_password"), v, "migrated hash persisted");
+  assert.ok(!String(await env.KEYS.get("auth:admin_password")).includes("migpw"), "never plaintext");
+});
+
 // round-444 (coverage-driven): DELETE /api/me/keys had ZERO route pins
 // (store-level deleteUserKey covered, handler not).
 test("me/keys DELETE: 401 unauth, 400 unknown name, deletes by query param", async () => {
