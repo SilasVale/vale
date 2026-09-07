@@ -105,6 +105,35 @@ pub fn append_command_newline(command: &str) -> String {
         format!("{command}\n")
     }
 }
+/// Read new output for `sid` past `read_abs`, advancing the cursor past
+/// anything eviction dropped (shared by the foreground + background wait
+/// loops — the dropped-jump + slice_from pair used to be inlined at both
+/// sites). round-94: the cursor MUST jump forward to `dropped`, not stay
+/// behind — slice_from clamps to the in-memory window and a stale cursor
+/// would re-read the window tail already appended to the result,
+/// duplicating it on every poll while eviction continues. The foreground
+/// loop additionally reports truncation via `truncated`.
+fn poll_output_chunk(
+    buf: &super::super::OutputBuf,
+    sid: &str,
+    read_abs: &mut usize,
+    truncated: Option<&mut bool>,
+) -> (Vec<u8>, usize) {
+    recover_guard(buf)
+        .live
+        .get(sid)
+        .map(|e| {
+            if e.dropped as usize > *read_abs {
+                *read_abs = e.dropped as usize;
+                if let Some(t) = truncated {
+                    *t = true;
+                }
+            }
+            let s = e.slice_from(*read_abs);
+            (s.to_vec(), s.len())
+        })
+        .unwrap_or_default()
+}
 
 /// Find a complete prompt marker — `ESC ] 133 ; D ; <exit-code> BEL` — in
 /// `data`, returning (start, end, exit_code) over the WHOLE sequence.
@@ -515,14 +544,8 @@ pub(super) fn tool_execute(
                                 // Session closed → release; retain_live already
                                 // logged the end.
                                 if mgr2.term_info(&sid2).await.is_none() { break; }
-                                let (chunk, chunk_len) = recover_guard(&buf2)
-                                    .live.get(&sid2)
-                                    .map(|e| {
-                                        if e.dropped as usize > read_abs { read_abs = e.dropped as usize; }
-                                        let s = e.slice_from(read_abs);
-                                        (s.to_vec(), s.len())
-                                    })
-                                    .unwrap_or_default();
+                                let (chunk, chunk_len) =
+                                    poll_output_chunk(&buf2, &sid2, &mut read_abs, None);
                                 if chunk_len > 0 {
                                     read_abs += chunk_len;
                                     pending.extend_from_slice(&chunk);
@@ -705,25 +728,12 @@ pub(super) fn tool_execute(
                             wait_reason = "closed";
                             break;
                         }
-                        let (chunk, chunk_len) = recover_guard(&buf)
-                            .live.get(&sid)
-                            .map(|e| {
-                                // Eviction advanced `dropped` past our read
-                                // cursor → output was dropped (1MB burst).
-                                // round-94: the cursor MUST jump forward to
-                                // `dropped`, not stay behind — slice_from
-                                // clamps to the in-memory window and the next
-                                // poll would re-read the window tail that was
-                                // already appended to `result`, duplicating
-                                // it on every poll while eviction continues.
-                                if e.dropped as usize > read_abs {
-                                    read_abs = e.dropped as usize;
-                                    truncated = true;
-                                }
-                                let s = e.slice_from(read_abs);
-                                (s.to_vec(), s.len())
-                            })
-                            .unwrap_or_default();
+                        let (chunk, chunk_len) = poll_output_chunk(
+                            &buf,
+                            &sid,
+                            &mut read_abs,
+                            Some(&mut truncated),
+                        );
                         if chunk_len > 0 {
                             read_abs += chunk_len;
                             pending.extend_from_slice(&chunk);
