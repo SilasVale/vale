@@ -666,18 +666,23 @@ async fn api_call_tool(state: &AppState, tool_name: &str, body: &str) -> serde_j
 // headers preserved verbatim). The Err is boxed like check_auth's — Response
 // is large and clippy::result_large_err fires on a plain Result err variant.
 
+/// Session-log reader over paths::sessions_dir().
+/// HIGH(audit round): the WRITER (terminal plugin) logs to
+/// paths::data_dir()/sessions — on registry-first installs the
+/// exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
+/// Vale), and these endpoints scanned an empty dir: the audit
+/// panel was permanently blind. Read the same dir; also honors
+/// the "zero current_exe() guessing outside paths.rs" rule.
+fn sessions_logger() -> crate::session_log::SessionLogger {
+    let dir = crate::paths::sessions_dir();
+    crate::session_log::SessionLogger::new(dir)
+}
+
 /// GET /api/sessions — audit trail: session list with terminal state
 /// (round-56). The logger lives in the terminal plugin's private field —
 /// read the same directory directly (cheap: one file per session).
 fn api_sessions_list() -> serde_json::Value {
-    // HIGH(audit round): the WRITER (terminal plugin) logs to
-    // paths::data_dir()/sessions — on registry-first installs the
-    // exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
-    // Vale), and these endpoints scanned an empty dir: the audit
-    // panel was permanently blind. Read the same dir; also honors
-    // the "zero current_exe() guessing outside paths.rs" rule.
-    let dir = crate::paths::sessions_dir();
-    let logger = crate::session_log::SessionLogger::new(dir);
+    let logger = sessions_logger();
     let list: serde_json::Value = logger
         .list_sessions()
         .iter()
@@ -713,14 +718,7 @@ fn api_session_events(p: &str) -> Result<serde_json::Value, Box<Response>> {
             Body::from(r#"{"ok":false,"error":"invalid session id"}"#),
         )));
     }
-    // HIGH(audit round): the WRITER (terminal plugin) logs to
-    // paths::data_dir()/sessions — on registry-first installs the
-    // exe dir is NOT the data dir (d1: D:\Vale vs C:\ProgramData\
-    // Vale), and these endpoints scanned an empty dir: the audit
-    // panel was permanently blind. Read the same dir; also honors
-    // the "zero current_exe() guessing outside paths.rs" rule.
-    let dir = crate::paths::sessions_dir();
-    let logger = crate::session_log::SessionLogger::new(dir);
+    let logger = sessions_logger();
     let events = logger.events_of(&sid);
     Ok(serde_json::json!({ "ok": true, "id": sid, "events": events }))
 }
