@@ -3063,6 +3063,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   closed (rounds 64-67), this round resumes function-level SRP
   decomposition of the remaining oversized closures.
 
+### 2026-09-08 SOLID round 69 (flatten_result extraction + tests)
+- **flatten_result (SRP, agent mcp_client/tools.rs)** — mcp_client_call's
+  dispatch tail inlined the response-folding logic (~45 lines:
+  structuredContent first, else text items joined with newlines,
+  image items passed as data: URIs). Extracted module-level
+  `flatten_result(&result)` — pure function, now covered by 3 unit
+  tests (text join, image data-URI pass-through, structuredContent
+  preference). The dispatch tail now reads as one call; the ~240-line
+  call closure loses its second post-processing block (the
+  screenshot-resolution block stays — it needs early returns + fs
+  access). 309 lib (+3) / 317 feature; fmt + clippy clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
