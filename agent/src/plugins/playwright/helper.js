@@ -6,9 +6,10 @@
 //      attach to that page (attached=true). Every action is visible live.
 //   2. otherwise -> launch a private headless chromium (attached=false)
 //      for batch jobs that must not disturb the watched screen.
-// close(): attached -> no-op (the CDP session drops when the script's node
-// process exits; NEVER browser.close() a shared browser). headless ->
-// closes the private browser (no orphaned chromium trees).
+// close(): attached -> browser.close() disconnects ONLY this node's CDP
+// session (device-verified: the Electron view survives; without it the
+// node process hangs forever on the open websocket and the runner times
+// out). headless -> closes the private browser (no orphaned trees).
 "use strict";
 const path = require("path");
 
@@ -47,7 +48,12 @@ async function acquireBrowser(opts) {
       view = null;
     }
     if (view) {
-      return { browser: browser, page: view, attached: true, close: async () => {} };
+      return {
+        browser: browser,
+        page: view,
+        attached: true,
+        close: async () => { try { await browser.close(); } catch (e) {} },
+      };
     }
     try { await browser.close(); } catch (e) {}
   } catch (e) { /* CDP down - fall through to headless */ }
