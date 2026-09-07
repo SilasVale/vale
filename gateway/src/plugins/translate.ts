@@ -151,6 +151,33 @@ export function scrubKeys(msg: string): string {
   return String(msg || "").replace(/\b(?:sk|rc|sc|or|xox[baprs])-[A-Za-z0-9_-]{8,}/g, "***");
 }
 
+// One place owns "which route kind needs which BYOK key + what the missing-
+// key 502 says". Every /v1 branch used to hand-roll the same
+// `if (route.kind === X && !keyX) return jsonError(502, "<KEY> not
+// configured — <hint>", "config_error")` — 21 copies that drifted on every
+// channel add (a new kind needed its guard in four separate flow sites with
+// the message re-typed each time). Call sites gate on the key themselves and
+// delegate the 502 shape here; the messages live ONLY in this table, so a
+// message tweak or a new kind touches one place.
+const KEY_MISSING_MESSAGES: Record<string, string> = {
+  deepseek: "DEEPSEEK_API_KEY not configured — add your own key in the console",
+  opencode: "OPENCODE_GO_API_KEY not configured — add your own key in the console",
+  openrouter: "OPENROUTER_API_KEY not configured — add your own key in the console",
+  qwen: "QWEN_API_KEY not configured — add your own key in the console",
+  nvidia: "NVAPI_KEY not configured — add your NVIDIA build.nvidia.com key",
+  gmi: "GMI_API_KEY not configured — add your GMI Cloud key in the console",
+  amd: "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
+  commandgoat: "CMD_API_KEY not configured — add your Command Code key in the console",
+};
+/** Missing-key 502 for a route kind, or null when the kind needs no key.
+ *  Callers invoke it only inside their own `!key` guard (they own which
+ *  kinds a flow gates on), so the returned error is never conditional on
+ *  anything but the message table lookup. */
+export function keyMissingError(kind: string): Response | null {
+  const msg = KEY_MISSING_MESSAGES[kind];
+  return msg ? jsonError(502, msg, "config_error") : null;
+}
+
 // get-then-put counters cost 2 reads + 2 writes per /v1/messages request —
 // that alone burned the Free-plan daily KV WRITE quota (1000/day) at ~250
 // requests. Never written; each window's first request per token reads KV
@@ -518,20 +545,12 @@ async function handleGatewayImpl(
   // or/ uses "this user's" OpenRouter key (BYOK); upstream is direct
   // openrouter.ai or the US exit per the proxy switch (see pickRoute).
   if (route.kind === "openrouter" && !openRouterKey) {
-    return jsonError(
-      502,
-      "OPENROUTER_API_KEY not configured — add your own key in the console",
-      "config_error",
-    );
+    return keyMissingError("openrouter") as Response;
   }
   // cm/ is pure BYOK like or/ — both the messages and chat/completions flows
   // need the user's own Command Code key.
   if (route.kind === "commandgoat" && !cmdKey) {
-    return jsonError(
-      502,
-      "CMD_API_KEY not configured — add your Command Code key in the console",
-      "config_error",
-    );
+    return keyMissingError("commandgoat") as Response;
   }
   // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
   // og/ (translate or native) uses their OpenCode Go key — never the DeepSeek key.
@@ -558,32 +577,16 @@ async function handleGatewayImpl(
   // clients to use og/ models without format conversion.
   if (isChatCompletions) {
     if (route.kind === "nvidia" && !nvKey) {
-      return jsonError(
-        502,
-        "NVAPI_KEY not configured — add your NVIDIA build.nvidia.com key",
-        "config_error",
-      );
+      return keyMissingError("nvidia") as Response;
     }
     if (route.kind === "gmi" && !gmiKey) {
-      return jsonError(
-        502,
-        "GMI_API_KEY not configured — add your GMI Cloud key in the console",
-        "config_error",
-      );
+      return keyMissingError("gmi") as Response;
     }
     if (route.kind === "amd" && !amdKey) {
-      return jsonError(
-        502,
-        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
-        "config_error",
-      );
+      return keyMissingError("amd") as Response;
     }
     if (route.kind === "opencode" && !opencodeGoKey) {
-      return jsonError(
-        502,
-        "OPENCODE_GO_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("opencode") as Response;
     }
     if (route.kind === "opencode" && (await isChannelDegraded(env))) {
       return jsonError(
@@ -593,25 +596,13 @@ async function handleGatewayImpl(
       );
     }
     if (route.kind === "deepseek" && !deepseekKey) {
-      return jsonError(
-        502,
-        "DEEPSEEK_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("deepseek") as Response;
     }
     if (route.kind === "openrouter" && !openRouterKey) {
-      return jsonError(
-        502,
-        "OPENROUTER_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("openrouter") as Response;
     }
     if (route.kind === "qwen" && !qwenKey) {
-      return jsonError(
-        502,
-        "QWEN_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("qwen") as Response;
     }
     // The OpenAI format must hit OpenRouter's chat/completions endpoint — the route.upstream
     // picked by the messages flow is /v1/messages; reusing it directly would stuff an OpenAI body
@@ -783,11 +774,7 @@ async function handleGatewayImpl(
       );
     }
     if (route.kind === "opencode" && !opencodeGoKey) {
-      return jsonError(
-        502,
-        "OPENCODE_GO_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("opencode") as Response;
     }
     if (route.kind === "opencode" && (await isChannelDegraded(env))) {
       return jsonError(
@@ -889,25 +876,13 @@ async function handleGatewayImpl(
   // are still real config errors and stay.
   if (isCount) {
     if (route.kind === "deepseek" && !deepseekKey) {
-      return jsonError(
-        502,
-        "DEEPSEEK_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("deepseek") as Response;
     }
     if (route.kind === "qwen" && !qwenKey) {
-      return jsonError(
-        502,
-        "QWEN_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("qwen") as Response;
     }
     if (route.kind === "amd" && !amdKey) {
-      return jsonError(
-        502,
-        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
-        "config_error",
-      );
+      return keyMissingError("amd") as Response;
     }
     return jsonOk({ input_tokens: estimateTokens(rawText) });
   }
@@ -920,18 +895,10 @@ async function handleGatewayImpl(
   // keep using the /v1/chat/completions direct passthrough above.
   if (route.kind === "nvidia" || route.kind === "gmi") {
     if (route.kind === "nvidia" && !nvKey) {
-      return jsonError(
-        502,
-        "NVAPI_KEY not configured — add your NVIDIA build.nvidia.com key",
-        "config_error",
-      );
+      return keyMissingError("nvidia") as Response;
     }
     if (route.kind === "gmi" && !gmiKey) {
-      return jsonError(
-        502,
-        "GMI_API_KEY not configured — add your GMI Cloud key in the console",
-        "config_error",
-      );
+      return keyMissingError("gmi") as Response;
     }
     const openaiReq = toOpenAIRequest(body, upstreamModel);
     const { response: upstream, detail } = await fetchWithRetry(
@@ -978,37 +945,21 @@ async function handleGatewayImpl(
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
     if (route.kind === "deepseek" && !deepseekKey) {
-      return jsonError(
-        502,
-        "DEEPSEEK_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("deepseek") as Response;
     }
     if (route.kind === "qwen" && !qwenKey) {
-      return jsonError(
-        502,
-        "QWEN_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("qwen") as Response;
     }
     // amd/ (AMD Radeon Cloud) is pure BYOK too — without the user's rc-… key
     // the request would go out headerless and 401 at the upstream.
     if (route.kind === "amd" && !amdKey) {
-      return jsonError(
-        502,
-        "AMD_API_KEY not configured — add your AMD Radeon Cloud (rc-…) key in the console",
-        "config_error",
-      );
+      return keyMissingError("amd") as Response;
     }
     // og-native (deepseek-v4-flash via /v1/messages) needs the OpenCode Go key
     // too — without it the request would go out headerless and return a bare
     // "Upstream 401" instead of a clear config error (translate path checks).
     if (route.kind === "opencode" && !opencodeGoKey) {
-      return jsonError(
-        502,
-        "OPENCODE_GO_API_KEY not configured — add your own key in the console",
-        "config_error",
-      );
+      return keyMissingError("opencode") as Response;
     }
     // The og-native passthrough previously BYPASSED the circuit breaker — a
     // dead channel kept getting routed (health lied, model=auto stuck on it).
@@ -1169,21 +1120,13 @@ async function handleGatewayImpl(
   // same message) — unreachable, kept as defense-in-depth like the chat-path
   // openrouter arm. Not pinned: keyless-cm tests land on the live guard.
   if (route.kind === "commandgoat" && !cmdKey) {
-    return jsonError(
-      502,
-      "CMD_API_KEY not configured — add your Command Code key in the console",
-      "config_error",
-    );
+    return keyMissingError("commandgoat") as Response;
   }
   // round-500: this guard was unscoped — a cm/ request (Bearer cmdKey,
   // cm upstream; opencodeGoKey unused below) was 502'd for lacking an
   // unrelated og key. Scope to the opencode kind it actually protects.
   if (route.kind === "opencode" && !opencodeGoKey) {
-    return jsonError(
-      502,
-      "OPENCODE_GO_API_KEY not configured — add your own key in the console",
-      "config_error",
-    );
+    return keyMissingError("opencode") as Response;
   }
   if (route.kind === "opencode" && (await isChannelDegraded(env))) {
     // Circuit open: repeated hard failures — fail fast instead of waiting on zen again.
