@@ -2087,6 +2087,23 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
 - Gateway 590 pass, tsc/lint/prettier clean; code-viewer mirror synced in
   each commit.
 
+### 2026-09-08 SOLID round 2 (gateway device-tool path single-sourcing)
+- **Device tool paths derived, 21-entry dup table deleted (DRY)** —
+  callTerminalToolOnce hand-wrote an "/api/tools/<name>" map for all 21
+  device-direct tools while mcp-tools.ts already owns the registration
+  list: two sources of truth that drifted silently (round-54's 11 missing
+  tools were exactly that class). Path is now the mechanical
+  `/api/tools/${name}` behind a single exported `isDeviceDirectTool()`
+  guard (terminal_*/secret_* prefixes + browser_pw_info/browser_run_script
+  specials). callTool's existing dispatch already routes only device-direct
+  names there, so the guard is a programming-error net, not a runtime
+  branch.
+- **+contract pin**: every registered gateway MCP tool must classify
+  device-direct XOR bridge-routed, matching callTool's dispatch partition
+  (7 bridge names are the exact non-device-direct set) — a future tool
+  added to one side without the other fails the suite, not production.
+- Gateway 591 pass; tsc/lint/prettier clean; code-viewer mirror synced.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
