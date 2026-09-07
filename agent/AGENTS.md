@@ -1812,6 +1812,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   forces deepseek-v4-flash). Also verified the og-native passthrough
   guards are unreachable (OG_NATIVE_ANTHROPIC empty). Suite 551->552;
   gates clean; snapshot updated; pushed.
+  ROUND-508 (2026-09-06): auto audit — the model=auto resolution arm had
+  ZERO pins. Added 1 in gateway.test.mjs (no route → first usable ds,
+  served 200). Clean round. Suite 552->553; gates clean; snapshot
+  updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
