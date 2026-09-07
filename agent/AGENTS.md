@@ -2018,6 +2018,15 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   proxies 12+7 green; parity shows exactly the expected 1 drift
   (upstream.ts comment rides next deploy). -348/+16. Pushed. NEXT: new
   goal objective pivots to agent-module testing.
+  ROUND-550 (2026-09-07): agent/update audit (new objective) — the
+  SYSTEM-execution gate (https/host-match/sha) lived as untested inline
+  closures. Extracted host_of + check_download_url + valid_sha256 as
+  pure fns (byte-identical verdicts, same messages) + 3 pin tests (6→9).
+  REAL FIND: the "::1" loopback arm is unreachable (host_of parses bare
+  ::1 to "") — documented, gate untouched (widening SYSTEM-exec is a
+  product decision). Self-caught×2: dropped version_url in an edit
+  (restored) + fmt line width. Matrix: lib 293, feat 301, clippy x2 +
+  fmt + xwin clean; snapshot 347->350. Pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
