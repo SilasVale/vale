@@ -2855,6 +2855,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   intentionally untested (external cloudflared). 301 lib pass (+1);
   fmt + clippy clean.
 
+### 2026-09-08 SOLID round 54 (error-classification full audit)
+- **Verification round (no code changes)** — extended the round-359
+  error-classification audit from terminal to EVERY plugin: all ~40
+  DeviceError::Internal sites in plugins/ walked. Verdict: all are
+  legitimate server-side classes (network/HTTP/IO/task-join/upstream
+  responses). The one borderline site — update/tools.rs's
+  check_download_url failure (a MISCONFIGURED download host, not a
+  caller argument) — is kept Internal with evidence: the AI caller
+  cannot fix it via parameters, the message carries the diagnostic,
+  and it is a refuse-to-install SECURITY posture where Internal's
+  no-retry semantics are the safe default. Round-359's classification
+  discipline now covers the whole plugin surface.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
