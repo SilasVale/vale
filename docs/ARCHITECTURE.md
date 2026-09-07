@@ -82,7 +82,7 @@ install/update: npm tgz ONLY (vale-dist worker; one-time file drop = R2 + TempCl
 | Subproject | Gate | Count (2026-09-06) |
 |---|---|---|
 | gateway | tsc + eslint(src+ui) + prettier + node --test | 580 |
-| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 347 (290 lib + 5 bin + 27 + 2 + 7 + 1 integration + 15 core; 298 lib feat-gated) |
+| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 350 (293 lib + 5 bin + 27 + 2 + 7 + 1 integration + 15 core; 301 lib feat-gated) |
 | proxies (×2) | node --test behavior suites + wrangler dry-run | 19 |
 | ~~studio~~ | retired (ADR 0006); CI studio job dropped, suite lives in git history | — |
 | electron | node --test (url-policy) + tsc build | 4 |

@@ -20,6 +20,57 @@ fn version_url(download_url: &str) -> String {
     format!("{}/api/version", download_url.trim_end_matches('/'))
 }
 
+/// Host part of a URL for the download gate: strips scheme, userinfo and
+/// port; lowercases. Pure — extracted from the agent_update handler so the
+/// SYSTEM-execution gate below is unit-pinned.
+///
+/// NOTE: a bare IPv6 loopback URL (`http://::1/x`) parses to "" (the ':'
+/// split takes the first segment), so only 127.0.0.1/localhost exercise
+/// the loopback exemption in practice; the "::1" match arm below is
+/// currently unreachable. Deliberately NOT "fixed" here — widening a
+/// SYSTEM-execution gate is a product decision, not a test refactor.
+fn host_of(u: &str) -> String {
+    u.split("://")
+        .nth(1)
+        .unwrap_or("")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .rsplit('@')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+/// Decide whether a manifest download URL may be fetched and executed.
+/// https always; http only for loopback dev; and the host must match the
+/// configured release site (an empty site means unset — skip the match).
+/// Pure — same verdicts as the inline handler logic it replaces.
+fn check_download_url(download: &str, site: &str) -> Result<(), String> {
+    let dl_host = host_of(download);
+    let site_host = host_of(site);
+    let loopback = matches!(dl_host.as_str(), "127.0.0.1" | "localhost" | "::1");
+    if !(download.starts_with("https://") || (loopback && download.starts_with("http://"))) {
+        return Err(format!("refusing non-https download URL: {download}"));
+    }
+    if !loopback && !site_host.is_empty() && dl_host != site_host {
+        return Err(format!(
+            "download host {dl_host} != release site {site_host}"
+        ));
+    }
+    Ok(())
+}
+
+/// Is this a well-formed sha256 hex digest (64 hex chars)? The manifest
+/// sha is REQUIRED (round-119) — an unverifiable download must never
+/// execute at SYSTEM.
+fn valid_sha256(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 /// Parse "x.y.z" into comparable parts (missing pieces become 0, so "0.9" == "0.9.0").
 fn parse_version(v: &str) -> Vec<u32> {
     v.trim().split('.').filter_map(|p| p.parse().ok()).collect()
@@ -328,37 +379,10 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 // another host) a network MITM supplies exe+matching hash and
                 // gets SYSTEM code execution. Require https (loopback dev
                 // exempt) and the SAME host as the configured download site.
+                if let Err(message) =
+                    check_download_url(&download, dl_site.as_deref().unwrap_or(""))
                 {
-                    let host_of = |u: &str| -> String {
-                        u.split("://")
-                            .nth(1)
-                            .unwrap_or("")
-                            .split('/')
-                            .next()
-                            .unwrap_or("")
-                            .rsplit('@')
-                            .next()
-                            .unwrap_or("")
-                            .split(':')
-                            .next()
-                            .unwrap_or("")
-                            .to_lowercase()
-                    };
-                    let dl_host = host_of(&download);
-                    let site_host = host_of(dl_site.as_deref().unwrap_or(""));
-                    let loopback = matches!(dl_host.as_str(), "127.0.0.1" | "localhost" | "::1");
-                    if !(download.starts_with("https://")
-                        || (loopback && download.starts_with("http://")))
-                    {
-                        return Err(DeviceError::Internal {
-                            message: format!("refusing non-https download URL: {download}"),
-                        });
-                    }
-                    if !loopback && !site_host.is_empty() && dl_host != site_host {
-                        return Err(DeviceError::Internal {
-                            message: format!("download host {dl_host} != release site {site_host}"),
-                        });
-                    }
+                    return Err(DeviceError::Internal { message });
                 }
                 // Integrity anchor: the sha256 of the npm tgz, published
                 // by the release server and verified against the downloaded bytes
@@ -379,9 +403,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 // and the downloaded bytes were spawned at SYSTEM unverified
                 // (re-opening the round-54 HTML-polluted-404 install class).
                 // Fail loudly: an unverifiable download must never execute.
-                if expected_sha256.len() != 64
-                    || !expected_sha256.chars().all(|c| c.is_ascii_hexdigit())
-                {
+                if !valid_sha256(&expected_sha256) {
                     return Err(DeviceError::Internal {
                     message: "release server returned no/invalid sha256 — refusing unverifiable install".to_string(),
                 });
@@ -675,5 +697,61 @@ mod tests {
         cleanup_staged(&dir); // must not error or create anything
         assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn host_of_strips_scheme_userinfo_port_and_case() {
+        assert_eq!(
+            host_of("https://agent.saisi.online/vale-agent/x.tgz"),
+            "agent.saisi.online"
+        );
+        assert_eq!(host_of("https://user:pw@EXAMPLE.com:8443/a"), "example.com");
+        assert_eq!(host_of("http://127.0.0.1:18080/api/version"), "127.0.0.1");
+        assert_eq!(host_of("http://localhost/x"), "localhost");
+        assert_eq!(host_of("not-a-url"), "");
+        assert_eq!(host_of(""), "");
+    }
+
+    #[test]
+    fn check_download_url_gates_scheme_and_host() {
+        let site = "https://agent.saisi.online";
+        // https same-host: the production shape.
+        assert!(check_download_url(
+            "https://agent.saisi.online/vale-agent/vale-agent-1.2.1.tgz",
+            site
+        )
+        .is_ok());
+        // http loopback: dev exemption (127.0.0.1/localhost only — a bare
+        // ::1 URL parses to "" via host_of, so it stays refused; see note).
+        for host in ["127.0.0.1", "localhost"] {
+            assert!(
+                check_download_url(&format!("http://{host}/x.tgz"), site).is_ok(),
+                "loopback {host} must pass"
+            );
+        }
+        assert!(check_download_url("http://::1/x.tgz", site).is_err());
+        // http public: MITM-supplied exe+hash → SYSTEM execution. Refuse.
+        assert!(check_download_url("http://agent.saisi.online/x.tgz", site).is_err());
+        assert!(check_download_url("http://evil.example/x.tgz", site).is_err());
+        // Host mismatch: manifest pointing off-site. Refuse.
+        let err = check_download_url("https://evil.example/x.tgz", site).unwrap_err();
+        assert!(
+            err.contains("evil.example") && err.contains("agent.saisi.online"),
+            "{err}"
+        );
+        // Empty site (unset download channel): skip the host match.
+        assert!(check_download_url("https://any.example/x.tgz", "").is_ok());
+        // Non-URL garbage: no https prefix. Refuse.
+        assert!(check_download_url("vale-agent.tgz", site).is_err());
+    }
+
+    #[test]
+    fn valid_sha256_requires_64_hex() {
+        assert!(valid_sha256(&"a".repeat(64)));
+        assert!(valid_sha256(&"A".repeat(64)));
+        assert!(!valid_sha256(""));
+        assert!(!valid_sha256(&"a".repeat(63)));
+        assert!(!valid_sha256(&"a".repeat(65)));
+        assert!(!valid_sha256(&format!("{}g", "a".repeat(63))));
     }
 }
