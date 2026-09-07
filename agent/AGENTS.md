@@ -2476,6 +2476,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   panel.rs helper) — test scaffolding stays (consistent with the
   earlier decision; a shared testutil would couple plugin test modules).
 
+### 2026-09-08 SOLID round 28 (handle_request SRP extraction)
+- **handle_browser_evidence (SRP, agent web/mod.rs)** — handle_request
+  (the web dispatch router) was ~376 lines; the three /api/browser
+  evidence endpoints (actions/pwshots/pwshot) formed a self-contained
+  ~85-line block. Extracted `handle_browser_evidence(path, query)` —
+  pure reads from the pwout dir, no AppState dependency (the unused
+  state param was dropped on clippy's first pass). Auth stays at the
+  call site, synchronous before the Send boundary: the extraction
+  surfaced that holding &Request across an await makes the router
+  future non-Send (panel.rs service layer requires Send) — fixed by
+  keeping auth + query extraction in handle_request and passing only
+  &str/query in. Router now ~290 lines. Web tests 44/44 (evidence
+  endpoints covered), lib 299 pass; clippy/fmt clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
