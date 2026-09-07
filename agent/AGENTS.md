@@ -2668,6 +2668,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   the round-39 DoAuthBase change (UI does not type-couple to the DO
   classes).
 
+### 2026-09-08 SOLID round 42 (translate.ts chat-flow key guards)
+- **Table-driven chat/completions key guards (DRY, gateway translate.ts
+  first real reduction)** — the isChatCompletions arm carried seven
+  byte-identical guards (if route.kind === X && !xKey →
+  keyMissingError(X)) with no per-kind comment distinctions — true
+  copy-paste, unlike the messages-flow guards that legitimately differ
+  per endpoint. Replaced with two ordered [kind, key] tables split
+  around the channelDegradedError probe so the probe keeps its exact
+  position. Behavior unchanged (same conditions/order/returns; the
+  round-360 no-borrow + BYOK tests still cover the paths). 592 pass;
+  tsc/prettier clean; mirror synced in the same commit (round-39
+  lesson). translate.ts drops 69→58 window-sites / 31→27 blocks — its
+  first reduction after many constant scans; the residual is
+  two-flow (messages vs chat) window overlap, still classified-kept.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
