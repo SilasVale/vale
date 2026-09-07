@@ -864,3 +864,47 @@ async fn connect_saved_unknown_id_empty_store_hint() {
     );
     unisolate_conns(&dir);
 }
+
+#[test]
+fn spill_append_read_roundtrip() {
+    let sid = "spill-append-rt";
+    let _ = std::fs::remove_file(crate::plugins::terminal::tools::ctx::spill_path(sid));
+    crate::plugins::terminal::tools::ctx::append_spill(sid, b"hello ");
+    crate::plugins::terminal::tools::ctx::append_spill(sid, b"world");
+    let (bytes, actual) = crate::plugins::terminal::tools::ctx::read_spill(sid, 0, 11, 0);
+    assert_eq!(bytes, b"hello world");
+    assert_eq!(actual, 0);
+    let _ = std::fs::remove_file(crate::plugins::terminal::tools::ctx::spill_path(sid));
+}
+
+#[test]
+fn spill_rotate_drops_oldest_bytes_and_read_uses_base() {
+    let sid = "spill-rotate-1";
+    let p = crate::plugins::terminal::tools::ctx::spill_path(sid);
+    let _ = std::fs::remove_file(&p);
+    crate::plugins::terminal::tools::ctx::append_spill(sid, &(0u8..100).collect::<Vec<u8>>());
+    assert!(crate::plugins::terminal::tools::ctx::rotate_spill(sid, 40));
+    // File now holds bytes [40,100) — read with base=40 surfaces abs offsets.
+    let (bytes, actual) = crate::plugins::terminal::tools::ctx::read_spill(sid, 50, 60, 40);
+    assert_eq!(bytes, vec![50u8, 51, 52, 53, 54, 55, 56, 57, 58, 59]);
+    assert_eq!(actual, 50);
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn spill_rotate_missing_file_is_true() {
+    let sid = "spill-rotate-missing";
+    let p = crate::plugins::terminal::tools::ctx::spill_path(sid);
+    let _ = std::fs::remove_file(&p);
+    assert!(crate::plugins::terminal::tools::ctx::rotate_spill(sid, 5));
+}
+
+#[test]
+fn spill_rotate_discard_past_end_removes_file() {
+    let sid = "spill-rotate-end";
+    let p = crate::plugins::terminal::tools::ctx::spill_path(sid);
+    let _ = std::fs::remove_file(&p);
+    crate::plugins::terminal::tools::ctx::append_spill(sid, b"abc");
+    assert!(crate::plugins::terminal::tools::ctx::rotate_spill(sid, 100));
+    assert!(!p.exists(), "discard >= len must delete the file");
+}
