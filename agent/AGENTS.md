@@ -2842,6 +2842,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   exist ONLY in the compiled artifact (main.ts source: zero) — tsc
   output noise. Full matrix unchanged green.
 
+### 2026-09-08 SOLID round 53 (gateway-connect 400 pin)
+- **gateway_connect invalid-JSON HTTP-400 pinned (test-only, agent
+  web/mod.rs)** — completes the round-49 audit pair: settings_put's
+  invalid-JSON envelope is pinned HTTP 200 (historical round-69 shape)
+  and gateway_connect's same-class error was previously unpinned — now
+  pinned HTTP 400, so the OPEN-decision contrast is documented on BOTH
+  endpoints and a future unification is a visible wire change on both,
+  never silent drift on one. Web-endpoint coverage review also
+  confirmed: panel host-gate + grant redemption (4 tests), auth,
+  settings (6), gateway-connect (2 + this) all covered; tunnel arm
+  intentionally untested (external cloudflared). 301 lib pass (+1);
+  fmt + clippy clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
