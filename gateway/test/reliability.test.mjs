@@ -444,6 +444,24 @@ test("streamOgToAnthropic: upstream death after content emits an error event", a
   assert.match(text, /event: error/);
 });
 
+// round-521 (coverage-driven): the stream cancel arm had ZERO pins (the F7
+// disconnect path must stop the upstream reader, not drain it).
+test("streamOgToAnthropic: cancelling the output stops the upstream reader", async () => {
+  const { streamOgToAnthropic } = await import("../src/anthropic-translate.ts");
+  let cancelled = false;
+  const src = new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const out = streamOgToAnthropic(src, "og/m", "m");
+  await out.cancel();
+  assert.equal(cancelled, true);
+});
+
 test("stream encoder: cache hits from last chunk surface in message_start", () => {
   const enc = new AnthropicStreamEncoder("og/m", "m");
   enc.push({
