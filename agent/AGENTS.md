@@ -1870,6 +1870,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-522 (2026-09-06): asset audit — the serveAssetText no-ASSETS arm
   had ZERO pins. Added 1 in health.test.mjs ({} and {ASSETS:{}} → null).
   Clean round. Suite 566->567; gates clean; snapshot updated; pushed.
+  ROUND-523 (2026-09-06): sweep audit — the regenerate survivor-sweep had
+  ZERO pins. Added 1 in plugins.test.mjs (stale token mapping swept).
+  Clean round. Suite 567->568; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
