@@ -2717,6 +2717,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   mirror synced. translate.ts drops 37→27 window-sites at the 8-line
   window — residual is the two-flow ox-alpha/upstream-repick overlap.
 
+### 2026-09-08 SOLID round 45 (DEVICE_PARAM for the MCP tool schemas)
+- **Shared device-selector field (DRY, gateway mcp-tools.ts)** — every
+  MCP tool inputSchema carried its own copy of the device field (18
+  seven-line blocks + 9 inline no-description variants) — the largest
+  remaining duplication after translate.ts converged. Extracted
+  `DEVICE_PARAM` (Record<string, unknown>) and spread it at each site
+  (`...DEVICE_PARAM`). The 9 tools that declared device with NO
+  description now inherit the standard one — a schema-text improvement
+  for AI clients; nothing pins the old shape (592 pass). tsc/prettier
+  clean; mirror synced. mcp-tools.ts drops 47→29 window-sites at the
+  8-line window; the residual is the inputSchema structural prefix
+  (declaration syntax, not duplication). Both former top-two files
+  now sit at ~28 sites.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
