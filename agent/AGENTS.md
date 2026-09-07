@@ -2683,6 +2683,24 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   first reduction after many constant scans; the residual is
   two-flow (messages vs chat) window overlap, still classified-kept.
 
+### 2026-09-08 SOLID round 43 (isCount guard table + gate completion)
+- **Table-driven isCount key guards (DRY, gateway translate.ts)** — the
+  count_tokens arm carried three byte-identical key-existence guards
+  (deepseek/qwen/amd), no per-kind comments — same class as the
+  round-42 chat table. Converted to the identical shape/order.
+  592 pass; tsc/prettier clean; mirror synced. The remaining translate
+  guard groups (nvidia/gmi branch, passthrough 4-guard) carry real
+  per-kind comments (amd rc-key rationale, og-native breaker history)
+  — table-izing would lose that documentation; classified-kept with
+  evidence. mcp_client tools.rs re-checked: residual windows are
+  adjacent-function artifacts (record_mcp_action/screenshot json
+  tails), auto-select already shared since round-11.
+- **Gates completed** — round-42/43 commits pass the CI gates the
+  earlier passes skipped: gateway format:check + lint clean; strict
+  8-line baseline re-run: translate.ts down to 37 window-sites (from
+  ~46+), mcp-tools schemas + secrets DPAPI remain the only standing
+  classes.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
