@@ -3314,6 +3314,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   removed; brace-depth verification now mandatory after test-file
   appends (this is the second local-item nesting trap).
 
+### 2026-09-08 SOLID round 86 (architecture snapshot gate refresh)
+- **Docs round (docs/ARCHITECTURE.md)** — the maintained-layering
+  snapshot's gate-count rows had drifted since the round-354 audit
+  (agent grew 12 refactor/test rounds, gateway grew suites). Re-
+  measured everything end to end and updated: agent row 350 -> 368
+  (325 lib + 5 bin + 27 + 1 + 2 + 7 + 1 integration + 15 core; 333
+  lib feat-gated, 376 full feat-gated — feature-full was re-run as a
+  whole, matching round-82's record); gateway 580 -> 592; proxies
+  19 -> 20 (zen-us 8 + zen-go 12; the ×2 row never included the
+  retired openrouter). Also audited the error-template family during
+  discovery: session_lost / connect_saved / job_id are all single-
+  point constructors; the terminal_jobs registry (job wait loop) has
+  no direct tests but its input requires a real backgrounded session
+  (pipeline-bound, recorded not forced).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
