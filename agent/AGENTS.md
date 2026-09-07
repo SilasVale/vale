@@ -2556,6 +2556,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   hostAllowError guard, not copies; claim.js single-shot DO is
   event-driven by design.)
 
+### 2026-09-08 SOLID round 34 (register 409 double-layer dedup)
+- **alreadyRegisteredConflict (DRY, gateway devices.ts)** —
+  handleRegister's pre-check (round-68) and its in-lock insertDevice
+  retry (round-122) each inlined the same 409 "already registered —
+  use the console (admin)" jsonError — two defense layers of ONE
+  endpoint (the round-14 "message variants" deferral covered
+  cross-endpoint variants; this is intra-endpoint verbatim dup).
+  Extracted `alreadyRegisteredConflict(name)`. The other 409 variants
+  (different-token 229, self-register short 262, rename newName 545)
+  keep distinct messages inline. Gateway 592 pass; tsc/prettier clean;
+  mirror synced.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
