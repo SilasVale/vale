@@ -260,6 +260,26 @@ pub(super) fn tool_jobs(jobs: &JobsMap) -> ToolDef {
 /// group on Unix so a timeout kills shell AND descendants), bounded 1 MB
 /// tail capture with truncation, kill-on-timeout, same {kind, text,
 /// truncated} shape as the session mode.
+/// Tail-append with a byte cap (round-55 BOUNDED capture): on overflow
+/// keep the NEWEST half before appending — a single huge chunk must not
+/// wipe the older tail — then trim to the cap; `truncated` records any
+/// drop. Shared by the live receive path and the final drains of the
+/// local-execute capture loop.
+fn tail_append(captured: &mut Vec<u8>, truncated: &mut bool, c: Vec<u8>, max: usize) {
+    if captured.len() + c.len() > max {
+        let keep = max / 2;
+        if captured.len() > keep {
+            captured.drain(..captured.len() - keep);
+        }
+        *truncated = true;
+    }
+    captured.extend_from_slice(&c);
+    if captured.len() > max {
+        captured.drain(..captured.len() - max);
+        *truncated = true;
+    }
+}
+
 async fn execute_local(
     command: &str,
     timeout_secs: u64,
@@ -339,25 +359,11 @@ async fn execute_local(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     // Capture tail append + truncation — shared by the live
     // receive path and the final drain before exit (round-57).
-    let append_chunk = |captured: &mut Vec<u8>, truncated: &mut bool, c: Vec<u8>| {
-        if captured.len() + c.len() > MAX_LOCAL_BYTES {
-            let keep = MAX_LOCAL_BYTES / 2;
-            if captured.len() > keep {
-                captured.drain(..captured.len() - keep);
-            }
-            *truncated = true;
-        }
-        captured.extend_from_slice(&c);
-        if captured.len() > MAX_LOCAL_BYTES {
-            captured.drain(..captured.len() - MAX_LOCAL_BYTES);
-            *truncated = true;
-        }
-    };
     loop {
         tokio::select! {
             chunk = rx.recv() => {
                 if let Some(c) = chunk {
-                    append_chunk(&mut captured, &mut truncated, c);
+                    tail_append(&mut captured, &mut truncated, c, MAX_LOCAL_BYTES);
                 } else {
                     // Both pipes closed but the child still runs
                     // (`sh -c 'exec >/dev/null 2>&1; sleep 100'`)
@@ -406,13 +412,13 @@ async fn execute_local(
             if let Ok(Some(c)) =
                 tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await
             {
-                append_chunk(&mut captured, &mut truncated, c);
+                tail_append(&mut captured, &mut truncated, c, MAX_LOCAL_BYTES);
             }
             // Drain whatever the exit flushed out (round-57):
             // skipping this silently dropped up to 16 chunks
             // (~128KB) of tail output with truncated unset.
             while let Ok(c) = rx.try_recv() {
-                append_chunk(&mut captured, &mut truncated, c);
+                tail_append(&mut captured, &mut truncated, c, MAX_LOCAL_BYTES);
             }
             // round-115: the readers block in stream.read(),
             // NOT tx.send — closing rx only fails future sends
@@ -498,7 +504,7 @@ async fn execute_local(
         }
         // Drain whatever the kill flushed out (bounded).
         while let Ok(c) = rx.try_recv() {
-            append_chunk(&mut captured, &mut truncated, c);
+            tail_append(&mut captured, &mut truncated, c, MAX_LOCAL_BYTES);
         }
     }
     // Reap whatever exited (may be None if the group is stuck).
@@ -1164,7 +1170,7 @@ pub(super) fn tool_execute(
 
 #[cfg(test)]
 mod tests {
-    use super::poll_output_chunk;
+    use super::{poll_output_chunk, tail_append};
     use crate::plugins::terminal::SessionBuf;
     use crate::plugins::terminal::SessionStore;
     use std::sync::{Arc, Mutex};
@@ -1261,5 +1267,39 @@ mod tests {
         assert_eq!(len, 0);
         assert!(chunk.is_empty());
         assert_eq!(read_abs, 99, "no eviction → cursor unchanged");
+    }
+    #[test]
+    fn tail_append_within_cap_keeps_everything() {
+        let mut cap = Vec::new();
+        let mut truncated = false;
+        tail_append(&mut cap, &mut truncated, b"ab".to_vec(), 100);
+        tail_append(&mut cap, &mut truncated, b"cd".to_vec(), 100);
+        assert_eq!(cap, b"abcd");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn tail_append_oversized_chunk_keeps_newest_half() {
+        let mut cap = b"prefix-older".to_vec(); // 12 bytes; keep = 50
+        let mut truncated = false;
+        tail_append(&mut cap, &mut truncated, vec![b'x'; 90], 100);
+        assert!(truncated);
+        // 12 < keep (50) so the pre-drain does not fire; 12+90=102 > cap →
+        // the post-extend trim drops the newest 2 oldest bytes → exactly 100
+        assert_eq!(cap.len(), 100);
+        assert!(cap.ends_with(&vec![b'x'; 90]));
+    }
+
+    #[test]
+    fn tail_append_accumulated_overflow_trims_to_cap() {
+        let mut cap = Vec::new();
+        let mut truncated = false;
+        for _ in 0..5 {
+            tail_append(&mut cap, &mut truncated, vec![b'a'; 30], 100);
+        }
+        // 4th append: 90+30=120 > 100 → keep=50, drain to 50, +30 = 80
+        // (< cap — no post-trim). Semantics: newest half + the new chunk.
+        assert_eq!(cap.len(), 80);
+        assert!(truncated);
     }
 }
