@@ -749,6 +749,15 @@ test("token/regenerate: sweeps a stale survivor mapping for the same user", asyn
   assert.equal(await env.KEYS.get("token:stale-tok"), null, "survivor mapping swept");
 });
 
+// round-524 (coverage-driven): the corrupt-record arm had ZERO pins — a torn
+// user JSON must read as missing, not throw.
+test("getUser: corrupt user JSON → null (no throw)", async () => {
+  __clearCaches();
+  const { getUser } = await import("../src/store/users.ts");
+  const env = { KEYS: { get: async () => "{corrupt" } };
+  assert.equal(await getUser(env, "ghost"), null);
+});
+
 // round-444 (coverage-driven): DELETE /api/me/keys had ZERO route pins
 // (store-level deleteUserKey covered, handler not).
 test("me/keys DELETE: 401 unauth, 400 unknown name, deletes by query param", async () => {
