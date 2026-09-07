@@ -3049,6 +3049,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   skeleton with per-tool differing descriptions). No production
   copy exists below the 6-line floor either.
 
+### 2026-09-08 SOLID round 68 (execute_local SRP extraction)
+- **execute_local (SRP, agent exec.rs)** — tool_execute's router
+  closure buried the local-shell path (~235 lines: spawn + Unix
+  process-group + bounded 1 MB tail capture with truncation +
+  kill-on-timeout) after the session-mode wait loop. Extracted
+  module-level `execute_local(command, timeout_secs, bus)` — the
+  closure now dispatches between the session wait-loop and the local
+  path, which is self-contained and individually readable. Behavior
+  unchanged (ShellExec gains .to_string() at the new &str boundary;
+  needless_borrows fixed on .arg). 306 lib pass; feature 314; fmt +
+  clippy clean; xwin check green. Note: the copy-depth sweep having
+  closed (rounds 64-67), this round resumes function-level SRP
+  decomposition of the remaining oversized closures.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
