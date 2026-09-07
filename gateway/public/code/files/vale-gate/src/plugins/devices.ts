@@ -115,12 +115,8 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
     if (!keyOk) {
       return jsonError(403, "Invalid or used registration key", "authorization_error");
     }
-    let device: Device;
-    try {
-      device = validateDevice(body);
-    } catch (e) {
-      return jsonError(400, (e as Error).message, "invalid_request");
-    }
+    const device = validatedDeviceOrError(body);
+    if (device instanceof Response) return device;
     // A one-time-key holder is untrusted: constrain the claimed hostname to
     // the agent-host suffix (same gate as handleSelfRegister) — validateDevice
     // alone accepts any RFC domain, so hostname=evil.com would register and
@@ -181,12 +177,8 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
 // same name + different token → refuse (anti-hijack, mirror round-68).
 async function handleSelfRegister(request: Request, env: any): Promise<Response> {
   const body = await readJson(request);
-  let device: Device;
-  try {
-    device = validateDevice(body);
-  } catch (e) {
-    return jsonError(400, (e as Error).message, "invalid_request");
-  }
+  const device = validatedDeviceOrError(body);
+  if (device instanceof Response) return device;
   if (!/^[0-9a-f]{64}$/i.test(device.token)) {
     return jsonError(403, "Invalid device token", "authorization_error");
   }
@@ -421,20 +413,16 @@ async function handleDevicesAdd(request: Request, env: any): Promise<Response> {
   const user = await requireAdmin(request, env);
   if (user instanceof Response) return user;
   const body = await readJson(request);
-  let device: Device;
-  try {
-    device = validateDevice(body);
-  } catch (e) {
-    return jsonError(400, (e as Error).message, "invalid_request");
-  }
+  const device = validatedDeviceOrError(body);
+  if (device instanceof Response) return device;
   // New record gets a registration date; an admin update of an existing
   // device keeps the original one (same contract as self-register).
   const existing = await getDevice(env, device.name);
-  device = { ...device, registeredAt: existing?.registeredAt ?? Date.now() };
-  await upsertDevice(env, device);
+  const toSave = { ...device, registeredAt: existing?.registeredAt ?? Date.now() };
+  await upsertDevice(env, toSave);
   return jsonOk({
     ok: true,
-    device: { name: device.name, hostname: device.hostname, token: maskKey(device.token) },
+    device: { name: toSave.name, hostname: toSave.hostname, token: maskKey(toSave.token) },
   });
 }
 
@@ -657,6 +645,16 @@ function validateDevice(body: any): Device {
     throw new Error("hostname must be a domain like d1.agent.saisi.online");
   if (token.length < 8) throw new Error("Token must be at least 8 chars");
   return { name, hostname, token };
+}
+
+/** validateDevice wrapped as a 400 Response — the reg-key, self-register and
+ *  admin-add handlers used to inline the same try/catch around it. */
+function validatedDeviceOrError(body: any): Device | Response {
+  try {
+    return validateDevice(body);
+  } catch (e) {
+    return jsonError(400, (e as Error).message, "invalid_request");
+  }
 }
 
 /** Claude Code MCP config snippet for a device (the only place the raw token is returned). */
