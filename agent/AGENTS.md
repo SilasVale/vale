@@ -1890,6 +1890,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-527 (2026-09-06): deny audit — the device-scan catch had ZERO pins.
   Added 1 in devices.test.mjs (KV outage → 401 deny, no throw). Clean
   round. Suite 571->572; gates clean; snapshot updated; pushed.
+  ROUND-528 (2026-09-06): frame audit — the malformed-frame catch had ZERO
+  pins. Added 1 in reliability.test.mjs (garbage frame skipped, valid
+  chunks + message_stop flow). Clean round. Suite 572->573; gates clean;
+  snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
