@@ -566,6 +566,71 @@ async function sectionBrowser() {
     setTimeout(resolve, 3000);
   });
   check('browser SPA bar sync', (state.url || '').includes('example.com'), 'bar=' + (state.url || '').slice(0, 60));
+
+  // Focus-trap regression: FOCUS the address bar without typing (the stuck
+  // state is focus-without-blur — e.g. the user clicked the bar then the
+  // native view, whose clicks never fire SPA blur), drive a navigation, and
+  // require the bar to follow WITHOUT re-entering the panel. Pre-fix the
+  // push is dropped and the bar stays stale.
+  {
+    const marker = 'focus-trap-' + Date.now();
+    const list3 = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+    const spa3 = list3.find((t) => t.url.includes('/desktop/'));
+    if (!spa3) {
+      check('browser focus-trap bar follows', false, 'no desktop SPA target');
+    } else {
+      const ws3 = new WebSocket(spa3.webSocketDebuggerUrl);
+      await new Promise((res, rej) => { ws3.onopen = res; ws3.onerror = rej; });
+      const eval3 = (id, expression) => new Promise((resolve) => {
+        const t = setTimeout(() => resolve(null), 15000);
+        const onMsg = (m) => {
+          const o = JSON.parse(m.data);
+          if (o.id === id) { clearTimeout(t); ws3.removeEventListener('message', onMsg); resolve(o); }
+        };
+        ws3.addEventListener('message', onMsg);
+        ws3.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
+      });
+      const rawOf = (r) => {
+        try {
+          const raw = r && r.result && r.result.result && r.result.result.value;
+          return raw !== undefined && raw !== null ? raw : null;
+        } catch (e) { return null; }
+      };
+      await eval3(300, "(function(){ var el = document.querySelector('.browser-url'); if (!el) return 'no-bar'; el.focus(); return 'focused'; })()");
+      const fscript = [
+        "const { chromium } = require('" + PW_DIR.replace(/\\/g, '/') + "/node_modules/playwright');",
+        "(async () => {",
+        "  const browser = await chromium.connectOverCDP('http://127.0.0.1:9333', { timeout: 10000 });",
+        "  const pages = browser.contexts().flatMap(c => c.pages());",
+        "  const view = pages.find(p => !p.url().includes('/desktop/'));",
+        "  if (!view) { console.log('NO_VIEW'); await browser.close(); return; }",
+        "  await view.goto('https://example.com/" + marker + "');",
+        "  console.log('NAV-OK');",
+        "  await browser.close();",
+        "})().catch(e => { console.log('FAIL:' + String(e).slice(0, 200)); process.exit(1); });",
+      ].join('\n');
+      await tool('browser_run_script', { script: fscript });
+      let barOk = false;
+      let barVal = '';
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const raw = await eval3(310 + attempt, "JSON.stringify({ url: (document.querySelector('.browser-url')||{}).value || '' })");
+        try {
+          const parsed = rawOf(raw) ? JSON.parse(rawOf(raw)) : null;
+          barVal = (parsed && parsed.url) || '';
+          if (barVal.includes(marker)) { barOk = true; break; }
+        } catch (e) {}
+        await sleep(2000);
+      }
+      // Restore: blur the bar so later runs/sections start from a clean state.
+      await eval3(399, "(function(){ var el = document.querySelector('.browser-url'); if (el) el.blur(); return 'ok'; })()");
+      await new Promise((resolve) => {
+        ws3.onclose = resolve;
+        setTimeout(() => { try { ws3.close(); } catch (e) {} }, 100);
+        setTimeout(resolve, 3000);
+      });
+      check('browser focus-trap bar follows', barOk, 'bar=' + barVal.slice(0, 60));
+    }
+  }
 }
 
 (async () => {

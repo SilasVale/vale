@@ -18,6 +18,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { Icon } from "../ui/Icon";
 import { useAiActivityPulse } from "../hooks/useAiActivityPulse";
 import { EvidenceDrawer } from "./EvidenceDrawer";
+import { shouldAcceptNavPush } from "../lib/embeddedNav";
 
 interface EmbeddedNavState {
   url: string;
@@ -54,6 +55,14 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
   // round-251: zoom the REAL view (webContents zoom factor via IPC).
   const [zoom, setZoomState] = useState(100);
   const urlEditingRef = useRef(false);
+  // Focus-trap fix: the editing flag clears only on DOM blur, but clicks
+  // into the NATIVE view never fire blur — without these refs the flag
+  // sticks and every later nav push is dropped (frozen address bar until
+  // remount). valueAtFocus snapshots the box at focus time; lastPushedUrl
+  // tracks the newest pushed URL; pushes are merged via shouldAcceptNavPush
+  // (focused-but-unchanged still follows; real typing is never clobbered).
+  const valueAtFocusRef = useRef("");
+  const lastPushedUrlRef = useRef("");
   // round-253: event-driven "AI is operating" pulse (SSE browser-actions-
   // changed / playwright-changed — no polling).
   const aiActive = useAiActivityPulse();
@@ -106,13 +115,25 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
     void b.state().then((s) => {
       if (s?.ok) {
         setReady(true);
-        if (s.url) setUrl(s.url);
+        if (s.url) {
+          setUrl(s.url);
+          lastPushedUrlRef.current = s.url;
+        }
         if (typeof s.canBack === "boolean") setCanBack(s.canBack);
         if (typeof s.canFwd === "boolean") setCanFwd(s.canFwd);
       }
     });
     const offNav = b.onNav((s) => {
-      if (!urlEditingRef.current && s.url) setUrl(s.url);
+      if (s.url) {
+        const accept = shouldAcceptNavPush({
+          editing: urlEditingRef.current,
+          inputValue: urlInputRef.current?.value ?? "",
+          valueAtFocus: valueAtFocusRef.current,
+          lastPushedUrl: lastPushedUrlRef.current,
+        });
+        if (accept) setUrl(s.url);
+        lastPushedUrlRef.current = s.url;
+      }
       setCanBack(s.canBack);
       setCanFwd(s.canFwd);
       // A nav event after a crash means the view recovered — clear the banner.
@@ -173,12 +194,18 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
     // honors — pass it through untouched.
     const u = /^https?:/i.test(raw) || raw.toLowerCase() === "about:blank" ? raw : `https://${raw}`;
     setUrl(u);
+    // Focus-trap fix: always release focus on submit. The Go button path
+    // previously kept DOM focus in the box (the subsequent click lands in
+    // the native view, which never fires blur) — the stuck editing flag
+    // then dropped every later nav push. Matches Chrome: the bar loses
+    // focus once navigation starts.
+    urlInputRef.current?.blur();
+    urlEditingRef.current = false;
     void b.navigate(u);
     // round-254 (user: "回车不能代替 Go 吗"): pressing Enter in the address
-    // bar is the primary submit — release the focus so the real URL (pushed
-    // by did-navigate) updates the bar and the view is clickable right away,
-    // exactly like Chrome's address bar.
-    if (fromSubmit) urlInputRef.current?.blur();
+    // bar is the primary submit — focus is already released above, so the
+    // real URL (pushed by did-navigate) updates the bar and the view is
+    // clickable right away, exactly like Chrome's address bar.
   }, [url]);
   const goBack = useCallback(() => { void bridge()?.back(); }, []);
   const goForward = useCallback(() => { void bridge()?.fwd(); }, []);
@@ -209,7 +236,10 @@ export function EmbeddedBrowserPane({ token }: { token: string }) {
             ref={urlInputRef}
             value={url}
             onChange={(e) => { setUrl(e.target.value); setNavError(null); }}
-            onFocus={() => { urlEditingRef.current = true; }}
+            onFocus={() => {
+              urlEditingRef.current = true;
+              valueAtFocusRef.current = urlInputRef.current?.value ?? "";
+            }}
             onBlur={() => { urlEditingRef.current = false; }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); navigate(true); } }}
             placeholder="Enter a URL and press Enter — rendered live by the real embedded browser"
