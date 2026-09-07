@@ -964,7 +964,9 @@ if (gotTheLock) {
         const nextRetry = () => { retryMs = Math.min(retryMs * 2, 30000); return retryMs; };
         const resetRetry = () => { retryMs = 2000; };
         /** Window title carries the agent version for at-a-glance diagnosis:
-         *  "Vale — v1.0.145". Falls back to "Vale" when the agent is unreachable. */
+         *  "Vale — v1.2.x" (the npm RELEASE version — /api/status `release`,
+         *  written by the update/setup swap paths; falls back to the Cargo
+         *  protocol `version` when the marker is absent). "Vale" when down. */
         const setVersionTitle = async () => {
             try {
                 const ctrl = new AbortController();
@@ -973,8 +975,9 @@ if (gotTheLock) {
                 clearTimeout(t);
                 if (r.ok) {
                     const j = await r.json();
-                    if (j.version)
-                        win?.setTitle(`Vale — v${j.version}`);
+                    const v = j.release || j.version;
+                    if (v)
+                        win?.setTitle(`Vale — v${v}`);
                 }
             }
             catch { /* agent down — keep default title */ }
@@ -1134,8 +1137,11 @@ if (gotTheLock) {
                     clearTimeout(t);
                     if (r.ok) {
                         const j = await r.json();
-                        if (j.version)
-                            version = j.version;
+                        // npm RELEASE version first (the number that changes per release,
+                        // written by update/setup), Cargo protocol `version` as fallback.
+                        const v = j.release || j.version;
+                        if (v)
+                            version = v;
                         if (typeof j.uptime_secs === "number")
                             uptime = fmtUptime(j.uptime_secs);
                         if (typeof j.live_sessions === "number")

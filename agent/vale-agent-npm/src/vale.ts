@@ -245,6 +245,30 @@ export function writeReleaseMarker(installDir: string): void {
   } catch { /* best-effort */ }
 }
 
+/**
+ * Stage the Electron desktop shell sources (main/preload/url-policy +
+ * icons) into the install dir. setup writes them in place; update writes
+ * `*.new` so the swap script can atomically replace them. The two flows
+ * used to each inline this block.
+ */
+function stageDesktopShell(installDir: string, suffix: "" | ".new"): void {
+  const DESK_SRC = path.join(__dirname, "..", "vale-desktop-electron", "src");
+  if (!fs.existsSync(DESK_SRC)) return;
+  const desDst = path.join(installDir, "vale-desktop-electron", "src");
+  fs.mkdirSync(desDst, { recursive: true });
+  for (const f of ["main.js", "preload.js", "url-policy.js"]) {
+    const s = path.join(DESK_SRC, f);
+    if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f + suffix));
+  }
+  // icon.png/.ico go next to src/ (Electron loads from ../icon.png;
+  // Windows Tray requires the .ico).
+  for (const icon of ["icon.png", "icon.ico"]) {
+    const iconSrc = path.join(__dirname, "..", "vale-desktop-electron", icon);
+    if (fs.existsSync(iconSrc))
+      fs.copyFileSync(iconSrc, path.join(installDir, "vale-desktop-electron", icon));
+  }
+}
+
 function svc(action) {
   sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
 }
@@ -450,24 +474,8 @@ const commands = {
     // round-330: Tauri vale-desktop staging removed (retired).
     // stage-l: stage the Electron shell sources (main/preload) so the desktop
     // app picks up menu/command features on a fresh install too.
-    const DESK_SRC = path.join(__dirname, "..", "vale-desktop-electron", "src");
-    if (fs.existsSync(DESK_SRC)) {
-      const desDst = path.join(DIR, "vale-desktop-electron", "src");
-      fs.mkdirSync(desDst, { recursive: true });
-      for (const f of ["main.js", "preload.js", "url-policy.js"]) {
-        const s = path.join(DESK_SRC, f);
-        if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f));
-      }
-      // icon.png goes next to src/ (Electron loads from ../icon.png)
-      const iconSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.png");
-      if (fs.existsSync(iconSrc))
-        fs.copyFileSync(iconSrc, path.join(DIR, "vale-desktop-electron", "icon.png"));
-      // icon.ico goes next to src/ too (Windows Tray requires .ico)
-      const icoSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.ico");
-      if (fs.existsSync(icoSrc))
-        fs.copyFileSync(icoSrc, path.join(DIR, "vale-desktop-electron", "icon.ico"));
-      console.log("setup: vale-desktop-electron sources staged");
-    }
+    stageDesktopShell(DIR, "");
+    console.log("setup: vale-desktop-electron sources staged");
     // Register boot-start task (SYSTEM) and kick it once; the agent's own
     // first-run flow registers the device with the console using the key.
     //
@@ -589,23 +597,8 @@ const commands = {
     // stage-l: ship the Electron desktop shell's main/preload alongside —
     // the desktop app (D:\Vale\vale-desktop-electron) loads these sources;
     // without the sync, new menu/command features never reach the device.
-    const DESK_SRC = path.join(__dirname, "..", "vale-desktop-electron", "src");
-    if (fs.existsSync(DESK_SRC)) {
-      const desDst = path.join(DIR, "vale-desktop-electron", "src");
-      fs.mkdirSync(desDst, { recursive: true });
-      for (const f of ["main.js", "preload.js", "url-policy.js"]) {
-        const s = path.join(DESK_SRC, f);
-        if (fs.existsSync(s)) fs.copyFileSync(s, path.join(desDst, f + ".new"));
-      }
-      // icon.png goes next to src/ (Electron loads from ../icon.png)
-      const iconSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.png");
-      if (fs.existsSync(iconSrc))
-        fs.copyFileSync(iconSrc, path.join(DIR, "vale-desktop-electron", "icon.png"));
-      // icon.ico goes next to src/ too (Windows Tray requires .ico)
-      const icoSrc = path.join(__dirname, "..", "vale-desktop-electron", "icon.ico");
-      if (fs.existsSync(icoSrc))
-        fs.copyFileSync(icoSrc, path.join(DIR, "vale-desktop-electron", "icon.ico"));
-    }
+    // (setup writes in place; update stages *.new for the atomic swap.)
+    stageDesktopShell(DIR, ".new");
     // P2-4: refresh the boxed-component manifest from the staged package +
     // the current install dir (best-effort, never fail-closed).
     writeBoxedVersions(DIR, path.join(__dirname, ".."));
