@@ -64,7 +64,9 @@ async function tool(name, body) {
 const results = [];
 function check(name, cond, detail) {
   results.push({ name, pass: !!cond, detail: detail || '' });
-  console.log((cond ? 'PASS ' : 'FAIL ') + name + (detail ? '  — ' + detail : ''));
+  // ASCII-only separator: the device console is GBK (cp936) — a UTF-8
+  // em-dash here mojibakes to `鈥?` in PowerShell transcripts.
+  console.log((cond ? 'PASS ' : 'FAIL ') + name + (detail ? '  -- ' + detail : ''));
 }
 
 // ── 1. terminal: session execute + background collect ──────────────────────
