@@ -1965,6 +1965,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   failures (check $? off-pipe). First run: exactly 1 drift (the 540
   comment — the forcing function works; comment rides the next deploy).
   Pushed.
+  ROUND-542 (2026-09-07): probe WIRED INTO DEPLOY — build.sh gateway now
+  runs check-live-parity.sh post-deploy (sleep 8 for edge propagation,
+  fail the step on drift; round-324 index-smoke pattern). Proved
+  end-to-end with a real deploy (Version dd093b0e): gate ran inside the
+  flow, "39 files, 0 drifted" — the 540 comment is now live and the
+  known drift is cleared. Mirror re-sync byte-identical no-op. Pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
