@@ -14,7 +14,7 @@ pwout" gap — every round-264..268 verification now runs from one file.
 | `browser` | 268 | browser_pw_info bundled → run_script fail path (exit≠0) → browser_run_script drives the embedded view via CDP 9333 → SPA address bar follows |
 | `panel` | 274 | AI writes a unique marker into a terminal session → the SPA's VISIBLE xterm must show it (display verification) |
 | `evidence` | 277 | AI screenshot into pwout → GET /api/browser/pwshots (Evidence drawer data) lists it |
-| `mcp` | 281/285 | stdio + http connect auto-select the embedded view; first browser_navigate drives it (regression) |
+| `mcp` | 281/285 | stdio + http connect auto-select the embedded view; first browser_navigate drives it (regression). Click proof: snapshot -> browser_click on an injected same-origin link (Learn more fallback) must drive the view (round-313, deterministic since the external-link redirect chain flaked under load) |
 
 ## Usage (on the device)
 

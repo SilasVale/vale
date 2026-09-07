@@ -300,6 +300,14 @@ async function mcpAutoselectProbe(tag, connArgs) {
   // navigate to the example.com HOMEPAGE first so the snapshot has links.
   await tool('mcp_client_call', { tool: 'browser_navigate', arguments: { url: 'https://example.com/' } });
   await sleep(3000);
+  // Deterministic click target: inject a big same-origin link and click IT
+  // (a real snapshot-ref mouse click driving a real navigation — the
+  // round-313 proof). The external "Learn more" link's cross-origin
+  // redirect chain flakes under load (device-caught: ok clicks with valid
+  // geometry that never commit, while same-origin clicks land in seconds).
+  // Falls back to Learn more when injection yields no ref.
+  await tool('mcp_client_call', { tool: 'browser_evaluate', arguments: { function: "() => { document.body.innerHTML = '<a id=e2e href=/inner-click-test style=display:block;font-size:40px;padding:60px>E2E-INNER-LINK</a>'; return 'INJECTED'; }" } }).catch(() => null);
+  await sleep(1000);
   // Snapshot + click + poll, up to 2 attempts with a FRESH snapshot each
   // time: under contention (parallel drivers on one box) a click can land
   // while the view is mid-navigation and silently do nothing (device-caught:
@@ -307,42 +315,49 @@ async function mcpAutoselectProbe(tag, connArgs) {
   // The proof stays strict — a real click must still drive the navigation.
   let clickOk = false;
   let clickRef = null;
+  let clickWant = 'inner-click-test';
   let emb2 = null;
-  for (let attempt = 0; attempt < 2 && !(emb2 && emb2.url.includes('iana.org')); attempt++) {
+  for (let attempt = 0; attempt < 2 && !(emb2 && (emb2.url.includes('inner-click-test') || emb2.url.includes('iana.org'))); attempt++) {
     if (attempt > 0) await sleep(3000);
     const snap = await tool('mcp_client_call', { tool: 'browser_snapshot', arguments: {} });
     const snapTxt = JSON.stringify(snap);
-    // Snapshot line: `- link "Learn more" [ref=f1e6] [cursor=pointer]:`
-    // NOTE: snapTxt is JSON.stringify'd, so inner quotes are escaped \" and
-    // the text is double-escaped (\\") — match the ref after "Learn more"
-    // without depending on the exact quote escaping.
-    const lmIdx = snapTxt.indexOf('Learn more');
-    const refMatch = lmIdx >= 0 ? /\[ref=(\w+)\]/.exec(snapTxt.slice(lmIdx, lmIdx + 200)) : null;
+    // Prefer the injected link; fall back to "Learn more". NOTE: snapTxt is
+    // JSON.stringify'd, so inner quotes are escaped \" and the text is
+    // double-escaped (\\") — match the ref after the label without
+    // depending on the exact quote escaping.
+    let lmIdx = snapTxt.indexOf('E2E-INNER-LINK');
+    let refMatch = lmIdx >= 0 ? /\[ref=(\w+)\]/.exec(snapTxt.slice(lmIdx, lmIdx + 200)) : null;
+    if (!refMatch) {
+      lmIdx = snapTxt.indexOf('Learn more');
+      refMatch = lmIdx >= 0 ? /\[ref=(\w+)\]/.exec(snapTxt.slice(lmIdx, lmIdx + 200)) : null;
+      if (refMatch) clickWant = 'iana.org';
+    }
     clickRef = refMatch && refMatch[1];
     if (clickRef) {
       const cl = await tool('mcp_client_call', { tool: 'browser_click', arguments: { target: clickRef } });
       clickOk = clickOk || !!(cl && cl.ok);
     }
-    // Poll for the navigation (slow iana.org loads committed after the old
-    // fixed 5s sleep flaked 16/18 on 1.2.297 — same predicate, more time).
+    // Poll for the navigation (slow loads committed after the old fixed 5s
+    // sleep flaked 16/18 on 1.2.297 — same predicate, more time).
     for (let i = 0; i < 15; i++) {
       await sleep(1000);
       try {
         const list2 = await (await fetch('http://127.0.0.1:9333/json/list')).json();
         emb2 = list2.find((t) => !t.url.includes('/desktop/'));
-        if (emb2 && emb2.url.includes('iana.org')) break;
+        if (emb2 && (emb2.url.includes('inner-click-test') || emb2.url.includes('iana.org'))) break;
       } catch {}
     }
   }
-  check('mcp ' + tag + ' click learn-more', clickOk, 'ref=' + clickRef);
-  if (!(emb2 && emb2.url.includes('iana.org'))) {
+  check('mcp ' + tag + ' click learn-more', clickOk, 'ref=' + clickRef + ' want=' + clickWant);
+  const clickDrove = !!(emb2 && (emb2.url.includes('inner-click-test') || emb2.url.includes('iana.org')));
+  if (!clickDrove) {
     // Geometry triage (diagnostic only, not a check): a physical click
     // that misses for viewport reasons looks identical to a broken click
     // path — log viewport + link rect so the next failure is instantly
     // triaged instead of needing a CDP probe round-trip.
     console.log('  [triage] click missed; geometry:', await clickGeom());
   }
-  check('mcp ' + tag + ' click drives embedded view', emb2 && emb2.url.includes('iana.org'), (emb2 && emb2.url.slice(0, 60)) || 'NO VIEW');
+  check('mcp ' + tag + ' click drives embedded view', clickDrove, (emb2 && emb2.url.slice(0, 60)) || 'NO VIEW');
   await tool('mcp_client_disconnect', {}).catch(() => {});
 }
 
