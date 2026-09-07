@@ -517,6 +517,23 @@ test("register: existing device name refuses with 409 (round-68 anti-takeover)",
   assert.equal(devs.find((d) => d.name === "d1").token, T64("c"), "production record untouched");
 });
 
+// round-526 (coverage-driven): the post-claim key recheck had ZERO pins — a
+// key consumed by a concurrent request between check and claim must 403.
+test("register: key vanishing after claim 403s (single-flight recheck)", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  await env.KEYS.put("regkey:kkrace", "1");
+  const realGet = env.KEYS.get.bind(env.KEYS);
+  let reads = 0;
+  env.KEYS.get = async (k) => {
+    if (k === "regkey:kkrace" && ++reads > 1) return null; // raced away
+    return realGet(k);
+  };
+  const res = await regPost(env, "/api/register", { key: "kkrace", name: "d9", hostname: "d9.agent.saisi.online", token: T64("a") });
+  assert.equal(res.status, 403);
+  assert.match((await res.json()).error.message, /Invalid or used registration key/);
+});
+
 // round-461 (coverage-driven): register-with-key 400, rename bad-hostname
 // 400, tunnel-token claim 403 + vanishing-key cleanup had ZERO pins.
 test("register: valid key with bad body 400s; rename rejects a bad hostname", async () => {

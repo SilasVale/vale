@@ -303,6 +303,10 @@ async function callTerminalToolOnce(name: string, env: any, device: any, args: a
  * browser tools return { image: { data, mimeType } } (base64 PNG) → an MCP
  * image block. Plain objects are stringified so the model sees the full shape.
  */
+// round-526: the top-level .image arm is defensive-only — both callers pass
+// the device {ok,result} envelope, so a bare {image} never arrives (the live
+// screenshot shape is the data-URL string handled below). Kept deliberately;
+// not pinned.
 function formatResult(result: any) {
   if (result && typeof result === "object" && result.image) {
     return [
