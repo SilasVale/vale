@@ -2429,6 +2429,25 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   The interim broken commit was amended with the fix; every commit
   leaves the suite green.
 
+### 2026-09-08 SOLID round 25 (actions-feed append dedup)
+- **append_action_line (DRY, agent mcp_client tools.rs)** —
+  record_mcp_action and record_mcp_screenshot each inlined the same
+  OpenOptions create/append write of one line into pwout/actions.jsonl
+  (round-18 deduped their timestamp construction; this was the
+  remaining write tail). Extracted `append_action_line(&impl Display)`;
+  both call it. Hazard rule FOLLOWED this round: call sites replaced
+  BEFORE the helper was inserted — no self-recursion. mcp_client
+  21/21, lib 299 pass; clippy/fmt clean.
+- **translate.ts key-guard chains reviewed, left** — three entry
+  points (messages / chat-completions / responses) each carry the
+  route-kind keyMissingError guard chain, but the kind set and order
+  differ per branch (chat adds openrouter/qwen re-checks; or/cm keys
+  are per-user BYOK vs env keys for the rest) — table-driving would
+  need a BYOK-vs-env key source split + per-entry ordering; medium
+  risk, medium payoff, left (same class as mcp-tools schema decls).
+  exec.rs slice_from buffer segments likewise stay (dropped-handling
+  differs per site).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
