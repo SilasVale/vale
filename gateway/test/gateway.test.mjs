@@ -1379,6 +1379,29 @@ test("og web_search: lone search tool without tool_choice gets it injected", asy
   assert.deepEqual(sent.tool_choice, { type: "tool", name: "web_search" });
 });
 
+// round-507 (coverage-driven): the tool_choice:"any" web_search variant had
+// ZERO pins (only type:"tool" + the lone-tool auto-inject were covered).
+test("og web_search: explicit any-choice with a search tool forces the search model", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  await withFetch(async (url, init) => {
+    sent = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({
+      type: "message",
+      content: [{ type: "text", text: "search answer" }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "og/mimo-v2.5", max_tokens: 100, stream: false,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      tool_choice: { type: "any", tools: [{ name: "web_search" }] },
+      messages: [{ role: "user", content: "query: what's new" }],
+    }),
+  );
+  assert.equal(sent.model, "deepseek-v4-flash");
+});
+
 // ── scanTopLevelModel / rawWithModel (CPU-safe model extraction) ──
 
 test("scanTopLevelModel: extracts top-level model", () => {
