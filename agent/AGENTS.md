@@ -3008,6 +3008,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   of ≥20 consecutive lines is copied anywhere. This closes the
   copy-detection space at every meaningful window depth.
 
+### 2026-09-08 SOLID round 65 (memory unknown-id envelope single-sourced)
+- **unknown_id_error (DRY + wording contract, agent memory/tools.rs)** —
+  memory_update and memory_delete each returned the same
+  {"ok": false, "error": "unknown id: {id}"} envelope inline; one
+  wording across two tools is a recovery contract for AI clients
+  (re-search before retry), so the message is now single-sourced via
+  unknown_id_error(id). 2 sites → shared helper; 34 memory-domain
+  tests pass; fmt + clippy clean. Baseline re-run: zen-us 12→10
+  sites; tooling.ts windows = fetch-call adjacency artifacts;
+  memory/mcp_client residuals = ToolDef closure-head + schema-tail
+  framework shapes. Copy-detection remains closed at 6/10/20 lines.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
