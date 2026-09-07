@@ -54,6 +54,13 @@ pub fn build(store: Arc<MemoryStore>) -> Vec<ToolDef> {
     ]
 }
 
+/// Failure envelope shared by memory_update / memory_delete — the same
+/// wording lets AI clients pattern-match one recovery path ("unknown
+/// id" → re-search before retrying).
+fn unknown_id_error(id: &str) -> Value {
+    json!({ "ok": false, "error": format!("unknown id: {id}") })
+}
+
 fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
     ToolDef::new(
         "memory_save",
@@ -216,7 +223,7 @@ fn tool_update(store: Arc<MemoryStore>) -> ToolDef {
                 if ok {
                     Ok(json!({"ok": true, "id": id}))
                 } else {
-                    Ok(json!({"ok": false, "error": format!("unknown id: {id}")}))
+                    Ok(unknown_id_error(&id))
                 }
             }
         },
@@ -244,7 +251,7 @@ fn tool_delete(store: Arc<MemoryStore>) -> ToolDef {
                 if store.delete(&id) {
                     Ok(json!({"ok": true, "id": id, "deleted": true}))
                 } else {
-                    Ok(json!({"ok": false, "error": format!("unknown id: {id}")}))
+                    Ok(unknown_id_error(&id))
                 }
             }
         },
