@@ -179,6 +179,23 @@ export function keyMissingError(kind: string): Response | null {
 }
 
 /**
+ * Circuit-open guard for og/: when the channel breaker is open, fail fast
+ * with the "circuit open" 502 instead of waiting on zen again. Every /v1
+ * flow that can reach the og upstream (chat/completions, responses,
+ * messages) used to inline the same three-line check.
+ */
+async function channelDegradedError(env: any, kind: string): Promise<Response | null> {
+  if (kind === "opencode" && (await isChannelDegraded(env))) {
+    return jsonError(
+      502,
+      "og: circuit open (recent upstream failures, try again in ~1 min)",
+      "api_error",
+    );
+  }
+  return null;
+}
+
+/**
  * Error response when the upstream call itself failed (network throw /
  * fetchWithRetry exhaustion): surface the in-band inspect failure's status
  * digits when it is a real HTTP status, else 502, so downstream classifiers
@@ -658,12 +675,9 @@ async function handleGatewayImpl(
     if (route.kind === "opencode" && !opencodeGoKey) {
       return keyMissingError("opencode") as Response;
     }
-    if (route.kind === "opencode" && (await isChannelDegraded(env))) {
-      return jsonError(
-        502,
-        "og: circuit open (recent upstream failures, try again in ~1 min)",
-        "api_error",
-      );
+    {
+      const dg = await channelDegradedError(env, route.kind);
+      if (dg) return dg;
     }
     if (route.kind === "deepseek" && !deepseekKey) {
       return keyMissingError("deepseek") as Response;
@@ -811,12 +825,9 @@ async function handleGatewayImpl(
     if (route.kind === "opencode" && !opencodeGoKey) {
       return keyMissingError("opencode") as Response;
     }
-    if (route.kind === "opencode" && (await isChannelDegraded(env))) {
-      return jsonError(
-        502,
-        "og: circuit open (recent upstream failures, try again in ~1 min)",
-        "api_error",
-      );
+    {
+      const dg = await channelDegradedError(env, route.kind);
+      if (dg) return dg;
     }
     // Model is og/muse-spark-*: force the US exit (Meta region policy). The
     // route picked above already rode via() when forceUsProxy was true — but
@@ -976,12 +987,9 @@ async function handleGatewayImpl(
     // The og-native passthrough previously BYPASSED the circuit breaker — a
     // dead channel kept getting routed (health lied, model=auto stuck on it).
     // Check the breaker up front like the translate path does.
-    if (route.kind === "opencode" && (await isChannelDegraded(env))) {
-      return jsonError(
-        502,
-        "og: circuit open (recent upstream failures, try again in ~1 min)",
-        "api_error",
-      );
+    {
+      const dg = await channelDegradedError(env, route.kind);
+      if (dg) return dg;
     }
     // og-native parsed the body above (web-search detection, image
     // pre-processing) — forward THAT (images must arrive described, deepseek
@@ -1089,13 +1097,11 @@ async function handleGatewayImpl(
   if (route.kind === "opencode" && !opencodeGoKey) {
     return keyMissingError("opencode") as Response;
   }
-  if (route.kind === "opencode" && (await isChannelDegraded(env))) {
-    // Circuit open: repeated hard failures — fail fast instead of waiting on zen again.
-    return jsonError(
-      502,
-      "og: circuit open (recent upstream failures, try again in ~1 min)",
-      "api_error",
-    );
+  // Circuit open: repeated hard failures — fail fast instead of waiting on
+  // zen again (shared channelDegradedError guard, same as the other /v1 arms).
+  {
+    const dg = await channelDegradedError(env, route.kind);
+    if (dg) return dg;
   }
   const openaiReq = toOpenAIRequest(body, upstreamModel);
   // ox-alpha-free takes reasoning effort levels (low/high/max) via the unified
