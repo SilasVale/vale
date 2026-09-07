@@ -2448,6 +2448,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   exec.rs slice_from buffer segments likewise stay (dropped-handling
   differs per site).
 
+### 2026-09-08 SOLID round 26 (tool name/desc pairs dedup)
+- **tool_name_desc_pairs (DRY, agent mcp_client tools.rs)** —
+  connect_stdio and list_tools_ref each inlined the same mapping of an
+  rmcp tool iterator onto (name, description-string) pairs. Extracted
+  `tool_name_desc_pairs(iter)` (module-level, generic over the
+  iterator); both call it. Hazard rule followed again (sites replaced
+  before helper insert — clean compile on the first try). mcp_client
+  21/21, lib 299 pass; clippy/fmt clean.
+- **Sweep updates** — index worker: ZERO ≥6-line code dups remain;
+  gateway tooling.ts clean after round-24; secrets.rs DPAPI seal/unseal
+  mirror confirmed intentional (direction-opposed FFI pair); e2e.js CDP
+  script scaffolding left (device-verified test suite — readability +
+  risk); auto_select_embedded_view's browser_tabs retries are one flow,
+  not copies.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
