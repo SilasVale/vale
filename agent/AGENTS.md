@@ -1856,6 +1856,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   had ZERO pins. Added 1 in gateway.test.mjs (gmi SSE delta → thinking
   block). Clean round. Suite 562->563; gates clean; snapshot updated;
   pushed.
+  ROUND-519 (2026-09-06): srvtool audit — the toSSE server_tool_use arm
+  had ZERO pins. Added 1 direct unit test in reliability.test.mjs.
+  Clean round. Suite 563->564; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
