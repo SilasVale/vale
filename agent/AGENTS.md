@@ -1940,6 +1940,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   /code/ 3/3 byte-identical, /mcp 401 gate. LESSON: test-only rounds
   never trigger deploys — schedule a live-vs-repo parity probe
   periodically, not just after code changes.
+  ROUND-538 (2026-09-07): harvest audit — the self-reg secret-harvest
+  catch had ZERO pins. Added 1 in devices.test.mjs (dead device → still
+  200, no secret). Self-caught: T64("g") fails the 64-hex token gate
+  (g not hex) → used "9". d1 answers 401 (alive, tunnel up) but no
+  device credential from here, so full device e2e stays out of reach.
+  Suite 577->578; gates clean; snapshot updated; pushed (test-only —
+  no redeploy needed).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
