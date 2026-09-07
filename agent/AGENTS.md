@@ -2156,6 +2156,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   (isChannelDownFailure on og 5xx) preserved at the two sites that had them.
   -23 net lines. Gateway 592 pass; tsc/lint/prettier clean; mirror synced.
 
+### 2026-09-08 SOLID round 6 (SSE encoder dedup + mcp_client auto-select dedup)
+- **AnthropicStreamEncoder dedup x2 (DRY, gateway)** — (1) ensureBlock
+  copy-pasted the thinking/text content_block_delta push between its
+  first-chunk and continuation paths → shared `pushContentDelta(delta)`.
+  (2) the constructor re-assigned eight fields that already carry
+  declaration-site initializers (class-field initializers run before the
+  ctor body — dead assignments) → ctor now only sets parameter-derived +
+  non-initialized fields. Gateway 592 pass; tsc/lint/prettier clean;
+  mirror synced.
+- **Connect auto-select dedup (DRY, agent mcp_client)** — the stdio and
+  http connect arms each copy-pasted the embedded-view auto-select
+  sequence (SESSION take-out → select under no lock → restore-or-drop,
+  P1-1 discipline). Extracted `auto_select_embedded_view(can_auto_select)`;
+  http passes "server exposes browser_tabs", stdio always true. mcp_client
+  21/21, feature-gated lib 307 pass; clippy clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
