@@ -2001,6 +2001,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   compare, claim-auth tests green in the 56). By construction the compat
   gate shows no external change — dormant/active indistinguishable
   through the worker path. No repo changes — ops round.
+  ROUND-548 (2026-09-07): vercel-proxy redeployed + smoke green — but the
+  "stale" verdict was WRONG: my probe used Origin console.saisi.online,
+  which is NOT in ALLOWED_ORIGINS (ai/api/dsh only), so no reflection by
+  design, pre- and post-fix. Re-probed with ai.saisi.online → 401 WITH
+  allow-origin reflected: the CORS fix is live. CORRECTION OWED: never
+  verdict drift without an allowlisted probe. Deploy stands as a fresh
+  push + verified smoke; no repo changes.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
