@@ -475,6 +475,37 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "terminal"))]
+    #[tokio::test]
+    async fn headless_session_tools_surface_recoverable_not_found() {
+        // Headless contract for session-scoped tools: with no sessions the
+        // stub manager can hold, every session tool must answer with the
+        // enriched session_lost error (InvalidParams + the reopen hint),
+        // NOT a bare failure — the AI client's self-recovery path stays
+        // uniform. write/resize/select/close were pinned nowhere; open was
+        // the only headless test (and it correctly reports the backend
+        // being disabled instead — it never needs an existing session).
+        let tools = plugin().tools();
+        for (name, params) in [
+            ("terminal_write", json!({"session_id": "s1", "data": "x"})),
+            (
+                "terminal_resize",
+                json!({"session_id": "s1", "rows": 24, "cols": 80}),
+            ),
+            ("terminal_select", json!({"session_id": "s1"})),
+            ("terminal_close", json!({"session_id": "s1"})),
+        ] {
+            let t = tools.iter().find(|t| t.name == name).unwrap();
+            let err = t.handler.call(params).await.unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("Session not found: s1")
+                    && msg.contains("(none — agent restarted? re-open with terminal_open)"),
+                "{name} must answer session_lost with the reopen hint: {msg}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn terminal_write_missing_params() {
         let tools = plugin().tools();

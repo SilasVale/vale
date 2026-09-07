@@ -58,6 +58,22 @@ pub(super) fn persist_pre_restart(map: &HashMap<String, serde_json::Value>) {
 
 /// Enriched "session not found" error: lists currently open sessions so the
 /// caller can self-recover (agent restarts drop in-memory PTY sessions).
+/// Session-scoped tools check existence BEFORE touching the backend so a
+/// vanished session yields the enriched session_lost error (open list +
+/// reopen instruction), NOT a bare backend/SessionNotFound error. Uniform
+/// across write/execute/screen/resize/select/close (round-87: resize etc.
+/// answered bare "not found"/disabled — the client's recovery path was
+/// tool-dependent).
+pub(super) async fn ensure_session_known(
+    mgr: &Arc<TerminalManager>,
+    sid: &str,
+) -> Result<(), DeviceError> {
+    if mgr.term_info(sid).await.is_none() {
+        return Err(session_lost(mgr, sid).await);
+    }
+    Ok(())
+}
+
 pub(super) async fn session_lost(mgr: &Arc<TerminalManager>, sid: &str) -> DeviceError {
     let open = mgr.term_list().await;
     let list = if open.is_empty() {

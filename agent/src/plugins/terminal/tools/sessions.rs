@@ -10,7 +10,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use super::ctx::{
-    append_spill, persist_pre_restart, pre_restart_map, rotate_spill, session_lost, MAX_SPILL_BYTES,
+    append_spill, ensure_session_known, persist_pre_restart, pre_restart_map, rotate_spill,
+    MAX_SPILL_BYTES,
 };
 use crate::plugins::terminal::{OutputBuf, SessionBuf};
 use crate::plugins::{require_str, to_value_or_empty};
@@ -347,9 +348,7 @@ pub(super) fn tool_write(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
             let terminal_mgr = terminal_mgr.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
-                if terminal_mgr.term_info(&session_id).await.is_none() {
-                    return Err(session_lost(&terminal_mgr, &session_id).await);
-                }
+                ensure_session_known(&terminal_mgr, &session_id).await?;
                 // data_base64 wins — it is the only path that can carry
                 // arbitrary bytes (round-54); `data` is UTF-8 text.
                 let bytes: Vec<u8> = if let Some(b64) = params.get("data_base64").and_then(|v| v.as_str()) {
@@ -385,6 +384,9 @@ pub(super) fn tool_close(
             let buf = buf.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
+                // Existence first: a vanished session gets the enriched
+                // session_lost error instead of a bare close failure.
+                ensure_session_known(&terminal_mgr, &session_id).await?;
                 // Capture metadata before close, then close. term_close fails
                 // on unknown sessions instead of fabricating a kind.
                 let meta = terminal_mgr.term_info(&session_id).await;
@@ -452,6 +454,7 @@ pub(super) fn tool_resize(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
             let terminal_mgr = terminal_mgr.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
+                ensure_session_known(&terminal_mgr, &session_id).await?;
                 let rows = params.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
                 let cols = params.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
                 terminal_mgr.term_resize(&session_id, rows, cols).await?;
@@ -471,6 +474,7 @@ pub(super) fn tool_select(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
             let terminal_mgr = terminal_mgr.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
+                ensure_session_known(&terminal_mgr, &session_id).await?;
                 terminal_mgr.term_select(&session_id).await?;
                 Ok(json!("OK"))
             }
