@@ -2286,6 +2286,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   mid-round: a line-range deletion script left two orphaned `s`/`}`
   fragments — compile caught them immediately, both removed.)
 
+### 2026-09-08 SOLID round 15 (index-worker 503 envelope + web sessions_logger)
+- **503 unavailable envelope single-sourced (DRY, index worker)** —
+  cross-file scan (now incl. index/src) found the claim handler (3
+  sites) and the index worker (1 site) each inlining the same
+  "temporarily unavailable" 503 JSON Response for R2/DO outage paths.
+  Extracted `unavailableResponse()` in claim.js (the module index.js
+  already depends on — no import cycle); all four sites call it.
+  Self-caught mid-round: the blind regex also rewrote the helper's own
+  body into a self-recursive call — fixed immediately (compile-level
+  checks + tests 56/56 green).
+- **sessions_logger() dedup (DRY, agent web/mod.rs)** — api_sessions_list
+  and api_session_events each re-inlined the sessions-dir SessionLogger
+  construction plus a 6-line HIGH(audit) rationale. Extracted
+  `sessions_logger()` owning both. Web tests 44/44, lib 299 pass;
+  clippy/fmt clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
