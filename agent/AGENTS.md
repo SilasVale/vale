@@ -1833,6 +1833,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   (back off). One-line parity fix. Self-caught×2 (translate branch, fast-
   500 no-retry). Proven by stash-revert (101/102 without, 102/102 with).
   Mirror resynced. Suite 556->557; gates clean; snapshot updated; pushed.
+  ROUND-513 (2026-09-06): nvtext audit — the nv/gmi non-JSON error arm had
+  ZERO pins. Added 1 in gateway.test.mjs (400 text, single call, status
+  kept). Clean round. Suite 557->558; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
