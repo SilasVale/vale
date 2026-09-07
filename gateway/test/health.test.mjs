@@ -184,6 +184,13 @@ test("valeProbe: fetch throw → ok false with the error message", async () => {
   }
 });
 
+// round-522 (coverage-driven): the serveAssetText no-ASSETS arm had ZERO pins.
+test("serveAssetText: env without ASSETS → null", async () => {
+  const { serveAssetText } = await import("../src/tooling.ts");
+  assert.equal(await serveAssetText({}, "/vale"), null);
+  assert.equal(await serveAssetText({ ASSETS: {} }, "/vale"), null);
+});
+
 test("valeProbe: unknown model → 400", async () => {
   const res = await valeProbe(keyedEnv, "xx/nope");
   assert.equal(res.status, 400);
