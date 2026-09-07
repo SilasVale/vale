@@ -2187,6 +2187,29 @@ mod tests {
     }
 
     #[tokio::test]
+    // round-41/49 audit pair: api_settings_put returns its invalid-JSON
+    // envelope as HTTP 200 (historical round-69 shape, pinned separately)
+    // while api_gateway_connect 400s the same class of error. This pin
+    // documents the contrast so the OPEN-decision unification is a visible
+    // wire change on BOTH endpoints, never a silent drift on one.
+    async fn gateway_connect_invalid_json_returns_http400() {
+        let (st, _cfg_path) = state_with_cfg("gw-bad-json", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(
+            req_with_json("POST", "/api/gateway/connect", "{not json"),
+            st,
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "gateway-connect 400s"
+        );
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["code"], "invalid_params");
+    }
+
+    #[tokio::test]
     async fn token_rotation_takes_effect_on_api_and_mcp_gate() {
         // Round-366 regression: TokenGate held a BOOT-time token clone while
         // /api/* read the live snapshot, so a runtime rotation stale-accepted
