@@ -2254,6 +2254,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   tools' id-parse stanzas (the MCP builder idiom — per-tool error text).
   Gateway 592 pass; tsc/lint/prettier clean; mirror synced.
 
+### 2026-09-08 SOLID round 13 (call-site comment trim + convergence check)
+- **Call-site comment trim (gateway translate.ts)** — the three /v1 arms
+  each carried a 6-line comment re-explaining the shared
+  upstreamFetchFailedResponse / upstreamBodyErrorResponse helpers whose
+  docstrings already own that explanation. Collapsed to one-line pointers
+  (-30 comment lines, zero logic change); mirror synced.
+- **Convergence check** — repo-wide dup scan now 13 files ≥4 blocks / 127
+  total (was 24 files / 260+ at round 1). translate.ts's remaining 16
+  blocks are all classified: flow-specific guard chains (by design),
+  fetchWithRetry destructures (shared-call-site isomorphism), incidental
+  single-line alignments. exec.rs's foreground/background buffer-read
+  segments stay separate (dropped-handling differs: silent adjust vs
+  truncated flag — the wait loops have the most device-caught regression
+  history; not worth the risk).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
