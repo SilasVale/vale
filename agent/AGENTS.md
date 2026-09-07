@@ -2787,6 +2787,16 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   log so a human decision-maker sees them without reading every round
   section.
 
+### 2026-09-08 SOLID round 49 (settings 200-envelope pin test)
+- **settings_put invalid-JSON envelope pinned (test-only, agent
+  web/mod.rs)** — the round-41 OPEN decision's HTTP-200 wire shape had
+  zero test coverage: a future "obvious" unification could silently
+  change the wire. Added
+  settings_put_invalid_json_keeps_http200_envelope pinning status 200
+  + ok:false + code invalid_params with a comment pointing at the
+  OPEN-decisions block. 300 lib pass (+1); fmt + clippy clean. No
+  behavior changed.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
