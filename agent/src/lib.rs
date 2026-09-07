@@ -23,6 +23,16 @@ pub(crate) fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// Milliseconds since the UNIX epoch (0 on clock errors). The mcp_client
+/// action feed and the system plugin's timing probe each used to inline
+/// this; pairs with unix_now() for sub-second stamps.
+pub(crate) fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// Lowercase hex of `bytes` (sha256-digest display). The update plugin and
 /// the tunnel manager each used to carry a private copy.
 pub(crate) fn hex_encode(bytes: &[u8]) -> String {

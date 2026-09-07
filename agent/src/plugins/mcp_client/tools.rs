@@ -605,10 +605,7 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
     let pwout = crate::paths::install_dir().join("pwout");
     let _ = std::fs::create_dir_all(&pwout);
     let summary = mcp_action_summary(tool, args);
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+    let ts = crate::now_millis();
     let line = serde_json::json!({
         "ts": ts,
         "duration_ms": dur_ms,
@@ -659,10 +656,7 @@ fn record_mcp_screenshot(dst: &std::path::Path) {
     let Some(name) = dst.file_name().map(|f| f.to_string_lossy().to_string()) else {
         return;
     };
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
+    let ts = crate::now_millis();
     let line = serde_json::json!({
         "ts": ts,
         "duration_ms": 0,
