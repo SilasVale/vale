@@ -1942,3 +1942,26 @@ test('model "auto" resolves to the first usable channel (ds) and serves', async 
   assert.equal(sent.model, "deepseek-v4-flash");
   assert.equal((await res.json()).content[0].text, "auto ok");
 });
+
+// round-509 (coverage-driven): the passthrough needsParse-true arm had ZERO
+// pins (og translate tests take the else arm; only a passthrough route with
+// a web_search/image trigger parses).
+test("ds passthrough with web_search tools parses the body and forwards", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  const res = await withFetch(async (url, init) => {
+    sent = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({
+      type: "message",
+      content: [{ type: "text", text: "ds search ok" }],
+      usage: { input_tokens: 3, output_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "ds/deepseek-v4-flash", max_tokens: 8,
+    tools: [{ type: "web_search_20250305", name: "web_search" }],
+    messages: [{ role: "user", content: "search this" }],
+  }));
+  assert.equal(res.status, 200);
+  assert.equal(sent.model, "deepseek-v4-flash");
+  assert.equal((await res.json()).content[0].text, "ds search ok");
+});
