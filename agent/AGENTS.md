@@ -2966,6 +2966,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   sweeper setup for one SessionNotFound branch — terminal behavior is
   covered by the device e2e suite instead. Kept with evidence.
 
+### 2026-09-08 SOLID round 62 (ox-alpha two-flow pair closed)
+- **oxAlphaReasoningDefault (DRY, gateway translate.ts)** — the
+  /v1/messages and chat/completions flows each inlined the same
+  stealth/ox-alpha reasoning-effort default (route.kind check +
+  rawWithOxAlphaReasoningDefault) — the LAST byte-identical two-flow
+  pair after the round-42/44 guard-table + relay extractions.
+  Shared `oxAlphaReasoningDefault(routeKind, upstreamModel, body)`;
+  behavior unchanged. 592 pass; tsc/prettier clean; mirror synced.
+  translate.ts full 19-block re-walk confirmed the remaining windows
+  are structural two-flow parallelism (destructure/fetch/relay call
+  shapes) plus per-flow-necessary key guards (each of the 3 opencode
+  guards serves a different flow) — nothing further extractable at
+  this window.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
