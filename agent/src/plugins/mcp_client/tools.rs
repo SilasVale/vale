@@ -1261,6 +1261,30 @@ pub fn mcp_client_list() -> ToolDef {
 }
 
 /// `mcp_client_call` — invoke a tool on the connected browser MCP server.
+/// Locate a playwright-mcp screenshot reference "(<path>\.playwright-mcp\
+/// <name>.png)" in the tool result text and return the referenced path.
+/// Pure text scan (no regex): find the marker dir, walk back to the '('
+/// that opens the reference, then forward past the extension to the ')'
+/// terminator. round-246: the extension is matched BARE — the old pattern
+/// required .png\" (quote immediately after the extension) which mutually
+/// excluded the paren check, so markdown references NEVER fired and MCP
+/// screenshots were silently unresolvable.
+fn parse_screenshot_ref(text: &str) -> Option<String> {
+    let marker = text.find(".playwright-mcp")?;
+    let open = text[..marker].rfind('(').unwrap_or(marker);
+    if let Some(dot) = text[marker..]
+        .find(".png")
+        .or_else(|| text[marker..].find(".jpg"))
+        .or_else(|| text[marker..].find(".jpeg"))
+    {
+        let end_rel = marker + dot + 4; // include extension
+        if end_rel < text.len() && text.as_bytes().get(end_rel) == Some(&b')') {
+            return Some(text[open + 1..end_rel].to_string());
+        }
+    }
+    None
+}
+
 /// Fold an MCP call result into the shape callers parse: structuredContent
 /// first (verbatim), else text content items joined with newlines and
 /// image items passed through as data: URIs for the caller to decode.
@@ -1401,33 +1425,7 @@ pub fn mcp_client_call() -> ToolDef {
             // the live page.
             {
                 let text = serde_json::to_string(&result).unwrap_or_default();
-                // Locate "(<path>\.playwright-mcp\<name>.png)" without regex:
-                // find the marker dir, walk back to '(' and forward to the
-                // closing extension + ')'.
-                let mut resolved: Option<String> = None;
-                if let Some(marker) = text.find(".playwright-mcp") {
-                    let bytes = text.as_bytes();
-                    // back to the '(' that opens this reference
-                    let open = text[..marker].rfind('(').unwrap_or(marker);
-                    // PRE-EXISTING BUG (one-browser round): the old patterns
-                    // required .png\" (quote IMMEDIATELY after the extension)
-                    // and then checked the next byte == ')' — mutually
-                    // exclusive, so the markdown-reference branch NEVER fired
-                    // and MCP screenshots were silently unresolvable. Match
-                    // the extension bare; the paren check below is the real
-                    // terminator.
-                    if let Some(dot) = text[marker..]
-                        .find(".png")
-                        .or_else(|| text[marker..].find(".jpg"))
-                        .or_else(|| text[marker..].find(".jpeg"))
-                    {
-                        let end_rel = marker + dot + 4; // include extension
-                        if end_rel < text.len() && bytes.get(end_rel) == Some(&b')') {
-                            let rel = &text[open + 1..end_rel];
-                            resolved = Some(rel.to_string());
-                        }
-                    }
-                }
+                let resolved = parse_screenshot_ref(&text);
                 if let Some(rel) = resolved {
                     let rel = rel.replace("\\\\", "\\");
                     let name = std::path::Path::new(&rel)
@@ -1985,5 +1983,31 @@ mod one_browser_tests {
         let r = json!({"content": [{"type": "text", "text": "ignored"}],
                        "structuredContent": {"a": 1}});
         assert_eq!(flatten_result(&r), json!({"ok": true, "result": {"a": 1}}));
+    }
+
+    #[test]
+    fn parse_screenshot_ref_plain_paren_reference() {
+        let text = r#"Screenshot saved: (C:\Users\x\.playwright-mcp\shot.png)"#;
+        assert_eq!(
+            parse_screenshot_ref(text).as_deref(),
+            Some(r"C:\Users\x\.playwright-mcp\shot.png")
+        );
+    }
+
+    #[test]
+    fn parse_screenshot_ref_markdown_reference() {
+        // round-246 regression pin: markdown-style ![](C:\...\a.png)
+        // references (no quote after the extension) must resolve.
+        let text = r#"![screenshot](C:\Users\x\.playwright-mcp\a.png)"#;
+        assert_eq!(
+            parse_screenshot_ref(text).as_deref(),
+            Some(r"C:\Users\x\.playwright-mcp\a.png")
+        );
+    }
+
+    #[test]
+    fn parse_screenshot_ref_no_reference_returns_none() {
+        assert_eq!(parse_screenshot_ref("all fine, no shots"), None);
+        assert_eq!(parse_screenshot_ref(r"(C:\x\.playwright-mcp\a.txt)"), None);
     }
 }
