@@ -2413,6 +2413,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   (tool-registration idiom), secrets.rs/exec.rs small blocks reviewed
   and left.
 
+### 2026-09-08 SOLID round 24 (valeProbe result envelope dedup)
+- **probeResultJson (DRY, gateway tooling.ts)** — valeProbe's og and
+  passthrough channel branches each inlined the same probe envelope
+  (ok/channel/status with the upstream status on failure). Extracted
+  `probeResultJson(prefix, res)`; both branches call it. Gateway 592
+  pass; tsc/prettier clean; mirror synced.
+- **SELF-RECURSION HAZARD — FOURTH occurrence (rounds 15/19/23/24)** —
+  the insert-then-blank-replace ordering rewrote probeResultJson's own
+  body into self-recursion (caught by the full suite: Maximum call
+  stack). RULE NOW HARDENED: when extracting a helper whose body
+  contains text identical to the pattern being replaced, run the
+  replacements FIRST (targeting only existing call sites), then insert
+  the helper — or anchor the replacement on call-site-only context.
+  The interim broken commit was amended with the fix; every commit
+  leaves the suite green.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
