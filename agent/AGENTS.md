@@ -1958,6 +1958,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   is defensive-only (not deterministically triggerable) — documented.
   Suite 579->580; gates clean; mirror resynced; pushed (comment-only
   src change rides the next deploy).
+  ROUND-541 (2026-09-07): parity probe TOOLED — round-537's lesson is now
+  gateway/scripts/check-live-parity.sh (39 manifest files, live /code/
+  vs repo mirror, exit 1 on drift). Self-caught: the viewer 307s bare
+  files to directory form (fixed with curl -L) and pipe exit codes mask
+  failures (check $? off-pipe). First run: exactly 1 drift (the 540
+  comment — the forcing function works; comment rides the next deploy).
+  Pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
