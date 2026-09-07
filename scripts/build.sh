@@ -25,6 +25,19 @@ cf_token() {
   else echo ""; fi
 }
 
+# Shared deploy gate: fetch the CF token once and bail with the same
+# "missing — skipping" message when absent. deploy_worker and
+# deploy_proxy used to each inline cf_token + the empty check.
+CF_TOKEN=""
+require_cf_token() {
+  local name="$1"
+  CF_TOKEN="$(cf_token)"
+  if [[ -z "$CF_TOKEN" ]]; then
+    echo "  !! CLOUDFLARE_API_TOKEN (or ~/.cloudflare-token) missing — skipping $name deploy"
+    return 1
+  fi
+}
+
 # --- P0-2 deploy/agent preflights (fail-closed, fail EARLY) ---
 # `deploy` chains five steps with && — a missing toolchain piece used to
 # abort MID-CHAIN, leaving a half-deployed stack with no manifest. Check
@@ -121,11 +134,7 @@ build_agent() {
 
 deploy_worker() {
   local dir="$1" name="$2"
-  local token; token="$(cf_token)"
-  if [[ -z "$token" ]]; then
-    echo "  !! CLOUDFLARE_API_TOKEN (or ~/.cloudflare-token) missing — skipping $name deploy"
-    return 1
-  fi
+  require_cf_token "$name" || return 1
   echo "=== [deploy] ${name} (${dir}/) ==="
   # P0-2: format gate before the deploy (runs only where the script exists —
   # gateway/prettier runs, index skips with a note).
@@ -145,7 +154,7 @@ deploy_worker() {
     # command fails silently into 2>/dev/null, aborting every deploy).
     for s in DO_AUTH SESSION_SECRET ADMIN_PASSWORD; do
       if ! ( cd "$ROOT/$dir" \
-        && CLOUDFLARE_API_TOKEN="$token" wrangler secret list 2>/dev/null \
+        && CLOUDFLARE_API_TOKEN="$CF_TOKEN" wrangler secret list 2>/dev/null \
         | grep -qE "(^|[\"' ])${s}([\"' ]|$)" ); then
         echo "  !! abort: worker secret $s 未配置 — 先执行 wrangler secret put $s (gateway fail-closed)" >&2
         return 1
@@ -164,7 +173,7 @@ deploy_worker() {
     fi
   fi
   ( cd "$ROOT/$dir" \
-      && CLOUDFLARE_API_TOKEN="$token" wrangler deploy )
+      && CLOUDFLARE_API_TOKEN="$CF_TOKEN" wrangler deploy )
   # round-542: gateway post-deploy parity — the round-537 stale deploy
   # proved green tests don't imply a fresh worker (19 src commits sat
   # undeployed). The /code/ viewer serves the just-deployed mirror, so
@@ -204,14 +213,10 @@ deploy_proxy() {
   # deploy_worker. $3 is the keyless smoke URL ("" = skip: the worker has no
   # reachable public URL).
   local dir="$1" name="$2" smoke_url="${3:-}"
-  local token; token="$(cf_token)"
-  if [[ -z "$token" ]]; then
-    echo "  !! CLOUDFLARE_API_TOKEN (or ~/.cloudflare-token) missing — skipping $name deploy"
-    return 1
-  fi
+  require_cf_token "$name" || return 1
   echo "=== [deploy] proxy ${name} (proxies/${dir}/) ==="
   ( cd "$ROOT/proxies/$dir" \
-      && CLOUDFLARE_API_TOKEN="$token" wrangler deploy )
+      && CLOUDFLARE_API_TOKEN="$CF_TOKEN" wrangler deploy )
   # Secrets are set once via `wrangler secret put` (or the dashboard) and
   # survive re-deploys; if a proxy needs env it reads from Worker env.
   echo "  ok: $name deployed"
