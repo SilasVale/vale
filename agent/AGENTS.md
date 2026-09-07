@@ -1976,6 +1976,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   /api/plugins/status 401, /api/devices 401, removed /api/plugins/pair
   still 404, /mcp 401 with proper JSON-RPC error. Deployed world fully
   consistent with repo. No code changes — verification round.
+  ROUND-544 (2026-09-07): proxy deploy BLIND SPOT CLOSED — deploy_proxy
+  had no post-deploy smoke (comment admitted it). Wired keyless 401-gate
+  smokes for zen-go + zen-us (vercel-proxy pattern; proves serving +
+  auth intact, zero upstream spend). openrouter-proxy skips: idle/
+  off-path, workers.dev TLS-dead, no reachable URL. Proved with a real
+  `build.sh proxies` run (all 3 deployed, both smokes green). Pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
