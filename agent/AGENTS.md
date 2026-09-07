@@ -2370,6 +2370,17 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   vale-desktop-electron/src/*.ts, the committed *.js products must be
   re-emitted, and the npm-package copies re-synced).
 
+### 2026-09-08 SOLID round 21 (electron shell dedup x2)
+- **resolveIcon (DRY, electron main.ts)** — appIcon and windowIcon each
+  inlined the same existsSync-guarded icon path resolution + icon-status
+  reporting, differing only in file name and report key. Extracted
+  `resolveIcon(name, reportKey)`; both call it. Products re-emitted from
+  the .ts source, byte-identical copies verified.
+- **emitMenu (DRY, electron main.ts)** — sendMenu's direct path and
+  flushMenuQueue's drain loop both called the same vale-menu webContents
+  send; the channel name + send shape now live in one place. Products
+  re-emitted, copies verified.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
