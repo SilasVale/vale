@@ -77,6 +77,17 @@ import { handleDeviceProxy, DEVICE_BASE, decodeDeviceName } from "./device-proxy
 // the upstream response headers that must never be re-served at the
 // console origin.
 const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+
+/// 409 conflict envelope for a name that is already registered — the
+/// register pre-check (round-68) and the in-lock insertDevice retry
+/// (round-122) used to each inline the same jsonError.
+function alreadyRegisteredConflict(name: string): Response {
+  return jsonError(
+    409,
+    `Device '${name}' already registered — use the console (admin) to update it`,
+    "conflict",
+  );
+}
 const UPLOAD_STRIP_RESPONSE_HEADERS = new Set([
   "set-cookie",
   "set-cookie2",
@@ -131,11 +142,7 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
     // attacker. Refuse when the name is already registered; re-registering
     // an existing device is an admin action.
     if (await getDevice(env, device.name)) {
-      return jsonError(
-        409,
-        `Device '${device.name}' already registered — use the console (admin) to update it`,
-        "conflict",
-      );
+      return alreadyRegisteredConflict(device.name);
     }
     // round-103: read the device's proxy secret so the gateway proxy can
     // present X-Vale-Auth for /panel/ (token-injection gate).
@@ -156,11 +163,7 @@ async function handleRegister(request: Request, env: any): Promise<Response> {
     device.registeredAt = Date.now();
     const inserted = await insertDevice(env, device);
     if (!inserted) {
-      return jsonError(
-        409,
-        `Device '${device.name}' already registered — use the console (admin) to update it`,
-        "conflict",
-      );
+      return alreadyRegisteredConflict(device.name);
     }
     await deleteRegKey(env, k); // one-time — consumed only after success
     await deleteRegGrant(env, k);
