@@ -269,9 +269,21 @@ async function mcpAutoselectProbe(tag, connArgs) {
   if (!c || c.status !== 'connected') { return; }
   const nav = await tool('mcp_client_call', { tool: 'browser_navigate', arguments: { url: 'https://example.com/' + marker } });
   check('mcp ' + tag + ' navigate ok', nav && nav.ok, (nav && JSON.stringify(nav).slice(0, 60)) || 'no result');
-  await sleep(6000);
-  const list = await (await fetch('http://127.0.0.1:9333/json/list')).json();
-  const embedded = list.find((t) => !t.url.includes('/desktop/'));
+  // Poll (not fixed sleep) for the navigate to become visible on CDP: after
+  // a transport switch the view can still show the previous probe's page
+  // for several seconds (device-caught: http probe kept seeing the stdio
+  // probe's iana.org landing past the old fixed 6s sleep). Same predicate,
+  // more time — mirrors the click poll below.
+  let embedded = null;
+  let list = [];
+  for (let i = 0; i < 15; i++) {
+    await sleep(1000);
+    try {
+      list = await (await fetch('http://127.0.0.1:9333/json/list')).json();
+      embedded = list.find((t) => !t.url.includes('/desktop/'));
+      if (embedded && embedded.url.includes(marker)) break;
+    } catch {}
+  }
   const spaOk = list.some((t) => t.url.includes('/desktop/'));
   check('mcp ' + tag + ' drives embedded view', embedded && embedded.url.includes(marker), (embedded && embedded.url.slice(0, 60)) || 'NO VIEW');
   check('mcp ' + tag + ' SPA intact', spaOk, 'targets=' + list.length);
