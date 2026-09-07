@@ -1887,6 +1887,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   Also found V8 misattributes executed else-if multi-line arms (786-790
   executes per output assertion yet still listed). Suite 570->571; gates
   clean; mirror resynced; pushed.
+  ROUND-527 (2026-09-06): deny audit — the device-scan catch had ZERO pins.
+  Added 1 in devices.test.mjs (KV outage → 401 deny, no throw). Clean
+  round. Suite 571->572; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
