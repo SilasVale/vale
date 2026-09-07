@@ -1909,6 +1909,12 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-532 (2026-09-06): tunnel audit — the dead-tunnel proof catch had
   ZERO pins. Added 1 in devices.test.mjs (throw → 409, record untouched).
   Clean round. Suite 576->577; gates clean; snapshot updated; pushed.
+  ROUND-533 (2026-09-06): agent matrix sweep — default 332 (290 lib + 5 +
+  27 + 2 + 7 + 1) + core 15 = 347, feat-gated lib 298, clippy x2 + fmt +
+  xwin clean. FINDINGS: (1) one-off flake — first feat-gated run failed
+  1 test, 4 reruns all green (name not captured; watch item); (2) the
+  snapshot headline 349 was stale arithmetic (true 347) — corrected.
+  Pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
