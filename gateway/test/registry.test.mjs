@@ -103,3 +103,64 @@ test("registry events: emit delivers, unsubscribe stops, throwers/rejecters swal
   await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(seen, [42], "unsubscribed listener stays silent");
 });
+
+test("registerPlugins: declared deps register before their consumers (topo order)", () => {
+  const ctx = createPluginContext(null, {});
+  const order = [];
+  const dep = {
+    name: "translate",
+    deps: [],
+    setup: (c) => {
+      order.push("translate");
+      c.api.translate = { resolveAutoModel: () => "auto-resolved" };
+    },
+  };
+  const consumer = {
+    name: "auth",
+    deps: ["translate"],
+    setup: (c) => {
+      order.push("auth");
+      // The bug this pins: auth was listed FIRST in index.ts's array, so
+      // its setup read ctx.api.translate as undefined and the effective
+      // model lookup permanently degraded. Deps must now win over array
+      // order.
+      c.api.authSawTranslate = !!(c.api && c.api.translate);
+    },
+  };
+  registerPlugins(ctx, [consumer, dep]); // consumer listed BEFORE dep
+  assert.deepEqual(order, ["translate", "auth"], "dep setup ran first");
+  assert.equal(ctx.api.authSawTranslate, true, "consumer saw its declared dep");
+});
+
+test("registerPlugins: same-level plugins keep caller-array relative order", () => {
+  const ctx = createPluginContext(null, {});
+  const order = [];
+  registerPlugins(ctx, [
+    { name: "a", deps: [], setup: () => order.push("a") },
+    { name: "b", deps: [], setup: () => order.push("b") },
+    { name: "c", deps: [], setup: () => order.push("c") },
+  ]);
+  assert.deepEqual(order, ["a", "b", "c"], "stable relative order preserved");
+});
+
+test("registerPlugins: absent-from-list deps are tolerated (external provider)", () => {
+  const ctx = createPluginContext(null, {});
+  ctx.api.external = { provided: true };
+  registerPlugins(ctx, [
+    { name: "consumer", deps: ["external"], setup: (c) => { c.api.checked = !!(c.api.external); } },
+  ]);
+  assert.equal(ctx.api.checked, true, "dep already on ctx.api satisfies the consumer");
+});
+
+test("registerPlugins: dependency cycle throws (fail loud, never silent)", () => {
+  const ctx = createPluginContext(null, {});
+  assert.throws(
+    () =>
+      registerPlugins(ctx, [
+        { name: "x", deps: ["y"], setup: () => {} },
+        { name: "y", deps: ["x"], setup: () => {} },
+      ]),
+    /dependency cycle/,
+    "cycle must surface instead of silently skipping setup",
+  );
+});

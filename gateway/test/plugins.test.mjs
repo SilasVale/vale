@@ -894,13 +894,25 @@ test("me/route: 401 unauth; PUT validates whitelist; GET shows stored + effectiv
   const bob = await issueSessionToken("pw", "bob", "user");
   const fresh = await (await meReq(env, bob, "/api/me/route", "GET")).json();
   assert.equal(fresh.model, null);
-  assert.equal(fresh.effective, null, "no stored route and no resolver wiring → null");
+  // round-2026-09-08: with the registry's declared deps now enforced (auth
+  // setup runs AFTER translate's, so resolveRouteModel is wired), a keyless
+  // user with no stored route resolves to the usable-fallback chain's
+  // terminal default — the old "null (no resolver wiring)" assertion pinned
+  // the pre-fix ordering bug.
+  assert.equal(fresh.effective, "ds/deepseek-v4-flash", "keyless no-route user falls back to the default model");
   assert.equal((await meReq(env, bob, "/api/me/route", "PUT", { model: "nope/model" })).status, 400);
   const put = await meReq(env, bob, "/api/me/route", "PUT", { model: "og/deepseek-v4-flash" });
   assert.deepEqual(await put.json(), { ok: true, model: "og/deepseek-v4-flash" });
+  // Effective resolves the STORED route only when it is usable for this
+  // user — bob needs an og key, else resolveAutoModel falls back (round-68:
+  // never route to a keyless channel). First without the key: fallback.
   const after = await (await meReq(env, bob, "/api/me/route", "GET")).json();
   assert.equal(after.model, "og/deepseek-v4-flash");
-  assert.equal(after.effective, "og/deepseek-v4-flash", "effective mirrors the stored route");
+  assert.equal(after.effective, "ds/deepseek-v4-flash", "keyless user's stored og route is unusable → default fallback");
+  await env.KEYS.put("ukeys:bob", JSON.stringify({ OPENCODE_GO_API_KEY: "og-k" }));
+  __clearCaches();
+  const withKey = await (await meReq(env, bob, "/api/me/route", "GET")).json();
+  assert.equal(withKey.effective, "og/deepseek-v4-flash", "usable stored route mirrors as effective");
   const clear = await meReq(env, bob, "/api/me/route", "PUT", { model: null });
   assert.deepEqual(await clear.json(), { ok: true, model: null });
 });

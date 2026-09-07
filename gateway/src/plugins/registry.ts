@@ -82,11 +82,49 @@ export function createPluginContext(env: PluginEnv | null, helpers: PluginHelper
   };
 }
 
-/** Register plugins in order; each plugin's setup runs immediately. */
+/** Register plugins in dependency order. Each plugin's `deps` names must be
+ *  provided by another plugin in the same list; a stable topological sort
+ *  runs first so a plugin's setup() ALWAYS sees its declared deps already
+ *  registered on ctx.api (e.g. auth's ctx.api.translate). The historical
+ *  contract was "registration order = dependency order" — an implicit,
+ *  unenforced convention that silently broke when the caller's array order
+ *  drifted (auth was listed before translate, so its setup read
+ *  ctx.api.translate as undefined and `/api/me/route`'s effective model
+ *  permanently degraded to the raw stored route). Route dispatch order is
+ *  preserved EXCEPT that a dependency now always precedes its consumers;
+ *  same-level plugins keep their caller-array relative order (stable).
+ *  A dep name that is in no provided plugin is tolerated (external source);
+ *  a genuine dependency CYCLE throws — fail loudly instead of silently
+ *  degrading setup. */
 export function registerPlugins(ctx: PluginContext, plugins: Plugin[]): void {
-  for (const plugin of plugins) {
-    if (!plugin || typeof plugin.setup !== "function") continue;
-    plugin.setup(ctx);
+  const byName = new Map<string, Plugin>();
+  for (const p of plugins) if (p?.name) byName.set(p.name, p);
+  const done = new Set<string>();
+  let remaining = plugins.filter((p) => p && typeof p.setup === "function");
+  // Upper bound: at most remaining.length passes can emit; extra passes
+  // mean a no-progress pass (cycle). length² + length + 1 is a strict bound
+  // on the loop's total iterations.
+  let guard = remaining.length * remaining.length + remaining.length + 1;
+  while (remaining.length > 0) {
+    if (--guard <= 0) {
+      const names = remaining.map((p) => p?.name || "(unnamed)").join(", ");
+      throw new Error(
+        `plugin dependency cycle among: ${names} (deps resolve only against plugins in the same list)`,
+      );
+    }
+    const next: Plugin[] = [];
+    for (const p of remaining) {
+      const unmet = (p.deps || []).filter(
+        (d) => byName.has(d) && !done.has(d), // absent-from-list deps are tolerated
+      );
+      if (unmet.length > 0) {
+        next.push(p);
+        continue;
+      }
+      p.setup(ctx);
+      if (p.name) done.add(p.name);
+    }
+    remaining = next;
   }
 }
 
