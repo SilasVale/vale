@@ -1,6 +1,0 @@
-{
-  "name": "my-openrouter-proxy-tests",
-  "private": true,
-  "type": "module",
-  "description": "OpenRouter BYOK proxy (Cloudflare Worker) — behavior tests via node --test (zero deps)"
-}

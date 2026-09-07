@@ -12,7 +12,7 @@
 ```
 AI clients ──► vale-gate (CF Worker) ──► upstream channels (og/ds/qw/or/nv/gmi/cm/amd)
 console SPA ──►   │  plugins + tooling            │ og via zen, muse via Vercel/zen-us exit
-extension ────►   │                               └─ proxies: zen-go/zen-us/openrouter (BYOK pipes)
+extension ────►   │                               └─ proxies: zen-go/zen-us (BYOK pipes; openrouter retired 2026-09-07)
 vale CLI ─────►   │
                   ▼
 devices (Windows) ◄── cloudflared tunnel (agent-supervised, free path)
@@ -83,7 +83,7 @@ install/update: npm tgz ONLY (vale-dist worker; one-time file drop = R2 + TempCl
 |---|---|---|
 | gateway | tsc + eslint(src+ui) + prettier + node --test | 580 |
 | agent | cargo test + clippy -D warnings + fmt --check + xwin check | 347 (290 lib + 5 bin + 27 + 2 + 7 + 1 integration + 15 core; 298 lib feat-gated) |
-| proxies (×3) | node --test behavior suites + wrangler dry-run | 26 |
+| proxies (×2) | node --test behavior suites + wrangler dry-run | 19 |
 | ~~studio~~ | retired (ADR 0006); CI studio job dropped, suite lives in git history | — |
 | electron | node --test (url-policy) + tsc build | 4 |
 | extension | node --check all JS | — |

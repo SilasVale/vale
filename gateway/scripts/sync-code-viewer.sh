@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 DEST=public/code/files
 
 rm -rf "$DEST"
-mkdir -p "$DEST/vale-gate/src" "$DEST/vale-gate/public" "$DEST/openrouter-proxy"
+mkdir -p "$DEST/vale-gate/src" "$DEST/vale-gate/public"
 
 # vale-gate sources: the TS migration (round-83) moved the real source to
 # .ts files (the .js re-export shims are long gone). Copy the live tree
@@ -37,22 +37,14 @@ cp "$PWD"/src/lib/*.ts "$DEST/vale-gate/src/lib/"
 cp public/index.html public/style.css "$DEST/vale-gate/public/"
 cp wrangler.jsonc "$DEST/vale-gate/"
 
-# openrouter-proxy (sibling project, the or/ OpenRouter proxy). Not part of the
-# vale monorepo — copy it when the sibling repo is present, else skip.
-if [ -f ../my-openrouter-proxy/src/index.js ]; then
-  cp ../my-openrouter-proxy/src/index.js "$DEST/openrouter-proxy/src.js"
-  cp ../my-openrouter-proxy/wrangler.jsonc "$DEST/openrouter-proxy/"
-  HAS_PROXY=1
-else
-  echo "  (warning: ../my-openrouter-proxy not found — skipping openrouter-proxy in code viewer)"
-  HAS_PROXY=0
-fi
+# (openrouter-proxy mirror removed with the worker's 2026-09-07 retirement —
+# the sibling-path block never fired inside the monorepo anyway.)
 
 # Generate the manifest from WHAT WAS ACTUALLY COPIED (no hardcoded file
 # list — the old static src/*.js spec rotted when the tree moved to .ts and
 # the viewer 404d on every entry). vercel-proxy is deprecated and contains
 # a hardcoded key — excluded.
-PROXY_HAS="$HAS_PROXY" python3 - "$DEST" <<'EOF'
+python3 - "$DEST" <<'EOF'
 import json, os, sys
 dest = sys.argv[1]
 files = []
@@ -62,9 +54,6 @@ for root, _dirs, names in os.walk(vg):
         full = os.path.join(root, n)
         rel = os.path.relpath(full, vg).replace(os.sep, "/")
         files.append({"name": rel, "path": f"files/vale-gate/{rel}", "group": "vale-gate"})
-if os.environ.get("PROXY_HAS") == "1":
-    for n in sorted(os.listdir(os.path.join(dest, "openrouter-proxy"))):
-        files.append({"name": n, "path": f"files/openrouter-proxy/{n}", "group": "openrouter-proxy"})
 with open(os.path.join(dest, "..", "manifest.json"), "w") as f:
     json.dump({"files": files}, f, indent=2, ensure_ascii=False)
 print(f"generated manifest: {len(files)} files → public/code/")

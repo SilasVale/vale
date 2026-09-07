@@ -60,7 +60,7 @@ export function pickRoute(
       // The switch now also covers or (2026-08-22): off = direct to openrouter.ai; on = via the US egress.
       // requestPath distinguishes the two formats: /v1/messages (Claude Code) and
       // /v1/chat/completions (DSH). The egress is measured to be a pure pipe — it passes Authorization
-      // through, so BYOK is unaffected. openrouter-proxy is no longer on the path (the worker remains but is idle).
+      // through, so BYOK is unaffected. The openrouter-proxy worker was retired 2026-09-07 (zero callers, dead URL).
       const upstreamPath = requestPath || VERIFY_PATH;
       return {
         type: "passthrough",

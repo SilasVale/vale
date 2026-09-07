@@ -263,9 +263,6 @@ jobs:
       - name: Test zen-us
         run: node --test
         working-directory: proxies/zen-us-proxy
-      - name: Test openrouter
-        run: node --test
-        working-directory: proxies/my-openrouter-proxy
       - name: Install wrangler
         run: npm install -g wrangler@4
       - name: Dry-run zen-go
@@ -274,9 +271,6 @@ jobs:
       - name: Dry-run zen-us
         run: wrangler deploy --dry-run
         working-directory: proxies/zen-us-proxy
-      - name: Dry-run openrouter
-        run: wrangler deploy --dry-run
-        working-directory: proxies/my-openrouter-proxy
       - name: Syntax-check vercel-proxy api
         run: |
           node --check api/proxy.js

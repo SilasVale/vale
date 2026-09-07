@@ -6,10 +6,11 @@ Independently deployed small proxy Workers / Vercel projects, invoked by the Val
 |---|---|---|---|
 | `zen-go-proxy/` | `opencode-go-proxy` | Dedicated direct entry for <opencode-host> (og transcoding merged into the gateway) | `OPENCODE_GO_API_KEY`, `CLIENT_KEY` (required — default-closed when unset) |
 | `zen-us-proxy/` | `zen-us-proxy` | US egress proxy (D1 binding forces US-region edge → opencode zen; see D1 note below) | `OPENCODE_GO_API_KEY`, `CLIENT_KEY` (required — default-closed when unset) |
-| `my-openrouter-proxy/` | `openrouter-proxy` | OpenRouter BYOK passthrough (BYOK-only: anonymous callers get 401, no built-in key exists to spend) | none — BYOK-only, no secret to configure |
 | `vercel-proxy/` | Vercel project | `<mirror-host>/api/zen` + `/api/proxy` AI egress (both BYOK-only: caller key required), controlled `/api/github/{web\|raw\|api\|release}/...` GitHub HTTP reverse proxy, plus `/api/gform/{gle\|docs\|...}/...` Google Forms reverse proxy (body rewriting, anonymous public forms) (Vercel platform, not a Worker) | none — BYOK-only, no secret to configure |
 
-Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default-closed when unset); the OpenRouter paths (`my-openrouter-proxy`, `/api/proxy`, `/api/zen`) and zen-us `/v1/responses` are BYOK-only — the caller always supplies their own upstream key and there is deliberately **no server-side key to leak, rotate, or configure**. Upstream fetches carry a 30s timeout that covers **waiting for response headers only** — streamed response bodies (long SSE generations, e.g. muse-spark via `/v1/responses`) are forwarded untimed so a long generation is never cut mid-stream. 5xx responses use generic client text (detail stays in the worker/function log).
+(~~`my-openrouter-proxy/`~~ RETIRED 2026-09-07 — zero callers (off-path since 2026-08-22, upstream table), workers.dev URL TLS-dead; remote worker deleted, source in git history.)
+
+Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default-closed when unset); the OpenRouter paths (`/api/proxy`, `/api/zen`) and zen-us `/v1/responses` are BYOK-only — the caller always supplies their own upstream key and there is deliberately **no server-side key to leak, rotate, or configure**. Upstream fetches carry a 30s timeout that covers **waiting for response headers only** — streamed response bodies (long SSE generations, e.g. muse-spark via `/v1/responses`) are forwarded untimed so a long generation is never cut mid-stream. 5xx responses use generic client text (detail stays in the worker/function log).
 
 ## `/v1/responses` (muse-spark) — why BYOK on zen-us, and the US-exit caveat
 
@@ -27,13 +28,12 @@ Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default
 ./scripts/build.sh vercel-proxy
 ```
 
-`./scripts/build.sh deploy` also deploys the three Cloudflare proxies.
+`./scripts/build.sh deploy` also deploys the two Cloudflare proxies.
 
 ## D1 bindings (geo-hack — read before touching)
 
 - `zen-us-proxy` binds the `us-proxy-db` D1 database but **never queries it**. The binding is an intentional geo-hack: pinning a D1 database forces compute onto regions that host D1 (US/Europe), so egress to opencode zen leaves from US/European edges instead of congested Asian ones.
 - ⚠️ **Do NOT remove the `zen-us-proxy` D1 binding** (`wrangler.jsonc` `d1_databases`): unbinding silently re-routes through Asian edges and the latency wins disappear with no error to alert you.
-- `openrouter-proxy` carries **no** D1 binding (its earlier `us-proxy-db` binding was idle — the code never touched `env.DB` — and has been removed). It needs none: OpenRouter routing is not latency-sensitive the way zen is.
 
 ## Git automatic URL rewriting
 

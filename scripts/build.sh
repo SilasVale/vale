@@ -202,7 +202,7 @@ deploy_worker() {
 deploy_proxy() {
   # Satellite proxy workers (proxies/<name>/): same deploy + smoke pattern as
   # deploy_worker. $3 is the keyless smoke URL ("" = skip: the worker has no
-  # reachable public URL — openrouter-proxy is idle/off-path, round-544).
+  # reachable public URL).
   local dir="$1" name="$2" smoke_url="${3:-}"
   local token; token="$(cf_token)"
   if [[ -z "$token" ]]; then
@@ -269,15 +269,15 @@ case "$cmd" in
   agent|command)  build_agent "${2:-release}" ;;
   gateway)  deploy_worker gateway "Vale Gate" ;;
   index)    deploy_worker index "Vale Index" ;;
-  proxies)  deploy_proxy zen-go-proxy "zen-go" "https://opencode.saisi.online/v1/models" && deploy_proxy zen-us-proxy "zen-us" "https://zen-us.saisi.online/v1/models" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  proxies)  deploy_proxy zen-go-proxy "zen-go" "https://opencode.saisi.online/v1/models" && deploy_proxy zen-us-proxy "zen-us" "https://zen-us.saisi.online/v1/models" ;;
   vercel-proxy) deploy_vercel_proxy ;;
   # round-320: build-installer.sh retired (it staged the dead Vercel mirror
   # + rewrote index.js + required retired Tauri exes — it always failed).
   # Releases use scripts/publish-release.sh (CDN publish + last-5 prune);
-  # `deploy` builds agent + deploys gateway/index + the three Cloudflare
+  # `deploy` builds agent + deploys gateway/index + the two Cloudflare
   # proxies and vercel-proxy are NOT deployed by `deploy` (deploy manually).
   # P0-2: full-stack preflight FIRST — a missing toolchain piece or token
   # aborts here, never mid-chain as a half-deployed stack (&& serial).
-  deploy)   preflight_deploy && build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" "https://opencode.saisi.online/v1/models" && deploy_proxy zen-us-proxy "zen-us" "https://zen-us.saisi.online/v1/models" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  deploy)   preflight_deploy && build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" "https://opencode.saisi.online/v1/models" && deploy_proxy zen-us-proxy "zen-us" "https://zen-us.saisi.online/v1/models" ;;
   *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
 esac
