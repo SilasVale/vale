@@ -412,6 +412,17 @@ test("toAnthropicResponse: tool_calls → tool_use; malformed args fall back to 
   assert.deepEqual(blocks[2], { type: "tool_use", id: "c3", name: "unknown", input: {} });
 });
 
+// round-519 (coverage-driven): the toSSE server_tool_use arm had ZERO pins.
+test("toSSE: server_tool_use block emits input_json_delta (input defaults to {})", async () => {
+  const { toSSE } = await import("../src/anthropic-translate.ts");
+  const out = toSSE({
+    type: "message",
+    content: [{ type: "server_tool_use", id: "s1", name: "web_search" }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
+  assert.match(out, /"type":"input_json_delta","partial_json":"\{\}"/);
+});
+
 test("stream encoder: cache hits from last chunk surface in message_start", () => {
   const enc = new AnthropicStreamEncoder("og/m", "m");
   enc.push({
