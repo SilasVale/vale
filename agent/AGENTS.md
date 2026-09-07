@@ -269,6 +269,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   suite 47 checks; all matrices green. Rounds 273-317 in this log; the
   round log continues below (ROUND-319..550 inlined under "Current
   release").
+
+### OPEN decisions (product sign-off needed — do NOT change without one)
+- **settings_put invalid-JSON envelope is HTTP 200** (web/mod.rs, pinned
+  since the round-69 extraction): api_settings_put returns an axum Json
+  envelope with no status override while api_gateway_connect 400s the
+  same class of error. Unifying = wire change; round-41 record.
+- **messages-passthrough arm does NOT record og body-failure breaker
+  trips** (translate.ts, preserved via relayUpstreamResult's
+  recordOgBodyFailure=false): chat/completions + responses arms do.
+  Likely a historical gap rather than intent; round-44 record.
+- **F3 relay-token scoping** — docs/adr/proposal-scoped-relay-token.md
+  (Option B recommended); implementation waits for human sign-off.
+
   ROUND-273 (2026-09-04): REPEATABLE E2E SUITE in the repo — the round-
   264..268 device verifications were one-off scripts in D:\Vale\pwout.
   Now agent/scripts/e2e/e2e.js + README: one Node file, sections
@@ -2757,6 +2770,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   evolution, secrets DPAPI seal/unseal mirror, memory tool
   registration idiom, mcp_client adjacent-function artifacts, tooling
   og-vs-passthrough protocol headers.
+
+### 2026-09-08 SOLID round 48 (UI/index/extension sweep + decision list)
+- **Verification round (no code changes)** — (1) gateway/ui scanned at
+  the 6-line window for the first time: only Auth.tsx's login/register/
+  reset form windows (declarative JSX scaffolding with per-form
+  handlers/i18n keys — 3 instances, each different; kept); (2)
+  index/src + extension: ZERO duplication at the fine window; (3)
+  periodic matrix: index 56 + npm CLI 9 green (gateway 592 + agent
+  299/307 already green this cycle). No standing duplication remains
+  anywhere that is not an explicitly-classified kept class.
+- **Decision list consolidated** — the product-sign-off candidates
+  accumulated across rounds (settings_put 200 envelope, messages-
+  passthrough og body-failure gap, F3 relay-token proposal) are now
+  collected in one "OPEN decisions" block at the top of the iteration
+  log so a human decision-maker sees them without reading every round
+  section.
 
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
