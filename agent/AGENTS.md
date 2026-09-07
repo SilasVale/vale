@@ -2593,6 +2593,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   per-branch evolution inside ADR-0003-autonomous workers or window
   noise.
 
+### 2026-09-08 SOLID round 37 (cross-target gate completion)
+- **Verification round (no code changes)** — closed the gate gaps left
+  by the refactor rounds: (1) `cargo xwin check -p vale-agent
+  --features terminal,keyring` GREEN — the rounds-23/28/29 web-module
+  refactors (sse_response_from_rx, handle_browser_evidence,
+  handle_panel_home) compile clean on the Windows target (Linux tests
+  alone had been the gate so far); (2) gateway `format:check` + `lint`
+  both clean (recent rounds ran prettier --write but not the CI
+  format gate); (3) gateway/ui has zero pair/extension remnants in the
+  new React console (the only "pair" hit is a historical comment in
+  Overview.tsx); (4) panel product chain re-verified fresh (src last
+  touched round-1, panel.js rebuilt round-3, no drift since).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
