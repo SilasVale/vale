@@ -107,13 +107,10 @@ function statSize(p) {
         return -1;
     }
 }
-// Brand icon for every native surface. Tray on Windows needs .ico;
-// BrowserWindow takes .png on ALL platforms (Skia-decodes reliably —
-// Chromium's ICO parser has choked on PNG-compressed 256px entries,
-// silently falling back to the stock electron.exe icon, device-caught).
-// Empty string when absent — callers fall back to Electron defaults.
-function appIcon() {
-    const name = process.platform === "win32" ? "icon.ico" : "icon.png";
+// Brand icon for every native surface: resolve the icon path (existsSync
+// guarded) and record the outcome for /api/shell/icon-status. appIcon and
+// windowIcon used to each inline this.
+function resolveIcon(name, reportKey) {
     const p = path.join(__dirname, "..", name);
     let out = "";
     try {
@@ -122,20 +119,19 @@ function appIcon() {
     catch {
         out = "";
     }
-    iconReport["tray"] = { path: p, size: statSize(p), used: out !== "" };
+    iconReport[reportKey] = { path: p, size: statSize(p), used: out !== "" };
     return out;
 }
+// Brand icon for every native surface. Tray on Windows needs .ico;
+// BrowserWindow takes .png on ALL platforms (Skia-decodes reliably —
+// Chromium's ICO parser has choked on PNG-compressed 256px entries,
+// silently falling back to the stock electron.exe icon, device-caught).
+// Empty string when absent — callers fall back to Electron defaults.
+function appIcon() {
+    return resolveIcon(process.platform === "win32" ? "icon.ico" : "icon.png", "tray");
+}
 function windowIcon() {
-    const p = path.join(__dirname, "..", "icon.png");
-    let out = "";
-    try {
-        out = fs.existsSync(p) ? p : "";
-    }
-    catch {
-        out = "";
-    }
-    iconReport["window"] = { path: p, size: statSize(p), used: out !== "" };
-    return out;
+    return resolveIcon("icon.png", "window");
 }
 // Native-decode probe: file-exists is NOT proof Electron can use the
 // image (a corrupt/undecodable file falls back silently). Report what
