@@ -201,9 +201,9 @@ deploy_worker() {
 
 deploy_proxy() {
   # Satellite proxy workers (proxies/<name>/): same deploy + smoke pattern as
-  # deploy_worker, but these are one-file workers without the post-publish
-  # version assertion (no /api/version endpoint).
-  local dir="$1" name="$2"
+  # deploy_worker. $3 is the keyless smoke URL ("" = skip: the worker has no
+  # reachable public URL — openrouter-proxy is idle/off-path, round-544).
+  local dir="$1" name="$2" smoke_url="${3:-}"
   local token; token="$(cf_token)"
   if [[ -z "$token" ]]; then
     echo "  !! CLOUDFLARE_API_TOKEN (or ~/.cloudflare-token) missing — skipping $name deploy"
@@ -215,6 +215,19 @@ deploy_proxy() {
   # Secrets are set once via `wrangler secret put` (or the dashboard) and
   # survive re-deploys; if a proxy needs env it reads from Worker env.
   echo "  ok: $name deployed"
+  # round-544: post-deploy smoke (vercel-proxy pattern) — the proxies are
+  # default-closed BYOK relays, so a keyless GET must answer 401. That
+  # proves the deployment serves AND the auth gate is intact, without
+  # spending an upstream call. Any other status fails the deploy step.
+  if [[ -n "$smoke_url" ]]; then
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 "$smoke_url" || true)"
+    if [[ "$code" != "401" ]]; then
+      echo "  !! $name smoke FAILED: keyless GET want 401, got ${code:-<curl error>} ($smoke_url)" >&2
+      return 1
+    fi
+    echo "  ok: $name smoke 401-gate intact ($smoke_url)"
+  fi
 }
 
 deploy_vercel_proxy() {
@@ -256,7 +269,7 @@ case "$cmd" in
   agent|command)  build_agent "${2:-release}" ;;
   gateway)  deploy_worker gateway "Vale Gate" ;;
   index)    deploy_worker index "Vale Index" ;;
-  proxies)  deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  proxies)  deploy_proxy zen-go-proxy "zen-go" "https://opencode.saisi.online/v1/models" && deploy_proxy zen-us-proxy "zen-us" "https://zen-us.saisi.online/v1/models" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   vercel-proxy) deploy_vercel_proxy ;;
   # round-320: build-installer.sh retired (it staged the dead Vercel mirror
   # + rewrote index.js + required retired Tauri exes — it always failed).
@@ -265,6 +278,6 @@ case "$cmd" in
   # proxies and vercel-proxy are NOT deployed by `deploy` (deploy manually).
   # P0-2: full-stack preflight FIRST — a missing toolchain piece or token
   # aborts here, never mid-chain as a half-deployed stack (&& serial).
-  deploy)   preflight_deploy && build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" && deploy_proxy zen-us-proxy "zen-us" && deploy_proxy my-openrouter-proxy "openrouter" ;;
+  deploy)   preflight_deploy && build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" "https://opencode.saisi.online/v1/models" && deploy_proxy zen-us-proxy "zen-us" "https://zen-us.saisi.online/v1/models" && deploy_proxy my-openrouter-proxy "openrouter" ;;
   *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
 esac
