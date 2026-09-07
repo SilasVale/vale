@@ -737,6 +737,18 @@ test("token/regenerate: 401 unauth; authed rotates and kills the old token", asy
   assert.equal(await env.KEYS.get("token:bob-tok-1"), null, "old token revoked");
 });
 
+// round-523 (coverage-driven): the regenerate survivor-sweep had ZERO pins —
+// a stale token:→user mapping (concurrent-regenerate leftover) must die too.
+test("token/regenerate: sweeps a stale survivor mapping for the same user", async () => {
+  __clearCaches();
+  const env = meEnv();
+  await env.KEYS.put("token:stale-tok", "bob");
+  const bob = await issueSessionToken("pw", "bob", "user");
+  const res = await meReq(env, bob, "/api/me/token/regenerate", "POST", {});
+  assert.equal(res.status, 200);
+  assert.equal(await env.KEYS.get("token:stale-tok"), null, "survivor mapping swept");
+});
+
 // round-444 (coverage-driven): DELETE /api/me/keys had ZERO route pins
 // (store-level deleteUserKey covered, handler not).
 test("me/keys DELETE: 401 unauth, 400 unknown name, deletes by query param", async () => {
