@@ -230,3 +230,18 @@ test("dial timeout vs refusal map to TIMEOUT vs DEVICE_UNREACHABLE (round-55)", 
     assert.equal(j.error?.data?.code, "DEVICE_UNREACHABLE");
   } finally { globalThis.fetch = real; }
 });
+
+// round-540 (coverage-driven): the MCP SSE endpoint had ZERO pins — GET
+// must open an event-stream and cancel cleanly (keepalive timer cleared,
+// no leaked interval). The 15s tick-vs-cancel race arm stays
+// defensive-only (not deterministically triggerable).
+test("mcp GET: SSE stream opens and cancels without leaking the timer", async () => {
+  __clearCaches();
+  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" }]);
+  const res = await worker.fetch(new Request("https://x/mcp", {
+    headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+  }), env);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") || "", /text\/event-stream/);
+  await res.body.cancel();
+});

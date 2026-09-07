@@ -354,6 +354,9 @@ function mcpSseStream(): Response {
         try {
           controller.enqueue(encoder.encode(": keepalive\n\n"));
         } catch {
+          // round-540: defensive-only — a 15s tick racing cancel() must not
+          // throw, but the race is not deterministically triggerable (the
+          // open/cancel path itself is pinned in mcp-gateway.test.mjs).
           // stream already cancelled — a tick racing cancel() must not throw
         }
       }, 15000);
