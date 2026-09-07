@@ -507,8 +507,10 @@ impl SessionLogger {
         }))
     }
 
-    /// List all session files (id → terminal state) for /api/sessions.
-    pub fn list_sessions(&self) -> Vec<(String, serde_json::Value)> {
+    /// Session ids present on disk (each `<sid>.jsonl` file), in directory
+    /// order. Shared by list_sessions and recover_interrupted, which used to
+    /// copy-paste the read_dir + jsonl-filter + stem-extraction loop.
+    fn session_ids(&self) -> Vec<String> {
         let mut out = Vec::new();
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return out;
@@ -518,13 +520,21 @@ impl SessionLogger {
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
-            let Some(sid) = path
+            if let Some(sid) = path
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .map(|s| s.to_string())
-            else {
-                continue;
-            };
+            {
+                out.push(sid);
+            }
+        }
+        out
+    }
+
+    /// List all session files (id → terminal state) for /api/sessions.
+    pub fn list_sessions(&self) -> Vec<(String, serde_json::Value)> {
+        let mut out = Vec::new();
+        for sid in self.session_ids() {
             if let Some(state) = self.terminal_state_of(&sid) {
                 out.push((sid, state));
             }
@@ -612,21 +622,7 @@ impl SessionLogger {
     /// session ids (the panel shows "interrupted — may still be running").
     pub fn recover_interrupted(&self) -> Vec<String> {
         let mut affected = Vec::new();
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return affected;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Some(sid) = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string())
-            else {
-                continue;
-            };
+        for sid in self.session_ids() {
             let Some((events, max_seq)) = self.read_events(&sid) else {
                 continue;
             };
