@@ -443,6 +443,23 @@ test("self-register: new device inserts; same-token re-post refreshes idempotent
   }
 });
 
+// round-538 (coverage-driven): the self-reg harvest catch had ZERO pins —
+// an unreachable device must still register (secret harvest is best-effort).
+test("self-register: unreachable device still registers without proxySecret", async () => {
+  __clearCaches();
+  const env = makeEnv([]);
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  try {
+    const res = await selfReg(env, { name: "d11", hostname: "d11.agent.saisi.online", token: T64("9") });
+    assert.equal(res.status, 200);
+    const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+    assert.equal(devs.find((d) => d.name === "d11")?.proxySecret, undefined, "no secret harvested, registration intact");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test("self-register: existing device rejects hostname moves + unproven rotations", async () => {
   __clearCaches();
   const OLD = T64("c"), NEW = T64("d");
