@@ -1965,3 +1965,19 @@ test("ds passthrough with web_search tools parses the body and forwards", async 
   assert.equal(sent.model, "deepseek-v4-flash");
   assert.equal((await res.json()).content[0].text, "ds search ok");
 });
+
+// round-510 (coverage-driven): the ox-alpha-free reasoning default had ZERO
+// pins (mirrors the or/ rule on the translate path).
+test("og ox-alpha-free without client reasoning gets effort=max upstream", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  const res = await withFetch(async (url, init) => {
+    sent = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "ox ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, { model: "og/ox-alpha-free", max_tokens: 8, messages: [{ role: "user", content: "hi" }] }));
+  assert.equal(res.status, 200);
+  assert.deepEqual(sent.reasoning, { effort: "max" });
+});
