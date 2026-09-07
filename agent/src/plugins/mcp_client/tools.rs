@@ -484,24 +484,9 @@ async fn connect_http(
     // round-281d: same embedded-view auto-select as the stdio arm. Only
     // when the desktop CDP is up AND the connected server exposes
     // browser_tabs (i.e. it IS a playwright-mcp driving the desktop) —
-    // foreign MCP servers must never receive this call.
-    // P1-1: NEVER hold SESSION across the auto-select (3s settle + up to 4
-    // x 2s retries + network round-trips would block every call/connect).
-    // Take the session OUT of the slot, release the lock, run the network
-    // on the owned value, then restore it.
-    if desktop_cdp_up() && tools.iter().any(|(n, _)| n == "browser_tabs") {
-        let taken = SESSION.lock().await.take();
-        if let Some(mut sess) = taken {
-            let _ = select_embedded_view_tab(&mut sess).await;
-            let mut guard = SESSION.lock().await;
-            // A concurrent connect that landed meanwhile wins — never
-            // clobber a fresh session with our (older) one; dropping ours
-            // just drops an Http client (no child to reap).
-            if guard.is_none() {
-                *guard = Some(sess);
-            }
-        }
-    }
+    // foreign MCP servers must never receive this call. See
+    // auto_select_embedded_view (shared with the stdio arm).
+    auto_select_embedded_view(tools.iter().any(|(n, _)| n == "browser_tabs")).await;
 
     Ok(json!({
         "status": "connected",
@@ -821,22 +806,10 @@ async fn connect_stdio() -> Result<serde_json::Value, DeviceError> {
     // attached to the Electron desktop, auto-select the EMBEDDED-VIEW tab
     // (the target whose URL is not the desktop SPA) so the very first
     // browser_navigate drives the page the user watches. Best-effort: a
-    // failure (no Electron, tabs not ready yet, odd layout) only logs.
-    // P1-1: same take-out-and-release pattern as the http arm — never hold
-    // SESSION across the 3s settle + retries + network round-trips.
-    if desktop_cdp_up() {
-        let taken = SESSION.lock().await.take();
-        if let Some(mut sess) = taken {
-            let _ = select_embedded_view_tab(&mut sess).await;
-            let mut guard = SESSION.lock().await;
-            // A concurrent connect that landed meanwhile wins — never
-            // clobber a fresh session; dropping ours reaps its stdio
-            // child, which is correct (the slot no longer points at it).
-            if guard.is_none() {
-                *guard = Some(sess);
-            }
-        }
-    }
+    // failure (no Electron, tabs not ready yet, odd layout) only logs. The
+    // stdio server is always the bundled playwright-mcp (browser_tabs
+    // present) — see auto_select_embedded_view (shared with the http arm).
+    auto_select_embedded_view(true).await;
 
     Ok(json!({
         "status": "connected",
@@ -1036,6 +1009,31 @@ async fn select_embedded_view_tab(sess: &mut McpSession) -> Result<(), DeviceErr
         diag_log("[select] no embedded-view tab found after retries — leaving default selection");
     }
     Ok(())
+}
+
+/// Auto-select the embedded-view tab on a JUST-CONNECTED session, when the
+/// desktop CDP is up AND (for http connects) the server actually exposes
+/// browser_tabs. Shared by the stdio and http connect arms — the
+/// take-out / select / restore sequence used to be copy-pasted between them
+/// (round-281/281d). P1-1 discipline preserved: never hold SESSION across
+/// the auto-select's 3s settle + retries + network round-trips — the
+/// session is taken OUT of the slot, the lock released, the network runs on
+/// the owned value, then it is restored.
+async fn auto_select_embedded_view(can_auto_select: bool) {
+    if !can_auto_select || !desktop_cdp_up() {
+        return;
+    }
+    let taken = SESSION.lock().await.take();
+    if let Some(mut sess) = taken {
+        let _ = select_embedded_view_tab(&mut sess).await;
+        let mut guard = SESSION.lock().await;
+        // A concurrent connect that landed meanwhile wins — never clobber a
+        // fresh session with our (older) one; dropping ours is correct
+        // (a stdio child is reaped, an http client is just dropped).
+        if guard.is_none() {
+            *guard = Some(sess);
+        }
+    }
 }
 
 /// Pull the human-readable text out of a tools/call result. The stdio arm
