@@ -20,6 +20,21 @@ use crate::state::AppState;
 
 use super::built_response;
 
+/// Bound one mpsc send at 5s. Both SSE streams funnel their frames through
+/// this: a client that stopped reading fills the bounded channel and an
+/// unbounded send would block FOREVER (leaking the task + broadcast
+/// subscription on a silently-dead client). Returns true when the send
+/// failed or timed out — the caller breaks its loop and drops the stream.
+async fn send_bounded(
+    tx: &mpsc::Sender<Result<Bytes, Infallible>>,
+    bytes: Bytes,
+) -> bool {
+    tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes)))
+        .await
+        .map(|r| r.is_err())
+        .unwrap_or(true)
+}
+
 static SSE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 const SSE_MAX_CONNECTIONS: usize = 64;
 pub(crate) struct SseConnectionGuard;
@@ -83,32 +98,27 @@ where
             // comment frame every 30s of silence — it keeps the socket alive
             // AND makes the client's read loop detect a dead connection.
             // The mpsc is bounded (128); a client that stopped reading fills
-            // it and tx.send blocks FOREVER (leak: the task + broadcast
-            // subscription survive a silently-dead client). Bound each send
-            // at 5s — a full channel means the client is gone.
-            let send_bounded = async |bytes: Bytes| {
-                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes)))
-                    .await
-                    .map(|r| r.is_err())
-                    .unwrap_or(true)
-            };
+            // it and an unbounded send would block FOREVER (leak: the task +
+            // broadcast subscription survive a silently-dead client). Bound
+            // each send at 5s — a full channel means the client is gone.
+            // (send_bounded is the shared helper both SSE streams use.)
             match tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv()).await {
                 Ok(Ok(item)) => {
-                    if send_bounded(Bytes::from(encode(&item))).await {
+                    if send_bounded(&tx, Bytes::from(encode(&item))).await {
                         break;
                     }
                 }
                 Ok(Err(RecvError::Lagged(n))) => {
                     // Client gone: stop like the Ok branch, or this task keeps
                     // the broadcast subscription and a failing send forever.
-                    if send_bounded(Bytes::from(lagged(n))).await {
+                    if send_bounded(&tx, Bytes::from(lagged(n))).await {
                         break;
                     }
                 }
                 Ok(Err(RecvError::Closed)) => break,
                 Err(_) => {
                     // 30s of silence — heartbeat.
-                    if send_bounded(Bytes::from(": ping\n\n")).await {
+                    if send_bounded(&tx, Bytes::from(": ping\n\n")).await {
                         break;
                     }
                 }
@@ -185,25 +195,19 @@ pub(crate) async fn sse_term_stream(state: Arc<AppState>) -> Response {
         // connection alive (a closed tab → send fails → loop breaks).
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
-            let send_bounded = async |bytes: Bytes| {
-                tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes)))
-                    .await
-                    .map(|r| r.is_err())
-                    .unwrap_or(true)
-            };
             tokio::select! {
                 _ = tick.tick() => {
                     // Heartbeat byte — dead-client detection depends on a
                     // send failing (the 5s bounded send into the full mpsc).
-                    if send_bounded(Bytes::from(": ping\n\n")).await { break; }
+                    if send_bounded(&tx, Bytes::from(": ping\n\n")).await { break; }
                 }
                 msg = rx.recv() => {
                     match msg {
                         Ok(item) => {
-                            if send_bounded(Bytes::from(encode(&item))).await { break; }
+                            if send_bounded(&tx, Bytes::from(encode(&item))).await { break; }
                         }
                         Err(RecvError::Lagged(n)) => {
-                            if send_bounded(Bytes::from(lagged(n))).await { break; }
+                            if send_bounded(&tx, Bytes::from(lagged(n))).await { break; }
                         }
                         Err(RecvError::Closed) => break,
                     }
