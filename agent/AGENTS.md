@@ -2505,6 +2505,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   a swallowed stderr) — verified with grep before each retry; the
   final single-shot script applied cleanly.
 
+### 2026-09-08 SOLID round 30 (round-24 extraction completion)
+- **og probe tail → probeResultJson (DRY completion, gateway
+  tooling.ts)** — round-24's probeResultJson extraction replaced the
+  passthrough tail but MISSED the og branch tail; its inline jsonOk
+  envelope survived as a third copy of the shape (the periodic
+  full-repo rescan caught it). ValeProbe now has exactly one envelope
+  shape across both branches. Gateway 592 pass; tsc/prettier clean;
+  mirror synced. translate.ts key-guard chains re-verified: the
+  chat-completions and /v1/responses entry chains differ in kind set
+  and order (per-endpoint minimal guards) — the round-25 keep
+  decision stands.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
