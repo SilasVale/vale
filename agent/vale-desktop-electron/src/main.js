@@ -211,13 +211,17 @@ electron_1.app.commandLine.appendSwitch("disable-backgrounding-occluded-windows"
 // registered within a second of load completing (token connect + effect).
 let menuQueue = []; // null = SPA confirmed ready, send directly
 let menuFlushTimer = null;
+/** Deliver one menu command to the SPA (win validated by callers). */
+function emitMenu(cmd) {
+    win.webContents.send("vale-menu", cmd);
+}
 function sendMenu(cmd) {
     if (win && !win.isDestroyed()) {
         if (menuQueue) {
             menuQueue.push(cmd); // SPA not yet confirmed ready — queue
         }
         else {
-            win.webContents.send("vale-menu", cmd);
+            emitMenu(cmd);
         }
     }
 }
@@ -232,7 +236,7 @@ function flushMenuQueue() {
     menuQueue = null; // drain: subsequent sends go straight out
     if (q) {
         for (const cmd of q) {
-            win.webContents.send("vale-menu", cmd);
+            emitMenu(cmd);
         }
     }
 }
