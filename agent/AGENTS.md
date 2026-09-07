@@ -1837,6 +1837,10 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ZERO pins. Added 1 in gateway.test.mjs (400 text, single call, status
   kept). Clean round. Suite 557->558; gates clean; snapshot updated;
   pushed.
+  ROUND-514 (2026-09-06): respm audit — the responses-path og keyless +
+  breaker arms had ZERO pins. Added 1 in gateway.test.mjs (muse-spark,
+  no dial). Clean round. Suite 558->559; gates clean; snapshot updated;
+  pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
