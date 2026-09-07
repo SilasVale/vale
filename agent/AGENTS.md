@@ -3140,6 +3140,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   (op dispatch is protocol); ssh connect / serial open / provision_
   tunnel are linear pipelines. No new extraction warranted.
 
+### 2026-09-08 SOLID round 74 (gateway big-function census)
+- **Verification round (no code changes)** — the agent-side census
+  (round-71) extended to gateway/src: ≥120-line functions are
+  translate.ts handleGatewayImpl (842 — the three-flow framework with
+  per-flow private segments; round-42/44/62 extractions already took
+  every byte-identical pair, residual is flow-local by construction),
+  anthropic-translate.ts streamOgToAnthropic (542 — og→anthropic SSE
+  stream conversion, single deep pipeline), channels.ts
+  museResponsesExit (181), auth.ts testKey (174), device-proxy.ts
+  proxyDevice (125 — SSRF stack already in device-fetch.ts),
+  index.ts handleGateway (143 — dispatch), upstream.ts pickRoute
+  (141 — switch-case route table, each arm declarative + only qw/
+  or arms carry 2-way format logic that is inherent). All judged
+  cohesive single-responsibility; no new extraction. Full-repo
+  function census (agent 17 + gateway 7 entries) now on record.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
