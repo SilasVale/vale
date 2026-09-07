@@ -1880,6 +1880,13 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   had ZERO pins. Added 1 in plugins.test.mjs (secret → legacy hash in KV,
   never plaintext). Self-caught: no trailing colon in format. Suite
   569->570; gates clean; snapshot updated; pushed.
+  ROUND-526 (2026-09-06): race audit — the post-claim key recheck had ZERO
+  pins. Added 1 in devices.test.mjs (vanishing key → 403). Verdict: the
+  formatResult top-level .image arm is unreachable (envelopes always wrap;
+  live shape rides the round-118 arm) — documented, no behavior change.
+  Also found V8 misattributes executed else-if multi-line arms (786-790
+  executes per output assertion yet still listed). Suite 570->571; gates
+  clean; mirror resynced; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
