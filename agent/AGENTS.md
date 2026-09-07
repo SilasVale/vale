@@ -1873,6 +1873,9 @@ Last updated: goal-iteration round 8 (multi-agent audit waves 1-2:
   ROUND-523 (2026-09-06): sweep audit — the regenerate survivor-sweep had
   ZERO pins. Added 1 in plugins.test.mjs (stale token mapping swept).
   Clean round. Suite 567->568; gates clean; snapshot updated; pushed.
+  ROUND-524 (2026-09-06): torn-record audit — the corrupt-user arm had ZERO
+  pins. Added 1 in plugins.test.mjs (garbage JSON → null, no throw).
+  Clean round. Suite 568->569; gates clean; snapshot updated; pushed.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
