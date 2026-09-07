@@ -2731,6 +2731,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   (declaration syntax, not duplication). Both former top-two files
   now sit at ~28 sites.
 
+### 2026-09-08 SOLID round 46 (memory store ns filter + tombstone)
+- **ns_matches + tombstone (DRY, agent memory/store.rs)** — the full
+  scan surfaced two real in-file copies the earlier rounds missed:
+  search/list/export each inlined the same namespace if-let filter
+  (3 copies) and the eviction + retention paths each inlined the same
+  soft-delete tombstone write (2 copies — round-19's recount helper
+  had left these). Extracted module-private `ns_matches(rec,
+  namespace)` and `tombstone(rec, persist)`; behavior unchanged
+  (299 lib pass; fmt + clippy clean; one E0596 self-caught — the
+  evict arm's persist is already &mut, fixed before commit). Translate
+  residual re-verified: the remaining ox-alpha windows are per-flow
+  adjacent-code artifacts, not copies.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
