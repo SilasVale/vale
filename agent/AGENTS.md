@@ -2578,6 +2578,21 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   paths); tsc/prettier clean. Store/ + admin + auth files all clean
   after this.
 
+### 2026-09-08 SOLID round 36 (full-repo JS/TS final sweep)
+- **Verification round (no code changes)** — swept EVERY remaining TS/
+  JS source tree (gateway/src, gateway/ui/src, index/src, extension/,
+  agent/scripts, proxies/) at a 6-line window: 209 window-sites across
+  10 files, each individually checked. Verdict: all are window
+  artifacts (adjacent-function overlap: zen-us safeEq/fetchUpstream
+  tails, access.ts verifyJwt try/catch) or previously-classified kinds
+  (mcp-tools.ts tool schemas, translate.ts key-guard chains, e2e.js
+  CDP scaffolding, gateway ui JSX rows, zen-us per-branch upstream
+  forwarding which has EVOLVED differently per endpoint — 5xx detail +
+  console.error on messages vs plain on responses). TRUE duplication
+  is exhausted across every JS/TS tree; what remains is intentional
+  per-branch evolution inside ADR-0003-autonomous workers or window
+  noise.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
