@@ -2269,6 +2269,23 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   truncated flag — the wait loops have the most device-caught regression
   history; not worth the risk).
 
+### 2026-09-08 SOLID round 14 (cross-file dedup: DO auth + crate-root helpers)
+- **DO external-auth single-sourced (DRY + security, gateway)** —
+  cross-file scan found BreakerDO (reliability.ts) and RouteDO
+  (route-do.ts) each carrying a byte-identical authorized(): fail-closed
+  DO_AUTH gate + constant-time x-do-auth compare. A security-critical
+  check duplicated across the two DO classes (future hardening would have
+  to touch both). Extracted `authorizeDoRequest(request, expectedSecret)`
+  in route-do.ts (zero-import module — no cycle). Gateway 592 pass.
+- **Crate-root helper centralization (DRY, agent)** — cross-file scan
+  also found three private byte-identical `unix_now()` (filelog.rs /
+  session_log.rs / memory store) and two private byte-identical
+  `hex_encode()` (update plugin / tunnel.rs). Both moved to lib.rs as
+  pub(crate) and all call sites repointed (incl. one unit test).
+  Lib 299 + feature-gated 307 pass; clippy/fmt clean. (Self-caught
+  mid-round: a line-range deletion script left two orphaned `s`/`}`
+  fragments — compile caught them immediately, both removed.)
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
