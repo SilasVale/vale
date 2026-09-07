@@ -147,7 +147,7 @@ impl SessionEvent {
     pub fn command_start(seq: u64, command: &str) -> Self {
         Self {
             seq,
-            ts: unix_now(),
+            ts: crate::unix_now(),
             kind: "command/start".into(),
             command: Some(command.to_string()),
             text: None,
@@ -160,7 +160,7 @@ impl SessionEvent {
     pub fn output(seq: u64, text: String) -> Self {
         Self {
             seq,
-            ts: unix_now(),
+            ts: crate::unix_now(),
             kind: "output".into(),
             command: None,
             text: Some(text),
@@ -173,7 +173,7 @@ impl SessionEvent {
     pub fn command_end(seq: u64, exit_code: Option<i32>, reason: Option<&str>) -> Self {
         Self {
             seq,
-            ts: unix_now(),
+            ts: crate::unix_now(),
             kind: "command/end".into(),
             command: None,
             text: None,
@@ -186,7 +186,7 @@ impl SessionEvent {
     pub fn status(seq: u64, status: &str) -> Self {
         Self {
             seq,
-            ts: unix_now(),
+            ts: crate::unix_now(),
             kind: "status".into(),
             command: None,
             text: None,
@@ -196,13 +196,6 @@ impl SessionEvent {
             duration_ms: None,
         }
     }
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 /// One JSONL file per session under the log dir. Internal state is a mutex

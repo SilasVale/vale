@@ -418,7 +418,7 @@ impl MemoryStore {
         namespace: Option<String>,
         deleted: Option<bool>,
     ) -> bool {
-        let now = unix_now();
+        let now = crate::unix_now();
         // Clone the current record out, mutate the clone, then write back —
         // avoids holding a mutable borrow across tag-index mutation.
         let mut rec = {
@@ -631,7 +631,7 @@ impl MemoryStore {
             .unwrap_or(0);
         if let Some(rec) = guard.by_id.get_mut(&victim) {
             rec.deleted = true;
-            rec.updated_at = unix_now();
+            rec.updated_at = crate::unix_now();
             if let Ok(line) = serde_json::to_string(&*rec) {
                 persist.push(line);
             }
@@ -674,7 +674,7 @@ impl MemoryStore {
         }
         // Retention days: soft-delete records older than retention_days.
         if let Some(days) = limits.retention_days {
-            let cutoff = unix_now().saturating_sub(days * 86400);
+            let cutoff = crate::unix_now().saturating_sub(days * 86400);
             let ids: Vec<String> = guard
                 .by_id
                 .iter()
@@ -684,7 +684,7 @@ impl MemoryStore {
             for id in ids {
                 if let Some(rec) = guard.by_id.get_mut(&id) {
                     rec.deleted = true;
-                    rec.updated_at = unix_now();
+                    rec.updated_at = crate::unix_now();
                     if let Ok(line) = serde_json::to_string(&*rec) {
                         persist.push(line);
                     }
@@ -712,13 +712,6 @@ fn truncate_utf8(s: &str, max: usize) -> String {
     }
     let cut = s.floor_char_boundary(max);
     format!("{}…", &s[..cut])
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -873,8 +866,8 @@ mod tests {
             tags: vec![],
             namespace: "shared".to_string(),
             source: "test".to_string(),
-            created_at: unix_now(),
-            updated_at: unix_now(),
+            created_at: crate::unix_now(),
+            updated_at: crate::unix_now(),
             deleted: false,
         }
     }
@@ -1081,7 +1074,7 @@ mod tests {
 
     fn old_rec(title: &str, age_secs: u64) -> MemoryRecord {
         let mut r = rec(title, "stale body");
-        let old = unix_now().saturating_sub(age_secs);
+        let old = crate::unix_now().saturating_sub(age_secs);
         r.created_at = old;
         r.updated_at = old;
         r

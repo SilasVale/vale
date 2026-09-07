@@ -23,13 +23,6 @@ fn day_bucket(secs: u64) -> u64 {
     secs / 86_400
 }
 
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 struct Inner {
     file: std::fs::File,
     path: PathBuf,
@@ -56,7 +49,7 @@ impl RotatingFile {
                 file,
                 path,
                 written,
-                day: day_bucket(unix_now()),
+                day: day_bucket(crate::unix_now()),
             })),
         })
     }
@@ -64,7 +57,7 @@ impl RotatingFile {
 
 /// Rename the current log out of the way, reopen, sweep to KEEP_OLD .old files.
 fn rotate_locked(g: &mut Inner) -> std::io::Result<()> {
-    let stamp = unix_now();
+    let stamp = crate::unix_now();
     let old = g.path.with_extension(format!("log.{stamp}.old"));
     let _ = std::fs::rename(&g.path, &old);
     g.file = std::fs::OpenOptions::new()
@@ -113,7 +106,8 @@ impl Write for Sink {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         // size cap OR day change (stage-n: daily rotation)
-        if g.written.saturating_add(buf.len() as u64) > MAX_BYTES || day_bucket(unix_now()) != g.day
+        if g.written.saturating_add(buf.len() as u64) > MAX_BYTES
+            || day_bucket(crate::unix_now()) != g.day
         {
             rotate_locked(&mut g)?;
         }
@@ -254,7 +248,7 @@ mod tests {
         let w = RotatingFile::new(path.clone()).unwrap();
         {
             let mut g = w.inner.lock().unwrap_or_else(|p| p.into_inner());
-            g.day = day_bucket(unix_now()).saturating_sub(1);
+            g.day = day_bucket(crate::unix_now()).saturating_sub(1);
         }
         let mut s = w.make_writer();
         s.write_all(b"next-day").unwrap();

@@ -13,6 +13,16 @@ pub use vale_agent_core::{
 pub mod bootstrap;
 pub mod register;
 
+/// Seconds since the UNIX epoch (0 on clock errors). Shared by the
+/// audit-log writers (filelog.rs, session_log.rs) and the memory store —
+/// each used to carry its own private copy of this 3-liner.
+pub(crate) fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Cross-task control channel for the cloudflared tunnel supervisor
 /// (supervision audit #1): provision_tunnel (tunnel.rs) rewrites tunnel.yml
 /// and then REQUESTS a restart; main.rs's supervisor task owns the single
