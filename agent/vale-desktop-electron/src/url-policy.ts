@@ -39,6 +39,50 @@ export function isDesktopSpaUrl(url: string): boolean {
   }
 }
 
+// Lab-device TLS bypass predicate (device-caught: OpenWrt-style
+// self-signed defaults, e.g. the GPON ONT web UI, fail every navigation
+// with ERR_CERT_AUTHORITY_INVALID). Private-network hosts MAY bypass cert
+// errors; the public internet keeps full validation — a bypassed MITM on
+// a lab LAN is contained, on the open web it is not. Pure + unit-tested;
+// main.ts feeds it the raw certificate-error URL.
+export function isPrivateHost(hostname: string): boolean {
+  const h = String(hostname || "").trim().toLowerCase();
+  if (!h) return false;
+  if (h === "localhost" || h === "::1" || h === "[::1]") return true;
+  if (h.endsWith(".local") || h.endsWith(".local.")) return true;
+  const parts = h.split(".");
+  if (parts.length !== 4) return false;
+  const nums: number[] = [];
+  for (const p of parts) {
+    if (!/^\d{1,3}$/.test(p)) return false;
+    const n = Number(p);
+    if (n > 255) return false;
+    nums.push(n);
+  }
+  const [a, b] = nums;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
+// Certificate-error gate for app.on("certificate-error"): true = bypass
+// (preventDefault + callback(true)), false = deny. http(s) URLs on
+// private hosts only — anything else (public hosts, weird schemes,
+// unparsable input) stays fully validated.
+export function certBypassAllowed(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(String(url || ""));
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  return isPrivateHost(u.hostname);
+}
+
 // AI-opened browser windows must never reach file://, javascript: or
 // arbitrary schemes through the CDP-driven session windows.
 export function sanitizeBrowserUrl(url?: string): string {

@@ -22,7 +22,7 @@ import * as net from "net";
 
 // url-policy.ts (shipped alongside, staged by vale update): pure
 // origin/URL predicates, unit-tested in test/url-policy.test.mjs.
-import { BASE, isBaseOrigin, frameUrlOk, isDesktopSpaUrl, sanitizeBrowserUrl } from "./url-policy";
+import { BASE, isBaseOrigin, frameUrlOk, isDesktopSpaUrl, sanitizeBrowserUrl, certBypassAllowed } from "./url-policy";
 // IPC audit #3: /api/status is TOKEN-GATED (same fact the watchdog fix cites);
 // credential-less fetches got 401 -> version title + tray vitals were DEAD on
 // every configured device. The shell runs as the interactive admin, and the
@@ -131,6 +131,17 @@ if (!gotTheLock) {
 
 // CDP must be enabled before app ready — pass it through Chromium switches.
 app.commandLine.appendSwitch("remote-debugging-port", String(CDP_PORT));
+// Lab-device self-signed certs (OpenWrt-style ONT defaults): bypass cert
+// errors ONLY on private-network hosts — the public internet keeps full
+// validation. Registered before ready so no navigation can race it.
+app.on("certificate-error", (event, _webContents, url, _error, _certificate, callback) => {
+  if (certBypassAllowed(String(url || ""))) {
+    event.preventDefault();
+    callback(true);
+    return;
+  }
+  callback(false);
+});
 // round-274 (device-caught): when the window is hidden (hide-to-tray /
 // SYSTEM-session background) Chromium flips the page to visibilityState
 // "hidden" and STOPS requestAnimationFrame — xterm's rAF-driven DOM

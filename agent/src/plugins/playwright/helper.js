@@ -58,10 +58,14 @@ async function acquireBrowser(opts) {
     try { await browser.close(); } catch (e) {}
   } catch (e) { /* CDP down - fall through to headless */ }
   // 2) fallback: private headless (must not disturb the screen).
+  // Lab-device self-signed certs (OpenWrt-style defaults): ignore TLS
+  // errors here - without it every self-signed device page fails instantly
+  // with ERR_CERT_AUTHORITY_INVALID. Scoped to this private browser only.
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage(
-    opts.viewport || { width: 1280, height: 800 }
-  );
+  const page = await browser.newPage({
+    viewport: opts.viewport || { width: 1280, height: 800 },
+    ignoreHTTPSErrors: true,
+  });
   return {
     browser: browser,
     page: page,

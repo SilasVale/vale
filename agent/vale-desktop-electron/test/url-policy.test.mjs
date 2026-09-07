@@ -47,3 +47,29 @@ test("isDesktopSpaUrl: parsed origin + /desktop subtree only", async () => {
   assert.equal(isDesktopSpaUrl("about:blank"), false);
   assert.equal(isDesktopSpaUrl("not a url"), false);
 });
+
+test("isPrivateHost: RFC1918 + loopback + .local only", async () => {
+  const { isPrivateHost } = await import("../src/url-policy.js");
+  assert.equal(isPrivateHost("192.168.1.1"), true, "ONT lab net");
+  assert.equal(isPrivateHost("10.0.0.5"), true);
+  assert.equal(isPrivateHost("172.16.0.1"), true);
+  assert.equal(isPrivateHost("172.31.255.255"), true);
+  assert.equal(isPrivateHost("127.0.0.1"), true);
+  assert.equal(isPrivateHost("localhost"), true);
+  assert.equal(isPrivateHost("printer.local"), true);
+  assert.equal(isPrivateHost("172.15.0.1"), false, "just outside 172.16/12");
+  assert.equal(isPrivateHost("172.32.0.1"), false, "just outside 172.16/12");
+  assert.equal(isPrivateHost("8.8.8.8"), false, "public stays strict");
+  assert.equal(isPrivateHost("example.com"), false);
+  assert.equal(isPrivateHost("192.168.1.1.evil.com"), false, "suffix lookalike");
+  assert.equal(isPrivateHost(""), false);
+});
+
+test("certBypassAllowed: private http(s) only", async () => {
+  const { certBypassAllowed } = await import("../src/url-policy.js");
+  assert.equal(certBypassAllowed("https://192.168.1.1:8000/?Role=Gpon"), true, "ONT web UI");
+  assert.equal(certBypassAllowed("http://10.1.2.3/"), true);
+  assert.equal(certBypassAllowed("https://example.com/"), false, "public internet stays validated");
+  assert.equal(certBypassAllowed("file:///C:/Windows/win.ini"), false, "schemes stay gated");
+  assert.equal(certBypassAllowed("not a url"), false);
+});

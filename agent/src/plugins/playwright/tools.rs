@@ -324,6 +324,7 @@ mod tools_tests {
             "acquireBrowser",
             "connectOverCDP",
             "headless",
+            "ignoreHTTPSErrors",
             "module.exports",
             "VALE_CDP_ENDPOINT",
             "VALE_PW_DIR",
