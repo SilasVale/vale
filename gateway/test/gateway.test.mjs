@@ -388,6 +388,30 @@ test("gmi /v1/messages stream:true → OpenAI SSE translated to Anthropic SSE", 
   assert.match(text, /event: message_stop/);
 });
 
+// round-518 (coverage-driven): the stream reasoning_content→thinking arm had
+// ZERO pins.
+test("gmi stream: reasoning_content delta becomes a thinking block", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { GMI_API_KEY: "sk-gmi" } });
+  const openaiSse =
+    'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"reasoning_content":"let me think"},"finish_reason":null}]}\n\n' +
+    'data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n' +
+    "data: [DONE]\n\n";
+  const res = await withFetch(async () =>
+    new Response(openaiSse, { status: 200, headers: { "content-type": "text/event-stream" } }), () =>
+    post(env, token, {
+      model: "gmi/MiniMaxAI/MiniMax-M3",
+      max_tokens: 8,
+      stream: true,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.match(text, /"type":"thinking"/);
+  assert.match(text, /let me think/);
+});
+
 test("gmi /v1/messages without GMI_API_KEY → 502 config error", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ keys: { GMI_API_KEY: undefined } });
