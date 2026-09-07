@@ -1261,6 +1261,46 @@ pub fn mcp_client_list() -> ToolDef {
 }
 
 /// `mcp_client_call` — invoke a tool on the connected browser MCP server.
+/// Fold an MCP call result into the shape callers parse: structuredContent
+/// first (verbatim), else text content items joined with newlines and
+/// image items passed through as data: URIs for the caller to decode.
+/// Extracted from the mcp_client_call closure so the dispatch tail stays
+/// readable and the folding is unit-testable.
+fn flatten_result(result: &serde_json::Value) -> serde_json::Value {
+    if let Some(sc) = result.get("structuredContent") {
+        if !sc.is_null() {
+            return json!({ "ok": true, "result": sc });
+        }
+    }
+    let empty = Vec::new();
+    let content = result
+        .get("content")
+        .and_then(|c| c.as_array())
+        .unwrap_or(&empty);
+    let mut texts: Vec<String> = Vec::new();
+    for c in content {
+        let ctype = c.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        match ctype {
+            "text" => {
+                if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
+                    texts.push(t.to_string());
+                }
+            }
+            "image" => {
+                let mime = c
+                    .get("mimeType")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("image/png");
+                if let Some(d) = c.get("data").and_then(|d| d.as_str()) {
+                    texts.push(format!("data:{mime};base64,{d}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    json!({ "ok": true, "result": texts.join("\n") })
+}
+
 pub fn mcp_client_call() -> ToolDef {
     ToolDef::new(
         "mcp_client_call",
@@ -1458,42 +1498,7 @@ pub fn mcp_client_call() -> ToolDef {
                 }
             }
 
-            // Same as the original implementation: prefer structuredContent, otherwise
-            // concatenate text content (screenshots are image content blocks;
-            // converted to data URIs and passed through verbatim for the
-            // caller to decode).
-            if let Some(sc) = result.get("structuredContent") {
-                if !sc.is_null() {
-                    return Ok(json!({ "ok": true, "result": sc }));
-                }
-            }
-            let empty = Vec::new();
-            let content = result
-                .get("content")
-                .and_then(|c| c.as_array())
-                .unwrap_or(&empty);
-            let mut texts: Vec<String> = Vec::new();
-            for c in content {
-                let ctype = c.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                match ctype {
-                    "text" => {
-                        if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
-                            texts.push(t.to_string());
-                        }
-                    }
-                    "image" => {
-                        let mime = c
-                            .get("mimeType")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("image/png");
-                        if let Some(d) = c.get("data").and_then(|d| d.as_str()) {
-                            texts.push(format!("data:{mime};base64,{d}"));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            Ok(json!({ "ok": true, "result": texts.join("\n") }))
+            Ok(flatten_result(&result))
         },
     )
 }
@@ -1949,5 +1954,36 @@ mod one_browser_tests {
             panic!("still http");
         };
         assert_eq!(last_url, &None);
+    }
+
+    #[test]
+    fn flatten_result_joins_text_content() {
+        let r = json!({"content": [
+            {"type": "text", "text": "hello"},
+            {"type": "text", "text": "world"},
+        ]});
+        assert_eq!(
+            flatten_result(&r),
+            json!({"ok": true, "result": "hello\nworld"})
+        );
+    }
+
+    #[test]
+    fn flatten_result_passes_images_as_data_uris() {
+        let r = json!({"content": [
+            {"type": "text", "text": "shot:"},
+            {"type": "image", "mimeType": "image/png", "data": "QUJD"},
+        ]});
+        assert_eq!(
+            flatten_result(&r),
+            json!({"ok": true, "result": "shot:\ndata:image/png;base64,QUJD"})
+        );
+    }
+
+    #[test]
+    fn flatten_result_prefers_structured_content() {
+        let r = json!({"content": [{"type": "text", "text": "ignored"}],
+                       "structuredContent": {"a": 1}});
+        assert_eq!(flatten_result(&r), json!({"ok": true, "result": {"a": 1}}));
     }
 }
