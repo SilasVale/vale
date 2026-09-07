@@ -2138,6 +2138,24 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   streams. Web tests 44/44, full lib 299 pass; clippy clean.
 - Both: code-viewer mirror synced for the gateway change.
 
+### 2026-09-08 SOLID round 5 (terminal take_session + translate error normalization)
+- **take_session dedup (DRY, agent)** — term_close and term_unregister each
+  copy-pasted the same lock-scoped position+remove block (review #10:
+  remove under the lock, close AFTER the guard drops). Extracted
+  `take_session(sid) -> Option<Session>`; callers still own the post-lock
+  close. Lib 299 + feature-gated 307 pass; clippy clean.
+- **Upstream error normalization single-sourced (DRY, gateway translate)** —
+  all three /v1 arms (chat/completions, responses, messages) copy-pasted the
+  same !upstream fetch-failure path and the !upstream.ok body-sniff (unwrap
+  {"detail":{…}}, scrubKeys, keep the upstream's own known error.type, carry
+  Retry-After). Extracted `upstreamFetchFailedResponse()` +
+  `upstreamBodyErrorResponse()`, called from all three arms. BEHAVIOR FIX
+  surfaced by the dedup: /v1/responses previously DROPPED Retry-After (its
+  sniff copy predated the extra-header parity) — it now carries it; new pin
+  (og responses 429 → retry-after header). Down-body breaker guards
+  (isChannelDownFailure on og 5xx) preserved at the two sites that had them.
+  -23 net lines. Gateway 592 pass; tsc/lint/prettier clean; mirror synced.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
