@@ -3124,6 +3124,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   clippy clean; xwin check green. start shrinks ~90 lines; its
   stop()/probe helpers were already separate.
 
+### 2026-09-08 SOLID round 73 (post-extraction baseline + census recheck)
+- **Verification round (no code changes)** — re-ran the 6/10-line
+  baselines after the rounds-68-72 extraction burst: totals stable
+  (mcp-tools 57 / translate 41 / secrets 12 / memory 16 all kept
+  classes; translate-vision.ts 2 sites = 1-block adjacency artifact).
+  exec.rs re-appeared at 6 sites / 3 blocks — classified: the window
+  is execute_local's main select loop hitting TWO adjacent exit-probe
+  branches (458/490 — pipe-closed probe vs periodic probe, same
+  loop, ~3-line shared head) — same-loop adjacency, not cross-code
+  duplication; kept. Census recheck of the remaining ≥150 fn
+  deferreds: pty spawn's reader/reaper threads are one-time
+  capture-assembly (maintained — extracting needs 6-slot plumbing for
+  no readability gain); sftp_handler is a parameterized single tool
+  (op dispatch is protocol); ssh connect / serial open / provision_
+  tunnel are linear pipelines. No new extraction warranted.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
