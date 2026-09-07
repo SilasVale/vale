@@ -25,10 +25,7 @@ use super::built_response;
 /// unbounded send would block FOREVER (leaking the task + broadcast
 /// subscription on a silently-dead client). Returns true when the send
 /// failed or timed out — the caller breaks its loop and drops the stream.
-async fn send_bounded(
-    tx: &mpsc::Sender<Result<Bytes, Infallible>>,
-    bytes: Bytes,
-) -> bool {
+async fn send_bounded(tx: &mpsc::Sender<Result<Bytes, Infallible>>, bytes: Bytes) -> bool {
     tokio::time::timeout(std::time::Duration::from_secs(5), tx.send(Ok(bytes)))
         .await
         .map(|r| r.is_err())

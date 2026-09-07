@@ -622,11 +622,13 @@ impl MemoryStore {
             .by_id
             .iter()
             .filter(|(_, r)| !r.deleted)
-            .min_by(|(ia, ra), (ib, rb)| {
-                ra.updated_at.cmp(&rb.updated_at).then_with(|| ia.cmp(ib))
-            })
+            .min_by(|(ia, ra), (ib, rb)| ra.updated_at.cmp(&rb.updated_at).then_with(|| ia.cmp(ib)))
             .map(|(id, _)| id.clone())?;
-        let content_len = guard.by_id.get(&victim).map(|r| r.content.len()).unwrap_or(0);
+        let content_len = guard
+            .by_id
+            .get(&victim)
+            .map(|r| r.content.len())
+            .unwrap_or(0);
         if let Some(rec) = guard.by_id.get_mut(&victim) {
             rec.deleted = true;
             rec.updated_at = unix_now();
