@@ -2994,6 +2994,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   residual files fully classified; nothing extractable at this
   window.
 
+### 2026-09-08 SOLID round 64 (zen-us error forwarding + window-depth scan)
+- **relayUpstreamError (DRY, proxies/zen-us-proxy)** — the /v1/responses
+  and /v1/messages flows each inlined the same non-ok upstream →
+  client jsonError block; the messages copy had drifted to a 2-chain
+  fallback (no err.message) under its own 5xx pre-branch (generic
+  client text + server-side detail log — kept local). Shared
+  relayUpstreamError(upstream, cors) with the 3-chain fallback
+  (superset: responses unchanged, messages gains err.message
+  coverage). 8/8 zen-us + sibling zen-go 12/12 green. ALSO ran the
+  window-depth escalation: 10-line scan shows only the known
+  structural classes; 20-line scan is EMPTY repo-wide — no segment
+  of ≥20 consecutive lines is copied anywhere. This closes the
+  copy-detection space at every meaningful window depth.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
