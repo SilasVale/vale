@@ -351,6 +351,22 @@ function checkRateLimit(env: any, method: string, path: string, token: string): 
   return null;
 }
 
+/** Extract BYOK (bring-your-own-key) keys from the user's key record.
+ *  Each key maps to a specific upstream provider. null when unset. */
+function extractByokKeys(ukeys: Record<string, any>) {
+  return {
+    deepseek: ukeys.DEEPSEEK_API_KEY || null,
+    opencodeGo: ukeys.OPENCODE_GO_API_KEY || null,
+    openRouter: ukeys.OPENROUTER_API_KEY || null,
+    qwen: ukeys.QWEN_API_KEY || null,
+    nv: ukeys.NVAPI_KEY || null,
+    gmi: ukeys.GMI_API_KEY || null,
+    cmd: ukeys.CMD_API_KEY || null,
+    amd: ukeys.AMD_API_KEY || null,
+  };
+}
+
+
 async function handleGatewayImpl(
   request: Request,
   env: any,
@@ -393,24 +409,7 @@ async function handleGatewayImpl(
   const rl = checkRateLimit(env, method, path, effectiveToken);
   if (rl) return rl;
   const ukeys = await getUserKeys(env, user.id);
-  const deepseekKey = ukeys.DEEPSEEK_API_KEY || null;
-  const opencodeGoKey = ukeys.OPENCODE_GO_API_KEY || null;
-  const openRouterKey = ukeys.OPENROUTER_API_KEY || null;
-  const qwenKey = ukeys.QWEN_API_KEY || null;
-  // NVIDIA NIM official API (build.nvidia.com key) — dedicated per-key capacity,
-  // no shared free pool. Stored in the same ukeys blob as the other BYOK keys.
-  const nvKey = ukeys.NVAPI_KEY || null;
-  // GMI Cloud Inference Engine (api.gmi-serving.com) — MiniMax Week free tier
-  // (MiniMaxAI/MiniMax-M3, MiniMaxAI/MiniMax-M2.7). Same BYOK blob.
-  const gmiKey = ukeys.GMI_API_KEY || null;
-  // Command Code Provider API (api.commandcode.ai/provider) — GOAT plan & up
-  // (the Go plan has no API access). One key for CLI and API; usage meters
-  // against the plan credits.
-  const cmdKey = ukeys.CMD_API_KEY || null;
-  // AMD Radeon Cloud (developer.amd.com.cn/radeon) — free BYOK pool, keys are
-  // the "rc-…" tokens from the Radeon developer console. Same BYOK blob.
-  const amdKey = ukeys.AMD_API_KEY || null;
-
+  const byok = extractByokKeys(ukeys);
   const isCount = method === "POST" && path.endsWith(COUNT_PATH);
   const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);
   const isChatCompletions = method === "POST" && path.endsWith("/v1/chat/completions");
@@ -679,32 +678,32 @@ async function handleGatewayImpl(
 
   // or/ uses "this user's" OpenRouter key (BYOK); upstream is direct
   // openrouter.ai or the US exit per the proxy switch (see pickRoute).
-  if (route.kind === "openrouter" && !openRouterKey) {
+  if (route.kind === "openrouter" && !byok.openRouter) {
     return keyMissingError("openrouter") as Response;
   }
   // cm/ is pure BYOK like or/ — both the messages and chat/completions flows
   // need the user's own Command Code key.
-  if (route.kind === "commandgoat" && !cmdKey) {
+  if (route.kind === "commandgoat" && !byok.cmd) {
     return keyMissingError("commandgoat") as Response;
   }
   // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
   // og/ (translate or native) uses their OpenCode Go key — never the DeepSeek key.
   const bearerKey =
     route.kind === "openrouter"
-      ? openRouterKey
+      ? byok.openRouter
       : route.kind === "commandgoat"
-        ? cmdKey
+        ? byok.cmd
         : route.kind === "qwen"
-          ? qwenKey
+          ? byok.qwen
           : route.kind === "nvidia"
-            ? nvKey
+            ? byok.nv
             : route.kind === "gmi"
-              ? gmiKey
+              ? byok.gmi
               : route.kind === "amd"
-                ? amdKey
+                ? byok.amd
                 : route.kind === "opencode"
-                  ? opencodeGoKey
-                  : deepseekKey;
+                  ? byok.opencodeGo
+                  : byok.deepseek;
 
   // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
   // Accepts OpenAI-format requests directly and forwards to the upstream
@@ -715,10 +714,10 @@ async function handleGatewayImpl(
     // kind the endpoint serves. Table-driven: identical shape, order matters
     // only relative to the degraded-channel probe below.
     const chatKeys: [string, string | null][] = [
-      ["nvidia", nvKey],
-      ["gmi", gmiKey],
-      ["amd", amdKey],
-      ["opencode", opencodeGoKey],
+      ["nvidia", byok.nv],
+      ["gmi", byok.gmi],
+      ["amd", byok.amd],
+      ["opencode", byok.opencodeGo],
     ];
     for (const [kind, key] of chatKeys) {
       if (route.kind === kind && !key) {
@@ -730,9 +729,9 @@ async function handleGatewayImpl(
       if (dg) return dg;
     }
     const chatKeysAfterProbe: [string, string | null][] = [
-      ["deepseek", deepseekKey],
-      ["openrouter", openRouterKey],
-      ["qwen", qwenKey],
+      ["deepseek", byok.deepseek],
+      ["openrouter", byok.openRouter],
+      ["qwen", byok.qwen],
     ];
     for (const [kind, key] of chatKeysAfterProbe) {
       if (route.kind === kind && !key) {
@@ -849,7 +848,7 @@ async function handleGatewayImpl(
         "invalid_request",
       );
     }
-    if (route.kind === "opencode" && !opencodeGoKey) {
+    if (route.kind === "opencode" && !byok.opencodeGo) {
       return keyMissingError("opencode") as Response;
     }
     {
@@ -910,9 +909,9 @@ async function handleGatewayImpl(
   // are still real config errors and stay.
   if (isCount) {
     const countKeys: [string, string | null][] = [
-      ["deepseek", deepseekKey],
-      ["qwen", qwenKey],
-      ["amd", amdKey],
+      ["deepseek", byok.deepseek],
+      ["qwen", byok.qwen],
+      ["amd", byok.amd],
     ];
     for (const [kind, key] of countKeys) {
       if (route.kind === kind && !key) {
@@ -929,10 +928,10 @@ async function handleGatewayImpl(
   // Code) can ride these channels via /v1/messages. OpenAI-native clients
   // keep using the /v1/chat/completions direct passthrough above.
   if (route.kind === "nvidia" || route.kind === "gmi") {
-    if (route.kind === "nvidia" && !nvKey) {
+    if (route.kind === "nvidia" && !byok.nv) {
       return keyMissingError("nvidia") as Response;
     }
-    if (route.kind === "gmi" && !gmiKey) {
+    if (route.kind === "gmi" && !byok.gmi) {
       return keyMissingError("gmi") as Response;
     }
     const openaiReq = toOpenAIRequest(body, upstreamModel);
@@ -941,7 +940,7 @@ async function handleGatewayImpl(
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${route.kind === "nvidia" ? nvKey : gmiKey}`,
+          Authorization: `Bearer ${route.kind === "nvidia" ? byok.nv : byok.gmi}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(openaiReq),
@@ -979,21 +978,21 @@ async function handleGatewayImpl(
   // Passthrough routes (or/ds/qw/amd): the upstream already speaks the Anthropic
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
-    if (route.kind === "deepseek" && !deepseekKey) {
+    if (route.kind === "deepseek" && !byok.deepseek) {
       return keyMissingError("deepseek") as Response;
     }
-    if (route.kind === "qwen" && !qwenKey) {
+    if (route.kind === "qwen" && !byok.qwen) {
       return keyMissingError("qwen") as Response;
     }
     // amd/ (AMD Radeon Cloud) is pure BYOK too — without the user's rc-… key
     // the request would go out headerless and 401 at the upstream.
-    if (route.kind === "amd" && !amdKey) {
+    if (route.kind === "amd" && !byok.amd) {
       return keyMissingError("amd") as Response;
     }
     // og-native (deepseek-v4-flash via /v1/messages) needs the OpenCode Go key
     // too — without it the request would go out headerless and return a bare
     // "Upstream 401" instead of a clear config error (translate path checks).
-    if (route.kind === "opencode" && !opencodeGoKey) {
+    if (route.kind === "opencode" && !byok.opencodeGo) {
       return keyMissingError("opencode") as Response;
     }
     // The og-native passthrough previously BYPASSED the circuit breaker — a
@@ -1082,16 +1081,16 @@ async function handleGatewayImpl(
   // minimax-m3 on og never get here — they were switched to passthrough above.
   // cm/ always gets here on /v1/messages: the Command Code Anthropic endpoint
   // serves claude-* only, deepseek & co. live on chat/completions.
-  // round-504: shadowed by the pre-branch commandgoat guard (same !cmdKey,
+  // round-504: shadowed by the pre-branch commandgoat guard (same !byok.cmd,
   // same message) — unreachable, kept as defense-in-depth like the chat-path
   // openrouter arm. Not pinned: keyless-cm tests land on the live guard.
-  if (route.kind === "commandgoat" && !cmdKey) {
+  if (route.kind === "commandgoat" && !byok.cmd) {
     return keyMissingError("commandgoat") as Response;
   }
-  // round-500: this guard was unscoped — a cm/ request (Bearer cmdKey,
-  // cm upstream; opencodeGoKey unused below) was 502'd for lacking an
+  // round-500: this guard was unscoped — a cm/ request (Bearer byok.cmd,
+  // cm upstream; byok.opencodeGo unused below) was 502'd for lacking an
   // unrelated og key. Scope to the opencode kind it actually protects.
-  if (route.kind === "opencode" && !opencodeGoKey) {
+  if (route.kind === "opencode" && !byok.opencodeGo) {
     return keyMissingError("opencode") as Response;
   }
   // Circuit open: repeated hard failures — fail fast instead of waiting on
@@ -1108,7 +1107,7 @@ async function handleGatewayImpl(
   if (upstreamModel === "ox-alpha-free" && openaiReq.reasoning === undefined) {
     openaiReq.reasoning = { effort: "max" };
   }
-  const translateKey = route.kind === "commandgoat" ? cmdKey : opencodeGoKey;
+  const translateKey = route.kind === "commandgoat" ? byok.cmd : byok.opencodeGo;
   const translateLabel = route.kind === "commandgoat" ? "cm" : "og";
   const { response: upstream, detail } = await fetchWithRetry(
     route.upstream,
