@@ -334,6 +334,16 @@ async function meRevokeRelayToken(request: Request, env: any): Promise<Response>
   return jsonOk({ ok: true, revoked });
 }
 
+// Session-gated full-value read for the console Relay section ("forgot to
+// save after issuing" — same trust as keys/reveal: a session holder can
+// already rotate the credential, so reading it adds no privilege).
+async function meRevealRelayToken(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  if (!user.relayToken) return jsonError(404, "Relay token not configured", "not_found_error");
+  return jsonOk({ ok: true, value: user.relayToken });
+}
+
 // US egress switch (global setting): GET reads the current value; PUT changes it (admin only).
 // The gateway reads KV on every request route, so the switch takes effect immediately without a restart.
 async function meGetUsproxy(request: Request, env: any): Promise<Response> {
@@ -751,6 +761,7 @@ export default {
     add("POST", `${ME_BASE}/token/regenerate`, meRegenerateToken);
     add("POST", `${ME_BASE}/token/relay`, meRotateRelayToken);
     add("DELETE", `${ME_BASE}/token/relay`, meRevokeRelayToken);
+    add("POST", `${ME_BASE}/token/relay/reveal`, meRevealRelayToken);
     add("GET", `${ME_BASE}/usproxy`, meGetUsproxy);
     add("PUT", `${ME_BASE}/usproxy`, mePutUsproxy);
     add("PUT", `${ME_BASE}/keys`, mePutKeys);
