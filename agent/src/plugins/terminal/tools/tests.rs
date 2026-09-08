@@ -975,3 +975,32 @@ fn session_lost_pre_restart_record_explains_vanished_session() {
         .unwrap_or_else(|p| p.into_inner())
         .remove("term-gone-9");
 }
+
+#[test]
+fn tail_n_lines_strips_trailing_newlines() {
+    let (start, end) = super::output::tail_n_lines(b"a\nb\n", 1);
+    assert_eq!(&b"a\nb\n"[start..end], b"b");
+    let (start, end) = super::output::tail_n_lines(b"a\r\nb\r\n", 1);
+    assert_eq!(&b"a\r\nb\r\n"[start..end], b"b");
+}
+
+#[test]
+fn tail_n_lines_exact_and_beyond_line_count() {
+    let (start, end) = super::output::tail_n_lines(b"1\n2\n3\n4\n", 3);
+    assert_eq!(&b"1\n2\n3\n4\n"[start..end], b"2\n3\n4");
+    let (start, end) = super::output::tail_n_lines(b"1\n2\n", 5);
+    // Trailing \n stripped first -> "1\n2" (len 3), then whole payload.
+    assert_eq!((start, end), (0, 3));
+}
+
+#[test]
+fn tail_n_lines_no_newline_single_line() {
+    let (start, end) = super::output::tail_n_lines(b"single-line", 10);
+    assert_eq!((start, end), (0, 11));
+}
+
+#[test]
+fn tail_n_lines_empty_and_crlf_mix() {
+    assert_eq!(super::output::tail_n_lines(b"", 3), (0, 0));
+    assert_eq!(super::output::tail_n_lines(b"a\rb\rc", 2), (0, 5));
+}

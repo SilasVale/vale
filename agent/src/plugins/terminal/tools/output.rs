@@ -21,7 +21,7 @@ use vale_agent_core::{recover_guard, ToolDef};
 /// the buffer ended in a newline. Returns (start, end); with fewer than
 /// `lines` content lines start is 0. Shared by tool_screen's live and
 /// history branches (used to copy-paste this tail scan).
-fn tail_n_lines(data: &[u8], lines: usize) -> (usize, usize) {
+pub(super) fn tail_n_lines(data: &[u8], lines: usize) -> (usize, usize) {
     let mut end = data.len();
     while end > 0 && (data[end - 1] == b'\n' || data[end - 1] == b'\r') {
         end -= 1;
