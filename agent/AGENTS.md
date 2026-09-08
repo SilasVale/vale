@@ -3473,6 +3473,22 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   instead of whole-tgz bytes. No history of "reconcile OK" exists — this
   is the first time the audit actually ran to comparison.
 
+### 2026-09-08 SOLID round 101 (MCP channel proof + d1 credential survey)
+- **Operator asked whether d1 is reachable via MCP — yes, verified live.**
+  This box's `ANTHROPIC_API_KEY` is a gateway admin token: `/mcp ping`
+  authenticated, `tools/list` returned the full terminal + browser kit,
+  opened two pty sessions on d1 and closed both afterwards (hygiene).
+- **d1 needs NO settings.json swap** (Step-2 scope correction): d1's agent
+  runs as SYSTEM (no user settings there); the only settings.json on the
+  box is `C:\Users\Administrator\` (27 B, effortLevel only, no env); no
+  Machine/User ANTHROPIC*/VALE* env vars; no saisi.online refs in any
+  user config. d1 is a pure target device, never a relay client. Probes
+  read key NAMES only, never values. Note: a concurrent worker was live
+  on d1 mid-survey (interleaved buffer output observed, incl. their
+  config.yaml edit) — probes were re-run on a clean session.
+- Step-2 remainder = this box's key only, blocked on an operator-minted
+  relay token (issuance is session-gated; no token path exists by design).
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
