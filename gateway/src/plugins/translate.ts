@@ -272,9 +272,9 @@ async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
  * arms used to each carry a byte-identical copy of this tail (the
  * round-14 extraction covered only the two failure helpers).
  * recordOgBodyFailure: a down-shaped 5xx BODY also counts toward the
- * breaker on the chat/completions + responses arms; the messages
- * passthrough arm historically did not record body failures (kept
- * exact — see the arm's channelDegradedError up-front check).
+ * breaker on all three arms (chat/completions + responses + messages
+ * passthrough, unified by product sign-off 2026-09-08 — the passthrough
+ * arm's historical gap is closed).
  */
 /// or/stealth/ox-alpha requests default reasoning.effort=max when the
 /// client sent no top-level reasoning. Applied by BOTH the /v1/messages
@@ -1074,7 +1074,7 @@ async function handleGatewayImpl(
       detail,
       inspectFailure,
       ctx,
-      false,
+      true,
     );
   }
 
