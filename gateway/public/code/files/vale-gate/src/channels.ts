@@ -65,7 +65,7 @@ export function usProxyBase(env: any): string {
 // US exit for og/muse-spark-* via POST /v1/responses (translate.ts). The
 // muse Contributor tier is responses-only upstream AND Meta region-blocks it
 // for CN, so it is FORCED through a US exit. The default exit is the Oracle
-// Cloud relay: oracle.saisi.online (Cloudflare-proxied, FULL SSL) → an
+// Cloud relay: oracle.saisi.online (grey-cloud DNS + Let's Encrypt cert) → an
 // Always-Free ARM VM in US West (Phoenix) whose nginx forwards /v1/responses
 // to opencode zen (US egress clears the Meta RegionError — verified live
 // 2026-09-08: full chain gateway→oracle→zen returns completed responses).
