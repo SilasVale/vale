@@ -3522,6 +3522,12 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   exact-match relay. This supersedes round-103's gate-level-only proof —
   full path (auth → owner keys → upstream → reshape) works on relay.
   Trivial spend, single probe. Cutover flip still awaiting operator word.
+- **Post-swap self-check: this box's own /mcp channel now 401s
+  (`admin token required`) — least privilege applies to the loop itself,
+  as designed.** Consequence: live device interrogation (e.g. d1's
+  current release) is no longer possible from here without the admin
+  token; last confirmed d1 = 1.2.278. Cutover flip + deploys unaffected
+  (Cloudflare token path, not gateway admin).
 
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
