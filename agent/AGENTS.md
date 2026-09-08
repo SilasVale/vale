@@ -3542,6 +3542,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
 - Hygiene ask: the pasted admin value now lives in chat history — operator
   should rotate it (console one click) to expire this temporary grant.
 
+### 2026-09-08 SOLID round 106 (device version display fix)
+- **Operator: agent version not visible on the page.** Root cause: the
+  status probe read `j.version` (frozen Cargo 1.0.145 — every device
+  showed v1.0.145 forever and the outdated badge never cleared), ignoring
+  `j.release` (round-304). Fix prefers release, falls back to version for
+  pre-1.2.276 agents; no UI change needed (list already renders
+  lastVersion + badge — the data was wrong, not the view). Tests: 3 probe
+  pins (preferred + persisted via touchDeviceSeen, fallback, absent).
+  Gateway 610 pass, tsc/eslint/prettier clean, deployed live (Version
+  b8bbe55e, health 200). Operator confirms on the Devices page: d1 row
+  should now read v1.2.305 with no outdated badge.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
