@@ -285,11 +285,11 @@ export default function DevicesPanel() {
       {/* Fleet stats strip — the at-a-glance summary above the cards */}
       {devices !== null && devices.length > 0 && (
         <div className="dev-stats">
-          <span className="dev-stat"><b>{devices.length}</b>{t("devices.statTotal")}</span>
+          <span className="dev-stat"><b>{devices.length}</b>{t(devices.length === 1 ? "devices.statTotalOne" : "devices.statTotal")}</span>
           <span className="dev-stat"><b>{devices.filter((d) => deviceStatuses[d.name]?.agent_up).length}</b>{t("devices.statOnline")}</span>
-          <span className="dev-stat"><b>{devices.filter((d) => deviceStatuses[d.name]?.tunnel_up).length}</b>{t("devices.statTunnels")}</span>
+          <span className="dev-stat"><b>{devices.filter((d) => deviceStatuses[d.name]?.tunnel_up).length}</b>{t(devices.filter((d) => deviceStatuses[d.name]?.tunnel_up).length === 1 ? "devices.statTunnelsOne" : "devices.statTunnels")}</span>
           {regKeys && regKeys.length > 0 && (
-            <span className="dev-stat"><b>{regKeys.length}</b>{t("devices.statKeys")}</span>
+            <span className="dev-stat"><b>{regKeys.length}</b>{t(regKeys.length === 1 ? "devices.statKeysOne" : "devices.statKeys")}</span>
           )}
         </div>
       )}
