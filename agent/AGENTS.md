@@ -3489,6 +3489,18 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
 - Step-2 remainder = this box's key only, blocked on an operator-minted
   relay token (issuance is session-gated; no token path exists by design).
 
+### 2026-09-08 SOLID round 102 (relay token console UI)
+- **Operator: relay token must show on the page, not just curl.** Built it:
+  Keys page Relay card (status badge from meGet relayTokenSet, Issue/
+  Rotate showing the value once in memory + copy, session-gated Reveal
+  via new POST /api/me/token/relay/reveal for the forgot-to-save case,
+  Revoke with confirm), i18n zh+en, client types. Backend reveal pinned
+  (401/404/value). Old UI bundle pruned. Gateway 607 pass, tsc/eslint/
+  prettier + ui build/test/render-smokes green. Deployed live (Version
+  dcda168a): health 200, reveal route 401-unauth, new bundle 200 served.
+  Operator path is now: console Keys page → Issue → copy → paste per
+  machine → tell the loop to verify + flip the cutover.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
