@@ -289,18 +289,34 @@ body[data-theme="dark"] .rail-btn.active {
 .rail-avatar {
   width: 36px;
   height: 36px;
-  border: none;
+  border: 2px solid rgba(255, 255, 255, 0.65);
   border-radius: 50%;
-  background: linear-gradient(135deg, #f59f00 0%, #e8590c 100%);
-  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ffe3b3 0%, #f59f00 48%, #d9480f 100%);
+  color: #3b1d05;
   font: 700 13px var(--ds-font-family);
   display: grid;
   place-items: center;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(217, 72, 15, 0.35);
-  transition: transform var(--ds-dur) var(--ds-ease);
+  box-shadow: 0 2px 8px rgba(217, 72, 15, 0.35), 0 0 0 3px var(--accent-ring);
+  transition: transform var(--ds-dur) var(--ds-ease), box-shadow var(--ds-dur) var(--ds-ease);
 }
-.rail-avatar:hover { transform: scale(1.06); }
+.rail-avatar:hover {
+  transform: scale(1.06);
+  box-shadow: 0 2px 12px rgba(217, 72, 15, 0.5), 0 0 0 4px var(--accent-ring);
+}
+/* identity seal in the user popover — same sun disc, static */
+.topbar-avatar {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe3b3 0%, #f59f00 48%, #d9480f 100%);
+  color: #3b1d05;
+  font: 700 14px var(--ds-font-family);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 2px 8px rgba(217, 72, 15, 0.35);
+}
 .rail-status {
   width: 7px;
   height: 7px;
