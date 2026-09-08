@@ -3391,6 +3391,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   convention) is now a module-level parse_memory_settings(v) returning
   (entries, bytes, retention, changed). 330 pass / clippy / fmt clean.
 
+### 2026-09-08 SOLID round 94 (extract extractByokKeys)
+- **Refactor (gateway translate.ts)** — handleGatewayImpl's inline BYOK key
+  extraction (8 keys from the ukeys blob) is now a module-level
+  extractByokKeys(ukeys) returning a typed record. Gateway 592 pass / tsc
+  clean.
+
+### 2026-09-08 SOLID round 95 (extract detectRoute)
+- **Refactor (gateway translate.ts)** — handleGatewayImpl's inline route
+  detection (isCount/isMessages/isChatCompletions/isResponses from
+  method + path) is now a module-level detectRoute(method, path) returning
+  a typed record. Gateway 592 pass / tsc clean. Self-caught: the first
+  extraction pass dropped the 404 guard for unknown routes (test: POST
+  /v1/<unknown> → 404); restored before the run.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
