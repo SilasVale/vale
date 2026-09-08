@@ -3369,6 +3369,13 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   else-if (assistant) and else branches from the message loop -> tsc error
   TS1128; restored before the run.
 
+### 2026-09-08 SOLID round 90 (extract checkRateLimit)
+- **Refactor (gateway translate.ts)** — handleGatewayImpl's inline rate-
+  limiting block (per-token minute + day counters with in-memory Maps) is
+  now a module-level checkRateLimit(env, method, path, token) returning
+  Response | null. The main fn calls it once after auth. Gateway 592 pass
+  / tsc clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
