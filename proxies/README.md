@@ -6,7 +6,7 @@ Independently deployed small proxy Workers / Vercel projects, invoked by the Val
 |---|---|---|---|
 | `zen-go-proxy/` | `opencode-go-proxy` | Dedicated direct entry for <opencode-host> (og transcoding merged into the gateway) | `OPENCODE_GO_API_KEY`, `CLIENT_KEY` (required — default-closed when unset) |
 | `zen-us-proxy/` | `zen-us-proxy` | US egress proxy (D1 binding forces US-region edge → opencode zen; see D1 note below) | `OPENCODE_GO_API_KEY`, `CLIENT_KEY` (required — default-closed when unset) |
-| `vercel-proxy/` | Vercel project → **migrated to the Oracle VPS as `vrelay` (2026-09-08; the free team was paused at 304% of its transfer cap)** | same sources now run under plain Node on the box; the Vercel deploy target is frozen | none — BYOK-only, no secret to configure |
+| `api-relay/` | **vrelay** (Oracle VPS, systemd node) — was the Vercel project until 2026-09-08 (free team paused at 304% of its transfer cap; project since DELETED) | `v.saisi.online/api/{zen,proxy,github,git,gform}` + the muse `/v1/responses` US exit on `oracle.saisi.online` | none — BYOK-only, no secret to configure |
 
 (~~`my-openrouter-proxy/`~~ RETIRED 2026-09-07 — zero callers (off-path since 2026-08-22, upstream table), workers.dev URL TLS-dead; remote worker deleted, source in git history.)
 
@@ -42,7 +42,7 @@ Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default
 ./scripts/build.sh proxies
 
 # Vercel egress proxy (requires vercel CLI + login)
-./scripts/build.sh vercel-proxy
+./scripts/build.sh api-relay
 ```
 
 `./scripts/build.sh deploy` also deploys the two Cloudflare proxies.
@@ -54,7 +54,7 @@ Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default
 
 ## vrelay — the VPS API relay (migrated from Vercel, 2026-09-08)
 
-`proxies/vercel-proxy/api/*` are standard web-API edge handlers (`Request ->
+`proxies/api-relay/api/*` are standard web-API edge handlers (`Request ->
 Response`); they run VERBATIM under Node 24 on the Oracle box via
 `server/entry.mjs` — a tiny http adapter that replicates vercel.json's
 rewrites in-process (`/api/git/…` → `?path=…`), shims undici's `duplex:"half"`
@@ -68,7 +68,7 @@ deployable to Vercel if the team is ever resumed).
   Cloudflare → LE certs via `certbot --nginx`; `/api/` → 8081,
   `client_max_body_size 500m` + `proxy_request_buffering off` for git pushes).
   The muse `= /v1/responses` exit stays on the `oracle.saisi.online` vhost.
-- **Deploy/update**: `cd proxies/vercel-proxy && ./build-relay.sh` (transpiles
+- **Deploy/update**: `./scripts/build.sh api-relay` (wraps build-relay.sh + scp +
   with the gateway's tsc — no extra downloads) → scp `relay-bundle.tar.gz` →
   extract to `/opt/vrelay` (chmod a+r!) → `systemctl restart vrelay`.
 - **DNS cutover was complete on 2026-09-08**: no consumer points at Vercel
@@ -89,7 +89,7 @@ deployable to Vercel if the team is ever resumed).
 
 ## Git automatic URL rewriting
 
-`vercel-proxy` provides a GitHub Smart HTTP reverse proxy at `/api/git/...`. Once configured, GitHub URLs in the repo do not need to change:
+The relay provides a GitHub Smart HTTP reverse proxy at `/api/git/...`. Once configured, GitHub URLs in the repo do not need to change:
 
 ```bash
 git config --global url."https://<git-mirror-host>/api/git/".insteadOf "https://github.com/"

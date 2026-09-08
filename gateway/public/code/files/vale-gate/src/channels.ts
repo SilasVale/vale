@@ -73,10 +73,12 @@ export function usProxyBase(env: any): string {
 // UNAVAILABLE: the free team exceeded the 10 GB Fast Origin Transfer cap
 // (304%) and the account was paused (402 DEPLOYMENT_DISABLED, 2026-09-07).
 // MUSE_RESPONSES_EXIT selects the exit:
-//   - "vercel"        → the old Vercel relay (v.saisi.online/api/zen), kept
-//                       as the fallback if the Oracle relay is ever down
-//                       (untimed streams; 4.5 MB body cap — long muse
-//                       contexts may exceed it).
+//   - "vercel"        → legacy NAME: routes muse through the generic zen
+//                       relay ({US_PROXY_BASE}/api/zen?target=og&path=…).
+//                       Since the 2026-09-08 Vercel retirement that endpoint
+//                       is served by the SAME Oracle box (vrelay) — a
+//                       distinct code path (BYOK gate + path allowlist),
+//                       not a distinct machine.
 //   - "zen-us"        → the zen-us Cloudflare worker (zen-us.saisi.online/
 //                       v1/responses). US-pinned via WNAM D1 + placement,
 //                       but the CF egress still hits 403 RegionError live

@@ -246,7 +246,7 @@ jobs:
         working-directory: index
 
   # satellite proxy behavior suites (CORS/gates/BYOK/protocol conversion)
-  # + wrangler dry-run per worker + the vercel-proxy syntax gate below.
+  # + wrangler dry-run per worker + the api-relay syntax gate below.
   # (Studio retired 2026-09-06, ADR 0006 — its contract-test comment block
   # that sat here was removed; the suite lives in git history.)
   proxies:
@@ -271,17 +271,17 @@ jobs:
       - name: Dry-run zen-us
         run: wrangler deploy --dry-run
         working-directory: proxies/zen-us-proxy
-      - name: Syntax-check vercel-proxy api
+      - name: Syntax-check api-relay handlers
         run: |
           node --check api/proxy.js
           node --check api/zen.js
           node --experimental-strip-types --check api/git.ts
           node --experimental-strip-types --check api/github.ts
           node --experimental-strip-types --check api/gform.ts
-        working-directory: proxies/vercel-proxy
+        working-directory: proxies/api-relay
 
   # extension/ (browser MV3) has no build/test tooling — zero CI gating
-  # until now. Mirror the vercel-proxy syntax gate above: parse every
+  # until now. Mirror the api-relay syntax gate above: parse every
   # .js/.mjs under extension/ with node --check so a syntax error fails
   # the PR instead of silently dead content/options scripts.
   extension:

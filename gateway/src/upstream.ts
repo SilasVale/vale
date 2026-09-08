@@ -44,7 +44,8 @@ export function pickRoute(
   usProxy: string | null = null,
   requestPath: string = VERIFY_PATH,
 ): RouteInfo {
-  // US egress switch: with US_PROXY=1 all models reach upstreams via the Vercel proxy (v.saisi.online/api/zen)
+  // US egress switch: with US_PROXY=1 all models reach upstreams via the api relay
+  // (v.saisi.online/api/zen — served by vrelay on the Oracle box since 2026-09-08)
   // from US edge nodes, avoiding regional restrictions/congestion. target=og|ds|qw|or selects the upstream,
   // the path param carries the upstream relative path (the proxy base already includes the host-level prefix). usProxy is a local
   // per-request value — never mutate the shared env object with it.

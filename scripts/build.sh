@@ -7,9 +7,7 @@
 #   ./scripts/build.sh gateway         # deploy the Vale Gate worker
 #   ./scripts/build.sh index           # deploy the Vale Index worker
 #   ./scripts/build.sh proxies         # deploy the satellite proxy workers (zen-go / zen-us)
-#   ./scripts/build.sh vercel-proxy    # RETIRED 2026-09-08 — the Vercel relay migrated to
-#   #   the Oracle box as vrelay (proxies/README.md); target kept only to redeploy the
-#   #   identical api/ sources to Vercel should the team ever be resumed.
+#   ./scripts/build.sh api-relay       # build + deploy the VPS api relay (vrelay @ Oracle box)
 #   ./scripts/build.sh deploy          # build agent + deploy gateway/index
 #
 # Dependencies: cargo-xwin, wrangler (global v4), CLOUDFLARE_API_TOKEN (deploy
@@ -222,7 +220,7 @@ deploy_proxy() {
   # Secrets are set once via `wrangler secret put` (or the dashboard) and
   # survive re-deploys; if a proxy needs env it reads from Worker env.
   echo "  ok: $name deployed"
-  # round-544: post-deploy smoke (vercel-proxy pattern) — the proxies are
+  # round-544: post-deploy smoke (the api-relay 401-gate pattern) — the proxies are
   # default-closed BYOK relays, so a keyless GET must answer 401. That
   # proves the deployment serves AND the auth gate is intact, without
   # spending an upstream call. Any other status fails the deploy step.
@@ -237,38 +235,28 @@ deploy_proxy() {
   fi
 }
 
-deploy_vercel_proxy() {
-  # Vercel exit proxy (v.saisi.online/api/zen + /api/proxy). Needs the Vercel
-  # CLI + token; skips with a clear message when unavailable (CI-friendly).
-  if ! command -v vercel >/dev/null 2>&1; then
-    echo "  !! vercel CLI not found — skipping vercel-proxy deploy"
-    echo "     install: npm i -g vercel  &&  vercel login  (or set VERCEL_TOKEN)"
-    return 1
-  fi
-  # P2-5b preflight: `vercel --prod` without auth fails mid-deploy (and
-  # --yes suppresses the login prompt, so it just dies). Require an explicit
-  # token OR a linked project (proxies/vercel-proxy/.vercel/project.json).
-  if [[ -z "${VERCEL_TOKEN:-}" && ! -f "$ROOT/proxies/vercel-proxy/.vercel/project.json" ]]; then
-    echo "  !! neither VERCEL_TOKEN nor a linked .vercel/project.json — set VERCEL_TOKEN or run: (cd proxies/vercel-proxy && vercel link)" >&2
-    return 1
-  fi
-  echo "=== [deploy] vercel-proxy (proxies/vercel-proxy/) ==="
-  ( cd "$ROOT/proxies/vercel-proxy" \
-      && vercel --prod --yes )
-  echo "  ok: vercel-proxy deployed"
-  # P2-5b smoke (keyless, mirrors the index-smoke pattern): /api/zen is
-  # BYOK-gated, so a keyless GET must answer 401 — that proves the deployment
-  # serves AND the auth gate is intact, without spending an upstream call.
-  # Any other status (404/500/...) fails the deploy, not the next caller.
-  echo "=== [smoke] vercel-proxy ==="
-  local smoke_base="${VERCEL_SMOKE_URL:-https://v.saisi.online}"
+deploy_api_relay() {
+  # VPS api relay (vrelay @ Oracle box): zen/or egress, git+github mirrors,
+  # gform, muse /v1/responses exit. Builds from proxies/api-relay (the former
+  # vercel-proxy — the Vercel project was DELETED 2026-09-08 after the free
+  # team's transfer-cap pause; re-deploying to Vercel would mean recreating the
+  # project by hand). Needs the box SSH key (default ~/.ssh/vrelay.key).
+  local host="${VRELAY_HOST:-132.226.90.175}"
+  local key="${VRELAY_KEY:-$HOME/.ssh/vrelay.key}"
+  [ -f "$key" ] || { echo "  !! relay ssh key not found at $key (VRELAY_KEY to override)" >&2; return 1; }
+  echo "=== [deploy] api-relay bundle (proxies/api-relay/) ==="
+  ( cd "$ROOT/proxies/api-relay" && bash build-relay.sh >/dev/null && echo "  built bundle" )
+  scp -i "$key" -o StrictHostKeyChecking=no "$ROOT/proxies/api-relay/relay-bundle.tar.gz" "ubuntu@$host:/tmp/"
+  ssh -i "$key" -o StrictHostKeyChecking=no "ubuntu@$host" '
+    sudo tar -xzf /tmp/relay-bundle.tar.gz -C /opt/vrelay
+    sudo chmod 755 /opt/vrelay && sudo chmod 644 /opt/vrelay/*.mjs
+    sudo systemctl restart vrelay
+  '
   local code
-  code="$(curl -s -o /dev/null -w '%{http_code}' -m 30 "${smoke_base}/api/zen?target=og&path=/v1/models" || true)"
-  if [[ "$code" != "401" ]]; then
-    echo "  !! vercel-proxy smoke FAILED: keyless /api/zen want 401, got ${code:-<curl error>} (${smoke_base})" >&2
-    return 1
-  fi
-  echo "  ok: vercel-proxy smoke 401-gate intact (${smoke_base}/api/zen)"
+  code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' -X POST "https://v.saisi.online/api/proxy" || echo 000)
+  [ "$code" = 401 ] || { echo "  !! relay smoke expected 401, got $code — check: ssh ubuntu@$host 'journalctl -u vrelay -n' " >&2; return 1; }
+  rm -f "$ROOT/proxies/api-relay/relay-bundle.tar.gz"
+  echo "  ok: vrelay deployed + 401-gate smoke passed"
 }
 
 cmd="${1:-agent}"
@@ -277,14 +265,14 @@ case "$cmd" in
   gateway)  deploy_worker gateway "Vale Gate" ;;
   index)    deploy_worker index "Vale Index" ;;
   proxies)  deploy_proxy zen-go-proxy "zen-go" "https://opencode.saisi.online/v1/models" && deploy_proxy zen-us-proxy "zen-us" "https://zen-us.saisi.online/v1/models" ;;
-  vercel-proxy) deploy_vercel_proxy ;;
+  api-relay) deploy_api_relay ;;
   # round-320: build-installer.sh retired (it staged the dead Vercel mirror
   # + rewrote index.js + required retired Tauri exes — it always failed).
   # Releases use scripts/publish-release.sh (CDN publish + last-5 prune);
   # `deploy` builds agent + deploys gateway/index + the two Cloudflare
-  # proxies and vercel-proxy are NOT deployed by `deploy` (deploy manually).
+  # proxies and api-relay are NOT deployed by `deploy` (deploy manually).
   # P0-2: full-stack preflight FIRST — a missing toolchain piece or token
   # aborts here, never mid-chain as a half-deployed stack (&& serial).
   deploy)   preflight_deploy && build_agent "${2:-release}" && deploy_worker gateway "Vale Gate" && deploy_worker index "Vale Index" && deploy_proxy zen-go-proxy "zen-go" "https://opencode.saisi.online/v1/models" && deploy_proxy zen-us-proxy "zen-us" "https://zen-us.saisi.online/v1/models" ;;
-  *) echo "usage: $0 [agent|gateway|index|proxies|vercel-proxy|deploy]"; exit 1 ;;
+  *) echo "usage: $0 [agent|gateway|index|proxies|api-relay|deploy]"; exit 1 ;;
 esac
