@@ -3385,6 +3385,12 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   already &AppState) and a result_large_err (Response is large -> boxed);
   both fixed before the run.
 
+### 2026-09-08 SOLID round 92 (extract parse_memory_settings)
+- **Refactor (agent web/mod.rs)** — api_settings_put's inline memory-
+  validation block (entries/bytes/retention with the missing-key
+  convention) is now a module-level parse_memory_settings(v) returning
+  (entries, bytes, retention, changed). 330 pass / clippy / fmt clean.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
