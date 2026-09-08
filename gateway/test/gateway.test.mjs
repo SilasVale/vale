@@ -177,10 +177,11 @@ test("og/minimax-m3 also goes to chat/completions (translate path)", async () =>
 // Muse Spark Contributor is responses-only on zen/go (chat/completions 500s)
 // and is forced through the US exit (Meta Geographic Use Policy). The
 // /v1/responses entry forwards the OpenAI Responses body verbatim with the
-// model prefix stripped, via the US exit. The default exit is the Vercel
-// relay (v.saisi.online/api/zen — the only exit verified to clear the Meta
-// RegionError); MUSE_RESPONSES_EXIT=zen-us (or an https URL) selects
-// another BYOK /v1/responses exit.
+// model prefix stripped, via the US exit. The default exit is the Oracle
+// Cloud relay (oracle.saisi.online — Always-Free ARM VM in US West, verified
+// live 2026-09-08; the Vercel relay it replaced got its free team paused on
+// Fast Origin Transfer overage); MUSE_RESPONSES_EXIT=vercel / zen-us / an
+// http(s) URL selects another BYOK /v1/responses exit.
 
 test("og/muse-spark-1.3-contributor on /v1/responses forces the US exit", async () => {
   const { env, token } = gwEnv();
@@ -196,9 +197,8 @@ test("og/muse-spark-1.3-contributor on /v1/responses forces the US exit", async 
     post(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi", max_output_tokens: 10 }, "/v1/responses"),
   );
   // US exit forced even with the global switch OFF (Meta region policy) —
-  // default exit is the Vercel relay (v.saisi.online/api/zen).
-  assert.ok(seen.url.startsWith("https://v.saisi.online/api/zen?target=og&path="));
-  assert.ok(decodeURIComponent(seen.url).includes("/v1/responses"));
+  // default exit is the Oracle relay (oracle.saisi.online/v1/responses).
+  assert.equal(seen.url, "https://oracle.saisi.online/v1/responses");
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-og");
   // No anthropic-version header on the OpenAI-native responses wire.
@@ -222,7 +222,7 @@ test("og/muse-spark-1.2-contributor on /v1/responses works (US exit, Bearer)", a
   }, () =>
     post(env, token, { model: "og/muse-spark-1.2-contributor", input: "hi" }, "/v1/responses"),
   );
-  assert.ok(seen.url.startsWith("https://v.saisi.online/api/zen?target=og&path="));
+  assert.ok(seen.url.startsWith("https://oracle.saisi.online/v1/responses"));
   assert.equal(JSON.parse(seen.init.body).model, "muse-spark-1.2-contributor");
   assert.equal(res.status, 200);
 });
@@ -354,6 +354,24 @@ test("og/muse-spark-1.3-contributor rides the zen-us CF exit when MUSE_RESPONSES
     post(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi" }, "/v1/responses"),
   );
   assert.equal(seen.url, "https://zen-us.saisi.online/v1/responses");
+  assert.equal(res.status, 200);
+});
+
+test("og/muse-spark-1.3-contributor rides the Vercel relay when MUSE_RESPONSES_EXIT=vercel", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv();
+  env.MUSE_RESPONSES_EXIT = "vercel";
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url: String(url), init };
+    return new Response(JSON.stringify({ object: "response", output: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, { model: "og/muse-spark-1.3-contributor", input: "hi" }, "/v1/responses"),
+  );
+  // Escape hatch back to the old relay (used to restore service if the
+  // Oracle relay ever goes down).
+  assert.ok(seen.url.startsWith("https://v.saisi.online/api/zen?target=og&path="));
+  assert.ok(decodeURIComponent(seen.url).includes("/v1/responses"));
   assert.equal(res.status, 200);
 });
 

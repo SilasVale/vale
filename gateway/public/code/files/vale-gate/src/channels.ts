@@ -64,29 +64,33 @@ export function usProxyBase(env: any): string {
 
 // US exit for og/muse-spark-* via POST /v1/responses (translate.ts). The
 // muse Contributor tier is responses-only upstream AND Meta region-blocks it
-// for CN, so it is FORCED through a US exit. The Vercel relay
-// (v.saisi.online/api/zen) is the only exit VERIFIED to clear the Meta
-// region policy (its edge runs in ORD/Chicago — Cloudflare worker exits
-// previously returned 403 RegionError, verified 2026-09-05). The relay used
-// to abort every streamed body at 30 s because its fetch carried a whole-
-// request AbortSignal.timeout (regression ff5ad05a, fixed 2026-09-05: the
-// timeout now covers response headers only, so long muse SSE generations
-// stream to completion). MUSE_RESPONSES_EXIT selects the exit:
+// for CN, so it is FORCED through a US exit. The default exit is the Oracle
+// Cloud relay: oracle.saisi.online (Cloudflare-proxied, FULL SSL) → an
+// Always-Free ARM VM in US West (Phoenix) whose nginx forwards /v1/responses
+// to opencode zen (US egress clears the Meta RegionError — verified live
+// 2026-09-08: full chain gateway→oracle→zen returns completed responses).
+// The previous default, the Vercel relay (v.saisi.online/api/zen), is now
+// UNAVAILABLE: the free team exceeded the 10 GB Fast Origin Transfer cap
+// (304%) and the account was paused (402 DEPLOYMENT_DISABLED, 2026-09-07).
+// MUSE_RESPONSES_EXIT selects the exit:
+//   - "vercel"        → the old Vercel relay (v.saisi.online/api/zen), kept
+//                       as the fallback if the Oracle relay is ever down
+//                       (untimed streams; 4.5 MB body cap — long muse
+//                       contexts may exceed it).
 //   - "zen-us"        → the zen-us Cloudflare worker (zen-us.saisi.online/
-//                       v1/responses). 2026-09-07: the worker is now US-
-//                       pinned (WNAM D1 + placement aws:us-east-1 — see
-//                       proxies/README.md) after smart placement parked it
-//                       in AMS and zen RegionError'd; treat as experimental
-//                       until verified live against muse (Vercel remains the
-//                       verified default).
-//   - an https URL    → used verbatim (any US exit speaking the same
+//                       v1/responses). US-pinned via WNAM D1 + placement,
+//                       but the CF egress still hits 403 RegionError live
+//                       (verified 2026-09-08) — experimental, do not set.
+//   - a http(s) URL   → used verbatim (any US exit speaking the same
 //                       BYOK /v1/responses contract)
-//   - unset / other   → the Vercel relay default
+//   - unset / other   → the Oracle relay default (oracle.saisi.online)
 export function museResponsesExit(env: any): string {
   const v = env?.MUSE_RESPONSES_EXIT;
+  if (v === "vercel")
+    return `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/responses")}`;
   if (v === "zen-us") return "https://zen-us.saisi.online/v1/responses";
-  if (typeof v === "string" && /^https:\/\//.test(v)) return v;
-  return `${usProxyBase(env)}/api/zen?target=og&path=${encodeURIComponent("/v1/responses")}`;
+  if (typeof v === "string" && /^https?:\/\//.test(v)) return v;
+  return "https://oracle.saisi.online/v1/responses";
 }
 
 export const MODELS: { id: string; owned_by: string }[] = [
