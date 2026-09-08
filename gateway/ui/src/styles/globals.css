@@ -1852,16 +1852,45 @@ body[data-theme="dark"] .auth-foot { color: rgba(255, 255, 255, 0.66); }
 }
 
 @media (max-width: 768px) {
-  .app { display: block; }
-  .sidebar {
-    position: fixed;
-    left: calc(-1 * var(--sidebar-width));
-    z-index: 100;
-    transition: left var(--ds-dur) var(--ds-ease);
-    box-shadow: var(--shadow-lg);
+  .app { flex-direction: column; height: 100dvh; }
+  /* v2 rail becomes a bottom tab bar (the v1 .sidebar is retired —
+     no .sidebar in the DOM since the control-deck rewrite). */
+  .main-col { order: 1; flex: 1; min-height: 0; }
+  .rail {
+    order: 2;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    border-right: none;
+    border-top: 1px solid var(--chrome-line);
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+    gap: 4px;
+    background: var(--chrome-bg-2);
   }
-  .sidebar.open { left: 0; }
-  .sidebar-link.active::before { display: none; }
+  .rail-brand, .rail-sep { display: none; }
+  .rail-nav {
+    flex: 1;
+    flex-direction: row;
+    justify-content: center;
+    gap: 10px;
+  }
+  .rail-cluster { flex-direction: row; padding-bottom: 0; gap: 2px; }
+  .rail-cluster + .rail-cluster::before {
+    top: 50%;
+    left: -6px;
+    transform: translateY(-50%);
+    width: 1px;
+    height: 24px;
+  }
+  .rail-foot { flex-direction: row; align-items: center; gap: 2px; }
+  .rail-status { margin-top: 0; margin-left: 2px; }
+  .user-pop {
+    left: 16px;
+    right: 16px;
+    bottom: 84px;
+    width: auto;
+  }
   .page-header { flex-direction: column; }
   .token-row { flex-wrap: wrap; }
   .lane { flex-wrap: wrap; }
