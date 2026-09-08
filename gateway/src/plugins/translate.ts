@@ -366,7 +366,6 @@ function extractByokKeys(ukeys: Record<string, any>) {
   };
 }
 
-
 async function handleGatewayImpl(
   request: Request,
   env: any,
