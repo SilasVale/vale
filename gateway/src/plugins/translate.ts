@@ -413,6 +413,23 @@ async function handleGatewayImpl(
     return jsonError(401, "Missing or invalid x-api-key", "authentication_error");
   }
 
+  // F3 step 3 (ADR-0007): operator cutover switch, default OFF (dual-accept
+  // window stays open until announced). When settings:RELAY_ADMIN_CUTOVER
+  // is "1", admin tokens stop working on relay paths — clients still on the
+  // admin token get 401 until they swap settings.json to a relay token
+  // (POST /api/me/token/relay). Relay-role tokens are unaffected, and so
+  // are /mcp + console recovery (admin-only by construction, untouched).
+  if (
+    user.role === "admin" &&
+    globalSettingEnabled(await getGlobalSetting(env, "RELAY_ADMIN_CUTOVER"))
+  ) {
+    return jsonError(
+      401,
+      "Admin token revoked from relay paths — use a relay token (POST /api/me/token/relay)",
+      "authentication_error",
+    );
+  }
+
   // Per-token rate limit (see checkRateLimit).
   const rl = checkRateLimit(env, method, path, effectiveToken);
   if (rl) return rl;

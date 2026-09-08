@@ -2,7 +2,8 @@
 //
 // The relay token resolves to its owner with role "relay": translate/models
 // dual-accept it, /mcp (admin-only) + the adminKey recovery gates reject it,
-// and revocation/rotation behave independently of the admin token.
+// and revocation/rotation behave independently of the admin token. Step 3
+// (admin cutover off relay paths) ships as a default-off KV switch below.
 //
 // store.ts keeps a module-level cache: every test uses distinct token
 // strings so entries seeded by an earlier test are never re-read.
@@ -199,4 +200,91 @@ test("relay: x-api-key relay drives /v1/messages (dual-accept), billed to the ow
   } finally {
     globalThis.fetch = real;
   }
+});
+
+// ── step-3 cutover switch (default off) ─────────────────────
+// Helper: translate env with optional cutover flag, pre-seeded owner keys.
+function cutEnv(uid, adminToken, cutover) {
+  return makeBaseEnv({
+    users: {
+      [uid]: { id: uid, username: uid, role: "admin", enabled: true, token: adminToken },
+    },
+    kv: {
+      [`token:${adminToken}`]: uid,
+      [`ukeys:${uid}`]: JSON.stringify({ OPENCODE_GO_API_KEY: "sk-og" }),
+      ...(cutover ? { "settings:RELAY_ADMIN_CUTOVER": "1" } : {}),
+    },
+    extra: {
+      BREAKER: { idFromName: () => ({}), get: () => ({ fetch: async () => new Response("0") }) },
+    },
+  });
+}
+
+const okUpstream = () =>
+  new Response(
+    JSON.stringify({
+      choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+
+const postMessages = (env, token) =>
+  handleGateway(
+    new Request("https://g/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": token, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "og/deepseek-v4-flash",
+        max_tokens: 10,
+        stream: false,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    }),
+    env,
+    new URL("https://g/v1/messages"),
+  );
+
+test("cutover off (default): admin token still drives relay paths", async () => {
+  __clearCaches();
+  const env = cutEnv("cutowner1", "relay-cut-adm-1", false);
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => okUpstream();
+  try {
+    const res = await postMessages(env, "relay-cut-adm-1");
+    assert.equal(res.status, 200);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("cutover on: admin 401s on relay paths, relay still passes", async () => {
+  __clearCaches();
+  const env = cutEnv("cutowner2", "relay-cut-adm-2", true);
+  const relay = await rotateRelayToken(env, "cutowner2");
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => okUpstream();
+  try {
+    const denied = await postMessages(env, "relay-cut-adm-2");
+    assert.equal(denied.status, 401);
+    const dj = await denied.json();
+    assert.match(dj.error?.message || "", /relay token/);
+    assert.equal((await postMessages(env, relay)).status, 200);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("cutover on: /mcp admin still works (cutover touches relay paths only)", async () => {
+  __clearCaches();
+  const env = cutEnv("cutowner3", "relay-cut-adm-3", true);
+  const res = await handleMcp(
+    new Request("https://x/mcp", {
+      method: "POST",
+      headers: { authorization: "Bearer relay-cut-adm-3", "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "ping", id: 1 }),
+    }),
+    env,
+  );
+  assert.equal(res.status, 200);
 });
