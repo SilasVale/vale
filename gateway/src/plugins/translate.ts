@@ -366,6 +366,16 @@ function extractByokKeys(ukeys: Record<string, any>) {
   };
 }
 
+/** Detect the route kind from method + path. */
+function detectRoute(method: string, path: string) {
+  const isCount = method === "POST" && path.endsWith(COUNT_PATH);
+  const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);
+  const isChatCompletions = method === "POST" && path.endsWith("/v1/chat/completions");
+  const isResponses = method === "POST" && path.endsWith("/v1/responses");
+  return { isCount, isMessages, isChatCompletions, isResponses };
+}
+
+
 async function handleGatewayImpl(
   request: Request,
   env: any,
@@ -409,13 +419,7 @@ async function handleGatewayImpl(
   if (rl) return rl;
   const ukeys = await getUserKeys(env, user.id);
   const byok = extractByokKeys(ukeys);
-  const isCount = method === "POST" && path.endsWith(COUNT_PATH);
-  const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);
-  const isChatCompletions = method === "POST" && path.endsWith("/v1/chat/completions");
-  // OpenAI Responses API entry (/v1/responses) — serves og/muse-spark-*
-  // Contributor models ONLY (they are responses-only upstream; chat/completions
-  // 500s on zen). See the isResponses branch below.
-  const isResponses = method === "POST" && path.endsWith("/v1/responses");
+  const { isCount, isMessages, isChatCompletions, isResponses } = detectRoute(method, path);
   if (!(isCount || isMessages || isChatCompletions || isResponses)) {
     return jsonError(404, "Not Found", "not_found_error");
   }
