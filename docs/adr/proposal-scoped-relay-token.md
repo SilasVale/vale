@@ -1,6 +1,6 @@
 # Proposal: scoped relay token — split daily relay use from the admin token (F3)
 
-Status: Proposal (round-356) ｜ Scope: `gateway/` auth model ｜ Needs: **human sign-off** (any option except A breaks existing `settings.json` clients)
+Status: **Superseded by [0007](0007-scoped-relay-token.md)** (Option B approved 2026-09-08; step 1 shipped, step-3 cutover pending) ｜ Scope: `gateway/` auth model ｜ Original: Proposal (round-356)
 
 ## Problem (verified in tree 2026-09-06, not hypothetical)
 
