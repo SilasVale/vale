@@ -818,16 +818,19 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
 /// byte-identical to the pre-extraction early return (including its
 /// HTTP-200 Json shape).
 fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, Box<Response>> {
-    let v: serde_json::Value =
-        match serde_json::from_str(body) {
-            Ok(v) => v,
-            Err(e) => return Err(Box::new(
-                axum::Json(serde_json::json!({
+    let v: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(e) => return Err(Box::new(built_response(
+            StatusCode::BAD_REQUEST,
+            "application/json",
+            Body::from(
+                serde_json::json!({
                     "ok": false, "error": format!("invalid JSON: {e}"), "code": "invalid_params",
-                }))
-                .into_response(),
-            )),
-        };
+                })
+                .to_string(),
+            ),
+        ))),
+    };
     // stage-n (settings audit): a PUT may legitimately carry ONLY ONE
     // of the keys — the old code reset buffer_mb to 8 whenever it was
     // ABSENT (a console-only save silently clobbered a user's 64).
@@ -1988,20 +1991,21 @@ mod tests {
     }
 
     #[tokio::test]
-    // round-41 audit pin: api_settings_put's invalid-JSON envelope returns
-    // HTTP 200 (axum Json into_response with no status override) — a
-    // HISTORICAL wire shape preserved since the round-69 extraction, while
-    // api_gateway_connect 400s the same class of error. Pinned here so an
-    // "obvious" unification cannot silently change the wire without a
-    // product decision (see the OPEN-decisions block in AGENTS.md).
-    async fn settings_put_invalid_json_keeps_http200_envelope() {
+    // round-41 audit pin, RESOLVED by product sign-off (2026-09-08):
+    // api_settings_put's invalid-JSON envelope now returns HTTP 400, matching
+    // api_gateway_connect. The old HTTP-200 Json shape is gone on purpose.
+    async fn settings_put_invalid_json_returns_http400_envelope() {
         let (st, _cfg_path) = state_with_cfg("put-bad-json", CFG_YAML_TOKEN_ONLY);
         let resp = handle_request(
             req_with_json("PUT", "/api/settings", "{not json"),
             st.clone(),
         )
         .await;
-        assert_eq!(resp.status(), StatusCode::OK, "historical 200 envelope");
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "unified 400 envelope"
+        );
         let v = json_body(resp).await;
         assert_eq!(v["ok"], false);
         assert_eq!(v["code"], "invalid_params");
