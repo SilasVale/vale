@@ -3529,6 +3529,19 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   token; last confirmed d1 = 1.2.278. Cutover flip + deploys unaffected
   (Cloudflare token path, not gateway admin).
 
+### 2026-09-08 SOLID round 105 (d1 upgraded to 1.2.305 via MCP)
+- **Operator handed the admin token back; loop drove the npm flow on d1
+  through gateway /mcp.** Pre-check corrected the record: d1 was already
+  1.2.304 (not 1.2.278 — something updated it earlier), npm pkg confirmed
+  1.2.304. Ran `npm i -g latest.tgz` (7s, pkg → 1.2.305) then `vale update`
+  (WMI-parented swap, connection drop as designed); reconnected after 30s,
+  `.vale-release` (provable-success marker) reads **1.2.305**. Sessions
+  closed afterwards. Note: concurrent worker live on d1 throughout
+  (interleaved output + their own pkg checks) — state was re-read before
+  the swap to avoid a double-update collision.
+- Hygiene ask: the pasted admin value now lives in chat history — operator
+  should rotate it (console one click) to expire this temporary grant.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
