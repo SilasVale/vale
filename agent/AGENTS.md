@@ -3464,6 +3464,14 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   GitHub asset via release.yml next; reconcile after the asset lands.
   Step 2 (settings.json swap) stays operator-side: issuance needs a
   console session the agent loop cannot mint.
+  P0 reconcile finding (1.2.305): CDN tgz vs GitHub asset differ ONLY in
+  vale-agent.exe (17142272 vs 17140736 B, same source commit) — the other
+  8 members are byte-identical. PE builds are not reproducible across
+  builders (timestamps/paths), so whole-tgz equality can never hold for
+  any release packing a locally-built exe. Proposal (needs sign-off, NOT
+  applied): amend the P0 check to member-wise equality + exe provenance,
+  instead of whole-tgz bytes. No history of "reconcile OK" exists — this
+  is the first time the audit actually ran to comparison.
 
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
