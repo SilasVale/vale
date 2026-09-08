@@ -323,13 +323,15 @@ const __rlDay = new Map(); // `day:${token}:${day}`   → count
 /** Per-token rate limiter: in-memory minute + day counters (no KV).
  *  Returns a 429 Response if the token is over budget, else null (proceed).
  *  Shared by the /v1/messages, /v1/chat/completions and /v1/responses arms. */
-function checkRateLimit(
-  env: any,
-  method: string,
-  path: string,
-  token: string,
-): Response | null {
-  if (!(env.KEYS && method === "POST" && (path.endsWith("/messages") || path.endsWith("/chat/completions") || path.endsWith("/responses")) && !path.endsWith(COUNT_PATH))) {
+function checkRateLimit(env: any, method: string, path: string, token: string): Response | null {
+  if (!(
+    env.KEYS &&
+    method === "POST" &&
+    (path.endsWith("/messages") ||
+      path.endsWith("/chat/completions") ||
+      path.endsWith("/responses")) &&
+    !path.endsWith(COUNT_PATH)
+  )) {
     return null;
   }
   const mk = `min:${token}:${Math.floor(Date.now() / 60000)}`;
@@ -348,7 +350,6 @@ function checkRateLimit(
   if (__rlDay.size > 4096) __rlDay.delete(__rlDay.keys().next().value);
   return null;
 }
-
 
 async function handleGatewayImpl(
   request: Request,
@@ -409,8 +410,6 @@ async function handleGatewayImpl(
   // AMD Radeon Cloud (developer.amd.com.cn/radeon) — free BYOK pool, keys are
   // the "rc-…" tokens from the Radeon developer console. Same BYOK blob.
   const amdKey = ukeys.AMD_API_KEY || null;
-
-
 
   const isCount = method === "POST" && path.endsWith(COUNT_PATH);
   const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);

@@ -72,7 +72,6 @@ function convertAssistantMessage(m: any, messages: any[]): void {
   messages.push(msg);
 }
 
-
 export function toOpenAIRequest(req: any, model: string): any {
   const messages = [];
   if (req.system) {
