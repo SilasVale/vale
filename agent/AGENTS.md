@@ -271,16 +271,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   release").
 
 ### OPEN decisions (product sign-off needed — do NOT change without one)
-- **settings_put invalid-JSON envelope is HTTP 200** (web/mod.rs, pinned
-  since the round-69 extraction): api_settings_put returns an axum Json
-  envelope with no status override while api_gateway_connect 400s the
-  same class of error. Unifying = wire change; round-41 record.
-- **messages-passthrough arm does NOT record og body-failure breaker
-  trips** (translate.ts, preserved via relayUpstreamResult's
-  recordOgBodyFailure=false): chat/completions + responses arms do.
-  Likely a historical gap rather than intent; round-44 record.
-- **F3 relay-token scoping** — docs/adr/proposal-scoped-relay-token.md
-  (Option B recommended); implementation waits for human sign-off.
+- **settings_put invalid-JSON envelope: RESOLVED 2026-09-08** (was HTTP
+  200 since the round-69 extraction; unified to HTTP 400 with product
+  sign-off — api_settings_put now matches api_gateway_connect; test
+  renamed to settings_put_invalid_json_returns_http400_envelope).
+- **messages-passthrough og body-failure: RESOLVED 2026-09-08** (was a
+  historical gap — relayUpstreamResult recordOgBodyFailure=false only on
+  that arm; unified to true with product sign-off, all three arms now
+  count body failures toward the breaker).
+- **F3 relay-token scoping — STEP 1 SHIPPED 2026-09-08** (docs/adr/0007-
+  scoped-relay-token.md, Option B approved): per-user relay credential
+  (`role: "relay"`, `POST/DELETE /api/me/token/relay`); dual-accept on
+  relay paths, /mcp + recovery stay admin-only. **Step 3 (revoking the
+  admin token from relay paths) is still an operator cutover — do NOT
+  code it without a new explicit sign-off + announced window.**
 
   ROUND-273 (2026-09-04): REPEATABLE E2E SUITE in the repo — the round-
   264..268 device verifications were one-off scripts in D:\Vale\pwout.
@@ -3411,6 +3415,16 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   (incl. integration) / clippy 0 / fmt clean, gateway 592 / tsc /
   prettier / eslint clean, index 56, npm CLI 9, zen-us 8, zen-go 12,
   xwin check green. The SOLID extraction phase (rounds 55-95) delivered
+  25+ code commits (10 test pins + 15 refactors) — every pure-logic
+  layer reached in the recent extraction rounds now has direct pins,
+  and the copy-detection space is fully closed repo-wide at all depths.
+
+### 2026-09-08 SOLID round 97 (round-97 matrix milestone)
+- **Verification round (no code changes)** — round-97 milestone. Every
+  suite re-verified green in one pass: agent 330 lib / 373 full
+  (incl. integration) / clippy 0 / fmt clean, gateway 592 / tsc /
+  prettier / eslint clean, index 56, npm CLI 9, zen-us 8, zen-go 12,
+  xwin check green. The SOLID extraction phase (rounds 55-97) delivered
   25+ code commits (10 test pins + 15 refactors) — every pure-logic
   layer reached in the recent extraction rounds now has direct pins,
   and the copy-detection space is fully closed repo-wide at all depths.
