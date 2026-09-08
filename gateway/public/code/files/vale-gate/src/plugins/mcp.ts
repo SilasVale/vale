@@ -30,8 +30,10 @@ interface DeviceProbeState {
   tunnel: boolean;
   agent: boolean;
   ts: number;
-  /// Agent version from the device's /api/status (CARGO_PKG_VERSION) — the
-  /// probe already fetched it and used to throw it away.
+  /// Agent version from the device's /api/status — the npm RELEASE
+  /// (round-304 added it; version is the frozen Cargo protocol anchor
+  /// 1.0.145 and useless for update checks). Falls back to version for
+  /// pre-1.2.276 agents that lack release.
   version?: string;
   checkedAt: number;
 }
@@ -76,7 +78,11 @@ async function cachedDeviceProbe(
     state.agent = res.ok;
     if (res.ok && res.resp) {
       const j: any = await res.resp.json().catch(() => null);
-      if (j && typeof j.version === "string") state.version = j.version;
+      // Prefer the npm release over the frozen Cargo version (round-304:
+      // version never changes, so the console showed v1.0.145 forever and
+      // the outdated badge never cleared). Pre-release agents fall back.
+      if (j && typeof j.release === "string" && j.release) state.version = j.release;
+      else if (j && typeof j.version === "string") state.version = j.version;
     }
   }
   if (DEVICE_PROBE_CACHE.size >= 64) DEVICE_PROBE_CACHE.clear();

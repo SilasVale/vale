@@ -836,3 +836,53 @@ test("panel-grant redeem: KV read failure fails closed 401", async () => {
   }), env);
   assert.equal(res.status, 401, "listDevices throw → caller null → 401, never 500");
 });
+
+// Version probe reads the npm release (round-304), not the frozen Cargo
+// version — the console showed v1.0.145 forever and the outdated badge
+// never cleared. Distinct device names per test: the probe cache lives in
+// the mcp plugin module (not cleared by __clearCaches); fresh=1 bypasses
+// the read side anyway.
+test("plugins/status: probe prefers npm release over Cargo version + persists lastVersion", async () => {
+  __clearCaches();
+  const env = makeEnv([{ name: "pv1", hostname: "pv1.agent.saisi.online", token: "pv1-devtok" }]);
+  const { restore } = stubFetch("/api/status", { version: "1.0.145", release: "1.2.305", cpu_pct: 1 });
+  try {
+    const res = await worker.fetch(req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }), env);
+    assert.equal(res.status, 200);
+    const j = await res.json();
+    assert.equal(j.devices.pv1.agent_up, true);
+    assert.equal(j.devices.pv1.version, "1.2.305");
+    const devs = JSON.parse(await env.KEYS.get("devices:v1"));
+    assert.equal(devs.find((d) => d.name === "pv1").lastVersion, "1.2.305");
+  } finally {
+    restore();
+  }
+});
+
+test("plugins/status: probe falls back to Cargo version when release is absent", async () => {
+  __clearCaches();
+  const env = makeEnv([{ name: "pv2", hostname: "pv2.agent.saisi.online", token: "pv2-devtok" }]);
+  const { restore } = stubFetch("/api/status", { version: "1.0.145" });
+  try {
+    const res = await worker.fetch(req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }), env);
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).devices.pv2.version, "1.0.145");
+  } finally {
+    restore();
+  }
+});
+
+test("plugins/status: probe with no version fields omits version, no crash", async () => {
+  __clearCaches();
+  const env = makeEnv([{ name: "pv3", hostname: "pv3.agent.saisi.online", token: "pv3-devtok" }]);
+  const { restore } = stubFetch("/api/status", { ok: true });
+  try {
+    const res = await worker.fetch(req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }), env);
+    assert.equal(res.status, 200);
+    const j = await res.json();
+    assert.equal(j.devices.pv3.agent_up, true);
+    assert.ok(!("version" in j.devices.pv3));
+  } finally {
+    restore();
+  }
+});
