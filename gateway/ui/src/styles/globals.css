@@ -1673,13 +1673,27 @@ body[data-theme="dark"] .auth-foot { color: rgba(255, 255, 255, 0.66); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .empty {
-  padding: 28px 16px;
+  padding: 28px 16px 24px;
   text-align: center;
   color: var(--text-muted);
   font-size: 13px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
+}
+/* empty pass — line-art vale vignette above the copy ("nothing here yet,
+   the pass is empty"). Pure CSS so every .empty gains it at once. */
+.empty::before {
+  content: "";
+  display: block;
+  width: 132px;
+  height: 62px;
+  margin: 0 auto 10px;
+  background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 132 62'%3E%3Ccircle cx='66' cy='20' r='9' fill='none' stroke='%23f59f00' stroke-width='2.5'/%3E%3Cpath d='M6 42 L32 28 L54 38 L80 24 L104 38 L126 30' fill='none' stroke='%23e8590c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' opacity='.55'/%3E%3Cpath d='M6 52 L36 42 L62 50 L90 40 L126 48' fill='none' stroke='%23e8590c' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  opacity: 0.85;
+}
+body[data-theme="dark"] .empty::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 132 62'%3E%3Ccircle cx='66' cy='20' r='9' fill='none' stroke='%23ffd8a8' stroke-width='2.5'/%3E%3Cpath d='M6 42 L32 28 L54 38 L80 24 L104 38 L126 30' fill='none' stroke='%23fdba74' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' opacity='.55'/%3E%3Cpath d='M6 52 L36 42 L62 50 L90 40 L126 48' fill='none' stroke='%23fdba74' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 /* ================================================================
