@@ -1287,7 +1287,7 @@ mod tests {
         // 12 < keep (50) so the pre-drain does not fire; 12+90=102 > cap →
         // the post-extend trim drops the newest 2 oldest bytes → exactly 100
         assert_eq!(cap.len(), 100);
-        assert!(cap.ends_with(&vec![b'x'; 90]));
+        assert!(cap.ends_with(&[b'x'; 90]));
     }
 
     #[test]

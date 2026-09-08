@@ -911,7 +911,7 @@ fn spill_rotate_discard_past_end_removes_file() {
 
 #[test]
 fn session_lost_empty_store_offers_reopen_hint() {
-    let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
+    let _bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
     let serial = Arc::new(SerialPool::new(115200, 1000));
     let mgr = Arc::new(TerminalManager::new(serial.clone()));
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -935,7 +935,7 @@ fn session_lost_empty_store_offers_reopen_hint() {
 
 #[test]
 fn session_lost_unknown_session_has_no_restart_note() {
-    let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
+    let _bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
     let serial = Arc::new(SerialPool::new(115200, 1000));
     let mgr = Arc::new(TerminalManager::new(serial.clone()));
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -951,7 +951,7 @@ fn session_lost_unknown_session_has_no_restart_note() {
 
 #[test]
 fn session_lost_pre_restart_record_explains_vanished_session() {
-    let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
+    let _bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
     let serial = Arc::new(SerialPool::new(115200, 1000));
     let mgr = Arc::new(TerminalManager::new(serial.clone()));
     // Inject the record into the process-wide pre-restart map IN MEMORY
