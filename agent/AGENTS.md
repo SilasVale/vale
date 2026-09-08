@@ -3451,6 +3451,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   POST /api/me/token/relay 401-unauth on the live worker (route + gate
   verified, not just merged).
 
+### 2026-09-08 SOLID round 99 (step-3 switch + 1.2.305 release)
+- **F3 step 3 ships as a default-off switch** (`settings:
+  RELAY_ADMIN_CUTOVER`, translate.ts): cutover-off admin passes (pinned),
+  cutover-on admin 401s with a relay-token pointer while relay passes and
+  /mcp admin passes. Flipping = one KV write, no deploy; the window stays
+  open until the operator announces it. Gateway 606 pass, tsc/prettier/
+  eslint clean, deployed live (Version 486f5701, health 200).
+- **Agent 1.2.305 released** (payload: settings_put 400): xwin release exe
+  staged, CLI 9/9, publish-release.sh green (version.json sha + last-5
+  prune + index deploy 7477804e + /api/version smoke v1.2.305). Tag +
+  GitHub asset via release.yml next; reconcile after the asset lands.
+  Step 2 (settings.json swap) stays operator-side: issuance needs a
+  console session the agent loop cannot mint.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
