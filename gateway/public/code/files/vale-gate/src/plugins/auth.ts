@@ -15,6 +15,8 @@ import {
   getUser,
   findUserByUsername,
   regenerateToken,
+  rotateRelayToken,
+  revokeRelayToken,
   getUserKeys,
   setUserKey,
   deleteUserKey,
@@ -270,6 +272,7 @@ async function meGet(request: Request, env: any): Promise<Response> {
     role: user.role,
     enabled: user.enabled,
     token: user.token,
+    relayTokenSet: !!user.relayToken,
     keys: userKeysStatus(ukeys),
   });
 }
@@ -308,6 +311,27 @@ async function meRegenerateToken(request: Request, env: any): Promise<Response> 
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const token = await regenerateToken(env, user.id);
   return jsonOk({ ok: true, token });
+}
+
+// F3 scoped relay token (ADR-0007 step 1): issue/rotate the caller's relay
+// credential for settings.json. The relay token resolves to its owner with
+// role "relay" — translate/models dual-accept it, /mcp + recovery reject
+// it. Returned in the clear exactly once, like the admin token rotation
+// above; afterwards only presence (meGet relayTokenSet) is visible.
+async function meRotateRelayToken(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const token = await rotateRelayToken(env, user.id);
+  return jsonOk({ ok: true, token });
+}
+
+// Revoke the caller's relay token (a leaked settings.json without touching
+// the admin token — the rotation coupling F3 was created to break).
+async function meRevokeRelayToken(request: Request, env: any): Promise<Response> {
+  const user = await requireSession(request, env);
+  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
+  const revoked = await revokeRelayToken(env, user.id);
+  return jsonOk({ ok: true, revoked });
 }
 
 // US egress switch (global setting): GET reads the current value; PUT changes it (admin only).
@@ -725,6 +749,8 @@ export default {
     add("GET", `${ME_BASE}/route`, meGetRoute);
     add("PUT", `${ME_BASE}/route`, mePutRoute);
     add("POST", `${ME_BASE}/token/regenerate`, meRegenerateToken);
+    add("POST", `${ME_BASE}/token/relay`, meRotateRelayToken);
+    add("DELETE", `${ME_BASE}/token/relay`, meRevokeRelayToken);
     add("GET", `${ME_BASE}/usproxy`, meGetUsproxy);
     add("PUT", `${ME_BASE}/usproxy`, mePutUsproxy);
     add("PUT", `${ME_BASE}/keys`, mePutKeys);

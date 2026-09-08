@@ -3,7 +3,7 @@
  * per-user route selection (RouteDO), invites, and key masking.
  */
 
-import { hashPassword, randomHex } from "../auth.ts";
+import { hashPassword, randomHex, safeEq } from "../auth.ts";
 import { cdel, cget, cset, withKeyLock, type Env } from "./cache.ts";
 
 export interface User {
@@ -15,6 +15,10 @@ export interface User {
   passwordHash?: string;
   salt?: string;
   token?: string;
+  // F3 scoped relay token (ADR-0007 step 1): a per-user second credential
+  // for daily relay use (settings.json). Mapped via token:<relayToken> like
+  // the admin token; findUserByToken resolves it with role "relay".
+  relayToken?: string;
 }
 
 export const ADMIN_USERNAME = "admin";
@@ -137,7 +141,17 @@ export async function findUserByToken(env: Env, token: string): Promise<User | n
     cset(tkey, name);
   }
   if (!name) return null;
-  return getUser(env, name);
+  const u = await getUser(env, name);
+  if (!u) return null;
+  // F3 scoped relay token (ADR-0007 step 1): when the presented token is the
+  // user's relay token (not the admin token), resolve to the owner but with
+  // role "relay" — translate/models dual-accept it, while /mcp (admin-only)
+  // and the adminKey recovery gates (compared against u.token) reject it.
+  // Returned as a copy so the cached record's role is never mutated. The
+  // admin-token match wins on the impossible double-match (both random).
+  if (u.token && safeEq(String(token), u.token)) return u;
+  if (u.relayToken && safeEq(String(token), u.relayToken)) return { ...u, role: "relay" };
+  return u;
 }
 
 export async function listUsers(env: Env): Promise<User[]> {
@@ -183,11 +197,15 @@ export async function regenerateToken(env: Env, id: string): Promise<string> {
     cset(`token:${u.token}`, id);
     // A concurrent regenerate could have left a survivor mapping (token:T2
     // still live after T3 won) — sweep any other mapping for this user.
+    // F3: the relay mapping points at the same user id — never sweep it
+    // (an admin-token rotation must not kill the relay credential).
     const newToken = u.token;
+    const relayToken = u.relayToken || "";
     try {
       const list = await env.KEYS.list({ prefix: "token:" });
       for (const k of list.keys || []) {
         if (k.name === `token:${newToken}`) continue;
+        if (relayToken && k.name === `token:${relayToken}`) continue;
         const v = await env.KEYS.get(k.name);
         if (v === id) {
           await env.KEYS.delete(k.name);
@@ -198,6 +216,49 @@ export async function regenerateToken(env: Env, id: string): Promise<string> {
       /* best-effort sweep */
     }
     return newToken;
+  });
+}
+
+/* ---- Scoped relay tokens (F3, ADR-0007 step 1) ----
+ *
+ * A per-user second credential for daily relay use (settings.json), so the
+ * admin token can leave client configs entirely. The relay token resolves
+ * via findUserByToken to its owner with role "relay": translate/models
+ * dual-accept it (their gate is role-agnostic), /mcp rejects it
+ * (admin-only), and the adminKey recovery gates reject it (compared
+ * against u.token). Serialized on the user key like regenerateToken.
+ * Step 3 (revoking the admin token from relay paths) is an operational
+ * cutover, not code — admin tokens keep working on relay paths here. */
+
+/** Issue (or rotate) the caller's relay token. Returns the new token value. */
+export async function rotateRelayToken(env: Env, id: string): Promise<string> {
+  return withKeyLock(`user:${id}`, async () => {
+    const u = await getJSON(env, `user:${id}`);
+    if (!u) throw new Error("User not found");
+    if (u.relayToken) {
+      await env.KEYS.delete(`token:${u.relayToken}`);
+      cdel(`token:${u.relayToken}`);
+    }
+    u.relayToken = generateGatewayToken();
+    await env.KEYS.put(`user:${id}`, JSON.stringify(u));
+    await env.KEYS.put(`token:${u.relayToken}`, id);
+    cset(`user:${id}`, u);
+    cset(`token:${u.relayToken}`, id);
+    return u.relayToken;
+  });
+}
+
+/** Revoke the caller's relay token. Returns true when one existed. */
+export async function revokeRelayToken(env: Env, id: string): Promise<boolean> {
+  return withKeyLock(`user:${id}`, async () => {
+    const u = await getJSON(env, `user:${id}`);
+    if (!u || !u.relayToken) return false;
+    await env.KEYS.delete(`token:${u.relayToken}`);
+    cdel(`token:${u.relayToken}`);
+    u.relayToken = "";
+    await env.KEYS.put(`user:${id}`, JSON.stringify(u));
+    cset(`user:${id}`, u);
+    return true;
   });
 }
 

@@ -320,7 +320,7 @@ test("admin/users: user tokens are masked, raw values never leave the server", a
   const env = makeBaseEnv({
     users: {
       admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "ADMIN_RAW_TOKEN_1234567890" },
-      bob: { id: "bob", username: "bob", role: "user", enabled: true, token: "BOB_RAW_TOKEN_1234567890" },
+      bob: { id: "bob", username: "bob", role: "user", enabled: true, token: "BOB_RAW_TOKEN_1234567890", relayToken: "BOB_RELAY_RAW_1234567890" },
     },
     kv: {
       _admin_seeded: "1",
@@ -339,9 +339,11 @@ test("admin/users: user tokens are masked, raw values never leave the server", a
   const raw = JSON.stringify(body);
   assert.ok(!raw.includes("ADMIN_RAW_TOKEN_1234567890"), "admin raw token must not leak");
   assert.ok(!raw.includes("BOB_RAW_TOKEN_1234567890"), "user raw token must not leak");
+  assert.ok(!raw.includes("BOB_RELAY_RAW_1234567890"), "relay raw token must not leak");
   const byId = Object.fromEntries(body.users.map((u) => [u.id, u]));
   assert.equal(byId.admin.token, maskKey("ADMIN_RAW_TOKEN_1234567890"));
   assert.equal(byId.bob.token, maskKey("BOB_RAW_TOKEN_1234567890"));
+  assert.equal(byId.bob.relayToken, maskKey("BOB_RELAY_RAW_1234567890"), "relay presence masked, never raw");
 });
 
 // ── Admin ops remainder (round-424: cf-token shape/masking, invite issue,
