@@ -38,6 +38,14 @@ relay credential (`role: "relay"`), staged so nothing breaks mid-migration:
 - No per-tool MCP gating (rejected option C) and no session-only /mcp
   (rejected option D) — see the proposal for rationale.
 
+## Step 3 ships as a switch (2026-09-08, deployed)
+
+The cutover is implemented, not just planned: `settings:RELAY_ADMIN_CUTOVER`
+(`"1"` = on, default off) in `translate.ts`, covered by three tests
+(cutover-off admin passes, cutover-on admin 401s + relay passes + /mcp
+admin passes). Flipping is one KV write, no deploy. Until the operator
+announces the window and flips it, the dual-accept window stays open.
+
 ## Consequences
 
 - A leaked `settings.json` now costs relay abuse (spend) only — no device
