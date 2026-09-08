@@ -3501,6 +3501,20 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   Operator path is now: console Keys page → Issue → copy → paste per
   machine → tell the loop to verify + flip the cutover.
 
+### 2026-09-08 SOLID round 103 (operator handed relay token; local swap live)
+- **Operator issued via the new Keys UI and pasted the relay token.**
+  Swapped this box's `ANTHROPIC_API_KEY` (safe JSON round-trip, old admin
+  value kept in shell memory only, never written elsewhere; exact-match
+  re-read confirmed). Live matrix, all as designed: relay + bogus model
+  → 402 (past auth, zero spend) vs bad token → 401; relay on /mcp ping
+  → 401 (relay-scoped, not admin). Skipped the spendy full-path probe —
+  post-gate code is role-agnostic and stub-covered.
+- Ops note: this box no longer holds the admin token in any file (the old
+  value stays valid server-side — only the local copy was replaced, so a
+  console-Overview re-paste always recovers). d1 already proven keyless.
+  Remaining: operator confirms all relay clients swapped → loop flips
+  RELAY_ADMIN_CUTOVER.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
