@@ -3447,6 +3447,9 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   Self-caught: the detectRoute extraction dropped the unknown-route
   404 guard (fixed + test-pinned before commit). Step 3 (revoking the
   admin token from relay paths) stays an operator cutover — NOT coded.
+  Deployed: `wrangler deploy` live (Version 2371e743) — /api/health 200,
+  POST /api/me/token/relay 401-unauth on the live worker (route + gate
+  verified, not just merged).
 
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
