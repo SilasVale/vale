@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Bundle the api/ edge handlers + server/entry.mjs into relay-bundle.tar.gz
-# for the VPS (see proxies/README.md "vrelay"). Vercel remains a valid deploy
-# target for the same sources (api/ + vercel.json untouched).
+# for the VPS (see proxies/README.md "vrelay"). The former Vercel deploy target
+# is gone WITH the deleted project (2026-09-08): shipping there again would
+# mean recreating the project by hand.
 #
 # Transpile: the repo's existing tsc (gateway devDep) — same API surface the
 # Vercel build uses; no extra toolchain download on CN-restricted boxes.
