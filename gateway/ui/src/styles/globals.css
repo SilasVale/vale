@@ -611,11 +611,22 @@ body[data-theme="dark"] .rail-btn.active {
 }
 
 .page-title {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 750;
   color: var(--text);
   letter-spacing: -0.02em;
-  line-height: 30px;
+  line-height: 32px;
+}
+/* dawn rule — editorial sunrise underline beneath every page title */
+.page-title::after {
+  content: "";
+  display: block;
+  width: 46px;
+  height: 3px;
+  border-radius: 2px;
+  margin-top: 9px;
+  background: linear-gradient(90deg, #f59f00 0%, var(--accent) 100%);
+  box-shadow: 0 1px 6px var(--accent-shadow);
 }
 
 .page-description {
@@ -1428,6 +1439,7 @@ body[data-theme="dark"] .auth-foot { color: rgba(255, 255, 255, 0.66); }
 
 @media (prefers-reduced-motion: reduce) {
   .auth-sun, .auth-card { animation: none; }
+  .modal-overlay, .modal-card { animation: none; }
   .rail-status,
   .dev-mini-led.on,
   .dev-led.on,
@@ -1573,13 +1585,19 @@ body[data-theme="dark"] .auth-foot { color: rgba(255, 255, 255, 0.66); }
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(3px);
+  background: rgba(24, 10, 4, 0.5);
+  backdrop-filter: blur(6px) saturate(1.1);
+  -webkit-backdrop-filter: blur(6px) saturate(1.1);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
   padding: 20px;
+  animation: scrim-in 0.2s var(--ds-ease);
+}
+@keyframes scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .modal-card {
@@ -1589,7 +1607,26 @@ body[data-theme="dark"] .auth-foot { color: rgba(255, 255, 255, 0.66); }
   padding: 24px;
   max-width: 400px;
   width: 100%;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-lg), 0 24px 64px rgba(124, 45, 18, 0.18);
+  position: relative;
+  overflow: hidden;
+  animation: modal-in 0.22s var(--ds-ease) both;
+}
+/* sunrise inlay along the modal's top edge (border-image would clip the
+   card radius, so this is a positioned bar instead) */
+.modal-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 24px;
+  right: 24px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: linear-gradient(90deg, #f59f00 0%, var(--accent) 100%);
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .modal-header {
@@ -1631,13 +1668,14 @@ body[data-theme="dark"] .auth-foot { color: rgba(255, 255, 255, 0.66); }
   top: 20px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 11px 20px;
+  padding: 11px 22px;
   background: var(--text);
   color: var(--bg);
-  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-pill);
   font-size: 13px;
   font-weight: 500;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-lg), 0 8px 28px rgba(0, 0, 0, 0.28);
   z-index: 2000;
   max-width: 90vw;
   animation: toast-in 0.2s var(--ds-ease);
