@@ -3429,6 +3429,25 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   layer reached in the recent extraction rounds now has direct pins,
   and the copy-detection space is fully closed repo-wide at all depths.
 
+### 2026-09-08 SOLID round 98 (OPEN-decisions implementation ×3)
+- **Product-signed fixes (agent + gateway + docs)** — the three OPEN
+  decisions were approved together, so all three landed in one round:
+  (1) settings_put invalid-JSON now HTTP 400 (was 200), matching
+  gateway_connect — test renamed to
+  settings_put_invalid_json_returns_http400_envelope; (2) the messages-
+  passthrough arm now records og body-failure breaker trips
+  (recordOgBodyFailure false→true), closing the historical gap — all
+  three arms count alike; (3) F3 scoped relay token step 1 (ADR-0007
+  adopted): per-user relayToken + findUserByToken role-"relay" copy,
+  POST/DELETE /api/me/token/relay, masked presence in meGet + admin
+  user list, regenerateToken sweep skips the relay mapping; /mcp +
+  recovery stay admin-only by construction (verified, not assumed).
+  Tests: agent 373 full + gateway 603 (+10 relay-token.test.mjs, +1
+  admin-masking pin); tsc/prettier/eslint + clippy/fmt clean.
+  Self-caught: the detectRoute extraction dropped the unknown-route
+  404 guard (fixed + test-pinned before commit). Step 3 (revoking the
+  admin token from relay paths) stays an operator cutover — NOT coded.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
