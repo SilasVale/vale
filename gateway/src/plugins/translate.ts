@@ -375,7 +375,6 @@ function detectRoute(method: string, path: string) {
   return { isCount, isMessages, isChatCompletions, isResponses };
 }
 
-
 async function handleGatewayImpl(
   request: Request,
   env: any,
