@@ -58,6 +58,20 @@ export default function Auth() {
 
   return (
     <div className="auth-wrap">
+      {/* Vale at sunrise — near hill, far ridge, signal over the pass.
+          Pure decoration (aria-hidden); the card below stays the single
+          interactive surface. */}
+      <div className="auth-scene" aria-hidden="true">
+        <div className="auth-stars" />
+        <div className="auth-sun" />
+        <svg className="auth-ridge auth-ridge-far" viewBox="0 0 1440 220" preserveAspectRatio="none">
+          <path d="M0,148 L150,104 L300,138 L470,84 L640,132 L810,92 L980,136 L1150,100 L1300,130 L1440,108 L1440,220 L0,220 Z" />
+        </svg>
+        <svg className="auth-ridge auth-ridge-near" viewBox="0 0 1440 220" preserveAspectRatio="none">
+          <path d="M0,176 L200,140 L360,168 L540,128 L690,162 L800,138 L920,164 L1100,132 L1280,168 L1440,146 L1440,220 L0,220 Z" />
+        </svg>
+        <div className="auth-grain" />
+      </div>
       <div className="auth-card">
         <div className="auth-lang">
           <button className="lang-btn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>

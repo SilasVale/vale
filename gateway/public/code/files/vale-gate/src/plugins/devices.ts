@@ -1,7 +1,8 @@
 /**
  * devices plugin (round-73 migration) — Vale Agent device registry, reverse
  * proxy, registration keys flow. (Extension pairing endpoints removed
- * round-340 — the browser extension was deleted round-262.)
+ * round-340 — the extension's browser-control half was deleted round-262;
+ * what remains is the tokenless code-server link rewriter in extension/.)
  *
  * Extracted VERBATIM from gateway/src/index.js (handleConsole) — the bodies
  * of every handler and helper below are byte-for-byte the inline blocks that
