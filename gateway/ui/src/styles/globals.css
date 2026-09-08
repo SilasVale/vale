@@ -264,8 +264,13 @@ pre code { background: none; padding: 0; }
 }
 .rail-btn:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
 .rail-btn.active {
-  background: var(--chrome-active-bg);
-  color: var(--chrome-active-ink);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px var(--accent-shadow);
+}
+body[data-theme="dark"] .rail-btn.active {
+  background: linear-gradient(135deg, #f59f00 0%, var(--accent-dark) 100%);
+  color: #1a1005;
 }
 .rail-foot {
   display: flex;
@@ -303,6 +308,20 @@ pre code { background: none; padding: 0; }
   margin-top: 6px;
   background: var(--success);
   box-shadow: 0 0 6px rgba(47, 158, 68, 0.55);
+  animation: led-breathe 2.6s ease-in-out infinite;
+}
+/* breathing signal lights — online LEDs pulse softly, like the pass beacon */
+@keyframes led-breathe {
+  0%, 100% { box-shadow: 0 0 4px rgba(47, 158, 68, 0.35); }
+  50% { box-shadow: 0 0 10px rgba(47, 158, 68, 0.8); }
+}
+.dev-mini-led.on,
+.dev-led.on,
+.ov-keyled.on,
+.kchip.on .kchip-dot,
+.sig-dot.ok,
+.health-row .dot.ok {
+  animation: led-breathe 2.6s ease-in-out infinite;
 }
 
 /* identity popover — anchored to the rail avatar, floats over content */
@@ -468,6 +487,16 @@ pre code { background: none; padding: 0; }
 .stat-card.stat-ok::before { background: var(--success); opacity: 1; }
 .stat-card.stat-warn::before { background: var(--warning); opacity: 1; }
 .stat-card.stat-info::before { background: var(--info); opacity: 1; }
+/* dawn wash — each tone carries a whisper of its color, like first light.
+   Light: pale wash from the top; the value stays ink for contrast. */
+.stat-card.stat-ok { background: linear-gradient(180deg, var(--success-bg) 0%, var(--bg) 78%); }
+.stat-card.stat-warn { background: linear-gradient(180deg, var(--warning-bg) 0%, var(--bg) 78%); }
+.stat-card.stat-info { background: linear-gradient(180deg, var(--info-bg) 0%, var(--bg) 78%); }
+.stat-card.stat-off { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg) 78%); }
+/* sun-kissed value numerals */
+.stat-card.stat-ok .stat-value { color: var(--success); }
+.stat-card.stat-warn .stat-value { color: var(--warning); }
+.stat-card.stat-info .stat-value { color: var(--info); }
 .stat-card:hover {
   border-color: var(--border-strong);
   box-shadow: var(--shadow-md);
@@ -1357,6 +1386,13 @@ body[data-theme="dark"] .auth-foot { color: rgba(255, 255, 255, 0.66); }
 
 @media (prefers-reduced-motion: reduce) {
   .auth-sun, .auth-card { animation: none; }
+  .rail-status,
+  .dev-mini-led.on,
+  .dev-led.on,
+  .ov-keyled.on,
+  .kchip.on .kchip-dot,
+  .sig-dot.ok,
+  .health-row .dot.ok { animation: none; }
 }
 
 .auth-lang {
