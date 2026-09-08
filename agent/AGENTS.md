@@ -3515,6 +3515,14 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   Remaining: operator confirms all relay clients swapped → loop flips
   RELAY_ADMIN_CUTOVER.
 
+### 2026-09-08 SOLID round 104 (relay end-to-end double-confirm)
+- **Operator asked to double-confirm: ran a REAL relay call** (og/
+  deepseek-v4-flash, max_tokens=1) with the box's relay token → 200 with
+  a valid Anthropic message envelope (thinking + text). File re-read:
+  exact-match relay. This supersedes round-103's gate-level-only proof —
+  full path (auth → owner keys → upstream → reshape) works on relay.
+  Trivial spend, single probe. Cutover flip still awaiting operator word.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
