@@ -7,7 +7,9 @@
 #   ./scripts/build.sh gateway         # deploy the Vale Gate worker
 #   ./scripts/build.sh index           # deploy the Vale Index worker
 #   ./scripts/build.sh proxies         # deploy the satellite proxy workers (zen-go / zen-us)
-#   ./scripts/build.sh vercel-proxy    # deploy the Vercel exit proxy (v.saisi.online, needs vercel CLI)
+#   ./scripts/build.sh vercel-proxy    # RETIRED 2026-09-08 — the Vercel relay migrated to
+#   #   the Oracle box as vrelay (proxies/README.md); target kept only to redeploy the
+#   #   identical api/ sources to Vercel should the team ever be resumed.
 #   ./scripts/build.sh deploy          # build agent + deploy gateway/index
 #
 # Dependencies: cargo-xwin, wrangler (global v4), CLOUDFLARE_API_TOKEN (deploy

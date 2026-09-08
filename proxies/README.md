@@ -6,7 +6,7 @@ Independently deployed small proxy Workers / Vercel projects, invoked by the Val
 |---|---|---|---|
 | `zen-go-proxy/` | `opencode-go-proxy` | Dedicated direct entry for <opencode-host> (og transcoding merged into the gateway) | `OPENCODE_GO_API_KEY`, `CLIENT_KEY` (required — default-closed when unset) |
 | `zen-us-proxy/` | `zen-us-proxy` | US egress proxy (D1 binding forces US-region edge → opencode zen; see D1 note below) | `OPENCODE_GO_API_KEY`, `CLIENT_KEY` (required — default-closed when unset) |
-| `vercel-proxy/` | Vercel project | `<mirror-host>/api/zen` + `/api/proxy` AI egress (both BYOK-only: caller key required), controlled `/api/github/{web\|raw\|api\|release}/...` GitHub HTTP reverse proxy, plus `/api/gform/{gle\|docs\|...}/...` Google Forms reverse proxy (body rewriting, anonymous public forms) (Vercel platform, not a Worker) | none — BYOK-only, no secret to configure |
+| `vercel-proxy/` | Vercel project → **migrated to the Oracle VPS as `vrelay` (2026-09-08; the free team was paused at 304% of its transfer cap)** | same sources now run under plain Node on the box; the Vercel deploy target is frozen | none — BYOK-only, no secret to configure |
 
 (~~`my-openrouter-proxy/`~~ RETIRED 2026-09-07 — zero callers (off-path since 2026-08-22, upstream table), workers.dev URL TLS-dead; remote worker deleted, source in git history.)
 
@@ -51,6 +51,41 @@ Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default
 
 - `zen-us-proxy` binds the **`zen-us-db-wnam`** (WNAM-primary) D1 database but **never queries it**. The binding is an intentional geo-pin: pinning a D1 database forces compute onto regions that host D1, keeping egress to opencode zen on Meta-permitted US edges. (The previous EU-primary `us-proxy-db` produced `403 RegionError` from EU edges — 2026-09-07; the WNAM primary + explicit `placement.region: aws:us-east-1` both point egress at the US east coast.)
 - ⚠️ **Do NOT remove the `zen-us-proxy` D1 binding** (`wrangler.jsonc` `d1_databases`) **or weaken the placement**: unbinding/reverting silently re-routes through EU/Asian edges and the RegionError + latency wins disappear with no error to alert you.
+
+## vrelay — the VPS API relay (migrated from Vercel, 2026-09-08)
+
+`proxies/vercel-proxy/api/*` are standard web-API edge handlers (`Request ->
+Response`); they run VERBATIM under Node 24 on the Oracle box via
+`server/entry.mjs` — a tiny http adapter that replicates vercel.json's
+rewrites in-process (`/api/git/…` → `?path=…`), shims undici's `duplex:"half"`
+for stream bodies, and preserves the Vercel sources byte-identical (they remain
+deployable to Vercel if the team is ever resumed).
+
+- **Service**: systemd `vrelay.service` (hardened unit, User=www-data, listen
+  127.0.0.1:8081). Files live in `/opt/vrelay`.
+- **TLS/routing**: nginx vhost `sites-available/vrelay` serves
+  `v.saisi.online` + `openrouter.saisi.online` (grey-cloud A records on
+  Cloudflare → LE certs via `certbot --nginx`; `/api/` → 8081,
+  `client_max_body_size 500m` + `proxy_request_buffering off` for git pushes).
+  The muse `= /v1/responses` exit stays on the `oracle.saisi.online` vhost.
+- **Deploy/update**: `cd proxies/vercel-proxy && ./build-relay.sh` (transpiles
+  with the gateway's tsc — no extra downloads) → scp `relay-bundle.tar.gz` →
+  extract to `/opt/vrelay` (chmod a+r!) → `systemctl restart vrelay`.
+- **DNS cutover was complete on 2026-09-08**: no consumer points at Vercel
+  anymore (gateway `usProxyBase` default `https://v.saisi.online` now lands on
+  the box unchanged — zero gateway config).
+- **Watchdog** (`/usr/local/bin/muse-relay-watchdog.sh`, cron */5): asserts the
+  nginx + vrelay systemd units AND behavior on both routes (fake-key probes
+  must surface 401s); any failure → reset-failed, kill ORPHAN nginx masters,
+  restart both. Orphan masters exist because of the reload-while-DNS-flaky
+  incident the same day: stop/start churn left a 07:04 master holding :80/:443
+  with a stale in-memory config while the unit read "failed" — every later
+  `reload` silently no-op'd and port probes looked healthy. If you ever
+  "reload" and behavior doesn't change, suspect exactly this.
+- Known limits vs old Vercel: body cap now 500m (was ~4.5m FAILing long
+  contexts — strictly better); no Vercel edge cache (nothing cached here
+  anyway except gform's upstream etags); single region (phx AD-1) — a second
+  box can reuse the same bundle + LE cert if redundancy is ever wanted.
 
 ## Git automatic URL rewriting
 
