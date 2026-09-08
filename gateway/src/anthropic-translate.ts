@@ -3,6 +3,76 @@
  * zero env dependency. Extracted from index.js (2026-08-12 refactor).
  */
 
+/** Convert an Anthropic user message (text/image/tool_result parts) to OpenAI. */
+function convertUserMessage(m: any, messages: any[]): void {
+  const content = typeof m.content === "string" ? m.content : m.content || [];
+  if (typeof content === "string") {
+    if (content) messages.push({ role: "user", content });
+    return;
+  }
+  // Keep text and image parts together as an OpenAI content array, so the
+  // og/ translation forwards images (vision models) instead of dropping them.
+  const parts: any[] = [];
+  let textBuf: any[] = [];
+  const flush = () => {
+    if (textBuf.length) {
+      parts.push({ type: "text", text: textBuf.join("\n") });
+      textBuf = [];
+    }
+  };
+  for (const b of content) {
+    if (b.type === "tool_result") {
+      flush();
+      const toolText =
+        typeof b.content === "string"
+          ? b.content
+          : (b.content || []).map((c: any) => c.text || c.thinking || "").join("\n");
+      messages.push({ role: "tool", tool_call_id: b.tool_use_id, content: toolText });
+    } else if (b.type === "text") {
+      textBuf.push(b.text);
+    } else if (b.type === "image") {
+      flush();
+      const mediaType = b.source?.media_type || "image/png";
+      const data = b.source?.data || "";
+      if (data)
+        parts.push({
+          type: "image_url",
+          image_url: { url: `data:${mediaType};base64,${data}` },
+        });
+    }
+  }
+  flush();
+  if (parts.length) messages.push({ role: "user", content: parts });
+}
+
+/** Convert an Anthropic assistant message (thinking/text/tool_use) to OpenAI. */
+function convertAssistantMessage(m: any, messages: any[]): void {
+  const msg: any = { role: "assistant", content: null };
+  const content = typeof m.content === "string" ? m.content : m.content || [];
+  const textParts: string[] = [],
+    thinkParts: string[] = [],
+    toolCalls: any[] = [];
+  if (typeof content === "string") textParts.push(content);
+  else {
+    for (const b of content) {
+      if (b.type === "thinking") thinkParts.push(b.thinking);
+      else if (b.type === "text") textParts.push(b.text);
+      else if (b.type === "tool_use") {
+        toolCalls.push({
+          id: b.id,
+          type: "function",
+          function: { name: b.name, arguments: JSON.stringify(b.input || {}) },
+        });
+      }
+    }
+  }
+  if (textParts.length) msg.content = textParts.join("\n");
+  if (thinkParts.length) msg.reasoning_content = thinkParts.join("\n");
+  if (toolCalls.length) msg.tool_calls = toolCalls;
+  messages.push(msg);
+}
+
+
 export function toOpenAIRequest(req: any, model: string): any {
   const messages = [];
   if (req.system) {
@@ -16,68 +86,9 @@ export function toOpenAIRequest(req: any, model: string): any {
   }
   for (const m of req.messages || []) {
     if (m.role === "user") {
-      const content = typeof m.content === "string" ? m.content : m.content || [];
-      if (typeof content === "string") {
-        if (content) messages.push({ role: "user", content });
-      } else {
-        // Keep text and image parts together as an OpenAI content array, so the
-        // og/ translation forwards images (vision models) instead of dropping them.
-        const parts = [];
-        let textBuf: any[] = [];
-        const flush = () => {
-          if (textBuf.length) {
-            parts.push({ type: "text", text: textBuf.join("\n") });
-            textBuf = [];
-          }
-        };
-        for (const b of content) {
-          if (b.type === "tool_result") {
-            flush();
-            const toolText =
-              typeof b.content === "string"
-                ? b.content
-                : (b.content || []).map((c: any) => c.text || c.thinking || "").join("\n");
-            messages.push({ role: "tool", tool_call_id: b.tool_use_id, content: toolText });
-          } else if (b.type === "text") {
-            textBuf.push(b.text);
-          } else if (b.type === "image") {
-            flush();
-            const mediaType = b.source?.media_type || "image/png";
-            const data = b.source?.data || "";
-            if (data)
-              parts.push({
-                type: "image_url",
-                image_url: { url: `data:${mediaType};base64,${data}` },
-              });
-          }
-        }
-        flush();
-        if (parts.length) messages.push({ role: "user", content: parts });
-      }
+      convertUserMessage(m, messages);
     } else if (m.role === "assistant") {
-      const msg: any = { role: "assistant", content: null };
-      const content = typeof m.content === "string" ? m.content : m.content || [];
-      const textParts = [],
-        thinkParts = [],
-        toolCalls = [];
-      if (typeof content === "string") textParts.push(content);
-      else {
-        for (const b of content) {
-          if (b.type === "thinking") thinkParts.push(b.thinking);
-          else if (b.type === "text") textParts.push(b.text);
-          else if (b.type === "tool_use") {
-            toolCalls.push({
-              id: b.id,
-              type: "function",
-              function: { name: b.name, arguments: JSON.stringify(b.input || {}) },
-            });
-          }
-        }
-      }
-      if (textParts.length) msg.content = textParts.join("\n");
-      if (thinkParts.length) msg.reasoning_content = thinkParts.join("\n");
-      if (toolCalls.length) msg.tool_calls = toolCalls;
-      messages.push(msg);
+      convertAssistantMessage(m, messages);
     } else {
       messages.push({
         role: m.role,
