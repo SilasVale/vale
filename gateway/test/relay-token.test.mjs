@@ -288,3 +288,15 @@ test("cutover on: /mcp admin still works (cutover touches relay paths only)", as
   );
   assert.equal(res.status, 200);
 });
+
+test("relay reveal: 401 unauth; 404 when unset; value when set", async () => {
+  __clearCaches();
+  const env = relayEnv("relay-adm-10");
+  assert.equal((await meReq(env, null, "/api/me/token/relay/reveal", "POST", {})).status, 401);
+  const cookie = await issueSessionToken("pw", "admin", "admin");
+  assert.equal((await meReq(env, cookie, "/api/me/token/relay/reveal", "POST", {})).status, 404);
+  const issued = await (await meReq(env, cookie, "/api/me/token/relay", "POST", {})).json();
+  const shown = await meReq(env, cookie, "/api/me/token/relay/reveal", "POST", {});
+  assert.equal(shown.status, 200);
+  assert.deepEqual(await shown.json(), { ok: true, value: issued.token });
+});

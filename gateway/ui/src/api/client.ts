@@ -52,6 +52,7 @@ export interface Me {
   username: string;
   role: "admin" | "user";
   token: string;
+  relayTokenSet: boolean;
   keys: Record<string, { configured: boolean; masked: string } | undefined>;
 }
 
@@ -191,6 +192,13 @@ export const api = {
   // Token regen
   regenerateToken: () =>
     request<{ token: string }>("/api/me/token/regenerate", { method: "POST" }),
+
+  // F3 relay token (settings.json credential — relay paths only, never /mcp)
+  relayToken: () => request<{ ok: boolean; token: string }>("/api/me/token/relay", { method: "POST" }),
+  revealRelayToken: () =>
+    request<{ ok: boolean; value: string }>("/api/me/token/relay/reveal", { method: "POST" }),
+  revokeRelayToken: () =>
+    request<{ ok: boolean; revoked: boolean }>("/api/me/token/relay", { method: "DELETE" }),
 
   // Admin: password
   getAdminPassword: () => request<{ set: boolean }>("/api/admin/password"),
