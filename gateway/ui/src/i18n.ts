@@ -87,7 +87,7 @@ const I18N = {
     "route.fail": "切换失败",
     "route.loadFail": "渠道状态加载失败",
     "usproxy.title": "美国出口",
-    "usproxy.desc": "所有模型经 Vercel 美国节点访问上游，规避区域限制。注意：og/deepseek-v4-flash 的慢在 zen 服务器自身，此开关对它无改善。",
+    "usproxy.desc": "所有模型经 Oracle 美国节点（vrelay）访问上游，规避区域限制。注意：og/deepseek-v4-flash 的慢在 zen 服务器自身，此开关对它无改善。",
     "usproxy.on": "已开启：请求走美国出口",
     "usproxy.off": "已关闭：请求直连上游",
     "usproxy.toggle": "切换",
@@ -350,7 +350,7 @@ const I18N = {
     "route.loadFail": "Failed to load channel status",
     "usproxy.title": "US exit",
     "usproxy.desc":
-      "Route all models via the Vercel US node to bypass regional blocks. Note: og/deepseek-v4-flash slowness is zen's own servers; this switch does not help it.",
+      "Route all models via the Oracle US node (vrelay) to bypass regional blocks. Note: og/deepseek-v4-flash slowness is zen's own servers; this switch does not help it.",
     "usproxy.on": "ON: requests go via the US exit",
     "usproxy.off": "OFF: requests go direct",
     "usproxy.toggle": "Toggle",

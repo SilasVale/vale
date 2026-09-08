@@ -203,7 +203,7 @@ export default function Keys() {
     <div>
       <PageHeader title={t("keys.title")} description={t("keys.lede")} />
       <div className="cards">
-        <div className="key-card" key="__relay">
+        <div className={`key-card key-relay${relaySet ? " key-on" : ""}`} key="__relay">
           <div className="key-card-top">
             <div>
               <div className="key-card-name">{t("relay.title")}</div>
@@ -259,7 +259,7 @@ export default function Keys() {
           const result = resultBox?.name === name ? resultBox : null;
 
           return (
-            <div className="key-card" key={name}>
+            <div className={`key-card${configured ? " key-on" : ""}`} key={name}>
               <div className="key-card-top">
                 <div>
                   <div className="key-card-name">{name}</div>
