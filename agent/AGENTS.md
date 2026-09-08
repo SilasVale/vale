@@ -3376,6 +3376,15 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   Response | null. The main fn calls it once after auth. Gateway 592 pass
   / tsc clean.
 
+### 2026-09-08 SOLID round 91 (extract dispatch from handle_request)
+- **Refactor (agent web/mod.rs)** — handle_request's route-match block
+  (~55 lines) is now a module-level dispatch(state, method, path, body,
+  query) returning Result<Value, Box<Response>>. The main fn stays auth +
+  body parsing + routing skeleton. 330 pass / clippy clean. Self-caught:
+  the first pass left needless borrows (&state/&body_str where state was
+  already &AppState) and a result_large_err (Response is large -> boxed);
+  both fixed before the run.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
