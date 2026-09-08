@@ -847,25 +847,30 @@ fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, B
             .map(|x| x.trim().to_string())
             .filter(|x| !x.is_empty())
     });
-    // Round-358: memory capacity (Settings page Memory card). Same
-    // missing-key convention: absent = unchanged. Entries/bytes clamp to
-    // >= 1 (0 would evict everything); retention accepts a positive day
-    // count, while null/""/0 CLEARS it back to keep-forever.
-    let mem_entries = v
-        .get("memory_max_entries")
-        .and_then(|b| b.as_u64())
-        .map(|x| (x as usize).max(1));
-    let mem_bytes = v
-        .get("memory_max_bytes_mb")
-        .and_then(|b| b.as_u64())
-        .map(|x| (x as usize).max(1) * 1024 * 1024);
-    let mem_retention: Option<Option<u64>> = v.get("memory_retention_days").map(|val| {
-        val.as_u64().filter(|&n| n > 0).or_else(|| {
-            val.as_str()
-                .and_then(|s| s.trim().parse::<u64>().ok().filter(|&n| n > 0))
-        })
-    });
-    let mem_changed = mem_entries.is_some() || mem_bytes.is_some() || mem_retention.is_some();
+    /** Parse memory capacity settings from a JSON value.
+     *  Returns (entries, bytes, retention, changed) where changed indicates
+     *  whether any key was present (absent = leave unchanged). */
+    fn parse_memory_settings(
+        v: &serde_json::Value,
+    ) -> (Option<usize>, Option<usize>, Option<Option<u64>>, bool) {
+        let mem_entries = v
+            .get("memory_max_entries")
+            .and_then(|b| b.as_u64())
+            .map(|x| (x as usize).max(1));
+        let mem_bytes = v
+            .get("memory_max_bytes_mb")
+            .and_then(|b| b.as_u64())
+            .map(|x| (x as usize).max(1) * 1024 * 1024);
+        let mem_retention: Option<Option<u64>> = v.get("memory_retention_days").map(|val| {
+            val.as_u64().filter(|&n| n > 0).or_else(|| {
+                val.as_str()
+                    .and_then(|s| s.trim().parse::<u64>().ok().filter(|&n| n > 0))
+            })
+        });
+        let mem_changed = mem_entries.is_some() || mem_bytes.is_some() || mem_retention.is_some();
+        (mem_entries, mem_bytes, mem_retention, mem_changed)
+    }
+
     // Write-through (audit A4): merge onto the CURRENT in-process snapshot
     // and persist via update_config — the runtime buffer cap, the in-process
     // config and config.yaml all move together (the old code rewrote the
@@ -874,6 +879,8 @@ fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, B
     // the PUT — the runtime value already took effect. With no config_path
     // (dev invocations), update_config still updates memory and writes
     // nothing.
+    let (mem_entries, mem_bytes, mem_retention, mem_changed) = parse_memory_settings(&v);
+
     if mb.is_some() || console_url.is_some() || mem_changed {
         let mut cfg = state.config_snapshot();
         if let Some(mb) = mb {
