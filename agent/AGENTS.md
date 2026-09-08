@@ -3346,6 +3346,29 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   (Discovery route: files.rs sftp + terminal_jobs were checked first —
   pipeline-bound real-SSH inputs, recorded not forced.)
 
+### 2026-09-08 SOLID round 88 (icon sync + CI clippy sweep)
+- **Fix round (electron + agent)** — two unrelated cleanups. (1) The
+  Electron shell's source icon files (agent/vale-desktop-electron/icon.*)
+  were out of sync with brand/ + the npm package: they still had the old
+  render (2740-byte icon.png with scanline stripes) while brand/ and npm
+  had the corrected render (3010 bytes, stripes removed in commit 888cbb12).
+  The shell loads icons from the source dir -> taskbar showed the stale
+  icon. Synced both from brand/ (commit fd6724aa). (2) CI clippy -D warnings
+  flagged two issues from the round-87 session_lost tests: unused `bus`
+  variable in three tests (prefixed `_bus`) and a useless `vec![b'x'; 90]`
+  in tail_append's test (switched to `&[b'x'; 90]`). Pushed both to GitHub;
+  CI green on retry (run 887).
+
+### 2026-09-08 SOLID round 89 (extract convertUserMessage + convertAssistantMessage)
+- **Refactor (gateway anthropic-translate.ts)** — toOpenAIRequest inlined
+  ~40 lines each for user message (text/image/tool_result parts) and
+  assistant message (thinking/text/tool_use) conversion. Extracted both as
+  module-level helpers (convertUserMessage / convertAssistantMessage) taking
+  the messages array so the main fn reads as a routing skeleton. Gateway
+  592 pass / tsc clean. Self-caught: the first extraction pass dropped the
+  else-if (assistant) and else branches from the message loop -> tsc error
+  TS1128; restored before the run.
+
 ### Recent (stage-n)
 - Browser panel Chrome-style redesign: two-line toolbar (tab row + address
   row), live viewport dominant, Evidence right-side drawer, bottom status
