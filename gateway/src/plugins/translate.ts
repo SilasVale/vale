@@ -320,6 +320,36 @@ async function relayUpstreamResult(
 // once to inherit other isolates' counts.
 const __rlMin = new Map(); // `min:${token}:${minute}` → count
 const __rlDay = new Map(); // `day:${token}:${day}`   → count
+/** Per-token rate limiter: in-memory minute + day counters (no KV).
+ *  Returns a 429 Response if the token is over budget, else null (proceed).
+ *  Shared by the /v1/messages, /v1/chat/completions and /v1/responses arms. */
+function checkRateLimit(
+  env: any,
+  method: string,
+  path: string,
+  token: string,
+): Response | null {
+  if (!(env.KEYS && method === "POST" && (path.endsWith("/messages") || path.endsWith("/chat/completions") || path.endsWith("/responses")) && !path.endsWith(COUNT_PATH))) {
+    return null;
+  }
+  const mk = `min:${token}:${Math.floor(Date.now() / 60000)}`;
+  const dk = `day:${token}:${Math.floor(Date.now() / 86400000)}`;
+  const minute = __rlMin.get(mk) ?? 0;
+  const day = __rlDay.get(dk) ?? 0;
+  if (minute >= 48) {
+    return jsonError(429, "Rate limit: ~60 requests/minute per token", "rate_limit_error");
+  }
+  if (day >= 4000) {
+    return jsonError(429, "Rate limit: ~5000 requests/day per token", "rate_limit_error");
+  }
+  __rlMin.set(mk, minute + 1);
+  __rlDay.set(dk, day + 1);
+  if (__rlMin.size > 4096) __rlMin.delete(__rlMin.keys().next().value);
+  if (__rlDay.size > 4096) __rlDay.delete(__rlDay.keys().next().value);
+  return null;
+}
+
+
 async function handleGatewayImpl(
   request: Request,
   env: any,
@@ -357,6 +387,10 @@ async function handleGatewayImpl(
   if (!user || !user.enabled) {
     return jsonError(401, "Missing or invalid x-api-key", "authentication_error");
   }
+
+  // Per-token rate limit (see checkRateLimit).
+  const rl = checkRateLimit(env, method, path, effectiveToken);
+  if (rl) return rl;
   const ukeys = await getUserKeys(env, user.id);
   const deepseekKey = ukeys.DEEPSEEK_API_KEY || null;
   const opencodeGoKey = ukeys.OPENCODE_GO_API_KEY || null;
@@ -376,41 +410,7 @@ async function handleGatewayImpl(
   // the "rc-…" tokens from the Radeon developer console. Same BYOK blob.
   const amdKey = ukeys.AMD_API_KEY || null;
 
-  // Per-token rate limit: a valid token previously meant UNLIMITED upstream
-  // spend (Free-plan quota exhaustion + surprise billing). Counters are IN
-  // MEMORY per isolate — zero KV reads/writes. The old path read KV on every
-  // request (2 reads) but never wrote the increments back, so the KV reads
-  // always returned stale/zero values and burned the Free-plan daily read
-  // quota. With 1-3 hot isolates overshoot is bounded (~48→~144/min worst
-  // case) — the thresholds already budget ~20% headroom.
-  // Skipped when KEYS is unbound (tests/local) — the limiter is a prod guard.
-  // count_tokens is a LOCAL estimate (no upstream spend) — excluding it stops
-  // the double-count that halved the effective budget for Claude Code turns.
-  // audit round F1: /v1/chat/completions (OpenAI format) skipped the limiter
-  // ENTIRELY — a leaked token burned quota unthrottled on that path.
-  if (
-    env.KEYS &&
-    method === "POST" &&
-    (path.endsWith("/messages") ||
-      path.endsWith("/chat/completions") ||
-      path.endsWith("/responses")) &&
-    !path.endsWith(COUNT_PATH)
-  ) {
-    const mk = `min:${effectiveToken}:${Math.floor(Date.now() / 60000)}`;
-    const dk = `day:${effectiveToken}:${Math.floor(Date.now() / 86400000)}`;
-    const minute = __rlMin.get(mk) ?? 0;
-    const day = __rlDay.get(dk) ?? 0;
-    if (minute >= 48) {
-      return jsonError(429, "Rate limit: ~60 requests/minute per token", "rate_limit_error");
-    }
-    if (day >= 4000) {
-      return jsonError(429, "Rate limit: ~5000 requests/day per token", "rate_limit_error");
-    }
-    __rlMin.set(mk, minute + 1);
-    __rlDay.set(dk, day + 1);
-    if (__rlMin.size > 4096) __rlMin.delete(__rlMin.keys().next().value);
-    if (__rlDay.size > 4096) __rlDay.delete(__rlDay.keys().next().value);
-  }
+
 
   const isCount = method === "POST" && path.endsWith(COUNT_PATH);
   const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);
