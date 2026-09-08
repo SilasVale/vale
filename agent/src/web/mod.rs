@@ -594,64 +594,66 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
     };
     let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
-    let result: serde_json::Value = match (method.as_str(), path.as_str()) {
-        ("GET", "/api/spec") => api_spec(&state),
-        ("GET", "/api/status") => api_status(&state).await,
-        // Audit trail: session list (round-56) + per-session events
-        // (round-68) — bodies in api_sessions_list / api_session_events.
+/** Route dispatch: map (method, path) -> handler result or error.
+ *  Extracted from handle_request (round-91 SRP) so the main fn stays
+ *  auth + body parsing + routing skeleton. */
+async fn dispatch(
+    state: &AppState,
+    method: &str,
+    path: &str,
+    body_str: &str,
+    query_str: Option<&str>,
+) -> Result<serde_json::Value, Box<Response>> {
+    let result = match (method, path) {
+        ("GET", "/api/spec") => api_spec(state),
+        ("GET", "/api/status") => api_status(state).await,
         ("GET", "/api/sessions") => api_sessions_list(),
         ("GET", p) if p.starts_with("/api/sessions/") && p.len() > "/api/sessions/".len() => {
             match api_session_events(p) {
                 Ok(v) => v,
-                Err(resp) => return *resp,
+                Err(resp) => return Err(Box::new(*resp)),
             }
         }
-        // vale-update.log reader (tray promise) — body in api_logs.
         ("GET", "/api/logs") => api_logs(),
         ("GET", "/api/events/poll") => {
-            let after: u64 = query_param(query_str.as_deref(), "after")
+            let after: u64 = query_param(query_str, "after")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            api_events_poll(&state, after)
+            api_events_poll(state, after)
         }
-
-        // Settings read/write (round-69) — bodies in
-        // api_settings_get / api_settings_put.
-        ("GET", "/api/settings") => api_settings_get(&state).await,
-        ("PUT", "/api/settings") => match api_settings_put(&state, &body_str) {
+        ("GET", "/api/settings") => api_settings_get(state).await,
+        ("PUT", "/api/settings") => match api_settings_put(state, body_str) {
             Ok(v) => v,
-            Err(resp) => return *resp,
+            Err(resp) => return Err(Box::new(*resp)),
         },
-
-        // Gateway connect (Settings page card) — body in api_gateway_connect.
-        ("POST", "/api/gateway/connect") => match api_gateway_connect(&state, &body_str).await {
+        ("POST", "/api/gateway/connect") => match api_gateway_connect(state, body_str).await {
             Ok(v) => v,
-            Err(resp) => return *resp,
+            Err(resp) => return Err(Box::new(*resp)),
         },
-
-        // ---- Plugin management (round-admin-ui): playwright-mcp process
-        // ---- control for the panel's plugins page. Auth: all /api/* POSTs
-        // and /api GETs pass the gate above.
-        ("GET", "/api/plugins/status") => api_plugins_status(&state).await,
-        ("POST", "/api/plugins/playwright/start") => match api_playwright_start(&state).await {
+        ("GET", "/api/plugins/status") => api_plugins_status(state).await,
+        ("POST", "/api/plugins/playwright/start") => match api_playwright_start(state).await {
             Ok(v) => v,
-            Err(resp) => return *resp,
+            Err(resp) => return Err(Box::new(*resp)),
         },
-        ("POST", "/api/plugins/playwright/stop") => match api_playwright_stop(&state).await {
+        ("POST", "/api/plugins/playwright/stop") => match api_playwright_stop(state).await {
             Ok(v) => v,
-            Err(resp) => return *resp,
+            Err(resp) => return Err(Box::new(*resp)),
         },
-
-        // Generic tool dispatch: POST /api/tools/{name}
         ("POST", p) if p.starts_with("/api/tools/") => {
             let tool_name = p.strip_prefix("/api/tools/").unwrap_or("");
-            api_call_tool(&state, tool_name, &body_str).await
+            api_call_tool(state, tool_name, body_str).await
         }
-
         _ => serde_json::json!({"ok": false, "error": "not found"}),
     };
+    Ok(result)
+}
 
-    axum::Json(result).into_response()
+
+
+    match dispatch(&state, method.as_str(), &path, &body_str, query_str.as_deref()).await {
+        Ok(result) => axum::Json(result).into_response(),
+        Err(resp) => *resp,
+    }
 }
 
 // ── Generic tool dispatch ────────────────────────────────────
