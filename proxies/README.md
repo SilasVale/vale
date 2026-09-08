@@ -38,14 +38,14 @@ Auth model: the zen proxies gate on `CLIENT_KEY` (constant-time compare, default
 ## Deployment
 
 ```bash
-# All Cloudflare proxy Workers (zen-go / zen-us / openrouter)
+# Both Cloudflare proxy Workers (zen-go / zen-us)
 ./scripts/build.sh proxies
 
-# Vercel egress proxy (requires vercel CLI + login)
+# VPS api relay (vrelay @ Oracle box — the Vercel project is DELETED, do not look for it)
 ./scripts/build.sh api-relay
 ```
 
-`./scripts/build.sh deploy` also deploys the two Cloudflare proxies.
+`./scripts/build.sh deploy` also deploys the two Cloudflare proxies (api-relay is separate — it ships to the VPS, not to Cloudflare).
 
 ## D1 bindings + placement (geo-pinning — read before touching)
 

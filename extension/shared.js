@@ -5,12 +5,13 @@
 // touch chrome.* at load time — content scripts run in an isolated world
 // where these top-level bindings are the cross-file channel.
 
-const DEFAULT_STUDIO_ORIGIN = "https://code.saisi.online";
+const DEFAULT_STUDIO_ORIGIN = "https://vscode.saisi.online";
 
 // Normalize to a bare https:// origin (path/query dropped), or null when the
-// value is not a well-formed https:// URL. Canonical guard: the Studio token
-// rides as a Bearer credential, so it must never attach to a cleartext
-// http:// origin (MITM leak) or to something that isn't a URL at all.
+// value is not a well-formed https:// URL. Canonical guard: the code-server
+// session rides on browser cookies (Access + code-server password), so the
+// origin must never be a cleartext http:// URL (MITM leak) or something that
+// isn't a URL at all.
 function httpsOrigin(v) {
   try {
     const u = new URL(v);

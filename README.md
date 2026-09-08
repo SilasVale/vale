@@ -9,13 +9,13 @@ Vale Gate (front door, Cloudflare Worker) — console, BYOK AI gateway, /mcp pro
         │
         ▼
 Vale Agent (Windows, Rust) — headless MCP server + /api/tools + panel
-  └─ plugin registry: terminal / memory / system / mcp-client / update / design
+  └─ plugin registry: terminal / memory / system / mcp-client / playwright / update / design
         │  mcp-client bridges to a local browser MCP server (playwright)
         ▼
 Vale Desktop (Electron) — tray + native menu + CDP :9333 for AI-driven UI
 Vale Index (Cloudflare Worker) — npm tgz / download distribution
-Satellites (not in the request path): Vale Studio (Node, code editor + terminal)
-  + satellite proxies (Cloudflare/Vercel AI egress) + brand (static icons)
+Satellites (not in the request path): satellite proxies (Cloudflare/VPS AI egress) + brand (static icons)
+  + extension (DSH chat paths → code-server folder links; no build)
 ```
 
 ## Highlights
@@ -45,7 +45,7 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 | `gateway/` | **Vale Gate** | Cloudflare Worker | console (login/roles), BYOK AI gateway, `/mcp` proxy to devices, device registry |
 | `agent/` | **Vale Agent** | Windows (Rust) | headless MCP server + `/api/tools` + panel + Electron desktop shell (`vale-desktop-electron/`) + npm distribution (`vale-agent-npm/`) |
 | `index/` | **Vale Index** | Cloudflare Worker | download distribution (`vale-dist`; hosts the npm tgz, see Quick start) |
-| `extension/` | **Vale Studio Links** | Chrome/Edge (MV3) | rewrites DSH panel file paths into Vale Studio deep links (unpacked; no build) |
+| `extension/` | **Vale Code Links** | Chrome/Edge (MV3) | rewrites DSH chat file paths into code-server folder links (unpacked; no build) |
 | ~~`studio/`~~ | RETIRED 2026-09-06 | — | replaced by code-server (vscode.saisi.online, behind Access); see docs/adr/0006 |
 | `proxies/` | **Satellite proxies** | Cloudflare Worker + Oracle VPS (vrelay) | zen-go / zen-us AI egress + api-relay (`./scripts/build.sh proxies|api-relay`) |
 | `brand/` | **Brand assets** | static (satellite) | sunrise favicon / icon source (no build) |
@@ -62,7 +62,7 @@ The install dir is registry-first (`HKLM\SOFTWARE\Vale\Agent\InstallDir`); all p
 ./scripts/build.sh gateway|index     # wrangler deploy the worker
 ./scripts/build.sh proxies           # deploy satellite proxy workers (zen-go / zen-us)
 ./scripts/build.sh api-relay         # build+deploy the VPS api relay (vrelay @ Oracle box)
-./scripts/build.sh deploy            # build agent + deploy gateway/index + 3 CF proxies (not api-relay)
+./scripts/build.sh deploy            # build agent + deploy gateway/index + 2 CF proxies (not api-relay)
 
 # CDN-publish a release (pack + stage + version.json sha256 + last-5 prune
 # + deploy; then push + tag vX to get the CI-built GitHub release)
@@ -73,7 +73,7 @@ See `agent/AGENTS.md` (Rust build guide) and `docs/superpowers/specs/2026-08-28-
 
 ## Core design
 
-- **Gateway plugin core (DSH-style)**: every `/api/*` route and `/mcp` lives in a plugin (`gateway/src/plugins/`: auth / devices / mcp / translate / admin) on a shared context; `index.ts` is a thin front door.
+- **Gateway plugin core (DSH-style)**: every `/api/*` route and `/mcp` lives in a plugin (`gateway/src/plugins/`: admin / auth / device-proxy / devices / mcp / model-route / translate / translate-vision on the shared registry) on a shared context; `index.ts` is a thin front door.
 - **Device control, AI-first**: an AI client connects to `https://<console>/mcp` (gateway) or `https://<device>/mcp` (direct) with a bearer token and gets the device tool surface.
 - **Terminal backends**: PTY (ConPTY on Windows, OSC 633 shell integration), SSH (keepalive 5s, bounded writes) and serial (auto-reconnect). Natural shell exits are detected (exit codes surface in `terminal_history`); the reader is pollable so `exit` never hangs the session.
 - **Browser control via mcp-client**: the `mcp-client` plugin spawns the bundled `playwright-mcp` over stdio by default (stdin/stdout, no listening port) and forwards its tools; the Rust agent only bridges. `transport=http` (9229) remains for external servers only. The Electron shell also exposes CDP :9333 for driving the desktop UI itself.

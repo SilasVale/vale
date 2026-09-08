@@ -16,9 +16,9 @@ Unified entry `scripts/build.sh`:
 ```bash
 ./scripts/build.sh agent             # Windows cross-compile vale-agent (tray/Tauri retired; needs cargo-xwin)
 ./scripts/build.sh gateway|index     # wrangler deploy the worker (needs CLOUDFLARE_API_TOKEN)
-./scripts/build.sh proxies           # deploy satellite proxy workers (zen-go / zen-us / openrouter; needs CLOUDFLARE_API_TOKEN)
+./scripts/build.sh proxies           # deploy satellite proxy workers (zen-go / zen-us; needs CLOUDFLARE_API_TOKEN)
 ./scripts/build.sh api-relay         # build+deploy the VPS api relay (vrelay @ Oracle box)
-./scripts/build.sh deploy            # build agent + deploy gateway/index + 3 CF proxies (not api-relay)
+./scripts/build.sh deploy            # build agent + deploy gateway/index + 2 CF proxies (not api-relay)
 ```
 
 Subprojects have their own build docs:
