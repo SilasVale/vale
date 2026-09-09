@@ -201,10 +201,9 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
                 cleanup_staged(&dir);
                 return false;
             }
-            if let Err(e) = std::fs::copy(
-                &pkg_cf,
-                dir.join("components").join("cloudflared.new.exe"),
-            ) {
+            if let Err(e) =
+                std::fs::copy(&pkg_cf, dir.join("components").join("cloudflared.new.exe"))
+            {
                 tracing::error!("[vale-agent] agent_update: cloudflared stage failed: {e}");
                 cleanup_staged(&dir);
                 return false;
@@ -215,21 +214,12 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
         let ver = release_version.replace('\'', "''");
         // Layout v2 homes (baked — the swap script is static text).
         // dir-relative (same root the staging above used, not globals).
-        let etc = dir
-            .join("etc")
-            .to_string_lossy()
-            .replace('\'', "''");
-        let comp = dir
-            .join("components")
-            .to_string_lossy()
-            .replace('\'', "''");
+        let etc = dir.join("etc").to_string_lossy().replace('\'', "''");
+        let comp = dir.join("components").to_string_lossy().replace('\'', "''");
         let logs = crate::paths::logs_dir()
             .to_string_lossy()
             .replace('\'', "''");
-        let scripts = dir
-            .join("scripts")
-            .to_string_lossy()
-            .replace('\'', "''");
+        let scripts = dir.join("scripts").to_string_lossy().replace('\'', "''");
         let script = format!(
             r#""[$(Get-Date -Format o)] update start" | Out-File '{logs}\vale-update.log' -Append;
 try {{

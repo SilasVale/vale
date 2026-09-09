@@ -165,7 +165,7 @@ test("bootTaskPs: explicit config argument, hardened SYSTEM task, optional kick"
   assert.ok(![...reg].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });
 
-test("migrateLayoutPs: mirrors paths.rs pairs, never clobbers, kills boxed node first", () => {
+test("migrateLayoutPs: mirrors paths.rs pairs, never clobbers, kills boxed node first, marker-gated", () => {
   const { migrateLayoutPs } = require("../bin/vale.js");
   const body = migrateLayoutPs("D:\\Vale", "C:\\ProgramData\\Vale").join("\n");
   for (const pair of [
@@ -183,5 +183,12 @@ test("migrateLayoutPs: mirrors paths.rs pairs, never clobbers, kills boxed node 
   }
   assert.match(body, /-not \(Test-Path/, "every move is guarded (never clobbers staged output)");
   assert.match(body, /CommandLine -like '\*.*playwright\*/, "boxed node processes are stopped before the tree moves");
+  // Marker aging (ADR 0008): whole block skips when done-marker present,
+  // and the marker is written only when NO old->new pair is still pending.
+  assert.ok(body.includes("$valeMg = (-not (Test-Path 'D:\\Vale\\etc\\.layout-v2'))"), "marker short-circuits re-runs (single-line guard)");
+  // 24 move lines + the node-kill line + the marker write all carry the guard.
+  assert.equal(body.split("if ($valeMg").length - 1, 26, "every statement carries the marker guard");
+  assert.ok(body.includes("if ($valeMg -and (-not (") && body.includes("(Test-Path 'D:\\Vale\\config.yaml')"), "marker write gated on pending pairs");
+  assert.ok(body.includes(`New-Item -ItemType File -Force -Path 'D:\\Vale\\etc\\.layout-v2'`), "marker file itself");
   assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });

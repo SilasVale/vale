@@ -250,49 +250,61 @@ function bootTaskPs(exeQ, cfgQ, start = false) {
 // pinned by tests; drift strands upgraded devices). Moves only when the
 // target is missing (never clobbers staged .new output); dirs merge
 // children. Best-effort per item; callers GATE on etc\config.yaml +
-// hostname afterwards (fail-closed). q = escaped DIR, dq = escaped DataDir.
-// ASCII-only PS. unit-tested.
+// hostname afterwards (fail-closed). Marker aging (same contract as
+// paths.rs): skip entirely when etc\.layout-v2 exists; write it only when
+// nothing is pending (old home exists, new missing). q = escaped DIR,
+// dq = escaped DataDir. ASCII-only PS. unit-tested.
 function migrateLayoutPs(q, dq) {
-    const mvf = (oldRel, newAbs) => `if ((Test-Path '${q}\\${oldRel}') -and (-not (Test-Path '${newAbs}'))) { try { New-Item -ItemType Directory -Force -Path (Split-Path '${newAbs}') | Out-Null; Move-Item -Force -Path '${q}\\${oldRel}' -Destination '${newAbs}' -ErrorAction Stop } catch {} }`;
-    const mvd = (oldRel, newAbs) => `if (Test-Path '${q}\\${oldRel}') { try { if (-not (Test-Path '${newAbs}')) { New-Item -ItemType Directory -Force -Path (Split-Path '${newAbs}') | Out-Null; Move-Item -Path '${q}\\${oldRel}' -Destination '${newAbs}' -ErrorAction Stop } else { Get-ChildItem -Force '${q}\\${oldRel}' | ForEach-Object { if (-not (Test-Path (Join-Path '${newAbs}' $_.Name))) { Move-Item -Force -Path $_.FullName -Destination (Join-Path '${newAbs}' $_.Name) -ErrorAction SilentlyContinue } } } } catch {} }`;
+    const mvf = (oldRel, newAbs) => `if ($valeMg -and (Test-Path '${q}\\${oldRel}') -and (-not (Test-Path '${newAbs}'))) { try { New-Item -ItemType Directory -Force -Path (Split-Path '${newAbs}') | Out-Null; Move-Item -Force -Path '${q}\\${oldRel}' -Destination '${newAbs}' -ErrorAction Stop } catch {} }`;
+    const mvd = (oldRel, newAbs) => `if ($valeMg -and (Test-Path '${q}\\${oldRel}')) { try { if (-not (Test-Path '${newAbs}')) { New-Item -ItemType Directory -Force -Path (Split-Path '${newAbs}') | Out-Null; Move-Item -Path '${q}\\${oldRel}' -Destination '${newAbs}' -ErrorAction Stop } else { Get-ChildItem -Force '${q}\\${oldRel}' | ForEach-Object { if (-not (Test-Path (Join-Path '${newAbs}' $_.Name))) { Move-Item -Force -Path $_.FullName -Destination (Join-Path '${newAbs}' $_.Name) -ErrorAction SilentlyContinue } } } } catch {} }`;
     const etc = `${q}\\etc`;
     const comp = `${q}\\components`;
     const scr = `${q}\\scripts`;
     const logs = `${dq}\\logs`;
+    // (oldRel, newAbs, kind) pairs — 'f' files move atomically, 'd' dirs
+    // merge children. The pending check covers EVERY pair exactly once with
+    // paths.rs' rule (old && !new); a merged dir whose target EXISTS is not
+    // pending even with locked leftovers behind them (garbage for uninstall).
+    const moves = [
+        ["config.yaml", `${etc}\\config.yaml`, "f"],
+        ["vale-agent.hostname", `${etc}\\vale-agent.hostname`, "f"],
+        ["tunnel.yml", `${etc}\\tunnel.yml`, "f"],
+        [".vale-release", `${etc}\\.vale-release`, "f"],
+        ["boxed-versions.json", `${etc}\\boxed-versions.json`, "f"],
+        ["tools\\node", `${comp}\\node`, "d"],
+        ["tools\\npm-global", `${comp}\\npm-global`, "d"],
+        ["tools\\cloudflared.exe", `${comp}\\cloudflared.exe`, "f"],
+        ["playwright", `${comp}\\playwright`, "d"],
+        ["vale-desktop-electron", `${comp}\\vale-desktop-electron`, "d"],
+        ["ensure-desktop.ps1", `${scr}\\ensure-desktop.ps1`, "f"],
+        ["desktop-pulse.vbs", `${scr}\\desktop-pulse.vbs`, "f"],
+        ["start-desktop.ps1", `${scr}\\start-desktop.ps1`, "f"],
+        ["vale-online-setup.ps1", `${scr}\\vale-online-setup.ps1`, "f"],
+        ["fix-tunnel.ps1", `${scr}\\fix-tunnel.ps1`, "f"],
+        ["playwright\\run-hidden.vbs", `${scr}\\run-hidden.vbs`, "f"],
+        ["playwright\\playwright-probe.ps1", `${scr}\\playwright-probe.ps1`, "f"],
+        ["shell-integration", `${scr}\\shell-integration`, "d"],
+        ["installer.log", `${logs}\\installer.log`, "f"],
+        ["install-result.txt", `${logs}\\install-result.txt`, "f"],
+        ["vale-update.log", `${logs}\\vale-update.log`, "f"],
+        ["agent.log", `${logs}\\agent.log`, "f"],
+        ["startup.log", `${logs}\\startup.log`, "f"],
+        ["pwout", `${dq}\\pwout`, "d"],
+    ];
+    const pending = moves
+        .map(([o, n]) => `((Test-Path '${q}\\${o}') -and (-not (Test-Path '${n}')))`)
+        .join(" -or ");
+    // All statements stay SINGLE-LINE (setup passes them joined with "; "
+    // through -Command): the marker guard is precomputed into $valeMg and
+    // every line carries it, instead of wrapping the block in braces.
     return [
+        `$valeMg = (-not (Test-Path '${etc}\\.layout-v2'))`,
         // A running boxed node locks the playwright tree — stop DIR-local ones
         // first (setup precedent; the updater itself runs from npm-global,
         // which never matches the playwright filter).
-        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*${q}*playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
-        // etc\
-        mvf("config.yaml", `${etc}\\config.yaml`),
-        mvf("vale-agent.hostname", `${etc}\\vale-agent.hostname`),
-        mvf("tunnel.yml", `${etc}\\tunnel.yml`),
-        mvf(".vale-release", `${etc}\\.vale-release`),
-        mvf("boxed-versions.json", `${etc}\\boxed-versions.json`),
-        // components\ (leaf names unchanged)
-        mvd("tools\\node", `${comp}\\node`),
-        mvd("tools\\npm-global", `${comp}\\npm-global`),
-        mvf("tools\\cloudflared.exe", `${comp}\\cloudflared.exe`),
-        mvd("playwright", `${comp}\\playwright`),
-        mvd("vale-desktop-electron", `${comp}\\vale-desktop-electron`),
-        // scripts\
-        mvf("ensure-desktop.ps1", `${scr}\\ensure-desktop.ps1`),
-        mvf("desktop-pulse.vbs", `${scr}\\desktop-pulse.vbs`),
-        mvf("start-desktop.ps1", `${scr}\\start-desktop.ps1`),
-        mvf("vale-online-setup.ps1", `${scr}\\vale-online-setup.ps1`),
-        mvf("fix-tunnel.ps1", `${scr}\\fix-tunnel.ps1`),
-        mvf("playwright\\run-hidden.vbs", `${scr}\\run-hidden.vbs`),
-        mvf("playwright\\playwright-probe.ps1", `${scr}\\playwright-probe.ps1`),
-        mvd("shell-integration", `${scr}\\shell-integration`),
-        // logs\ (history, never gated)
-        mvf("installer.log", `${logs}\\installer.log`),
-        mvf("install-result.txt", `${logs}\\install-result.txt`),
-        mvf("vale-update.log", `${logs}\\vale-update.log`),
-        mvf("agent.log", `${logs}\\agent.log`),
-        mvf("startup.log", `${logs}\\startup.log`),
-        // evidence (history, never gated)
-        mvd("pwout", `${dq}\\pwout`),
+        `if ($valeMg) { Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*${q}*playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }`,
+        ...moves.map(([o, n, k]) => (k === "d" ? mvd(o, n) : mvf(o, n))),
+        `if ($valeMg -and (-not (${pending}))) { try { New-Item -ItemType Directory -Force -Path '${etc}' | Out-Null; New-Item -ItemType File -Force -Path '${etc}\\.layout-v2' | Out-Null } catch {} }`,
     ];
 }
 // exported: Add/Remove-Programs version parity. The NSIS installer writes

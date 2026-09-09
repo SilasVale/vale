@@ -234,6 +234,16 @@ pub fn startup_log_file() -> PathBuf {
 pub fn shell_integration_dir() -> PathBuf {
     scripts_dir().join("shell-integration")
 }
+/// Layout-v2 migration done-marker (ADR 0008 aging). Presence means the
+/// boot backstop already ran to completion; `migrate_layout_v2` returns a
+/// no-op note instead of re-scanning every boot. Written ONLY when no move
+/// is left pending (an old path exists while its new path does not) — a
+/// partially-failed migration retries on the next boot. Deletion criterion:
+/// once the oldest release kept by the CDN last-5-per-minor policy is a
+/// layout-v2 build, this shim (marker check + move plan) can be removed.
+pub fn layout_marker_file() -> PathBuf {
+    etc_dir().join(".layout-v2")
+}
 
 /// Layout-v2 migration plan (ADR 0008): (old, new) pairs for every path
 /// that moved off the install root. PURE — takes both roots as args so
@@ -358,10 +368,12 @@ fn move_one(old: &std::path::Path, new: &std::path::Path) -> bool {
 /// v2 home when the new home is still missing. Covers the one updater that
 /// cannot migrate itself — a pre-v2 Rust `agent_update` swapping in a v2
 /// exe with v1 paths (the updater is old code; the layout it leaves is
-/// old). Idempotent (second boot is all no-ops); real installs only
-/// (registry InstallDir present — dev trees with exe-dir fallback never
-/// had the v1 layout and must not be touched). Returns human-readable notes
-/// for the boot log. Never fails the boot.
+/// old). Gated by the `.layout-v2` marker: once a full pass ends with
+/// nothing pending, the marker is written and every later boot returns a
+/// one-line no-op note. Idempotent; real installs only (registry
+/// InstallDir present — dev trees with exe-dir fallback never had the v1
+/// layout and must not be touched). Returns human-readable notes for the
+/// boot log. Never fails the boot.
 pub fn migrate_layout_v2() -> Vec<String> {
     let mut notes = Vec::new();
     if registry_value("InstallDir").is_none() {
@@ -369,6 +381,10 @@ pub fn migrate_layout_v2() -> Vec<String> {
     }
     let install = install_dir();
     let data = data_dir();
+    if install.join("etc").join(".layout-v2").exists() {
+        notes.push("layout v2 marker present (migration done)".into());
+        return notes;
+    }
     for (old, new) in migration_moves(&install, &data) {
         // move_one decides clobber/merge per kind; report only real moves.
         // (Dirs with a present target merge children instead of no-op.)
@@ -376,7 +392,34 @@ pub fn migrate_layout_v2() -> Vec<String> {
             notes.push(format!("migrated {} -> {}", old.display(), new.display()));
         }
     }
+    // Marker only when NOTHING is pending: a move that failed because its
+    // source is locked retries next boot (a locked leftover is garbage for
+    // uninstall, but a MISSING new home — config.yaml especially — must
+    // never be accepted silently).
+    if migration_pending(&install, &data) {
+        notes.push(
+            "layout v2 migration INCOMPLETE (pending moves locked?) — retrying next boot".into(),
+        );
+    } else {
+        let marker = install.join("etc").join(".layout-v2");
+        match std::fs::create_dir_all(marker.parent().unwrap())
+            .and_then(|()| std::fs::write(&marker, b"migrated by vale-agent boot backstop\n"))
+        {
+            Ok(()) => notes.push(format!("layout v2 marker written: {}", marker.display())),
+            Err(e) => notes.push(format!(
+                "layout v2 marker write failed: {e} (retries next boot)"
+            )),
+        }
+    }
     notes
+}
+
+/// Pure pending check (testable without the registry-gated globals): any
+/// moved path whose old home still exists while its new home does not.
+fn migration_pending(install: &std::path::Path, data: &std::path::Path) -> bool {
+    migration_moves(install, data)
+        .into_iter()
+        .any(|(old, new)| old.exists() && !new.exists())
 }
 
 /// The node runtime path recorded by `vale setup` (registry NodePath).
@@ -491,6 +534,32 @@ mod resolution_tests {
             shell_integration_dir(),
             scripts_dir().join("shell-integration")
         );
+        assert_eq!(layout_marker_file(), etc_dir().join(".layout-v2"));
+    }
+
+    #[test]
+    fn migration_pending_tracks_unmoved_paths_only() {
+        // A migrated tree (new home present) is not pending even while the
+        // emptied old dir lingers; a failed move (old present, new missing)
+        // IS pending and keeps the boot marker from being written.
+        let base = std::env::temp_dir().join(format!("vale-pending-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let install = base.join("I");
+        let data = base.join("D");
+        // config.yaml pair: fully migrated (file moved to etc\).
+        std::fs::create_dir_all(install.join("etc")).unwrap();
+        std::fs::write(install.join("etc").join("config.yaml"), b"x").unwrap();
+        assert!(
+            !migration_pending(&install, &data),
+            "migrated config must not be pending"
+        );
+        // hostname pair: old exists, new missing -> pending.
+        std::fs::write(install.join("vale-agent.hostname"), b"d1").unwrap();
+        assert!(
+            migration_pending(&install, &data),
+            "unmoved hostname must be pending"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
