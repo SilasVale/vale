@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, BOOT_TASKS, autostartArgv } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -119,4 +119,17 @@ test("uninstallVersionPs: $ok-gated DisplayVersion parity, never fabricates Unin
   assert.match(body, /catch \{\}/, "best-effort: registry failure never fails the update");
   assert.match(body, /Test-Path \$rk/, "creates the key for npm-only installs that lack one");
   assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
+});
+
+test("autostartArgv: ENABLE/DISABLE both boot tasks, no credential-prompt flags", () => {
+  const { autostartArgv, BOOT_TASKS } = require("../bin/vale.js");
+  assert.deepEqual([...BOOT_TASKS].sort(), ["ValeAgent", "ValeDesktop"], "both boot tasks covered");
+  for (const t of BOOT_TASKS) {
+    assert.deepEqual(autostartArgv(t, "off"), ["schtasks", "/Change", "/TN", t, "/DISABLE"]);
+    assert.deepEqual(autostartArgv(t, "on"), ["schtasks", "/Change", "/TN", t, "/ENABLE"]);
+  }
+  const all = BOOT_TASKS.flatMap((t) => [autostartArgv(t, "on").join(" "), autostartArgv(t, "off").join(" ")]).join("\n");
+  for (const banned of ["/RU", "/RP", "/RI", "/TR"]) {
+    assert.ok(!all.includes(banned), `${banned} must never appear (it prompts for the account password and hangs)`);
+  }
 });

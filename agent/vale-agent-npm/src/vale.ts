@@ -149,6 +149,17 @@ export function uninstallVersionPs(q: string, ver: string): string[] {
     `} catch {} }`,
   ];
 }
+// exported: autostart (boot) switch for the two scheduled tasks. ValeAgent
+// (SYSTEM service task) + ValeDesktop (logon shell task) ARE the autostart
+// surface — `vale stop` only Ends the running instance and the 5-min
+// watchdog revives it, so stop != opting out of autostart. This flips the
+// task ENABLED flag itself. /ENABLE|/DISABLE need no credentials, unlike
+// trigger edits which prompt for the /ru password interactively (and hang
+// the caller) — never add /RI /RU /RP /TR here. unit-tested.
+export const BOOT_TASKS = ["ValeAgent", "ValeDesktop"];
+export function autostartArgv(task: string, action: "on" | "off"): string[] {
+  return ["schtasks", "/Change", "/TN", task, action === "on" ? "/ENABLE" : "/DISABLE"];
+}
 // exported: the ValePlaywright probe launcher (playwright-probe.ps1).
 // Probe order matches the agent's preferred_cdp_endpoint(): 9333
 // (Electron DESKTOP embedded view — what the user watches) when up, else
@@ -567,13 +578,51 @@ const commands = {
 
   stop() {
     svc("End");
-    console.log("stopped — 'vale start' to resume");
+    console.log("stopped — revives via 'vale start' or the 5-min watchdog ('vale autostart off' opts out of autostart)");
   },
 
   restart() {
     svc("End");
     sh("timeout /t 2 >nul");
     svc("Run");
+  },
+
+  // Boot switch: `vale autostart on|off|status` (default status). Flips the
+  // ENABLED flag on BOTH boot tasks (service + desktop shell) — this is the
+  // only real "don't start at boot" control; `vale stop` is one-shot and
+  // the watchdog revives it. Missing task = skipped with a note (never
+  // fatal — headless installs have no ValeDesktop). State read via
+  // Get-ScheduledTask (locale-independent enum, unlike schtasks /Query
+  // headers which localize).
+  autostart(args) {
+    const sub = String(args[0] || "status").toLowerCase();
+    if (sub === "status") {
+      for (const t of BOOT_TASKS) {
+        const r = spawnSync("powershell",
+          ["-NoProfile", "-Command", `(Get-ScheduledTask -TaskName '${t}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty State -ErrorAction SilentlyContinue)`],
+          { encoding: "utf8" });
+        const s = String((r && r.stdout) || "").trim();
+        console.log(`${t}: ${s || "(not installed)"}`);
+      }
+      return;
+    }
+    if (sub !== "on" && sub !== "off") {
+      console.error("usage: vale autostart <on|off|status>");
+      process.exit(1);
+    }
+    let failed = false;
+    for (const t of BOOT_TASKS) {
+      const argv = autostartArgv(t, sub);
+      const r = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
+      if (!r || r.status !== 0) {
+        console.error(`autostart: ${t} ${sub} failed (task may not exist — run vale setup first)`);
+        failed = true;
+      } else {
+        console.log(`autostart: ${t} ${sub === "on" ? "enabled" : "disabled"}`);
+      }
+    }
+    if (sub === "off") console.log("autostart: off — tasks stay disabled across reboot until 'vale autostart on'");
+    if (failed) process.exit(1);
   },
 
   update() {
@@ -963,7 +1012,7 @@ const commands = {
 if (require.main === module) {
   const [cmd, ...rest] = process.argv.slice(2);
   if (!cmd || !commands[cmd]) {
-    console.log("vale <setup|status|start|stop|restart|update|uninstall|run|tunnel> — Vale Agent control");
+    console.log("vale <setup|status|start|stop|restart|autostart|update|uninstall|run|tunnel> — Vale Agent control");
     Object.keys(commands).forEach((k) => console.log(" ", k));
     process.exit(cmd ? 1 : 0);
   }
