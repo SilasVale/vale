@@ -69,7 +69,8 @@ function bad(message: string, status = 400): Response {
   });
 }
 
-function safePath(value: string): boolean {
+// Exported for direct pins (SOLID Round-23; additive — handler untouched).
+export function safePath(value: string): boolean {
   if (!value || !value.startsWith("/")) return false;
   if (value.includes("\\") || value.includes("\0") || value.includes("..")) return false;
   try {
@@ -83,7 +84,8 @@ function safePath(value: string): boolean {
   }
 }
 
-function parseRoute(value: string | null): Route | null {
+// Exported for direct pins (SOLID Round-23; additive — handler untouched).
+export function parseRoute(value: string | null): Route | null {
   if (!value || !safePath(value)) return null;
   const slash = value.indexOf("/", 1);
   if (slash < 0) return null;
@@ -111,7 +113,8 @@ function copyResponseHeaders(response: Response): Headers {
   return headers;
 }
 
-function redirectTarget(response: Response, currentUrl: URL): URL | null {
+// Exported for direct pins (SOLID Round-23; additive — handler untouched).
+export function redirectTarget(response: Response, currentUrl: URL): URL | null {
   const location = response.headers.get("location");
   if (!location) return null;
   try {
@@ -124,7 +127,8 @@ function redirectTarget(response: Response, currentUrl: URL): URL | null {
   }
 }
 
-function rewritable(contentType: string | null): boolean {
+// Exported for direct pins (SOLID Round-23; additive — handler untouched).
+export function rewritable(contentType: string | null): boolean {
   if (!contentType) return false;
   const type = contentType.toLowerCase();
   return type.startsWith("text/") ||
@@ -166,7 +170,8 @@ const SRI_NEUTRALIZER = `
 })();
 </script>`;
 
-function rewriteBody(body: string, origin: string, isHtml: boolean): string {
+// Exported for direct pins (SOLID Round-23; additive — handler untouched).
+export function rewriteBody(body: string, origin: string, isHtml: boolean): string {
   if (isHtml) {
     body = body.replace(/\s+integrity="[^"]*"/g, " ");
     const head = body.indexOf("<head");
@@ -193,7 +198,8 @@ function rewriteBody(body: string, origin: string, isHtml: boolean): string {
 
 // Set-Cookie may appear multiple times in one response; Headers#get() only
 // returns the first, so collect them all explicitly.
-function setCookieValues(headers: Headers): string[] {
+// Exported for direct pins (SOLID Round-23; additive — handler untouched).
+export function setCookieValues(headers: Headers): string[] {
   const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
   if (typeof getSetCookie === "function") return getSetCookie.call(headers);
   const values: string[] = [];
