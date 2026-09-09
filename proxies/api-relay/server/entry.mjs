@@ -4,7 +4,9 @@
 // web-API edge functions (Request -> Response), so behavior parity with the
 // Vercel deployment is by construction, not by re-implementation.
 //
-// Routing replicates vercel.json's rewrites in-process:
+// Routing replicates vercel.json's rewrites in-process (pure table +
+// matchers in ./routing.mjs — unit-tested; entry keeps only the handler
+// wiring + HTTP plumbing):
 //   /api/git/<rest>     -> handler(Request at /api/git?path=/<rest>&<orig args>)
 //   /api/github/...     -> /api/github?path=...
 //   /api/gform/...      -> /api/gform?path=...
@@ -33,6 +35,7 @@ import proxy from "./proxy.mjs";
 import github from "./github.mjs";
 import git from "./git.mjs";
 import gform from "./gform.mjs";
+import { resolveRoute, buildUrl } from "./routing.mjs";
 
 const PORT = Number(process.env.PORT || 8081);
 
@@ -47,35 +50,6 @@ const ROUTES = [
   { prefix: "/api/gform", handler: gform, pathFromRest: true },
 ];
 
-function resolveRoute(rawUrl) {
-  const qmark = rawUrl.indexOf("?");
-  const pathname = qmark < 0 ? rawUrl : rawUrl.slice(0, qmark);
-  const search = qmark < 0 ? "" : rawUrl.slice(qmark + 1);
-  for (const r of ROUTES) {
-    // "/api/git/" vs "/api/github/…" stay distinguishable: tail must start
-    // with "/" (prefix+sep) or be exactly the prefix itself.
-    if (pathname === r.prefix || pathname.startsWith(r.prefix + "/")) {
-      return { r, pathname, search };
-    }
-  }
-  return null;
-}
-
-function buildUrl({ r, pathname, search }, host) {
-  if (!r.pathFromRest) {
-    return `https://${host}${pathname}${search ? "?" + search : ""}`;
-  }
-  const rest = pathname.slice(r.prefix.length); // "" or "/deepseek-ai/x.git"
-  const params = new URLSearchParams();
-  params.set("path", "/" + rest.replace(/^\//, ""));
-  if (search) {
-    // original args win as-is (info/refs?service=git-upload-pack etc.);
-    // a caller-supplied path= param would collide and is dropped.
-    for (const [k, v] of new URLSearchParams(search)) if (k !== "path") params.append(k, v);
-  }
-  return `https://${host}${r.prefix}?${params.toString()}`;
-}
-
 const server = createServer(async (req, res) => {
   const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
   try {
@@ -84,7 +58,7 @@ const server = createServer(async (req, res) => {
       res.end("ok");
       return;
     }
-    const hit = resolveRoute(req.url || "/");
+    const hit = resolveRoute(ROUTES, req.url || "/");
     if (!hit) {
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "not found" }));

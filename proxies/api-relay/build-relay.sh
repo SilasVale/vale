@@ -17,5 +17,6 @@ mv dist/git.js dist/git.mjs && mv dist/github.js dist/github.mjs && mv dist/gfor
 cp api/zen.js dist/zen.mjs
 cp api/proxy.js dist/proxy.mjs
 cp server/entry.mjs dist/entry.mjs
+cp server/routing.mjs dist/routing.mjs # entry.mjs's pure routing table+matchers (unit-tested)
 tar -czf relay-bundle.tar.gz -C dist .
 echo "built $(pwd)/relay-bundle.tar.gz ($(wc -c < relay-bundle.tar.gz) bytes)"
