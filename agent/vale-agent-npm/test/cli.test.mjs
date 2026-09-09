@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, BOOT_TASKS, autostartArgv } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, BOOT_TASKS, autostartArgv, bootTaskPs, migrateLayoutPs } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -27,7 +27,7 @@ test("busyIsFresh: the 10-minute update-exclusion window", () => {
 });
 
 test("deskShortcutRepairPs: stale-shortcut repair is repair-only + sunrise-pinned", () => {
-  const lines = deskShortcutRepairPs("D:\\Vale", "Write-Host");
+  const lines = deskShortcutRepairPs("D:\\Vale\\scripts", "D:\\Vale\\components\\vale-desktop-electron", "Write-Host");
   const body = lines.join("\n");
   assert.match(body, /Vale\.lnk/, "touches the desktop Vale link");
   assert.match(body, /vale-desktop\.exe/, "detects the retired Tauri target");
@@ -91,13 +91,15 @@ test("writeReleaseMarker: fresh-install parity with the round-298 update marker"
   const { writeReleaseMarker } = require("../bin/vale.js");
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "vale-relmark-"));
   try {
-    // Writes the package.json version (same source `vale update` uses).
+    // Writes the package.json version under etc/ (layout v2). Callers
+    // (setup/update) always create etc/ during staging/migration first.
+    fs.mkdirSync(path.join(d, "etc"), { recursive: true });
     writeReleaseMarker(d);
     const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-    assert.equal(fs.readFileSync(path.join(d, ".vale-release"), "utf8"), pkg.version);
+    assert.equal(fs.readFileSync(path.join(d, "etc", ".vale-release"), "utf8"), pkg.version);
     // Idempotent (re-run overwrites with the same value).
     writeReleaseMarker(d);
-    assert.equal(fs.readFileSync(path.join(d, ".vale-release"), "utf8"), pkg.version);
+    assert.equal(fs.readFileSync(path.join(d, "etc", ".vale-release"), "utf8"), pkg.version);
   } finally {
     fs.rmSync(d, { recursive: true, force: true });
   }
@@ -132,4 +134,42 @@ test("autostartArgv: ENABLE/DISABLE both boot tasks, no credential-prompt flags"
   for (const banned of ["/RU", "/RP", "/RI", "/TR"]) {
     assert.ok(!all.includes(banned), `${banned} must never appear (it prompts for the account password and hangs)`);
   }
+});
+
+test("bootTaskPs: explicit config argument, hardened SYSTEM task, optional kick", () => {
+  const { bootTaskPs } = require("../bin/vale.js");
+  const reg = bootTaskPs("C:\\V\\vale-agent.exe", "C:\\V\\etc\\config.yaml", false).join("\n");
+  assert.match(reg, /-Argument \('"'\s*\+\s*'C:\\V\\etc\\config\.yaml'\s*\+\s*'"'\)/, "-Argument is the config path");
+  assert.ok(!reg.includes("vale-agent.exe' + '\"'"), "the exe path must never be the argument");
+  assert.match(reg, /-UserId SYSTEM/, "SYSTEM principal");
+  assert.match(reg, /ExecutionTimeLimit.*0/, "never kill the running task");
+  assert.match(reg, /Register-ScheduledTask ValeAgent/, "re-registers with -Force semantics");
+  assert.ok(!reg.includes("Start-ScheduledTask"), "no kick without start=true");
+  const kick = bootTaskPs("C:\\V\\vale-agent.exe", "C:\\V\\etc\\config.yaml", true).join("\n");
+  assert.match(kick, /Start-ScheduledTask ValeAgent/, "setup kicks the task once");
+  for (const banned of ["/RU", "/RP", "/RI", "/TR"]) {
+    assert.ok(!reg.includes(` ${banned}`), `${banned} must never appear (password prompt hangs headless setup)`);
+  }
+  assert.ok(![...reg].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
+});
+
+test("migrateLayoutPs: mirrors paths.rs pairs, never clobbers, kills boxed node first", () => {
+  const { migrateLayoutPs } = require("../bin/vale.js");
+  const body = migrateLayoutPs("D:\\Vale", "C:\\ProgramData\\Vale").join("\n");
+  for (const pair of [
+    ["D:\\Vale\\config.yaml", "D:\\Vale\\etc\\config.yaml"],
+    ["D:\\Vale\\vale-agent.hostname", "D:\\Vale\\etc\\vale-agent.hostname"],
+    ["D:\\Vale\\.vale-release", "D:\\Vale\\etc\\.vale-release"],
+    ["D:\\Vale\\tools\\node", "D:\\Vale\\components\\node"],
+    ["D:\\Vale\\playwright", "D:\\Vale\\components\\playwright"],
+    ["D:\\Vale\\vale-desktop-electron", "D:\\Vale\\components\\vale-desktop-electron"],
+    ["D:\\Vale\\start-desktop.ps1", "D:\\Vale\\scripts\\start-desktop.ps1"],
+    ["D:\\Vale\\installer.log", "C:\\ProgramData\\Vale\\logs\\installer.log"],
+    ["D:\\Vale\\pwout", "C:\\ProgramData\\Vale\\pwout"],
+  ]) {
+    assert.ok(body.includes(pair[0]) && body.includes(pair[1]), `migration covers ${pair[0]} -> ${pair[1]}`);
+  }
+  assert.match(body, /-not \(Test-Path/, "every move is guarded (never clobbers staged output)");
+  assert.match(body, /CommandLine -like '\*.*playwright\*/, "boxed node processes are stopped before the tree moves");
+  assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });

@@ -39,6 +39,8 @@ exports.deskShortcutRepairPs = deskShortcutRepairPs;
 exports.parseAgentPort = parseAgentPort;
 exports.agentPort = agentPort;
 exports.firewallPs = firewallPs;
+exports.bootTaskPs = bootTaskPs;
+exports.migrateLayoutPs = migrateLayoutPs;
 exports.uninstallVersionPs = uninstallVersionPs;
 exports.autostartArgv = autostartArgv;
 exports.playwrightProbePs = playwrightProbePs;
@@ -78,6 +80,33 @@ function resolveDir() {
 }
 const DIR = resolveDir();
 const EXE_DST = path.join(DIR, "vale-agent.exe");
+// Layout v2 (ADR 0008): the install ROOT keeps only the service exe (+ its
+// transient .new/.old) and the NSIS uninstaller. Everything else lives in
+// one of these — leaf names unchanged (Electron packaging + task arguments
+// are rename-sensitive; only the parent moves).
+const ETC_DIR = path.join(DIR, "etc");
+const COMPONENTS_DIR = path.join(DIR, "components");
+const SCRIPTS_DIR = path.join(DIR, "scripts");
+// DataDir mirrors resolveDir (registry DataDir, else %ProgramData%\Vale) —
+// runtime logs + evidence live there, never in program files.
+function resolveDataDir() {
+    try {
+        const out = (0, child_process_1.spawnSync)("reg", ["query", "HKLM\\SOFTWARE\\Vale\\Agent", "/v", "DataDir"], { encoding: "utf8" });
+        if (out.status === 0 && out.stdout) {
+            const m = /REG_SZ\s+(.+)/.exec(out.stdout.split(/\r?\n/).find((l) => l.includes("DataDir")) || "");
+            if (m && m[1].trim())
+                return m[1].trim();
+        }
+    }
+    catch { /* fall through */ }
+    return path.join(process.env.ProgramData || "C:\\ProgramData", "Vale");
+}
+const DATA_DIR = resolveDataDir();
+const LOGS_DIR = path.join(DATA_DIR, "logs");
+const CFG_FILE = path.join(ETC_DIR, "config.yaml");
+const HOSTNAME_FILE = path.join(ETC_DIR, "vale-agent.hostname");
+const DESK_DIR = path.join(COMPONENTS_DIR, "vale-desktop-electron");
+const PW_DIR = path.join(COMPONENTS_DIR, "playwright");
 const TASK = "ValeAgent";
 // Gateway API base — where the console endpoints live (tunnel-token /
 // register). Overridable for staging.
@@ -125,19 +154,19 @@ exports.psq = psq;
 // needs — callers passing through -Command "..." must backslash-escape
 // them (see setup step 7); the update swap script runs from a file.
 // exported: unit-tested in test/cli.test.mjs.
-function deskShortcutRepairPs(qq, sink) {
+function deskShortcutRepairPs(scriptsQ, deskDirQ, sink) {
     return [
         `$dLnk = Join-Path $env:PUBLIC 'Desktop\\Vale.lnk'`,
-        `$dIco = '${qq}\\vale-desktop-electron\\icon.ico'`,
-        `$dPs1 = '${qq}\\start-desktop.ps1'`,
+        `$dIco = '${deskDirQ}\\icon.ico'`,
+        `$dPs1 = '${scriptsQ}\\start-desktop.ps1'`,
         `$dNeed = $false`,
         `if (Test-Path $dLnk) {`,
         `  try { $dEx = (New-Object -ComObject WScript.Shell).CreateShortcut($dLnk); if (($dEx.TargetPath -like '*vale-desktop.exe') -or ($dEx.TargetPath -like '*vale-tray.exe') -or (-not (Test-Path $dEx.TargetPath))) { $dNeed = $true } } catch { $dNeed = $true }`,
         `}`,
         `if ($dNeed -and (Test-Path $dIco) -and (Test-Path $dPs1)) {`,
-        `  try { $dWs = New-Object -ComObject WScript.Shell; $dSc = $dWs.CreateShortcut($dLnk); $dSc.TargetPath = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $dSc.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $dPs1 + '"'; $dSc.WorkingDirectory = '${qq}\\vale-desktop-electron'; $dSc.IconLocation = $dIco + ',0'; $dSc.Save(); 'desk: Vale.lnk repointed to electron shell' | ${sink} } catch { ('desk: Vale.lnk repair failed: ' + $_.Exception.Message) | ${sink} }`,
+        `  try { $dWs = New-Object -ComObject WScript.Shell; $dSc = $dWs.CreateShortcut($dLnk); $dSc.TargetPath = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $dSc.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $dPs1 + '"'; $dSc.WorkingDirectory = '${deskDirQ}'; $dSc.IconLocation = $dIco + ',0'; $dSc.Save(); 'desk: Vale.lnk repointed to electron shell' | ${sink} } catch { ('desk: Vale.lnk repair failed: ' + $_.Exception.Message) | ${sink} }`,
         `}`,
-        `foreach ($dRx in @('vale-desktop.exe','vale-tray.exe')) { $dRp = '${qq}\\' + $dRx; if (Test-Path $dRp) { try { Remove-Item -Force -ErrorAction Stop $dRp; ('desk: removed retired ' + $dRx) | ${sink} } catch { ('desk: retired ' + $dRx + ' locked, kept') | ${sink} } } }`,
+        `foreach ($dRx in @('vale-desktop.exe','vale-tray.exe')) { $dRp = '${deskDirQ}\\' + $dRx; if (Test-Path $dRp) { try { Remove-Item -Force -ErrorAction Stop $dRp; ('desk: removed retired ' + $dRx) | ${sink} } catch { ('desk: retired ' + $dRx + ' locked, kept') | ${sink} } } }`,
     ];
 }
 // exported: agent bind port plumbing (custom-port installs). server.port
@@ -179,6 +208,78 @@ function firewallPs(port) {
         `$fwPort = ${port};`,
         `foreach ($fr in @(Get-NetFirewallRule -DisplayName 'Vale Agent' -ErrorAction SilentlyContinue)) { try { $fp = @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $fr | Select-Object -ExpandProperty LocalPort); if ($fp -notcontains "$fwPort") { Remove-NetFirewallRule -Name $fr.Name -Confirm:$false -ErrorAction SilentlyContinue } } catch {} }`,
         `if (-not (Get-NetFirewallRule -DisplayName 'Vale Agent' -ErrorAction SilentlyContinue | Where-Object { @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $PSItem | Select-Object -ExpandProperty LocalPort) -contains "$fwPort" })) { New-NetFirewallRule -DisplayName 'Vale Agent' -Direction Inbound -LocalPort $fwPort -Protocol TCP -Action Allow | Out-Null }`,
+    ];
+}
+// exported: ValeAgent boot-task registration (SYSTEM, hardened). The task's
+// -Argument is the EXPLICIT config path (layout v2: etc\config.yaml) — never
+// the exe path (Rust takes argv[1] as the config FILE; an exe path fails
+// YAML parse and quarantines the install). Shared by setup (fresh install)
+// and the update swap (repoint, fail-closed — the repoint runs BEFORE any
+// swap, and a config-path argument boots old AND new agents alike, so a
+// repoint failure aborts the update with the old version still running).
+// `start` appends the kick for setup; the swap omits it (it restarts the
+// task itself after the swap). ASCII-only PS. unit-tested.
+function bootTaskPs(exeQ, cfgQ, start = false) {
+    const lines = [
+        `$action = New-ScheduledTaskAction -Execute '${exeQ}' -Argument ('"' + '${cfgQ}' + '"')`,
+        "$boot = New-ScheduledTaskTrigger -AtStartup",
+        "$watch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)",
+        "$principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest",
+        "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 8 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable",
+        "Register-ScheduledTask ValeAgent -Action $action -Trigger @($boot,$watch) -Principal $principal -Settings $settings -Force | Out-Null",
+    ];
+    if (start)
+        lines.push("Start-ScheduledTask ValeAgent");
+    return lines;
+}
+// exported: layout-v2 one-time migration (ADR 0008) for the setup/update
+// paths. Mirrors paths.rs migration_moves EXACTLY (same pairs — both sides
+// pinned by tests; drift strands upgraded devices). Moves only when the
+// target is missing (never clobbers staged .new output); dirs merge
+// children. Best-effort per item; callers GATE on etc\config.yaml +
+// hostname afterwards (fail-closed). q = escaped DIR, dq = escaped DataDir.
+// ASCII-only PS. unit-tested.
+function migrateLayoutPs(q, dq) {
+    const mvf = (oldRel, newAbs) => `if ((Test-Path '${q}\\${oldRel}') -and (-not (Test-Path '${newAbs}'))) { try { New-Item -ItemType Directory -Force -Path (Split-Path '${newAbs}') | Out-Null; Move-Item -Force -Path '${q}\\${oldRel}' -Destination '${newAbs}' -ErrorAction Stop } catch {} }`;
+    const mvd = (oldRel, newAbs) => `if (Test-Path '${q}\\${oldRel}') { try { if (-not (Test-Path '${newAbs}')) { New-Item -ItemType Directory -Force -Path (Split-Path '${newAbs}') | Out-Null; Move-Item -Path '${q}\\${oldRel}' -Destination '${newAbs}' -ErrorAction Stop } else { Get-ChildItem -Force '${q}\\${oldRel}' | ForEach-Object { if (-not (Test-Path (Join-Path '${newAbs}' $_.Name))) { Move-Item -Force -Path $_.FullName -Destination (Join-Path '${newAbs}' $_.Name) -ErrorAction SilentlyContinue } } } } catch {} }`;
+    const etc = `${q}\\etc`;
+    const comp = `${q}\\components`;
+    const scr = `${q}\\scripts`;
+    const logs = `${dq}\\logs`;
+    return [
+        // A running boxed node locks the playwright tree — stop DIR-local ones
+        // first (setup precedent; the updater itself runs from npm-global,
+        // which never matches the playwright filter).
+        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*${q}*playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+        // etc\
+        mvf("config.yaml", `${etc}\\config.yaml`),
+        mvf("vale-agent.hostname", `${etc}\\vale-agent.hostname`),
+        mvf("tunnel.yml", `${etc}\\tunnel.yml`),
+        mvf(".vale-release", `${etc}\\.vale-release`),
+        mvf("boxed-versions.json", `${etc}\\boxed-versions.json`),
+        // components\ (leaf names unchanged)
+        mvd("tools\\node", `${comp}\\node`),
+        mvd("tools\\npm-global", `${comp}\\npm-global`),
+        mvf("tools\\cloudflared.exe", `${comp}\\cloudflared.exe`),
+        mvd("playwright", `${comp}\\playwright`),
+        mvd("vale-desktop-electron", `${comp}\\vale-desktop-electron`),
+        // scripts\
+        mvf("ensure-desktop.ps1", `${scr}\\ensure-desktop.ps1`),
+        mvf("desktop-pulse.vbs", `${scr}\\desktop-pulse.vbs`),
+        mvf("start-desktop.ps1", `${scr}\\start-desktop.ps1`),
+        mvf("vale-online-setup.ps1", `${scr}\\vale-online-setup.ps1`),
+        mvf("fix-tunnel.ps1", `${scr}\\fix-tunnel.ps1`),
+        mvf("playwright\\run-hidden.vbs", `${scr}\\run-hidden.vbs`),
+        mvf("playwright\\playwright-probe.ps1", `${scr}\\playwright-probe.ps1`),
+        mvd("shell-integration", `${scr}\\shell-integration`),
+        // logs\ (history, never gated)
+        mvf("installer.log", `${logs}\\installer.log`),
+        mvf("install-result.txt", `${logs}\\install-result.txt`),
+        mvf("vale-update.log", `${logs}\\vale-update.log`),
+        mvf("agent.log", `${logs}\\agent.log`),
+        mvf("startup.log", `${logs}\\startup.log`),
+        // evidence (history, never gated)
+        mvd("pwout", `${dq}\\pwout`),
     ];
 }
 // exported: Add/Remove-Programs version parity. The NSIS installer writes
@@ -276,8 +377,10 @@ function boxedVersions(installDir, pkgDir) {
             return "unknown";
         }
     };
-    const cfBin = fs.existsSync(path.join(installDir, "tools", "cloudflared.exe"))
-        ? path.join(installDir, "tools", "cloudflared.exe")
+    // Layout v2: callers (setup/update) always run after staging/migration, so
+    // the components\ homes exist — no legacy fallback (single semantic).
+    const cfBin = fs.existsSync(path.join(installDir, "components", "cloudflared.exe"))
+        ? path.join(installDir, "components", "cloudflared.exe")
         : path.join(pkgDir, "cloudflared.exe");
     let cfVer = "unknown";
     try {
@@ -289,7 +392,7 @@ function boxedVersions(installDir, pkgDir) {
         }
     }
     catch { /* best-effort */ }
-    const pwRoot = path.join(installDir, "playwright");
+    const pwRoot = path.join(installDir, "components", "playwright");
     return {
         updated: new Date().toISOString(),
         playwright_mcp: {
@@ -306,8 +409,8 @@ function boxedVersions(installDir, pkgDir) {
 // exported: best-effort writer for the P2-4 manifest (never throws).
 function writeBoxedVersions(installDir, pkgDir) {
     try {
-        fs.mkdirSync(installDir, { recursive: true });
-        fs.writeFileSync(path.join(installDir, "boxed-versions.json"), JSON.stringify(boxedVersions(installDir, pkgDir), null, 2));
+        fs.mkdirSync(path.join(installDir, "etc"), { recursive: true });
+        fs.writeFileSync(path.join(installDir, "etc", "boxed-versions.json"), JSON.stringify(boxedVersions(installDir, pkgDir), null, 2));
     }
     catch (e) {
         console.log("boxed-versions: manifest write skipped (" + (e?.message || e) + ")");
@@ -326,21 +429,23 @@ function writeReleaseMarker(installDir) {
         const v = String(require("../package.json").version || "");
         if (!v)
             return;
-        fs.writeFileSync(path.join(installDir, ".vale-release"), v, "utf8");
+        // No mkdir: callers (setup/update) always run after staging/migration,
+        // so etc\ exists — a missing dir stays a silent best-effort skip.
+        fs.writeFileSync(path.join(installDir, "etc", ".vale-release"), v, "utf8");
     }
     catch { /* best-effort */ }
 }
 /**
  * Stage the Electron desktop shell sources (main/preload/url-policy +
- * icons) into the install dir. setup writes them in place; update writes
- * `*.new` so the swap script can atomically replace them. The two flows
- * used to each inline this block.
+ * icons) into components\vale-desktop-electron. setup writes them in place;
+ * update writes `*.new` so the swap script can atomically replace them. The
+ * two flows used to each inline this block.
  */
 function stageDesktopShell(installDir, suffix) {
     const DESK_SRC = path.join(__dirname, "..", "vale-desktop-electron", "src");
     if (!fs.existsSync(DESK_SRC))
         return;
-    const desDst = path.join(installDir, "vale-desktop-electron", "src");
+    const desDst = path.join(installDir, "components", "vale-desktop-electron", "src");
     fs.mkdirSync(desDst, { recursive: true });
     for (const f of ["main.js", "preload.js", "url-policy.js"]) {
         const s = path.join(DESK_SRC, f);
@@ -352,7 +457,7 @@ function stageDesktopShell(installDir, suffix) {
     for (const icon of ["icon.png", "icon.ico"]) {
         const iconSrc = path.join(__dirname, "..", "vale-desktop-electron", icon);
         if (fs.existsSync(iconSrc))
-            fs.copyFileSync(iconSrc, path.join(installDir, "vale-desktop-electron", icon));
+            fs.copyFileSync(iconSrc, path.join(installDir, "components", "vale-desktop-electron", icon));
     }
 }
 function svc(action) {
@@ -362,8 +467,8 @@ function svc(action) {
 // DNS route → write tunnel.yml. Used by `vale setup --tunnel` and
 // `vale tunnel install`.
 function initTunnel(hostname, regKey) {
-    const cf = path.join(DIR, "tools", "cloudflared.exe");
-    const cfg = path.join(DIR, "tunnel.yml");
+    const cf = path.join(COMPONENTS_DIR, "cloudflared.exe");
+    const cfg = path.join(ETC_DIR, "tunnel.yml");
     if (!fs.existsSync(cf)) {
         console.error("tunnel: cloudflared.exe not staged at", cf);
         console.error("  reinstall the package (npm i -g vale-agent) to stage it.");
@@ -412,7 +517,7 @@ function initTunnel(hostname, regKey) {
     const cred = path.join(process.env.USERPROFILE || "", ".cloudflared", tunnelId + ".json");
     // Ingress follows the agent's configured bind port (custom ports 502
     // otherwise); DIR/config.yaml may not exist on fresh installs → default.
-    const tunPort = agentPort(DIR);
+    const tunPort = agentPort(ETC_DIR);
     fs.writeFileSync(cfg, [
         "tunnel: " + tunnelId,
         "credentials-file: " + cred,
@@ -445,8 +550,11 @@ const commands = {
         // review #1 (HIGH): the hostname write ran BEFORE the mkdirSync below —
         // on a FRESH machine DIR doesn't exist yet → ENOENT throw → setup died
         // having installed nothing. Ensure the dir first.
-        fs.mkdirSync(DIR, { recursive: true });
-        fs.writeFileSync(path.join(DIR, "vale-agent.hostname"), deviceHost);
+        fs.mkdirSync(ETC_DIR, { recursive: true });
+        fs.mkdirSync(COMPONENTS_DIR, { recursive: true });
+        fs.mkdirSync(SCRIPTS_DIR, { recursive: true });
+        fs.mkdirSync(LOGS_DIR, { recursive: true });
+        fs.writeFileSync(HOSTNAME_FILE, deviceHost);
         // No key required for a local install — key/tunnel are optional extras.
         if (regKey) {
             console.log("setup: registering device with the gateway (--reg-key)");
@@ -455,6 +563,18 @@ const commands = {
             console.log("setup: LOCAL install (no cloud). Configure the gateway later in the Settings page.");
         }
         fs.mkdirSync(DIR, { recursive: true });
+        // Layout-v2 migration (ADR 0008): a re-setup on a pre-v2 device moves
+        // the old root paths into their v2 homes before anything stages.
+        // Idempotent (fresh installs no-op). Runs here — before the residue
+        // cleanup below, which targets the NEW homes.
+        try {
+            const mig = ps(migrateLayoutPs((0, exports.psq)(DIR), (0, exports.psq)(DATA_DIR)).join("; "));
+            if (!mig || mig.status !== 0)
+                console.log("setup: layout migration had warnings (continuing)");
+        }
+        catch {
+            console.log("setup: layout migration skipped (continuing)");
+        }
         // ---- idempotent reinstall: clean every legacy residue BEFORE writing
         // anything (a re-run of `vale setup` must leave a pristine install).
         // 1. Stop any running vale processes (a live agent locks its exe and the
@@ -484,7 +604,7 @@ const commands = {
         //    pair silently skipped it, and the device was left with a playwright
         //    dir WITHOUT node.exe (bridge could never spawn again; observed d1).
         sh(`powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -like '*${(0, exports.psq)(DIR)}*playwright*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`);
-        sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${(0, exports.psq)(DIR)}\\playwright'"`);
+        sh(`powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '${(0, exports.psq)(PW_DIR)}'"`);
         // 6. Legacy install dirs from retired installers (C:\vale-agent /
         //    D:\vale-agent). If the registry now points at a DIFFERENT dir and a
         //    legacy dir exists, it is a residue of the old channel — remove it
@@ -501,7 +621,7 @@ const commands = {
         //    the retired orphans. Repair-only (helper checks link existence).
         //    Backslash-escape the .lnk Arguments double quotes for -Command.
         console.log("setup: reconciling desktop shortcut (retired-exe repair)...");
-        sh(`powershell -NoProfile -Command "${deskShortcutRepairPs((0, exports.psq)(DIR), "Write-Host").join("; ").replace(/"/g, '\\"')}"`);
+        sh(`powershell -NoProfile -Command "${deskShortcutRepairPs((0, exports.psq)(SCRIPTS_DIR), (0, exports.psq)(DESK_DIR), "Write-Host").join("; ").replace(/"/g, '\\"')}"`);
         // C1: write the registry single source of truth (InstallDir; DataDir
         // defaults to %ProgramData%\Vale). Everything else reads it back.
         try {
@@ -510,7 +630,7 @@ const commands = {
         }
         catch { /* non-fatal — runtime falls back to exe dir */ }
         // Pre-create the data dir tree (sessions/memory/logs — C1 separation).
-        const DATA = path.join(process.env.ProgramData || "C:\\ProgramData", "Vale");
+        const DATA = DATA_DIR;
         for (const sub of ["sessions", "memory", "logs"]) {
             fs.mkdirSync(path.join(DATA, sub), { recursive: true });
         }
@@ -524,15 +644,15 @@ const commands = {
         // artifact in the npm package, Vale version-locked.
         const PW_ZIP = path.join(__dirname, "..", "vale-playwright.zip");
         if (fs.existsSync(PW_ZIP)) {
-            const pwDir = path.join(DIR, "playwright");
+            const pwDir = PW_DIR;
             fs.mkdirSync(pwDir, { recursive: true });
-            sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${(0, exports.psq)(PW_ZIP)}' -DestinationPath '${(0, exports.psq)(DIR)}'"`);
+            sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${(0, exports.psq)(PW_ZIP)}' -DestinationPath '${(0, exports.psq)(COMPONENTS_DIR)}'"`);
             // round-163: the whole point of the bundle is node.exe — VERIFY it
             // landed (a silently-missing copy killed the bridge forever on d1).
             // One retry, then fail loudly: a half-staged bundle is worse than none.
             if (!fs.existsSync(path.join(pwDir, "node.exe"))) {
                 console.log("setup: node.exe missing after expand — retrying once");
-                sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${(0, exports.psq)(PW_ZIP)}' -DestinationPath '${(0, exports.psq)(DIR)}'"`);
+                sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${(0, exports.psq)(PW_ZIP)}' -DestinationPath '${(0, exports.psq)(COMPONENTS_DIR)}'"`);
             }
             if (fs.existsSync(path.join(pwDir, "node.exe"))) {
                 console.log("setup: playwright bundle staged (node.exe + node_modules verified)");
@@ -560,12 +680,12 @@ const commands = {
         else {
             console.log("setup: WARNING — node not found in PATH (browser tools need node)");
         }
-        // C2: stage the boxed cloudflared binary into tools/ (optional — local
+        // C2: stage the boxed cloudflared binary into components/ (optional — local
         // mode works without it; only used when the user opts into public access).
         const CF_SRC = path.join(__dirname, "..", "cloudflared.exe");
         if (fs.existsSync(CF_SRC)) {
-            fs.mkdirSync(path.join(DIR, "tools"), { recursive: true });
-            fs.copyFileSync(CF_SRC, path.join(DIR, "tools", "cloudflared.exe"));
+            fs.mkdirSync(COMPONENTS_DIR, { recursive: true });
+            fs.copyFileSync(CF_SRC, path.join(COMPONENTS_DIR, "cloudflared.exe"));
             console.log("setup: cloudflared staged (tunnel optional — `vale tunnel install` to enable)");
         }
         // P2-4: record the boxed-component versions (never fail-closed).
@@ -593,16 +713,8 @@ const commands = {
         //   - battery-safe + StartWhenAvailable
         //   - 5-min repetition watchdog   IgnoreNew = no-op while running;
         //                                 restarts within <=5 min if dead
-        const reg = [
-            `$action = New-ScheduledTaskAction -Execute '${(0, exports.psq)(EXE_DST)}' -Argument ('"' + '${(0, exports.psq)(EXE_DST)}' + '"')`,
-            "$boot = New-ScheduledTaskTrigger -AtStartup",
-            "$watch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)",
-            "$principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest",
-            "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 8 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable",
-            "Register-ScheduledTask ValeAgent -Action $action -Trigger @($boot,$watch) -Principal $principal -Settings $settings -Force | Out-Null",
-            "Start-ScheduledTask ValeAgent",
-        ].join("; ");
-        const regRes = ps(reg);
+        //   - explicit config -Argument   layout v2 (never the exe path)
+        const regRes = ps(bootTaskPs((0, exports.psq)(EXE_DST), (0, exports.psq)(CFG_FILE), true).join("; "));
         if (!regRes || regRes.status !== 0) {
             console.error("setup: FATAL — task registration failed (audit #7: used to claim success regardless).");
             process.exit(1);
@@ -613,7 +725,7 @@ const commands = {
         // loopback, required for LAN clients otherwise). Best-effort, never
         // fail-closed — a locked-down box keeps working locally regardless.
         try {
-            const fwPort = agentPort(DIR);
+            const fwPort = agentPort(ETC_DIR);
             const fw = ps(firewallPs(fwPort).join("; "));
             console.log("setup: firewall inbound TCP " + fwPort + (fw && fw.status === 0 ? " ensured" : " (ensure failed — LAN clients may be blocked)"));
         }
@@ -636,7 +748,7 @@ const commands = {
         }).stdout || "";
         console.log(out.includes("vale-agent") ? "status: RUNNING" : "status: STOPPED");
         console.log("install dir:", DIR);
-        console.log("panel:", fs.existsSync(EXE_DST) ? "http://127.0.0.1:" + agentPort(DIR) + "/panel/" : "(not installed)");
+        console.log("panel:", fs.existsSync(EXE_DST) ? "http://127.0.0.1:" + agentPort(ETC_DIR) + "/panel/" : "(not installed)");
     },
     start() {
         svc("Run");
@@ -733,7 +845,7 @@ const commands = {
         fs.mkdirSync(DIR, { recursive: true });
         fs.copyFileSync(EXE_SRC, path.join(DIR, "vale-agent.new.exe"));
         // stage-l: ship the Electron desktop shell's main/preload alongside —
-        // the desktop app (D:\Vale\vale-desktop-electron) loads these sources;
+        // the desktop app (components\vale-desktop-electron) loads these sources;
         // without the sync, new menu/command features never reach the device.
         // (setup writes in place; update stages *.new for the atomic swap.)
         stageDesktopShell(DIR, ".new");
@@ -741,12 +853,16 @@ const commands = {
         // the current install dir (best-effort, never fail-closed).
         writeBoxedVersions(DIR, path.join(__dirname, ".."));
         const q = DIR.replace(/'/g, "''");
-        const log = `Out-File '${q}\\vale-update.log' -Append`;
+        const qd = DATA_DIR.replace(/'/g, "''");
+        const log = `Out-File '${qd}\\logs\\vale-update.log' -Append`;
         // round-143: write the run-hidden.vbs wrapper next to node.exe, so the
         // ValePlaywright scheduled task can launch node.exe without flashing a
         // visible cmd window. Idempotent — overwrites any existing copy.
-        const pwDir = path.join(DIR, "playwright");
-        const vbsPath = path.join(pwDir, "run-hidden.vbs");
+        // Layout v2: launchers live in scripts\, the runtime stays in
+        // components\playwright\. The old-layout gate keeps migrating devices
+        // refreshed too (migration carries the files over regardless).
+        const pwDir = PW_DIR;
+        const vbsPath = path.join(SCRIPTS_DIR, "run-hidden.vbs");
         // round-246 (browser-display audit C3) + round-257 + round-263:
         // ONE-BROWSER — the AI must drive the SAME browser the user watches:
         // the Electron desktop embedded WebContentsView (CDP 9333). The
@@ -755,8 +871,9 @@ const commands = {
         // launcher that attaches to the DESKTOP view (9333) and falls back to a
         // private headless only when the desktop is down (agent restart window).
         // The bridge chromium (9223) tier was removed in round-263.
-        const probePath = path.join(pwDir, "playwright-probe.ps1");
-        if (fs.existsSync(pwDir)) {
+        const probePath = path.join(SCRIPTS_DIR, "playwright-probe.ps1");
+        fs.mkdirSync(SCRIPTS_DIR, { recursive: true });
+        if (fs.existsSync(pwDir) || fs.existsSync(path.join(DIR, "playwright"))) {
             // round-143: ASCII-only VBS (no em-dash, no Unicode). VBScript on
             // Windows uses the system locale; non-ASCII in comments corrupts the
             // file and causes "unterminated string constant" (800A0409). Use chr(34)
@@ -784,6 +901,19 @@ const commands = {
         catch { /* best-effort */ }
         const script = [
             `"[$(Get-Date -Format o)] update start" | ${log}`,
+            // Layout v2 FIRST: repoint the boot task at the explicit config path
+            // BEFORE touching anything (fail-closed — a config-path argument boots
+            // old AND new agents alike, so aborting here leaves the old version
+            // running untouched). Without this the moved config strands the boot.
+            `try { ${bootTaskPs(`${q}\\vale-agent.exe`, `${q}\\etc\\config.yaml`, false).join("; ")} } catch { "[$(Get-Date -Format o)] task repoint FAILED: $($_.Exception.Message)" | ${log}; try { Remove-Item -Force (Join-Path $env:ProgramData 'ValeAgent\\update-busy') } catch {}; exit 1 }`,
+            `"[$(Get-Date -Format o)] task repointed at etc\\config.yaml" | ${log}`,
+            // Layout-v2 migration (ADR 0008): move pre-v2 root paths into their
+            // v2 homes. Best-effort per item; the gate below is fail-closed.
+            ...migrateLayoutPs(q, qd),
+            // Fail-closed gate: the new agent reads ONLY the v2 homes. A missing
+            // config/hostname here means migration failed — do NOT swap (the old
+            // exe keeps running the old layout until the next update).
+            `if ((-not (Test-Path '${q}\\etc\\config.yaml')) -or (-not (Test-Path '${q}\\etc\\vale-agent.hostname'))) { "[$(Get-Date -Format o)] migration gate FAILED (etc\\config.yaml/hostname missing) — aborting, old version keeps running" | ${log}; try { Remove-Item -Force (Join-Path $env:ProgramData 'ValeAgent\\update-busy') } catch {}; exit 1 }`,
             // A running exe cannot be overwritten on Windows — stop the service
             // first (task end + process kill), THEN swap with retry.
             "try { Stop-ScheduledTask ValeAgent -ErrorAction Stop } catch {}",
@@ -795,14 +925,14 @@ const commands = {
             // round-298: .vale-release is only written when the copy provably
             // completed (a failed swap keeps the device on the OLD exe — the
             // marker must not lie). The marker is what agent_update compares.
-            `if ($ok -and '${relVer}') { Set-Content -Path '${q}\\.vale-release' -Value '${relVer}' -NoNewline -ErrorAction SilentlyContinue }`,
+            `if ($ok -and '${relVer}') { Set-Content -Path '${q}\\etc\\.vale-release' -Value '${relVer}' -NoNewline -ErrorAction SilentlyContinue }`,
             // Add/Remove-Programs parity (same $ok gate — a failed swap must not
             // move the displayed version either).
             ...uninstallVersionPs(q, relVer),
             `Remove-Item -Force -ErrorAction SilentlyContinue '${q}\\vale-agent.new.exe'`,
             // stage-l: swap the desktop shell sources (main/preload) with retry —
             // the running Electron may hold them briefly.
-            `foreach($df in @('main.js','preload.js','url-policy.js')){ $ds='${q}\\vale-desktop-electron\\src\\'+$df+'.new'; if (Test-Path $ds) { $ok2=$false; foreach($i in 1..8){ try { Copy-Item -Force -ErrorAction Stop $ds ('${q}\\vale-desktop-electron\\src\\'+$df); $ok2=$true; break } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item -Force -ErrorAction SilentlyContinue $ds; "[$(Get-Date -Format o)] desk $df ok=$ok2" | ${log} } }`,
+            `foreach($df in @('main.js','preload.js','url-policy.js')){ $ds='${q}\\components\\vale-desktop-electron\\src\\'+$df+'.new'; if (Test-Path $ds) { $ok2=$false; foreach($i in 1..8){ try { Copy-Item -Force -ErrorAction Stop $ds ('${q}\\components\\vale-desktop-electron\\src\\'+$df); $ok2=$true; break } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item -Force -ErrorAction SilentlyContinue $ds; "[$(Get-Date -Format o)] desk $df ok=$ok2" | ${log} } }`,
             // NEVER leave the device dark: even a failed swap must bring the task
             // back up (it will run the old exe until the next update).
             `try { Start-ScheduledTask ValeAgent -ErrorAction Stop } catch { schtasks /Run /TN ValeAgent }`,
@@ -811,14 +941,14 @@ const commands = {
             // Custom-port installs: the firewall rule must track the configured
             // bind port (baked at update time from the live config.yaml — the
             // swap itself runs from a static file and cannot read it).
-            ...firewallPs(agentPort(DIR)),
+            ...firewallPs(agentPort(ETC_DIR)),
             // stage-n: restart the Electron shell so newly-synced main/preload
             // sources take effect. The shell is INDEPENDENT of the ValeAgent task —
             // it probes the configured port and loads /desktop/. Kill + relaunch
             // via start-desktop.ps1 (the same path ValeDesktop onlogon uses); if
             // the task/script is missing (non-desktop install), skip silently.
-            `$deskDir = '${q}\\vale-desktop-electron'`,
-            `$deskStart = '${q}\\start-desktop.ps1'`,
+            `$deskDir = '${q}\\components\\vale-desktop-electron'`,
+            `$deskStart = '${q}\\scripts\\start-desktop.ps1'`,
             // stage-n: harden the SHELL supervisor itself — ValeDesktop gains a
             // 5-minute repetition trigger so a dead electron is reborn within
             // ≤5 min (previously only started at logon: "the watchdog died" left
@@ -831,9 +961,9 @@ const commands = {
             //    (second-instance focuses the window = focus steal every 5 min) —
             //    the guarded ensure-desktop.ps1 checks Get-Process first, and the
             //    wscript wrapper runs it with no console flash.
-            `$en1 = '${q}\\ensure-desktop.ps1'`,
-            `$vb1 = '${q}\\desktop-pulse.vbs'`,
-            `Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "${q}\\start-desktop.ps1"' -Force`,
+            `$en1 = '${q}\\scripts\\ensure-desktop.ps1'`,
+            `$vb1 = '${q}\\scripts\\desktop-pulse.vbs'`,
+            `Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "${q}\\scripts\\start-desktop.ps1"' -Force`,
             `Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "${q}\\ensure-desktop.ps1" & Chr(34), 0, False' -Force`,
             `if ($null -ne (Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue)) {`,
             `  $da = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $vb1 + '"') -WorkingDirectory '${q}'`,
@@ -859,15 +989,15 @@ const commands = {
             `} else { "[$(Get-Date -Format o)] desk: no electron shell (skipped)" | ${log} }`,
             // stage-brand: heal a stale desktop shortcut (Vale.lnk -> retired
             // Tauri exe) + drop the retired orphans. Repair-only, best-effort.
-            ...deskShortcutRepairPs(q, log),
+            ...deskShortcutRepairPs(`${q}\\scripts`, `${q}\\components\\vale-desktop-electron`, log),
             // round-143: re-register ValePlaywright via the wscript/VBS wrapper so
             // node.exe no longer allocates a visible console. Idempotent — task may
             // not exist (older install paths), so wrap in try/catch.
-            `$pwVbs = '${q}\\playwright\\run-hidden.vbs'`,
-            `$pwProbe = '${q}\\playwright\\playwright-probe.ps1'`,
+            `$pwVbs = '${q}\\scripts\\run-hidden.vbs'`,
+            `$pwProbe = '${q}\\scripts\\playwright-probe.ps1'`,
             `if ((Test-Path $pwVbs) -and (Test-Path $pwProbe)) {`,
-            `  $pwNode = '${q}\\playwright\\node.exe'`,
-            `  $pwCli  = '${q}\\playwright\\node_modules\\@playwright\\mcp\\cli.js'`,
+            `  $pwNode = '${q}\\components\\playwright\\node.exe'`,
+            `  $pwCli  = '${q}\\components\\playwright\\node_modules\\@playwright\\mcp\\cli.js'`,
             `  if ((Test-Path $pwNode) -and (Test-Path $pwCli)) {`, // parens: bare -and is a param parse error
             // Read the CURRENT task's UserId BEFORE unregistering — we need to know
             // who the task runs as (Administrator), but $env:USERNAME returns
@@ -892,8 +1022,13 @@ const commands = {
             `    "[$(Get-Date -Format o)] ValePlaywright re-registered (probe launcher, user=$pwUser)" | ${log}`,
             `  }`,
             `}`,
+            // Layout v2: the swap script itself is transient — delete it last
+            // (the Rust agent_update twin already self-deletes; this one lingered
+            // at the install root forever).
+            `try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction Stop } catch {}`,
         ].join("\r\n");
-        fs.writeFileSync(path.join(DIR, "vale-update.ps1"), script);
+        fs.mkdirSync(SCRIPTS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(SCRIPTS_DIR, "vale-update.ps1"), script);
         // Launch the swap via WMI Win32_Process.Create: the child is parented by
         // WmiPrvSE, outside any caller job, so it survives this CLI (and the
         // agent it kills) dying — node's detached spawn does NOT (observed d1).
@@ -909,7 +1044,7 @@ const commands = {
             "-Command",
             "if((Get-ExecutionPolicy) -eq 'Restricted'){ Set-ExecutionPolicy RemoteSigned -Scope LocalMachine -Force }",
         ], { stdio: "ignore", timeout: 30000 });
-        const ps1 = path.join(DIR, "vale-update.ps1");
+        const ps1 = path.join(SCRIPTS_DIR, "vale-update.ps1");
         // stage-n npm audit LOW: DIR can contain characters that break the
         // inner PS double-quote literal (backslash, quote). Escape for the
         // inner -File arg; the outer WMI literal is already escaped on L562.
@@ -954,6 +1089,7 @@ const commands = {
         // recursively deleting — an attacker who controls VALE_AGENT_DIR (env
         // var) or the registry key could point it at D:\Windows or C:\.
         if (!fs.existsSync(path.join(DIR, "vale-agent.exe")) &&
+            !fs.existsSync(path.join(ETC_DIR, "vale-agent.hostname")) &&
             !fs.existsSync(path.join(DIR, "vale-agent.hostname"))) {
             console.error("uninstall: REFUSE — " + DIR + " does not look like a Vale install dir (no vale-agent.exe/hostname). Set VALE_AGENT_DIR to the correct path.");
             process.exit(1);
@@ -1015,8 +1151,8 @@ const commands = {
     // touch the binary directly. This CLI is the only handle.
     tunnel(args) {
         const sub = args[0] || "status";
-        const cf = path.join(DIR, "tools", "cloudflared.exe");
-        const cfg = path.join(DIR, "tunnel.yml");
+        const cf = path.join(COMPONENTS_DIR, "cloudflared.exe");
+        const cfg = path.join(ETC_DIR, "tunnel.yml");
         const has = fs.existsSync(cf) && fs.existsSync(cfg);
         switch (sub) {
             case "status": {
