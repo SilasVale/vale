@@ -114,6 +114,21 @@ smoke_index_release() {
   # installer_sha256, the advertised installer URL must hash to it AND the
   # versionless Setup.exe alias must hash to it too (the landing page
   # links the alias; a stale alias would install the previous release).
+  # Re-read the manifest here (not the copy from the top of this function):
+  # edge propagation can land the new BINARY while still serving the old
+  # manifest — the tgz checks above take minutes (120 MB hashes), which is
+  # usually enough for the manifest to catch up, but re-reading makes the
+  # installer verdict compare against the freshest manifest, not the first.
+  local fresh
+  fresh="$(curl -s -m 30 "$base/api/version" 2>/dev/null)" || fresh=""
+  # Adopt the re-read only if it still carries the installer verdict (or the
+  # first read had none) — never let a mid-smoke manifest downgrade SILENTLY
+  # drop the installer check.
+  if [ -n "$fresh" ] && echo "$fresh" | grep -q '"installer_sha256"'; then
+    live="$fresh"
+  elif [ -n "$fresh" ] && ! echo "$live" | grep -q '"installer_sha256"'; then
+    live="$fresh"
+  fi
   local inst_url inst_want
   inst_url="$(echo "$live" | grep -oP '"installer":"\K[^"]+' | head -1)" || inst_url=""
   inst_want="$(echo "$live" | grep -oP '"installer_sha256":"\K[^"]+' | head -1)" || inst_want=""

@@ -1,7 +1,12 @@
-# Vale Windows 在线安装包 — 测试清单
+# Vale Windows 安装包 — 测试清单
 
 安装包：`https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe`
 （版本钉死，当前 1.2.307；按版本另有 `ValeAgent-Setup-<ver>.exe`。）
+
+自包含（ADR 0009，1.2.307 起）：pinned tgz 打在安装包里，**断网也能装**
+（Electron 那 ~100MB 仍需下载，便携 Node 缺失时也要下）；装完内嵌包
+自删。验证点：全新机拔网线跑安装 → agent 本体 + 面板可用（Electron
+报"未装上"属预期 WARNING），`scripts\` 下无 `vale-agent-*.tgz` 残留。
 
 **只能在备用 Windows 沙盒机上测，不要在生产设备（d1）上跑**——安装会停
 agent、重装同版本并重启桌面壳，中断正在跑的 AI 会话。
