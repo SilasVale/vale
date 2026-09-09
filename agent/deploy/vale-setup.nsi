@@ -24,8 +24,11 @@ OutFile "ValeAgent-Setup-${VALE_VERSION}.exe"
 InstallDir "$PROGRAMFILES\Vale"
 RequestExecutionLevel admin
 
-Icon "vale-agent.ico"
-UninstallIcon "vale-agent.ico"
+; MUI2 owns the Icon call: a bare `Icon` gets overridden by MUI's default
+; (modern-install.ico) at MUI_LANGUAGE time — MUI_ICON/MUI_UNICON are the
+; supported hooks and must precede the page macros.
+!define MUI_ICON "vale-agent.ico"
+!define MUI_UNICON "vale-agent.ico"
 
 ; 品牌头图（scripts/render-installer-art.py 生成，日出主题）
 !define MUI_HEADERIMAGE

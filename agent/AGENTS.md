@@ -2083,6 +2083,14 @@ Last updated: 2026-09-09 round-551 — current release **1.2.306
   wizard (user: 安装过程不需要) — registration is a post-install Gateway-
   card step; ps1 keeps -RegKey for scripted use. Rebuilt + republished
   1.2.306 (156771B, both aliases 200); README-installer.md updated.
+  FOLLOW-UP (same day): user STILL saw the old logo — the exe carried the
+  DEFAULT NSIS sphere. ROOT CAUSE (bisected with minimal compiles): MUI2
+  OVERRIDES a bare `Icon` with modern-install.ico at MUI_LANGUAGE time —
+  the supported hooks are `!define MUI_ICON`/`MUI_UNICON` BEFORE the page
+  macros. Fixed; live exe now verified via pefile to embed the sunrise
+  frames (256 PNG 6660B + 16-48 BMP). LESSON: verify artifact CONTENT
+  (resource frames), not build success — makensis applies the default icon
+  silently. pefile wheel at /tmp/pylibs, PE dump recipe in round notes.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
