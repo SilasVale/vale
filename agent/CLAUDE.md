@@ -106,6 +106,18 @@ then: stop ValeAgent task → kill agent
 tree → copy with retry → restart task. The terminal connection DROPS for ~10 s mid-update; reconnect
 and verify via `/api/status` → `version`.
 
+`vale rollback <x.y.z>` (bin/vale.js): HEAD-checks the pinned tgz on the CDN
+(last-5-per-minor keeps the recent line), `npm install -g --prefix
+<components\npm-global> <tgz>`, then runs the TARGET build's own `vale update`
+so the staged exe IS the rollback build; finally writes `etc\.rollback-pin` +
+syncs `etc\.vale-release` (healing a pre-v2 split-brain marker). `agent_update`
+(Rust) returns `{"status":"pinned"}` for any remote version other than the pin
+while the pin exists; `force:true` on agent_update or `vale rollback --clear`
+removes it. `vale update` does NOT clear the pin (it swaps what npm-global
+holds = the pinned build). `vale autostart <on|off|status>` flips the ENABLED
+flag on both boot tasks — `vale stop` is one-shot (the 5-min watchdog revives
+it), so autostart is the only real "don't start at boot" control.
+
 Gateway (`gateway/`) deploys separately: `cd gateway && wrangler deploy`.
 
 ## Architecture

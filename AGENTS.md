@@ -44,7 +44,9 @@ npm i -g https://agent.saisi.online/vale-agent/vale-agent-<ver>.tgz   # install 
 vale setup                        # PURE LOCAL install — no key, no tunnel, no cloud
 vale setup --reg-key <key>        # optional: also register the device with the gateway
 vale setup --tunnel d1            # optional: also provision the free cloudflared tunnel
-vale update                       # update (same channel)
+vale update                       # update (same channel — swaps what npm-global holds)
+vale rollback <x.y.z> | status | --clear  # pin to a CDN-retained release; blocks agent_update drift (force or --clear overrides)
+vale autostart <on|off|status>    # boot switch (ENABLED flag on both scheduled tasks)
 vale uninstall [--purge-data]     # remove (data kept unless --purge-data)
 vale tunnel status|install|start|stop|update   # tunnel management (boxed component)
 ```

@@ -49,6 +49,7 @@ exports.busyIsFresh = busyIsFresh;
 exports.boxedVersions = boxedVersions;
 exports.writeBoxedVersions = writeBoxedVersions;
 exports.writeReleaseMarker = writeReleaseMarker;
+exports.rollbackVersionOk = rollbackVersionOk;
 /**
  * vale CLI — DSH-style management for the Vale Agent.
  *
@@ -554,6 +555,11 @@ function initTunnel(hostname, regKey) {
     ].join("\n"));
     console.log("tunnel: installed — tunnel.yml written, agent spawns it on boot");
     console.log("  hostname:", host);
+}
+// exported: rollback version gate — a plain dotted triple only (the tgz URL
+// interpolates it; anything else could escape the /vale-agent/ prefix). unit-tested.
+function rollbackVersionOk(v) {
+    return /^\d+\.\d+\.\d+$/.test(v);
 }
 const commands = {
     // `vale setup` = PURE LOCAL install (no key, no tunnel, no cloud). The
@@ -1116,6 +1122,93 @@ const commands = {
         }
         console.log("update: swap launched (connection drops, reconnect in ~10s)");
     },
+    // `vale rollback <x.y.z> | --clear` — pin the device to a CDN-retained
+    // release and prevent the agent_update auto-upgrade from undoing it.
+    // Mechanics (the swap itself reuses the installed package's `update`):
+    //  1. HEAD-check the pinned tgz (CDN keeps last-5-per-minor — a pruned
+    //     version fails HERE with a clear message, not as an npm 404 storm).
+    //  2. npm install -g --prefix <components\npm-global> <tgz> — replaces
+    //     the package whose bin/vale.js + exe the swap below uses.
+    //  3. <npm-global>\vale.cmd update — runs the TARGET version's own swap
+    //     (its staged exe IS the rollback build). Old (pre-v2) scripts write
+    //     .vale-release to the install ROOT; steps 4/5 heal that: sync the
+    //     marker into etc\ and delete the root leftover so agent_update can
+    //     never read a split-brain version.
+    //  4/5. write etc\.rollback-pin = <ver>, sync etc\.vale-release.
+    // agent_update (Rust) refuses any non-matching version while the pin
+    // exists; force:true (or a real Rust-side upgrade) clears it — same for
+    // a later `vale rollback --clear`. A human `vale update` deliberately
+    // does NOT clear the pin: the update flow swaps whatever npm-global
+    // holds, so after rollback that IS the pinned version (no-op), and the
+    // pin stays authoritative for the auto path.
+    rollback(args) {
+        const NPM_GLOBAL = path.join(COMPONENTS_DIR, "npm-global");
+        const PIN = path.join(ETC_DIR, ".rollback-pin");
+        const val = String(args[0] || "");
+        if (val === "--clear") {
+            try {
+                const cur = fs.readFileSync(PIN, "utf8").trim();
+                fs.rmSync(PIN, { force: true });
+                console.log(`rollback: pin cleared (was ${cur || "?"}) — agent_update tracks the release channel again`);
+            }
+            catch {
+                console.log("rollback: no pin present (nothing to clear)");
+            }
+            return;
+        }
+        if (val === "status") {
+            try {
+                console.log("rollback: pinned to", fs.readFileSync(PIN, "utf8").trim());
+            }
+            catch {
+                console.log("rollback: not pinned (tracks the release channel)");
+            }
+            return;
+        }
+        if (!rollbackVersionOk(val)) {
+            console.error("usage: vale rollback <x.y.z> | status | --clear");
+            process.exit(1);
+        }
+        const base = (process.env.VALE_CDN || "https://agent.saisi.online").replace(/\/+$/, "");
+        const url = `${base}/vale-agent/vale-agent-${val}.tgz`;
+        const head = (0, child_process_1.spawnSync)("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "30", "--head", url], { encoding: "utf8", timeout: 40000 });
+        const code = String(head.stdout || "").trim();
+        if (head.status !== 0 || code !== "200") {
+            console.error(`rollback: ${val} is not on the release CDN (HTTP ${code || "?"}) — the last-5-per-minor prune removed it;`
+                + " pick a retained version (see https://agent.saisi.online/vale-agent/version.json for the current line)");
+            process.exit(1);
+        }
+        console.log(`rollback: installing vale-agent ${val} into ${NPM_GLOBAL} ...`);
+        const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+        const inst = (0, child_process_1.spawnSync)(npmCmd, ["install", "-g", "--prefix", NPM_GLOBAL, url], { stdio: "inherit", timeout: 300000 });
+        if (inst.status !== 0) {
+            console.error("rollback: npm install failed — device left untouched");
+            process.exit(1);
+        }
+        const valeCmd = path.join(NPM_GLOBAL, "vale.cmd");
+        if (!fs.existsSync(valeCmd)) {
+            console.error("rollback: vale.cmd missing after install (broken package?) — aborting before any swap");
+            process.exit(1);
+        }
+        console.log(`rollback: swapping in ${val} (connection drops ~10s) ...`);
+        const upd = (0, child_process_1.spawnSync)(valeCmd, ["update"], { stdio: "inherit", timeout: 120000 });
+        if (upd.status !== 0) {
+            console.error("rollback: swap failed — pin NOT written, device still runs the previous release");
+            process.exit(1);
+        }
+        try {
+            fs.mkdirSync(ETC_DIR, { recursive: true });
+            fs.writeFileSync(PIN, val);
+            // Heal a pre-v2 swap's split-brain marker (old CLI wrote ROOT
+            // .vale-release; the agent reads etc\). Root leftover is garbage.
+            fs.writeFileSync(path.join(ETC_DIR, ".vale-release"), val);
+            fs.rmSync(path.join(DIR, ".vale-release"), { force: true });
+            console.log(`rollback: pinned to ${val} — auto-upgrade refused until 'vale rollback --clear' or a forced agent_update`);
+        }
+        catch (e) {
+            console.error("rollback: WARNING — pin/marker write failed (" + e.message + "); device runs " + val + " but agent_update is NOT blocked");
+        }
+    },
     // The ONLY uninstall path (NSIS installer is retired — npm CLI is the
     // single install/update channel). Stops the agent, removes the scheduled
     // tasks, deletes the program dir + registry keys. The DATA dir
@@ -1248,7 +1341,7 @@ const commands = {
 if (require.main === module) {
     const [cmd, ...rest] = process.argv.slice(2);
     if (!cmd || !commands[cmd]) {
-        console.log("vale <setup|status|start|stop|restart|autostart|update|uninstall|run|tunnel> — Vale Agent control");
+        console.log("vale <setup|status|start|stop|restart|autostart|update|rollback|uninstall|run|tunnel> — Vale Agent control");
         Object.keys(commands).forEach((k) => console.log(" ", k));
         process.exit(cmd ? 1 : 0);
     }

@@ -108,6 +108,18 @@ then: stop ValeAgent task → kill agent tree → copy with retry →
 restart task. The terminal connection DROPS for ~10 s mid-update; reconnect
 and verify via `/api/status` → `version`.
 
+`vale rollback <x.y.z>` (bin/vale.js): HEAD-checks the pinned tgz on the CDN
+(last-5-per-minor keeps the recent line), `npm install -g --prefix
+<components\npm-global> <tgz>`, then runs the TARGET build's own `vale update`
+so the staged exe IS the rollback build; finally writes `etc\.rollback-pin` +
+syncs `etc\.vale-release` (healing a pre-v2 split-brain marker). `agent_update`
+(Rust) returns `{"status":"pinned"}` for any remote version other than the pin
+while the pin exists; `force:true` on agent_update or `vale rollback --clear`
+removes it. `vale update` does NOT clear the pin (it swaps what npm-global
+holds = the pinned build). `vale autostart <on|off|status>` flips the ENABLED
+flag on both boot tasks — `vale stop` is one-shot (the 5-min watchdog revives
+it), so autostart is the only real "don't start at boot" control.
+
 Gateway (`gateway/`) deploys separately: `cd gateway && wrangler deploy`.
 
 ## Architecture
@@ -282,18 +294,18 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-09 round-554 — current release **1.2.307 LIVE on d1
+Last updated: 2026-09-09 round-555 — current release **1.2.307 LIVE on d1
   (package.json + CDN version.json + GitHub release; last-5-per-minor prune
   active; Windows online installer ValeAgent-Setup.exe on the CDN)**; e2e
   suite 47 checks; all matrices green. Rounds 273-317 in this log; the
-  round log continues below (ROUND-319..554 inlined under "Current
-  release"). ROUND-554 = the file-transfer relay became the ONE transfer
-  method (both directions DEVICE-VERIFIED with a 30 MB payload through the
-  console MCP), the dead Windows `system_file_download` path was fixed, and
-  the console-MCP visibility drift got a device-generated contract
-  (agent/spec-tools.json + NOT_EXPOSED). keep-latest ran (GitHub holds only
-  v1.2.307). OPEN for sign-off: the P0 reconcile's whole-tgz equality, which
-  PE non-reproducibility makes unsatisfiable (member-wise finding below).
+  round log continues below (ROUND-319..555 inlined under "Current
+  release"). ROUND-555 = installer made user-usable (Setup.exe served +
+  installer_sha256 in the manifest + DisplayVersion parity), layout v2
+  (ADR 0008: etc\/components\/scripts\ + DataDir logs\/pwout\), the
+  migration-surfaced task-argument brick fixed, start-desktop.ps1 given a
+  writer, migration marker aging, `vale autostart` + `vale rollback`.
+  NOT yet on a device: v2 migration + rollback + autostart ship as 1.2.308
+  once the Windows sandbox run is green. Rounds 273-317 in this log.
 
 ### OPEN decisions (product sign-off needed — do NOT change without one)
 - **settings_put invalid-JSON envelope: RESOLVED 2026-09-08** (was HTTP
@@ -2209,6 +2221,53 @@ Last updated: 2026-09-09 round-554 — current release **1.2.307 LIVE on d1
   instead of whole-tgz bytes) still awaits sign-off; --skip-reconcile for
   a first publish remains the only usable path, and the post-tag checklist
   is where the real audit has to happen.
+  ROUND-555 (2026-09-09): INSTALLER MADE USER-USABLE + layout v2 (ADR
+  0008) + autostart + rollback pin. (1) The share front-end was BROKEN:
+  index.js 302'd ValeAgent-Setup.exe to the console and 404'd versioned
+  names, so the landing-page download button never delivered a binary —
+  now the alias + versioned exes serve straight from ASSETS (exact-pattern
+  discipline). version.json gained installer + installer_sha256 (additive;
+  the worker passes them through /api/version after flat-name validation),
+  the installer is built same-release (publish-release.sh stages +
+  prune_installers keeps last-5), and smoke verifies the alias hash.
+  (2) `vale update` now writes DisplayVersion (uninstallVersionPs, $ok-
+  gated, never fabricates UninstallString) — the control-panel entry used
+  to show the original version forever. (3) `vale autostart on|off|status`
+  — the real boot switch (schtasks /Change /ENABLE on ValeAgent +
+  ValeDesktop; stop is one-shot, the 5-min watchdog revives it). (4) LAYOUT
+  v2: the install root held ~15 loose files + three inconsistent depths;
+  now etc\ / components\ / scripts\ under InstallDir and logs\ + pwout\
+  under DataDir (leaf names unchanged — Electron packaging + task args are
+  rename-sensitive; only the parent moves). The migration surfaced a REAL
+  BRICK: the ValeAgent task's -Argument was the exe PATH and Rust treats
+  argv[1] as the config FILE, so a moved config made the new exe quarantine
+  the install — bootTaskPs now passes etc\config.yaml explicitly, and BOTH
+  swap paths repoint the task fail-closed BEFORE touching any file (a
+  config-path arg boots old and new agents alike, so a failed repoint aborts
+  the update with the old version running). One-version boot backstop
+  (paths.rs migrate_layout_v2 + PS migrateLayoutPs, mirror pairs, both
+  pinned by tests) moves v1→v2; never clobbers, merges dirs, gates on
+  etc\config.yaml+hostname. (5) start-desktop.ps1 HAD NO WRITER — the
+  shell's onlogon relaunch was broken by omission (absent from repo + git
+  history); startDesktopPs now ships from setup/update/installer, and the
+  swap's desktop-pulse.vbs ensure-desktop path was fixed (pointed at the
+  root). (6) Migration MARKER AGING (etc\.layout-v2): the backstop stops
+  re-scanning 24 paths once a pass ends with nothing pending (a failed move
+  retries; a merged dir with a present target is never pending — locked
+  leftovers are uninstall garbage, not migration state). PS keeps every
+  statement single-line with the guard in $valeMg (setup joins via
+  -Command). Deletion criterion in ADR 0008. (7) `vale rollback <ver>` +
+  Rust pin: HEAD-checks the CDN-retained tgz, installs to
+  components\npm-global, runs the TARGET build's own update, writes
+  etc\.rollback-pin + heals a split-brain .vale-release; agent_update
+  returns {"status":"pinned"} for any other remote unless force (which
+  clears it). Matrices (all green): agent lib 347 (feat-gated), clippy -D
+  warnings + fmt + xwin check clean; index 66; npm CLI 15; release-lib 20.
+  CDN LIVE: 1.2.307 tgz + installer alias/versioned serve 200 with matching
+  shas (installer_sha256 2169f0ea…, verified). NOT yet run on a device: the
+  layout-v2 migration + rollback + autostart need the Windows sandbox
+  (README-installer checklist gained the v2 verification items); ship as
+  1.2.308 once green.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent

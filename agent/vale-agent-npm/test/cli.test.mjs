@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, BOOT_TASKS, autostartArgv, bootTaskPs, migrateLayoutPs, startDesktopPs } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, BOOT_TASKS, autostartArgv, bootTaskPs, migrateLayoutPs, startDesktopPs, rollbackVersionOk } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -191,4 +191,15 @@ test("migrateLayoutPs: mirrors paths.rs pairs, never clobbers, kills boxed node 
   assert.ok(body.includes("if ($valeMg -and (-not (") && body.includes("(Test-Path 'D:\\Vale\\config.yaml')"), "marker write gated on pending pairs");
   assert.ok(body.includes(`New-Item -ItemType File -Force -Path 'D:\\Vale\\etc\\.layout-v2'`), "marker file itself");
   assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
+});
+
+test("rollbackVersionOk: plain dotted triples only (URL interpolation gate)", () => {
+  const { rollbackVersionOk } = require("../bin/vale.js");
+  assert.equal(rollbackVersionOk("1.2.307"), true);
+  assert.equal(rollbackVersionOk("0.0.1"), true);
+  assert.equal(rollbackVersionOk("1.2"), false, "two parts");
+  assert.equal(rollbackVersionOk("1.2.3.4"), false, "four parts");
+  assert.equal(rollbackVersionOk("1.2.307/../../evil"), false, "path escape");
+  assert.equal(rollbackVersionOk("--clear"), false, "flag is not a version");
+  assert.equal(rollbackVersionOk(""), false);
 });

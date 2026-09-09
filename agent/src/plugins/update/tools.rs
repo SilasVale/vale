@@ -99,6 +99,14 @@ fn install_dir() -> PathBuf {
     crate::paths::install_dir()
 }
 
+/// Pure rollback-pin decision (unit-tested): a non-empty pin blocks any
+/// remote that differs from it, unless force overrides. pin == remote is
+/// allowed (the release channel caught up to the pin — installing it does
+/// not undo the pin's intent, and the pin keeps guarding later drift).
+fn pin_blocks(pin: &str, remote: &str, force: bool) -> bool {
+    !force && !pin.is_empty() && pin != remote
+}
+
 /// Best-effort removal of staged `.new` files after a FAILED update.
 /// A failed staging must leave zero appliable leftovers: the swap script
 /// applies staged `.new` files, so a failure that kept them would let a
@@ -442,6 +450,29 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 });
                 }
 
+                // vale rollback pin (ADR 0008 companion): while
+                // etc\.rollback-pin exists, agent_update must NOT drift the
+                // device off the pinned version — the AI-push path is
+                // exactly the auto-upgrade that would undo a human
+                // rollback. force:true is the explicit override and clears
+                // the pin (same intent a `vale rollback --clear`).
+                let pin = std::fs::read_to_string(crate::paths::etc_dir().join(".rollback-pin"))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                if pin_blocks(&pin, &remote, force) {
+                    return Ok(json!({
+                        "status": "pinned",
+                        "pinned_to": pin,
+                        "remote": remote,
+                        "current": local,
+                        "message": format!("device pinned to {pin} by 'vale rollback' — 'vale rollback --clear' on the device, or force:true, overrides"),
+                    }));
+                }
+                if force && !pin.is_empty() {
+                    let _ = std::fs::remove_file(crate::paths::etc_dir().join(".rollback-pin"));
+                    tracing::info!("[vale-agent] agent_update: force cleared rollback pin {pin}");
+                }
+
                 if !newer(&remote, &local) && !force {
                     return Ok(json!({
                         "status": "up_to_date",
@@ -642,6 +673,18 @@ mod tests {
         assert_eq!(parse_version("0.9"), vec![0, 9]);
         assert_eq!(parse_version("1.0.72"), vec![1, 0, 72]);
         assert_eq!(parse_version(""), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn pin_blocks_matrix() {
+        // No pin (empty) never blocks — the release channel is authoritative.
+        assert!(!pin_blocks("", "1.2.308", false));
+        assert!(!pin_blocks("", "1.2.308", true));
+        // A pin blocks every OTHER version; the pinned version itself passes.
+        assert!(pin_blocks("1.2.307", "1.2.308", false));
+        assert!(!pin_blocks("1.2.307", "1.2.307", false));
+        // force is the explicit human override — never blocks.
+        assert!(!pin_blocks("1.2.307", "1.2.308", true));
     }
 
     #[test]
