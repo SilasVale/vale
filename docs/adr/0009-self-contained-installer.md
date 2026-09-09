@@ -25,7 +25,19 @@ makensis 把已 stage 的 `vale-agent-<ver>.tgz` 用 `File` 打进安装包；
 - 安装包 150KB → ~6.7MB（CDN 流量 + 用户下载时间；仍远小于 Electron
   那 ~100MB）。
 - 失败安装会在 scripts\ 留一个 6MB tgz（重跑覆盖；卸载删干净）。
-- 不解决签名问题：SmartScreen 照样拦（要 Authenticode 证书，另议）。
+
+## 签名（SmartScreen）
+
+- 自包含解决"篡改可验证"（installer_sha256 覆盖整个 exe），不解决
+  "系统认识"——无 Authenticode 证书，首次运行照样蓝屏警告，用户点
+  "更多信息 → 仍要运行"，或对哈希自证。
+- 根治 = 买公网 CA 证书：OV（~$100–300/年，公司实名，靠下载量攒
+  reputation，初期仍可能弹）或 EV（~$300–500/年+硬件 token，即时信任）。
+- 流水线已就绪：`build-installer.sh sign_exe`（osslsigncode userspace，
+  `-h sha256`，可选 TSA；无证书自动跳过，构建照常可发），自签名证书
+  全链路验证过（sign → verify ok，+1471B）。买完设
+  `VALE_SIGN_CRT`/`VALE_SIGN_KEY`（+可选 `VALE_SIGN_PASS`/`VALE_SIGN_TSA`）
+  即插即用——证书和密码永不进仓库、不进日志。
 
 ## 顺序约束
 

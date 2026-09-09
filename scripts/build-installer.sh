@@ -35,6 +35,43 @@ NSIS_ROOT="$HOME/nsis-root"
 NSIS_SRC_DIR="$HOME/nsis-src/nsis-3.12-src"
 NSIS_DIST="$HOME/nsis-dist"
 MAKENSIS="$NSIS_DIST/bin/makensis"
+OSSLSIGNCODE="$HOME/osslsigncode-root/usr/bin/osslsigncode"
+
+# Optional Authenticode signing (kills the SmartScreen blue warning).
+# Provide VALE_SIGN_CRT (PEM cert file) + VALE_SIGN_KEY (PEM key file),
+# optionally VALE_SIGN_PASS (key password) and VALE_SIGN_TSA (RFC3161
+# timestamp URL — without it the signature dies with the cert).
+# NEVER commit these, never echo them. No cert = skip with a note (the
+# build stays shippable; SmartScreen will warn on first run).
+# A self-signed cert exercises the whole pipeline (sign+verify) but buys
+# ZERO trust — SmartScreen only respects public CA certs (OV: cheaper,
+# warns until reputation accrues; EV: instant trust, hardware token).
+sign_exe() { # $1 = exe path to sign in place
+  local exe="$1"
+  if [[ -z "${VALE_SIGN_CRT:-}" || -z "${VALE_SIGN_KEY:-}" ]]; then
+    echo "-- code signing skipped (VALE_SIGN_CRT/VALE_SIGN_KEY unset; SmartScreen will warn)"
+    return 0
+  fi
+  [[ -f "$VALE_SIGN_CRT" ]] || { echo "::error::VALE_SIGN_CRT not found: $VALE_SIGN_CRT" >&2; return 1; }
+  [[ -f "$VALE_SIGN_KEY" ]] || { echo "::error::VALE_SIGN_KEY not found: $VALE_SIGN_KEY" >&2; return 1; }
+  if [[ ! -x "$OSSLSIGNCODE" ]]; then
+    echo "::error::osslsigncode missing at $OSSLSIGNCODE (cert given but no tool)" >&2
+    return 1
+  fi
+  local args=(sign -certs "$VALE_SIGN_CRT" -key "$VALE_SIGN_KEY" -h sha256
+    -in "$exe" -out "$exe.signed")
+  [[ -n "${VALE_SIGN_PASS:-}" ]] && args+=( -pass "${VALE_SIGN_PASS}" )
+  if [[ -n "${VALE_SIGN_TSA:-}" ]]; then args+=( -ts "${VALE_SIGN_TSA}" );
+  else echo "-- WARN: no VALE_SIGN_TSA — signature expires with the cert"; fi
+  LD_LIBRARY_PATH="$HOME/osslsigncode-root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}" \
+    "$OSSLSIGNCODE" "${args[@]}" \
+    || { echo "::error::osslsigncode sign failed" >&2; return 1; }
+  LD_LIBRARY_PATH="$HOME/osslsigncode-root/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}" \
+    "$OSSLSIGNCODE" verify "$exe.signed" >/dev/null \
+    || { echo "::error::signed exe failed verify" >&2; return 1; }
+  mv "$exe.signed" "$exe"
+  echo "signed: $exe ($(stat -c %s "$exe") bytes)"
+}
 
 cf_token() {
   if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then echo "$CLOUDFLARE_API_TOKEN";
@@ -116,6 +153,9 @@ echo "== compile =="
 ( cd "$STAGE" && "$MAKENSIS" "-DVALE_VERSION=$VER" "-DVALE_CDN=$CDN_BASE" vale-setup.nsi )
 EXE="$STAGE/ValeAgent-Setup-$VER.exe"
 [[ -f "$EXE" ]] || { echo "::error::makensis produced no exe" >&2; exit 1; }
+# Sign BEFORE the size proof + staging so every downstream hash
+# (manifest installer_sha256, smoke) covers the final shipped bytes.
+sign_exe "$EXE"
 SIZE=$(stat -c %s "$EXE")
 # 自包含证明：成品必须比内嵌的 tgz 还大（stub+lzma 开销）。在线包时代的
 # 150KB 门已作废——一个 200KB 的"自包含"包一定是 tgz 没打进去。

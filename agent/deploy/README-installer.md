@@ -11,6 +11,19 @@
 **只能在备用 Windows 沙盒机上测，不要在生产设备（d1）上跑**——安装会停
 agent、重装同版本并重启桌面壳，中断正在跑的 AI 会话。
 
+## SmartScreen 蓝色警告（预期内，无证书前一直会有）
+
+包没有 Authenticode 签名，首次运行必弹"已阻止无法识别的应用"。
+点**更多信息** → **仍要运行**。不放心就对哈希：
+`certutil -hashfile ValeAgent-Setup.exe SHA256`，跟
+`https://agent.saisi.online/vale-agent/version.json` 里的
+`installer_sha256` 比对，一致即没被篡改。签名流水线已就绪
+（`build-installer.sh` 的 sign_exe：自签名全链路验证过），只差买一张
+公网 CA 证书（OV 约 $100–300/年，需公司实名，攒 reputation；EV 约
+$300–500/年，即时信任）——买完设 `VALE_SIGN_CRT/VALE_SIGN_KEY`
+（+ 可选 `VALE_SIGN_PASS`/`VALE_SIGN_TSA`）即插即用，无证书时构建
+自动跳过。
+
 ## 安装测试（全新机器最佳）
 
 1. 右键 → 以管理员身份运行 `ValeAgent-Setup.exe`。
