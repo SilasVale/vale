@@ -161,3 +161,92 @@ mod guard_tests {
         assert_eq!(*g, vec![1, 2, 3], "recovered guard keeps the data");
     }
 }
+
+#[cfg(test)]
+mod handler_tests {
+    //! round-118 contract: every tool handler is an async closure behind the
+    //! blanket impl, and cooperative cancellation is OPT-IN — the default
+    //! call_cancellable delegates to call (a pre-cancelled token must neither
+    //! fail nor hang a tool that doesn't observe it). No tokio runtime exists
+    //! in this crate (only tokio::sync + vocabulary types, by design), so a
+    //! tiny std-only block_on drives the immediately-ready test futures.
+    use super::*;
+
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+        fn no_op(_: *const ()) {}
+        fn clone(_: *const ()) -> RawWaker {
+            raw_waker()
+        }
+        fn raw_waker() -> RawWaker {
+            static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
+        // SAFETY: the waker never dereferences its (null) data pointer —
+        // all four vtable entries are no-ops — and the future is never
+        // moved after pinning nor polled after Ready.
+        let waker = unsafe { Waker::from_raw(raw_waker()) };
+        let mut cx = Context::from_waker(&waker);
+        let mut fut = Box::pin(fut);
+        loop {
+            match fut.as_mut().poll(&mut cx) {
+                Poll::Ready(v) => return v,
+                // Test futures are immediately ready (no real I/O to wait
+                // on); yield rather than spin if one ever pends.
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+    }
+
+    fn echo_def() -> ToolDef {
+        ToolDef::new(
+            "echo",
+            "echoes params",
+            serde_json::json!({"type": "object"}),
+            |params: serde_json::Value| async move { Ok::<_, DeviceError>(params) },
+        )
+    }
+
+    #[test]
+    fn closure_handlers_dispatch_and_keep_their_def() {
+        let def = echo_def();
+        assert_eq!(def.name, "echo");
+        assert_eq!(def.description, "echoes params");
+        assert_eq!(def.input_schema, serde_json::json!({"type": "object"}));
+        let out = block_on(def.handler.call(serde_json::json!({"a": 1}))).unwrap();
+        assert_eq!(out, serde_json::json!({"a": 1}));
+    }
+
+    #[test]
+    fn default_call_cancellable_delegates_to_call() {
+        let def = echo_def();
+        // Pre-cancelled: a tool WITHOUT cooperative cancellation must still
+        // behave exactly like a plain call (cancellation is opt-in per tool,
+        // wired in server.rs panic isolation for the first tool that needs it).
+        let cancel = tokio_util::sync::CancellationToken::new();
+        cancel.cancel();
+        let via_default = block_on(
+            def.handler
+                .call_cancellable(serde_json::json!({"a": 1}), cancel),
+        )
+        .unwrap();
+        assert_eq!(via_default, serde_json::json!({"a": 1}));
+        // And errors propagate through the default path untouched.
+        let failing = ToolDef::new(
+            "fail",
+            "always fails",
+            serde_json::json!({"type": "object"}),
+            |_params: serde_json::Value| async move {
+                Err::<serde_json::Value, _>(DeviceError::InvalidParams {
+                    message: "nope".into(),
+                })
+            },
+        );
+        let err = block_on(failing.handler.call_cancellable(
+            serde_json::json!({}),
+            tokio_util::sync::CancellationToken::new(),
+        ))
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_params");
+    }
+}
