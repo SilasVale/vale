@@ -586,7 +586,8 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
 /// testKey probe response: {ok, name, status} plus a per-provider success
 /// text or the upstream status on failure. The six probe branches used to
 /// each inline this jsonOk shape.
-function keyProbeResult(name: string, res: Response, okText: string): Response {
+// Exported for direct pins (SOLID Round-32; additive — handlers untouched).
+export function keyProbeResult(name: string, res: Response, okText: string): Response {
   return jsonOk({
     ok: res.ok,
     name,
@@ -595,7 +596,8 @@ function keyProbeResult(name: string, res: Response, okText: string): Response {
   });
 }
 
-async function testKey(env: any, name: string, key: string): Promise<Response> {
+// Exported for direct pins (SOLID Round-32; additive — handlers untouched).
+export async function testKey(env: any, name: string, key: string): Promise<Response> {
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
   try {
     if (name === "DEEPSEEK_API_KEY") {
