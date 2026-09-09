@@ -309,6 +309,25 @@ mod tests {
         assert!(t.input_schema.contains_key("properties"));
     }
 
+    // SOLID Round-29: the non-object fallback (unwrap_or_default) silently
+    // becomes `{}` — pin it so a future schema-shape change surfaces here,
+    // not as a mysteriously permissive tool in an AI client.
+    #[test]
+    fn tool_conversion_non_object_schema_falls_back_to_empty() {
+        let def = vale_agent_core::ToolDef::new(
+            "x",
+            "d",
+            serde_json::json!([1, 2]),
+            |_p: serde_json::Value| async move { Ok::<_, DeviceError>(serde_json::json!({})) },
+        );
+        let t = to_mcp_tool(&def);
+        assert_eq!(t.name, "x");
+        assert!(
+            t.input_schema.is_empty(),
+            "non-object schema → empty object"
+        );
+    }
+
     // bind() DNS resolution (the `host: localhost` dark-device fix): a DNS
     // name must resolve and serve, an unresolvable one must fail LOUD at
     // bind — never 5 futile retries + silence.
