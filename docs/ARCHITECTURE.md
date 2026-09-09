@@ -2,7 +2,7 @@
 
 > Status: maintained ｜ Last full review: 2026-09-08 (09-07/09-08 sweep: Vercel retirement, vrelay, relay token, extension→code-server) ｜ Scope: the whole repo
 >
-> SOLID program 2026-09-09 (rounds 1–14, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 37 gateway / 9 Rust pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
+> SOLID program 2026-09-09 (rounds 1–24, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 37 gateway / 12 Rust / 4 CLI / 49 relay / 4 extension pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
 >
 > Single-page map of every module's boundary verdict. Each entry carries the
 > evidence (file-header note, ADR, or audit round). When a boundary verdict
@@ -40,6 +40,7 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 | `agent/src/tools/` | TRANSPORTS (ssh=russh, serial=SerialPool) UNDER the terminal backends; the two ssh.rs are layers, not duplicates | da6a6137 |
 | `index/src/` | single-file router + extracted pure modules (claim.js, page.js) | 81b1c40f |
 | `proxies/*` | one-file workers, DELIBERATELY autonomous (ADR 0003) — ~90 lines of CORS/safeEq duplication is the accepted cost of independent secrets/deploys | 5e1f410e review |
+| `proxies/api-relay` | VPS relay: entry.mjs (HTTP plumbing only) + routing.mjs (pure table+matchers, table-param seam) + api/ edge handlers with exported pure guards (SOLID R18–R23: first tests this tree ever had) | server/routing.mjs header |
 
 ## Module boundary verdicts (all reviewed 2026-08/09)
 
@@ -97,10 +98,12 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 | Subproject | Gate | Count |
 |---|---|---|
 | gateway | tsc + eslint(src+ui) + prettier + node --test | 655 (recounted 2026-09-09: 610 → 655, incl. 37 SOLID-program pins R1–R14; suite green) |
-| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 392 feat-gated terminal,keyring (recounted 2026-09-09: 349 lib + 5 bin + 27 + 1 + 2 + 7 + 1 integration; default-config lib 342; suite green) |
+| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 395 feat-gated terminal,keyring (recounted 2026-09-09: 352 lib + 5 bin + 27 + 1 + 2 + 7 + 1 integration; default-config lib 345; suite green) |
 | vale-agent-core | cargo test + clippy -D warnings + fmt --check | 22 (15 + 7 SOLID-program pins R11–R12; suite green) |
+| vale CLI (npm) | node --test | 20 (16 + 4 SOLID-program pins R17: boxed-manifest contract; suite green) |
+| api-relay (vrelay) | node --test + build-relay.sh bundle build | 49 (0 → 49 across SOLID R18–R23: routing seam + zen/proxy/github/git/gform gates; suite green) |
+| extension | node --check all JS + node --test pure guards | 4 (SOLID R24: httpsOrigin MITM table; CI extension job runs them) |
 | proxies (×2) | node --test behavior suites + wrangler dry-run | 20 |
 | ~~studio~~ | retired (ADR 0006); CI studio job dropped, suite lives in git history | — |
 | electron | node --test (url-policy) + tsc build | 4 |
-| extension | node --check all JS | — |
 | release chain | release-lib regression + bin/electron freshness + tgz content gate + fail-closed smoke/reconcile | 11 checks |
