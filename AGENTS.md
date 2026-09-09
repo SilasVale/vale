@@ -49,6 +49,12 @@ vale uninstall [--purge-data]     # remove (data kept unless --purge-data)
 vale tunnel status|install|start|stop|update   # tunnel management (boxed component)
 ```
 
+- Sharing front-end (2026-09-09): the online installer
+  (`agent.saisi.online/vale-agent/ValeAgent-Setup.exe`, NSIS 3.12, built by
+  `scripts/build-installer.sh <ver>`) bootstraps Node, installs the pinned
+  tgz and runs `vale setup` — same npm channel underneath, updates still via
+  `vale update`. The RETIRED Tauri-era NSIS/`setup.ps1` stay retired.
+
 - Install layout is registry-first: `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}`
   is the single source of truth; all path resolution goes through
   `agent/src/paths.rs` (`install_dir()` / `data_dir()`). No legacy-directory

@@ -352,8 +352,10 @@ export default {
     // npm must hit the host that actually serves the tgz, and no production
     // domain is hardcoded.
     const installerUrl = `${url.origin}/vale-agent/vale-agent-latest.tgz`;
+    // Windows setup.exe 别名（build-installer.sh 每次发版同步），同源、无硬编码。
+    const setupUrl = `${url.origin}/vale-agent/ValeAgent-Setup.exe`;
 
-    return new Response(PAGE(consoleUrl, installerUrl), {
+    return new Response(PAGE(consoleUrl, installerUrl, setupUrl), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   },

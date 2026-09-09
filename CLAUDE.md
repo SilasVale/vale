@@ -35,6 +35,11 @@ vale uninstall [--purge-data]     # remove (data kept unless --purge-data)
 vale tunnel status|install|start|stop|update   # tunnel management (boxed component)
 ```
 
+- Sharing front-end (2026-09-09): the online installer
+  (`ValeAgent-Setup.exe` on the CDN, NSIS 3.12, `scripts/build-installer.sh`)
+  wraps the same npm channel (pinned tgz + `vale setup`); updates still via
+  `vale update`.
+
 - Install layout is registry-first: `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}`
   is the single source of truth (`agent/src/paths.rs`). No legacy-directory probing.
 - Boxed components (playwright, cloudflared) are version-locked by the

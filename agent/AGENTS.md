@@ -42,8 +42,12 @@ Output binaries:
   zero `current_exe()` guesses outside it, zero legacy-directory probing.
 - Boxed components: `vale-playwright.zip` → `InstallDir\playwright\`,
   `cloudflared.exe` → `InstallDir\tools\` (agent-supervised, no Windows service).
-- The NSIS installer / setup.ps1 / run-setup.bat are RETIRED
-  (`deploy/retired/`).
+- The OLD NSIS installer / setup.ps1 / run-setup.bat are RETIRED
+  (`deploy/retired/`). Sharing front-end: the NEW online installer
+  (`deploy/vale-setup.nsi` + `vale-online-setup.ps1`, NSIS 3.12, built by
+  `scripts/build-installer.sh <ver>`) wraps the same npm channel (bootstraps
+  Node, installs the pinned tgz, runs `vale setup`); test checklist in
+  `deploy/README-installer.md`.
 
 ## Device update — npm one-click update (THE ONLY sanctioned rollout path)
 
