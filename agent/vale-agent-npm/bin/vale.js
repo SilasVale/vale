@@ -42,6 +42,7 @@ exports.agentPort = agentPort;
 exports.firewallPs = firewallPs;
 exports.bootTaskPs = bootTaskPs;
 exports.migrateLayoutPs = migrateLayoutPs;
+exports.uninstallRegBodyPs = uninstallRegBodyPs;
 exports.uninstallVersionPs = uninstallVersionPs;
 exports.autostartArgv = autostartArgv;
 exports.playwrightProbePs = playwrightProbePs;
@@ -319,16 +320,39 @@ function migrateLayoutPs(q, dq) {
 // but never fabricates UninstallString (NSIS owns it; npm uninstall is
 // `vale uninstall`). q = single-quote-escaped install dir, ver = release
 // version. ASCII-only PS. unit-tested.
-function uninstallVersionPs(q, ver) {
+// exported: Add/Remove-Programs entry body (shared by setup + the update
+// swap). Writes DisplayVersion/DisplayName/InstallLocation/Publisher always;
+// writes UninstallString ONLY when absent — NSIS installs own theirs
+// ($INSTDIR\uninstall.exe) and it must never be overwritten. The fallback
+// value relaunches vale.cmd ELEVATED (control panel does not elevate for
+// us; without RunAs the uninstall dies on HKLM/schtasks with access
+// denied), preferring components\npm-global (layout v2) then the legacy
+// tools\ path. Best-effort try/catch throughout — a registry failure must
+// never fail install/update. Empty ver = no-op. ASCII-only PS. unit-tested.
+function uninstallRegBodyPs(q, ver) {
+    if (!ver)
+        return [];
     return [
-        `if ($ok -and '${ver}') { try {`,
+        `try {`,
         `  $rk = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ValeAgent'`,
         `  if (-not (Test-Path $rk)) { New-Item -Path $rk -Force | Out-Null }`,
         `  Set-ItemProperty -Path $rk -Name DisplayVersion -Value '${ver}' -ErrorAction Stop`,
         `  Set-ItemProperty -Path $rk -Name DisplayName -Value 'Vale Agent ${ver}' -ErrorAction Stop`,
         `  Set-ItemProperty -Path $rk -Name InstallLocation -Value '${q}' -ErrorAction Stop`,
         `  Set-ItemProperty -Path $rk -Name Publisher -Value 'Vale' -ErrorAction Stop`,
-        `} catch {} }`,
+        `  $uv = '${q}\\components\\npm-global\\vale.cmd'`,
+        `  if (-not (Test-Path $uv)) { $uv = '${q}\\tools\\npm-global\\vale.cmd' }`,
+        `  if ((Test-Path $uv) -and (-not (Get-ItemProperty -Path $rk -Name UninstallString -ErrorAction SilentlyContinue))) { Set-ItemProperty -Path $rk -Name UninstallString -Value ('powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath ''' + $uv + ''' -ArgumentList ''uninstall'' -Verb RunAs -Wait"') -ErrorAction Stop }`,
+        `} catch {}`,
+    ];
+}
+function uninstallVersionPs(q, ver) {
+    if (!ver)
+        return [];
+    return [
+        `if ($ok -and '${ver}') {`,
+        ...uninstallRegBodyPs(q, ver),
+        `}`,
     ];
 }
 // exported: autostart (boot) switch for the two scheduled tasks. ValeAgent
@@ -515,10 +539,10 @@ function initTunnel(hostname, regKey) {
                 console.log("tunnel: key exchanged (consumed once)");
             }
             else
-                console.log("tunnel: tunnel-token exchange failed (" + (r && r.error ? r.error : "no token") + ") — falling back");
+                console.log("tunnel: tunnel-token exchange failed (" + (r && r.error ? r.error : "no token") + ") -- falling back");
         }
         catch (e) {
-            console.log("tunnel: exchange unavailable (" + e.message + ") — falling back");
+            console.log("tunnel: exchange unavailable (" + e.message + ") -- falling back");
         }
     }
     const r1 = (0, child_process_1.spawnSync)(cf, token ? ["tunnel", "login", "--token", token] : ["tunnel", "login"], { stdio: "inherit" });
@@ -553,7 +577,7 @@ function initTunnel(hostname, regKey) {
         "  - service: http_status:404",
         "",
     ].join("\n"));
-    console.log("tunnel: installed — tunnel.yml written, agent spawns it on boot");
+    console.log("tunnel: installed -- tunnel.yml written, agent spawns it on boot");
     console.log("  hostname:", host);
 }
 // exported: rollback version gate — a plain dotted triple only (the tgz URL
@@ -682,14 +706,14 @@ const commands = {
             // landed (a silently-missing copy killed the bridge forever on d1).
             // One retry, then fail loudly: a half-staged bundle is worse than none.
             if (!fs.existsSync(path.join(pwDir, "node.exe"))) {
-                console.log("setup: node.exe missing after expand — retrying once");
+                console.log("setup: node.exe missing after expand -- retrying once");
                 sh(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${(0, exports.psq)(PW_ZIP)}' -DestinationPath '${(0, exports.psq)(COMPONENTS_DIR)}'"`);
             }
             if (fs.existsSync(path.join(pwDir, "node.exe"))) {
                 console.log("setup: playwright bundle staged (node.exe + node_modules verified)");
             }
             else {
-                console.error("setup: FATAL — playwright bundle expanded but node.exe is STILL missing; browser tools cannot run. Check AV/lock interference and re-run vale setup.");
+                console.error("setup: FATAL -- playwright bundle expanded but node.exe is STILL missing; browser tools cannot run. Check AV/lock interference and re-run vale setup.");
                 process.exit(1);
             }
         }
@@ -709,7 +733,7 @@ const commands = {
             catch { /* non-fatal */ }
         }
         else {
-            console.log("setup: WARNING — node not found in PATH (browser tools need node)");
+            console.log("setup: WARNING -- node not found in PATH (browser tools need node)");
         }
         // C2: stage the boxed cloudflared binary into components/ (optional — local
         // mode works without it; only used when the user opts into public access).
@@ -717,7 +741,7 @@ const commands = {
         if (fs.existsSync(CF_SRC)) {
             fs.mkdirSync(COMPONENTS_DIR, { recursive: true });
             fs.copyFileSync(CF_SRC, path.join(COMPONENTS_DIR, "cloudflared.exe"));
-            console.log("setup: cloudflared staged (tunnel optional — `vale tunnel install` to enable)");
+            console.log("setup: cloudflared staged (tunnel optional -- `vale tunnel install` to enable)");
         }
         // P2-4: record the boxed-component versions (never fail-closed).
         writeBoxedVersions(DIR, path.join(__dirname, ".."));
@@ -753,18 +777,29 @@ const commands = {
         //   - explicit config -Argument   layout v2 (never the exe path)
         const regRes = ps(bootTaskPs((0, exports.psq)(EXE_DST), (0, exports.psq)(CFG_FILE), true).join("; "));
         if (!regRes || regRes.status !== 0) {
-            console.error("setup: FATAL — task registration failed (audit #7: used to claim success regardless).");
+            console.error("setup: FATAL -- task registration failed (audit #7: used to claim success regardless).");
             process.exit(1);
         }
+        // Control-panel entry for npm-path installs too (the NSIS writer owns
+        // UninstallString on its installs; the helper never overwrites one).
+        // Best-effort — a registry failure must not fail the install.
+        try {
+            const pkgVer = String(require("../package.json").version || "");
+            const ureg = ps(uninstallRegBodyPs((0, exports.psq)(DIR), pkgVer).join("; "));
+            console.log("setup: control-panel uninstall entry" + (ureg && ureg.status === 0 ? " ensured" : " (ensure failed -- uninstall via `vale uninstall`)"));
+        }
+        catch {
+            console.log("setup: control-panel entry skipped (uninstall via `vale uninstall`)");
+        }
         console.log("setup: installed to", DIR);
-        console.log("setup: device registers on start — check the console Devices list");
+        console.log("setup: device registers on start -- check the console Devices list");
         // Inbound firewall for the agent port (idempotent; inert when bound to
         // loopback, required for LAN clients otherwise). Best-effort, never
         // fail-closed — a locked-down box keeps working locally regardless.
         try {
             const fwPort = agentPort(ETC_DIR);
             const fw = ps(firewallPs(fwPort).join("; "));
-            console.log("setup: firewall inbound TCP " + fwPort + (fw && fw.status === 0 ? " ensured" : " (ensure failed — LAN clients may be blocked)"));
+            console.log("setup: firewall inbound TCP " + fwPort + (fw && fw.status === 0 ? " ensured" : " (ensure failed -- LAN clients may be blocked)"));
         }
         catch {
             console.log("setup: firewall ensure skipped (LAN clients may be blocked)");
@@ -792,7 +827,7 @@ const commands = {
     },
     stop() {
         svc("End");
-        console.log("stopped — revives via 'vale start' or the 5-min watchdog ('vale autostart off' opts out of autostart)");
+        console.log("stopped -- revives via 'vale start' or the 5-min watchdog ('vale autostart off' opts out of autostart)");
     },
     restart() {
         svc("End");
@@ -825,7 +860,7 @@ const commands = {
             const argv = autostartArgv(t, sub);
             const r = (0, child_process_1.spawnSync)(argv[0], argv.slice(1), { stdio: "inherit" });
             if (!r || r.status !== 0) {
-                console.error(`autostart: ${t} ${sub} failed (task may not exist — run vale setup first)`);
+                console.error(`autostart: ${t} ${sub} failed (task may not exist -- run vale setup first)`);
                 failed = true;
             }
             else {
@@ -833,7 +868,7 @@ const commands = {
             }
         }
         if (sub === "off")
-            console.log("autostart: off — tasks stay disabled across reboot until 'vale autostart on'");
+            console.log("autostart: off -- tasks stay disabled across reboot until 'vale autostart on'");
         if (failed)
             process.exit(1);
     },
@@ -858,7 +893,7 @@ const commands = {
                 try {
                     const st = fs.statSync(BUSYM);
                     if (busyIsFresh(st.mtimeMs, Date.now())) {
-                        console.error("update: another update looks in progress (" + BUSYM + " <10 min old) — wait, or delete the marker after a mid-swap reboot");
+                        console.error("update: another update looks in progress (" + BUSYM + " <10 min old) -- wait, or delete the marker after a mid-swap reboot");
                         process.exit(1);
                     }
                     // Stale marker — overwrite it.
@@ -958,7 +993,7 @@ const commands = {
             // Fail-closed gate: the new agent reads ONLY the v2 homes. A missing
             // config/hostname here means migration failed — do NOT swap (the old
             // exe keeps running the old layout until the next update).
-            `if ((-not (Test-Path '${q}\\etc\\config.yaml')) -or (-not (Test-Path '${q}\\etc\\vale-agent.hostname'))) { "[$(Get-Date -Format o)] migration gate FAILED (etc\\config.yaml/hostname missing) — aborting, old version keeps running" | ${log}; try { Remove-Item -Force (Join-Path $env:ProgramData 'ValeAgent\\update-busy') } catch {}; exit 1 }`,
+            `if ((-not (Test-Path '${q}\\etc\\config.yaml')) -or (-not (Test-Path '${q}\\etc\\vale-agent.hostname'))) { "[$(Get-Date -Format o)] migration gate FAILED (etc\\config.yaml/hostname missing) -- aborting, old version keeps running" | ${log}; try { Remove-Item -Force (Join-Path $env:ProgramData 'ValeAgent\\update-busy') } catch {}; exit 1 }`,
             // A running exe cannot be overwritten on Windows — stop the service
             // first (task end + process kill), THEN swap with retry.
             "try { Stop-ScheduledTask ValeAgent -ErrorAction Stop } catch {}",
@@ -1149,7 +1184,7 @@ const commands = {
             try {
                 const cur = fs.readFileSync(PIN, "utf8").trim();
                 fs.rmSync(PIN, { force: true });
-                console.log(`rollback: pin cleared (was ${cur || "?"}) — agent_update tracks the release channel again`);
+                console.log(`rollback: pin cleared (was ${cur || "?"}) -- agent_update tracks the release channel again`);
             }
             catch {
                 console.log("rollback: no pin present (nothing to clear)");
@@ -1174,7 +1209,7 @@ const commands = {
         const head = (0, child_process_1.spawnSync)("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "30", "--head", url], { encoding: "utf8", timeout: 40000 });
         const code = String(head.stdout || "").trim();
         if (head.status !== 0 || code !== "200") {
-            console.error(`rollback: ${val} is not on the release CDN (HTTP ${code || "?"}) — the last-5-per-minor prune removed it;`
+            console.error(`rollback: ${val} is not on the release CDN (HTTP ${code || "?"}) -- the last-5-per-minor prune removed it;`
                 + " pick a retained version (see https://agent.saisi.online/vale-agent/version.json for the current line)");
             process.exit(1);
         }
@@ -1182,18 +1217,18 @@ const commands = {
         const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
         const inst = (0, child_process_1.spawnSync)(npmCmd, ["install", "-g", "--prefix", NPM_GLOBAL, url], { stdio: "inherit", timeout: 300000 });
         if (inst.status !== 0) {
-            console.error("rollback: npm install failed — device left untouched");
+            console.error("rollback: npm install failed -- device left untouched");
             process.exit(1);
         }
         const valeCmd = path.join(NPM_GLOBAL, "vale.cmd");
         if (!fs.existsSync(valeCmd)) {
-            console.error("rollback: vale.cmd missing after install (broken package?) — aborting before any swap");
+            console.error("rollback: vale.cmd missing after install (broken package?) -- aborting before any swap");
             process.exit(1);
         }
         console.log(`rollback: swapping in ${val} (connection drops ~10s) ...`);
         const upd = (0, child_process_1.spawnSync)(valeCmd, ["update"], { stdio: "inherit", timeout: 120000 });
         if (upd.status !== 0) {
-            console.error("rollback: swap failed — pin NOT written, device still runs the previous release");
+            console.error("rollback: swap failed -- pin NOT written, device still runs the previous release");
             process.exit(1);
         }
         try {
@@ -1203,10 +1238,10 @@ const commands = {
             // .vale-release; the agent reads etc\). Root leftover is garbage.
             fs.writeFileSync(path.join(ETC_DIR, ".vale-release"), val);
             fs.rmSync(path.join(DIR, ".vale-release"), { force: true });
-            console.log(`rollback: pinned to ${val} — auto-upgrade refused until 'vale rollback --clear' or a forced agent_update`);
+            console.log(`rollback: pinned to ${val} -- auto-upgrade refused until 'vale rollback --clear' or a forced agent_update`);
         }
         catch (e) {
-            console.error("rollback: WARNING — pin/marker write failed (" + e.message + "); device runs " + val + " but agent_update is NOT blocked");
+            console.error("rollback: WARNING -- pin/marker write failed (" + e.message + "); device runs " + val + " but agent_update is NOT blocked");
         }
     },
     // The ONLY uninstall path (NSIS installer is retired — npm CLI is the
@@ -1258,7 +1293,7 @@ const commands = {
                 // files better than rmdir; retry once after a short wait.
                 sh(`powershell -NoProfile -Command "Remove-Item -LiteralPath '${(0, exports.psq)(legacy)}' -Recurse -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath '${(0, exports.psq)(legacy)}' -Recurse -Force -ErrorAction SilentlyContinue"`);
                 if (fs.existsSync(legacy)) {
-                    console.log("uninstall: WARNING — legacy dir still present:", legacy);
+                    console.log("uninstall: WARNING -- legacy dir still present:", legacy);
                 }
             }
         }
@@ -1289,7 +1324,7 @@ const commands = {
         switch (sub) {
             case "status": {
                 if (!has) {
-                    console.log("tunnel: not installed (cloudflared is OPTIONAL — local mode needs no tunnel)");
+                    console.log("tunnel: not installed (cloudflared is OPTIONAL -- local mode needs no tunnel)");
                     console.log("  to enable public access: `vale tunnel install`");
                     return;
                 }
@@ -1309,7 +1344,7 @@ const commands = {
             }
             case "start": {
                 if (!has) {
-                    console.error("tunnel: not installed — run setup with public-access enabled");
+                    console.error("tunnel: not installed -- run setup with public-access enabled");
                     process.exit(1);
                 }
                 // npm audit #12: detached/unref are NO-OPS on spawnSync —
@@ -1327,7 +1362,7 @@ const commands = {
                 return;
             }
             case "update": {
-                console.log("tunnel: version is locked by the Vale release flow — update via the installer/npm package.");
+                console.log("tunnel: version is locked by the Vale release flow -- update via the installer/npm package.");
                 return;
             }
             default:
@@ -1341,7 +1376,7 @@ const commands = {
 if (require.main === module) {
     const [cmd, ...rest] = process.argv.slice(2);
     if (!cmd || !commands[cmd]) {
-        console.log("vale <setup|status|start|stop|restart|autostart|update|rollback|uninstall|run|tunnel> — Vale Agent control");
+        console.log("vale <setup|status|start|stop|restart|autostart|update|rollback|uninstall|run|tunnel> -- Vale Agent control");
         Object.keys(commands).forEach((k) => console.log(" ", k));
         process.exit(cmd ? 1 : 0);
     }

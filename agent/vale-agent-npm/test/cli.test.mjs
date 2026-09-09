@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, BOOT_TASKS, autostartArgv, bootTaskPs, migrateLayoutPs, startDesktopPs, rollbackVersionOk } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, uninstallRegBodyPs, BOOT_TASKS, autostartArgv, bootTaskPs, migrateLayoutPs, startDesktopPs, rollbackVersionOk } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -122,16 +122,38 @@ test("writeReleaseMarker: missing dir stays silent (best-effort, never throws)",
   assert.doesNotThrow(() => writeReleaseMarker("Z:\\definitely\\not\\here"));
 });
 
-test("uninstallVersionPs: $ok-gated DisplayVersion parity, never fabricates UninstallString", () => {
+test("uninstallVersionPs: $ok-gated DisplayVersion parity, UninstallString only when absent", () => {
   const { uninstallVersionPs } = require("../bin/vale.js");
   const body = uninstallVersionPs("C:\\Program Files\\Vale", "1.2.307").join("\n");
   assert.match(body, /\$ok -and '1\.2\.307'/, "gated on provable swap success like .vale-release");
   assert.match(body, /DisplayVersion/, "moves the Add/Remove version");
   assert.match(body, /DisplayName/, "moves the display name with it");
   assert.match(body, /InstallLocation/, "records where the release lives");
-  assert.ok(!body.includes("UninstallString"), "never fabricates UninstallString (NSIS owns it)");
   assert.match(body, /catch \{\}/, "best-effort: registry failure never fails the update");
   assert.match(body, /Test-Path \$rk/, "creates the key for npm-only installs that lack one");
+  assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
+});
+
+test("uninstallRegBodyPs: shared setup/swap body, conditional elevated uninstall", () => {
+  const { uninstallRegBodyPs } = require("../bin/vale.js");
+  const body = uninstallRegBodyPs("D:\\Vale", "1.2.307").join("\n");
+  assert.ok(!body.includes("$ok"), "ungated body (setup has no $ok; the swap wraps it)");
+  assert.match(body, /DisplayVersion/, "versions the entry");
+  // UninstallString is conditional — an NSIS install owns its
+  // $INSTDIR\uninstall.exe value and it must never be overwritten.
+  assert.match(body, /Get-ItemProperty -Path \$rk -Name UninstallString/, "reads before writing");
+  const idxRead = body.indexOf("Get-ItemProperty -Path $rk -Name UninstallString");
+  const idxWrite = body.indexOf("-Name UninstallString -Value", idxRead);
+  assert.ok(idxRead >= 0 && idxWrite > idxRead, "write is guarded by the absence read");
+  // v2 path first, legacy fallback second.
+  const idxComp = body.indexOf("components\\npm-global\\vale.cmd");
+  const idxTools = body.indexOf("tools\\npm-global\\vale.cmd");
+  assert.ok(idxComp >= 0 && idxTools > idxComp, "components first, tools legacy fallback");
+  // Control panel does not elevate: relaunch elevated or uninstall dies.
+  assert.match(body, /-Verb RunAs/, "re-elevates (HKLM/schtasks need admin)");
+  assert.match(body, /-Wait/, "control panel waits for completion");
+  // Empty version = no-op (setup with an unreadable package.json).
+  assert.deepEqual(uninstallRegBodyPs("D:\\Vale", ""), [], "empty ver writes nothing");
   assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });
 
