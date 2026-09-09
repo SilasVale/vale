@@ -280,12 +280,11 @@ jobs:
           node --experimental-strip-types --check api/gform.ts
         working-directory: proxies/api-relay
 
-  # extension/ (browser MV3) has no build/test tooling — zero CI gating
-  # until now. Mirror the api-relay syntax gate above: parse every
-  # .js/.mjs under extension/ with node --check so a syntax error fails
-  # the PR instead of silently dead content/options scripts.
+  # extension/ (browser MV3) has no build tooling — syntax gate plus the
+  # pure-guard unit tests (shared.js MITM guard; DOM glue stays untested by
+  # design). No build/pack step exists here, so no new toolchain is needed.
   extension:
-    name: extension (node --check)
+    name: extension (node --check + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -300,3 +299,7 @@ jobs:
             node --check "$f" || status=1
           done
           exit $status
+      - name: Unit-test extension pure guards
+        # Quoted glob (NOT a trailing-slash dir): node treats a dir arg as
+        # a module path and fails; the glob discovers the test files.
+        run: node --test "extension/test/*.test.mjs"

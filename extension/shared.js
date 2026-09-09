@@ -21,3 +21,10 @@ function httpsOrigin(v) {
   }
 }
 
+// Test seam (SOLID Round-24): expose the pure guards to node --test without
+// changing browser semantics — classic <script> pages have no `module`, so
+// this block is inert there; the extension CI job runs extension/test/.
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { DEFAULT_STUDIO_ORIGIN, httpsOrigin };
+}
+
