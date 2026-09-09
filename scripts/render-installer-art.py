@@ -2,7 +2,8 @@
 """Render NSIS MUI brand art for the Vale online installer.
 
 Same "vale at sunrise" vocabulary as scripts/render-brand-icon.py
-(amber sky, glowing sun, white hills) sized for the MUI wizard:
+(amber sky, glowing sun, rounded white hills — near hill solid, far hill
+78% haze) sized for the MUI wizard:
   header.bmp  150x57   (top-right of every page)
   welcome.bmp 164x314  (left rail of welcome/finish pages)
 
@@ -20,8 +21,9 @@ from PIL import Image, ImageDraw, ImageFont
 SKY_TOP = (0xF5, 0x9F, 0x00)
 SKY_BOT = (0xE8, 0x59, 0x0C)
 SUN = (0xFF, 0xF8, 0xE1)
-HILL_FAR = (0xFF, 0xFF, 0xFF, 200)
-HILL_NEAR = (0xFF, 0xFF, 0xFF, 255)
+GLOW_COLOR = (0xFF, 0xF8, 0xE1)
+HILL_FAR = (255, 255, 255, 0.78)
+HILL_NEAR = (255, 255, 255, 1.0)
 
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
@@ -41,41 +43,52 @@ def sky(w, h):
 
 
 def scene(img, sun_c, sun_r, glow_r, hills):
-    d = ImageDraw.Draw(img, "RGBA")
+    """Bake glow per-pixel (like the brand renderer), then sun, then hills."""
     w, h = img.size
-    # glow
-    glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    gd.ellipse(
-        [sun_c[0] - glow_r, sun_c[1] - glow_r, sun_c[0] + glow_r, sun_c[1] + glow_r],
-        fill=(255, 248, 225, 110),
-    )
-    img.alpha_composite(glow) if False else None
-    d = ImageDraw.Draw(img, "RGBA")
-    # re-draw glow manually (BMP has no alpha; bake onto sky)
-    for r in range(glow_r, 0, -1):
-        t = r / glow_r
-        c = tuple(int(SKY_TOP[i] * 0.0 + 0) for i in range(3))
-        col = (
-            int(lerp((255, 248, 225), lerp(SKY_TOP, SKY_BOT, sun_c[1] / h), t)[0]),
-            int(lerp((255, 248, 225), lerp(SKY_TOP, SKY_BOT, sun_c[1] / h), t)[1]),
-            int(lerp((255, 248, 225), lerp(SKY_TOP, SKY_BOT, sun_c[1] / h), t)[2]),
-            int(90 * (1 - t)),
-        )
-        # cheap radial bake: draw concentric circles with decreasing alpha
-        tmp = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        ImageDraw.Draw(tmp).ellipse(
-            [sun_c[0] - r, sun_c[1] - r, sun_c[0] + r, sun_c[1] + r], fill=col
-        )
-        img.paste(Image.alpha_composite(img.convert("RGBA"), tmp).convert("RGB"), (0, 0))
+    px = img.load()
+    for y in range(h):
+        for x in range(w):
+            d = ((x - sun_c[0]) ** 2 + (y - sun_c[1]) ** 2) ** 0.5
+            if d <= glow_r:
+                t = d / glow_r
+                a = int(255 * (1 - t) * 0.55)
+                if a > 0:
+                    r_, g_, b_ = px[x, y]
+                    px[x, y] = (
+                        int(r_ * (255 - a) / 255 + GLOW_COLOR[0] * a / 255),
+                        int(g_ * (255 - a) / 255 + GLOW_COLOR[1] * a / 255),
+                        int(b_ * (255 - a) / 255 + GLOW_COLOR[2] * a / 255),
+                    )
     d = ImageDraw.Draw(img)
     d.ellipse(
         [sun_c[0] - sun_r, sun_c[1] - sun_r, sun_c[0] + sun_r, sun_c[1] + sun_r],
         fill=SUN,
     )
-    for pts, fill in hills:
-        d.polygon(pts, fill=fill[:3])
+    for mound, fill in hills:
+        # rounded hill = wide ellipse sunk below the bottom edge; the visible
+        # top arc reads as the brand's quadratic ridge (not a sharp triangle)
+        cx, cy, rx, ry = mound
+        _draw_hill(img, cx, cy, rx, ry, fill)
     return img
+
+
+def _draw_hill(img, cx, cy, rx, ry, fill):
+    """Fill an ellipse region with a (r,g,b,opacity) white blend."""
+    w, h = img.size
+    px = img.load()
+    r_c, g_c, b_c, op = fill
+    for y in range(max(0, int(cy - ry)), min(h, int(cy + ry) + 1)):
+        dy = (y - cy) / ry
+        if abs(dy) >= 1:
+            continue
+        half = int(rx * (1 - dy * dy) ** 0.5)
+        for x in range(max(0, int(cx) - half), min(w, int(cx) + half + 1)):
+            r_, g_, b_ = px[x, y]
+            px[x, y] = (
+                int(r_ * (1 - op) + r_c * op),
+                int(g_ * (1 - op) + g_c * op),
+                int(b_ * (1 - op) + b_c * op),
+            )
 
 
 def main():
@@ -84,30 +97,30 @@ def main():
     )
     os.makedirs(out, exist_ok=True)
 
-    # header 150x57 — compact mark, no text (MUI draws the title beside it)
+    # header 150x57 — brand layout: sun left-of-center, twin hills centered
     h = sky(150, 57)
     scene(
         h,
-        sun_c=(118, 20),
-        sun_r=9,
-        glow_r=20,
+        sun_c=(62, 20),
+        sun_r=8,
+        glow_r=18,
         hills=[
-            ([(86, 57), (118, 30), (150, 57)], HILL_FAR),
-            ([(100, 57), (132, 34), (164, 57)], HILL_NEAR),
+            ((88, 78, 34, 30), HILL_FAR),    # far ridge (haze), right of center
+            ((58, 82, 30, 34), HILL_NEAR),   # near hill, left, overlapping
         ],
     )
     h.save(os.path.join(out, "header.bmp"))
 
-    # welcome 164x314 — tall panel + product name
+    # welcome 164x314 — tall panel, brand layout + product name
     w = sky(164, 314)
     scene(
         w,
-        sun_c=(82, 92),
-        sun_r=22,
-        glow_r=52,
+        sun_c=(72, 96),
+        sun_r=20,
+        glow_r=48,
         hills=[
-            ([(-20, 314), (55, 190), (130, 314)], HILL_FAR),
-            ([(40, 314), (115, 205), (200, 314)], HILL_NEAR),
+            ((104, 340, 62, 58), HILL_FAR),
+            ((58, 348, 58, 66), HILL_NEAR),
         ],
     )
     d = ImageDraw.Draw(w)

@@ -33,8 +33,6 @@ UninstallIcon "vale-agent.ico"
 !define MUI_WELCOMEFINISHPAGE_BITMAP "res\welcome.bmp"
 !define MUI_ABORTWARNING
 
-Var REGKEY
-Var REGKEY_INPUT
 Var RESULT_TEXT
 
 ; StrFunc 函数落子（全局作用域；卸载节用 Un 变体）
@@ -42,25 +40,6 @@ ${UnStrRep}
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
-
-; 注册码（可选）：控制台 → 设备管理 → 生成注册码。填了自动登记设备。
-Page custom regKeyPage regKeyPageLeave
-Function regKeyPage
-  nsDialogs::Create 1018
-  Pop $0
-  ${If} $0 == error
-    Abort
-  ${EndIf}
-  ${NSD_CreateLabel} 0 0 100% 40u "注册码（可选）：到控制台 → 设备管理 → 生成注册码。$\r$\n填了它，装完自动登记设备；留空则纯本地安装，以后随时登记。"
-  Pop $0
-  ${NSD_CreateText} 0 44u 100% 22u ""
-  Pop $REGKEY_INPUT
-  ${NSD_AddStyle} $REGKEY_INPUT ${ES_AUTOHSCROLL}
-  nsDialogs::Show
-FunctionEnd
-Function regKeyPageLeave
-  ${NSD_GetText} $REGKEY_INPUT $REGKEY
-FunctionEnd
 
 !insertmacro MUI_PAGE_INSTFILES
 
@@ -97,7 +76,7 @@ Section "Install" SEC01
   SetOutPath "$INSTDIR"
   ; 引导脚本 + 版本钉死（装 pinned tgz，不装 latest，保证可复现）
   File "vale-online-setup.ps1"
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\vale-online-setup.ps1" -InstallDir "$INSTDIR" -ValeVersion "${VALE_VERSION}" -CdnBase "${VALE_CDN}" -RegKey "$REGKEY" -ResultFile "$INSTDIR\install-result.txt"'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\vale-online-setup.ps1" -InstallDir "$INSTDIR" -ValeVersion "${VALE_VERSION}" -CdnBase "${VALE_CDN}" -ResultFile "$INSTDIR\install-result.txt"'
   Pop $0
   ${If} $0 != 0
     MessageBox MB_ICONSTOP "安装失败（步骤退出码 $0）。$\r$\n看 $INSTDIR\installer.log 找原因，修好后重跑安装包即可（幂等）。"

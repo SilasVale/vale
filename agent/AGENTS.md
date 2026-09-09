@@ -2072,6 +2072,17 @@ Last updated: 2026-09-09 round-551 — current release **1.2.306
   deploys assets, it does not rebuild them), fixed d1's broken Vale.lnk
   (pointed at the deleted Tauri exe; repair logic exists but only covered
   PUBLIC desktop — user-profile links need the same treatment, OPEN).
+  ROUND-552 (2026-09-09): installer brand + wizard polish (user feedback) —
+  the exe icon was the STRIPED pre-sunrise vale-agent.ico (user: "logo不
+  对"); regenerated from scripts/render-brand-icon.py (256 PNG + 48/32/24/
+  16 BMP entries — 256 is shell-safe, the brand renderer only omits it for
+  Chromium's ICO parser). render-installer-art.py rewritten: per-pixel glow
+  bake (the old per-ring full-image composite loop was O(n²) AND blocky) +
+  brand layout (sun left-of-center, rounded twin hills — ellipses sunk
+  below the bottom edge, not triangles). REG-KEY PAGE REMOVED from the
+  wizard (user: 安装过程不需要) — registration is a post-install Gateway-
+  card step; ps1 keeps -RegKey for scripted use. Rebuilt + republished
+  1.2.306 (156771B, both aliases 200); README-installer.md updated.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
