@@ -294,16 +294,21 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-09 round-555 — current release **1.2.307 LIVE on d1
+Last updated: 2026-09-09 round-556 — current release **1.2.307 LIVE on d1
   (package.json + CDN version.json + GitHub release; last-5-per-minor prune
-  active; Windows online installer ValeAgent-Setup.exe on the CDN)**; e2e
-  suite 47 checks; all matrices green. Rounds 273-317 in this log; the
-  round log continues below (ROUND-319..555 inlined under "Current
-  release"). ROUND-555 = installer made user-usable (Setup.exe served +
-  installer_sha256 in the manifest + DisplayVersion parity), layout v2
-  (ADR 0008: etc\/components\/scripts\ + DataDir logs\/pwout\), the
-  migration-surfaced task-argument brick fixed, start-desktop.ps1 given a
-  writer, migration marker aging, `vale autostart` + `vale rollback`.
+  active; Windows self-contained installer ValeAgent-Setup.exe on the CDN)**;
+  e2e suite 47 checks; all matrices green. Rounds 273-317 in this log; the
+  round log continues below (ROUND-319..556 inlined under "Current
+  release"). ROUND-556 = first REAL installer log analyzed: the ValeDesktop
+  step never ran on any version (PS argument-mode '+' bug — cmdlet args
+  don't concat, both Set-Content -Value lines failed identically before and
+  after the scripts\ move; d1's task came from update/Electron/manual),
+  fixed by parenthesizing + line numbers in the catch; npm installs now
+  register the control-panel entry (conditional UninstallString, elevated
+  relaunch); console strings ASCII-only for GBK consoles; signing pipeline
+  wired (cert-pending); playwright-zip box confirmed unbuilt by anything
+  (fresh installs run browser-less by design so far — needs a 308-sized
+  decision). 307 installer rebuilt (ps1-only, tgz untouched) + smoke green.
   NOT yet on a device: v2 migration + rollback + autostart ship as 1.2.308
   once the Windows sandbox run is green. Rounds 273-317 in this log.
 
