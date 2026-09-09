@@ -13,6 +13,8 @@
     -RegKey     可选：网关注册码（自动登记设备）
     -Tunnel     可选：tunnel 主机名（vale setup --tunnel）
     -ResultFile 安装结果回执（NSIS 完成页读取）
+    -LocalTgz   可选：自带 tgz 路径（自包含安装包内嵌，优先用它，免下载）
+    -ResultFile 安装结果回执（NSIS 完成页读取）
 #>
 param(
   [string]$InstallDir = "C:\Program Files\Vale",
@@ -21,7 +23,8 @@ param(
   [string]$RegKey = "",
   [string]$Tunnel = "",
   [string]$ResultFile = "",
-  [string]$DataDir = (Join-Path $env:ProgramData "Vale")
+  [string]$DataDir = (Join-Path $env:ProgramData "Vale"),
+  [string]$LocalTgz = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,8 +113,18 @@ $npmCmd = Join-Path $nodeBinDir "npm.cmd"
 if (-not (Test-Path $npmCmd)) { Write-Host "[vale-setup] 找不到 npm.cmd（$nodeBinDir），退出。"; exit 5 }
 
 # --- 2. npm 装 pinned 的 vale-agent（这就是以后的更新通道） ---
+# 自包含安装包优先用内嵌 tgz（LocalTgz，NSIS 打包时 File 进去）——无网络、
+# 被 prune 的老版本照样能装；手动跑脚本时缺省走 CDN 下载（原逻辑不变）。
 $tgz = "$CdnBase/vale-agent/vale-agent-$ValeVersion.tgz"
-Say "安装 vale-agent $ValeVersion ..."
+$tgzSource = "cdn"
+if ($LocalTgz -and (Test-Path $LocalTgz)) {
+  $tgz = $LocalTgz
+  $tgzSource = "bundled"
+  Say "使用自带安装包 $ValeVersion（免下载）..."
+} else {
+  if ($LocalTgz) { Say "自带包缺失（$LocalTgz），回退 CDN 下载..." }
+  Say "安装 vale-agent $ValeVersion ..."
+}
 & $npmCmd install -g --prefix $NpmGlobal $tgz
 if ($LASTEXITCODE -ne 0) { Write-Host "[vale-setup] npm 安装失败，退出。"; exit 6 }
 $valeCmd = Join-Path $NpmGlobal "vale.cmd"
@@ -214,5 +227,10 @@ $lines = @(
 if (-not $ResultFile) { $ResultFile = Join-Path $DataDir "logs\install-result.txt" }
 $lines | Set-Content -Path $ResultFile -Encoding UTF8
 $lines | ForEach-Object { Say $_ }
+# 自包含包的内嵌 tgz 用完即删（~6MB 死重；重跑安装包会重新解压出来）。
+# 只删"自带的那一份"（LocalTgz 指向的文件），不动用户手里的东西。
+if (($tgzSource -eq "bundled") -and $LocalTgz) {
+  try { Remove-Item -Force -ErrorAction Stop $LocalTgz; Say "内嵌安装包已清理" } catch { Say "内嵌安装包清理跳过（不影响使用）" }
+}
 try { Stop-Transcript | Out-Null } catch { }
 exit 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Vale agent release publisher — the ONE command for a CDN release.
 #
-#   ./scripts/publish-release.sh <1.2.N> [--skip-reconcile]
+#   ./scripts/publish-release.sh <1.2.N> [--skip-reconcile] [--with-installer]
 #
 # Assumes the exe is already built and staged (cargo xwin build + cp into
 # agent/vale-agent-npm/vale-agent.exe) and package.json version == 1.2.N.
@@ -9,8 +9,12 @@
 # Steps:
 #   1. npm pack in agent/vale-agent-npm -> vale-agent-1.2.N.tgz
 #   2. stage tgz + versionless latest alias into index/public/vale-agent
+#   2b. [--with-installer] build the SELF-CONTAINED installer (NSIS bundles
+#      the staged tgz; --no-deploy here — the single deploy in step 6 covers
+#      everything, so the manifest and the installer never disagree)
 #   3. write version.json {version, tarball, updated, sha256} (sha256 of the
-#      packed tgz — agent_update REQUIRES it, round-119)
+#      packed tgz — agent_update REQUIRES it, round-119) + installer fields
+#      when the exe is staged
 #   4. LAST-5-PER-MINOR PRUNE (round-309 lesson): delete every
 #      vale-agent-1.*.*.tgz older than the newest 5 OF ITS minor line, so
 #      defective releases are not downloadable (this policy was never
@@ -36,14 +40,16 @@ cd "$(dirname "$0")/.."
 # scripts/test/release-lib.bash pins them.
 source "scripts/lib/release-lib.sh"
 
-VER="${1:?usage: ./scripts/publish-release.sh <1.2.N> [--skip-reconcile]}"
-case "$VER" in -*) echo "::error::usage: ./scripts/publish-release.sh <1.2.N> [--skip-reconcile]" >&2; exit 1;; esac
+VER="${1:?usage: ./scripts/publish-release.sh <1.2.N> [--skip-reconcile] [--with-installer]}"
+case "$VER" in -*) echo "::error::usage: ./scripts/publish-release.sh <1.2.N> [--skip-reconcile] [--with-installer]" >&2; exit 1;; esac
 shift
 SKIP_RECONCILE=0
+WITH_INSTALLER=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --skip-reconcile) SKIP_RECONCILE=1 ;;
-    *) echo "::error::unknown flag: $1 (usage: ./scripts/publish-release.sh <1.2.N> [--skip-reconcile])" >&2; exit 1 ;;
+    --with-installer) WITH_INSTALLER=1 ;;
+    *) echo "::error::unknown flag: $1 (usage: ./scripts/publish-release.sh <1.2.N> [--skip-reconcile] [--with-installer])" >&2; exit 1 ;;
   esac
   shift
 done
@@ -234,13 +240,22 @@ echo "tgz content check OK ($TGZ)"
 echo "== stage =="
 cp "$TGZ" "$ASSET_DIR/"
 cp "$TGZ" "$ASSET_DIR/vale-agent-latest.tgz"
-# Installer 同版同发：build-installer.sh <ver> 必须先跑（它把
-# ValeAgent-Setup-<ver>.exe + 别名 stage 进资产目录）；这里只做 manifest
-# 接线 + prune，不重打安装器。缺安装器则 manifest 保持 tgz-only 形状
-# （向后兼容），但打印 WARN 提醒补打 — 新用户拿到的别名会滞后一版。
+# Installer 同版同发：--with-installer 在这里打自包含安装器（--no-deploy，
+# 单次 deploy 在下面统一做，manifest 和安装器不可能互相滞后）。tgz 已在
+# 上面 stage 好，正好满足 build-installer.sh 的前置。
+if [ "$WITH_INSTALLER" -eq 1 ]; then
+  echo "== installer (self-contained, staged, no deploy yet) =="
+  ./scripts/build-installer.sh "$VER" --no-deploy
+fi
+# 自包含证明：staged 安装器必须比 tgz 大（内嵌 payload）。更小的只有一种
+# 可能——上一个版本的在线包残留（没打进去 tgz）。WARN 不 fail：紧急发布
+# 允许先上 tgz-only manifest，补打安装器后重跑 manifest+deploy 即可。
 INST_EXE="$ASSET_DIR/ValeAgent-Setup-$VER.exe"
 if [ -f "$INST_EXE" ]; then
   echo "installer staged: $(basename "$INST_EXE") ($(stat -c %s "$INST_EXE") bytes)"
+  if [ "$(stat -c %s "$INST_EXE")" -le "$(stat -c %s "$TGZ")" ]; then
+    echo "-- WARN: $INST_EXE not larger than the tgz — stale online-only build? Rebuild with ./scripts/build-installer.sh $VER (manifest will advertise a non-self-contained exe)"
+  fi
 else
   echo "-- WARN: no $INST_EXE — run ./scripts/build-installer.sh $VER first so fresh installs track this release (manifest will be tgz-only)"
 fi

@@ -3,7 +3,9 @@
 ;   makensis /DVALE_VERSION=1.2.N /DVALE_CDN=https://agent.saisi.online vale-setup.nsi
 ; 只做最小外壳：中文向导 + 管理员提权 + 卸载器；真正的安装由内嵌的
 ; vale-online-setup.ps1 完成（Node 引导 → npm 通道 → vale setup）。
-; 更新通道不变：装完一律 `vale update`。
+; 自包含：pinned tgz（vale-agent-${VALE_VERSION}.tgz）File 进包，
+; ps1 优先用它（-LocalTgz），无网络/老版本被 prune 照样能装；
+; 装完即删，不留死重。更新通道不变：装完一律 `vale update`。
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -82,11 +84,13 @@ Section "Install" SEC01
   ; 引导脚本 + 版本钉死（装 pinned tgz，不装 latest，保证可复现）。
   ; 布局 v2：引导脚本进 scripts\（根目录只留 exe + 卸载器）；
   ; 回执/日志走 %ProgramData%\Vale\logs\（与 ps1 的 -DataDir 默认一致）。
+  ; 自包含：pinned tgz 一起 File 进来，ps1 优先用 -LocalTgz 装。
   SetOutPath "$INSTDIR\scripts"
   File "vale-online-setup.ps1"
+  File "vale-agent-${VALE_VERSION}.tgz"
   SetOutPath "$INSTDIR"
   ReadEnvStr $3 "ProgramData"
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\scripts\vale-online-setup.ps1" -InstallDir "$INSTDIR" -ValeVersion "${VALE_VERSION}" -CdnBase "${VALE_CDN}" -ResultFile "$3\Vale\logs\install-result.txt"'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\scripts\vale-online-setup.ps1" -InstallDir "$INSTDIR" -ValeVersion "${VALE_VERSION}" -CdnBase "${VALE_CDN}" -ResultFile "$3\Vale\logs\install-result.txt" -LocalTgz "$INSTDIR\scripts\vale-agent-${VALE_VERSION}.tgz"'
   Pop $0
   ${If} $0 != 0
     MessageBox MB_ICONSTOP "安装失败（步骤退出码 $0）。$\r$\n看 $INSTDIR\installer.log 找原因，修好后重跑安装包即可（幂等）。"
@@ -105,7 +109,10 @@ SectionEnd
 
 Section "Uninstall"
   ; 正主：vale uninstall（停任务、杀进程、删程序目录+注册表；数据默认保留）
-  ${If} ${FileExists} "$INSTDIR\tools\npm-global\vale.cmd"
+  ; 布局 v2：vale.cmd 在 components\npm-global\；tools\ 是迁移前残留，兼容。
+  ${If} ${FileExists} "$INSTDIR\components\npm-global\vale.cmd"
+    nsExec::ExecToLog 'cmd /c "set VALE_AGENT_DIR=$INSTDIR && "$INSTDIR\components\npm-global\vale.cmd" uninstall"'
+  ${ElseIf} ${FileExists} "$INSTDIR\tools\npm-global\vale.cmd"
     nsExec::ExecToLog 'cmd /c "set VALE_AGENT_DIR=$INSTDIR && "$INSTDIR\tools\npm-global\vale.cmd" uninstall"'
   ${Else}
     nsExec::ExecToLog 'cmd /c "schtasks /End /TN ValeAgent 2>NUL & schtasks /Delete /TN ValeAgent /F 2>NUL & schtasks /End /TN ValeDesktop 2>NUL & schtasks /Delete /TN ValeDesktop /F 2>NUL & taskkill /F /IM vale-agent.exe 2>NUL & taskkill /F /IM electron.exe 2>NUL"'

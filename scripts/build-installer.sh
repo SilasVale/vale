@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Vale Windows 在线安装包构建脚本 — Linux 上产出 setup.exe。
+# Vale Windows 自包含安装包构建脚本 — Linux 上产出 setup.exe。
 #
-#   ./scripts/build-installer.sh <1.2.N>
+#   ./scripts/build-installer.sh <1.2.N> [--no-deploy]
 #
+# 自包含：pinned tgz（vale-agent-<ver>.tgz）File 进安装包，ps1 优先用内嵌
+# 包安装（-LocalTgz）——无网络、老版本被 prune 照样能装；装完即删tgz。
 # 产物: index/public/vale-agent/ValeAgent-Setup-<ver>.exe (+ ValeAgent-Setup.exe 别名)
-# 之后随 index worker 一起 deploy 到 CDN。
+# 默认随 index worker 一起 deploy 到 CDN；--no-deploy 只 stage 不 deploy
+# （给 publish-release.sh 编排单次 deploy 用）。
+#
+# 前置：index/public/vale-agent/vale-agent-<ver>.tgz 必须已存在（publish
+# 先 pack+stage tgz，再打安装器；顺序反了就地失败，不打半吊子包）。
 #
 # 工具链：NSIS 3.12 从源码编译（userspace，无需 sudo；apt 只做 download +
 # dpkg-deb -x，gcc10-root 同款手法）。首次运行约 10 分钟（含下载），
@@ -13,8 +19,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VER="${1:?usage: ./scripts/build-installer.sh <1.2.N>}"
-case "$VER" in -*) echo "::error::usage: ./scripts/build-installer.sh <1.2.N>" >&2; exit 1;; esac
+VER="${1:?usage: ./scripts/build-installer.sh <1.2.N> [--no-deploy]}"
+case "$VER" in -*) echo "::error::usage: ./scripts/build-installer.sh <1.2.N> [--no-deploy]" >&2; exit 1;; esac
+shift || true
+NO_DEPLOY=0
+for a in "$@"; do
+  case "$a" in
+    --no-deploy) NO_DEPLOY=1 ;;
+    *) echo "::error::unknown flag: $a (usage: ./scripts/build-installer.sh <1.2.N> [--no-deploy])" >&2; exit 1 ;;
+  esac
+done
 CDN_BASE="${VALE_CDN_BASE:-https://agent.saisi.online}"
 
 NSIS_ROOT="$HOME/nsis-root"
@@ -91,23 +105,36 @@ STAGE="$(mktemp -d)/installer"
 mkdir -p "$STAGE/res"
 cp agent/deploy/vale-setup.nsi agent/deploy/vale-online-setup.ps1 agent/deploy/vale-agent.ico "$STAGE/"
 cp agent/deploy/res/header.bmp agent/deploy/res/welcome.bmp "$STAGE/res/"
+# 自包含前置：pinned tgz 必须已 stage（publish 先 pack，顺序反了就地失败）。
+TGZ_SRC="index/public/vale-agent/vale-agent-$VER.tgz"
+[[ -f "$TGZ_SRC" ]] || { echo "::error::missing $TGZ_SRC — pack+stage the tgz first (publish-release.sh does this before the installer)" >&2; exit 1; }
+cp "$TGZ_SRC" "$STAGE/vale-agent-$VER.tgz"
+TGZ_SIZE=$(stat -c %s "$STAGE/vale-agent-$VER.tgz")
+echo "bundled tgz: vale-agent-$VER.tgz ($TGZ_SIZE bytes)"
 
 echo "== compile =="
 ( cd "$STAGE" && "$MAKENSIS" "-DVALE_VERSION=$VER" "-DVALE_CDN=$CDN_BASE" vale-setup.nsi )
 EXE="$STAGE/ValeAgent-Setup-$VER.exe"
 [[ -f "$EXE" ]] || { echo "::error::makensis produced no exe" >&2; exit 1; }
 SIZE=$(stat -c %s "$EXE")
-# 在线包 payload 只有 ps1+位图+ico（~240KB 未压缩），成品 ~150KB 正常；
-# 空包/损坏构建远小于此。
-[[ "$SIZE" -gt 120000 ]] || { echo "::error::exe suspiciously small ($SIZE bytes)" >&2; exit 1; }
+# 自包含证明：成品必须比内嵌的 tgz 还大（stub+lzma 开销）。在线包时代的
+# 150KB 门已作废——一个 200KB 的"自包含"包一定是 tgz 没打进去。
+[[ "$SIZE" -gt "$TGZ_SIZE" ]] || { echo "::error::exe ($SIZE bytes) not larger than bundled tgz ($TGZ_SIZE bytes) — payload missing?" >&2; exit 1; }
 # 版本号已编进文件名（OutFile ValeAgent-Setup-$VER.exe 即校验）；
 # payload 经 lzma 压缩，exe 内 grep 不到明文，不做内容 grep 门。
-echo "built $EXE ($SIZE bytes)"
+echo "built $EXE ($SIZE bytes, self-contained with $TGZ_SIZE-byte tgz)"
 
 echo "== publish to CDN staging =="
 ASSET_DIR="index/public/vale-agent"
 cp "$EXE" "$ASSET_DIR/ValeAgent-Setup-$VER.exe"
 cp "$EXE" "$ASSET_DIR/ValeAgent-Setup.exe"
+if [[ "$NO_DEPLOY" -eq 1 ]]; then
+  echo "-- --no-deploy: staged only, skipping wrangler deploy (caller deploys)"
+  echo "== done (staged, not deployed) =="
+  echo "  versioned: $ASSET_DIR/ValeAgent-Setup-$VER.exe"
+  echo "  alias:     $ASSET_DIR/ValeAgent-Setup.exe"
+  exit 0
+fi
 CF_TOKEN="$(cf_token)"
 if [[ -z "$CF_TOKEN" ]]; then
   echo "::error::no Cloudflare token — set CLOUDFLARE_API_TOKEN or write ~/.cloudflare-token" >&2
