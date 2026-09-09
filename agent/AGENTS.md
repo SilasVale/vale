@@ -279,14 +279,17 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-09 round-554 — current release **1.2.306
-  (package.json + CDN version.json; last-5-per-minor prune active; Windows
-  online installer ValeAgent-Setup.exe on the CDN)**; e2e suite 47 checks;
-  all matrices green. Rounds 273-317 in this log; the round log continues
-  below (ROUND-319..554 inlined under "Current release"). ROUND-554 = the
-  file-transfer relay became the ONE transfer method + the console-MCP
-  visibility drift got a device-generated contract (agent/spec-tools.json);
-  gateway + index deploy and the d1 rollout are PENDING.
+Last updated: 2026-09-09 round-554 — current release **1.2.307 LIVE on d1
+  (package.json + CDN version.json + GitHub release; last-5-per-minor prune
+  active; Windows online installer ValeAgent-Setup.exe on the CDN)**; e2e
+  suite 47 checks; all matrices green. Rounds 273-317 in this log; the
+  round log continues below (ROUND-319..554 inlined under "Current
+  release"). ROUND-554 = the file-transfer relay became the ONE transfer
+  method (both directions DEVICE-VERIFIED with a 30 MB payload through the
+  console MCP), the dead Windows `system_file_download` path was fixed, and
+  the console-MCP visibility drift got a device-generated contract
+  (agent/spec-tools.json + NOT_EXPOSED). OPEN: the GitHub-asset-vs-CDN
+  dual-build digest split (see ROUND-554) and keep-latest for v1.2.306.
 
 ### OPEN decisions (product sign-off needed — do NOT change without one)
 - **settings_put invalid-JSON envelope: RESOLVED 2026-09-08** (was HTTP
@@ -2165,10 +2168,35 @@ Last updated: 2026-09-09 round-554 — current release **1.2.306
   the exact Linux→D1 curl leg; agent/{AGENTS,CLAUDE}.md gained "console MCP
   visibility is a SEPARATE decision". Matrices: agent lib 341 + every
   integration suite green, clippy/fmt/xwin clean; gateway 618 pass +
-  tsc/prettier/eslint clean; index 54→64 pass. NOT DEPLOYED YET: gateway +
-  index wrangler deploy and the d1 release (vale update) remain, and the
-  Windows download fix is unprovable from the Linux suite — smoke BOTH
-  legs on d1 after rollout.
+  tsc/prettier/eslint clean; index 54→64 pass.
+  ROLLOUT + LIVE SMOKE (same day): gateway deployed (vale-gate 285210bc),
+  index deployed (vale-dist 7ec96a89), release **1.2.307** published and d1
+  updated (`.vale-release` = 1.2.307). Evidence with a 31457280-byte
+  payload, BOTH directions through the CONSOLE MCP (not the device HTTP API
+  — MCP reachability was the point of the round):
+  · tools/list → 30 tools incl. the pair (was 28 without it).
+  · Linux→d1: curl -T with the ADMIN API TOKEN → 200 with filename
+    "r554-to-d1.bin" (so ?name= survived the proxy) → system_file_download
+    to D:\Vale\relay\r554-to-d1.bin — a path OUTSIDE the data dir whose
+    PARENT DID NOT EXIST → ok:true, 31457280 bytes, MD5 identical to the
+    source, and the dir holds only the final file (no .part). The same call
+    on 1.2.306 answered "path must be under data dir" for EVERY path,
+    including one inside it.
+  · d1→Linux: system_file_upload on that same 30 MB → ok + URL (the old
+    25 MB gateway screen 413'd it in 5.9 s) → Linux curl 22.8 s, same MD5,
+    and the SECOND claim 404s (one-time semantics intact).
+  · CI: release.yml on tag v1.2.307 success; both commits' CI success.
+  FOUND, PRE-EXISTING (not introduced here — it is the reconcile gate's own
+  subject): the GitHub release asset and the CDN tgz are DIFFERENT BUILDS.
+  v1.2.307 asset digest 66526fb5… vs CDN cdbff19c…, and v1.2.306 splits the
+  same way (GitHub dc02625c… vs the CDN file 34375138…), so devices have
+  been updating from a binary that is NOT the one on the GitHub release.
+  --skip-reconcile was unavoidable because the asset does not exist at
+  CDN-publish time — i.e. the P0 reconcile can NEVER pass in that order.
+  Either the reconcile moves to a post-tag step or the release stops
+  rebuilding the exe; needs a decision, not another silent continuation.
+  OPEN: keep-latest (delete the v1.2.306 release + tag refs) still manual,
+  needs the GitHub API token; the CDN last-5-per-minor prune already ran.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
