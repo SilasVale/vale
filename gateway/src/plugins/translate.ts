@@ -280,7 +280,12 @@ async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
 /// or/stealth/ox-alpha requests default reasoning.effort=max when the
 /// client sent no top-level reasoning. Applied by BOTH the /v1/messages
 /// and the chat/completions flows — used to be inlined at both sites.
-function oxAlphaReasoningDefault(routeKind: string, upstreamModel: string, body: string): string {
+// Exported for direct pins (SOLID Round-27; additive — call sites untouched).
+export function oxAlphaReasoningDefault(
+  routeKind: string,
+  upstreamModel: string,
+  body: string,
+): string {
   if (routeKind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
     return rawWithOxAlphaReasoningDefault(body);
   }
@@ -324,7 +329,13 @@ const __rlDay = new Map(); // `day:${token}:${day}`   → count
 /** Per-token rate limiter: in-memory minute + day counters (no KV).
  *  Returns a 429 Response if the token is over budget, else null (proceed).
  *  Shared by the /v1/messages, /v1/chat/completions and /v1/responses arms. */
-function checkRateLimit(env: any, method: string, path: string, token: string): Response | null {
+// Exported for direct pins (SOLID Round-27; additive — call sites untouched).
+export function checkRateLimit(
+  env: any,
+  method: string,
+  path: string,
+  token: string,
+): Response | null {
   if (!(
     env.KEYS &&
     method === "POST" &&
@@ -354,7 +365,8 @@ function checkRateLimit(env: any, method: string, path: string, token: string): 
 
 /** Extract BYOK (bring-your-own-key) keys from the user's key record.
  *  Each key maps to a specific upstream provider. null when unset. */
-function extractByokKeys(ukeys: Record<string, any>) {
+// Exported for direct pins (SOLID Round-27; additive — call sites untouched).
+export function extractByokKeys(ukeys: Record<string, any>) {
   return {
     deepseek: ukeys.DEEPSEEK_API_KEY || null,
     opencodeGo: ukeys.OPENCODE_GO_API_KEY || null,
@@ -368,7 +380,8 @@ function extractByokKeys(ukeys: Record<string, any>) {
 }
 
 /** Detect the route kind from method + path. */
-function detectRoute(method: string, path: string) {
+// Exported for direct pins (SOLID Round-27; additive — call sites untouched).
+export function detectRoute(method: string, path: string) {
   const isCount = method === "POST" && path.endsWith(COUNT_PATH);
   const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);
   const isChatCompletions = method === "POST" && path.endsWith("/v1/chat/completions");
