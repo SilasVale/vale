@@ -41,8 +41,11 @@ vale tunnel status|install|start|stop|update   # tunnel management (boxed compon
   `vale update`.
 
 - Install layout is registry-first: `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}`
-  is the single source of truth (`agent/src/paths.rs`). No legacy-directory probing.
-- Boxed components (playwright, cloudflared) are version-locked by the
+  is the single source of truth (`agent/src/paths.rs` + layout-v2 subdirs
+  `etc\`/`components\`/`scripts\`, see `docs/adr/0008-install-layout-v2.md`).
+  No legacy-directory probing.
+- Boxed components (playwright, cloudflared) live under
+  `InstallDir\components\`, version-locked by the
   release flow and agent-supervised (no Windows service).
 - The Gateway is an OPTIONAL card in the device Settings page
   (`POST /api/gateway/connect`); pure local mode needs none of it.

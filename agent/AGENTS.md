@@ -38,10 +38,13 @@ Output binaries:
   and `--tunnel <host>` are OPTIONAL extras; the Settings page Gateway card
   (`POST /api/gateway/connect`) is the GUI way to configure them.
 - Install layout is registry-first: `HKLM\SOFTWARE\Vale\Agent\{InstallDir,DataDir}`
-  — all path resolution goes through `src/paths.rs` (`install_dir()`/`data_dir()`);
-  zero `current_exe()` guesses outside it, zero legacy-directory probing.
-- Boxed components: `vale-playwright.zip` → `InstallDir\playwright\`,
-  `cloudflared.exe` → `InstallDir\tools\` (agent-supervised, no Windows service).
+  — all path resolution goes through `src/paths.rs` (`install_dir()`/`data_dir()`
+  + layout-v2 subdir helpers per `docs/adr/0008-install-layout-v2.md`: `etc\`,
+  `components\`, `scripts\` under InstallDir, logs + `pwout\` under DataDir);
+  zero `current_exe()` guesses outside it, zero legacy-directory probing
+  (one versioned v2 migration exception).
+- Boxed components: `vale-playwright.zip` → `InstallDir\components\playwright\`,
+  `cloudflared.exe` → `InstallDir\components\` (agent-supervised, no Windows service).
 - The OLD NSIS installer / setup.ps1 / run-setup.bat are RETIRED
   (`deploy/retired/`). Sharing front-end: the NEW online installer
   (`deploy/vale-setup.nsi` + `vale-online-setup.ps1`, NSIS 3.12, built by
@@ -134,7 +137,7 @@ src/
   bootstrap.rs     vale_command::bootstrap::load_or_create(path, fallback) —
                    create-if-missing, load, ensure_token. Single bootstrap site.
   metrics.rs       device vitals for /api/status (CPU delta + memory, kernel32)
-  filelog.rs       size-rotating tracing writer -> agent.log next to the exe
+  filelog.rs       size-rotating tracing writer -> DataDir\logs\agent.log (layout v2)
   session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
