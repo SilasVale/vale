@@ -231,7 +231,7 @@ async fn read_absolute_offset_after_eviction() {
     // requested offset and yields whatever the spill yields (nothing) +
     // the in-memory window (round-54: the old clamp silently re-pointed
     // the read to the in-memory window start).
-    let p = spill_path("s1");
+    let p = spill_path("s1").expect("valid test sid");
     let _ = std::fs::remove_file(&p);
     let out = call(
         find(&tools, "terminal_read"),
@@ -252,7 +252,7 @@ async fn read_merges_spill_and_memory() {
     seed(&buf, "spill-s1", b"tail", 10); // 10 bytes evicted, memory holds "tail"
                                          // Write the evicted head to the spill file the way the drainer does.
     use std::io::Write;
-    let p = spill_path("spill-s1");
+    let p = spill_path("spill-s1").expect("valid test sid");
     let _ = std::fs::create_dir_all(p.parent().unwrap());
     let mut f = std::fs::File::create(&p).unwrap();
     f.write_all(b"0123456789").unwrap();
@@ -868,19 +868,20 @@ async fn connect_saved_unknown_id_empty_store_hint() {
 #[test]
 fn spill_append_read_roundtrip() {
     let sid = "spill-append-rt";
-    let _ = std::fs::remove_file(crate::plugins::terminal::tools::ctx::spill_path(sid));
+    let p = crate::plugins::terminal::tools::ctx::spill_path(sid).expect("valid test sid");
+    let _ = std::fs::remove_file(&p);
     crate::plugins::terminal::tools::ctx::append_spill(sid, b"hello ");
     crate::plugins::terminal::tools::ctx::append_spill(sid, b"world");
     let (bytes, actual) = crate::plugins::terminal::tools::ctx::read_spill(sid, 0, 11, 0);
     assert_eq!(bytes, b"hello world");
     assert_eq!(actual, 0);
-    let _ = std::fs::remove_file(crate::plugins::terminal::tools::ctx::spill_path(sid));
+    let _ = std::fs::remove_file(&p);
 }
 
 #[test]
 fn spill_rotate_drops_oldest_bytes_and_read_uses_base() {
     let sid = "spill-rotate-1";
-    let p = crate::plugins::terminal::tools::ctx::spill_path(sid);
+    let p = crate::plugins::terminal::tools::ctx::spill_path(sid).expect("valid test sid");
     let _ = std::fs::remove_file(&p);
     crate::plugins::terminal::tools::ctx::append_spill(sid, &(0u8..100).collect::<Vec<u8>>());
     assert!(crate::plugins::terminal::tools::ctx::rotate_spill(sid, 40));
@@ -894,7 +895,7 @@ fn spill_rotate_drops_oldest_bytes_and_read_uses_base() {
 #[test]
 fn spill_rotate_missing_file_is_true() {
     let sid = "spill-rotate-missing";
-    let p = crate::plugins::terminal::tools::ctx::spill_path(sid);
+    let p = crate::plugins::terminal::tools::ctx::spill_path(sid).expect("valid test sid");
     let _ = std::fs::remove_file(&p);
     assert!(crate::plugins::terminal::tools::ctx::rotate_spill(sid, 5));
 }
@@ -902,11 +903,82 @@ fn spill_rotate_missing_file_is_true() {
 #[test]
 fn spill_rotate_discard_past_end_removes_file() {
     let sid = "spill-rotate-end";
-    let p = crate::plugins::terminal::tools::ctx::spill_path(sid);
+    let p = crate::plugins::terminal::tools::ctx::spill_path(sid).expect("valid test sid");
     let _ = std::fs::remove_file(&p);
     crate::plugins::terminal::tools::ctx::append_spill(sid, b"abc");
     assert!(crate::plugins::terminal::tools::ctx::rotate_spill(sid, 100));
     assert!(!p.exists(), "discard >= len must delete the file");
+}
+
+// SOLID Round-6 (SRP choke point): spill_path is the single validation
+// site — non-whitelisted ids resolve to None on every path, never to a
+// joined attacker-influenced filesystem path.
+#[test]
+fn spill_path_rejects_non_whitelisted_ids() {
+    use crate::plugins::terminal::tools::ctx::spill_path;
+    // Traversal / separator / dot shapes — the review #8 threat model
+    // (client-controlled session_id, SYSTEM process).
+    for evil in [
+        "../spill-rt6-evil",
+        "..\\spill-rt6-evil",
+        "sub/dir",
+        "a.b",
+        ".hidden",
+        "",
+        "has space",
+        "semi;colon",
+        "C:\\temp\\x",
+        "/abs/path",
+    ] {
+        assert!(
+            spill_path(evil).is_none(),
+            "must reject traversal-shaped id: {evil:?}"
+        );
+    }
+    // Over-long ids (>64) rejected.
+    assert!(spill_path(&"a".repeat(65)).is_none());
+    // Whitelisted shapes still resolve inside the vale spill dir.
+    for good in ["term-abc123-4", "spill-rt6-ok", "A-_9", &"a".repeat(64)] {
+        let p = spill_path(good).expect("whitelisted id must resolve");
+        assert!(
+            p.parent()
+                .is_some_and(|d| d.file_name().is_some_and(|n| n == "vale")),
+            "spill file must live directly under the vale dir: {}",
+            p.display()
+        );
+        assert_eq!(
+            p.file_name().and_then(|n| n.to_str()),
+            Some(format!("{good}.spill").as_str())
+        );
+    }
+}
+
+#[test]
+fn spill_writers_fail_closed_on_invalid_ids() {
+    use crate::plugins::terminal::tools::ctx;
+    // Unique sids (round-56): spill files live in a shared %TEMP% dir.
+    let evil = "../spill-rt6-evilw";
+    let evil_bs = "..\\spill-rt6-evilw-bs";
+    // Where the bytes WOULD have landed without the choke point: the
+    // `..` escapes the vale dir into %TEMP% itself.
+    let escaped = std::env::temp_dir().join("spill-rt6-evilw.spill");
+    let _ = std::fs::remove_file(&escaped);
+    // Writers must no-op: nothing created anywhere, reads empty, rotation
+    // vacuously true, removal silent.
+    ctx::append_spill(evil, b"pwned-by-session-id");
+    assert!(
+        !escaped.exists(),
+        "append must not escape the spill dir for traversal ids"
+    );
+    assert!(ctx::rotate_spill(evil, 5));
+    assert!(!escaped.exists());
+    let (bytes, actual) = ctx::read_spill(evil, 0, 99, 0);
+    assert!(bytes.is_empty());
+    assert_eq!(actual, 0);
+    ctx::remove_spill_for(evil); // must not panic
+    ctx::remove_spill_for(evil_bs); // backslash variant: same fail-closed
+    assert!(!escaped.exists());
+    let _ = std::fs::remove_file(&escaped);
 }
 
 #[test]

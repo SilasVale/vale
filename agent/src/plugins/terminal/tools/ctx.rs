@@ -120,9 +120,14 @@ fn pre_restart_context(sid: &str) -> String {
 /// file exceeds this, rotate_spill drops the oldest half.
 pub(super) const MAX_SPILL_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB per live session
 
-/// review #8: session ids are server-generated `term-<hex>-<n>`; anything
-/// else (path separators, `..`) must NEVER reach spill_path — read_spill is
-/// driven by client-controlled `session_id` and this process runs as SYSTEM.
+/// review #8 (SOLID Round-6: SRP choke point): session ids are
+/// server-generated `term-<hex>-<n>`; anything else (path separators, `..`)
+/// must NEVER reach the filesystem. Validation used to live ONLY on the
+/// read path (`read_spill`), while `append_spill`/`rotate_spill` joined the
+/// raw sid — a client-controlled `session_id` like `../evil` escaped the
+/// spill dir on write. Now EVERY path goes through `spill_path`, which
+/// returns `None` for non-whitelisted ids, and the writers fail closed
+/// (no-op / vacuous-true). One validation site, not four.
 fn valid_spill_id(sid: &str) -> bool {
     // The whitelist itself is the traversal defense: no '.', '/' or '\'
     // can appear, so neither ".." nor absolute paths can be named. (Term
@@ -134,10 +139,18 @@ fn valid_spill_id(sid: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-pub(super) fn spill_path(sid: &str) -> std::path::PathBuf {
-    std::env::temp_dir()
-        .join("vale")
-        .join(format!("{sid}.spill"))
+/// The single choke point for spill-file access. `None` means "not a
+/// server-shaped id — touch nothing" (callers treat it like a missing
+/// file, matching the long-standing best-effort semantics).
+pub(super) fn spill_path(sid: &str) -> Option<std::path::PathBuf> {
+    if !valid_spill_id(sid) {
+        return None;
+    }
+    Some(
+        std::env::temp_dir()
+            .join("vale")
+            .join(format!("{sid}.spill")),
+    )
 }
 
 /// Drop the oldest `discard` bytes from a session's spill file (round-115).
@@ -153,7 +166,13 @@ pub(super) fn spill_path(sid: &str) -> std::path::PathBuf {
 /// advances spill_base only on true (review #5).
 pub(super) fn rotate_spill(sid: &str, discard: u64) -> bool {
     use std::io::{Seek, SeekFrom, Write};
-    let p = spill_path(sid);
+    // Fail closed on non-whitelisted ids (see spill_path): there is no file
+    // and never will be, so "starts at discard" holds vacuously. The caller
+    // advancing spill_base is harmless — appends no-op for the same sid, so
+    // the stream stays consistently empty.
+    let Some(p) = spill_path(sid) else {
+        return true;
+    };
     let Ok(mut f) = std::fs::File::open(&p) else {
         return true;
     };
@@ -192,7 +211,11 @@ pub(super) fn rotate_spill(sid: &str, discard: u64) -> bool {
 
 pub(super) fn append_spill(sid: &str, bytes: &[u8]) {
     use std::io::Write;
-    let p = spill_path(sid);
+    // Fail closed on non-whitelisted ids (see spill_path): drop the bytes
+    // rather than joining a client-controlled sid into a filesystem path.
+    let Some(p) = spill_path(sid) else {
+        return;
+    };
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).append(true);
     if p.exists() {
@@ -221,15 +244,17 @@ pub(super) fn append_spill(sid: &str, bytes: &[u8]) {
 /// file is no longer stream byte 0). Everything before `base` is gone;
 /// requests there return empty with actual_start = max(start, base).
 pub(super) fn read_spill(sid: &str, start: usize, end: usize, base: u64) -> (Vec<u8>, u64) {
-    if !valid_spill_id(sid) {
-        return (Vec::new(), 0);
-    }
     // round-110/111: the whole spill file was read into RAM then sliced —
     // a log-streaming session accumulates hundreds of MB, so a first
     // no-offset read (cursor 0) OOM'd the agent. Cap a single read at 1MB.
     use std::io::{Read, Seek, SeekFrom};
     const MAX_SPILL_READ: u64 = 1_048_576;
-    let Ok(mut f) = std::fs::File::open(spill_path(sid)) else {
+    // Non-whitelisted ids behave like a missing file (see spill_path).
+    // Historical contract preserved exactly: (empty, 0).
+    let Some(p) = spill_path(sid) else {
+        return (Vec::new(), 0);
+    };
+    let Ok(mut f) = std::fs::File::open(&p) else {
         return (Vec::new(), start.max(base as usize) as u64);
     };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
@@ -254,7 +279,10 @@ pub(super) fn read_spill(sid: &str, start: usize, end: usize, base: u64) -> (Vec
 /// accumulated). Call when the session's last reference disappears (drainer
 /// close, history eviction). Idempotent; a missing file is fine.
 fn remove_spill(sid: &str) {
-    let _ = std::fs::remove_file(spill_path(sid));
+    // Non-whitelisted ids never had a file (see spill_path) — no-op.
+    if let Some(p) = spill_path(sid) {
+        let _ = std::fs::remove_file(p);
+    }
 }
 
 /// Public alias for mod.rs (history eviction calls it under a different

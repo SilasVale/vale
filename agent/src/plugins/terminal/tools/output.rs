@@ -178,7 +178,13 @@ pub(super) fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                     out["dropped"] = json!(dropped);
                 }
                 if spilled {
-                    out["spill"] = json!(spill_path(&session_id).to_string_lossy());
+                    // Debug aid only: the spill file backing this read.
+                    // Non-whitelisted ids (see ctx::spill_path) surface as ""
+                    // rather than a joined attacker-influenced path.
+                    let spill_dbg = spill_path(&session_id)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    out["spill"] = json!(spill_dbg);
                 }
                 Ok(out)
             }
