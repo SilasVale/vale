@@ -47,7 +47,8 @@ interface DeviceProbeState {
 const DEVICE_PROBE_CACHE = new Map<string, any>(); // name -> { at, ok }
 const DEVICE_PROBE_TTL_MS = 30000;
 
-async function cachedDeviceProbe(
+// Exported for direct pins (SOLID Round-31; additive — call sites untouched).
+export async function cachedDeviceProbe(
   env: any,
   device: Device,
   fresh = false,
