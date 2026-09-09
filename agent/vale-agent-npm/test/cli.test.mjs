@@ -225,3 +225,89 @@ test("rollbackVersionOk: plain dotted triples only (URL interpolation gate)", ()
   assert.equal(rollbackVersionOk("--clear"), false, "flag is not a version");
   assert.equal(rollbackVersionOk(""), false);
 });
+
+// SOLID Round-17 (contract completion): boxedVersions/writeBoxedVersions
+// carry an "exported: unit-tested shape" comment but had ZERO pins — the
+// boxed-component manifest (/api/status surfaces it) is the version-lock
+// supervision for playwright + cloudflared. Staged temp dirs only; the
+// cloudflared --version probe never fires here (no staged binary).
+test("boxedVersions: empty trees → all unknown, ISO updated stamp", () => {
+  const { boxedVersions } = require("../bin/vale.js");
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `vale-boxed-empty-${process.pid}-`));
+  try {
+    const m = boxedVersions(dir, dir);
+    assert.ok(!Number.isNaN(Date.parse(m.updated)), "machine-readable stamp");
+    assert.equal(m.playwright_mcp.version, "unknown");
+    assert.equal(m.playwright_mcp.sha256, "unknown");
+    assert.equal(m.playwright_core.version, "unknown");
+    assert.equal(m.cloudflared.version, "unknown");
+    assert.equal(m.cloudflared.sha256, "unknown");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("boxedVersions: staged versions read, zip hashed exactly", () => {
+  const { boxedVersions } = require("../bin/vale.js");
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const crypto = require("node:crypto");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `vale-boxed-full-${process.pid}-`));
+  try {
+    const mcpPkg = path.join(dir, "components", "playwright", "node_modules", "@playwright", "mcp");
+    fs.mkdirSync(mcpPkg, { recursive: true });
+    fs.writeFileSync(path.join(mcpPkg, "package.json"), '{"version":"9.9.9"}');
+    const zipBytes = Buffer.from("fake-playwright-zip-bytes");
+    fs.writeFileSync(path.join(dir, "vale-playwright.zip"), zipBytes);
+    const m = boxedVersions(dir, dir);
+    assert.equal(m.playwright_mcp.version, "9.9.9");
+    assert.equal(m.playwright_mcp.sha256, crypto.createHash("sha256").update(zipBytes).digest("hex"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("boxedVersions: >300MB blob → unknown sha without reading it", () => {
+  const { boxedVersions } = require("../bin/vale.js");
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `vale-boxed-big-${process.pid}-`));
+  try {
+    // Sparse file: stat reports 301MB instantly, disk use stays ~nil.
+    const big = path.join(dir, "vale-playwright.zip");
+    fs.writeFileSync(big, "x");
+    fs.truncateSync(big, 301 * 1024 * 1024);
+    const t0 = Date.now();
+    const m = boxedVersions(dir, dir);
+    assert.equal(m.playwright_mcp.sha256, "unknown", "oversize guard, not a hash");
+    assert.ok(Date.now() - t0 < 5000, "must not read 301MB");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeBoxedVersions: writes a parseable manifest; hostile dirs stay silent", () => {
+  const { writeBoxedVersions } = require("../bin/vale.js");
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `vale-boxed-write-${process.pid}-`));
+  try {
+    writeBoxedVersions(dir, dir); // etc/ auto-created, never throws
+    const back = JSON.parse(fs.readFileSync(path.join(dir, "etc", "boxed-versions.json"), "utf8"));
+    for (const k of ["updated", "playwright_mcp", "playwright_core", "cloudflared"]) {
+      assert.ok(back[k] !== undefined, `manifest carries ${k}`);
+    }
+    // A file where a directory is expected: best-effort skip, never throws.
+    const file = path.join(dir, "blocker");
+    fs.writeFileSync(file, "x");
+    writeBoxedVersions(file, dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
