@@ -185,8 +185,8 @@ try {
   Set-Content -Path $sdPath -Value $sdLines -Encoding ASCII
   $en1 = Join-Path $InstallDir "scripts\ensure-desktop.ps1"
   $vb1 = Join-Path $InstallDir "scripts\desktop-pulse.vbs"
-  Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $InstallDir "scripts\start-desktop.ps1")+'"' -Force
-  Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "'+(Join-Path $InstallDir "scripts\ensure-desktop.ps1")+'" & Chr(34), 0, False' -Force
+  Set-Content -Path $en1 -Value ('if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallDir "scripts\start-desktop.ps1") + '"') -Force
+  Set-Content -Path $vb1 -Value ('CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "' + (Join-Path $InstallDir "scripts\ensure-desktop.ps1") + '" & Chr(34), 0, False') -Force
   if ($null -eq (Get-ScheduledTask -TaskName "ValeDesktop" -ErrorAction SilentlyContinue)) {
     $da = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vb1 + '"') -WorkingDirectory $InstallDir
     $dt1 = New-ScheduledTaskTrigger -AtLogOn
@@ -195,7 +195,7 @@ try {
     Say "ValeDesktop 登录任务已创建"
   }
   Start-ScheduledTask -TaskName "ValeDesktop" -ErrorAction SilentlyContinue
-} catch { Say "ValeDesktop 任务跳过：$($_.Exception.Message)" }
+} catch { Say "ValeDesktop 任务跳过（行 $($_.InvocationInfo.ScriptLineNumber)）：$($_.Exception.Message)" }
 
 # --- 7. 桌面快捷方式（公共桌面 + 当前用户桌面；目标早已不是那个删掉的旧壳） ---
 try {
