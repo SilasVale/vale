@@ -109,6 +109,42 @@ smoke_index_release() {
     echo "  !! latest-alias sha256 mismatch: manifest $want_sha, downloaded $latest_sha ($base/vale-agent/vale-agent-latest.tgz)"
     return 1
   fi
+  # Installer manifest (additive — older manifests carry no installer
+  # fields and pass on the tgz checks above). When /api/version advertises
+  # installer_sha256, the advertised installer URL must hash to it AND the
+  # versionless Setup.exe alias must hash to it too (the landing page
+  # links the alias; a stale alias would install the previous release).
+  local inst_url inst_want
+  inst_url="$(echo "$live" | grep -oP '"installer":"\K[^"]+' | head -1)" || inst_url=""
+  inst_want="$(echo "$live" | grep -oP '"installer_sha256":"\K[^"]+' | head -1)" || inst_want=""
+  if [ -n "$inst_url" ] || [ -n "$inst_want" ]; then
+    if [ -z "$inst_url" ] || [ -z "$inst_want" ]; then
+      echo "  !! installer manifest half-present (installer='$inst_url' installer_sha256='${inst_want:0:12}...') — both or neither"
+      return 1
+    fi
+    assert_want_sha256 "$inst_want" || return 1
+    local inst_sha=""
+    for _ in 1 2 3 4 5; do
+      inst_sha="$(curl -fsSL -m 120 "$inst_url" 2>/dev/null | sha256sum | cut -d' ' -f1)" || inst_sha=""
+      [ "$inst_sha" = "$inst_want" ] && break
+      sleep "$retry_sleep"
+    done
+    if [ "$inst_sha" != "$inst_want" ]; then
+      echo "  !! installer binary sha256 mismatch: manifest $inst_want, downloaded $inst_sha ($inst_url)"
+      return 1
+    fi
+    local alias_sha=""
+    for _ in 1 2 3 4 5; do
+      alias_sha="$(curl -fsSL -m 120 "$base/vale-agent/ValeAgent-Setup.exe" 2>/dev/null | sha256sum | cut -d' ' -f1)" || alias_sha=""
+      [ "$alias_sha" = "$inst_want" ] && break
+      sleep "$retry_sleep"
+    done
+    if [ "$alias_sha" != "$inst_want" ]; then
+      echo "  !! installer-alias sha256 mismatch: manifest $inst_want, downloaded $alias_sha ($base/vale-agent/ValeAgent-Setup.exe)"
+      return 1
+    fi
+    echo "  ok: installer smoke passed (versioned + alias binary sha verified)"
+  fi
   echo "  ok: /api/version smoke passed (v$want_version, versioned + latest binary sha verified)"
   return 0
 }

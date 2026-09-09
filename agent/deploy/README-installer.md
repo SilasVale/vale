@@ -1,7 +1,7 @@
 # Vale Windows 在线安装包 — 测试清单
 
 安装包：`https://agent.saisi.online/vale-agent/ValeAgent-Setup.exe`
-（版本钉死，当前 1.2.306；按版本另有 `ValeAgent-Setup-<ver>.exe`。）
+（版本钉死，当前 1.2.307；按版本另有 `ValeAgent-Setup-<ver>.exe`。）
 
 **只能在备用 Windows 沙盒机上测，不要在生产设备（d1）上跑**——安装会停
 agent、重装同版本并重启桌面壳，中断正在跑的 AI 会话。

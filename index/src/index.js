@@ -3,7 +3,9 @@
 // This Worker is the download site for vale-agent. Device management
 // (registry + MCP config + panel proxy) lives in the Vale console
 // (admin-only). This page distributes the npm tgz (the SINGLE install/update
-// channel — NSIS installer retired 2026-08-28) and points users to the
+// channel) plus the Windows online installer (ValeAgent-Setup.exe, NSIS,
+// same npm channel underneath — bootstraps Node, installs the pinned tgz,
+// runs `vale setup`) and points users to the
 // console. The console URL is set per-deployment via the CONSOLE_URL var
 // (no production domain is hardcoded here).
 //
@@ -369,14 +371,31 @@ export default {
               : `vale-agent-${ver}.tgz`;
           if (ver && typeof sha === "string" && SHA256_RE.test(sha)) {
             const base = new URL(request.url).origin;
-            return new Response(
-              JSON.stringify({
-                version: ver,
-                download: `${base}/vale-agent/${tb}`,
-                sha256: sha,
-              }),
-              { headers: { "content-type": "application/json", "cache-control": "no-store" } }
-            );
+            // Installer fields are ADDITIVE (older manifests lack them —
+            // fresh-install clients treat absence as "installer unknown").
+            // Same flat-name discipline as the tarball: the versioned
+            // Setup-<ver>.exe shape only, never a path.
+            const instRaw = vj && vj.installer;
+            const instShaRaw = vj && vj.installer_sha256;
+            const inst =
+              typeof instRaw === "string" &&
+              /^ValeAgent-Setup-[0-9]+\.[0-9]+\.[0-9]+\.exe$/.test(instRaw)
+                ? instRaw
+                : null;
+            const instSha =
+              typeof instShaRaw === "string" && SHA256_RE.test(instShaRaw) ? instShaRaw : null;
+            const body = {
+              version: ver,
+              download: `${base}/vale-agent/${tb}`,
+              sha256: sha,
+            };
+            if (inst && instSha) {
+              body.installer = `${base}/vale-agent/${inst}`;
+              body.installer_sha256 = instSha;
+            }
+            return new Response(JSON.stringify(body), {
+              headers: { "content-type": "application/json", "cache-control": "no-store" },
+            });
           }
         }
       } catch (e) {
@@ -388,12 +407,15 @@ export default {
       return new Response("release manifest unavailable", { status: 503 });
     }
     const pathname = new URL(request.url).pathname;
-    // Keep the old installer URL usable for links/bookmarks — the NSIS
-    // installer is retired (npm is the single channel); redirect to the
-    // console URL (CONSOLE_URL var, or this site's root when unset) so
-    // stale links land somewhere useful.
-    if (pathname === "/vale-agent/ValeAgent-Setup.exe") {
-      return Response.redirect(consoleUrl, 302);
+    // Windows online installer (NSIS, same npm channel underneath): the
+    // versionless alias + versioned names are served straight from ASSETS
+    // (staged by scripts/build-installer.sh on every release). Exact-pattern
+    // discipline like the tgz route below — a missing exe must 404 (never
+    // the landing page as 200 HTML; devices once downloaded HTML as the
+    // installer and the agent never started).
+    const setupMatch = /^\/vale-agent\/ValeAgent-Setup-[0-9]+\.[0-9]+\.[0-9]+\.exe$/.exec(pathname);
+    if (setupMatch || pathname === "/vale-agent/ValeAgent-Setup.exe") {
+      return env.ASSETS.fetch(request);
     }
     // npm tgz download path (the documented `npm i -g
     // https://agent.saisi.online/vale-agent/vale-agent-<v>.tgz` command).

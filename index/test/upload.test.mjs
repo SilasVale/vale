@@ -231,6 +231,41 @@ test("/api/version serves the manifest when version + 64-hex sha are present", a
   assert.equal(j.version, "1.2.3");
   assert.equal(j.sha256, GOOD_SHA);
   assert.ok(j.download.endsWith("/vale-agent/vale-agent-1.2.3.tgz"));
+  assert.equal(j.installer, undefined, "tgz-only manifest carries no installer fields");
+});
+
+test("/api/version passes installer fields through when the manifest carries them", async () => {
+  const resp = await worker.fetch(
+    new Request("https://dl.local/api/version"),
+    versionEnv({
+      version: "1.2.3",
+      sha256: GOOD_SHA,
+      tarball: "vale-agent-latest.tgz",
+      installer: "ValeAgent-Setup-1.2.3.exe",
+      installer_sha256: "b".repeat(64),
+    }),
+  );
+  assert.equal(resp.status, 200);
+  const j = await resp.json();
+  assert.equal(j.installer, "https://dl.local/vale-agent/ValeAgent-Setup-1.2.3.exe");
+  assert.equal(j.installer_sha256, "b".repeat(64));
+});
+
+test("/api/version drops hostile/mismatched installer fields (additive, never 503)", async () => {
+  for (const extra of [
+    { installer: "../evil.exe", installer_sha256: "b".repeat(64) },
+    { installer: "ValeAgent-Setup-1.2.3.exe", installer_sha256: "xyz" },
+    { installer: "ValeAgent-Setup.exe", installer_sha256: "b".repeat(64) },
+    { installer: "ValeAgent-Setup-1.2.3.exe" },
+  ]) {
+    const resp = await worker.fetch(
+      new Request("https://dl.local/api/version"),
+      versionEnv({ version: "1.2.3", sha256: GOOD_SHA, ...extra }),
+    );
+    assert.equal(resp.status, 200, `${JSON.stringify(extra)} must stay 200 (tgz manifest intact)`);
+    const j = await resp.json();
+    assert.equal(j.installer, undefined, `${JSON.stringify(extra)} must not surface installer fields`);
+  }
 });
 
 test("/api/version 503s on truncated / non-hex / missing sha (P2-5)", async () => {

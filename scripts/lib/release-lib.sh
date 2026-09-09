@@ -5,14 +5,27 @@
 # round-309 keep-policy can never silently regress).
 
 # Write the CDN manifest the agent_update tool consumes (round-119: sha256
-# REQUIRED). $1 = version, $2 = packed tgz path, $3 = output dir.
+# REQUIRED). $1 = version, $2 = packed tgz path, $3 = output dir,
+# $4 = optional staged installer exe path (ValeAgent-Setup-<ver>.exe).
 # Echoes the sha256 so the caller keeps it for the reconcile stages.
+# The installer fields are ADDITIVE (old readers ignore them): when $4 is
+# given and exists, the manifest also carries installer (flat basename) +
+# installer_sha256 so fresh installs are verifiable the same way tgz
+# updates are. When absent (older flow / installer not rebuilt yet), the
+# manifest keeps the tgz-only shape and every old consumer keeps working.
 write_version_json() {
-  local ver="$1" tgz="$2" out="$3"
+  local ver="$1" tgz="$2" out="$3" installer_exe="${4:-}"
   local sha
   sha=$(sha256sum "$tgz" | cut -d' ' -f1)
-  printf '{"version":"%s","tarball":"vale-agent-latest.tgz","updated":"%s","sha256":"%s"}\n' \
-    "$ver" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sha" > "$out/version.json"
+  if [[ -n "$installer_exe" && -f "$installer_exe" ]]; then
+    local ish
+    ish=$(sha256sum "$installer_exe" | cut -d' ' -f1)
+    printf '{"version":"%s","tarball":"vale-agent-latest.tgz","updated":"%s","sha256":"%s","installer":"%s","installer_sha256":"%s"}\n' \
+      "$ver" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sha" "$(basename "$installer_exe")" "$ish" > "$out/version.json"
+  else
+    printf '{"version":"%s","tarball":"vale-agent-latest.tgz","updated":"%s","sha256":"%s"}\n' \
+      "$ver" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sha" > "$out/version.json"
+  fi
   echo "$sha"
 }
 
@@ -31,6 +44,24 @@ prune_last5_per_minor() {
   for f in "$dir"/vale-agent-1.*.*.tgz; do
     keep=0
     for k in "${KEEP[@]}"; do [ "$k" = "$f" ] && keep=1 && break; done
+    if [ "$keep" -eq 0 ]; then rm -f "$f"; echo "pruned $(basename "$f")"; fi
+  done
+}
+
+# Installer prune (companion to the tgz last-5-per-minor above): keep the
+# newest $2 (default 5) versioned ValeAgent-Setup-1.*.*.exe + the versionless
+# ValeAgent-Setup.exe alias (never pruned — the landing page links it).
+# Versioned installers pin their tgz at build time, so evicting superseded
+# ones is safe; the alias always tracks the newest build staged by the
+# release flow.
+prune_installers() {
+  local dir="$1" keep_n="${2:-5}"
+  shopt -s nullglob
+  mapfile -t KEEP_EXE < <(ls "$dir"/ValeAgent-Setup-1.*.*.exe 2>/dev/null | sort -V | tail -n "$keep_n")
+  local f k keep=0
+  for f in "$dir"/ValeAgent-Setup-1.*.*.exe; do
+    keep=0
+    for k in "${KEEP_EXE[@]}"; do [ "$k" = "$f" ] && keep=1 && break; done
     if [ "$keep" -eq 0 ]; then rm -f "$f"; echo "pruned $(basename "$f")"; fi
   done
 }

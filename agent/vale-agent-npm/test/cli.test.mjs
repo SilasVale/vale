@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -106,4 +106,17 @@ test("writeReleaseMarker: fresh-install parity with the round-298 update marker"
 test("writeReleaseMarker: missing dir stays silent (best-effort, never throws)", () => {
   const { writeReleaseMarker } = require("../bin/vale.js");
   assert.doesNotThrow(() => writeReleaseMarker("Z:\\definitely\\not\\here"));
+});
+
+test("uninstallVersionPs: $ok-gated DisplayVersion parity, never fabricates UninstallString", () => {
+  const { uninstallVersionPs } = require("../bin/vale.js");
+  const body = uninstallVersionPs("C:\\Program Files\\Vale", "1.2.307").join("\n");
+  assert.match(body, /\$ok -and '1\.2\.307'/, "gated on provable swap success like .vale-release");
+  assert.match(body, /DisplayVersion/, "moves the Add/Remove version");
+  assert.match(body, /DisplayName/, "moves the display name with it");
+  assert.match(body, /InstallLocation/, "records where the release lives");
+  assert.ok(!body.includes("UninstallString"), "never fabricates UninstallString (NSIS owns it)");
+  assert.match(body, /catch \{\}/, "best-effort: registry failure never fails the update");
+  assert.match(body, /Test-Path \$rk/, "creates the key for npm-only installs that lack one");
+  assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });

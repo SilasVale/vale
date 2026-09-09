@@ -72,5 +72,43 @@ check_match "manifest is valid JSON with version+tarball" \
 # REFUSES installs without a correct sha — round-119).
 WRITTEN_SHA=$(node -p "JSON.parse(require('fs').readFileSync('$T/version.json','utf8')).sha256")
 check "manifest sha256 matches the packed tgz" "$WRITTEN_SHA" "$WANT_SHA"
+# No installer staged: the manifest keeps the tgz-only shape (old consumers
+# ignore nothing, new consumers treat missing installer fields as absent).
+check "tgz-only manifest has no installer fields" \
+  "$(node -p "JSON.stringify(Object.keys(JSON.parse(require('fs').readFileSync('$T/version.json','utf8'))).sort())")" \
+  '["sha256","tarball","updated","version"]'
+
+# With a staged installer: additive installer + installer_sha256 fields.
+echo "fake-exe-payload" > "$T/ValeAgent-Setup-1.2.297.exe"
+WANT_ISH=$(sha256sum "$T/ValeAgent-Setup-1.2.297.exe" | cut -d' ' -f1)
+GOT_SHA2=$(write_version_json "1.2.297" "$T/payload.tgz" "$T" "$T/ValeAgent-Setup-1.2.297.exe")
+check "writer with installer still echoes the tgz sha" "$GOT_SHA2" "$WANT_SHA"
+check "manifest installer basename" \
+  "$(node -p "JSON.parse(require('fs').readFileSync('$T/version.json','utf8')).installer")" \
+  "ValeAgent-Setup-1.2.297.exe"
+check "manifest installer_sha256 matches the staged exe" \
+  "$(node -p "JSON.parse(require('fs').readFileSync('$T/version.json','utf8')).installer_sha256")" \
+  "$WANT_ISH"
+# Missing installer path: falls back to the tgz-only shape (never writes a
+# dangling installer name).
+write_version_json "1.2.297" "$T/payload.tgz" "$T" "$T/ValeAgent-Setup-9.9.9.exe" >/dev/null
+check "dangling installer path keeps tgz-only shape" \
+  "$(node -p "JSON.stringify(Object.keys(JSON.parse(require('fs').readFileSync('$T/version.json','utf8'))).sort())")" \
+  '["sha256","tarball","updated","version"]'
+
+# ── installer prune ────────────────────────────────────────────────────
+rm -rf "$T" && mkdir -p "$T"
+for v in 1.2.300 1.2.301 1.2.302 1.2.303 1.2.304 1.2.305 1.2.306; do echo "exe-$v" > "$T/ValeAgent-Setup-$v.exe"; done
+echo "alias" > "$T/ValeAgent-Setup.exe"
+echo keep > "$T/unrelated.txt"
+prune_installers "$T" >/dev/null
+check "installer prune keeps newest 5 versioned" \
+  "$(ls "$T"/ValeAgent-Setup-1.*.*.exe 2>/dev/null | xargs -r -n1 basename | sort -V | tr '\n' ' ')" \
+  "ValeAgent-Setup-1.2.302.exe ValeAgent-Setup-1.2.303.exe ValeAgent-Setup-1.2.304.exe ValeAgent-Setup-1.2.305.exe ValeAgent-Setup-1.2.306.exe "
+check "installer alias untouched" "$(cat "$T/ValeAgent-Setup.exe")" "alias"
+check "installer prune leaves unrelated files" "$(cat "$T/unrelated.txt")" "keep"
+rm -rf "$T" && mkdir -p "$T"
+out=$(prune_installers "$T")
+check "empty asset dir installer-prunes nothing and stays silent" "$out" ""
 
 echo "release-lib: $PASS checks passed"

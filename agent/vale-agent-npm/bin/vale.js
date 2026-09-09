@@ -39,6 +39,7 @@ exports.deskShortcutRepairPs = deskShortcutRepairPs;
 exports.parseAgentPort = parseAgentPort;
 exports.agentPort = agentPort;
 exports.firewallPs = firewallPs;
+exports.uninstallVersionPs = uninstallVersionPs;
 exports.playwrightProbePs = playwrightProbePs;
 exports.busyIsFresh = busyIsFresh;
 exports.boxedVersions = boxedVersions;
@@ -177,6 +178,29 @@ function firewallPs(port) {
         `$fwPort = ${port};`,
         `foreach ($fr in @(Get-NetFirewallRule -DisplayName 'Vale Agent' -ErrorAction SilentlyContinue)) { try { $fp = @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $fr | Select-Object -ExpandProperty LocalPort); if ($fp -notcontains "$fwPort") { Remove-NetFirewallRule -Name $fr.Name -Confirm:$false -ErrorAction SilentlyContinue } } catch {} }`,
         `if (-not (Get-NetFirewallRule -DisplayName 'Vale Agent' -ErrorAction SilentlyContinue | Where-Object { @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $PSItem | Select-Object -ExpandProperty LocalPort) -contains "$fwPort" })) { New-NetFirewallRule -DisplayName 'Vale Agent' -Direction Inbound -LocalPort $fwPort -Protocol TCP -Action Allow | Out-Null }`,
+    ];
+}
+// exported: Add/Remove-Programs version parity. The NSIS installer writes
+// DisplayVersion once at install time, but `vale update` swaps the exe
+// out-of-band — without this the control-panel entry shows the ORIGINAL
+// version forever and misleads troubleshooting. Same round-298 discipline
+// as .vale-release: the caller splices these lines right after the marker
+// write, gated on $ok (a failed swap must not move the version), wrapped
+// in try/catch (best-effort — a registry failure must never fail the
+// update). Creates the key when missing (npm-only installs never had one)
+// but never fabricates UninstallString (NSIS owns it; npm uninstall is
+// `vale uninstall`). q = single-quote-escaped install dir, ver = release
+// version. ASCII-only PS. unit-tested.
+function uninstallVersionPs(q, ver) {
+    return [
+        `if ($ok -and '${ver}') { try {`,
+        `  $rk = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ValeAgent'`,
+        `  if (-not (Test-Path $rk)) { New-Item -Path $rk -Force | Out-Null }`,
+        `  Set-ItemProperty -Path $rk -Name DisplayVersion -Value '${ver}' -ErrorAction Stop`,
+        `  Set-ItemProperty -Path $rk -Name DisplayName -Value 'Vale Agent ${ver}' -ErrorAction Stop`,
+        `  Set-ItemProperty -Path $rk -Name InstallLocation -Value '${q}' -ErrorAction Stop`,
+        `  Set-ItemProperty -Path $rk -Name Publisher -Value 'Vale' -ErrorAction Stop`,
+        `} catch {} }`,
     ];
 }
 // exported: the ValePlaywright probe launcher (playwright-probe.ps1).
@@ -722,6 +746,9 @@ const commands = {
             // completed (a failed swap keeps the device on the OLD exe — the
             // marker must not lie). The marker is what agent_update compares.
             `if ($ok -and '${relVer}') { Set-Content -Path '${q}\\.vale-release' -Value '${relVer}' -NoNewline -ErrorAction SilentlyContinue }`,
+            // Add/Remove-Programs parity (same $ok gate — a failed swap must not
+            // move the displayed version either).
+            ...uninstallVersionPs(q, relVer),
             `Remove-Item -Force -ErrorAction SilentlyContinue '${q}\\vale-agent.new.exe'`,
             // stage-l: swap the desktop shell sources (main/preload) with retry —
             // the running Electron may hold them briefly.

@@ -1,5 +1,5 @@
 // Worker static-routing regression tests (structure refactor round — these
-// routes previously had ZERO coverage). The Setup.exe redirect exists
+// routes previously had ZERO coverage). The Setup.exe serving exists
 // precisely because a past bug served the download PAGE as 200 HTML for a
 // missing binary (devices silently downloaded HTML as ValeAgent-Setup.exe);
 // these tests pin the documented contract so it can't regress.
@@ -62,27 +62,32 @@ test("near-miss tgz paths are NOT routed to ASSETS (exact-pattern discipline)", 
   assert.equal(assetsFetches.length, 0, "no near-miss may reach ASSETS");
 });
 
-test("retired ValeAgent-Setup.exe redirects to CONSOLE_URL (never 200 HTML)", async () => {
-  const { env } = makeEnv(null);
-  const resp = await worker.fetch(
-    new Request("https://dl.local/vale-agent/ValeAgent-Setup.exe"),
-    env,
-  );
-  assert.equal(resp.status, 302);
-  // Response.redirect normalizes the Location (undici appends the root "/");
-  // compare as URLs.
-  assert.equal(new URL(resp.headers.get("location")).href, "https://console.example/");
+test("ValeAgent-Setup.exe alias + versioned names serve from ASSETS", async () => {
+  const { env, assetsFetches } = makeEnv(null);
+  for (const p of [
+    "/vale-agent/ValeAgent-Setup.exe",
+    "/vale-agent/ValeAgent-Setup-1.2.307.exe",
+  ]) {
+    const resp = await worker.fetch(new Request(`https://dl.local${p}`), env);
+    assert.equal(resp.status, 200, p);
+    assert.equal(await resp.text(), "fake-binary", p);
+  }
+  assert.equal(assetsFetches.length, 2, "both requests must reach ASSETS");
 });
 
-test("Setup.exe falls back to the request origin when CONSOLE_URL is unset", async () => {
-  const { env: noVar } = makeEnv(null);
-  delete noVar.CONSOLE_URL;
-  const resp = await worker.fetch(
-    new Request("https://dl.local/vale-agent/ValeAgent-Setup.exe"),
-    noVar,
-  );
-  assert.equal(resp.status, 302);
-  assert.equal(new URL(resp.headers.get("location")).href, "https://dl.local/");
+test("near-miss Setup.exe paths are NOT routed to ASSETS (exact-pattern discipline)", async () => {
+  const { env, assetsFetches } = makeEnv(null);
+  for (const p of [
+    "/vale-agent/ValeAgent-Setup.exe.exe",
+    "/vale-agent/ValeAgent-Setup-1.2.exe",
+    "/vale-agent/ValeAgent-Setup-1.2.307.exe/",
+    "/vale-agent/valeagent-setup.exe",
+    "/vale-agent/ValeAgent-Setup-1.2.307.tgz",
+  ]) {
+    const resp = await worker.fetch(new Request(`https://dl.local${p}`), env);
+    assert.equal(resp.status, 404, `${p} must fall to the 404 fallback`);
+  }
+  assert.equal(assetsFetches.length, 0, "no near-miss may reach ASSETS");
 });
 
 test("/api/version serves the release manifest derived from version.json", async () => {
