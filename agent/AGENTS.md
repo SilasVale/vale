@@ -288,8 +288,9 @@ Last updated: 2026-09-09 round-554 — current release **1.2.307 LIVE on d1
   method (both directions DEVICE-VERIFIED with a 30 MB payload through the
   console MCP), the dead Windows `system_file_download` path was fixed, and
   the console-MCP visibility drift got a device-generated contract
-  (agent/spec-tools.json + NOT_EXPOSED). OPEN: the GitHub-asset-vs-CDN
-  dual-build digest split (see ROUND-554) and keep-latest for v1.2.306.
+  (agent/spec-tools.json + NOT_EXPOSED). keep-latest ran (GitHub holds only
+  v1.2.307). OPEN for sign-off: the P0 reconcile's whole-tgz equality, which
+  PE non-reproducibility makes unsatisfiable (member-wise finding below).
 
 ### OPEN decisions (product sign-off needed — do NOT change without one)
 - **settings_put invalid-JSON envelope: RESOLVED 2026-09-08** (was HTTP
@@ -2186,17 +2187,25 @@ Last updated: 2026-09-09 round-554 — current release **1.2.307 LIVE on d1
     25 MB gateway screen 413'd it in 5.9 s) → Linux curl 22.8 s, same MD5,
     and the SECOND claim 404s (one-time semantics intact).
   · CI: release.yml on tag v1.2.307 success; both commits' CI success.
-  FOUND, PRE-EXISTING (not introduced here — it is the reconcile gate's own
-  subject): the GitHub release asset and the CDN tgz are DIFFERENT BUILDS.
-  v1.2.307 asset digest 66526fb5… vs CDN cdbff19c…, and v1.2.306 splits the
-  same way (GitHub dc02625c… vs the CDN file 34375138…), so devices have
-  been updating from a binary that is NOT the one on the GitHub release.
-  --skip-reconcile was unavoidable because the asset does not exist at
-  CDN-publish time — i.e. the P0 reconcile can NEVER pass in that order.
-  Either the reconcile moves to a post-tag step or the release stops
-  rebuilding the exe; needs a decision, not another silent continuation.
-  OPEN: keep-latest (delete the v1.2.306 release + tag refs) still manual,
-  needs the GitHub API token; the CDN last-5-per-minor prune already ran.
+  KEEP-LATEST DONE (the operator's GitHub token is ~/.github-token — gh is
+  NOT installed here, so the audit runs on the REST API): superseded
+  releases + tag refs v1.2.302/304/305/306 deleted via
+  DELETE /releases/{id} + DELETE /git/refs/tags/{tag} (4×204), leaving
+  GitHub with exactly one release and one tag (v1.2.307), matching the
+  keep-latest rule that had drifted by four releases.
+  DUAL-BUILD SPLIT — NOT a new finding, and my first write-up of it was
+  wrong in kind: the earlier rounds already recorded (1.2.305) that the
+  CDN tgz and the GitHub asset differ ONLY in vale-agent.exe, because PE
+  builds are not reproducible across builders. Re-measured on 1.2.307
+  member-wise: 8 of 9 members byte-identical, `package/vale-agent.exe`
+  differs (gh 17141760 B vs cdn 17140736 B) — CDN sha cdbff19c… vs asset
+  66526fb5…. So the P0 reconcile's "same sha256 or abort" premise cannot
+  hold for ANY release that ships a locally-built exe, which is every
+  release: "reconcile OK" has never once run to comparison. The standing
+  proposal from the 1.2.305 note (member-wise equality + exe provenance
+  instead of whole-tgz bytes) still awaits sign-off; --skip-reconcile for
+  a first publish remains the only usable path, and the post-tag checklist
+  is where the real audit has to happen.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
