@@ -33,6 +33,14 @@ scripts\                     ensure-desktop.ps1, desktop-pulse.vbs, start-deskto
 2. **Rust `agent_update` 的 swap 缺 DisplayVersion 回写**（TS 有）——补齐，否则该路径更新后
    控制面板版本 permanently stale。
 3. **TS `vale-update.ps1` 用完不删** —— swap 尾加自删（Rust 那份本来就自删）。
+4. **`start-desktop.ps1` 没有写入方**（本次调查发现的真实缺口）—— ValeDesktop 任务、
+   桌面快捷方式、`ensure-desktop.ps1` 三处引用它，但 setup/update/引导脚本从来没人生成，
+   repo 与 git 历史里都没有这个文件：桌面壳的 onlogon 拉起一直是坏的（d1 上 electron
+   靠手工/开发路径活着）。现在三个入口都写它：`vale setup`（fs 直写）、`vale update`
+   swap 前（fs 直写，无条件——pre-v2 设备上迁移发生在 swap 内，不能等目录存在）、
+   `vale-online-setup.ps1`（Set-Content，且 launcher 三件套改为无条件刷新，
+   修复运行不刷新的问题）。swap 脚本里 `desktop-pulse.vbs` 引用的 ensure-desktop
+   路径同步修正（原来指根目录，布局 v2 后在 scripts\）。
 
 ## 迁移（老设备不经过 setup，只走 update）
 

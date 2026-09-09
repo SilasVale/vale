@@ -157,13 +157,24 @@ if (-not $electronOk -and (Test-Path (Join-Path $shellDir "package.json"))) {
 if ($electronOk) { Say "Electron 就绪" } else { Say "警告：Electron 没装上（桌面壳跑不起来，agent 本体不受影响；可稍后手动 npm 装）" }
 
 # --- 6. ValeDesktop 登录任务（没有才建；形态抄 update 流的 hardened 版） ---
-# Layout v2: supervisor scripts live in scripts\.
+# Layout v2: supervisor scripts live in scripts\. The three launcher files
+# are written UNCONDITIONALLY (idempotent refresh on re-run — the old code
+# only wrote them inside the create-task branch, so a repair run left stale
+# or missing launchers): start-desktop.ps1 (electron entry), the guarded
+# ensure-desktop.ps1 pulse, and its console-less VBS wrapper.
 try {
+  $sdPath = Join-Path $InstallDir "scripts\start-desktop.ps1"
+  $sdLines = @(
+    ("`$dir = '" + $shellDir.Replace("'","''") + "'"),
+    'Set-Location $dir',
+    '& "$dir\node_modules\electron\dist\electron.exe" .'
+  )
+  Set-Content -Path $sdPath -Value $sdLines -Encoding ASCII
+  $en1 = Join-Path $InstallDir "scripts\ensure-desktop.ps1"
+  $vb1 = Join-Path $InstallDir "scripts\desktop-pulse.vbs"
+  Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $InstallDir "scripts\start-desktop.ps1")+'"' -Force
+  Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "'+(Join-Path $InstallDir "scripts\ensure-desktop.ps1")+'" & Chr(34), 0, False' -Force
   if ($null -eq (Get-ScheduledTask -TaskName "ValeDesktop" -ErrorAction SilentlyContinue)) {
-    $en1 = Join-Path $InstallDir "scripts\ensure-desktop.ps1"
-    $vb1 = Join-Path $InstallDir "scripts\desktop-pulse.vbs"
-    Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $InstallDir "scripts\start-desktop.ps1")+'"' -Force
-    Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "'+$InstallDir+'\ensure-desktop.ps1" & Chr(34), 0, False' -Force
     $da = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vb1 + '"') -WorkingDirectory $InstallDir
     $dt1 = New-ScheduledTaskTrigger -AtLogOn
     $dw1 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)

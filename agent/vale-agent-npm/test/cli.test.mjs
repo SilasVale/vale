@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, BOOT_TASKS, autostartArgv, bootTaskPs, migrateLayoutPs } = require("../bin/vale.js");
+const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, BOOT_TASKS, autostartArgv, bootTaskPs, migrateLayoutPs, startDesktopPs } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
   assert.equal(psq("C:\\Program Files\\Vale\\a'b"), "C:\\Program Files\\Vale\\a''b");
@@ -81,6 +81,18 @@ test("firewallPs: idempotent Vale-scoped rule for the port", () => {
   assert.match(body, /New-NetFirewallRule/, "creates the allow rule");
   assert.match(body, /Remove-NetFirewallRule/, "prunes stale own rules");
   assert.match(body, /'Vale Agent'/, "DisplayName-scoped, never foreign rules");
+  assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
+});
+
+test("startDesktopPs: the electron launcher matches the migrated layout", () => {
+  const { startDesktopPs } = require("../bin/vale.js");
+  const body = startDesktopPs("D:\\Vale\\components\\vale-desktop-electron").join("\n");
+  assert.match(body, /\$dir = 'D:\\Vale\\components\\vale-desktop-electron'/, "pins the components dir");
+  assert.match(body, /Set-Location \$dir/, "cwd matters (electron resolves package.json main)");
+  assert.match(body, /node_modules\\electron\\dist\\electron\.exe/, "launches the boxed electron");
+  // second-instance (ValeDesktop pulse every 5 min) must NOT open a window —
+  // the app's single-instance lock focuses the existing one. No -new flag here.
+  assert.ok(!/Start-Process/i.test(body), "plain invocation (focus steal is the app's job)");
   assert.ok(![...body].some((c) => c.charCodeAt(0) > 127), "ASCII-only (system-locale PS)");
 });
 

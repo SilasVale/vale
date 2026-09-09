@@ -36,6 +36,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BOOT_TASKS = exports.psq = void 0;
 exports.deskShortcutRepairPs = deskShortcutRepairPs;
+exports.startDesktopPs = startDesktopPs;
 exports.parseAgentPort = parseAgentPort;
 exports.agentPort = agentPort;
 exports.firewallPs = firewallPs;
@@ -167,6 +168,18 @@ function deskShortcutRepairPs(scriptsQ, deskDirQ, sink) {
         `  try { $dWs = New-Object -ComObject WScript.Shell; $dSc = $dWs.CreateShortcut($dLnk); $dSc.TargetPath = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $dSc.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $dPs1 + '"'; $dSc.WorkingDirectory = '${deskDirQ}'; $dSc.IconLocation = $dIco + ',0'; $dSc.Save(); 'desk: Vale.lnk repointed to electron shell' | ${sink} } catch { ('desk: Vale.lnk repair failed: ' + $_.Exception.Message) | ${sink} }`,
         `}`,
         `foreach ($dRx in @('vale-desktop.exe','vale-tray.exe')) { $dRp = '${deskDirQ}\\' + $dRx; if (Test-Path $dRp) { try { Remove-Item -Force -ErrorAction Stop $dRp; ('desk: removed retired ' + $dRx) | ${sink} } catch { ('desk: retired ' + $dRx + ' locked, kept') | ${sink} } } }`,
+    ];
+}
+// exported: the start-desktop.ps1 launcher (the ValeDesktop onlogon task +
+// desktop Vale.lnk both call it). Launches the Electron shell from
+// components\vale-desktop-electron\ with the working directory set there
+// (electron . resolves src/main.js via package.json main). The script is
+// intentionally tiny + ASCII-only (system-locale PS). unit-tested.
+function startDesktopPs(deskDirQ) {
+    return [
+        `$dir = '${deskDirQ}'`,
+        `Set-Location $dir`,
+        `& "$dir\\node_modules\\electron\\dist\\electron.exe" .`,
     ];
 }
 // exported: agent bind port plumbing (custom-port installs). server.port
@@ -700,6 +713,12 @@ const commands = {
         // app picks up menu/command features on a fresh install too.
         stageDesktopShell(DIR, "");
         console.log("setup: vale-desktop-electron sources staged");
+        // Layout v2: write the start-desktop.ps1 launcher into scripts\ (the
+        // ValeDesktop onlogon task + desktop Vale.lnk both call it). Was never
+        // written before — a real gap that left the shell unlaunchable.
+        fs.mkdirSync(SCRIPTS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(SCRIPTS_DIR, "start-desktop.ps1"), startDesktopPs((0, exports.psq)(DESK_DIR)).join("\r\n"), "utf8");
+        console.log("setup: scripts\\start-desktop.ps1 written");
         // Register boot-start task (SYSTEM) and kick it once; the agent's own
         // first-run flow registers the device with the console using the key.
         //
@@ -891,6 +910,14 @@ const commands = {
             // (playwrightProbePs, unit-tested).
             fs.writeFileSync(probePath, playwrightProbePs().join("\r\n"));
         }
+        // Layout v2: write the start-desktop.ps1 launcher into scripts\ (the
+        // ValeDesktop onlogon task + desktop Vale.lnk both call it). Was never
+        // written before — a real gap that left the shell unlaunchable. Written
+        // unconditionally: on a pre-v2 device components\ appears only after
+        // the swap script's migration, and a headless install simply never
+        // calls the launcher (shortcut repair is Test-Path guarded anyway).
+        fs.mkdirSync(SCRIPTS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(SCRIPTS_DIR, "start-desktop.ps1"), startDesktopPs((0, exports.psq)(DESK_DIR)).join("\r\n"), "utf8");
         // round-298: record the release version on a PROVABLY successful swap
         // so agent_update (which reads <install>/.vale-release as its local
         // version) reports up_to_date instead of re-swapping every call.
@@ -964,7 +991,7 @@ const commands = {
             `$en1 = '${q}\\scripts\\ensure-desktop.ps1'`,
             `$vb1 = '${q}\\scripts\\desktop-pulse.vbs'`,
             `Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "${q}\\scripts\\start-desktop.ps1"' -Force`,
-            `Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "${q}\\ensure-desktop.ps1" & Chr(34), 0, False' -Force`,
+            `Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "${q}\\scripts\\ensure-desktop.ps1" & Chr(34), 0, False' -Force`,
             `if ($null -ne (Get-ScheduledTask -TaskName 'ValeDesktop' -ErrorAction SilentlyContinue)) {`,
             `  $da = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $vb1 + '"') -WorkingDirectory '${q}'`,
             `  $dt1 = New-ScheduledTaskTrigger -AtLogOn`,
