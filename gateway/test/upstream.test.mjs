@@ -4,7 +4,7 @@
 // drifted table misroutes silently. Pins each prefix + the US-egress wrap.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pickRoute, stripBracket, passthroughHeaders } from "../src/upstream.ts";
+import { pickRoute, stripBracket, passthroughHeaders, registerRoute, ROUTE_TABLE, opencodeSessionHeader, clientSessionId, syntheticSessionId, fnvHex } from "../src/upstream.ts";
 
 test("stripBracket trims a trailing [context] marker only", () => {
   assert.equal(stripBracket("og/model[1m]"), "og/model");
@@ -75,4 +75,69 @@ test("passthroughHeaders: bearer default, api-key mode, keyless", () => {
   const n = passthroughHeaders(null);
   assert.equal(n.get("authorization"), null);
   assert.equal(n.get("content-type"), "application/json");
+});
+
+// SOLID Round-1 (OCP): new channels register without editing pickRoute.
+// Pins the extension point; cleans up so no other test sees the temp entry.
+test("registerRoute: new prefix resolves via the table, unknown still falls back", () => {
+  assert.equal(ROUTE_TABLE["zz-test-ocp"], undefined, "temp prefix must start absent");
+  registerRoute("zz-test-ocp", ({ via }) => ({
+    type: "passthrough",
+    kind: "zztest",
+    stripPrefix: true,
+    upstream: via("https://example.invalid/chat", "/chat"),
+  }));
+  try {
+    const r = pickRoute("zz-test-ocp", {}, null, "/v1/messages");
+    assert.equal(r.kind, "zztest");
+    assert.equal(r.upstream, "https://example.invalid/chat");
+    // unknown prefixes still hit the DeepSeek default (no strip)
+    const d = pickRoute("zz-unknown", {}, null, "/v1/messages");
+    assert.equal(d.kind, "deepseek");
+    assert.equal(d.stripPrefix, false);
+  } finally {
+    delete ROUTE_TABLE["zz-test-ocp"];
+  }
+  assert.equal(ROUTE_TABLE["zz-test-ocp"], undefined, "temp prefix cleaned up");
+});
+
+// SOLID Round-4 (SRP): session-id extraction vs synthesis are independently
+// pinned; the composer preserves the historical client-wins-then-fallback
+// semantics relied on by translate/translate-vision/tooling/auth callers.
+test("clientSessionId: priority order, trimming, blank falls through", () => {
+  assert.equal(clientSessionId(undefined), "", "no headers → blank");
+  assert.equal(
+    clientSessionId({ "x-opencode-session": "sess-1", "x-client-request-id": "req-9" }),
+    "sess-1",
+    "native session wins over request id",
+  );
+  assert.equal(clientSessionId({ "x-client-request-id": "req-9" }), "req-9");
+  assert.equal(clientSessionId({ session_id: "openai-conv" }), "openai-conv");
+  assert.equal(clientSessionId({ "x-session-id": "hdr-conv" }), "hdr-conv");
+  assert.equal(clientSessionId({ "x-opencode-session": "  padded  " }), "padded", "trims");
+  assert.equal(
+    clientSessionId({ "x-opencode-session": "   ", "x-client-request-id": "req-9" }),
+    "req-9",
+    "blank first candidate falls through to the next",
+  );
+});
+
+test("syntheticSessionId+fnvHex: stable vale-prefixed 16-hex digest, per-uid distinct", () => {
+  const a1 = syntheticSessionId("user-a");
+  const a2 = syntheticSessionId("user-a");
+  const b = syntheticSessionId("user-b");
+  assert.equal(a1, a2, "stable across calls (KV-free cache reuse)");
+  assert.match(a1, /^vale-[0-9a-f]{16}$/, "vale- + 16 hex chars");
+  assert.notEqual(a1, b, "distinct uids → distinct fallbacks");
+  assert.equal(fnvHex("abc"), fnvHex("abc"), "deterministic");
+  assert.match(fnvHex("abc"), /^[0-9a-f]{16}$/);
+  assert.notEqual(fnvHex("abc"), fnvHex("abd"));
+});
+
+test("opencodeSessionHeader: relays client id verbatim, else synthetic fallback", () => {
+  const relayed = opencodeSessionHeader({ "x-client-request-id": "conv-42" }, "user-a");
+  assert.deepEqual(relayed, { "x-opencode-session": "conv-42" }, "client id wins verbatim");
+  const fallback = opencodeSessionHeader(undefined, "user-a");
+  assert.deepEqual(fallback, { "x-opencode-session": syntheticSessionId("user-a") });
+  assert.deepEqual(opencodeSessionHeader({}, "user-a"), fallback, "empty headers ≡ absent");
 });

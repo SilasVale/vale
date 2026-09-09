@@ -12,6 +12,9 @@ import {
   route,
   emit,
   on,
+  provideApi,
+  requireApi,
+  optionalApi,
 } from "../src/plugins/registry.ts";
 import {
   MODELS,
@@ -163,4 +166,17 @@ test("registerPlugins: dependency cycle throws (fail loud, never silent)", () =>
     /dependency cycle/,
     "cycle must surface instead of silently skipping setup",
   );
+});
+
+// SOLID Round-2 (ISP/DIP): typed capability seam — one write site, two read
+// modes. Pins the contract the auth→translate soft-dep now relies on.
+test("capability seam: provideApi stores+returns, optionalApi reads, requireApi enforces", () => {
+  const ctx = createPluginContext(null, {});
+  // soft-dep before provisioning → null (same fallback as the old `|| null`)
+  assert.equal(optionalApi(ctx, "translate"), null, "missing soft-dep reads as null");
+  assert.throws(() => requireApi(ctx, "translate"), /capability missing: "translate"/);
+  const cap = { resolveAutoModel: () => "auto" };
+  assert.equal(provideApi(ctx, "translate", cap), cap, "provide returns the capability");
+  assert.equal(optionalApi(ctx, "translate"), cap, "soft read sees the provided cap");
+  assert.equal(requireApi(ctx, "translate"), cap, "hard read sees the provided cap");
 });

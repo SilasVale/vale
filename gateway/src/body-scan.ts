@@ -3,8 +3,10 @@
  *
  * The /v1/* hot path must NEVER fully JSON.parse / re-stringify a multi-MB
  * body (Workers Free plan 10ms CPU budget, Error 1102). This module only
- * provides O(n) raw-string scans: scanTopLevelModel, rawWithModel,
- * estimateTokens. Extracted from index.js (2026-08-12).
+ * provides O(n) raw-string scans: scanTopLevelModel,
+ * rawWithModel/rawWithTopLevelField (+ the DeepSeek/OxAlpha one-liners),
+ * estimateTokens and its SRP halves countBase64Payloads/estimateTextTokens.
+ * Extracted from index.js (2026-08-12).
  *
  * NO app-level body size limit (round-61): passthrough routes never parse
  * the body, and the scans are bounded by design (2MB sampling window +
@@ -241,14 +243,36 @@ export function scanTopLevelModel(raw: string): {
 const ESTIMATE_SAMPLE = 128 * 1024; // 128K chars sampled ≈ 1-2ms
 
 export function estimateTokens(jsonStr: any): number {
-  // Strip base64 image/document payloads BEFORE estimating: image blocks are
-  // ~1.33 chars/byte, so counting them as text overestimated by ~580x — a
-  // screenshot-heavy conversation looked far beyond the 1M context and the
-  // client rejected requests / compacted prematurely. Each image gets a fixed
-  // allowance (~1600 tokens, the real vision cost).
+  // Thin composer (SOLID Round-7: SRP) — image accounting and text-density
+  // estimation live in the two exported pure helpers below and are pinned
+  // independently; this keeps the exact historical arithmetic (subtract ALL
+  // scanned base64, per-image 1600 allowance on top).
   const s = String(jsonStr);
-  const len = s.length;
+  const { images, removedChars } = countBase64Payloads(s);
+  // Text estimate: subtract ALL base64 bytes (the scan covered the body
+  // region per countBase64Payloads) — the per-image 1600 charge replaces them.
+  const textLen = s.length - removedChars;
+  if (textLen <= 0) return images * 1600;
+  return estimateTextTokens(s, textLen) + images * 1600; // ~1600 tokens per image (real vision cost)
+}
 
+/**
+ * Base64-image accounting over a raw request body (SOLID Round-7: SRP
+ * extraction from estimateTokens — moved verbatim, no behavior change).
+ *
+ * Returns `{ images, removedChars }`: images gets a fixed allowance each
+ * (~1600 tokens, the real vision cost) because counting image blocks as
+ * text overestimates by ~580x (image blocks are ~1.33 chars/byte).
+ *
+ * CPU contracts preserved: the scan starts at the last user message
+ * (round-340 — images only appear there, so multi-MB histories aren't
+ * re-scanned), jumps with indexOf (round-57 — no full-string regex pass),
+ * and tests bytes with charCode ranges instead of per-char regex
+ * (round-58 — ~10x faster on all-base64 bodies). Only runs of >= 512
+ * base64 chars after a `"data":"` key count as payloads.
+ */
+export function countBase64Payloads(s: string): { images: number; removedChars: number } {
+  const len = s.length;
   // Bound the scan to the last user message (round-340): images only appear
   // in the last user message, so scanning the whole body wastes CPU on
   // multi-MB histories. Find the last "role":"user" and scan from there.
@@ -291,32 +315,40 @@ export function estimateTokens(jsonStr: any): number {
       searchFrom = idx + DATA_KEY.length;
     }
   }
+  return { images, removedChars };
+}
 
-  // Text estimate: subtract ALL base64 bytes (the scan covered the full
-  // body) — the per-image 1600 charge replaces them.
-  const textLen = len - removedChars;
-  if (textLen <= 0) return images * 1600;
-  const base = (() => {
-    // round-119: the old >ESTIMATE_WALK_LIMIT branch returned
-    // Math.ceil(textLen/3) — discarding the CJK-aware sample. A Chinese-
-    // heavy body just over 1M chars estimated ~0.33 tokens/char vs the real
-    // ~1.8 (~5.4x under): the client's context accounting said it fit, no
-    // compaction, then the upstream rejected with request_too_large — and
-    // the estimate DROPPED discontinuously (1.78M → 337K) at the boundary.
-    // Sampling is bounded (ESTIMATE_SAMPLE head) and cheap at any size, so
-    // use it for the large branch too.
-    const sample = s.slice(0, Math.min(ESTIMATE_SAMPLE, len));
-    const stripped = sample.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, '"data":"<base64>"');
-    let ascii = 0;
-    let other = 0;
-    for (let i = 0; i < stripped.length; i++) {
-      if (stripped.charCodeAt(i) < 128) ascii += 1;
-      else other += 1;
-    }
-    // stripped contains the <base64> markers (18 chars each) — their text
-    // density is negligible; extrapolate by the stripped length.
-    const r = textLen / stripped.length;
-    return Math.ceil((ascii * r) / 4 + other * r * 1.8);
-  })();
-  return base + images * 1600; // ~1600 tokens per image (real vision cost)
+/**
+ * CJK-aware text-density estimate over a sampled head (SOLID Round-7: SRP
+ * extraction from estimateTokens — moved verbatim, no behavior change).
+ *
+ * ASCII runs ~4 chars/token, CJK/other script chars ~1.8 tokens each. `s`
+ * is the full body (only the ESTIMATE_SAMPLE head is walked — O(1) at any
+ * size, round-119: sampling replaced the discontinuous >1M branch that
+ * under-counted Chinese-heavy bodies ~5.4x past the boundary), `textLen`
+ * the base64-excluded length to extrapolate to. ±20% accuracy is fine —
+ * count_tokens only needs a context-budget estimate.
+ */
+export function estimateTextTokens(s: string, textLen: number): number {
+  const len = s.length;
+  // round-119: the old >ESTIMATE_WALK_LIMIT branch returned
+  // Math.ceil(textLen/3) — discarding the CJK-aware sample. A Chinese-
+  // heavy body just over 1M chars estimated ~0.33 tokens/char vs the real
+  // ~1.8 (~5.4x under): the client's context accounting said it fit, no
+  // compaction, then the upstream rejected with request_too_large — and
+  // the estimate DROPPED discontinuously (1.78M → 337K) at the boundary.
+  // Sampling is bounded (ESTIMATE_SAMPLE head) and cheap at any size, so
+  // use it for the large branch too.
+  const sample = s.slice(0, Math.min(ESTIMATE_SAMPLE, len));
+  const stripped = sample.replace(/"data":"[A-Za-z0-9+/=]{512,}"/g, '"data":"<base64>"');
+  let ascii = 0;
+  let other = 0;
+  for (let i = 0; i < stripped.length; i++) {
+    if (stripped.charCodeAt(i) < 128) ascii += 1;
+    else other += 1;
+  }
+  // stripped contains the <base64> markers (18 chars each) — their text
+  // density is negligible; extrapolate by the stripped length.
+  const r = textLen / stripped.length;
+  return Math.ceil((ascii * r) / 4 + other * r * 1.8);
 }

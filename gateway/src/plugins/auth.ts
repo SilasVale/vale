@@ -50,6 +50,7 @@ import { MODELS, OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
 import { opencodeSessionHeader } from "../upstream.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import type { PluginContext } from "./registry.ts";
+import { optionalApi } from "./registry.ts";
 
 const AUTH_BASE = "/api/auth";
 const ME_BASE = "/api/me";
@@ -740,7 +741,11 @@ export default {
   setup(ctx: PluginContext) {
     // meGetRoute resolves the effective model via the translate plugin's
     // resolveAutoModel (dep registered before this setup runs).
-    resolveRouteModel = (ctx.api?.translate as any)?.resolveAutoModel || null;
+    // SOLID Round-2: typed soft-dep read — same null-fallback semantics as
+    // the old `(ctx.api?.translate as any)?.resolveAutoModel || null`.
+    resolveRouteModel =
+      optionalApi<{ resolveAutoModel?: (...args: any[]) => any }>(ctx, "translate")
+        ?.resolveAutoModel || null;
     // Exact method+path match, same as the index.js if/else chain (the
     // registry's route() helper does prefix matching — exact here so
     // /api/me never swallows /api/me/route etc.). Order mirrors index.js.

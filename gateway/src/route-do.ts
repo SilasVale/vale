@@ -14,6 +14,8 @@
  *   DELETE /route?uid=xxx       → { ok: true }
  */
 
+import { safeEq } from "./auth.ts";
+
 /**
  * DO external-address defense-in-depth, shared by every DO class (BreakerDO
  * and RouteDO used to each carry a byte-identical copy). A Durable Object
@@ -21,15 +23,25 @@
  * the main router's auth is not the last line. FAIL CLOSED (Auth-core audit
  * MED-2): an unconfigured DO_AUTH must DENY every caller — never wave the
  * gate open. Constant-time compare on the x-do-auth header.
+ *
+ * Truth table (pinned in route-do.test.mjs):
+ *   expected empty → false ALWAYS (even when the header is also absent —
+ *     this is what makes it fail-closed rather than a plain equality);
+ *   header missing / wrong length / wrong value → false;
+ *   header equals expected → true.
+ *
+ * SOLID Round-8 (DRY/DIP): the comparison itself is auth.ts's `safeEq`
+ * primitive — that module's header mandates reaching for its primitives
+ * instead of re-implementing them, and this gate previously hand-rolled a
+ * second copy of the same loop. The fail-closed empty-secret guard stays
+ * HERE (it is gate policy, not comparison semantics — `safeEq("","")`
+ * is true, which would wave an unconfigured gate open).
  */
 export function authorizeDoRequest(request: Request, expectedSecret: string): boolean {
   const expected = expectedSecret || "";
   if (!expected) return false;
   const got = request.headers.get("x-do-auth") || "";
-  if (got.length !== expected.length) return false;
-  let diff = 0;
-  for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
-  return diff === 0;
+  return safeEq(got, expected);
 }
 
 /**

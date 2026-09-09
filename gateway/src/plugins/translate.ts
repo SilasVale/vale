@@ -62,6 +62,7 @@ import { isModelUsable, resolveAutoModel } from "./model-route.ts";
 // Keep the old import paths working for the moved fns' external consumers.
 export { isModelUsable, resolveAutoModel } from "./model-route.ts";
 import type { PluginContext } from "./registry.ts";
+import { provideApi } from "./registry.ts";
 
 const COUNT_PATH = "/v1/messages/count_tokens";
 
@@ -1249,6 +1250,11 @@ export default {
       handler,
     });
     // Cross-plugin API surface (mirrors the exports index.js exposes today).
-    ctx.api.translate = { handleGateway, handleGatewayImpl, resolveAutoModel, isModelUsable };
+    provideApi(ctx, "translate", {
+      handleGateway,
+      handleGatewayImpl,
+      resolveAutoModel,
+      isModelUsable,
+    });
   },
 };

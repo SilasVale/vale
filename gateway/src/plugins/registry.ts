@@ -52,7 +52,13 @@ export interface PluginContext {
   helpers: PluginHelpers;
   /** Registered routes (first-match wins). */
   routes: PluginRoute[];
-  /** Named capabilities plugins expose to each other (ctx.api.<dep>). */
+  /**
+   * Named capabilities plugins expose to each other.
+   * SOLID Round-2 (ISP/DIP): prefer the typed helpers below
+   * (provideApi/requireApi/optionalApi) over raw `ctx.api.<dep>` reads —
+   * raw reads silently degrade to `undefined` when array order drifts
+   * (the auth→translate incident). requireApi fails LOUD instead.
+   */
   api: Record<string, unknown>;
   /** Plugin-configurable values (writable in setup). */
   config: Record<string, unknown>;
@@ -153,6 +159,37 @@ export function route(
     match: (m, p) => ms.includes(m) && p.startsWith(pathPrefix),
     handler,
   });
+}
+
+/**
+ * Typed cross-plugin capability access (SOLID Round-2: ISP/DIP).
+ *
+ * The `api` bag stays `Record<string, unknown>` for wire-compat, but every
+ * read/write should go through these three — one typed seam instead of N
+ * ad-hoc `(ctx.api?.x as any)` casts:
+ *   provideApi(ctx, name, cap) — the SINGLE write site for capabilities.
+ *   requireApi<T>(ctx, name)   — declared-dep read; THROWS when missing
+ *                                (fail loud, never silently degrade).
+ *   optionalApi<T>(ctx, name)  — soft-dep read; returns null when missing.
+ */
+export function provideApi<T>(ctx: PluginContext, name: string, capability: T): T {
+  ctx.api[name] = capability;
+  return capability;
+}
+
+export function requireApi<T>(ctx: PluginContext, name: string): T {
+  const cap = ctx.api[name] as T | undefined;
+  if (cap === undefined || cap === null) {
+    throw new Error(
+      `plugin capability missing: "${name}" (declared dep not registered — check deps[] order)`,
+    );
+  }
+  return cap;
+}
+
+export function optionalApi<T>(ctx: PluginContext, name: string): T | null {
+  const cap = ctx.api[name] as T | undefined;
+  return cap === undefined ? null : cap;
 }
 
 /** Emit a cross-plugin event (fire-and-forget; listeners may be async). */

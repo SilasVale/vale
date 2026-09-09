@@ -3,7 +3,7 @@
 // deletes, 400s, unknown-path 404, storage-throw 500 (never a hang).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { RouteDO } from "../src/route-do.ts";
+import { RouteDO, DoAuthBase, authorizeDoRequest } from "../src/route-do.ts";
 
 function makeDO(storage) {
   return new RouteDO({ storage }, { DO_AUTH: "sekret" });
@@ -71,4 +71,39 @@ test("unauthenticated CRUD denied even with valid shape", async () => {
   assert.equal((await db.fetch(bare("https://d/route?uid=u"))).status, 401);
   assert.equal((await db.fetch(bare("https://d/route", { method: "PUT", body: "{}" }))).status, 401);
   assert.equal((await db.fetch(bare("https://d/route?uid=u", { method: "DELETE" }))).status, 401);
+});
+
+// ── SOLID Round-8: authorizeDoRequest truth table ───────────────
+// The gate is now auth.ts's safeEq primitive behind the fail-closed
+// empty-secret guard (previously a hand-rolled second copy of the loop).
+// These pins fix the exact contract, especially the divergence that must
+// NEVER regress: safeEq("","") is true, but an UNCONFIGURED gate must deny.
+test("authorizeDoRequest: match → true; mismatch/missing → false", () => {
+  const good = (h) => new Request("https://d/", { headers: h });
+  assert.equal(authorizeDoRequest(good({ "x-do-auth": "sekret" }), "sekret"), true);
+  assert.equal(authorizeDoRequest(good({ "x-do-auth": "sekreT" }), "sekret"), false, "same length, one bit off");
+  assert.equal(authorizeDoRequest(good({ "x-do-auth": "short" }), "sekret"), false, "length mismatch");
+  assert.equal(authorizeDoRequest(good({ "x-do-auth": "sekretsekret" }), "sekret"), false, "longer mismatch");
+  assert.equal(authorizeDoRequest(good({}), "sekret"), false, "missing header");
+});
+
+test("authorizeDoRequest: empty expected secret FAILS CLOSED", () => {
+  const bare = new Request("https://d/");
+  const emptyHeader = new Request("https://d/", { headers: { "x-do-auth": "" } });
+  const anyHeader = new Request("https://d/", { headers: { "x-do-auth": "anything" } });
+  assert.equal(authorizeDoRequest(bare, ""), false, "unconfigured gate denies headerless callers");
+  assert.equal(authorizeDoRequest(emptyHeader, ""), false, "empty-vs-empty still denies (≠ safeEq)");
+  assert.equal(authorizeDoRequest(anyHeader, ""), false, "unconfigured gate denies keyed callers");
+  assert.equal(authorizeDoRequest(bare, undefined), false, "undefined secret denies");
+});
+
+test("DoAuthBase.authorized: honors DO_AUTH, denies when unset", () => {
+  const base = new DoAuthBase({}, { DO_AUTH: "sekret" });
+  const naked = new DoAuthBase({}, {});
+  const good = new Request("https://d/", { headers: { "x-do-auth": "sekret" } });
+  const bad = new Request("https://d/", { headers: { "x-do-auth": "nope" } });
+  assert.equal(base.authorized(good), true);
+  assert.equal(base.authorized(bad), false);
+  assert.equal(naked.authorized(good), false, "no DO_AUTH → deny even the right shape");
+  assert.equal(naked.authorized(new Request("https://d/")), false);
 });
