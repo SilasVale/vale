@@ -2,6 +2,8 @@
 
 > Status: maintained ｜ Last full review: 2026-09-08 (09-07/09-08 sweep: Vercel retirement, vrelay, relay token, extension→code-server) ｜ Scope: the whole repo
 >
+> SOLID program 2026-09-09 (rounds 1–14, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 37 gateway / 9 Rust pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
+>
 > Single-page map of every module's boundary verdict. Each entry carries the
 > evidence (file-header note, ADR, or audit round). When a boundary verdict
 > CHANGES, update this file in the same commit. Detailed history lives in the
@@ -44,21 +46,25 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 | Module | Verdict | Where |
 |---|---|---|
 | gateway channels.ts | DATA registry (endpoints/whitelists/health cards + exit helpers); "adding a channel touches only this file" holds | header note (a2501e92) |
-| gateway upstream.ts | routing DECISIONS (pickRoute/passthroughHeaders); one-way upstream→channels | header note (a2501e92) |
+| gateway upstream.ts | routing DECISIONS (pickRoute/passthroughHeaders); one-way upstream→channels. SOLID R1: switch → ROUTE_TABLE + registerRoute (OCP, closed for modification); R4: session-id extraction (clientSessionId) vs synthesis (syntheticSessionId) split (SRP) | header note (a2501e92) |
 | gateway reliability.ts | cohesive cluster: bounded fetch → retry ladder → timeout policy → BreakerDO + channel health; every upstream call goes through it | header note (da6a6137) |
 | gateway access.ts | Cloudflare Access IDENTITY layer beside session.ts; self-contained JWT verify (L5) | header note (da6a6137) |
-| gateway auth trio | auth.ts = primitives leaf (imports NOTHING) ← session.ts = resolution ← plugins/auth.ts = routes. Physical merge REJECTED (access↔auth cycle) | headers (c81fe8bf) |
+| gateway auth trio | auth.ts = primitives leaf (imports NOTHING) ← session.ts = resolution ← plugins/auth.ts = routes. Physical merge REJECTED (access↔auth cycle). SOLID R5: resolution depends on the SessionUserStore seam (liveSessionStore default; ~25 call sites untouched). SOLID R8: route-do.ts authorizeDoRequest reuses auth.ts safeEq behind its fail-closed guard (second loop deleted) | headers (c81fe8bf) |
 | gateway store.ts shim | PURE re-export (zero logic) over `store/` domains; keeps every `from "../store.ts"` import working after the domain split | store.ts header |
+| gateway plugins/registry.ts | route-plugin framework (topo-order deps, fail-loud cycles) + typed capability seam provideApi/requireApi/optionalApi (SOLID R2/3: replaces raw ctx.api reads; translate/auth migrated) | registry.ts header |
 | gateway mcp trio | mcp.ts = hand-rolled stateless JSON-RPC server (zero-dep, Workers has no runtime deps) ← mcp-tools.ts = DATA registry (mirrors agent /api/spec; round-54 lesson: both lists + spec snapshot update together) + mcp-browser.ts = browser bridge (per-call total budget + per-device semaphore; extension/PluginHubDO path deleted round-341) | headers (round-341) |
 | gateway tooling.ts | public UNAUTHENTICATED CLI surface (health/probe/installers) extracted verbatim from index.ts — front door owns nothing but the front door (ADR 0001 completion) | header note |
-| gateway route-do.ts | RouteDO per-user routes (KV→DO fix for cross-isolate staleness) + the SHARED DO external-address guard (BreakerDO/RouteDO dedup) | header note |
+| gateway route-do.ts | RouteDO per-user routes (KV→DO fix for cross-isolate staleness) + the SHARED DO external-address guard (BreakerDO/RouteDO dedup). SOLID R8: gate truth table pinned; comparison unified onto auth.ts safeEq | header note |
+| gateway body-scan.ts | O(n) raw-string scans (10ms CPU budget). SOLID R7: estimateTokens = countBase64Payloads + estimateTextTokens composer (verbatim moves); raw-* rewriters directly pinned | body-scan.ts header |
+| gateway device-proxy.ts | device reverse-proxy (session/plugin-token/per-device-cookie auth) + rewriteDeviceBody as an exported pure unit (SOLID R14: mount rewriting + token-strip pins) | device-proxy.ts header |
 | gateway anthropic-translate.ts | PURE data transforms (Anthropic↔OpenAI), zero env dependency | header note |
 | gateway relay token | `store/users.ts` User.relayToken + role "relay" (ADR 0007): relay paths dual-accept during migration, `/mcp` stays admin-only, cutover is the default-off RELAY_ADMIN_CUTOVER flag — one KV write, no deploy | ADR 0007 |
-| agent vale-command-core | the contract crate (Plugin/ToolDef/Config/EventBus); canonical import `vale_agent_core::`; tokio-util CancellationToken is the MCP layer's vocabulary (kept, documented) | lib.rs (29c2a575, a64c32d2) |
+| agent vale-command-core | the contract crate (Plugin/ToolDef/Config/EventBus); canonical import `vale_agent_core::`; tokio-util CancellationToken is the MCP layer's vocabulary (kept, documented). SOLID R11/12: ensure_token table, ToolHandler blanket-impl + cancellable-default pins | lib.rs (29c2a575, a64c32d2) |
 | agent paths.rs | single path-resolution truth, OnceLock-cached (boot-invariant) | 584c7669 |
 | agent register.rs / mcp/server.rs | register.rs is a pure-planning seam (network lives in main.rs); mcp/server.rs is a thin rmcp↔registry adapter with the full hardening set (round-118/123/124, panic isolation) — correctly layered | ece266d4 review |
 | agent winmain.rs | Windows-only boot plumbing (self-heal, child-reaper job, SCM service, tunnel supervisor) behind `#![cfg(windows)]`; main.rs keeps only `winmain::…` call sites. SCM dispatch wrapped as `started_by_scm()` (the macro-generated fn can't carry visibility); Linux test/clippy never compile this file — xwin check is its gate | header note (d35873b0, round-351) |
 | agent TerminalManager | 1071-line session orchestration over 3 backends — size inherent to owning PTY/SSH/serial lifecycles with the documented lock discipline (round-92/94/55); a split would scatter the lock policy | ece266d4 review |
+| agent terminal spill helpers | spill_path is the single Option choke point for spill-file access; writers fail closed (SOLID R6, review-#8 completion: validation lived only on the read path) | tools/ctx.rs header |
 | agent state.rs | write-through ConfigHandle: file before swap under one guard (ADR 0005) | c579b311 |
 | index single file | appropriate at current size; page template + claim logic extracted | 81b1c40f |
 | extension | code-server folder-link rewriter ("Vale Code Links"): no tokens, no network probes since ADR 0006 (pure-local resolution); manifest + README + default origin (`vscode.saisi.online`) re-synced 2026-09-08 | ADR 0006, 2026-09-08 sweep |
@@ -90,8 +96,9 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 
 | Subproject | Gate | Count |
 |---|---|---|
-| gateway | tsc + eslint(src+ui) + prettier + node --test | 610 (recounted 2026-09-08, suite green) |
-| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 368 (2026-09-06: 325 lib + 5 bin + 27 + 1 + 2 + 7 + 1 integration + 15 core; 333 lib feat-gated, 376 full feat-gated; recount on next agent gate) |
+| gateway | tsc + eslint(src+ui) + prettier + node --test | 655 (recounted 2026-09-09: 610 → 655, incl. 37 SOLID-program pins R1–R14; suite green) |
+| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 392 feat-gated terminal,keyring (recounted 2026-09-09: 349 lib + 5 bin + 27 + 1 + 2 + 7 + 1 integration; default-config lib 342; suite green) |
+| vale-agent-core | cargo test + clippy -D warnings + fmt --check | 22 (15 + 7 SOLID-program pins R11–R12; suite green) |
 | proxies (×2) | node --test behavior suites + wrangler dry-run | 20 |
 | ~~studio~~ | retired (ADR 0006); CI studio job dropped, suite lives in git history | — |
 | electron | node --test (url-policy) + tsc build | 4 |
