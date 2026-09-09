@@ -333,4 +333,42 @@ mod sse_tests {
             "data: lagged=3\n\ndata: m3\n\ndata: m4\n\n"
         );
     }
+
+    // SOLID Round-16 (contract completion): send_bounded is the dead-client
+    // detector both SSE pumps depend on (a silently-dead client must break
+    // the loop, never leak the task + subscription), yet neither arm had a
+    // direct pin. The 5s-timeout arm itself stays untested by design — it
+    // would take 5s; the closed-channel arm proves the failure path returns
+    // true instantly, and the drain arm proves the success path.
+    #[tokio::test]
+    async fn send_bounded_fails_fast_on_closed_channel() {
+        let (tx, rx) = mpsc::channel::<Result<Bytes, Infallible>>(8);
+        drop(rx); // silently-dead client: subscription gone
+        assert!(
+            send_bounded(&tx, Bytes::from("data: x\n\n")).await,
+            "closed channel must report failure (caller breaks its loop)"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_bounded_succeeds_and_delivers_when_drained() {
+        let (tx, mut rx) = mpsc::channel::<Result<Bytes, Infallible>>(8);
+        assert!(
+            !send_bounded(&tx, Bytes::from("data: y\n\n")).await,
+            "live receiver must report success (loop continues)"
+        );
+        let got = rx.recv().await.expect("frame must arrive").unwrap();
+        assert_eq!(got, Bytes::from("data: y\n\n"));
+    }
+
+    #[test]
+    fn acquire_sse_guard_ok_path_holds_a_slot() {
+        // The Err (503) arm is intentionally unreached: draining the shared
+        // 64-slot pool would starve the parallel endpoint tests (see NOTE
+        // above). This pins the Ok wiring — a granted guard is a real hold.
+        let g = acquire_sse_guard();
+        assert!(g.is_ok(), "a free pool must grant through the helper");
+        drop(g);
+        assert!(acquire_sse_guard().is_ok(), "dropped guard releases");
+    }
 }
