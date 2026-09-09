@@ -268,10 +268,11 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-08 cleanup round — current release **1.2.304
-  (package.json + CDN version.json; last-5-per-minor prune active)**; e2e
+Last updated: 2026-09-09 round-551 — current release **1.2.306
+  (package.json + CDN version.json; last-5-per-minor prune active; NEW:
+  Windows online installer ValeAgent-Setup.exe on the CDN)**; e2e
   suite 47 checks; all matrices green. Rounds 273-317 in this log; the
-  round log continues below (ROUND-319..550 inlined under "Current
+  round log continues below (ROUND-319..551 inlined under "Current
   release").
 
 ### OPEN decisions (product sign-off needed — do NOT change without one)
@@ -2046,6 +2047,31 @@ Last updated: 2026-09-08 cleanup round — current release **1.2.304
   product decision). Self-caught×2: dropped version_url in an edit
   (restored) + fmt line width. Matrix: lib 293, feat 301, clippy x2 +
   fmt + xwin clean; snapshot 347->350. Pushed.
+  ROUND-551 (2026-09-09): Windows ONLINE INSTALLER shipped — sharing was
+  npm-only (boss: "不方便分享"). NSIS 3.12 cross-built in userspace on this
+  box (apt-download + dpkg-deb -x of mingw-w64/binutils/zlib/scons debs —
+  NO apt install (focal has only 3.05, missing the 3.11/3.12 SYSTEM temp-dir
+  priv-esc fixes); three toolchain traps pinned in scripts/build-installer.sh:
+  dangling alternatives symlinks need `ln -sfn`, mingw-w64-common provides
+  the limits.h the runtime include dirs symlink to, and
+  NSIS_SCONS_GNU_ENVPATHHACK=1 is REQUIRED or windres is "not found" inside
+  the cross env). Art: scripts/render-installer-art.py renders the sunrise
+  brand into header.bmp/welcome.bmp (exact MUI sizes, 24-bit); NSIS script =
+  zh wizard + reg-key page + result-file finish page; the payload is ONLY
+  vale-online-setup.ps1 (151KB exe): reuse-or-bootstrap portable Node ->
+  npm i -g PINNED tgz -> cloudflared best-effort -> `vale setup` (the real
+  installer — dir/registry/tasks/firewall untouched) -> Electron +
+  ValeDesktop task + shortcuts. CDN 25MiB asset cap is why it is online-only
+  (offline bundle ~250MB cannot live on Assets; R2 noted as the later path).
+  Published 1.2.306 exe + versionless ValeAgent-Setup.exe alias; index
+  landing page gained the Download button (PAGE 3rd arg, 56 tests green).
+  UNVERIFIED ON WINDOWS — checklist in agent/deploy/README-installer.md
+  (test on a spare machine, never d1). Also this round: released 1.2.306
+  (25 commits), reverted the sunrise console redesign per product (rebuild
+  gate lesson: checkout alone ships the STALE vite bundle — build.sh gateway
+  deploys assets, it does not rebuild them), fixed d1's broken Vale.lnk
+  (pointed at the deleted Tauri exe; repair logic exists but only covered
+  PUBLIC desktop — user-profile links need the same treatment, OPEN).
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
