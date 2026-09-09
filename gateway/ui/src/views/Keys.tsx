@@ -41,9 +41,6 @@ export default function Keys() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [keys, setKeys] = useState<Record<string, KeyInfo | undefined>>({});
-  const [relaySet, setRelaySet] = useState(false);
-  const [relayValue, setRelayValue] = useState("");
-  const [relayBusy, setRelayBusy] = useState(false);
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [resultBox, setResultBox] = useState<{ name: string; ok: boolean; msg: string } | null>(null);
@@ -54,7 +51,6 @@ export default function Keys() {
     try {
       const me = await api.me();
       setKeys(me.keys || {});
-      setRelaySet(!!me.relayTokenSet);
     } catch {
       /* noop */
     }
@@ -158,97 +154,10 @@ export default function Keys() {
     }
   };
 
-  // F3 relay token (settings.json credential): issue/rotate returns the
-  // value once — hold it in memory only (never persisted, cleared on
-  // revoke/reload), same posture as the keys reveal flow.
-  const handleRelayIssue = async () => {
-    setRelayBusy(true);
-    try {
-      const { token } = await api.relayToken();
-      setRelayValue(token);
-      toast(t("relay.issued"));
-      await loadKeys();
-    } catch {
-      toast(t("relay.fail"), true);
-    }
-    setRelayBusy(false);
-  };
-
-  const handleRelayShow = async () => {
-    setRelayBusy(true);
-    try {
-      const { value } = await api.revealRelayToken();
-      setRelayValue(value);
-    } catch {
-      toast(t("relay.fail"), true);
-    }
-    setRelayBusy(false);
-  };
-
-  const handleRelayRevoke = async () => {
-    if (!confirm(t("relay.revokeConfirm"))) return;
-    setRelayBusy(true);
-    try {
-      await api.revokeRelayToken();
-      setRelayValue("");
-      toast(t("relay.revoked"));
-      await loadKeys();
-    } catch {
-      toast(t("relay.fail"), true);
-    }
-    setRelayBusy(false);
-  };
-
   return (
     <div>
       <PageHeader title={t("keys.title")} description={t("keys.lede")} />
       <div className="cards">
-        <div className={`key-card key-relay${relaySet ? " key-on" : ""}`} key="__relay">
-          <div className="key-card-top">
-            <div>
-              <div className="key-card-name">{t("relay.title")}</div>
-              <div className="key-card-desc">{t("relay.lede")}</div>
-            </div>
-            <Badge tone={relaySet ? "success" : "muted"}>
-              {relaySet ? t("key.configured") : t("key.notConfigured")}
-            </Badge>
-          </div>
-
-          <div className="row">
-            <code className="token" style={{ flex: 1 }}>
-              {relayValue || t("relay.unshown")}
-            </code>
-            {relayValue && <CopyButton text={relayValue} small />}
-          </div>
-
-          <div className="key-card-actions">
-            <button
-              className="btn btn-primary btn-mini"
-              disabled={relayBusy}
-              onClick={handleRelayIssue}
-            >
-              {relaySet ? t("relay.rotate") : t("relay.issue")}
-            </button>
-            {relaySet && (
-              <button
-                className="btn btn-ghost btn-mini"
-                disabled={relayBusy}
-                onClick={handleRelayShow}
-              >
-                {t("relay.show")}
-              </button>
-            )}
-            {relaySet && (
-              <button
-                className="btn btn-danger btn-mini"
-                disabled={relayBusy}
-                onClick={handleRelayRevoke}
-              >
-                {t("relay.revoke")}
-              </button>
-            )}
-          </div>
-        </div>
         {KEY_NAMES.map((name) => {
           const info = keys[name];
           const configured = !!(info && info.configured);
@@ -259,7 +168,7 @@ export default function Keys() {
           const result = resultBox?.name === name ? resultBox : null;
 
           return (
-            <div className={`key-card${configured ? " key-on" : ""}`} key={name}>
+            <div className="key-card" key={name}>
               <div className="key-card-top">
                 <div>
                   <div className="key-card-name">{name}</div>

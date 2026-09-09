@@ -171,7 +171,7 @@ export default function Overview() {
         headerExtra={<Link className="card-link" to="/devices">{t("overview.viewAll")} →</Link>}
       >
         {devices.length === 0 ? (
-          <div className="empty">{t("overview.devicesEmpty")}</div>
+          <p className="muted">{t("overview.devicesEmpty")}</p>
         ) : (
           <div className="dev-strip">
             {devices.map((d) => {
