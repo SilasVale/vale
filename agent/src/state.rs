@@ -259,8 +259,7 @@ mod state_tests {
         // missing dir no longer fails — the dead path here is a regular
         // FILE used as a directory, which no writer can survive.)
         let st = AppState::new(cfg_with_token("a"));
-        let bad =
-            std::env::temp_dir().join(format!("vale-state-not-a-dir-{}", std::process::id()));
+        let bad = std::env::temp_dir().join(format!("vale-state-not-a-dir-{}", std::process::id()));
         std::fs::write(&bad, b"i am a file, not a dir").unwrap();
         *st.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(bad.join("config.yaml"));
         let err = st.update_config(cfg_with_token("b"), true).unwrap_err();

@@ -52,6 +52,12 @@ scripts\                     ensure-desktop.ps1, desktop-pulse.vbs, start-deskto
     Rust-old-updater 无迁移逻辑的 307→308 一跳；幂等，搬完即止）。
 - C1 附录：本次是 registry-root 解析规则之外**唯一**的版本化迁移例外，
   搬迁 shim 随布局稳定后删除，不演变为长期双读。
+- **老化（marker）**：`etc\.layout-v2` 由首次收敛的迁移写入（pending 规则
+  两侧一致：旧家存在且新家缺失 = 未完成，marker 不落、下次重启重试；
+  合并过的目录只要新家存在就不算 pending——锁住的残料是卸载要扫的垃圾，
+  不是迁移状态）。Rust boot backstop + TS setup/update 的 migrateLayoutPs
+  都门控/写这同一个文件。删除判据：CDN last-5-per-minor 保留的最老一版
+  已是 layout-v2-only 时，marker 检查 + move 计划整体删除。
 
 ## 不做的
 
