@@ -260,7 +260,15 @@ const PANEL_ROOT_PATHS: string[] = [
   "/vendor/",
 ];
 
-function rewriteDeviceBody(text: string, name: string): string {
+/**
+ * Rewrite absolute panel paths to the proxy mount + strip the injected
+ * device token (SOLID Round-14: SRP export — previously module-private and
+ * only exercisable through a live proxied fetch; the transform is pure and
+ * carries the revocation-scope security invariant, so it is exported for
+ * direct pins in device-proxy-rewrite.test.mjs. Export is additive: the
+ * proxy path calls it exactly as before).
+ */
+export function rewriteDeviceBody(text: string, name: string): string {
   const prefix = `${DEVICE_BASE}/${name}/proxy`;
   const already = `${DEVICE_BASE}/[^/"']+/proxy/`;
   let out = text;
