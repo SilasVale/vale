@@ -43,7 +43,8 @@ function errorResponse(message: string, status = 400): Response {
   });
 }
 
-function validPath(value: string): boolean {
+// Exported for direct pins (SOLID Round-22; additive — handler untouched).
+export function validPath(value: string): boolean {
   if (!value || !value.startsWith("/") || value.includes("\\") || value.includes("\0") || value.includes("..")) return false;
   try {
     const decoded = decodeURIComponent(value);
@@ -74,7 +75,8 @@ function responseHeaders(response: Response): Headers {
   return headers;
 }
 
-function allowedRedirect(response: Response, current: URL): URL | null {
+// Exported for direct pins (SOLID Round-22; additive — handler untouched).
+export function allowedRedirect(response: Response, current: URL): URL | null {
   const location = response.headers.get("location");
   if (!location) return null;
   try {
