@@ -10,6 +10,19 @@
  * in mcp.ts, and refresh the spec snapshot in test/mcp-handler.test.mjs
  * (round-54: 11 tools were missing here — terminal_read/write/resize/select/
  * history, list_ports, diag_*, secret_* — invisible to console MCP clients).
+ *
+ * ROUND-554 — that comment's "refresh the snapshot" step is now FORCED. The
+ * snapshot it referred to was a hand-typed copy of THIS list, so it could
+ * never notice a device tool missing here: 21 of the agent's 49 tools
+ * (the entire system_, memory_, mcp_client_ families, agent_update,
+ * page_view, terminal_sftp/jobs/forget_saved) were invisible AND uncalled
+ * — tools/call looks the name up in this registry before routing — with
+ * every gate green. test/mcp-handler.test.mjs now reads the agent-generated
+ * ../agent/spec-tools.json (dumped from the live PluginRegistry by
+ * web::tests::spec_snapshot…) and fails on any device tool that is neither
+ * registered here nor explicitly listed as not-exposed in that test. Adding
+ * a device tool therefore requires an explicit exposure decision, not an
+ * optional copy-paste.
  */
 
 interface McpTool {
@@ -362,6 +375,60 @@ const TERMINAL_TOOLS: McpTool[] = [
   },
 ];
 
+/**
+ * The device-direct file-transfer pair — the ONE sanctioned way to move a
+ * file between a device and anything else (Linux workstation, another
+ * device, a CDN URL). Bytes never touch the AI context in either direction,
+ * so the 100 MB firmware image that `system_file_write` (≤4 MiB, inline)
+ * cannot carry works here.
+ *
+ * Registration is a POLICY decision, not a capability one: the device serves
+ * 49 tools, this file used to mirror 28 of them by hand, and everything
+ * unmirrored was uncalled (`tools/call` looks the name up here before
+ * routing). test/mcp-handler.test.mjs now reads the agent's generated
+ * spec-tools.json and fails on any name that is neither registered here nor
+ * explicitly listed as not-exposed.
+ */
+const SYSTEM_TOOLS: McpTool[] = [
+  {
+    name: "system_file_upload",
+    description:
+      "Send a file FROM the device to the Vale relay and return its one-time download URL (any other machine or device can then pull it). Streamed from disk — the bytes never pass through the AI context, so 100 MB is fine. The relay holds the file until first download or 24 h. Returns {ok, url, bytes}. Pair: system_file_download.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        path: {
+          type: "string",
+          description: "Absolute path of the file on the device to send.",
+        },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "system_file_download",
+    description:
+      "Land a URL ON the device (the receive half of the relay pair — hand it the url from system_file_upload, or any HTTP(S) URL). The device fetches directly, so the bytes never pass through the AI context and 100 MB works; the write is staged as <path>.part and renamed, so a truncated transfer never appears complete. Returns {ok, path, bytes}. IP-literal hosts are refused (SSRF guard) — use a hostname.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        url: {
+          type: "string",
+          description: "HTTP/HTTPS URL to fetch (a relay URL from system_file_upload).",
+        },
+        path: {
+          type: "string",
+          description:
+            "Destination on the device (absolute recommended, e.g. D:\\Vale\\downloads\\fw.bin). Parent dirs are created; a relative name lands under <data dir>/downloads.",
+        },
+      },
+      required: ["url", "path"],
+    },
+  },
+];
+
 const BROWSER_TOOLS: McpTool[] = [
   {
     name: "browser_open",
@@ -454,5 +521,5 @@ const BROWSER_TOOLS: McpTool[] = [
 ];
 
 export function allMcpTools(): McpTool[] {
-  return [...TERMINAL_TOOLS, ...BROWSER_TOOLS];
+  return [...TERMINAL_TOOLS, ...SYSTEM_TOOLS, ...BROWSER_TOOLS];
 }

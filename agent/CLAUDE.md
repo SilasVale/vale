@@ -206,6 +206,17 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
   22 terminal_* incl. env/jobs/saved/connect/forget + secret_* legacy aliases)
   if adding/removing terminal tools; the plugin tests in
   plugins/{memory,system,mcp_client}/mod.rs cover their own counts.
+- **Console MCP visibility is a SEPARATE decision**: the gateway's `/mcp`
+  registry (`gateway/src/mcp-tools.ts`) is a hand-maintained SUBSET of the
+  device's, and `tools/call` looks a name up there BEFORE routing — an
+  unmirrored device tool is not merely unlisted, it is uncalled (21 of 49
+  tools sat invisible with every gate green). After adding or removing a
+  tool, regenerate the inventory the gateway contract reads:
+  `VALE_REFRESH_SPEC=1 cargo test --features terminal,keyring spec_snapshot`
+  (rewrites `agent/spec-tools.json`), then either register the name in
+  `mcp-tools.ts` (and satisfy `isDeviceDirectTool()`'s routing) or add it to
+  that test's `NOT_EXPOSED` map WITH A REASON. Doing neither fails the
+  gateway suite.
 
 ## Device memory + desktop shell
 

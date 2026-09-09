@@ -156,7 +156,11 @@ test("auth + content-type errors carry the JSON envelope (P2-12)", async () => {
   await assertJsonError(await worker.fetch(noAuth, env), 401, "unauthorized");
   const badCt = multipart({});
   badCt.headers.set("content-type", "application/json");
-  await assertJsonError(await worker.fetch(badCt, env), 400, "expected multipart/form-data");
+  await assertJsonError(
+    await worker.fetch(badCt, env),
+    400,
+    "expected multipart/form-data (POST) or a raw body (PUT)",
+  );
   // Missing file field: valid multipart, wrong part name.
   const boundary = "----valetestboundary3";
   const body = new TextEncoder().encode(`--${boundary}\r\nContent-Disposition: form-data; name="nope"\r\n\r\nx\r\n--${boundary}--\r\n`);
@@ -238,4 +242,130 @@ test("/api/version 503s on truncated / non-hex / missing sha (P2-5)", async () =
     assert.equal(resp.status, 503, `sha ${JSON.stringify(sha256)} must 503`);
     assert.equal(await resp.text(), "release manifest unavailable");
   }
+});
+
+// ── Raw-stream upload (PUT /api/upload, round-554) ───────────────────────
+// The multipart path above calls request.formData(), which materializes the
+// whole body inside the 128 MB isolate — the reason the gateway kept a 25 MB
+// pre-screen. PUT streams the body straight into R2, so the same one-time
+// relay works for full firmware images. These pin that the STREAM lands
+// byte-identical and that every guard the multipart path has still fires.
+
+function rawPut({
+  bytes = new TextEncoder().encode("hello"),
+  name = "fw.bin",
+  nameIn = "query",
+  withLength = true,
+  auth = true,
+  contentType = null,
+} = {}) {
+  const headers = { authorization: `Bearer ${KEY}` };
+  if (!auth) delete headers.authorization;
+  const target = new URL("https://dl.local/api/upload");
+  if (name !== null) {
+    if (nameIn === "query") target.searchParams.set("name", name);
+    else headers["x-filename"] = name;
+  }
+  if (contentType) headers["x-content-type"] = contentType;
+  if (withLength) headers["content-length"] = String(bytes.length);
+  return new Request(target.toString(), { method: "PUT", headers, body: bytes });
+}
+
+test("raw PUT: streams the body into R2 byte-identical + manifest shape", async () => {
+  const r2 = makeR2();
+  const payload = new Uint8Array(300000).map((_, i) => i % 251);
+  const resp = await worker.fetch(rawPut({ bytes: payload, name: "big_fw.bin" }), uploadEnv(r2));
+  assert.equal(resp.status, 200);
+  const j = await resp.json();
+  assert.match(j.token, /^[A-Za-z0-9]{22}$/);
+  assert.equal(j.size, payload.length, "size must come from the stored object");
+  assert.equal(j.filename, "big_fw.bin");
+  assert.equal(j.url, `https://dl.local/files/${j.token}`);
+  assert.match(j.note, /one-time download/);
+  const stored = r2.store.get(`files/${j.token}`);
+  assert.ok(stored, "R2 key must exist");
+  assert.deepEqual(Array.from(stored.bytes), Array.from(payload), "streamed bytes must be verbatim");
+  assert.equal(stored.httpMetadata.contentDisposition, 'attachment; filename="big_fw.bin"');
+  assert.match(stored.customMetadata.expiresAt, /^\d+$/, "24h lazy-expiry deadline must be recorded");
+});
+
+test("raw PUT: filename from X-Filename when no ?name= is present", async () => {
+  const r2 = makeR2();
+  const resp = await worker.fetch(rawPut({ name: "header.bin", nameIn: "header" }), uploadEnv(r2));
+  assert.equal(resp.status, 200);
+  assert.equal((await resp.json()).filename, "header.bin");
+});
+
+test("raw PUT: a client path is reduced to its basename (no disposition shaping)", async () => {
+  const r2 = makeR2();
+  const resp = await worker.fetch(
+    rawPut({ name: "C:\\Users\\me\\Downloads\\fw.bin" }),
+    uploadEnv(r2),
+  );
+  const j = await resp.json();
+  assert.equal(j.filename, "fw.bin");
+  assert.equal(
+    r2.store.get(`files/${j.token}`).httpMetadata.contentDisposition,
+    'attachment; filename="fw.bin"',
+  );
+});
+
+test("raw PUT: non-ASCII name keeps the RFC 5987 filename* form", async () => {
+  const r2 = makeR2();
+  const resp = await worker.fetch(rawPut({ name: "固件.bin" }), uploadEnv(r2));
+  assert.equal(resp.status, 200);
+  const disp = r2.store.get(`files/${(await resp.json()).token}`).httpMetadata.contentDisposition;
+  assert.ok(/^[\x20-\x7e]*$/.test(disp.match(/filename="([^"]*)"/)[1]), "quoted part stays ASCII");
+  assert.match(disp, /filename\*=UTF-8''/);
+});
+
+test("raw PUT: guards — 401 auth, 411 missing length, 413 over cap, 400 illegal name", async () => {
+  const r2 = makeR2();
+  const env = uploadEnv(r2);
+  await assertJsonError(await worker.fetch(rawPut({ auth: false }), env), 401, "unauthorized");
+  await assertJsonError(
+    await worker.fetch(rawPut({ withLength: false }), env),
+    411,
+    "content-length required",
+  );
+  const over = rawPut({});
+  over.headers.set("content-length", String(100 * 1024 * 1024 + 1));
+  await assertJsonError(
+    await worker.fetch(over, env),
+    413,
+    `file too large (max ${100 * 1024 * 1024} bytes)`,
+  );
+  await assertJsonError(await worker.fetch(rawPut({ name: "   " }), env), 400, "invalid filename");
+  assert.equal(r2.store.size, 0, "no rejected upload may reach the R2 put");
+});
+
+test("raw PUT: ?name= wins over X-Filename, and the default name is 'file'", async () => {
+  const r2 = makeR2();
+  const both = rawPut({ name: "query.bin" });
+  both.headers.set("x-filename", "header.bin");
+  assert.equal((await (await worker.fetch(both, uploadEnv(r2))).json()).filename, "query.bin");
+  const nameless = await worker.fetch(rawPut({ name: null }), uploadEnv(makeR2()));
+  assert.equal((await nameless.json()).filename, "file");
+});
+
+test("raw PUT: an R2 put failure answers 502 JSON, never the 500 catch-all", async () => {
+  const r2 = makeR2();
+  r2.put = async () => {
+    throw new Error("r2 down");
+  };
+  await assertJsonError(
+    await worker.fetch(rawPut({}), uploadEnv(r2)),
+    502,
+    "r2 put failed: Error: r2 down",
+  );
+});
+
+test("raw PUT and multipart share the claim path (one-time download after either)", async () => {
+  const r2 = makeR2();
+  const env = uploadEnv(r2);
+  const j = await (await worker.fetch(rawPut({ name: "shared.bin" }), env)).json();
+  const obj = r2.store.get(`files/${j.token}`);
+  assert.equal(new TextDecoder().decode(obj.bytes), "hello");
+  // Same key shape seedFile writes for the claim tests -> the DO serves it.
+  assert.ok(obj.customMetadata.expiresAt, "claim path reads expiresAt from customMetadata");
 });

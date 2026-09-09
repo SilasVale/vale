@@ -1,0 +1,202 @@
+// Device MCP tool inventory (name + owning plugin), generated from
+// the live PluginRegistry by web::tests::spec_snapshot_pins_every_device_tool_for_the_gateway_contract.
+// The gateway MCP registry contract test reads this file.
+// Do not hand-edit: VALE_REFRESH_SPEC=1 cargo test spec_snapshot, then commit.
+[
+  {
+    "name": "agent_update",
+    "plugin": "update"
+  },
+  {
+    "name": "browser_pw_info",
+    "plugin": "playwright"
+  },
+  {
+    "name": "browser_run_script",
+    "plugin": "playwright"
+  },
+  {
+    "name": "mcp_client_call",
+    "plugin": "mcp-client"
+  },
+  {
+    "name": "mcp_client_connect",
+    "plugin": "mcp-client"
+  },
+  {
+    "name": "mcp_client_disconnect",
+    "plugin": "mcp-client"
+  },
+  {
+    "name": "mcp_client_list",
+    "plugin": "mcp-client"
+  },
+  {
+    "name": "memory_delete",
+    "plugin": "memory"
+  },
+  {
+    "name": "memory_export",
+    "plugin": "memory"
+  },
+  {
+    "name": "memory_list",
+    "plugin": "memory"
+  },
+  {
+    "name": "memory_save",
+    "plugin": "memory"
+  },
+  {
+    "name": "memory_search",
+    "plugin": "memory"
+  },
+  {
+    "name": "memory_update",
+    "plugin": "memory"
+  },
+  {
+    "name": "page_view",
+    "plugin": "design"
+  },
+  {
+    "name": "secret_delete",
+    "plugin": "terminal"
+  },
+  {
+    "name": "secret_get",
+    "plugin": "terminal"
+  },
+  {
+    "name": "secret_set",
+    "plugin": "terminal"
+  },
+  {
+    "name": "sftp",
+    "plugin": "terminal"
+  },
+  {
+    "name": "system_file_download",
+    "plugin": "system"
+  },
+  {
+    "name": "system_file_list",
+    "plugin": "system"
+  },
+  {
+    "name": "system_file_read",
+    "plugin": "system"
+  },
+  {
+    "name": "system_file_stat",
+    "plugin": "system"
+  },
+  {
+    "name": "system_file_upload",
+    "plugin": "system"
+  },
+  {
+    "name": "system_file_write",
+    "plugin": "system"
+  },
+  {
+    "name": "system_net_test",
+    "plugin": "system"
+  },
+  {
+    "name": "system_process_kill",
+    "plugin": "system"
+  },
+  {
+    "name": "system_process_list",
+    "plugin": "system"
+  },
+  {
+    "name": "terminal_close",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_connect_saved",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_diag_read",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_diag_write",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_env",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_execute",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_forget_saved",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_history",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_jobs",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_list",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_list_ports",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_open",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_read",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_resize",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_saved_connections",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_screen",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_secret_delete",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_secret_get",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_secret_set",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_select",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_sftp",
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_write",
+    "plugin": "terminal"
+  }
+]

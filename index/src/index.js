@@ -46,6 +46,77 @@ function buildContentDisposition(rawName) {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(cleaned)}`;
 }
 
+// round-554: RAW-STREAM upload (PUT /api/upload). Same credential (verified
+// by the caller), same stored shape + one-time-claim semantics as the
+// multipart path — the only difference is that the body is handed to R2 as a
+// stream instead of being materialized by formData() inside the 128 MB
+// isolate. Filename arrives as ?name=<percent-encoded> or X-Filename and is
+// reduced to its basename: a client-supplied path must never shape the stored
+// Content-Disposition.
+async function rawUpload(request, env, url) {
+  const MAX_BYTES = 100 * 1024 * 1024;
+  const declaredRaw = request.headers.get("content-length");
+  if (declaredRaw === null || declaredRaw === "") {
+    return new Response(JSON.stringify({ error: "content-length required" }), {
+      status: 411,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  const declared = Number(declaredRaw);
+  if (!Number.isFinite(declared) || declared < 0) {
+    return new Response(JSON.stringify({ error: "invalid content-length" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (declared > MAX_BYTES) {
+    return tooLargeResponse(MAX_BYTES);
+  }
+  const rawName = url.searchParams.get("name") || request.headers.get("x-filename") || "file";
+  const base = String(rawName).split(/[/\\]/).pop() || "file";
+  const disposition = buildContentDisposition(base);
+  if (!disposition) {
+    return new Response(JSON.stringify({ error: "invalid filename" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  const token = genToken(22);
+  const key = `files/${token}`;
+  const expiresAt = Date.now() + 24 * 3600 * 1000;
+  let stored;
+  try {
+    stored = await env.TEMP_FILES.put(key, request.body, {
+      httpMetadata: {
+        contentType: request.headers.get("x-content-type") || "application/octet-stream",
+        contentDisposition: disposition,
+      },
+      customMetadata: { expiresAt: String(expiresAt) },
+    });
+  } catch (err) {
+    // A mid-stream abort or an R2 outage must answer as JSON, never as the
+    // catch-all 500 with an un-`String(err)`-formatted envelope.
+    return new Response(JSON.stringify({ error: `r2 put failed: ${String(err)}` }), {
+      status: 502,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  // R2 reports the stored object's authoritative size; fall back to the
+  // declared length only if the put result lacks it.
+  const size = typeof stored?.size === "number" ? stored.size : declared;
+  return new Response(
+    JSON.stringify({
+      token,
+      url: `${url.origin}/files/${token}`,
+      size,
+      filename: base,
+      expiresAt: new Date(expiresAt).toISOString(),
+      note: "one-time download: file is deleted after first access or 24h",
+    }),
+    { headers: { "content-type": "application/json" } },
+  );
+}
+
 // P2-5: agent_update refuses unverifiable installs (round-119) — a
 // truncated/placeholder sha in version.json must never be served as if it
 // were a real manifest. Same shape as assert_want_sha256 in
@@ -103,9 +174,12 @@ export default {
     const consoleUrl = (env && env.CONSOLE_URL) || url.origin;
 
     // ── Temporary file hosting ──────────────────────────────────────────
-    // Upload: POST /api/upload  ->  { token, url, size, expiresIn }
+    // Upload: POST /api/upload (multipart) | PUT /api/upload?name=<f> (raw
+    //         stream)  ->  { token, url, size, filename, expiresAt }
     // Download: GET /files/<token>  ->  file bytes (one-time, then deleted)
-    if (url.pathname === "/api/upload" && request.method === "POST") {
+    const isUpload =
+      url.pathname === "/api/upload" && (request.method === "POST" || request.method === "PUT");
+    if (isUpload) {
       try {
         // Auth: require a bearer token matching the shared secret (set via
         // `wrangler secret put UPLOAD_KEY`). Compared via safeEq (hash both
@@ -119,16 +193,30 @@ export default {
             headers: { "content-type": "application/json" },
           });
         }
+        // PUT = RAW-STREAM upload (round-554): the request body goes
+        // straight into R2 as a stream. The multipart path below calls
+        // request.formData(), which MATERIALIZES the whole body inside the
+        // 128 MB isolate ceiling — so a large file either tripped that or
+        // tripped the gateway's 25 MB pre-screen that existed to dodge it.
+        // Streaming removes both ceilings at once; the 100 MiB cap is then
+        // purely the Cloudflare request-body ceiling (Free/Pro account plan
+        // = 100 MB, Business 200 MB — a Workers PLAN limit does not apply).
+        // Filename rides in ?name= (percent-encoded) or X-Filename.
+        if (request.method === "PUT") {
+          return await rawUpload(request, env, url);
+        }
         const ct = request.headers.get("content-type") || "";
         if (!ct.includes("multipart/form-data")) {
-          return new Response(JSON.stringify({ error: "expected multipart/form-data" }), {
-            status: 400,
-            headers: { "content-type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({
+              error: "expected multipart/form-data (POST) or a raw body (PUT)",
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
         }
-        // Cap at 100 MiB (Cloudflare Workers limit ~10 MiB for free plan,
-        // 100 MiB for paid — this 100 MiB cap ASSUMES a paid plan; on free,
-        // large uploads fail at the platform edge before reaching here).
+        // Cap at 100 MiB — the Cloudflare ACCOUNT-plan request-body ceiling
+        // (Free/Pro 100 MB, Business 200 MB, Enterprise up to 5 GB). Beyond
+        // it the platform answers 413 before this worker is invoked.
         // Screen the declared Content-Length BEFORE formData() materializes
         // the whole body in memory — the multipart framing (boundary + part
         // headers) adds a little on top of the file bytes, hence the

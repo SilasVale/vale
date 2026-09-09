@@ -1698,6 +1698,49 @@ mod tests {
         serde_json::from_slice(&body).unwrap()
     }
 
+    #[test]
+    fn spec_snapshot_pins_every_device_tool_for_the_gateway_contract() {
+        // `agent/spec-tools.json` is the machine-readable face of THIS
+        // registry. gateway/test/mcp-handler.test.mjs fails when a name in it
+        // is neither registered on the console MCP surface nor explicitly
+        // listed as not-exposed — because the old gateway contract compared
+        // its registry against a hand-typed copy of ITSELF, 21 device tools
+        // (the whole system_*/memory_*/mcp_client_* families) stayed invisible
+        // to MCP clients with every gate green. Regenerate with:
+        //   VALE_REFRESH_SPEC=1 cargo test --features terminal,keyring spec_snapshot
+        let spec = api_spec(&state());
+        let mut entries: Vec<serde_json::Value> = Vec::new();
+        for p in spec["plugins"].as_array().unwrap() {
+            for t in p["tools"].as_array().unwrap() {
+                entries.push(serde_json::json!({
+                    "name": t["name"].as_str().unwrap(),
+                    "plugin": p["name"].as_str().unwrap(),
+                }));
+            }
+        }
+        entries.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        let rendered = format!(
+            "// Device MCP tool inventory (name + owning plugin), generated from\n\
+             // the live PluginRegistry by web::tests::spec_snapshot_pins_every_device_tool_for_the_gateway_contract.\n\
+             // The gateway MCP registry contract test reads this file.\n\
+             // Do not hand-edit: VALE_REFRESH_SPEC=1 cargo test spec_snapshot, then commit.\n{}\n",
+            serde_json::to_string_pretty(&serde_json::Value::Array(entries)).unwrap()
+        );
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/spec-tools.json");
+        if std::env::var("VALE_REFRESH_SPEC").is_ok_and(|v| !v.is_empty()) {
+            std::fs::write(path, &rendered).expect("write spec-tools.json");
+            return;
+        }
+        let committed = std::fs::read_to_string(path).unwrap_or_else(|e| {
+            panic!("{path} missing ({e}) — run VALE_REFRESH_SPEC=1 cargo test spec_snapshot")
+        });
+        assert_eq!(
+            committed.trim_end(),
+            rendered.trim_end(),
+            "{path} is stale vs the live registry — run VALE_REFRESH_SPEC=1 cargo test spec_snapshot and commit it"
+        );
+    }
+
     #[tokio::test]
     async fn spec_lists_terminal_plugin() {
         let resp = handle_request(req("GET", "/api/spec"), state()).await;

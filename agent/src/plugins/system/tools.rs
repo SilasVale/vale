@@ -261,15 +261,63 @@ fn tool_file_write() -> ToolDef {
     )
 }
 
+/// Normalize a Windows VERBATIM path (`\\?\C:\…`, `\\?\UNC\server\share\…`)
+/// to the plain form, so a destination copied from a canonicalizing source
+/// (`Get-ChildItem`'s FullName, a `.NET` resolved path) lands where the caller
+/// can find it and the returned `path` matches what they passed.
+///
+/// HISTORY — this is where `system_file_download` died on every real device
+/// until round-554: the confinement rule it used to enforce compared
+/// `dest.canonicalize()` (Windows: `\\?\C:\ProgramData\Vale\x`, whose disk
+/// prefix is a `VerbatimDisk` component) against `paths::data_dir()` (the
+/// plain registry string `C:\ProgramData\Vale`), so `starts_with` was FALSE
+/// for every path — device-verified on d1: both `D:\Vale\x.txt` and
+/// `C:\ProgramData\Vale\x.txt` answered "path must be under data dir". The
+/// rule is gone (see `resolve_dest`); the normalization stayed, and the
+/// regression test kept the shape visible.
+///
+/// Deliberately NOT `#[cfg(windows)]`: as pure string logic it runs (and is
+/// tested) on every platform — a cfg-gated fix would have been invisible to
+/// the suite that ships it, which is exactly how the bug survived (the
+/// round-351 lesson).
+fn strip_verbatim(p: &std::path::Path) -> std::path::PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(rest);
+    }
+    std::path::PathBuf::from(s.as_ref())
+}
+
+/// Resolve a caller-supplied destination into an absolute write target.
+/// Relative names land in `<data dir>/downloads`; absolute ones are used as
+/// given (the handler creates missing parents).
+///
+/// NO directory confinement, deliberately: `system_file_write` never had one,
+/// the credential that reaches either tool is admin-equivalent (the same
+/// token opens a PTY on this host), and the transfers this tool exists for
+/// target work directories (`F:\Projects\…\bugs\…`, `D:\Vale\…`) no sane
+/// allowlist would cover. The protection that mattered is the `.part` +
+/// rename in the handler: a truncated transfer never appears complete.
+fn resolve_dest(path_str: &str) -> std::path::PathBuf {
+    let raw = std::path::Path::new(path_str);
+    if raw.is_absolute() {
+        return raw.to_path_buf();
+    }
+    crate::paths::data_dir().join("downloads").join(raw)
+}
+
 fn tool_file_download() -> ToolDef {
     ToolDef::new(
         "system_file_download",
-        "Download a URL to a file on THIS device (the agent host). The device fetches the URL directly — content does NOT pass through the AI context, so large files (100MB+) work fine. The URL must be reachable from the device (public IP or same tailnet). Returns {ok, path, bytes}.",
+        "Receive a file onto THIS device (the agent host) from a URL — the device fetches it directly, so the bytes NEVER pass through the AI context (this is how a 100 MB firmware image moves; system_file_write is only for ≤4 MiB inline text). Pair with system_file_upload: the sender uploads to the Vale relay and hands back the one-time URL, this tool lands it. Returns {ok, path, bytes}. Destination is any absolute path (parents are created; relative = <data dir>/downloads).",
         json!({
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "HTTP or HTTPS URL to download. Must be reachable from the device."},
-                "path": {"type": "string", "description": "Destination path on the device (absolute recommended, e.g. D:\\Vale\\downloads\\file.zip)."}
+                "url": {"type": "string", "description": "HTTP or HTTPS URL to download (a relay URL from system_file_upload counts). IP-literal hosts are rejected (SSRF guard) — use a hostname."},
+                "path": {"type": "string", "description": "Destination path on the device (absolute recommended, e.g. D:\\Vale\\downloads\\file.zip). Parent dirs are auto-created."}
             },
             "required": ["url", "path"]
         }),
@@ -291,25 +339,22 @@ fn tool_file_download() -> ToolDef {
                 if host.parse::<std::net::IpAddr>().is_ok() {
                     return Ok(to_value_or_empty(json!({"ok": false, "error": "IP-based URLs are blocked (SSRF protection)"})));
                 }
-                let data_dir = crate::paths::data_dir();
-                let dest = std::path::Path::new(&path_str);
-                let canonical = match dest.canonicalize() {
-                    Ok(p) => p,
-                    Err(_) => {
-                        let parent = dest.parent().unwrap_or(std::path::Path::new("."));
-                        match parent.canonicalize() {
-                            Ok(p) => p.join(dest.file_name().unwrap_or_default()),
-                            Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("invalid path: {e}")}))),
-                        }
+                let canonical = strip_verbatim(&resolve_dest(&path_str));
+                if let Some(parent) = canonical.parent() {
+                    if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                        let msg = format!("create parent {}: {e}", parent.display());
+                        return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
                     }
-                };
-                if !canonical.starts_with(&data_dir) {
-                    let msg = format!("path must be under data dir: {}", data_dir.display());
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
                 }
                 const MAX_BYTES: u64 = 100 * 1024 * 1024;
                 let client = match reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(120))
+                    // 600 s, not 120: the whole point of this tool is the
+                    // 100 MB image, and 100 MB over a real uplink (the 30 MB
+                    // transfer that ran at ~0.8 MB/s) is minutes. The old 120
+                    // s capped the tool at roughly a third of the size it
+                    // advertises — and did so with a bare "download failed".
+                    // Matches the gateway's own 600 s upload window.
+                    .timeout(std::time::Duration::from_secs(600))
                     .build()
                 {
                     Ok(c) => c,
@@ -325,35 +370,57 @@ fn tool_file_download() -> ToolDef {
                 let mut stream = resp.bytes_stream();
                 let mut total: u64 = 0;
                 use tokio::io::AsyncWriteExt;
+                // Land in a `.part` file and rename into place. A firmware
+                // image that dies at 40 % must not sit at the caller's target
+                // path looking complete — that is how a half-written trx gets
+                // flashed onto a device.
+                let tmp = {
+                    let mut s = canonical.as_os_str().to_os_string();
+                    s.push(".part");
+                    std::path::PathBuf::from(s)
+                };
                 let mut f = match tokio::fs::OpenOptions::new()
                     .write(true).create(true).truncate(true)
-                    .open(&canonical).await
+                    .open(&tmp).await
                 {
                     Ok(f) => f,
                     Err(e) => {
-                        let msg = format!("open {}: {}", canonical.display(), e);
+                        let msg = format!("open {}: {}", tmp.display(), e);
                         return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
                     }
                 };
+                // Every early exit below must leave no corpse behind: the
+                // rename never runs, so delete the partial (best effort).
+                macro_rules! bail_part {
+                    ($($t:tt)*) => {{
+                        let msg = format!($($t)*);
+                        let _ = f.shutdown().await;
+                        let _ = tokio::fs::remove_file(&tmp).await;
+                        return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                    }};
+                }
                 while let Some(chunk) = stream.next().await {
                     let chunk = match chunk {
                         Ok(c) => c,
-                        Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read chunk: {e}")}))),
+                        Err(e) => bail_part!("read chunk: {e}"),
                     };
                     total += chunk.len() as u64;
                     if total > MAX_BYTES {
-                        let msg = format!("file too large (>{MAX_BYTES} bytes)");
-                        return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                        bail_part!("file too large (>{MAX_BYTES} bytes)");
                     }
-                    match f.write_all(&chunk).await {
-                        Ok(()) => {}
-                        Err(e) => {
-                            let msg = format!("write: {e}");
-                            return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
-                        }
+                    if let Err(e) = f.write_all(&chunk).await {
+                        bail_part!("write: {e}");
                     }
                 }
-                let _ = f.flush().await;
+                if let Err(e) = f.flush().await {
+                    bail_part!("flush: {e}");
+                }
+                drop(f);
+                if let Err(e) = tokio::fs::rename(&tmp, &canonical).await {
+                    let msg = format!("rename {} -> {}: {e}", tmp.display(), canonical.display());
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                }
                 Ok(to_value_or_empty(json!({"ok": true, "path": canonical.to_string_lossy(), "bytes": total})))
             }
         },
@@ -363,7 +430,7 @@ fn tool_file_download() -> ToolDef {
 fn tool_file_upload() -> ToolDef {
     ToolDef::new(
         "system_file_upload",
-        "Upload a local file to temporary hosting and return a one-time download URL. The file is read from disk and sent to the Vale CDN via the gateway — content does NOT pass through the AI context, so large files (100MB+) work fine. The file is deleted from hosting after first download. Returns {ok, url, bytes}.",
+        "Send a local file to the Vale relay and return its one-time download URL (the other half of the file-transfer pair: hand that URL to system_file_download on the receiving device, or fetch it here on Linux). The file is streamed from disk straight to the relay — the bytes NEVER pass through the AI context, so 100 MB images are fine (system_file_write is the ≤4 MiB inline path only). The relay holds it until first download or 24 h. Returns {ok, url, bytes}.",
         json!({
             "type": "object",
             "properties": {
@@ -395,15 +462,27 @@ fn tool_file_upload() -> ToolDef {
                 };
                 let gateway_url = std::env::var("VALE_GATEWAY_URL")
                     .unwrap_or_else(|_| "https://api.saisi.online".to_string());
-                let upload_url = format!("{gateway_url}/api/upload");
                 let device_token = std::env::var("VALE_DEVICE_TOKEN").unwrap_or_default();
-                let mut req = reqwest::Client::new()
-                    .post(&upload_url)
-                    .header("Authorization", format!("Bearer {device_token}"));
-                let form = reqwest::multipart::Form::new()
-                    .part("file", reqwest::multipart::Part::bytes(bytes)
-                        .file_name(path.file_name().unwrap_or_default().to_string_lossy().to_string()));
-                req = req.multipart(form);
+                // RAW-STREAM PUT, not multipart (round-554). The index worker's
+                // multipart branch calls formData(), which materializes the
+                // ENTIRE body inside the 128 MB isolate — the reason the
+                // gateway kept a 25 MB pre-screen that made this tool's own
+                // advertised "100 MB+" a lie (a 30 MB image answered 413).
+                // The filename rides in ?name= (percent-encoded by
+                // parse_with_params, so non-ASCII survives: an HTTP header
+                // could not carry it).
+                let upload_url = match reqwest::Url::parse_with_params(
+                    &format!("{gateway_url}/api/upload"),
+                    &[("name", path.file_name().unwrap_or_default().to_string_lossy().as_ref())],
+                ) {
+                    Ok(u) => u.to_string(),
+                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("bad upload url: {e}")}))),
+                };
+                let req = reqwest::Client::new()
+                    .put(&upload_url)
+                    .header("Authorization", format!("Bearer {device_token}"))
+                    .header("X-Content-Type", "application/octet-stream")
+                    .body(bytes);
                 let resp = match req.send().await {
                     Ok(r) => r,
                     Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("upload failed: {e}")}))),
@@ -763,19 +842,184 @@ mod file_tool_tests {
         assert!(out["error"].as_str().unwrap().contains("IP"));
     }
 
+    #[test]
+    fn strip_verbatim_normalizes_windows_canonical_forms() {
+        // The round-554 regression pin: canonicalize() on Windows returns
+        // `\\?\C:\…`, whose disk prefix is a DIFFERENT component kind from a
+        // plain `C:\…`, so any starts_with/== against a registry-sourced path
+        // fails and system_file_download rejected every destination —
+        // including one inside the data dir. Device-verified on d1.
+        assert_eq!(
+            strip_verbatim(std::path::Path::new(r"\\?\C:\ProgramData\Vale\x.bin")),
+            std::path::PathBuf::from(r"C:\ProgramData\Vale\x.bin")
+        );
+        assert_eq!(
+            strip_verbatim(std::path::Path::new(r"\\?\UNC\server\share\x.bin")),
+            std::path::PathBuf::from(r"\\server\share\x.bin")
+        );
+        // Plain paths (and everything a Linux test throws at it) pass through.
+        for plain in [r"C:\ProgramData\Vale\x.bin", "/tmp/x.bin"] {
+            assert_eq!(
+                strip_verbatim(std::path::Path::new(plain)),
+                std::path::PathBuf::from(plain)
+            );
+        }
+        // After stripping, the comparison the device needs can hold at all.
+        // `starts_with` on a Windows-shaped path is only meaningful with
+        // Windows component parsing (Linux splits on `/` alone), so that half
+        // is pinned where it applies; the string shape is pinned everywhere.
+        let canonical = strip_verbatim(std::path::Path::new(r"\\?\C:\ProgramData\Vale\x.bin"));
+        assert_eq!(canonical.to_string_lossy(), r"C:\ProgramData\Vale\x.bin");
+        #[cfg(windows)]
+        assert!(canonical.starts_with(std::path::Path::new(r"C:\ProgramData\Vale")));
+    }
+
+    #[test]
+    fn resolve_dest_absolute_wins_relative_roots_in_downloads() {
+        let abs = if cfg!(windows) {
+            r"D:\Vale\fw.bin"
+        } else {
+            "/tmp/vale-fw.bin"
+        };
+        assert_eq!(resolve_dest(abs), std::path::PathBuf::from(abs));
+        let rel = resolve_dest("fw.bin");
+        assert!(
+            rel.ends_with(
+                "downloads/fw.bin"
+                    .replace('/', std::path::MAIN_SEPARATOR_STR)
+                    .as_str()
+            ),
+            "relative destinations root at <data dir>/downloads: {rel:?}"
+        );
+        assert!(rel.is_absolute());
+    }
+
     #[tokio::test]
-    async fn file_download_rejects_path_traversal() {
+    async fn file_download_lands_anywhere_and_renames_the_part() {
+        // The transfer contract this tool exists for: an arbitrary work
+        // directory (NOT the data dir — the rule that made it dead on
+        // Windows), a parent that does not exist yet, and no `.part` corpse
+        // left at either name.
+        let dir = std::env::temp_dir().join(format!("vale-dl-{}", std::process::id()));
+        let deep = dir.join("nested").join("deeper");
+        let payload: Vec<u8> = (0u16..=255).map(|b| b as u8).cycle().take(70_000).collect();
+        let md5 = format!("{:x}", md5_like(&payload));
+        let port = stub_serve_server(payload.clone()).await;
+        let dest = deep.join("fw.bin");
         let out = run(
             &tool_file_download(),
-            json!({ "url": "https://example.com/file.txt", "path": "/etc/passwd" }),
+            json!({ "url": format!("http://localhost:{port}/fw.bin"), "path": dest.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(out["ok"], true, "download must succeed: {out}");
+        assert_eq!(out["bytes"], payload.len() as u64);
+        let got = std::fs::read(&dest).unwrap_or_default();
+        assert_eq!(got.len(), payload.len(), "byte count must match");
+        assert_eq!(
+            format!("{:x}", md5_like(&got)),
+            md5,
+            "content must be verbatim"
+        );
+        assert!(
+            !deep.join("fw.bin.part").exists(),
+            "the .part staging file must be gone after the rename"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn file_download_rejects_bad_status_without_touching_dest() {
+        let dir = std::env::temp_dir().join(format!("vale-dl404-{}", std::process::id()));
+        let port = stub_serve_status(404).await;
+        let dest = dir.join("nope.bin");
+        let out = run(
+            &tool_file_download(),
+            json!({ "url": format!("http://localhost:{port}/nope"), "path": dest.to_string_lossy() }),
         )
         .await;
         assert_eq!(out["ok"], false);
-        let err = out["error"].as_str().unwrap();
+        assert!(out["error"].as_str().unwrap().contains("404"), "got: {out}");
         assert!(
-            err.contains("data dir") || err.contains("invalid path"),
-            "got: {err}"
+            !dest.exists(),
+            "a failed download must leave no file at the target"
         );
+        assert!(!dir.join("nope.bin.part").exists(), "…and no .part either");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// FNV-1a 64 — enough to prove byte-fidelity across the stream/rename
+    /// path without pulling a hash crate into the dependency graph.
+    fn md5_like(bytes: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x1000_0000_01b3);
+        }
+        h
+    }
+
+    /// Serve `payload` for any GET; port returned. "localhost" (not an IP
+    /// literal) keeps the tool's SSRF guard out of the way.
+    async fn stub_serve_server(payload: Vec<u8>) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 4096];
+            let mut seen = Vec::new();
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let Ok(n) = sock.read(&mut buf).await else {
+                    return;
+                };
+                if n == 0 {
+                    return;
+                }
+                seen.extend_from_slice(&buf[..n]);
+            }
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/octet-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                payload.len()
+            );
+            let _ = sock.write_all(head.as_bytes()).await;
+            let _ = sock.write_all(&payload).await;
+            let _ = sock.flush().await;
+        });
+        port
+    }
+
+    /// Answer any GET with a bare status (no body) — the failure-path probe.
+    async fn stub_serve_status(status: u16) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = vec![0u8; 4096];
+            let mut seen = Vec::new();
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let Ok(n) = sock.read(&mut buf).await else {
+                    return;
+                };
+                if n == 0 {
+                    return;
+                }
+                seen.extend_from_slice(&buf[..n]);
+            }
+            let _ = sock
+                .write_all(
+                    format!(
+                        "HTTP/1.1 {status} Gone\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await;
+        });
+        port
     }
 
     #[tokio::test]
@@ -902,7 +1146,7 @@ mod file_tool_tests {
     }
 
     #[tokio::test]
-    async fn file_upload_posts_bearer_multipart_and_reports_manifest() {
+    async fn file_upload_puts_raw_stream_and_reports_manifest() {
         // Serialize with the unreachable-gateway test below (shared module
         // lock): both mutate the process-global VALE_GATEWAY_URL /
         // VALE_DEVICE_TOKEN and cargo runs tests on parallel threads —
@@ -928,20 +1172,31 @@ mod file_tool_tests {
         assert_eq!(out["url"], "https://cdn.example/f/abc");
         assert_eq!(out["bytes"], 11);
         let got = captured.lock().unwrap();
-        assert_eq!(got.len(), 1, "exactly one upstream POST");
+        assert_eq!(got.len(), 1, "exactly one upstream request");
         let (head, body) = &got[0];
         let low = head.to_lowercase();
         assert!(
             low.contains("authorization: bearer tok-test"),
             "device Bearer must ride: {head}"
         );
+        // Raw stream, NOT multipart: formData() on the worker side buffers the
+        // whole body in the isolate, which is what forced the 25 MB ceiling.
         assert!(
-            low.contains("multipart/form-data"),
-            "must be multipart: {head}"
+            head.contains("PUT /api/upload?name=vale-upload-ok-"),
+            "must be a raw-stream PUT carrying ?name=<basename>: {head}"
         );
         assert!(
-            String::from_utf8_lossy(body).contains("hello world"),
-            "file bytes must ride the multipart body"
+            !low.contains("multipart/form-data"),
+            "must NOT be multipart any more: {head}"
+        );
+        assert_eq!(
+            body.as_slice(),
+            b"hello world",
+            "the body must be the file bytes verbatim"
+        );
+        assert!(
+            low.contains("content-length: 11"),
+            "declared length must survive for the worker's pre-screen: {head}"
         );
         std::fs::remove_file(&path).ok();
     }

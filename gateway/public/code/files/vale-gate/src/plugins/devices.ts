@@ -60,6 +60,7 @@ import {
   createPanelGrant,
   getPanelGrant,
   deletePanelGrant,
+  findUserByToken,
   type Device,
 } from "../store.ts";
 import { safeEq } from "../auth.ts";
@@ -77,7 +78,21 @@ import { handleDeviceProxy, DEVICE_BASE, decodeDeviceName } from "./device-proxy
 // Upload hardening (see proxyUploadToWorker): max accepted upload size and
 // the upstream response headers that must never be re-served at the
 // console origin.
-const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+//
+// 100 MiB now matches BOTH other layers on the relay path (the index worker
+// caps the file at 100 MiB, the agent's system_file_upload/upload at
+// 100 MiB) — the old 25 MB here silently undercut both, so a 30 MB firmware
+// image died with a gateway 413 that no layer's documentation predicted.
+// It also existed only because the multipart path materializes the body
+// inside the worker's 128 MB isolate (formData()); the raw-stream PUT path
+// added in the same round removes that reason. Storage was never the
+// argument: the bucket is a one-time, 24 h claim relay (index/src/claim.js),
+// not a host. Cloudflare's own ceiling is the ACCOUNT plan (Free/Pro 100 MB,
+// Business 200 MB), so this number now mirrors it instead of guessing below
+// it. Multipart framing adds a little on top of the file bytes — the margin
+// matches the index worker's, which does the authoritative size check.
+const UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+const UPLOAD_CL_MARGIN = 64 * 1024;
 
 /// 409 conflict envelope for a name that is already registered — the
 /// register pre-check (round-68) and the in-lock insertDevice retry
@@ -299,26 +314,44 @@ async function handleTunnelToken(request: Request, env: any): Promise<Response> 
 }
 
 // ---- File upload proxy ----
-// POST /api/upload — device token or admin session → proxy to index worker
-// (which holds the R2 UPLOAD_KEY). Device uses its existing Bearer token —
-// no new credential to deploy. This enables the device → AI file transfer
-// path: device uploads to R2 → returns URL → AI reads URL directly.
-async function handleFileUpload(request: Request, env: any, _url: URL): Promise<Response> {
+// POST|PUT /api/upload — device token, admin session, or the admin API token
+// → proxy to index worker (which holds the R2 UPLOAD_KEY). Device uses its
+// existing Bearer token — no new credential to deploy.
+//
+// The ADMIN API TOKEN arm (round-554) is what makes the relay symmetric:
+// without it only a device (or a browser holding a console cookie) could put
+// a file into the bucket, so the "AI-side → device" direction had no
+// first-class path and Linux→D1 transfers had to fall back to SSH. The
+// credential is the same one /mcp already requires (findUserByToken,
+// role admin) — this route grants strictly less than that endpoint does,
+// because /mcp can already run arbitrary commands on the same device.
+// Relay-role tokens (ADR-0007) are excluded with the role check.
+//
+// POST = multipart (legacy agent builds), PUT = raw stream (?name=<f>).
+async function handleFileUpload(request: Request, env: any, url: URL): Promise<Response> {
   const user = await requireSession(request, env);
   const auth = String(request.headers.get("authorization") || "");
 
   // Admin session: allow
   if (user && user.role === "admin") {
-    return await proxyUploadToWorker(request, env);
+    return await proxyUploadToWorker(request, env, url);
+  }
+
+  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  if (!token) {
+    return jsonError(401, "Not logged in or missing device token", "authentication_error");
+  }
+
+  // Admin API token (the /mcp credential): an AI client on another machine
+  // staging a file for a device to pull.
+  const apiUser = await findUserByToken(env, token);
+  if (apiUser && apiUser.role === "admin") {
+    return await proxyUploadToWorker(request, env, url);
   }
 
   // Device token: accept a paired plugin-link token OR the device's own
   // config token (possession of the token IS the device identity —
   // same rule as self-register). Scan the small device registry.
-  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (!token) {
-    return jsonError(401, "Not logged in or missing device token", "authentication_error");
-  }
   const link = await getPluginByToken(env, token);
   let ok = !!link;
   if (!ok) {
@@ -334,21 +367,28 @@ async function handleFileUpload(request: Request, env: any, _url: URL): Promise<
   if (!ok) {
     return jsonError(401, "Invalid device token", "authentication_error");
   }
-  return await proxyUploadToWorker(request, env);
+  return await proxyUploadToWorker(request, env, url);
 }
 
-// Proxy the multipart upload to the index worker, injecting the UPLOAD_KEY.
-async function proxyUploadToWorker(request: Request, env: any): Promise<Response> {
+// Proxy the upload to the index worker, injecting the UPLOAD_KEY.
+async function proxyUploadToWorker(request: Request, env: any, url: URL): Promise<Response> {
   const indexWorkerUrl = env.INDEX_WORKER_URL || "https://agent.saisi.online";
-  const uploadUrl = `${indexWorkerUrl}/api/upload`;
+  // Forward the QUERY, not just the path: the raw-stream PUT carries the
+  // filename in ?name=, and dropping it silently renamed every upload
+  // "file" on the download side.
+  const uploadUrl = `${indexWorkerUrl}/api/upload${url.search}`;
 
   // Size bound: an unbounded passthrough turns the gateway into a free
-  // large-file relay (subrequest memory + egress). 25MB is far above any
-  // legitimate update payload. Bodies without a declared length (chunked)
-  // are still bounded by the platform's own request-body ceiling.
+  // large-file relay (subrequest memory + egress). Bodies without a declared
+  // length (chunked) are still bounded by the platform's own request-body
+  // ceiling, and the index worker does the authoritative check.
   const declared = Number(request.headers.get("content-length") || "");
-  if (Number.isFinite(declared) && declared > UPLOAD_MAX_BYTES) {
-    return jsonError(413, "Upload too large (max 25MB)", "invalid_request");
+  if (Number.isFinite(declared) && declared > UPLOAD_MAX_BYTES + UPLOAD_CL_MARGIN) {
+    return jsonError(
+      413,
+      `Upload too large (max ${Math.floor(UPLOAD_MAX_BYTES / (1024 * 1024))}MB)`,
+      "invalid_request",
+    );
   }
 
   // Rebuild the request with the UPLOAD_KEY header for the index worker.
@@ -363,15 +403,25 @@ async function proxyUploadToWorker(request: Request, env: any): Promise<Response
   headers.set("Authorization", `Bearer ${env.UPLOAD_KEY || ""}`);
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("Content-Type", contentType);
+  // Raw-stream upload metadata (PUT): the filename and the file's own type
+  // ride in these two headers; both are non-credential and must reach the
+  // worker that stores the Content-Disposition.
+  for (const h of ["x-filename", "x-content-type"]) {
+    const v = request.headers.get(h);
+    if (v) headers.set(h, v);
+  }
 
   const resp = await fetchWithTimeout(
     uploadUrl,
     {
-      method: "POST",
+      method: request.method,
       headers,
       body: request.body,
     },
-    60000,
+    // A 100 MB stream over a slow uplink is minutes, not 60 s: the old fixed
+    // timeout aborted exactly the large transfers this round is about (the
+    // worker then answers 500 with no manifest).
+    600000,
   );
 
   // Never re-serve the upstream's response headers verbatim: a Set-Cookie
@@ -709,11 +759,12 @@ export default {
       handler: handleDeviceProxy,
     });
 
-    // File upload: device token or admin session → proxy to index worker
-    // (which holds the R2 UPLOAD_KEY). Device uses its existing Bearer
-    // token — no new credential to deploy.
+    // File upload: device token, admin session or admin API token → proxy to
+    // index worker (which holds the R2 UPLOAD_KEY). Device uses its existing
+    // Bearer token — no new credential to deploy. POST = multipart,
+    // PUT = raw stream carrying ?name=<file> (round-554).
     ctx.routes.push({
-      match: (m, p) => m === "POST" && p === "/api/upload",
+      match: (m, p) => (m === "POST" || m === "PUT") && p === "/api/upload",
       handler: handleFileUpload,
     });
 

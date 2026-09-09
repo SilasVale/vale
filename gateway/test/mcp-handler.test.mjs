@@ -164,34 +164,129 @@ test("mcp: GET → 200 text/event-stream keepalive stream; cancel() clears the t
   await res.body.cancel(); // must not throw; underlying source cancel() clears the keepalive interval
 });
 
-// ── Contract: gateway tool list vs agent /api/spec (round-54) ──
-// The gateway's TERMINAL_TOOLS mirror the agent's /api/spec (the single
-// source of truth). When the agent gains/loses a tool, refresh THIS snapshot
-// AND the toolPath map in mcp.js — the test fails loudly on drift instead of
-// silently hiding tools from console MCP clients (11 tools were missing
-// before round-54).
+// ── Contract: gateway tool list vs the DEVICE registry (round-54; rewritten
+// round-554) ───────────────────────────────────────────────────────────────
+// The round-54 version compared mcp-tools.ts with a hand-typed array of tool
+// names maintained IN THIS TEST. Two copies of the same hand cannot drift
+// apart, so it caught nothing: 21 of the agent's 49 tools (the whole
+// system_*/memory_*/mcp_client_* families, agent_update, page_view,
+// terminal_sftp/jobs/forget_saved) were invisible to console MCP clients AND
+// uncalled — tools/call looks the name up in this registry BEFORE routing, so
+// "not listed" was never cosmetic.
+//
+// The expected set now comes from ../agent/spec-tools.json, generated from
+// the agent's live PluginRegistry by
+// web::tests::spec_snapshot_pins_every_device_tool_for_the_gateway_contract.
+// Adding a device tool now forces an explicit decision: register it, or list
+// it in NOT_EXPOSED with a reason.
+import { readFileSync } from "node:fs";
 
-test("contract: every agent terminal tool is registered in the gateway list", async () => {
+/** Device tools deliberately NOT on the console MCP surface. Each needs a
+ *  reason — an unexplained absence is exactly the bug this map exists to
+ *  prevent, and the ghost test below keeps the map honest. */
+const NOT_EXPOSED = {
+  // OS surface beyond the sanctioned transfer pair: a PTY is strictly more
+  // capable and the panel already renders these.
+  system_file_list: "OS browsing — terminal_* covers it; the panel has the GUI",
+  system_file_stat: "OS metadata — same",
+  system_file_read: "inline ≤1 MiB read; the relay pair is the transfer path",
+  system_file_write: "inline ≤4 MiB write; the relay pair is the transfer path",
+  system_process_list: "tasklist is a PTY away",
+  system_process_kill: "taskkill is a PTY away",
+  system_net_test: "reachability probe — a PTY away",
+  // Device-local knowledge base (panel + device MCP surface).
+  memory_save: "device KB — panel surface",
+  memory_search: "device KB — panel surface",
+  memory_list: "device KB — panel surface",
+  memory_update: "device KB — panel surface",
+  memory_delete: "device KB — panel surface",
+  memory_export: "device KB — panel surface",
+  // The playwright-mcp bridge plumbing mcp-browser.ts drives internally;
+  // exposing it lets a client route around the browser_* tools entirely.
+  mcp_client_connect: "internal bridge plumbing (mcp-browser.ts calls it)",
+  mcp_client_list: "internal bridge plumbing",
+  mcp_client_call: "internal bridge plumbing",
+  mcp_client_disconnect: "internal bridge plumbing",
+  // Swaps the device binary and restarts the agent (drops every session).
+  agent_update: "self-modifying — console/CLI action, not an MCP call",
+  page_view: "legacy remote-page helper (design plugin)",
+  // terminal_sftp was the pre-relay transfer path. Kept off deliberately:
+  // round-554 makes the relay pair the ONE method, and sftp takes arbitrary
+  // host/user/credential args an MCP client should not be offered.
+  terminal_sftp: "superseded by the relay pair; takes arbitrary SSH credentials",
+  sftp: "legacy alias of terminal_sftp",
+  terminal_jobs: "job control — panel surface",
+  terminal_forget_saved: "credential-store admin — panel surface",
+  terminal_secret_set: "alias of secret_set (registered)",
+  terminal_secret_get: "alias of secret_get (registered)",
+  terminal_secret_delete: "alias of secret_delete (registered)",
+};
+
+/** The gateway-synthesized browser_* tools: implemented over the device's
+ *  playwright-mcp bridge, with no device-side /api/tools/<name> counterpart. */
+const BRIDGE_SYNTHETIC = [
+  "browser_open", "browser_snapshot", "browser_screenshot",
+  "browser_click", "browser_type", "browser_wait", "browser_close",
+];
+
+function deviceTools() {
+  const raw = readFileSync(new URL("../../agent/spec-tools.json", import.meta.url), "utf8");
+  // The generated file carries // header lines so it reads in-repo; JSON has
+  // no comments, so drop them before parsing.
+  return JSON.parse(raw.split("\n").filter((l) => !l.startsWith("//")).join("\n"));
+}
+
+test("contract: every device tool is registered or explicitly not exposed", async () => {
   const { allMcpTools } = await import("../src/mcp-tools.ts");
-  const names = allMcpTools().map((t) => t.name);
-  // Snapshot of agent /api/spec tool names (agent/src/plugins/terminal/tools.rs).
-  const AGENT_SPEC_TOOLS = [
-    "terminal_open", "terminal_write", "terminal_close", "terminal_list",
-    "terminal_execute", "terminal_list_ports", "terminal_resize",
-    "terminal_select", "terminal_read", "terminal_screen",
-    "terminal_history", "terminal_diag_write", "terminal_diag_read",
-    "secret_set", "secret_get", "secret_delete",
-    "terminal_saved_connections", "terminal_connect_saved",
-    "terminal_env", "browser_pw_info", "browser_run_script",
-  ];
-  for (const t of AGENT_SPEC_TOOLS) {
-    assert.ok(names.includes(t), `gateway MCP list missing agent tool: ${t}`);
+  const registered = new Set(allMcpTools().map((t) => t.name));
+  const tools = deviceTools();
+  assert.ok(
+    tools.length >= 49,
+    `device registry looks truncated (${tools.length} tools) — regenerate spec-tools.json`,
+  );
+  for (const t of tools) {
+    assert.ok(
+      registered.has(t.name) || t.name in NOT_EXPOSED,
+      `device tool ${t.name} (plugin ${t.plugin}) is neither registered in mcp-tools.ts nor decided against in NOT_EXPOSED`,
+    );
   }
-  // No extras that the device cannot serve.
-  const ALLOWED_EXTRA = ["browser_open", "browser_snapshot", "browser_screenshot", "browser_click", "browser_type", "browser_wait", "browser_close"];
-  for (const n of names) {
-    assert.ok(AGENT_SPEC_TOOLS.includes(n) || ALLOWED_EXTRA.includes(n), `unexpected gateway tool: ${n}`);
+});
+
+test("contract: NOT_EXPOSED contains no ghost and every entry is justified", () => {
+  const served = new Set(deviceTools().map((t) => t.name));
+  for (const [name, reason] of Object.entries(NOT_EXPOSED)) {
+    assert.ok(served.has(name), `NOT_EXPOSED.${name} is stale — the device no longer serves it`);
+    assert.ok(reason.length > 8, `NOT_EXPOSED.${name} needs a real reason`);
   }
+});
+
+test("contract: every registered tool is device-served or bridge-synthetic", async () => {
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
+  const served = new Set(deviceTools().map((t) => t.name));
+  for (const t of allMcpTools()) {
+    assert.ok(
+      served.has(t.name) || BRIDGE_SYNTHETIC.includes(t.name),
+      `unexpected gateway tool: ${t.name} (the device cannot serve it)`,
+    );
+  }
+});
+
+test("contract: the relay pair is registered, routed and self-documenting", async () => {
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
+  const { isDeviceDirectTool } = await import("../src/mcp.ts");
+  const byName = new Map(allMcpTools().map((t) => [t.name, t]));
+  for (const n of ["system_file_upload", "system_file_download"]) {
+    const t = byName.get(n);
+    assert.ok(t, `${n} must be registered — it is the sanctioned transfer method`);
+    assert.ok(isDeviceDirectTool(n), `${n} must route device-direct`);
+    assert.ok(
+      /context/i.test(t.description),
+      `${n} must state whether bytes pass through the AI context`,
+    );
+    assert.equal(t.inputSchema.properties.device.type, "string", `${n} takes device`);
+  }
+  assert.deepEqual(byName.get("system_file_upload").inputSchema.required, ["path"]);
+  assert.deepEqual(byName.get("system_file_download").inputSchema.required, ["url", "path"]);
 });
 
 test("contract: terminal_execute schema/quiet default match the agent", async () => {
@@ -220,10 +315,13 @@ test("contract: device-direct partition matches the bridge-vs-device dispatch", 
   for (const t of allMcpTools()) {
     const n = t.name;
     if (isDeviceDirectTool(n)) {
-      // Device-direct: terminal_*/secret_* or the two bundled-runner tools —
-      // exactly what callTool routes to callTerminalTool.
+      // Device-direct: the terminal_/secret_/system_ families plus the two
+      // bundled-runner tools. callTool routes on THIS predicate now (it used
+      // to re-implement it inline, which is how a registered tool could still
+      // fall through to the bridge and die there).
       assert.ok(
         n.startsWith("terminal_") || n.startsWith("secret_") ||
+          n.startsWith("system_") ||
           n === "browser_pw_info" || n === "browser_run_script",
         `device-direct misclassification: ${n}`,
       );

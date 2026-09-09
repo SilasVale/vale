@@ -210,6 +210,17 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
   22 terminal_* incl. env/jobs/saved/connect/forget + secret_* legacy aliases)
   if adding/removing terminal tools; the plugin tests in
   plugins/{memory,system,mcp_client}/mod.rs cover their own counts.
+- **Console MCP visibility is a SEPARATE decision**: the gateway's `/mcp`
+  registry (`gateway/src/mcp-tools.ts`) is a hand-maintained SUBSET of the
+  device's, and `tools/call` looks a name up there BEFORE routing — an
+  unmirrored device tool is not merely unlisted, it is uncalled (21 of 49
+  tools sat invisible with every gate green). After adding or removing a
+  tool, regenerate the inventory the gateway contract reads:
+  `VALE_REFRESH_SPEC=1 cargo test --features terminal,keyring spec_snapshot`
+  (rewrites `agent/spec-tools.json`), then either register the name in
+  `mcp-tools.ts` (and satisfy `isDeviceDirectTool()`'s routing) or add it to
+  that test's `NOT_EXPOSED` map WITH A REASON. Doing neither fails the
+  gateway suite.
 
 ## Device memory + desktop shell
 
@@ -268,12 +279,14 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-09 round-551 — current release **1.2.306
-  (package.json + CDN version.json; last-5-per-minor prune active; NEW:
-  Windows online installer ValeAgent-Setup.exe on the CDN)**; e2e
-  suite 47 checks; all matrices green. Rounds 273-317 in this log; the
-  round log continues below (ROUND-319..551 inlined under "Current
-  release").
+Last updated: 2026-09-09 round-554 — current release **1.2.306
+  (package.json + CDN version.json; last-5-per-minor prune active; Windows
+  online installer ValeAgent-Setup.exe on the CDN)**; e2e suite 47 checks;
+  all matrices green. Rounds 273-317 in this log; the round log continues
+  below (ROUND-319..554 inlined under "Current release"). ROUND-554 = the
+  file-transfer relay became the ONE transfer method + the console-MCP
+  visibility drift got a device-generated contract (agent/spec-tools.json);
+  gateway + index deploy and the d1 rollout are PENDING.
 
 ### OPEN decisions (product sign-off needed — do NOT change without one)
 - **settings_put invalid-JSON envelope: RESOLVED 2026-09-08** (was HTTP
@@ -2102,6 +2115,60 @@ Last updated: 2026-09-09 round-551 — current release **1.2.306
   replaced in place; installer rebuilt (156512B) + republished. LESSON:
   any non-ASCII .ps1 shipped to Windows MUST carry a UTF-8 BOM — and a
   build-time gate is the only thing that survives the next edit.
+  ROUND-554 (2026-09-09): FILE TRANSFER COLLAPSED TO ONE METHOD + the
+  registry-drift class KILLED AT THE ROOT. Trigger: the user asked why
+  tools/list offers no Linux→D1 push. THREE real bugs behind one answer.
+  (1) gateway /mcp tools/list is a HAND-MAINTAINED MIRROR (mcp-tools.ts,
+  28 entries), never the device's spec — 21 of d1's 49 tools (whole
+  system_/memory_/mcp_client_ families, terminal_sftp, agent_update,
+  page_view) were invisible AND UNCALLABLE (tools/call looks the name up
+  BEFORE routing → "Unknown tool"), and the round-54 "drift guard" could
+  not catch it: it compared the registry with a hand-typed copy of ITSELF,
+  whose second half then pinned "no extras" — codifying the absence. Now
+  the agent emits agent/spec-tools.json from the live PluginRegistry
+  (VALE_REFRESH_SPEC=1 cargo test spec_snapshot) and the gateway test reads
+  THAT, failing on any device tool neither registered nor listed in
+  NOT_EXPOSED WITH A REASON; callTool routes through isDeviceDirectTool()
+  instead of re-implementing the predicate as three inline branches;
+  system_file_upload + system_file_download registered (28→30).
+  (2) system_file_download was DEAD ON WINDOWS: canonicalize() returns
+  `\\?\C:\…` (VerbatimDisk prefix) while data_dir() is the plain registry
+  string, so the confinement `starts_with` was false for EVERY path —
+  device-verified on d1, both D:\Vale\x.txt and C:\ProgramData\Vale\x.txt
+  answered "path must be under data dir". Shipped since round-340 having
+  never worked on a real device (the suite runs on Linux, where the prefix
+  does not exist). Fix: strip_verbatim() + resolve_dest() as pure
+  cross-platform STRING fns so the Linux suite exercises the Windows shape
+  (cfg(windows) would have stayed invisible — the round-351 lesson);
+  confinement dropped (the same credential drives a PTY and
+  system_file_write never had one); parents auto-created; `.part` + rename
+  so a truncated image never sits at the target looking flashable; fetch
+  timeout 120s→600s (120 s could not carry the 100 MB its own description
+  advertised). (3) the size cap was 100 MB in the agent AND the index
+  worker but 25 MB in the gateway proxy → a 30 MB image died with 413 in
+  5.9 s (measured). Unified at 100 MB with the real ceiling documented
+  (Cloudflare's request-body limit follows the ACCOUNT plan — Free/Pro
+  100 MB, Business 200 MB — not a Workers plan; the old "assumes paid"
+  note was wrong), and the reason 25 MB existed (multipart formData()
+  materializes the body inside the 128 MB isolate) removed by adding a
+  RAW-STREAM PUT arm: index /api/upload?name= streams into R2 (multipart
+  kept for old agents), gateway forwards method/query/metadata with a
+  60→600 s window, agent switched to it. Symmetry: /api/upload now ALSO
+  accepts the ADMIN API TOKEN (the same credential /mcp requires) — without
+  it only a device or a console cookie could stage a file, so the AI side
+  had no inbound leg; relay-role tokens stay excluded (ADR-0007).
+  Measured while diagnosing (kept as the escape hatch, deliberately NOT
+  exposed over MCP): d1's terminal_sftp pulled 30 MB in 36.1 s (0.8 MB/s),
+  MD5-identical, over the existing 22122 outbound path — but its upload
+  arm takes base64 `data` only, so it was never a viable big-file leg.
+  Docs: ~/.dsh/AGENTS.md now names the relay pair as the ONE method incl.
+  the exact Linux→D1 curl leg; agent/{AGENTS,CLAUDE}.md gained "console MCP
+  visibility is a SEPARATE decision". Matrices: agent lib 341 + every
+  integration suite green, clippy/fmt/xwin clean; gateway 618 pass +
+  tsc/prettier/eslint clean; index 54→64 pass. NOT DEPLOYED YET: gateway +
+  index wrangler deploy and the d1 release (vale update) remain, and the
+  Windows download fix is unprovable from the Linux suite — smoke BOTH
+  legs on d1 after rollout.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent

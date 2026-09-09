@@ -6,8 +6,12 @@ import { DEVICE_UNREACHABLE, TIMEOUT, SESSION_NOT_FOUND, SESSION_BUSY, TOOL_ERRO
 test("mcp tools: all tools take a device param", () => {
   const tools = allMcpTools();
   // 21 tooling tools (16 agent terminal_*/secret_* + terminal_env + 2
-  // browser_* runtime tools, round-151) + 7 browser control tools.
-  assert.equal(tools.length, 28);
+  // browser_* runtime tools, round-151) + 7 browser control tools + the 2
+  // relay file-transfer tools (round-554). The DEVICE side is pinned by
+  // ../agent/spec-tools.json (49 tools) in mcp-handler.test.mjs: this
+  // registry is a POLICY SUBSET of the device, so every device name missing
+  // here must be justified in that test's NOT_EXPOSED map, not silently.
+  assert.equal(tools.length, 30);
   for (const t of tools) {
     assert.equal(t.inputSchema.type, "object");
     assert.ok(t.inputSchema.properties.device, `${t.name} must take device`);

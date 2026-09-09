@@ -123,25 +123,28 @@ export async function handleMcp(request: Request, env: any): Promise<Response> {
 }
 
 export async function callTool(tool: any, env: any, device: any, args: any): Promise<any> {
-  // round-160: secret_* lives on the DEVICE agent (keyring/file via
-  // /api/tools/secret_*), not in the browser extension — the extension route
-  // failed 9/9 calls in a week of real usage whenever Chrome wasn't running
-  // with the Vale extension. The toolPath map below already had the routes;
-  // the dispatcher just never sent secret_* here.
-  if (tool.name.startsWith("terminal_") || tool.name.startsWith("secret_")) {
+  // ONE routing rule, one source of truth: isDeviceDirectTool() below decides
+  // device-proxy vs playwright-bridge. callTool used to re-implement that
+  // predicate as three inline branches — which is how the whole `system_*`
+  // family stayed unreachable even after someone added it to the registry
+  // (round-54's missing-tool class, second copy of the same bug).
+  //
+  // - terminal_* / secret_* / system_* live on the DEVICE agent and are
+  //   relayed to its /api/tools/<name> (round-160: secret_* was misrouted to
+  //   the browser extension and failed 9/9 real calls).
+  // - browser_pw_info / browser_run_script are the bundled playwright runner,
+  //   also a device tool (round-161: the bridge rejects them).
+  // - every other browser_* goes through the playwright-mcp bridge.
+  if (isDeviceDirectTool(tool.name)) {
     return callTerminalTool(tool.name, env, device, args);
   }
-  // round-161: browser_pw_info / browser_run_script are DEVICE tools (the
-  // bundled playwright runner, toolPath map below) — the playwright-mcp
-  // bridge rejects them ("Tool browser_pw_info not found", 50% of real DSH
-  // calls). Everything else browser_* goes through the bridge.
-  if (tool.name === "browser_pw_info" || tool.name === "browser_run_script") {
-    return callTerminalTool(tool.name, env, device, args);
-  }
-  // Browser tools route through Playwright (mcp_client) on the device.
   if (tool.name.startsWith("browser_")) {
     return callMcpClientBridge(tool.name, env, device, args);
   }
+  // Registered but unrouted is a programming error (the contract test in
+  // test/mcp-handler.test.mjs pins the partition). Returning undefined would
+  // reach the client as an empty tool result.
+  throw ToolErr(TOOL_ERROR, `No route for registered tool ${tool.name}`);
 }
 
 /**
@@ -203,6 +206,7 @@ export function isDeviceDirectTool(name: string): boolean {
   return (
     name.startsWith("terminal_") ||
     name.startsWith("secret_") ||
+    name.startsWith("system_") ||
     name === "browser_pw_info" ||
     name === "browser_run_script"
   );

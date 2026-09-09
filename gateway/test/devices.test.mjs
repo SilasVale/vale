@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { issueSessionToken, SESSION_COOKIE } from "../src/auth.ts";
 import { __clearCaches, maskKey } from "../src/store.ts";
-import { makeEnv as makeBaseEnv } from "./helpers.mjs";
+import { makeEnv as makeBaseEnv, withFetch } from "./helpers.mjs";
 
 const ADMIN_PW = "test-admin-password";
 
@@ -701,7 +701,11 @@ test("upload proxy: admin session is proxied with the upload key", async () => {
 
 // round-463 (coverage-driven): the upload 413 bound + the public-gate 429
 // arm had ZERO pins.
-test("upload proxy: declared 26MB body 413s without touching the network", async () => {
+// round-554: the bound moved 25MB → 100MB (it used to sit BELOW the agent's
+// and the index worker's own 100 MiB, so a 30 MB firmware image died here
+// with a 413 no layer's documentation predicted). 26MB must now PASS and
+// 101MB must still be refused before any upstream dial.
+test("upload proxy: declared 26MB body passes the re-raised bound", async () => {
   __clearCaches();
   const env = {
     ...makeEnv([]),
@@ -721,11 +725,135 @@ test("upload proxy: declared 26MB body 413s without touching the network", async
       },
       body: "small-lie",
     }), env);
+    assert.notEqual(res.status, 413, "26MB is a legitimate firmware-size payload now");
+    assert.equal(calls, 1, "must reach the index worker (which owns the real cap)");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("upload proxy: declared 101MB body 413s without touching the network", async () => {
+  __clearCaches();
+  const env = {
+    ...makeEnv([]),
+    UPLOAD_KEY: "test-upload-key",
+    INDEX_WORKER_URL: "https://idx.example",
+  };
+  let calls = 0;
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { calls++; return new Response("{}"); };
+  try {
+    const res = await worker.fetch(new Request("https://x/api/upload", {
+      method: "POST",
+      headers: {
+        cookie: `${SESSION_COOKIE}=${await adminCookie()}`,
+        "content-type": "multipart/form-data; boundary=----valeboundary",
+        "content-length": String(101 * 1024 * 1024),
+      },
+      body: "small-lie",
+    }), env);
     assert.equal(res.status, 413);
+    assert.match((await res.json()).error.message, /max 100MB/);
     assert.equal(calls, 0, "rejected before any upstream dial");
   } finally {
     globalThis.fetch = real;
   }
+});
+
+// ── round-554: the relay is symmetric (an AI client can stage a file FOR a
+// device) and speaks raw-stream PUT ───────────────────────────────────────
+const ADMINTOK = "a".repeat(64);
+const RELAYTOK = "r".repeat(64);
+
+function tokenEnv(devices = []) {
+  return makeBaseEnv({
+    devices,
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: ADMINTOK, relayToken: RELAYTOK },
+    },
+    kv: {
+      "auth:admin_password": ADMIN_PW,
+      _admin_seeded: "1",
+      [`token:${ADMINTOK}`]: "admin",
+      [`token:${RELAYTOK}`]: "admin",
+    },
+    extra: { UPLOAD_KEY: "test-upload-key", INDEX_WORKER_URL: "https://idx.example" },
+  });
+}
+
+test("upload proxy: the admin API token may stage a file (the Linux → device leg)", async () => {
+  const env = tokenEnv([]);
+  const seen = [];
+  await withFetch(async (url, init) => {
+    seen.push({ url: String(url), method: init.method, headers: init.headers });
+    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+  }, async () => {
+    const res = await worker.fetch(new Request("https://x/api/upload", {
+      method: "PUT",
+      headers: { authorization: `Bearer ${ADMINTOK}`, "content-length": "5" },
+      body: "bytes",
+    }), env);
+    assert.equal(res.status, 200, "the /mcp credential must be able to feed the relay");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].method, "PUT", "the method must survive the proxy (raw-stream path)");
+    // The device/user credential never rides on to the index worker — only
+    // the relay's own UPLOAD_KEY does.
+    assert.equal(seen[0].headers.get("authorization"), "Bearer test-upload-key");
+  });
+});
+
+test("upload proxy: a relay-role token is refused (ADR-0007 scoping holds)", async () => {
+  const env = tokenEnv([]);
+  await withFetch(async () => {
+    throw new Error("must not dial the index worker");
+  }, async () => {
+    const res = await worker.fetch(new Request("https://x/api/upload", {
+      method: "PUT",
+      headers: { authorization: `Bearer ${RELAYTOK}`, "content-length": "5" },
+      body: "bytes",
+    }), env);
+    assert.equal(res.status, 401, "relay tokens are for the translate path only");
+  });
+});
+
+test("upload proxy: PUT forwards ?name= and the raw-metadata headers", async () => {
+  const env = tokenEnv([]);
+  const seen = [];
+  await withFetch(async (url, init) => {
+    seen.push({ url: String(url), headers: init.headers });
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  }, async () => {
+    const res = await worker.fetch(
+      new Request("https://x/api/upload?name=%E5%9B%BA%E4%BB%B6.bin", {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${ADMINTOK}`,
+          "content-length": "5",
+          "x-filename": "fw.bin",
+          "x-content-type": "application/octet-stream",
+          cookie: "ag_session=must-not-ride",
+        },
+        body: "bytes",
+      }),
+      env,
+    );
+    assert.equal(res.status, 200);
+    // Dropping the query used to silently rename every relay file "file".
+    assert.equal(seen[0].url, "https://idx.example/api/upload?name=%E5%9B%BA%E4%BB%B6.bin");
+    assert.equal(seen[0].headers.get("x-filename"), "fw.bin");
+    assert.equal(seen[0].headers.get("x-content-type"), "application/octet-stream");
+    assert.equal(seen[0].headers.get("cookie"), null);
+  });
+});
+
+test("upload proxy: non-admin session and unknown tokens stay 401", async () => {
+  const env = tokenEnv([]);
+  const asUser = await worker.fetch(new Request("https://x/api/upload", {
+    method: "PUT",
+    headers: { authorization: `Bearer ${"z".repeat(64)}`, "content-length": "5" },
+    body: "bytes",
+  }), env);
+  assert.equal(asUser.status, 401);
 });
 
 test("public gate: 10 tunnel-token attempts then 429", async () => {

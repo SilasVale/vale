@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 
 const enc = new TextEncoder();
 
-/** In-memory R2 bucket mock. put() accepts a string, Uint8Array, or Blob. */
+/** In-memory R2 bucket mock. put() accepts a string, Uint8Array, Blob or
+ *  ReadableStream (the raw-upload path streams the request body straight in)
+ *  and resolves to the { key, size } shape the worker reads back. */
 export function makeR2() {
   const store = new Map();
   return {
@@ -15,12 +17,31 @@ export function makeR2() {
       if (typeof value === "string") bytes = enc.encode(value);
       else if (value instanceof Uint8Array) bytes = value;
       else if (value instanceof Blob) bytes = new Uint8Array(await value.arrayBuffer());
-      else throw new TypeError(`makeR2: unsupported value type for ${key}`);
+      else if (value && typeof value.getReader === "function") {
+        // ReadableStream: drain to bytes (what R2 does server-side).
+        const reader = value.getReader();
+        const chunks = [];
+        let total = 0;
+        for (;;) {
+          const { done, value: part } = await reader.read();
+          if (done) break;
+          const b = part instanceof Uint8Array ? part : enc.encode(String(part));
+          chunks.push(b);
+          total += b.length;
+        }
+        bytes = new Uint8Array(total);
+        let at = 0;
+        for (const c of chunks) {
+          bytes.set(c, at);
+          at += c.length;
+        }
+      } else throw new TypeError(`makeR2: unsupported value type for ${key}`);
       store.set(key, {
         bytes,
         httpMetadata: { ...(opts.httpMetadata || {}) },
         customMetadata: { ...(opts.customMetadata || {}) },
       });
+      return { key, size: bytes.length };
     },
     async get(key) {
       const e = store.get(key);
