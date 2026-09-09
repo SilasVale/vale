@@ -55,7 +55,8 @@ function bad(message: string, status = 400): Response {
   });
 }
 
-function safePath(value: string): boolean {
+// Exported for direct pins (SOLID Round-21; additive — handler untouched).
+export function safePath(value: string): boolean {
   if (!value || !value.startsWith("/")) return false;
   if (value.includes("\\") || value.includes("\0") || value.includes("..")) return false;
   try {
@@ -69,7 +70,8 @@ function safePath(value: string): boolean {
   }
 }
 
-function parseRoute(value: string | null): Route | null {
+// Exported for direct pins (SOLID Round-21; additive — handler untouched).
+export function parseRoute(value: string | null): Route | null {
   if (!value || !safePath(value)) return null;
   const slash = value.indexOf("/", 1);
   if (slash < 0) return null;
@@ -97,7 +99,8 @@ function copyResponseHeaders(response: Response): Headers {
   return headers;
 }
 
-function redirectTarget(response: Response, currentUrl: URL): URL | null {
+// Exported for direct pins (SOLID Round-21; additive — handler untouched).
+export function redirectTarget(response: Response, currentUrl: URL): URL | null {
   const location = response.headers.get("location");
   if (!location) return null;
   try {
