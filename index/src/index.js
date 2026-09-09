@@ -40,7 +40,8 @@ function tooLargeResponse(maxBytes) {
 // must never reach the R2 put as a forged header); keeps the quoted
 // filename parameter pure-ASCII and carries non-ASCII names via filename*
 // (RFC 5987) with an ASCII fallback.
-function buildContentDisposition(rawName) {
+// Exported for direct pins (SOLID Round-30; additive — call sites untouched).
+export function buildContentDisposition(rawName) {
   const cleaned = String(rawName || "").replace(/["\\\u0000-\u001f\u007f]/g, "").trim();
   if (!cleaned) return null;
   const ascii = cleaned.replace(/[^\x20-\x7e]/g, "").trim() || "download.bin";
@@ -123,7 +124,8 @@ async function rawUpload(request, env, url) {
 // truncated/placeholder sha in version.json must never be served as if it
 // were a real manifest. Same shape as assert_want_sha256 in
 // scripts/smoke-index.sh (the shared pre-publish guard): 64 hex chars.
-const SHA256_RE = /^[0-9a-f]{64}$/i;
+// Exported for direct pins (SOLID Round-30; additive).
+export const SHA256_RE = /^[0-9a-f]{64}$/i;
 
 // P2-7 (was: stale "In-memory token set / swap to KV later" note):
 // claim tokens are one-time nonces created per upload below and consumed by
@@ -133,7 +135,8 @@ const SHA256_RE = /^[0-9a-f]{64}$/i;
 // chars URL-safe.
 const TOKEN_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-function genToken(len = 22) {
+// Exported for direct pins (SOLID Round-30; additive — call sites untouched).
+export function genToken(len = 22) {
   // P2-11: rejection sampling — TOKEN_CHARS.length (62) does not divide
   // 256, so buf%62 would overweight the first 256%62 = 8 symbols (A-H).
   // Accept only bytes in [0, 248) (largest multiple of 62 below 256) and
