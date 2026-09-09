@@ -16,23 +16,47 @@ import { isChannelDegraded } from "../reliability.ts";
  *  round-68: the old code checked ADMIN_ID's keys — a BYOK user with only an
  *  og key was told og was "unusable" (the admin lacks it) and routed to ds,
  *  which the user lacks → 502 on every model=auto request. */
+
+// SOLID Round-26 (OCP): per-channel key rules are DATA — adding a channel
+// registers one entry instead of appending another if-line (nv/gmi/cm/amd
+// each arrived as a new line). userKey is always required; envKey null
+// means pure BYOK (the /v1 handler reads ONLY the user's key blob there).
+export interface ChannelKeyRule {
+  userKey: string;
+  envKey: string | null;
+}
+
+export const CHANNEL_KEY_RULES: Record<string, ChannelKeyRule> = {
+  og: { userKey: "OPENCODE_GO_API_KEY", envKey: "OPENCODE_GO_API_KEY" },
+  ds: { userKey: "DEEPSEEK_API_KEY", envKey: "DEEPSEEK_API_KEY" },
+  qw: { userKey: "QWEN_API_KEY", envKey: "QWEN_API_KEY" },
+  or: { userKey: "OPENROUTER_API_KEY", envKey: "OPENROUTER_API_KEY" },
+  nv: { userKey: "NVAPI_KEY", envKey: null },
+  gmi: { userKey: "GMI_API_KEY", envKey: null },
+  cm: { userKey: "CMD_API_KEY", envKey: "CMD_API_KEY" },
+  amd: { userKey: "AMD_API_KEY", envKey: "AMD_API_KEY" },
+};
+
+/** OCP extension point: new channels register here — no edit to isModelUsable. */
+export function registerChannelKey(prefix: string, rule: ChannelKeyRule): void {
+  CHANNEL_KEY_RULES[prefix] = rule;
+}
+
 export async function isModelUsable(env: any, model: string, uid: string): Promise<boolean> {
   if (!MODELS.some((m) => m.id === model)) return false;
   const userKeys: any = await getUserKeys(env, uid).catch(() => ({}));
-  const prefix = model.split("/")[0] + "/";
-  if (prefix === "og/" && !(userKeys.OPENCODE_GO_API_KEY || env.OPENCODE_GO_API_KEY)) return false;
-  if (prefix === "ds/" && !(userKeys.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY)) return false;
-  if (prefix === "qw/" && !(userKeys.QWEN_API_KEY || env.QWEN_API_KEY)) return false;
-  if (prefix === "or/" && !(userKeys.OPENROUTER_API_KEY || env.OPENROUTER_API_KEY)) return false;
-  // nv/ and gmi/ are pure BYOK — the /v1 handler reads ONLY the user's key
-  // blob (no env fallback), so a missing user key means every request 502s.
-  if (prefix === "nv/" && !userKeys.NVAPI_KEY) return false;
-  if (prefix === "gmi/" && !userKeys.GMI_API_KEY) return false;
-  // cm/ — Command Code is pure BYOK too; without a user key every request 502s.
-  if (prefix === "cm/" && !(userKeys.CMD_API_KEY || env.CMD_API_KEY)) return false;
-  // amd/ — Radeon Cloud free pool, the rc-… key belongs to the user who added
-  // it (a missing key 502s; a shared-pool 429 is the upstream's, not a 502).
-  if (prefix === "amd/" && !(userKeys.AMD_API_KEY || env.AMD_API_KEY)) return false;
+  const key = model.split("/")[0] || "";
+  const rule = Object.prototype.hasOwnProperty.call(CHANNEL_KEY_RULES, key)
+    ? (CHANNEL_KEY_RULES[key] as ChannelKeyRule)
+    : null;
+  if (rule) {
+    // nv/gmi carry envKey null (pure BYOK — the /v1 handler reads ONLY the
+    // user's key blob, so a missing user key means every request 502s);
+    // every other channel also honors its env-level key.
+    const hasUser = !!userKeys[rule.userKey];
+    const hasEnv = rule.envKey ? !!env[rule.envKey] : false;
+    if (!hasUser && !hasEnv) return false;
+  }
   if (model.startsWith("og/")) return !(await isChannelDegraded(env));
   return true;
 }
