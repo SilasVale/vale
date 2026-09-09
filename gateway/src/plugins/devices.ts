@@ -680,7 +680,8 @@ async function handleRegisterKey(request: Request, env: any): Promise<Response> 
 /// Authorization + x-vale-auth into https://<hostname>…) AND re-serves that
 /// host's responses at the console origin. Enforce a suffix allowlist,
 /// overridable per-deployment via DEVICE_HOST_SUFFIX.
-function hostAllowError(hostname: string, env: any): string | null {
+// Exported for direct pins (SOLID Round-28; additive — handlers untouched).
+export function hostAllowError(hostname: string, env: any): string | null {
   const suffix = (env?.DEVICE_HOST_SUFFIX || ".agent.saisi.online").toLowerCase();
   const h = hostname.toLowerCase();
   if (!h.endsWith(suffix) || h.length <= suffix.length) {
@@ -689,7 +690,8 @@ function hostAllowError(hostname: string, env: any): string | null {
   return null;
 }
 
-function validateDevice(body: any): Device {
+// Exported for direct pins (SOLID Round-28; additive — handlers untouched).
+export function validateDevice(body: any): Device {
   const name = String(body?.name || "").trim();
   const hostname = String(body?.hostname || "").trim();
   const token = String(body?.token || "").trim();
@@ -703,7 +705,8 @@ function validateDevice(body: any): Device {
 
 /** validateDevice wrapped as a 400 Response — the reg-key, self-register and
  *  admin-add handlers used to inline the same try/catch around it. */
-function validatedDeviceOrError(body: any): Device | Response {
+// Exported for direct pins (SOLID Round-28; additive — handlers untouched).
+export function validatedDeviceOrError(body: any): Device | Response {
   try {
     return validateDevice(body);
   } catch (e) {
@@ -712,7 +715,8 @@ function validatedDeviceOrError(body: any): Device | Response {
 }
 
 /** Claude Code MCP config snippet for a device (the only place the raw token is returned). */
-function mcpConfig(d: Device): { url: string; json: string } {
+// Exported for direct pins (SOLID Round-28; additive — handlers untouched).
+export function mcpConfig(d: Device): { url: string; json: string } {
   const url = `https://${d.hostname}/mcp`;
   const snippet = {
     mcpServers: {
