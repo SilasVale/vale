@@ -255,10 +255,13 @@ mod state_tests {
     fn failed_persist_leaves_memory_untouched() {
         // Write-through, not write-behind: persist runs BEFORE the swap, so
         // a dead disk path must leave BOTH sides at the old value.
+        // (atomic_write creates missing PARENTS since layout v2, so a mere
+        // missing dir no longer fails — the dead path here is a regular
+        // FILE used as a directory, which no writer can survive.)
         let st = AppState::new(cfg_with_token("a"));
         let bad =
-            std::env::temp_dir().join(format!("vale-state-no-such-dir-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&bad);
+            std::env::temp_dir().join(format!("vale-state-not-a-dir-{}", std::process::id()));
+        std::fs::write(&bad, b"i am a file, not a dir").unwrap();
         *st.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(bad.join("config.yaml"));
         let err = st.update_config(cfg_with_token("b"), true).unwrap_err();
         assert!(format!("{err:?}").contains("persist"), "got: {err:?}");
@@ -267,6 +270,7 @@ mod state_tests {
             "a",
             "memory must not move on persist failure"
         );
+        std::fs::remove_file(&bad).ok();
     }
 
     #[test]

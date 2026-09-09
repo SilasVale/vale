@@ -10,8 +10,17 @@ use vale_agent_core::Config;
 /// std::fs::write (truncate + write) left a half-written config on power
 /// loss, which the next boot quarantined and replaced with a FRESH token —
 /// every client 401'd with no recovery path.
+/// Layout v2: creates missing parents first (config now lives in etc\, which
+/// a hand-made invocation may not have created — a missing dir must not be
+/// a fatal boot).
 pub fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    // Layout-v2 parent guard: "."/"" need nothing; anything else is created.
+    // (create_dir_all on an existing dir is a no-op, so the hot path is one
+    // cheap syscall.)
+    if !dir.as_os_str().is_empty() && dir != Path::new(".") {
+        std::fs::create_dir_all(dir)?;
+    }
     let tmp = dir.join(format!(
         ".{}.tmp",
         path.file_name()
@@ -299,6 +308,17 @@ mod bootstrap_tests {
             !d.join(".config.yaml.tmp").exists(),
             "temp must be renamed away"
         );
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn atomic_write_creates_missing_parents() {
+        // Layout v2: config lives in etc\, which may not exist yet on a
+        // hand-made invocation — a missing dir must not fail the write.
+        let d = dir("atomic-parents");
+        let path = d.join("etc").join("config.yaml");
+        atomic_write(&path, b"nested").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"nested");
         std::fs::remove_dir_all(&d).ok();
     }
 }

@@ -92,26 +92,22 @@ fn init_tracing() {
     let env =
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
     let stdout_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
-    // stage-n: on Windows ALSO mirror tracing into agent.log (next to the
-    // exe, 1 MB rotation) — the scheduled task / service context has no
-    // console, and without this the runtime `tracing!` call sites
-    // (recovery notices, bridge supervision…) were invisible on the device.
+    // stage-n: on Windows ALSO mirror tracing into agent.log (DataDir\logs,
+    // layout v2 — was next to the exe; program files stay read-mostly, and
+    // a reinstall keeps diagnostics). 1 MB rotation — the scheduled task /
+    // service context has no console, and without this the runtime `tracing!`
+    // call sites (recovery notices, bridge supervision…) were invisible.
     #[cfg(windows)]
     {
-        // Zero current_exe() guessing outside paths.rs — exe_dir() is the
-        // same resolution, centralized.
-        let dir = vale_agent::paths::exe_dir();
-        let file_layer = if dir.as_os_str().is_empty() {
-            None
-        } else {
-            vale_agent::filelog::RotatingFile::new(dir.join("agent.log"))
-                .ok()
-                .map(|w| {
-                    tracing_subscriber::fmt::layer()
-                        .with_ansi(false)
-                        .with_writer(w)
-                })
-        };
+        let path = vale_agent::paths::agent_log_file();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let file_layer = vale_agent::filelog::RotatingFile::new(path).ok().map(|w| {
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(w)
+        });
         tracing_subscriber::Registry::default()
             .with(env)
             .with(stdout_layer)
@@ -129,22 +125,41 @@ fn init_tracing() {
 }
 
 fn main() {
-    init_tracing();
-
-    // Every out!/eout! line also goes to startup.log next to this exe, so a
-    // boot-task run (no console) is diagnosable after the fact.
+    // Layout-v2 boot migration FIRST (ADR 0008 backstop): a pre-v2 updater
+    // (old Rust agent_update / old vale.js) leaves v1 paths behind; the new
+    // agent moves them into their v2 homes before anything reads them.
+    // Real installs only (registry-gated inside); idempotent; never fatal.
+    // Runs before logging so the moved history is complete.
     #[cfg(windows)]
     {
-        // Zero current_exe() guessing outside paths.rs — exe_dir() is the
-        // same resolution, centralized.
-        let dir = vale_agent::paths::exe_dir();
-        if !dir.as_os_str().is_empty() {
-            let _ = LOG_FILE.set(dir.join("startup.log"));
-            log_line(&format!(
-                "=== vale-agent {} starting ===",
-                env!("CARGO_PKG_VERSION")
-            ));
+        for note in vale_agent::paths::migrate_layout_v2() {
+            eprintln!("  layout-v2: {note}");
         }
+    }
+    init_tracing();
+
+    // Every out!/eout! line also goes to startup.log (DataDir\logs — layout
+    // v2; was next to the exe), so a boot-task run (no console) is
+    // diagnosable after the fact.
+    #[cfg(windows)]
+    {
+        let path = vale_agent::paths::startup_log_file();
+        if path.as_os_str().is_empty() {
+            // Unresolvable roots — fall back to the exe dir (dev trees).
+            let dir = vale_agent::paths::exe_dir();
+            if !dir.as_os_str().is_empty() {
+                let _ = LOG_FILE.set(dir.join("startup.log"));
+            }
+        } else {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = LOG_FILE.set(path);
+        }
+        log_line(&format!(
+            "=== vale-agent {} starting ===",
+            env!("CARGO_PKG_VERSION")
+        ));
     }
 
     // Must run before ANY child spawns: every PTY shell, SSH/serial session,
@@ -174,24 +189,25 @@ fn main() {
     // used to fall back to a RELATIVE "config.yaml" — resolved against the
     // process CWD (C:\Windows\System32 for shell/SYSTEM contexts), where
     // bootstrap CREATED a phantom default config with a fresh unknown token
-    // and every client 401'd. Fall back to the exe's own directory.
+    // and every client 401'd. Fall back to the layout-v2 config file
+    // (etc\config.yaml under the resolved install dir).
     // zero current_exe() guessing outside paths.rs — exe_dir() is the same
     // resolution (empty PathBuf when the exe path is unavailable), so the
     // closure degrades to None exactly when the old one did.
-    let exe_dir_cfg = || {
+    let default_cfg = || {
         let dir = vale_agent::paths::exe_dir();
-        (!dir.as_os_str().is_empty()).then(|| dir.join("config.yaml"))
+        (!dir.as_os_str().is_empty()).then(vale_agent::paths::config_file)
     };
     let init_mode = args.get(1).map(String::as_str) == Some("--init");
     let config_path = if init_mode {
         args.get(2)
             .map(PathBuf::from)
-            .or_else(exe_dir_cfg)
+            .or_else(default_cfg)
             .unwrap_or_else(|| PathBuf::from("config.yaml"))
     } else {
         args.get(1)
             .map(PathBuf::from)
-            .or_else(exe_dir_cfg)
+            .or_else(default_cfg)
             .unwrap_or_else(|| PathBuf::from("config.yaml"))
     };
 
@@ -223,12 +239,11 @@ fn main() {
     #[cfg(windows)]
     {
         // stage-m (VS Code shell integration): materialize the OSC 633
-        // injection script under install_dir/shell-integration/ so pty spawn
+        // injection script under scripts\shell-integration\ so pty spawn
         // can dot-source it (`-Command . '<path>'`). Embedded at compile time
         // via include_str!, written once per boot (idempotent, no version
         // churn — the script's own guard skips re-install per session).
-        let install_dir = vale_agent::paths::install_dir();
-        let si_dir = install_dir.join("shell-integration");
+        let si_dir = vale_agent::paths::shell_integration_dir();
         let si_script = si_dir.join("shellIntegration.ps1");
         if std::fs::create_dir_all(&si_dir).is_ok()
             && std::fs::write(
@@ -243,7 +258,7 @@ fn main() {
             ));
         }
 
-        let fix_script = install_dir.join("fix-tunnel.ps1");
+        let fix_script = vale_agent::paths::scripts_dir().join("fix-tunnel.ps1");
         if fix_script.exists() && !init_mode {
             let _ = std::process::Command::new("powershell")
                 .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
@@ -419,12 +434,11 @@ pub(crate) async fn run_server(config_path: PathBuf) {
     let state = Arc::new(AppState::new(config));
     // round-158: device self-register — the npm-installed agent reports itself
     // ({name, hostname, token = config.device_token}) to the console so the
-    // Devices list stays automatic. Hostname comes from vale-agent.hostname
-    // next to the exe (written at install); name = first label of the
+    // Devices list stays automatic. Hostname comes from etc\vale-agent.hostname
+    // (written at install); name = first label of the
     // subdomain. Runs at boot after the server is up, then every 6h; failures
     // are silent (the console may be offline at boot).
     {
-        let reg_install = vale_agent::paths::install_dir();
         let reg_state = state.clone();
         tokio::spawn(async move {
             // Supervision audit #2: the old loop SNAPSHOT-READ the config
@@ -448,7 +462,7 @@ pub(crate) async fn run_server(config_path: PathBuf) {
                     .map(|x| x.trim().to_string())
                     .filter(|x| !x.is_empty());
                 let token = cfg.server.device_token.clone().unwrap_or_default();
-                let hostname = std::fs::read_to_string(reg_install.join("vale-agent.hostname"))
+                let hostname = std::fs::read_to_string(vale_agent::paths::hostname_file())
                     .map(|x| x.trim().to_string())
                     .unwrap_or_default();
                 let mut fast_retry = true;

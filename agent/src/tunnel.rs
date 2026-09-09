@@ -129,7 +129,7 @@ pub(crate) fn write_verified_bytes(
         );
     }
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("tools dir create failed: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("parent dir create failed: {e}"))?;
     }
     crate::bootstrap::atomic_write(dest, bytes)
         .map_err(|e| format!("cloudflared download write failed: {e}"))?;
@@ -143,10 +143,9 @@ pub(crate) fn write_verified_bytes(
 /// `port` is the agent's configured bind port — the ingress must point where
 /// the agent actually listens (a hardcoded 18080 502s custom-port installs).
 pub(crate) async fn provision_tunnel(cf_token: &str, port: u16) -> String {
-    let install_dir = crate::paths::install_dir();
-    let cf = install_dir.join("tools").join("cloudflared.exe");
+    let cf = crate::paths::cloudflared_bin();
     if !cf.exists() {
-        // tools\cloudflared.exe absent (the boxed tgz binary normally covers
+        // components\cloudflared.exe absent (the boxed tgz binary normally covers
         // this) — download the PINNED official Windows binary on demand
         // (one-time). Pinned version + sha256 (see the constants above): the
         // bytes are verified BEFORE they are written or executed, mirroring
@@ -196,7 +195,7 @@ pub(crate) async fn provision_tunnel(cf_token: &str, port: u16) -> String {
             bytes.len()
         );
     }
-    let hostname = std::fs::read_to_string(install_dir.join("vale-agent.hostname"))
+    let hostname = std::fs::read_to_string(crate::paths::hostname_file())
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
     // Supervision audit #5: hostname flows into cloudflared ARGV and an
@@ -298,7 +297,7 @@ pub(crate) async fn provision_tunnel(cf_token: &str, port: u16) -> String {
         "tunnel: {id}\ncredentials-file: {cred}\nallow-remote-config: false\ningress:\n  - hostname: {hostname}\n    service: {}\n  - service: http_status:404\n",
         ingress_service(port)
     );
-    let cfg_path = install_dir.join("tunnel.yml");
+    let cfg_path = crate::paths::tunnel_file();
     // Supervision audit #5: atomic (the boot-spawned cloudflared may be
     // mid-read) — and #1: DO NOT spawn a second tunnel here; the supervisor
     // task owns the single child and restarts on the generation bump.

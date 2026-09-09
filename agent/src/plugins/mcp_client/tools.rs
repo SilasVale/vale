@@ -102,7 +102,7 @@ fn diag_log(line: &str) {
 /// Diagnostic log path — under the DATA dir (C1: registry DataDir, else exe
 /// dir). Works on Windows AND in tests on other platforms.
 fn diag_path() -> std::path::PathBuf {
-    crate::paths::data_dir().join("mcp_diag.log")
+    crate::paths::logs_dir().join("mcp_diag.log")
 }
 
 /// Single entry point for a JSON-RPC call, dispatched by transport.
@@ -504,15 +504,10 @@ async fn connect_http(
 /// @playwright/mcp/cli.js`) + the node runtime (registry NodePath / system
 /// node — the agent no longer bundles node.exe).
 fn bundled_playwright() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
-    let dir = crate::paths::install_dir();
-    let node = crate::paths::node_path().or_else(|| {
-        dir.join("playwright")
-            .join("node.exe")
-            .exists()
-            .then(|| dir.join("playwright").join("node.exe"))
-    })?;
-    let entry = dir
-        .join("playwright")
+    let pw = crate::paths::playwright_dir();
+    let node = crate::paths::node_path()
+        .or_else(|| pw.join("node.exe").exists().then(|| pw.join("node.exe")))?;
+    let entry = pw
         .join("node_modules")
         .join("@playwright")
         .join("mcp")
@@ -604,7 +599,7 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
     if !tool.starts_with("browser_") {
         return;
     }
-    let pwout = crate::paths::install_dir().join("pwout");
+    let pwout = crate::paths::evidence_dir();
     let _ = std::fs::create_dir_all(&pwout);
     let summary = mcp_action_summary(tool, args);
     let ts = crate::now_millis();
@@ -639,7 +634,7 @@ pub(crate) fn set_actions_bus(bus: std::sync::Arc<dyn vale_agent_core::EventBus>
 /// to each inline this open/write pair.
 fn append_action_line(line: &impl std::fmt::Display) {
     use std::io::Write;
-    let pwout = crate::paths::install_dir().join("pwout");
+    let pwout = crate::paths::evidence_dir();
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -692,7 +687,7 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
         (std::path::PathBuf::from(n), std::path::PathBuf::from(e))
     } else {
         bundled_playwright().ok_or_else(|| DeviceError::Internal {
-            message: "bundled playwright not found (install_dir/playwright/) — run the installer"
+            message: "bundled playwright not found (components/playwright/) — run the installer"
                 .into(),
         })?
     };
@@ -719,7 +714,7 @@ async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), Dev
         // while the agent's temp_dir() probe found only weeks-old files) —
         // pin it to install\pwout so screenshots appear in the Evidence
         // drawer with zero copying.
-        let pwout = crate::paths::install_dir().join("pwout");
+        let pwout = crate::paths::evidence_dir();
         let _ = std::fs::create_dir_all(&pwout);
         for a in mcp_browser_args(preferred_cdp_endpoint().as_deref(), &pwout) {
             cmd.arg(a);
@@ -1444,7 +1439,7 @@ pub fn mcp_client_call() -> ToolDef {
                         // --output-dir pins shots under pwout; the temp path
                         // stays as the fallback for servers that ignore the
                         // flag (their CWD-relative default we cannot know).
-                        candidates.push(crate::paths::install_dir().join("pwout").join(&name));
+                        candidates.push(crate::paths::evidence_dir().join(&name));
                         candidates.push(std::env::temp_dir().join(".playwright-mcp").join(&name));
                     }
                     let _ = &rel;
@@ -1455,7 +1450,7 @@ pub fn mcp_client_call() -> ToolDef {
                             // lists pwout/*.png) surfaces MCP screenshots —
                             // previously they lived only in %TEMP% forever.
                             if !name.is_empty() {
-                                let pwout = crate::paths::install_dir().join("pwout");
+                                let pwout = crate::paths::evidence_dir();
                                 if std::fs::create_dir_all(&pwout).is_ok() {
                                     let dst = pwout.join(format!("mcp-{name}"));
                                     // round-245 (browser-display audit B5):

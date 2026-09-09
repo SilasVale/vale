@@ -193,16 +193,11 @@ struct ManagedPlaywright {
     _kill_tx: oneshot::Sender<()>,
 }
 
-/// Install dir — registry-first, then exe dir (crate::paths::install_dir).
-fn install_dir() -> PathBuf {
-    crate::paths::install_dir()
-}
-
 /// Resolve the node runtime: the agent no longer bundles node.exe (the npm
 /// channel guarantees the device has node). Resolution order:
 ///   1. registry NodePath (written by `vale setup` — the SYSTEM agent may
 ///      not see the user PATH)
-///   2. bundled install_dir/playwright/node.exe (legacy bundles)
+///   2. bundled components/playwright/node.exe (layout v2)
 ///   3. system PATH (`where node`)
 ///
 /// Gives a clear error when none is found.
@@ -212,7 +207,7 @@ fn resolve_node() -> Result<PathBuf, DeviceError> {
         return Ok(p);
     }
     // 2. legacy bundled node.exe
-    let bundled = install_dir().join("playwright").join("node.exe");
+    let bundled = crate::paths::playwright_dir().join("node.exe");
     if bundled.exists() {
         return Ok(bundled);
     }
@@ -240,8 +235,7 @@ fn resolve_node() -> Result<PathBuf, DeviceError> {
 /// Bundled playwright-mcp entry script — 0.0.79's bin is the package-root cli.js
 /// (no dist/; cli.js relatively requires package.json in the same directory).
 fn bundled_mcp_entry() -> Result<PathBuf, DeviceError> {
-    let p = install_dir()
-        .join("playwright")
+    let p = crate::paths::playwright_dir()
         .join("node_modules")
         .join("@playwright")
         .join("mcp")
@@ -250,7 +244,7 @@ fn bundled_mcp_entry() -> Result<PathBuf, DeviceError> {
         return Err(DeviceError::Internal {
             message: format!(
                 "playwright-mcp not found: {} (the agent installer bundles \
-                 playwright-mcp under install_dir/playwright/)",
+                 playwright-mcp under components/playwright/)",
                 p.display()
             ),
         });
@@ -451,7 +445,7 @@ impl PlaywrightManager {
         }
         // evidence land: same --output-dir pin as the stdio spawn
         {
-            let pwout = crate::paths::install_dir().join("pwout");
+            let pwout = crate::paths::evidence_dir();
             let _ = std::fs::create_dir_all(&pwout);
             child.arg("--output-dir").arg(pwout);
         }

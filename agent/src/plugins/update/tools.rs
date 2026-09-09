@@ -105,9 +105,12 @@ fn install_dir() -> PathBuf {
 /// later boot/swap apply a MIX of the failed release's components under
 /// the old (consistent) version marker. Never touches live files.
 fn cleanup_staged(dir: &std::path::Path) {
+    // dir-relative (NOT the global components_dir() — this runs against the
+    // passed install root, and tests pin it with temp dirs).
+    let comp = dir.join("components");
     let _ = std::fs::remove_file(dir.join("vale-agent.new.exe"));
-    let _ = std::fs::remove_file(dir.join("vale-playwright.new.zip"));
-    let _ = std::fs::remove_file(dir.join("tools").join("cloudflared.new.exe"));
+    let _ = std::fs::remove_file(comp.join("vale-playwright.new.zip"));
+    let _ = std::fs::remove_file(comp.join("cloudflared.new.exe"));
     let _ = std::fs::remove_dir_all(dir.join(".vale-update"));
 }
 
@@ -150,6 +153,10 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
                 return false;
             }
         }
+        // The tgz served its purpose (bytes are already staged from memory
+        // below) — remove it now so a 6 MB artifact never lingers at the
+        // install root after successful updates.
+        let _ = std::fs::remove_file(installer);
         // The npm tgz contains package/... — find the exe inside.
         let pkg_exe = extract.join("package").join("vale-agent.exe");
         if !pkg_exe.exists() {
@@ -178,7 +185,10 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
         // the main-exe copy succeeded.
         let pkg_pw = extract.join("package").join("vale-playwright.zip");
         if pkg_pw.exists() {
-            if let Err(e) = std::fs::copy(&pkg_pw, dir.join("vale-playwright.new.zip")) {
+            if let Err(e) = std::fs::copy(
+                &pkg_pw,
+                dir.join("components").join("vale-playwright.new.zip"),
+            ) {
                 tracing::error!("[vale-agent] agent_update: playwright stage failed: {e}");
                 cleanup_staged(&dir);
                 return false;
@@ -186,12 +196,15 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
         }
         let pkg_cf = extract.join("package").join("cloudflared.exe");
         if pkg_cf.exists() {
-            if let Err(e) = std::fs::create_dir_all(dir.join("tools")) {
-                tracing::error!("[vale-agent] agent_update: tools dir create failed: {e}");
+            if let Err(e) = std::fs::create_dir_all(dir.join("components")) {
+                tracing::error!("[vale-agent] agent_update: components dir create failed: {e}");
                 cleanup_staged(&dir);
                 return false;
             }
-            if let Err(e) = std::fs::copy(&pkg_cf, dir.join("tools").join("cloudflared.new.exe")) {
+            if let Err(e) = std::fs::copy(
+                &pkg_cf,
+                dir.join("components").join("cloudflared.new.exe"),
+            ) {
                 tracing::error!("[vale-agent] agent_update: cloudflared stage failed: {e}");
                 cleanup_staged(&dir);
                 return false;
@@ -200,8 +213,34 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
 
         let q = dir.to_string_lossy().replace('\'', "''");
         let ver = release_version.replace('\'', "''");
+        // Layout v2 homes (baked — the swap script is static text).
+        // dir-relative (same root the staging above used, not globals).
+        let etc = dir
+            .join("etc")
+            .to_string_lossy()
+            .replace('\'', "''");
+        let comp = dir
+            .join("components")
+            .to_string_lossy()
+            .replace('\'', "''");
+        let logs = crate::paths::logs_dir()
+            .to_string_lossy()
+            .replace('\'', "''");
+        let scripts = dir
+            .join("scripts")
+            .to_string_lossy()
+            .replace('\'', "''");
         let script = format!(
-            r#""[$(Get-Date -Format o)] update start" | Out-File '{q}\vale-update.log' -Append;
+            r#""[$(Get-Date -Format o)] update start" | Out-File '{logs}\vale-update.log' -Append;
+try {{
+$uaction = New-ScheduledTaskAction -Execute '{q}\vale-agent.exe' -Argument ('"' + '{etc}\config.yaml' + '"');
+$uboot = New-ScheduledTaskTrigger -AtStartup;
+$uwatch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5);
+$uprincipal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest;
+$usettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 8 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable;
+Register-ScheduledTask ValeAgent -Action $uaction -Trigger @($uboot,$uwatch) -Principal $uprincipal -Settings $usettings -Force -ErrorAction Stop | Out-Null;
+}} catch {{ "[$(Get-Date -Format o)] task repoint FAILED — aborting, old version keeps running" | Out-File '{logs}\vale-update.log' -Append; Remove-Item -Force -ErrorAction SilentlyContinue "$env:ProgramData\ValeAgent\update-busy"; exit 1 }};
+"[$(Get-Date -Format o)] task repointed at etc\config.yaml" | Out-File '{logs}\vale-update.log' -Append;
 try {{ Stop-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{}};
 Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
 Get-Process node -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '*vale-agent*' }} | Stop-Process -Force -ErrorAction SilentlyContinue;
@@ -209,18 +248,31 @@ Start-Sleep -Milliseconds 1500;
 $ok=$false;
 if (Test-Path '{q}\vale-agent.exe') {{ try {{ Copy-Item -Force '{q}\vale-agent.exe' '{q}\vale-agent.old.exe' }} catch {{}} }}
 foreach($i in 1..12){{ try {{ Copy-Item -Force -ErrorAction Stop '{q}\vale-agent.new.exe' '{q}\vale-agent.exe'; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 800 }} }};
-"[$(Get-Date -Format o)] copy ok=$ok" | Out-File '{q}\vale-update.log' -Append;
+"[$(Get-Date -Format o)] copy ok=$ok" | Out-File '{logs}\vale-update.log' -Append;
 if ($ok) {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe' }};
-if ($ok) {{ if (Test-Path '{q}\vale-playwright.new.zip') {{ Copy-Item -Force '{q}\vale-playwright.new.zip' '{q}\vale-playwright.zip'; Remove-Item -Force '{q}\vale-playwright.new.zip' }} }};
-if ($ok) {{ if (Test-Path '{q}\tools\cloudflared.new.exe') {{ Copy-Item -Force '{q}\tools\cloudflared.new.exe' '{q}\tools\cloudflared.exe'; Remove-Item -Force '{q}\tools\cloudflared.new.exe' }} }};
-if ($ok) {{ Set-Content -Path '{q}\.vale-release' -Value '{ver}' -NoNewline -ErrorAction SilentlyContinue }}
-else {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe','{q}\vale-playwright.new.zip','{q}\tools\cloudflared.new.exe' }};
+if ($ok) {{ if (Test-Path '{comp}\vale-playwright.new.zip') {{ Copy-Item -Force '{comp}\vale-playwright.new.zip' '{comp}\vale-playwright.zip'; Remove-Item -Force '{comp}\vale-playwright.new.zip' }} }};
+if ($ok) {{ if (Test-Path '{comp}\cloudflared.new.exe') {{ Copy-Item -Force '{comp}\cloudflared.new.exe' '{comp}\cloudflared.exe'; Remove-Item -Force '{comp}\cloudflared.new.exe' }} }};
+if ($ok) {{ Set-Content -Path '{etc}\.vale-release' -Value '{ver}' -NoNewline -ErrorAction SilentlyContinue }};
+if ($ok -and '{ver}') {{ try {{
+$rk = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\ValeAgent';
+if (-not (Test-Path $rk)) {{ New-Item -Path $rk -Force | Out-Null }};
+Set-ItemProperty -Path $rk -Name DisplayVersion -Value '{ver}' -ErrorAction Stop;
+Set-ItemProperty -Path $rk -Name DisplayName -Value 'Vale Agent {ver}' -ErrorAction Stop;
+Set-ItemProperty -Path $rk -Name InstallLocation -Value '{q}' -ErrorAction Stop;
+Set-ItemProperty -Path $rk -Name Publisher -Value 'Vale' -ErrorAction Stop;
+}} catch {{}} }};
+if (-not $ok) {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agent.new.exe','{comp}\vale-playwright.new.zip','{comp}\cloudflared.new.exe' }};
 try {{ Start-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{ schtasks /Run /TN ValeAgent }};
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '{q}\.vale-update';
-Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-update.ps1';
+Remove-Item -Force -ErrorAction SilentlyContinue '{scripts}\vale-update.ps1','{q}\vale-update.ps1';
 Remove-Item -Force -ErrorAction SilentlyContinue "$env:ProgramData\ValeAgent\update-busy""#,
         );
-        let ps1 = dir.join("vale-update.ps1");
+        let ps1 = crate::paths::scripts_dir().join("vale-update.ps1");
+        if let Some(parent) = ps1.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                return false;
+            }
+        }
         let mut f = match std::fs::File::create(&ps1) {
             Ok(f) => f,
             Err(_) => return false,
@@ -320,7 +372,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 // swap time (.vale-release); read it as the local version when
                 // present, falling back to the Cargo version (fresh installs /
                 // non-Windows test environments).
-                let local = std::fs::read_to_string(install_dir().join(".vale-release"))
+                let local = std::fs::read_to_string(crate::paths::release_marker_file())
                     .ok()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
@@ -641,20 +693,21 @@ mod tests {
         // LIVE file stays byte-identical.
         let dir = std::env::temp_dir().join(format!("vale-cleanup-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("tools")).unwrap();
+        std::fs::create_dir_all(dir.join("components")).unwrap();
+        std::fs::create_dir_all(dir.join("etc")).unwrap();
         let live = [
             dir.join("vale-agent.exe"),
-            dir.join("vale-playwright.zip"),
-            dir.join("tools").join("cloudflared.exe"),
-            dir.join(".vale-release"),
+            dir.join("components").join("vale-playwright.zip"),
+            dir.join("components").join("cloudflared.exe"),
+            dir.join("etc").join(".vale-release"),
         ];
         for p in &live {
             std::fs::write(p, b"live").unwrap();
         }
         let staged = [
             dir.join("vale-agent.new.exe"),
-            dir.join("vale-playwright.new.zip"),
-            dir.join("tools").join("cloudflared.new.exe"),
+            dir.join("components").join("vale-playwright.new.zip"),
+            dir.join("components").join("cloudflared.new.exe"),
         ];
         for p in &staged {
             std::fs::write(p, b"staged").unwrap();

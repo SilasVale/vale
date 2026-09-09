@@ -58,13 +58,18 @@ const url_policy_1 = require("./url-policy");
 // every configured device. The shell runs as the interactive admin, and the
 // config is now ACL-restricted to SYSTEM+Administrators (1.2.226) — reading
 // the local device_token from it is exactly the trust that grants.
+// Layout v2 (ADR 0008): the shell lives at
+// <install>\components\vale-desktop-electron\src\, so the install root is
+// THREE levels up from here (was two before components\ existed). All
+// install-root-relative paths derive from this one const.
+const INSTALL_ROOT = path.join(__dirname, "..", "..", "..");
 let _tokenCache = { at: 0, tok: null };
 function agentToken() {
     if (Date.now() - _tokenCache.at < 60_000)
         return _tokenCache.tok;
     let tok = null;
     try {
-        const raw = fs.readFileSync(path.join(__dirname, "..", "..", "config.yaml"), "utf8");
+        const raw = fs.readFileSync(path.join(INSTALL_ROOT, "etc", "config.yaml"), "utf8");
         const m = /device_token:\s*"?([0-9a-f]{16,})"?/.exec(raw);
         if (m)
             tok = m[1];
@@ -87,7 +92,7 @@ function resolveAgentPort() {
     if (Number.isInteger(env) && env > 0 && env < 65536)
         return env;
     try {
-        const raw = fs.readFileSync(path.join(__dirname, "..", "..", "config.yaml"), "utf8");
+        const raw = fs.readFileSync(path.join(INSTALL_ROOT, "etc", "config.yaml"), "utf8");
         const port = (0, url_policy_1.parseAgentPort)(raw);
         if (port)
             return port;
@@ -646,11 +651,12 @@ electron_1.ipcMain.handle("embedded-browser:state", (e) => frameOk(e) ? embedded
 // API is unreliable, while schtasks works for the current user without
 // elevation. The task runs start-desktop.ps1 (non-elevated → clickable).
 const AUTOSTART_TASK = "ValeDesktop";
-// Resolve the autostart script from __dirname (the compiled main.js location:
-// <install>\vale-desktop-electron\src\) — process.cwd() depends on how the
-// shell was launched and broke the toggle when electron started from another
-// directory. The install root is two levels up from src/.
-const AUTOSTART_SCRIPT = path.join(__dirname, "..", "..", "start-desktop.ps1");
+// Resolve the autostart script from the install root (layout v2: the shell
+// lives at <install>\components\vale-desktop-electron\src\, so the script
+// is at <install>\scripts\ — process.cwd() depends on how the shell was
+// launched and broke the toggle when electron started from another
+// directory).
+const AUTOSTART_SCRIPT = path.join(INSTALL_ROOT, "scripts", "start-desktop.ps1");
 async function autoLaunchTaskExists() {
     // review #4: was sync execSync schtasks — the same hang class that killed
     // electron; route through the bounded async runner.

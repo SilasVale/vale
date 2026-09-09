@@ -252,7 +252,7 @@ async fn handle_browser_evidence(path: &str, query: Option<&str>) -> Option<Resp
     // current_exe()'s parent while the WRITE side (playwright tools)
     // uses the registry install_dir() — the exact 1.2.219 /api/sessions
     // blindness pattern. Same source of truth now.
-    let pwout = crate::paths::install_dir().join("pwout");
+    let pwout = crate::paths::evidence_dir();
     // P2: AI-action timeline — the JSONL written by browser_run_script
     // (one line per execution). Return newest-first, capped at 50.
     if path == "/api/browser/actions" {
@@ -777,8 +777,7 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
     // Tunnel state: tunnel.yml present + cloudflared running? Lets the
     // Settings page show the persisted state after a refresh (the
     // Gateway card must not blank out once connected).
-    let install_dir = crate::paths::install_dir();
-    let tunnel_configured = install_dir.join("tunnel.yml").exists();
+    let tunnel_configured = crate::paths::tunnel_file().exists();
     // Blocking-subprocess audit: tasklist is a synchronous child
     // process — run it on the blocking pool so the polled-every-15s
     // /api/status sibling handler never stalls the async runtime
@@ -1081,8 +1080,7 @@ async fn run_playwright_op(
 /// write `<install>/boxed-versions.json`). Returns None when absent or
 /// unparseable — advisory only, never fail-closed.
 fn boxed_versions() -> Option<serde_json::Value> {
-    let text =
-        std::fs::read_to_string(crate::paths::install_dir().join("boxed-versions.json")).ok()?;
+    let text = std::fs::read_to_string(crate::paths::boxed_versions_file()).ok()?;
     serde_json::from_str(&text).ok()
 }
 
@@ -1108,7 +1106,7 @@ async fn api_status(state: &AppState) -> serde_json::Value {
     // scripts, agent_update + vale.js) alongside the Cargo protocol
     // version — /api/status consumers otherwise see 1.0.145 forever
     // while the device runs 1.2.x. Omitted when absent (fresh installs).
-    if let Ok(rel) = std::fs::read_to_string(crate::paths::install_dir().join(".vale-release")) {
+    if let Ok(rel) = std::fs::read_to_string(crate::paths::release_marker_file()) {
         let rel = rel.trim();
         if !rel.is_empty() {
             out["release"] = serde_json::json!(rel);

@@ -61,7 +61,7 @@ pub(super) fn tool_terminal_env() -> ToolDef {
         move |_params: Value| {
             async move {
                 let dir = crate::paths::install_dir();
-                let node = dir.join("playwright").join("node.exe");
+                let node = crate::paths::playwright_dir().join("node.exe");
                 let node_ver = if node.exists() {
                     tokio::time::timeout(
                         std::time::Duration::from_secs(4),

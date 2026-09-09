@@ -17,11 +17,6 @@ use serde_json::{json, Value};
 use crate::plugins::to_value_or_empty;
 use vale_agent_core::ToolDef;
 
-/// Install dir — registry-first, then exe dir (crate::paths::install_dir).
-fn install_dir() -> std::path::PathBuf {
-    crate::paths::install_dir()
-}
-
 /// Per-run script stem: millisecond time + pid + process-wide counter.
 /// Concurrent browser_run_script calls run as independent node processes
 /// with NO runner lock (headless runs are fully parallel) — a bare
@@ -81,13 +76,12 @@ fn tool_browser_pw_info() -> ToolDef {
         json!({"type":"object","properties":{}}),
         move |_params: Value| {
             async move {
-                let dir = install_dir();
-                let pw = dir.join("playwright");
+                let pw = crate::paths::playwright_dir();
                 let md = std::fs::metadata(pw.join("node_modules").join("playwright-core"));
 let has_core = md.map(|m| m.is_dir()).unwrap_or(false);
                 let core_ver = if has_core { pw_version(&pw).unwrap_or_else(|| "?".into()) } else { String::new() };
                 let _node_ok = node_exe_path(&pw).exists();
-                let out_dir = dir.join("pwout");
+                let out_dir = crate::paths::evidence_dir();
                 let chromium = pw.join("chromium");
                 let script_template = [
                     "const { acquireBrowser } = require(process.env.VALE_BROWSER_HELPER);",
@@ -143,13 +137,12 @@ fn tool_browser_run_script() -> ToolDef {
         }),
         move |params: Value| {
             async move {
-                let dir = install_dir();
-                let pw = dir.join("playwright");
+                let pw = crate::paths::playwright_dir();
                 let node = node_exe_path(&pw);
                 if !node.exists() {
                     return Ok(to_value_or_empty(json!({"error": format!("bundled node not found at {}", node.to_string_lossy())})));
                 }
-                let out_dir = dir.join("pwout");
+                let out_dir = crate::paths::evidence_dir();
                 let _ = std::fs::create_dir_all(&out_dir);
                 // The helper + detection inputs every script gets: the
                 // attach-or-headless module (always in sync — rewritten on
