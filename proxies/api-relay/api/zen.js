@@ -91,7 +91,9 @@ function corsHeaders(request) {
 // chosen target's host. Rejects traversal (..), backslashes (WHATWG URL
 // parsers treat \ as / for https:, so \\host escapes the origin),
 // absolute URIs / schemes, and control bytes. Returns the safe path or null.
-function normalizeUpstreamPath(p) {
+// Exported for direct pins (SOLID Round-19: the traversal guard previously
+// had zero — the handler needs network past this point, the guard doesn't).
+export function normalizeUpstreamPath(p) {
   let decoded = p;
   try {
     decoded = decodeURIComponent(p);
