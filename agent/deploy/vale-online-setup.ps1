@@ -20,7 +20,8 @@ param(
   [string]$CdnBase = "https://agent.saisi.online",
   [string]$RegKey = "",
   [string]$Tunnel = "",
-  [string]$ResultFile = ""
+  [string]$ResultFile = "",
+  [string]$DataDir = (Join-Path $env:ProgramData "Vale")
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,7 +41,11 @@ if (-not [Environment]::Is64BitOperatingSystem) {
   exit 3
 }
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-try { Start-Transcript -Path (Join-Path $InstallDir "installer.log") -Append | Out-Null } catch { }
+New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "etc") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "components") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "scripts") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "logs") | Out-Null
+try { Start-Transcript -Path (Join-Path $DataDir "logs\installer.log") -Append | Out-Null } catch { }
 
 function Download-File([string]$url, [string]$dest, [string]$what) {
   # 主源一次 + 备用源一次；调用方决定失败是否致命。
@@ -58,7 +63,8 @@ function Download-File([string]$url, [string]$dest, [string]$what) {
 }
 
 # --- 1. Node：复用现有的，版本太旧或缺失才装便携版 ---
-$NodeDir = Join-Path $InstallDir "tools\node"
+# Layout v2: portable node lives at components\node.
+$NodeDir = Join-Path $InstallDir "components\node"
 $nodeExe = ""
 try {
   $found = (Get-Command node -ErrorAction SilentlyContinue).Source
@@ -82,14 +88,15 @@ if (-not $nodeExe) {
   $zipUrl = "https://nodejs.org/dist/$lts/node-$lts-win-x64.zip"
   if (-not (Download-File $zipUrl $zip "Node $lts")) { Write-Host "[vale-setup] Node 下载失败，退出。"; exit 5 }
   if (Test-Path $NodeDir) { Remove-Item -Recurse -Force $NodeDir }
-  Expand-Archive -Force -Path $zip -DestinationPath (Join-Path $InstallDir "tools")
-  Move-Item (Join-Path $InstallDir "tools\node-$lts-win-x64") $NodeDir -Force
+  Expand-Archive -Force -Path $zip -DestinationPath (Join-Path $InstallDir "components")
+  Move-Item (Join-Path $InstallDir "components\node-$lts-win-x64") $NodeDir -Force
   Remove-Item -Force $zip -ErrorAction SilentlyContinue
   $nodeExe = Join-Path $NodeDir "node.exe"
   Say "便携 Node 就绪：$nodeExe"
 }
 $nodeBinDir = Split-Path $nodeExe -Parent
-$NpmGlobal = Join-Path $InstallDir "tools\npm-global"
+# Layout v2: the npm global prefix lives at components\npm-global (was tools\).
+$NpmGlobal = Join-Path $InstallDir "components\npm-global"
 # 本机 PATH（新进程生效；vale setup 的 where node 也能找到它）
 try {
   $mp = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -130,7 +137,8 @@ Say "运行 vale setup ..."
 if ($LASTEXITCODE -ne 0) { Write-Host "[vale-setup] vale setup 失败，退出。"; exit 7 }
 
 # --- 5. Electron（二进制；官方源主，npmmirror 备；重试一次，失败只告警） ---
-$shellDir = Join-Path $InstallDir "vale-desktop-electron"
+# Layout v2: the shell lives at components\vale-desktop-electron.
+$shellDir = Join-Path $InstallDir "components\vale-desktop-electron"
 $electronOk = Test-Path (Join-Path $shellDir "node_modules\electron\dist\electron.exe")
 if (-not $electronOk -and (Test-Path (Join-Path $shellDir "package.json"))) {
   Push-Location $shellDir
@@ -149,11 +157,12 @@ if (-not $electronOk -and (Test-Path (Join-Path $shellDir "package.json"))) {
 if ($electronOk) { Say "Electron 就绪" } else { Say "警告：Electron 没装上（桌面壳跑不起来，agent 本体不受影响；可稍后手动 npm 装）" }
 
 # --- 6. ValeDesktop 登录任务（没有才建；形态抄 update 流的 hardened 版） ---
+# Layout v2: supervisor scripts live in scripts\.
 try {
   if ($null -eq (Get-ScheduledTask -TaskName "ValeDesktop" -ErrorAction SilentlyContinue)) {
-    $en1 = Join-Path $InstallDir "ensure-desktop.ps1"
-    $vb1 = Join-Path $InstallDir "desktop-pulse.vbs"
-    Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "'+$InstallDir+'\start-desktop.ps1"' -Force
+    $en1 = Join-Path $InstallDir "scripts\ensure-desktop.ps1"
+    $vb1 = Join-Path $InstallDir "scripts\desktop-pulse.vbs"
+    Set-Content -Path $en1 -Value 'if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $InstallDir "scripts\start-desktop.ps1")+'"' -Force
     Set-Content -Path $vb1 -Value 'CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "'+$InstallDir+'\ensure-desktop.ps1" & Chr(34), 0, False' -Force
     $da = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vb1 + '"') -WorkingDirectory $InstallDir
     $dt1 = New-ScheduledTaskTrigger -AtLogOn
@@ -173,7 +182,7 @@ try {
     $lnk = Join-Path $desk "Vale.lnk"
     $s = $ws.CreateShortcut($lnk)
     $s.TargetPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-    $s.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallDir "start-desktop.ps1") + '"'
+    $s.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallDir "scripts\start-desktop.ps1") + '"'
     $s.WorkingDirectory = $shellDir
     if (Test-Path $ico) { $s.IconLocation = "$ico,0" }
     $s.Save()
@@ -182,15 +191,16 @@ try {
 } catch { Say "快捷方式跳过：$($_.Exception.Message)" }
 
 # --- 8. 回执（NSIS 完成页读这个；绝不写 token） ---
+# Layout v2: config in etc\, receipt in DataDir\logs\.
 $port = "18080"
-try { $p = Select-String -Path (Join-Path $InstallDir "config.yaml") -Pattern "^\s*port:\s*(\d+)" | Select-Object -First 1; if ($p -and $p.Matches.Groups[1].Value) { $port = $p.Matches.Groups[1].Value } } catch { }
+try { $p = Select-String -Path (Join-Path $InstallDir "etc\config.yaml") -Pattern "^\s*port:\s*(\d+)" | Select-Object -First 1; if ($p -and $p.Matches.Groups[1].Value) { $port = $p.Matches.Groups[1].Value } } catch { }
 $lines = @(
   "DONE Vale Agent $ValeVersion 安装完成",
   "面板： http://127.0.0.1:$port/desktop/",
   "目录： $InstallDir",
   ("桌面壳 Electron：" + ($(if ($electronOk) { "就绪" } else { "未装上（见上方警告）" })))
 )
-if (-not $ResultFile) { $ResultFile = Join-Path $InstallDir "install-result.txt" }
+if (-not $ResultFile) { $ResultFile = Join-Path $DataDir "logs\install-result.txt" }
 $lines | Set-Content -Path $ResultFile -Encoding UTF8
 $lines | ForEach-Object { Say $_ }
 try { Stop-Transcript | Out-Null } catch { }

@@ -17,6 +17,9 @@ agent、重装同版本并重启桌面壳，中断正在跑的 AI 会话。
    - `vale --version` / 面板 `http://127.0.0.1:18080/desktop/` 可开
    - 任务计划 `ValeAgent`（SYSTEM）+ `ValeDesktop`（登录）存在
    - 注册表 `HKLM\SOFTWARE\Vale\Agent\InstallDir`
+   - 安装根只剩 `vale-agent.exe` + `uninstall.exe`；`etc\`（config/marker）、
+     `components\`（node/npm-global/cloudflared/playwright/桌面壳）、`scripts\`
+     齐全；日志在 `%ProgramData%\Vale\logs\`（布局 v2，见 ADR 0008）
    - 桌面 `Vale.lnk` 图标是日出标（非空白）
    - 托盘 + 任务栏窗口图标正常，`D:\Vale` 类比目录无报错
    - `install-result.txt` 四行回执无 WARNING（Electron 未装上算 WARNING，
@@ -33,4 +36,4 @@ agent、重装同版本并重启桌面壳，中断正在跑的 AI 会话。
 ## 回报格式
 
 版本 + 机器（全新/覆盖）+ 上面 4/5 逐项 OK/FAIL + `installer.log`
-（安装目录下）相关段落。
+（`%ProgramData%\Vale\logs\` 下）相关段落。

@@ -46,13 +46,15 @@ ${UnStrRep}
 
 !insertmacro MUI_PAGE_INSTFILES
 
-; 完成页：读引导脚本写的回执（绝不含 token）
+; 完成页：读引导脚本写的回执（布局 v2 在 %ProgramData%\Vale\logs\；
+; ReadEnvStr 读进程环境，不受 ShellVarContext 影响；绝不含 token）
 Page custom finishPage
 Function finishPage
+  ReadEnvStr $3 "ProgramData"
   StrCpy $RESULT_TEXT "安装程序已退出。请用 vale status 查看状态，或重新运行安装。"
-  ${If} ${FileExists} "$INSTDIR\install-result.txt"
+  ${If} ${FileExists} "$3\Vale\logs\install-result.txt"
     StrCpy $RESULT_TEXT ""
-    FileOpen $4 "$INSTDIR\install-result.txt" r
+    FileOpen $4 "$3\Vale\logs\install-result.txt" r
     ${If} $4 != ""
       ${Do}
         ClearErrors
@@ -77,9 +79,14 @@ FunctionEnd
 
 Section "Install" SEC01
   SetOutPath "$INSTDIR"
-  ; 引导脚本 + 版本钉死（装 pinned tgz，不装 latest，保证可复现）
+  ; 引导脚本 + 版本钉死（装 pinned tgz，不装 latest，保证可复现）。
+  ; 布局 v2：引导脚本进 scripts\（根目录只留 exe + 卸载器）；
+  ; 回执/日志走 %ProgramData%\Vale\logs\（与 ps1 的 -DataDir 默认一致）。
+  SetOutPath "$INSTDIR\scripts"
   File "vale-online-setup.ps1"
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\vale-online-setup.ps1" -InstallDir "$INSTDIR" -ValeVersion "${VALE_VERSION}" -CdnBase "${VALE_CDN}" -ResultFile "$INSTDIR\install-result.txt"'
+  SetOutPath "$INSTDIR"
+  ReadEnvStr $3 "ProgramData"
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\scripts\vale-online-setup.ps1" -InstallDir "$INSTDIR" -ValeVersion "${VALE_VERSION}" -CdnBase "${VALE_CDN}" -ResultFile "$3\Vale\logs\install-result.txt"'
   Pop $0
   ${If} $0 != 0
     MessageBox MB_ICONSTOP "安装失败（步骤退出码 $0）。$\r$\n看 $INSTDIR\installer.log 找原因，修好后重跑安装包即可（幂等）。"
@@ -109,8 +116,13 @@ Section "Uninstall"
   Delete "$DESKTOP\Vale.lnk"
   SetShellVarContext current
   Delete "$DESKTOP\Vale.lnk"
-  ; 清掉安装时加的 Machine PATH（便携 node + npm-global；系统自带的 node 不动）
+  ; 清掉安装时加的 Machine PATH（便携 node + npm-global；系统自带的 node 不动）。
+  ; 布局 v2 在 components\ 下；tools\ 条目是迁移前版本的残留，一并清掉。
   ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Control\Session Manager\Environment" "Path"
+  ${UnStrRep} $0 $0 "$INSTDIR\components\node;" ""
+  ${UnStrRep} $0 $0 ";$INSTDIR\components\node" ""
+  ${UnStrRep} $0 $0 "$INSTDIR\components\npm-global;" ""
+  ${UnStrRep} $0 $0 ";$INSTDIR\components\npm-global" ""
   ${UnStrRep} $0 $0 "$INSTDIR\tools\node;" ""
   ${UnStrRep} $0 $0 ";$INSTDIR\tools\node" ""
   ${UnStrRep} $0 $0 "$INSTDIR\tools\npm-global;" ""

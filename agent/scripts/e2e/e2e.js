@@ -45,7 +45,11 @@ const ONLY = (() => {
   return i >= 0 ? process.argv[i + 1].split(',').map((s) => s.trim()) : null;
 })();
 const NO_BROWSER = process.argv.includes('--no-browser');
-const PW_DIR = process.env.VALE_PW_DIR || 'D:\\Vale\\playwright';
+const PW_DIR = process.env.VALE_PW_DIR || 'D:\\Vale\\components\\playwright';
+// Layout v2 (ADR 0008): AI evidence lives under DataDir\pwout (was the
+// install-root pwout\). Pre-migration devices: VALE_EVIDENCE_DIR override
+// (same pattern as VALE_PW_DIR above).
+const EVIDENCE_DIR = process.env.VALE_EVIDENCE_DIR || 'C:\\ProgramData\\Vale\\pwout';
 
 const H = { Authorization: 'Bearer ' + TOKEN, 'Content-Type': 'application/json' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -124,7 +128,7 @@ async function sectionTerminal() {
 
 // ── 2. file: stat + append-up + paged raw read down ────────────────────────
 async function sectionFile() {
-  const path = 'D:\\Vale\\pwout\\e2e_suite_transfer.bin';
+  const path = EVIDENCE_DIR + '\\e2e_suite_transfer.bin';
   const chunk = Buffer.alloc(150 * 1024, 'B').toString('base64');
   const w1 = await tool('system_file_write', { path, data: chunk });
   const w2 = await tool('system_file_write', { path, data: chunk, append: true });
@@ -137,15 +141,15 @@ async function sectionFile() {
   check('file single-read download', bytes.length === 300 * 1024 && bytes.every((b) => b === 66),
     'bytes=' + bytes.length);
   // list must show the uploaded file (same dir the suite writes to).
-  const fl = await tool('system_file_list', { path: 'D:\\Vale\\pwout' });
+  const fl = await tool('system_file_list', { path: EVIDENCE_DIR });
   const entries = (fl && fl.entries) || [];
   check('file list contains upload', entries.some((e) => (e.name || '').includes('e2e_suite_transfer.bin')),
     'entries=' + entries.length);
   // missing path is a data-shaped {ok:false}, not a transport error.
-  const miss = await tool('system_file_stat', { path: 'D:\\Vale\\pwout\\e2e_no_such_file_xyz' });
+  const miss = await tool('system_file_stat', { path: EVIDENCE_DIR + '\\e2e_no_such_file_xyz' });
   check('file stat missing ok:false', !!(miss && miss.ok === false), (miss && miss.error || '').slice(0, 60));
   // text mode (not just base64 pages): write text, read it back as text.
-  const tpath = 'D:\\Vale\\pwout\\e2e_suite_text.txt';
+  const tpath = EVIDENCE_DIR + '\\e2e_suite_text.txt';
   const tw = await tool('system_file_write', { path: tpath, text: 'E2E-TEXT-OK' });
   check('file text write', !!(tw && tw.ok !== false), '');
   const tr = await tool('system_file_read', { path: tpath });
@@ -162,9 +166,9 @@ async function sectionWorkflow() {
   const ex = await tool('terminal_execute', { command: 'echo E2E-WF-1', timeout_secs: 15 });
   check('workflow local execute', !!(ex && (ex.text || '').includes('E2E-WF-1')), '');
   const cfg = JSON.stringify({ e2e: true, ts: Date.now() });
-  const fw = await tool('system_file_write', { path: 'D:\\Vale\\pwout\\e2e_wf.json', text: cfg });
+  const fw = await tool('system_file_write', { path: EVIDENCE_DIR + '\\e2e_wf.json', text: cfg });
   check('workflow file_write', !!(fw && fw.ok !== false), '');
-  const st = await tool('system_file_stat', { path: 'D:\\Vale\\pwout\\e2e_wf.json' });
+  const st = await tool('system_file_stat', { path: EVIDENCE_DIR + '\\e2e_wf.json' });
   check('workflow file_stat', st && st.size === Buffer.byteLength(cfg), 'size=' + (st && st.size));
   const tok = 'toolchain-' + Date.now();
   const ms = await tool('memory_save', {
@@ -194,7 +198,7 @@ async function sectionWorkflow() {
   const mq3 = await tool('memory_search', { query: tok2 });
   check('workflow memory_delete verified', !!(mq3 && mq3.results && mq3.results.length === 0),
     'hits=' + (mq3 && mq3.results && mq3.results.length));
-  require('fs').unlinkSync('D:\\Vale\\pwout\\e2e_wf.json');
+  require('fs').unlinkSync(EVIDENCE_DIR + '\\e2e_wf.json');
 }
 
 // ── 4. browser: browser_run_script drives the view; SPA bar follows ────────
@@ -454,7 +458,7 @@ async function sectionEvidence() {
     "  const pages = browser.contexts().flatMap(c => c.pages());",
     "  const view = pages.find(p => !p.url().includes('/desktop/'));",
     "  if (!view) { console.log('NO_VIEW'); await browser.close(); return; }",
-    "  await view.screenshot({ path: 'D:\\\\Vale\\\\pwout\\\\" + name + "' });",
+    "  await view.screenshot({ path: '" + EVIDENCE_DIR.replace(/\\/g, '\\\\') + "\\\\" + name + "' });",
     "  console.log('SHOT_SAVED');",
     "  await browser.close();",
     "})().catch(e => { console.log('FAIL:' + String(e).slice(0, 200)); process.exit(1); });",
@@ -473,7 +477,7 @@ async function sectionEvidence() {
     'shots=' + list.length + ' looking=' + name.slice(0, 30));
   // 3. self-clean the test screenshot (same policy as the file/terminal
   //    sections — the suite must not litter pwout)
-  try { require('fs').unlinkSync('D:\\Vale\\pwout\\' + name); } catch (e) { /* best-effort */ }
+  try { require('fs').unlinkSync(EVIDENCE_DIR + '\\' + name); } catch (e) { /* best-effort */ }
 }
 
 async function sectionBrowser() {
