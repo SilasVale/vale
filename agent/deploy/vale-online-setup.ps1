@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
   Vale Agent 在线安装引导脚本（NSIS 安装包内嵌调用，也可手动运行）。
   只做最小引导，真正的安装复用 npm 通道本身：

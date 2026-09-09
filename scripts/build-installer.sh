@@ -79,6 +79,14 @@ EOF
 if need_toolchain; then build_toolchain; else echo "toolchain OK: $("$MAKENSIS" -VERSION)"; fi
 
 echo "== stage =="
+# PS 5.1 parses a BOM-less .ps1 as the ANSI codepage — the Chinese strings
+# in the bootstrap break GBK decoding and the script dies with PARSE errors
+# before any statement runs (installer.log never written; round-552 field
+# failure). UTF-8 BOM is mandatory for non-ASCII ps1 shipped to Windows.
+if ! head -c 3 agent/deploy/vale-online-setup.ps1 | grep -q $'\xef\xbb\xbf'; then
+  echo "::error::vale-online-setup.ps1 lacks a UTF-8 BOM (PS5.1 would parse it as GBK and die) — fix: python3 -c \"d=open(p,'rb').read(); open(p,'wb').write(b'\\xef\\xbb\\xbf'+d.lstrip(b'\\xef\\xbb\\xbf'))\"" >&2
+  exit 1
+fi
 STAGE="$(mktemp -d)/installer"
 mkdir -p "$STAGE/res"
 cp agent/deploy/vale-setup.nsi agent/deploy/vale-online-setup.ps1 agent/deploy/vale-agent.ico "$STAGE/"

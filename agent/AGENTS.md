@@ -2091,6 +2091,17 @@ Last updated: 2026-09-09 round-551 — current release **1.2.306
   frames (256 PNG 6660B + 16-48 BMP). LESSON: verify artifact CONTENT
   (resource frames), not build success — makensis applies the default icon
   silently. pefile wheel at /tmp/pylibs, PE dump recipe in round notes.
+  ROUND-553 (2026-09-09): FIRST FIELD INSTALL FAILED on d1 — root cause:
+  the embedded bootstrap ps1 was UTF-8 WITHOUT BOM containing Chinese;
+  PS 5.1 parses BOM-less files as the ANSI codepage (GBK), multibyte tails
+  swallow quotes → 6 PARSE errors, script dies before statement #1 (no
+  installer.log — the tell). NSIS surfaced only "exit code N". FIX: BOM
+  prepended to agent/deploy/vale-online-setup.ps1 + a fail-closed BOM gate
+  in build-installer.sh (head -c 3 == EF BB BF before staging). Verified
+  ON d1: BOM-prefixed copy parses with 0 errors; stray D:\Vale copy
+  replaced in place; installer rebuilt (156512B) + republished. LESSON:
+  any non-ASCII .ps1 shipped to Windows MUST carry a UTF-8 BOM — and a
+  build-time gate is the only thing that survives the next edit.
 - Release history: bridge-era releases (1.2.232 and earlier) are archived in
   `agent/RELEASE-HISTORY.md` (chronological; entries record the state at
   the time — bridge-era notes included for context). Current + recent
