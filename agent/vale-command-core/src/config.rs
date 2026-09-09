@@ -281,4 +281,83 @@ mod tests {
             serde_yaml::from_str("memory:\n  max_entries: 0\n  max_bytes: 0\n").unwrap();
         assert_eq!(cfg.memory.effective(), (10_000, 64 * 1024 * 1024, None));
     }
+
+    // SOLID Round-11 (contract completion): ensure_token is the credential
+    // bootstrap for the whole HTTP/MCP API yet had zero direct pins — only
+    // incidental exercise through agent boot. This fixes its truth table:
+    // valid pair → noop; missing secret → backfill (round-103/104:
+    // persistence-needed); missing/blank token → fresh pair (blank treated
+    // as missing, else `device_token: ""` locks every client out with 401).
+    fn is_hex64(s: &str) -> bool {
+        s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
+    #[test]
+    fn ensure_token_valid_pair_is_noop() {
+        let mut s = ServerConfig {
+            device_token: Some("tok-abc".into()),
+            proxy_secret: Some("sec-def".into()),
+            ..Default::default()
+        };
+        let (tok, changed) = s.ensure_token().unwrap();
+        assert_eq!(tok, None);
+        assert!(!changed, "nothing generated → nothing to persist");
+        assert_eq!(s.device_token.as_deref(), Some("tok-abc"));
+        assert_eq!(s.proxy_secret.as_deref(), Some("sec-def"));
+    }
+
+    #[test]
+    fn ensure_token_backfills_missing_proxy_secret() {
+        for secret in [None, Some("".to_string()), Some("   ".to_string())] {
+            let mut s = ServerConfig {
+                device_token: Some("tok-abc".into()),
+                proxy_secret: secret,
+                ..Default::default()
+            };
+            let (tok, changed) = s.ensure_token().unwrap();
+            assert_eq!(tok, None, "device token untouched");
+            assert!(changed, "fresh secret needs persistence");
+            assert_eq!(s.device_token.as_deref(), Some("tok-abc"));
+            let sec = s.proxy_secret.clone().unwrap();
+            assert!(is_hex64(&sec), "32 CSPRNG bytes as hex: {sec}");
+        }
+    }
+
+    #[test]
+    fn ensure_token_generates_pair_when_token_missing_or_blank() {
+        for token in [None, Some("".to_string()), Some("  \t ".to_string())] {
+            let mut s = ServerConfig {
+                device_token: token,
+                proxy_secret: None,
+                ..Default::default()
+            };
+            let (tok, changed) = s.ensure_token().unwrap();
+            let tok = tok.expect("fresh device token must be returned");
+            assert!(changed);
+            assert!(is_hex64(&tok));
+            let sec = s.proxy_secret.clone().unwrap();
+            assert!(is_hex64(&sec));
+            assert_ne!(tok, sec, "independent draws");
+            assert_eq!(s.device_token.as_deref(), Some(tok.as_str()));
+        }
+    }
+
+    #[test]
+    fn auth_token_alias_survives_the_rename() {
+        // Pre-0.8.5 config.yaml files carry `auth_token:` — the alias must
+        // keep working so the token survives without regeneration.
+        let cfg: Config = serde_yaml::from_str("server:\n  auth_token: legacy-tok\n").unwrap();
+        assert_eq!(cfg.server.device_token.as_deref(), Some("legacy-tok"));
+    }
+
+    #[test]
+    fn platform_decouple_and_server_defaults() {
+        // saisi decouple: a purely local device configures neither endpoint.
+        let cfg: Config = serde_yaml::from_str("server:\n  port: 18080\n").unwrap();
+        assert_eq!(cfg.platform.console_url, None);
+        assert_eq!(cfg.platform.download_url, None);
+        // Loopback + canonical port (tunnel ingress 18080; never 0.0.0.0).
+        let d = ServerConfig::default();
+        assert_eq!((d.host.as_str(), d.port), ("127.0.0.2", 18080));
+    }
 }

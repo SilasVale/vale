@@ -326,8 +326,12 @@ mod event_tests {
     #[test]
     fn ring_evicts_oldest_and_gap_stays_detectable() {
         // RING_CAP (256) must cover the broadcast cap so a Lagged
-        // subscriber can always catch up by polling — pinned here.
-        assert!(RING_CAP >= 256);
+        // subscriber can always catch up by polling — pinned at COMPILE
+        // time (clippy::assertions_on_constants: a runtime assert on a
+        // constant is flagged; const-eval keeps the identical guarantee).
+        const {
+            assert!(RING_CAP >= 256);
+        }
         let bus = AppEventBus::new();
         for i in 0..(RING_CAP as u64 + 44) {
             bus.emit(&nav(i));
