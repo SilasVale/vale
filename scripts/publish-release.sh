@@ -234,7 +234,17 @@ echo "tgz content check OK ($TGZ)"
 echo "== stage =="
 cp "$TGZ" "$ASSET_DIR/"
 cp "$TGZ" "$ASSET_DIR/vale-agent-latest.tgz"
-SHA=$(write_version_json "$VER" "$TGZ" "$ASSET_DIR")
+# Installer 同版同发：build-installer.sh <ver> 必须先跑（它把
+# ValeAgent-Setup-<ver>.exe + 别名 stage 进资产目录）；这里只做 manifest
+# 接线 + prune，不重打安装器。缺安装器则 manifest 保持 tgz-only 形状
+# （向后兼容），但打印 WARN 提醒补打 — 新用户拿到的别名会滞后一版。
+INST_EXE="$ASSET_DIR/ValeAgent-Setup-$VER.exe"
+if [ -f "$INST_EXE" ]; then
+  echo "installer staged: $(basename "$INST_EXE") ($(stat -c %s "$INST_EXE") bytes)"
+else
+  echo "-- WARN: no $INST_EXE — run ./scripts/build-installer.sh $VER first so fresh installs track this release (manifest will be tgz-only)"
+fi
+SHA=$(write_version_json "$VER" "$TGZ" "$ASSET_DIR" "$INST_EXE")
 echo "sha256: $SHA"
 
 echo "== last-5-per-minor prune (round-309) =="
@@ -242,7 +252,8 @@ echo "== last-5-per-minor prune (round-309) =="
 # and its awk grouping live in scripts/lib/release-lib.sh, pinned by
 # scripts/test/release-lib.bash).
 prune_last5_per_minor "$ASSET_DIR"
-echo "remaining: $(ls "$ASSET_DIR"/vale-agent-1.*.*.tgz 2>/dev/null | wc -l) versioned + latest"
+prune_installers "$ASSET_DIR"
+echo "remaining: $(ls "$ASSET_DIR"/vale-agent-1.*.*.tgz 2>/dev/null | wc -l) versioned tgz + latest + $(ls "$ASSET_DIR"/ValeAgent-Setup-1.*.*.exe 2>/dev/null | wc -l) versioned installers + alias"
 
 echo "== commit =="
 git add "$PKG" "$ASSET_DIR/version.json"
@@ -333,3 +344,4 @@ echo "        curl -fsSL $CDN_BASE/vale-agent/vale-agent-$VER.tgz | sha256sum   
 echo "        gh release download v$VER -p 'vale-agent-$VER.tgz' -D /tmp/reconcile-$VER --clobber && sha256sum /tmp/reconcile-$VER/vale-agent-$VER.tgz   # want: $SHA"
 echo "  [5] keep-latest alias:   curl -fsSL $CDN_BASE/vale-agent/vale-agent-latest.tgz | sha256sum   # want: $SHA"
 echo "  [6] live manifest:   curl -s $CDN_BASE/api/version   # want version $VER + sha $SHA"
+echo "  [7] installer alias:   curl -fsSL $CDN_BASE/vale-agent/ValeAgent-Setup.exe -o /tmp/Setup-check.exe && curl -s $CDN_BASE/api/version | grep -o '\"installer_sha256\":\"[0-9a-f]*\"'   # alias sha must equal the advertised installer_sha256"
