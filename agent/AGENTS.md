@@ -338,7 +338,28 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R112 — the terminal tool builders take ONE
+Last updated: 2026-09-10 SOLID-R113 — accounting audited, one deferred
+  decision made durable. (1) CUMULATIVE-PIN AUDIT over R98–R112: every
+  per-round "+N pins" claim was re-measured from git instead of trusted, and
+  the agent rows held up — they sum to the measured total, and the running
+  total (+60 on a 415 baseline) independently confirms the earlier recount.
+  One ±1 drift found and corrected (R108's authoring added two attrs across
+  two commits). Two METHOD HAZARDS recorded so a future audit does not repeat
+  them: grep-counting `#[test]` OVER-COUNTS when a test's own fixture contains
+  the string (boot_surface.rs counts 6, really 5 — `cargo test -- --list` is
+  authoritative), and a zero baseline from the counting pipeline is a BUG
+  SIGNAL rather than a fact. Authoritative counts now: agent 471 feat-gated
+  (417 lib + 54 integration), 464 default, core 25. (2) The R107-deferred
+  SFTP/SSH timeout-code divergence is now DURABLE: `sftp_connect_timed_out`
+  names the choice in one place, its doc explains that `internal` vs
+  `ssh_timeout` become different gateway classes, and a pin fails with an
+  instruction pointing at the ledger entry — so unifying them is a deliberate
+  act with a ledger update, not a silent "cleanup". Mutation-proven. Agent
+  gates 471 feat-gated / 464 default green, clippy -D warnings clean both
+  configs, fmt clean, xwin check OK. Program ledger: docs/solid-program.md.
+  No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R112 — the terminal tool builders take ONE
   context. `build()` threaded seven parameters by hand and three builders took
   five each, but the cost was never the typing: the terminal tools keep
   gaining shared state (`buffer_limit` round-68, `jobs`, `diag`) and every

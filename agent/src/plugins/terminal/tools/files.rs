@@ -23,6 +23,32 @@ use vale_agent_core::DeviceError;
 /// only exists under the `terminal` feature. Headless builds get a stub that
 /// returns an explicit "backend not enabled" error (same contract as
 /// terminal_open's stub path).
+/// The error for "the SFTP connect exceeded its 30 s ceiling".
+///
+/// Extracted so the CODE CHOICE is nameable and pinned (SOLID R113) — it is
+/// currently a deliberate-looking DIVERGENCE, not an accident:
+///
+/// * `crate::tools::ssh`'s terminal path reports the same condition as
+///   [`DeviceError::SshTimeout`] (code `ssh_timeout`), which the gateway maps
+///   onto its `TIMEOUT` class (`gateway/src/mcp.ts`), telling the client to
+///   retry with a longer budget;
+/// * SFTP reports `Internal` (code `internal`), which the gateway falls
+///   through to `TOOL_ERROR` — the catch-all for "device is up, the tool
+///   failed".
+///
+/// Both readings are defensible and the difference is CLIENT-VISIBLE, so it is
+/// NOT repaired here: the program's rule is that a semantic difference found
+/// mid-round is recorded for a human decision, never silently fixed (`docs/
+/// solid-program.md` → Open threads). `sftp_timeout_code_is_pinned_below`
+/// fails the moment the choice changes, so whoever changes it does so on
+/// purpose and updates that entry.
+#[cfg(feature = "terminal")]
+fn sftp_connect_timed_out(host: &str, port: u16, user: &str) -> DeviceError {
+    DeviceError::Internal {
+        message: format!("sftp: ssh connect to {user}@{host}:{port} timed out after 30s"),
+    }
+}
+
 pub(super) fn tool_sftp(name: &'static str) -> ToolDef {
     ToolDef::new(
         name,
@@ -109,13 +135,8 @@ fn sftp_handler() -> impl vale_agent_core::ToolHandler + 'static {
                 .await
                 {
                     Ok(r) => r?,
-                    Err(_) => {
-                        return Err(DeviceError::Internal {
-                            message: format!(
-                                "sftp: ssh connect to {user}@{host}:{port} timed out after 30s"
-                            ),
-                        })
-                    }
+                    // NOTE the code choice — see sftp_connect_timed_out.
+                    Err(_) => return Err(sftp_connect_timed_out(&host, port, &user)),
                 };
                 let sftp = session.sftp_session().await?;
 
@@ -232,6 +253,49 @@ mod tests {
     //! connect). Unknown ops and op-specific checks need a session — left
     //! to live devices, explicitly.
     use super::*;
+
+    /// PINS A DEFERRED DECISION, not a desired behaviour (SOLID R113).
+    ///
+    /// An SFTP connect timeout is reported with code `internal`, while the
+    /// SSH terminal path reports the SAME condition as `ssh_timeout`. Through
+    /// `gateway/src/mcp.ts` those become different client-visible classes:
+    /// `ssh_timeout` → TIMEOUT (retry with a longer budget), `internal` →
+    /// TOOL_ERROR (the catch-all "device is up, the tool failed").
+    ///
+    /// The divergence is real, client-visible, and arguably wrong — but
+    /// changing it is a BEHAVIOUR change, and this program's rule is that a
+    /// semantic difference found mid-round is recorded for a human decision
+    /// rather than silently fixed (`docs/solid-program.md` → Open threads).
+    /// So the current choice is pinned instead: if someone unifies these, this
+    /// fails and sends them to that entry to update it deliberately.
+    #[cfg(feature = "terminal")]
+    #[test]
+    fn sftp_timeout_code_is_pinned_below_its_ledger_entry() {
+        use vale_agent_core::DeviceError as E;
+        let err = sftp_connect_timed_out("host.example", 22, "deploy");
+        assert_eq!(
+            err.code(),
+            "internal",
+            "the SFTP timeout code changed — this is a CLIENT-VISIBLE change \
+             (gateway maps ssh_timeout→TIMEOUT, internal→TOOL_ERROR). Update \
+             the docs/solid-program.md Open-threads entry for it, then this pin"
+        );
+        // The message still has to name the endpoint and the ceiling: it is
+        // what a human reads when the transfer never starts.
+        let msg = err.to_string();
+        assert!(msg.contains("deploy@host.example:22"), "{msg}");
+        assert!(msg.contains("30s"), "{msg}");
+        // And the divergence is pinned from the OTHER side too, so a change to
+        // either path fails here rather than only one of them.
+        assert_eq!(
+            E::SshTimeout {
+                host: "host.example".into()
+            }
+            .code(),
+            "ssh_timeout",
+            "the terminal SSH path's code moved — re-check the divergence"
+        );
+    }
     use serde_json::json;
 
     #[cfg(not(feature = "terminal"))]
