@@ -47,6 +47,35 @@
   --lane-ds: #4f6bed;   /* SSH tab dot */
   --lane-or: #d97706;   /* serial tab dot */
 
+  /* ---- discrete state palette (P1) ----
+     FIVE states, each with its OWN colour AND its own SILHOUETTE. Both
+     channels are load-bearing, not decorative:
+
+     * Colour alone CANNOT carry five states in this palette. Three of the five
+       hues sit in the same red-orange band — --accent #d9480f is ~16°,
+       --danger #dc2626 ~0°, --warn #b45309 ~27° — so hue yields roughly two
+       usable buckets (warm / green) plus grey.
+     * Animation cannot carry a state either, and this one was a MEASURED
+       defect rather than a hypothesis: "running" and "ok" were both
+       `var(--accent)`, separated only by the `cmd-pulse` animation, and
+       `prefers-reduced-motion: reduce` sets `animation: none` on .cmd-dot,
+       .traj-ev-dot AND .plug-dot. For anyone with that setting (standard
+       accessibility), "the AI is still working" and "the AI finished"
+       rendered IDENTICALLY — in three separate components at once.
+
+     `--state-*` names the semantic slot; the shape rules live with the
+     components. Never reintroduce a state whose only difference is animation. */
+  --state-running: var(--accent);
+  --state-ok: var(--success);
+  --state-fail: var(--danger);
+  --state-warn: var(--warn);
+  --state-muted: var(--faint);
+  --state-running-soft: var(--accent-soft);
+  --state-ok-soft: var(--success-soft);
+  --state-fail-soft: var(--danger-soft);
+  --state-warn-soft: var(--warn-soft);
+  --state-muted-soft: rgba(127, 127, 127, 0.12);
+
   /* ---- round-161 semantic additions (previously hardcoded in css) ---- */
   --tag-ink: #0b7a6e;        /* memory tag chips (teal ink, light theme) */
   --terminal-bg: #131418;    /* xterm + browser viewport (always dark) */

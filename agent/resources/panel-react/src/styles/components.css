@@ -467,16 +467,49 @@
 #modal-status.error { color: var(--danger); }
 
 /* ---------- command cards / details ---------- */
+/* FIVE states, TWO channels — and BOTH were needed (see --state-* in
+   tokens.css): three of the five hues share one red-orange band, and
+   "running" vs "ok" used to differ ONLY by the pulse animation, which
+   prefers-reduced-motion removes. That made "still working" and "finished"
+   render identically for anyone with the setting on — in this component, on
+   the trajectory rail AND on the plugin page.
+
+   The second channel is FILL, not geometry: every dot stays a CIRCLE, matching
+   the rest of this sheet. Colour marks the exception, fill carries the rest,
+   which is what keeps a screen of completed commands from becoming a wall of
+   green (the restrained-console premise of this design system):
+     running  solid + soft halo   (the one state that earns the accent)
+     ok       solid, quiet        (the common, unremarkable outcome)
+     fail     solid red + halo    (the exception you must not miss)
+     warn     solid amber + halo
+     muted    hollow ring         (ended without a verdict)
+
+   Halos are box-shadow, NOT border: this sheet has no global
+   `box-sizing: border-box`, so a border would grow the dot and shift the row
+   it sits in. */
 .cmd-dot {
   flex: none;
   width: 8px; height: 8px;
   border-radius: 50%;
 }
-.cmd-dot[data-state="running"] { background: var(--accent); animation: cmd-pulse 1.6s var(--ds-ease-in-out) infinite; }
-.cmd-dot[data-state="ok"] { background: var(--accent); }
-.cmd-dot[data-state="fail"] { background: var(--danger); }
-.cmd-dot[data-state="warn"] { background: var(--warn); }
-.cmd-dot[data-state="muted"] { background: var(--faint); }
+.cmd-dot[data-state="running"] {
+  background: var(--state-running);
+  box-shadow: 0 0 0 2.5px var(--state-running-soft);
+  animation: cmd-pulse 1.6s var(--ds-ease-in-out) infinite;
+}
+.cmd-dot[data-state="ok"] { background: var(--state-ok); }
+.cmd-dot[data-state="fail"] {
+  background: var(--state-fail);
+  box-shadow: 0 0 0 2.5px var(--state-fail-soft);
+}
+.cmd-dot[data-state="warn"] {
+  background: var(--state-warn);
+  box-shadow: 0 0 0 2.5px var(--state-warn-soft);
+}
+.cmd-dot[data-state="muted"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--state-muted);
+}
 @keyframes cmd-pulse { 50% { opacity: 0.35; } }
 .cmd-name {
   flex: 1;
@@ -500,11 +533,17 @@
   padding: 1px 8px;
   white-space: nowrap;
 }
-.cmd-badge[data-state="running"],
-.cmd-badge[data-state="ok"] { color: var(--accent-ink); background: var(--accent-soft); }
+/* The badge is the PRECISE channel (it prints "0", "exit 1", "backgrounded"),
+   so its text already distinguishes the states; here colour only sets the
+   temperature. "ok" is deliberately QUIET rather than green: successes are the
+   common case, and painting every one of them accent-coloured is what makes a
+   command stream read as noise. Only the live, the failed and the interrupted
+   states raise their voice. */
+.cmd-badge[data-state="running"] { color: var(--accent-ink); background: var(--accent-soft); }
+.cmd-badge[data-state="ok"] { color: var(--muted); background: var(--state-muted-soft); }
 .cmd-badge[data-state="fail"] { color: var(--danger); background: var(--danger-soft); }
 .cmd-badge[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
-.cmd-badge[data-state="muted"] { color: var(--faint); background: var(--ds-neutral-100); }
+.cmd-badge[data-state="muted"] { color: var(--faint); background: var(--state-muted-soft); }
 .cmd-btn {
   flex: none;
   font-size: 11px;
@@ -849,10 +888,28 @@
   background: var(--ds-neutral-300);
   margin-top: 5px;
 }
-.traj-ev-dot[data-state="ok"] { background: var(--accent); }
-.traj-ev-dot[data-state="fail"] { background: var(--danger); }
-.traj-ev-dot[data-state="warn"] { background: var(--warn); }
-.traj-ev-dot[data-state="running"] { background: var(--accent); animation: cmd-pulse 1.6s var(--ds-ease-in-out) infinite; }
+/* Same five-state contract as .cmd-dot above — one vocabulary, two renderers.
+   The trajectory rail is denser (7px) and sits on a 1px line, so the halo is
+   tightened rather than the colour changed.
+   DELIBERATE asymmetry with .cmd-dot: `muted` stays a QUIET FILLED dot here,
+   not a hollow ring. On the rail, `muted` is the MAJORITY (every raw output
+   line is an event with no verdict), so hollowing it would give the
+   non-events the most visual weight on the timeline. On a command card the
+   same state is rare and meaningful — one command that ended without a
+   verdict — so it earns the ring. Both choices are pinned by
+   src/lib/statePalette.test.ts. */
+.traj-ev-dot[data-state="muted"] { background: var(--ds-neutral-300); }
+.traj-ev-dot[data-state="ok"] { background: var(--state-ok); }
+.traj-ev-dot[data-state="fail"] {
+  background: var(--state-fail);
+  box-shadow: 0 0 0 2px var(--state-fail-soft);
+}
+.traj-ev-dot[data-state="warn"] { background: var(--state-warn); }
+.traj-ev-dot[data-state="running"] {
+  background: var(--state-running);
+  box-shadow: 0 0 0 2px var(--state-running-soft);
+  animation: cmd-pulse 1.6s var(--ds-ease-in-out) infinite;
+}
 .traj-ev-content { min-width: 0; padding: 1px 0 6px; }
 .traj-ev-out {
   margin: 0;
@@ -940,10 +997,20 @@
   border-radius: 50%;
   background: var(--faint);
 }
-.plug-dot[data-state="success"] { background: var(--accent); }
-.plug-dot[data-state="warn"] { background: var(--warn); }
-.plug-dot[data-state="error"] { background: var(--danger); }
-.plug-dot[data-state="ongoing"] { background: var(--accent); animation: plug-pulse 1.6s var(--ds-ease-in-out) infinite; }
+/* Plugin page uses its OWN state names (success/error/ongoing) for the same
+   five-state contract — same defect, same fix. The halo is what makes
+   "ongoing" survive prefers-reduced-motion, which switches the pulse off. */
+.plug-dot[data-state="success"] { background: var(--state-ok); }
+.plug-dot[data-state="warn"] { background: var(--state-warn); }
+.plug-dot[data-state="error"] {
+  background: var(--state-fail);
+  box-shadow: 0 0 0 2.5px var(--state-fail-soft);
+}
+.plug-dot[data-state="ongoing"] {
+  background: var(--state-running);
+  box-shadow: 0 0 0 2.5px var(--state-running-soft);
+  animation: plug-pulse 1.6s var(--ds-ease-in-out) infinite;
+}
 @keyframes plug-pulse { 50% { opacity: 0.35; } }
 .plug-pill {
   flex: none;
@@ -974,11 +1041,15 @@
   padding: 1px 8px;
   white-space: nowrap;
 }
-.plug-tag[data-state="success"],
+/* Same temperature rule as .cmd-badge: only the live / failed / interrupted
+   states raise their voice, everything settled stays quiet. The muted surface
+   is a translucent grey rather than --ds-neutral-100, which is a LIGHT solid
+   and so painted a pale chip with pale text once the dark theme was on. */
 .plug-tag[data-state="ongoing"] { color: var(--accent-ink); background: var(--accent-soft); }
+.plug-tag[data-state="success"] { color: var(--muted); background: var(--state-muted-soft); }
 .plug-tag[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .plug-tag[data-state="error"] { color: var(--danger); background: var(--danger-soft); }
-.plug-tag[data-state="muted"] { color: var(--faint); background: var(--ds-neutral-100); }
+.plug-tag[data-state="muted"] { color: var(--faint); background: var(--state-muted-soft); }
 .plug-card {
   flex: none;
   background: var(--surface);
