@@ -201,7 +201,7 @@ if (-not $electronOk -and (Test-Path (Join-Path $shellDir "package.json"))) {
 }
 if ($electronOk) { Say "Electron 就绪" } else { Say "警告：Electron 没装上（桌面壳跑不起来，agent 本体不受影响；可稍后手动 npm 装）" }
 
-# --- 6. ValeDesktop 登录任务（没有才建；形态抄 update 流的 hardened 版） ---
+# --- 6. ValeDesktop 登录任务（总是重建 = 顺带修复旧版指向；形态抄 update 流的 hardened 版） ---
 # Layout v2: supervisor scripts live in scripts\. The three launcher files
 # are written UNCONDITIONALLY (idempotent refresh on re-run — the old code
 # only wrote them inside the create-task branch, so a repair run left stale
@@ -219,13 +219,16 @@ try {
   $vb1 = Join-Path $InstallDir "scripts\desktop-pulse.vbs"
   Set-Content -Path $en1 -Value ('if (Get-Process electron -ErrorAction SilentlyContinue) { exit }; & powershell -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $InstallDir "scripts\start-desktop.ps1") + '"') -Force
   Set-Content -Path $vb1 -Value ('CreateObject("WScript.Shell").Run "powershell -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & "' + (Join-Path $InstallDir "scripts\ensure-desktop.ps1") + '" & Chr(34), 0, False') -Force
-  if ($null -eq (Get-ScheduledTask -TaskName "ValeDesktop" -ErrorAction SilentlyContinue)) {
-    $da = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vb1 + '"') -WorkingDirectory $InstallDir
-    $dt1 = New-ScheduledTaskTrigger -AtLogOn
-    $dw1 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)
-    Register-ScheduledTask ValeDesktop -Action $da -Trigger @($dt1, $dw1) -Force | Out-Null
-    Say "ValeDesktop 登录任务已创建"
-  }
+  # ALWAYS re-register (Register -Force overwrites an existing definition).
+  # The old create-if-absent logic left a pre-layout-v2 task pointing at the
+  # retired root "D:\Vale\desktop-pulse.vbs" — it fired every 5 min and popped
+  # "Windows Script Host: 无法找到脚本文件". Re-registering heals the action to
+  # the scripts\ path on every install/repair.
+  $da = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"' + $vb1 + '"') -WorkingDirectory $InstallDir
+  $dt1 = New-ScheduledTaskTrigger -AtLogOn
+  $dw1 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -RepetitionInterval (New-TimeSpan -Minutes 5)
+  Register-ScheduledTask ValeDesktop -Action $da -Trigger @($dt1, $dw1) -Force | Out-Null
+  Say "ValeDesktop 登录任务已就绪（含修复旧版指向）"
   Start-ScheduledTask -TaskName "ValeDesktop" -ErrorAction SilentlyContinue
 } catch { Say "ValeDesktop 任务跳过（行 $($_.InvocationInfo.ScriptLineNumber)）：$($_.Exception.Message)" }
 
