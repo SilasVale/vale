@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, valeProbe } from "../src/index.ts";
+import { probeEnvKeyName } from "../src/tooling.ts";
 import { resolveAutoModel } from "../src/plugins/translate.ts";
 import { __clearDegradedCache } from "../src/reliability.ts";
 
@@ -293,6 +294,51 @@ test("valeProbe: amd channel probes the native Radeon /v1/messages with the AMD 
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.channel, "amd");
+});
+
+// SOLID Round-52: cm/ was the only channel without a probe pin (og/ds/qw/
+// or/gmi/nv/amd all have one) — and the probe key chain just became the
+// PROBE_ENV_KEYS table, so this also proves the cm row resolves.
+test("valeProbe: cm channel probes the Command Code endpoint with the CMD key", async () => {
+  // BYOK isolation like the amd test: with only CMD_API_KEY left, cm/ must
+  // probe with it (an unlisted prefix would silently fall through to the
+  // DEEPSEEK_API_KEY arm).
+  const env = {
+    ...keyedEnv,
+    DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined,
+    OPENCODE_GO_API_KEY: undefined, OPENROUTER_API_KEY: undefined,
+    GMI_API_KEY: undefined, NVAPI_KEY: undefined, AMD_API_KEY: undefined,
+    CMD_API_KEY: "sk-cm",
+  };
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response("{}", { status: 200 });
+  }, () => valeProbe(env, "cm/deepseek/deepseek-v4-flash"));
+  assert.equal(seen.url, "https://api.commandcode.ai/provider/v1/chat/completions");
+  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-cm");
+  assert.equal(JSON.parse(seen.init.body).model, "deepseek/deepseek-v4-flash");
+  const body = await res.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.channel, "cm");
+});
+
+test("probeEnvKeyName: every passthrough prefix maps; unknown falls to DeepSeek", () => {
+  assert.deepEqual(
+    Object.fromEntries(["or", "qw", "nv", "gmi", "cm", "amd", "ds"].map((p) => [p, probeEnvKeyName(p)])),
+    {
+      or: "OPENROUTER_API_KEY",
+      qw: "QWEN_API_KEY",
+      nv: "NVAPI_KEY",
+      gmi: "GMI_API_KEY",
+      cm: "CMD_API_KEY",
+      amd: "AMD_API_KEY",
+      ds: "DEEPSEEK_API_KEY",
+    },
+  );
+  assert.equal(probeEnvKeyName("xx"), "DEEPSEEK_API_KEY", "legacy default arm preserved");
+  assert.equal(probeEnvKeyName(""), "DEEPSEEK_API_KEY");
 });
 
 // ── probeRateLimited (KV-backed, whole-gateway) ──────────────────
