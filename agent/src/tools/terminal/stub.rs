@@ -102,6 +102,19 @@ impl TerminalManager {
     pub async fn term_approval_grants(&self, _sid: &str) -> Result<Vec<String>, DeviceError> {
         Err(disabled_err())
     }
+    /// Headless twins of the goal surface. Same `disabled_err()` discipline: a
+    /// headless build must not report a goal it never stored, because the AI
+    /// would then act on an objective nobody set.
+    pub async fn term_set_goal(
+        &self,
+        _sid: &str,
+        _goal: &str,
+    ) -> Result<Option<String>, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_goal(&self, _sid: &str) -> Result<Option<String>, DeviceError> {
+        Err(disabled_err())
+    }
     pub async fn term_revoke_grants(
         &self,
         _sid: &str,

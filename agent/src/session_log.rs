@@ -197,6 +197,31 @@ impl SessionEvent {
         }
     }
 
+    /// The session's stated GOAL — what the operator asked for.
+    ///
+    /// Recorded in the trail for the same reason a handoff is: the live value
+    /// lives on the session (and dies with it), but "this session was for X" is a
+    /// statement about the past that a later reader needs. Without it, an audit
+    /// trail answers "what ran" and never "what was it FOR", which is the
+    /// question anyone returning to a finished session actually has.
+    ///
+    /// A distinct `kind`, like `control`, because it is orthogonal to the
+    /// session's lifecycle: a goal can be set, replaced or cleared at any point
+    /// without the session changing state.
+    pub fn goal(seq: u64, text: &str) -> Self {
+        Self {
+            seq,
+            ts: crate::unix_now(),
+            kind: "goal".into(),
+            command: None,
+            text: Some(text.to_string()),
+            exit_code: None,
+            reason: None,
+            status: None,
+            duration_ms: None,
+        }
+    }
+
     /// Control handoff: `holder` is `"human"` or `"ai"`.
     ///
     /// A distinct `kind` rather than one more `status` value, on purpose. The
@@ -489,6 +514,15 @@ impl SessionLogger {
     /// handoff itself would cost the operator the keyboard.
     pub fn log_control(&self, sid: &str, holder: &str) {
         self.log(sid, SessionEvent::control(0, holder));
+    }
+
+    /// Record the session's stated goal. Best-effort like every write here.
+    ///
+    /// An EMPTY string is a real value, not a no-op: it is how a goal is CLEARED,
+    /// and the trail must show that someone withdrew the objective rather than
+    /// leaving a reader to assume the last one still stands.
+    pub fn log_goal(&self, sid: &str, text: &str) {
+        self.log(sid, SessionEvent::goal(0, text));
     }
 
     /// Replay a session file, skipping the version header. Returns the parsed

@@ -962,9 +962,26 @@ async fn api_session_control(
     // "arm the gate" cannot silently hand the keyboard over.
     let holder = parse::optional_trimmed_string(&v, "holder");
     let approval = parse::optional_bool(&v, "approval_required");
-    if holder.is_none() && approval.is_none() {
+    // The GOAL is the operator's statement of intent — the design's dispatch beat.
+    // Read with the `present` distinction preserved: an ABSENT key leaves the goal
+    // alone, while an empty string CLEARS it. Those are different acts and a
+    // partial patch must not be able to do the second by accident.
+    let goal_present = v.get("goal").is_some();
+    let goal = v
+        .get("goal")
+        .and_then(|g| g.as_str())
+        .map(|s| s.to_string());
+    if holder.is_none() && approval.is_none() && !goal_present {
         return Err(parse::invalid_params_response(
-            "provide holder (\"human\"|\"ai\") and/or approval_required (bool)".to_string(),
+            "provide holder (\"human\"|\"ai\"), approval_required (bool) and/or goal (string)"
+                .to_string(),
+        ));
+    }
+    // A non-string goal is a client bug, not a clear. Treated as absent so the
+    // other fields in the same request still apply.
+    if v.get("goal").is_some() && goal.is_none() {
+        return Err(parse::invalid_params_response(
+            "goal must be a string (empty clears it)".to_string(),
         ));
     }
 
@@ -1015,11 +1032,28 @@ async fn api_session_control(
         );
     }
 
+    let mut goal_out = None;
+    if let Some(text) = goal {
+        let stored = state
+            .terminal_mgr
+            .term_set_goal(sid, &text)
+            .await
+            .map_err(not_found)?;
+        // Recorded in the audit trail as its own event: the live goal dies with
+        // the session, but "this session was FOR x" is history. Logged AFTER the
+        // store succeeded, and the CLEARED case logs an empty string rather than
+        // nothing — "someone withdrew the objective" is itself a fact a reader
+        // needs, and silence would leave the previous goal looking current.
+        sessions_logger().log_goal(sid, stored.as_deref().unwrap_or(""));
+        goal_out = Some(stored);
+    }
+
     Ok(serde_json::json!({
         "ok": true,
         "id": sid,
         "held_by_human": held,
         "approval_required": approval_required,
+        "goal": goal_out,
     }))
 }
 
@@ -2225,6 +2259,121 @@ mod tests {
                 "{p} must reject an anonymous caller pre-dispatch"
             );
         }
+    }
+
+    /// THE DISPATCH BEAT, end to end: the operator states a goal through the
+    /// route and it reaches BOTH the session (so the AI reads it off
+    /// `terminal_list`) and the audit trail (so a later reader knows what the
+    /// session was FOR).
+    ///
+    /// Both halves matter and neither implies the other: a goal that only lives
+    /// in memory answers "what is it doing"; one that only lives in the log
+    /// answers "what was it for". The design's dispatch beat needs the first, and
+    /// the evidence beat needs the second.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_goal_set_through_the_route_reaches_the_session_and_the_trail() {
+        let (st, cfg_path) = state_with_cfg("goal-e2e", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"goal":"provision the ONU on VLAN 100"}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["goal"], "provision the ONU on VLAN 100");
+        // The OTHER fields were not mentioned, so they must read null rather
+        // than being defaulted — a partial patch may not clear its neighbours.
+        assert!(v["held_by_human"].is_null());
+        assert!(v["approval_required"].is_null());
+
+        // (a) The AI can read it off the tool surface it already polls.
+        let listed = handle_request(req_with_token("POST", "/api/tools/terminal_list", TEST_TOKEN), st.clone()).await;
+        let body = json_body(listed).await;
+        let row = body["result"]
+            .as_array()
+            .and_then(|a| a.iter().find(|r| r["id"] == sid.as_str()))
+            .cloned()
+            .expect("session listed");
+        assert_eq!(row["goal"], "provision the ONU on VLAN 100");
+
+        // (b) The trail records the STATEMENT, not just the state.
+        let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
+        let events = json_body(resp).await["events"].as_array().cloned().unwrap_or_default();
+        let goals: Vec<String> = events
+            .iter()
+            .filter(|e| e["kind"] == "goal")
+            .map(|e| e["text"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert_eq!(goals, vec!["provision the ONU on VLAN 100".to_string()]);
+
+        // Clearing is an EVENT too: a withdrawn objective must not leave the
+        // previous one looking current.
+        let _ = handle_request(
+            req_with_json("POST", &format!("/api/sessions/{sid}/control"), r#"{"goal":""}"#),
+            st.clone(),
+        )
+        .await;
+        let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
+        let events = json_body(resp).await["events"].as_array().cloned().unwrap_or_default();
+        let goals: Vec<String> = events
+            .iter()
+            .filter(|e| e["kind"] == "goal")
+            .map(|e| e["text"].as_str().unwrap_or("<null>").to_string())
+            .collect();
+        assert_eq!(goals.len(), 2, "the clear must be recorded: {goals:?}");
+        assert_eq!(goals[1], "", "the clear logs an EMPTY goal, not nothing");
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// A goal that is not a string is rejected rather than silently ignored.
+    #[tokio::test]
+    async fn a_non_string_goal_is_rejected() {
+        let (st, cfg_path) = state_with_cfg("goal-bad", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/sessions/abc123/control",
+                r#"{"goal":123}"#,
+            ),
+            st,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            json_body(resp).await["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("goal must be a string"),
+            "a number where an objective belongs is a client bug, and guessing \
+             which way they meant is the one thing this field must not do"
+        );
+        let _ = std::fs::remove_file(cfg_path);
     }
 
     /// `POST /api/sessions/{sid}/control` — the control-handoff route.

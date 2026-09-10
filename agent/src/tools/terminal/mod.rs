@@ -86,6 +86,15 @@ pub struct TermSessionInfo {
     /// they cannot judge or revoke, and these decide what runs unasked.
     #[serde(default)]
     pub approval_grants: Vec<String>,
+    /// What the operator asked this session to achieve, if they said.
+    ///
+    /// Carried HERE, on the list every client already polls, so an AI agent
+    /// learns the objective without a new tool and without the operator having to
+    /// repeat it into a chat window. That is the whole dispatch beat: the
+    /// operator states intent in the panel, the agent records it, and the AI
+    /// finds it on the first `terminal_list`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
 }
 
 /// A command waiting for an operator decision. `expires_in_ms` is derived at read
@@ -378,6 +387,12 @@ mod desktop_impl {
         /// operator actually read and approved. In-memory, like the hold: a
         /// restart must not carry forward a permission nobody re-confirmed.
         approval_grants: Vec<String>,
+        /// What the operator asked for. In-memory with the session (a goal
+        /// without a session is meaningless), while the STATEMENT of it is
+        /// recorded in the audit trail — the same live/durable split as the
+        /// handoff, and for the same reason: the live value is coordination, the
+        /// record is history.
+        goal: Option<String>,
     }
 
     /// Identifier for one approval request. Unpredictable rather than sequential on
@@ -436,6 +451,14 @@ mod desktop_impl {
     /// timeouts the existing 30 s acquire wait already lives within. An operator
     /// who needs longer should take the keyboard, which is unbounded.
     const APPROVAL_WAIT_MS: u64 = 60_000;
+    /// Longest goal we keep, in bytes.
+    ///
+    /// Sized to hold a real sentence or two ("get the ONU at 0/1 provisioned on
+    /// VLAN 100 and save the config") — an objective, not a specification. A goal
+    /// is echoed on every `terminal_list` and every audit read, so this bound is
+    /// what keeps a chatty client from inflating both.
+    const GOAL_MAX_BYTES: usize = 512;
+
     /// Poll cadence while waiting for a decision.
     const APPROVAL_POLL_MS: u64 = 200;
 
@@ -677,6 +700,7 @@ mod desktop_impl {
                     approval_required: false,
                     pending_approval: None,
                     approval_grants: Vec::new(),
+                    goal: None,
                 });
                 deferred
             };
@@ -938,6 +962,51 @@ mod desktop_impl {
                     }
                     Ok(s.approval_required)
                 }
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// State the session's GOAL, or clear it with an empty string. Returns
+        /// the value now in force (trimmed, or `None` when cleared).
+        ///
+        /// The OPERATOR states this; the AI reads it off `terminal_list`. That
+        /// split is deliberate and is what the design's dispatch beat needs: an
+        /// objective is the human's to declare, and requiring an AI client to
+        /// cooperate in declaring it would make the most valuable beat of the loop
+        /// depend on the least controllable part of the system. The AI's own plan
+        /// decomposition is a separate, later concern (the intent layer).
+        ///
+        /// CAPPED, because this is a label rather than a document: a goal rides on
+        /// every `terminal_list` response and on every audit read, and an unbounded
+        /// one would tax both. The cap is on a char boundary (see `crate::text`),
+        /// so a multi-byte goal truncates cleanly rather than panicking.
+        pub async fn term_set_goal(
+            &self,
+            sid: &str,
+            goal: &str,
+        ) -> Result<Option<String>, DeviceError> {
+            let trimmed = goal.trim();
+            let value = (!trimmed.is_empty())
+                .then(|| crate::text::clip(trimmed, GOAL_MAX_BYTES).to_string());
+            let mut inner = self.inner.lock().await;
+            match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) => {
+                    s.goal = value.clone();
+                    Ok(value)
+                }
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// The session's current goal, if any.
+        pub async fn term_goal(&self, sid: &str) -> Result<Option<String>, DeviceError> {
+            let inner = self.inner.lock().await;
+            match inner.sessions.iter().find(|s| s.id == sid) {
+                Some(s) => Ok(s.goal.clone()),
                 None => Err(DeviceError::SessionNotFound {
                     id: sid.to_string(),
                 }),
@@ -1237,6 +1306,7 @@ mod desktop_impl {
                     approval_required: s.approval_required,
                     pending_approval: live_pending(s),
                     approval_grants: s.approval_grants.clone(),
+                    goal: s.goal.clone(),
                 })
                 .collect()
         }
@@ -1260,6 +1330,7 @@ mod desktop_impl {
                     approval_required: s.approval_required,
                     pending_approval: live_pending(s),
                     approval_grants: s.approval_grants.clone(),
+                    goal: s.goal.clone(),
                 })
         }
 
@@ -2121,6 +2192,108 @@ mod tests {
         assert!(mgr.term_approval_grants(&sid).await.unwrap().is_empty());
 
         mgr.term_close(&sid).await.ok();
+    }
+
+    /// A goal is set, REPLACED, CLEARED, and visible to whoever lists sessions.
+    ///
+    /// The third case is the one worth stating: clearing is a real act, not a
+    /// no-op, because an objective that has been withdrawn must stop reading as
+    /// current — otherwise the path view keeps measuring the run against
+    /// something the operator already abandoned.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_goal_is_set_replaced_and_cleared() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+
+        assert_eq!(
+            mgr.term_goal(&sid).await.unwrap(),
+            None,
+            "no goal initially"
+        );
+        assert_eq!(
+            mgr.term_set_goal(&sid, "  provision the ONU  ")
+                .await
+                .unwrap(),
+            Some("provision the ONU".to_string()),
+            "the stored goal is trimmed"
+        );
+        // Visible to the AI on the list it already polls — this is the whole
+        // dispatch beat, and it needs no new tool.
+        assert_eq!(
+            mgr.term_info(&sid).await.unwrap().goal.as_deref(),
+            Some("provision the ONU")
+        );
+        assert_eq!(
+            mgr.term_list()
+                .await
+                .iter()
+                .find(|s| s.id == sid)
+                .unwrap()
+                .goal
+                .as_deref(),
+            Some("provision the ONU")
+        );
+
+        // Replaced.
+        assert_eq!(
+            mgr.term_set_goal(&sid, "roll the VLAN back").await.unwrap(),
+            Some("roll the VLAN back".to_string())
+        );
+
+        // Cleared — by an empty string, not by a separate verb.
+        assert_eq!(mgr.term_set_goal(&sid, "   ").await.unwrap(), None);
+        assert_eq!(mgr.term_goal(&sid).await.unwrap(), None);
+        assert!(mgr.term_info(&sid).await.unwrap().goal.is_none());
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// A long goal is CAPPED, on a char boundary, rather than truncated blindly.
+    ///
+    /// The cap exists because a goal rides every `terminal_list` and every audit
+    /// read; the boundary matters because `&s[..n]` on a multi-byte goal is a
+    /// panic, which is a failure this crate has already paid for three times
+    /// (see `crate::text`).
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_long_goal_is_capped_on_a_char_boundary() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+
+        // Every char is 3 bytes, so a naive byte cut lands mid-character.
+        let long = "汉".repeat(400);
+        let stored = mgr.term_set_goal(&sid, &long).await.unwrap().unwrap();
+        assert!(
+            stored.len() <= 512,
+            "a goal must be capped so it does not inflate every list response \
+             (stored {} bytes)",
+            stored.len()
+        );
+        assert!(stored.len() > 400, "the cap must not be absurdly tight");
+        // The result must be valid UTF-8 that ends on a boundary — proven by the
+        // fact that we can round-trip it and count whole characters.
+        assert_eq!(stored.chars().count(), stored.len() / 3);
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// An unknown session is an error, never a silent success.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_goal_on_an_unknown_session_is_an_error() {
+        let mgr = control_mgr();
+        assert_eq!(
+            mgr.term_set_goal("no-such-sid", "x")
+                .await
+                .unwrap_err()
+                .code(),
+            "session_not_found"
+        );
+        assert_eq!(
+            mgr.term_goal("no-such-sid").await.unwrap_err().code(),
+            "session_not_found"
+        );
     }
 
     /// Real PTY round-trip (needs a local shell, so Linux/macOS only).
