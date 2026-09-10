@@ -676,6 +676,10 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
                 let sid = session_id_from_path(p)?;
                 api_session_approval(state, &sid, body_str).await?
             }
+            ("POST", p) if p.starts_with("/api/sessions/") && p.ends_with("/grants") => {
+                let sid = session_id_from_path(p)?;
+                api_session_grants(state, &sid, body_str).await?
+            }
             ("GET", "/api/events/poll") => {
                 let after: u64 = query_param(query_str, "after")
                     .and_then(|v| v.parse().ok())
@@ -857,6 +861,49 @@ async fn api_session_approval(
         "decided": decided,
         "approval_grants": grants,
     }))
+}
+
+/// `POST /api/sessions/{sid}/grants` — revoke an approval grant, or all of them.
+///
+/// Body: `{"grant": "<word>"}` to revoke one, or `{"all": true}` for every grant
+/// on the session. A request that names NEITHER is rejected rather than treated
+/// as "all": revoking everything is a consequential act that must be asked for
+/// explicitly, not the default for a malformed body.
+///
+/// Every response carries the grants now in force, so the caller renders the
+/// server's answer rather than its own guess about what a revoke did.
+async fn api_session_grants(
+    state: &AppState,
+    sid: &str,
+    body: &str,
+) -> Result<serde_json::Value, Box<Response>> {
+    let v = parse::json_body(body, |_| "invalid JSON".to_string())?;
+    let all = parse::optional_bool(&v, "all").unwrap_or(false);
+    let grant = parse::optional_trimmed_string(&v, "grant");
+    if !all && grant.is_none() {
+        return Err(parse::invalid_params_response(
+            "provide grant (a word) or all (true)".to_string(),
+        ));
+    }
+
+    // `all` wins when both are given: it is the strictly larger act, so honouring
+    // the narrower one would quietly do less than the operator asked.
+    let target = if all { None } else { grant.as_deref() };
+    state
+        .terminal_mgr
+        .term_revoke_grants(sid, target)
+        .await
+        .map_err(|e| {
+            // A missing session is a client error: the panel can hold a stale sid.
+            parse::invalid_params_response(e.to_string())
+        })?;
+
+    let grants = state
+        .terminal_mgr
+        .term_approval_grants(sid)
+        .await
+        .unwrap_or_default();
+    Ok(serde_json::json!({ "ok": true, "id": sid, "approval_grants": grants }))
 }
 
 /// Extract and validate a session id from `/api/sessions/{sid}[...]`.
@@ -2632,6 +2679,7 @@ mod tests {
             ("GET", "/api/sessions/some-session-id"),
             ("POST", "/api/sessions/some-session-id/control"),
             ("POST", "/api/sessions/some-session-id/approval"),
+            ("POST", "/api/sessions/some-session-id/grants"),
             ("GET", "/api/logs"),
             ("GET", "/api/events/poll"),
             ("GET", "/api/settings"),
