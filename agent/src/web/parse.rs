@@ -79,6 +79,22 @@ pub(super) fn optional_trimmed_string(v: &Value, key: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Read an optional BOOLEAN field.
+///
+/// `Option<bool>` rather than `bool` with a default, for the same reason
+/// `optional_trimmed_string` returns `Option<String>`: a caller must be able to
+/// tell "the request did not mention this" from "the request set it to false".
+/// Collapsing those would make every partial patch silently clear the fields it
+/// did not mention — the documented incident class this module already guards
+/// for strings (a console-only save clobbering `buffer_mb`).
+///
+/// A NON-boolean value is treated as absent rather than coerced: `"false"` as a
+/// string is a client bug, and guessing which way the caller meant is the one
+/// thing a governance field must not do.
+pub(super) fn optional_bool(v: &Value, key: &str) -> Option<bool> {
+    v.get(key).and_then(|x| x.as_bool())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

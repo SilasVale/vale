@@ -617,6 +617,10 @@ async fn execute_local(
         "truncated": truncated,
     }))
 }
+/// How long the approval gate waits for an operator decision (design beat 3).
+/// Mirrors the manager's own deadline; named here so the call site reads as a
+/// budget rather than a magic number.
+const APPROVAL_WAIT_MS: u64 = 60_000;
 
 pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
     let terminal_mgr = ctx.terminal_mgr.clone();
@@ -716,6 +720,29 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                     // failures in one week of real usage.
                     if !terminal_mgr.term_acquire_execute(&sid, 30_000).await? {
                         return Err(DeviceError::SessionBusy { id: sid.clone() });
+                    }
+                    // APPROVAL GATE (design beat 3). Placed HERE — after the busy
+                    // guard, before anything reaches the shell — and that
+                    // ordering IS the safety property: on a denial or a timeout
+                    // the command was never written, so the device did nothing.
+                    // Moved below the write it would be advice, not a gate.
+                    //
+                    // Only when the operator armed it: approval mode is opt-in per
+                    // session, because autonomous operation is the product and a
+                    // gate nobody asked for is just a delay.
+                    //
+                    // The busy lock is held ACROSS this wait on purpose. A second
+                    // execute queueing behind would otherwise slip past the gate
+                    // while the first was unanswered — the operator would be
+                    // approving one command while another ran.
+                    if terminal_mgr
+                        .term_approval_required(&sid)
+                        .await
+                        .unwrap_or(false)
+                    {
+                        terminal_mgr
+                            .term_await_approval(&sid, &command, APPROVAL_WAIT_MS)
+                            .await?;
                     }
                     // First-prompt gate (stage-l rework): the old gate waited
                     // for the OSC prompt marker that PowerShell 5.1 + ConPTY
@@ -1574,5 +1601,53 @@ mod tests {
         assert!(wait_for_exit(&mut child, std::time::Duration::from_secs(10)).await);
         signal_tree(pid, false).await;
         signal_tree(pid, true).await;
+    }
+
+    /// THE GATE SITS BEFORE THE SHELL WRITE — and that ordering IS the safety
+    /// property, so it is pinned structurally rather than left to review.
+    ///
+    /// The approval wait and the shell write are ~110 lines apart inside one
+    /// branch of a very long function, which is exactly the distance across which
+    /// a later edit can move one without noticing. Moving the wait BELOW the
+    /// write turns the gate into advice: a denied or unanswered command would
+    /// already be running on the device while the operator is still reading the
+    /// prompt.
+    ///
+    /// A source scan rather than a behavioural test because the property is about
+    /// ORDER of two calls on one code path; driving it end-to-end would need a
+    /// real PTY, a spawned approver and a race, and would still only cover the
+    /// branch it happened to exercise.
+    ///
+    /// Limits, stated: this compares line positions in THIS file, so it cannot see
+    /// a write that moves into a helper.
+    #[test]
+    fn the_approval_gate_is_placed_before_the_shell_write() {
+        let src = include_str!("exec.rs");
+        let production = src.split("#[cfg(test)]").next().expect("file is not empty");
+        let gate = production.find("term_await_approval(").expect(
+            "the approval gate is GONE from the execute path — an armed \
+                     session would run commands with nobody asked",
+        );
+        let write = production.find("term_write(&sid, &cmd_with_nl)").expect(
+            "the shell write moved or was renamed; re-point this pin rather \
+                     than deleting it — it is the only thing asserting the gate \
+                     comes first",
+        );
+        assert!(
+            gate < write,
+            "the approval gate must be evaluated BEFORE the command reaches the \
+             shell (gate at byte {gate}, write at byte {write}). After the write \
+             a denied command has already run."
+        );
+        // And it must be GATED on the mode, not called unconditionally: an
+        // unconditional wait would block every autonomous execute for a minute.
+        let guard = production
+            .find("term_approval_required(")
+            .expect("the gate lost its mode check — every execute would now block");
+        assert!(
+            guard < gate,
+            "the mode check must come before the wait, or an unarmed session still \
+             blocks"
+        );
     }
 }

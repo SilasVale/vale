@@ -68,6 +68,44 @@ impl TerminalManager {
     pub async fn term_held_by_human(&self, _sid: &str) -> Result<bool, DeviceError> {
         Err(disabled_err())
     }
+
+    /// Headless twins of the approval gate. Same `disabled_err()` discipline as
+    /// the control twins above: a headless build must fail loudly rather than
+    /// report a decision it cannot store. In particular `term_await_approval`
+    /// must NOT return `Ok(true)` — that would let a headless agent execute
+    /// commands while an operator believes the gate is armed.
+    pub async fn term_set_approval_required(
+        &self,
+        _sid: &str,
+        _required: bool,
+    ) -> Result<bool, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_approval_required(&self, _sid: &str) -> Result<bool, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_pending_approval(
+        &self,
+        _sid: &str,
+    ) -> Result<Option<super::PendingApprovalInfo>, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_decide_approval(
+        &self,
+        _sid: &str,
+        _id: &str,
+        _approve: bool,
+    ) -> Result<bool, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_await_approval(
+        &self,
+        _sid: &str,
+        _command: &str,
+        _max_wait_ms: u64,
+    ) -> Result<bool, DeviceError> {
+        Err(disabled_err())
+    }
     pub async fn term_exit_code(&self, _sid: &str) -> Option<i32> {
         None
     }

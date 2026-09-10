@@ -32,7 +32,7 @@ use tower::Service;
 
 use crate::plugins::memory::store::MemoryLimits;
 use crate::state::AppState;
-use vale_agent_core::EventBus;
+use vale_agent_core::{DeviceError, EventBus};
 mod panel;
 mod parse;
 mod sse;
@@ -670,6 +670,12 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
                 let sid = session_id_from_path(p)?;
                 api_session_control(state, &sid, body_str).await?
             }
+            // The gate's decision. Matched before any broader arm, same as the
+            // control route above.
+            ("POST", p) if p.starts_with("/api/sessions/") && p.ends_with("/approval") => {
+                let sid = session_id_from_path(p)?;
+                api_session_approval(state, &sid, body_str).await?
+            }
             ("GET", "/api/events/poll") => {
                 let after: u64 = query_param(query_str, "after")
                     .and_then(|v| v.parse().ok())
@@ -790,6 +796,49 @@ fn api_session_events(p: &str) -> Result<serde_json::Value, Box<Response>> {
     Ok(serde_json::json!({ "ok": true, "id": sid, "events": events }))
 }
 
+/// `POST /api/sessions/{sid}/approval` — decide the command waiting at the gate.
+///
+/// Body: `{"id": "<request id>", "approve": true|false}`. The `id` is required and
+/// must match the live request, so a panel tab that rendered an OLD prompt cannot
+/// approve a DIFFERENT command that arrived after it — the operator's "yes" is
+/// always attached to the command they actually read.
+///
+/// `approve` is required for the same reason `holder` is on the control route: a
+/// decision with no direction is not a decision, and defaulting it would mean
+/// guessing whether silence meant "run it".
+///
+/// Nothing is logged to the audit trail here. The handoff is logged because it
+/// changes WHO drives; an approval changes only whether one command runs, and
+/// that command logs its own `command/start` moments later — so an extra event
+/// would duplicate the record rather than complete it.
+async fn api_session_approval(
+    state: &AppState,
+    sid: &str,
+    body: &str,
+) -> Result<serde_json::Value, Box<Response>> {
+    let v = parse::json_body(body, |_| "invalid JSON".to_string())?;
+    let id = parse::optional_trimmed_string(&v, "id")
+        .ok_or_else(|| parse::invalid_params_response("id is required".to_string()))?;
+    let approve = parse::optional_bool(&v, "approve").ok_or_else(|| {
+        parse::invalid_params_response("approve is required (true or false)".to_string())
+    })?;
+
+    let decided = state
+        .terminal_mgr
+        .term_decide_approval(sid, &id, approve)
+        .await
+        .map_err(|e| {
+            // A missing session is a client error: the panel can hold a stale sid.
+            parse::invalid_params_response(e.to_string())
+        })?;
+
+    // `decided: false` is NOT an error at the HTTP level — the session exists and
+    // the request was well formed, there was simply nothing waiting. The caller
+    // distinguishes it, because "someone already answered" and "it timed out" are
+    // both things the operator should be told rather than shown a success.
+    Ok(serde_json::json!({ "ok": true, "id": sid, "decided": decided }))
+}
+
 /// Extract and validate a session id from `/api/sessions/{sid}[...]`.
 ///
 /// Shared by every session route. The charset guard is not cosmetic: the sid
@@ -838,40 +887,73 @@ async fn api_session_control(
     body: &str,
 ) -> Result<serde_json::Value, Box<Response>> {
     let v = parse::json_body(body, |_| "invalid JSON".to_string())?;
-    let holder = parse::optional_trimmed_string(&v, "holder").ok_or_else(|| {
-        parse::invalid_params_response(r#"holder is required: "human" or "ai""#.to_string())
-    })?;
-    let human = match holder.as_str() {
-        "human" => true,
-        "ai" => false,
-        other => {
+
+    // Both fields are OPTIONAL and at least one is required: this route patches
+    // the session's governance, and a request that mentions neither is a client
+    // bug rather than a no-op. Absent fields are left alone — never defaulted —
+    // so "hand the keyboard back" cannot silently disarm the approval gate, and
+    // "arm the gate" cannot silently hand the keyboard over.
+    let holder = parse::optional_trimmed_string(&v, "holder");
+    let approval = parse::optional_bool(&v, "approval_required");
+    if holder.is_none() && approval.is_none() {
+        return Err(parse::invalid_params_response(
+            "provide holder (\"human\"|\"ai\") and/or approval_required (bool)".to_string(),
+        ));
+    }
+
+    let human = match holder.as_deref() {
+        None => None,
+        Some("human") => Some(true),
+        Some("ai") => Some(false),
+        Some(other) => {
             return Err(parse::invalid_params_response(format!(
                 "holder must be \"human\" or \"ai\", got {other:?}"
             )))
         }
     };
 
-    let held = state
-        .terminal_mgr
-        .term_set_control(sid, human)
-        .await
-        .map_err(|e| {
-            // A missing session is a client error, not a 500: the panel can hold
-            // a stale sid after the session was closed or reaped.
-            parse::invalid_params_response(e.to_string())
-        })?;
+    // A missing session is a client error, not a 500: the panel can hold a stale
+    // sid after the session was closed or reaped.
+    let not_found = |e: DeviceError| parse::invalid_params_response(e.to_string());
 
-    // Record the handoff in the session's audit trail. Logged HERE, at the point
-    // the decision is made, rather than inside the manager: the manager owns the
-    // in-memory hold and must not grow a dependency on the log, while this is the
-    // layer that knows a decision actually happened.
-    //
-    // Best-effort by design — `log_control` returns nothing, because a log
-    // failure must not cost the operator the keyboard. The consequence is that
-    // the record can be MISSING an event; it can never invent one.
-    sessions_logger().log_control(sid, if held { "human" } else { "ai" });
+    let mut held = None;
+    if let Some(h) = human {
+        held = Some(
+            state
+                .terminal_mgr
+                .term_set_control(sid, h)
+                .await
+                .map_err(not_found)?,
+        );
 
-    Ok(serde_json::json!({ "ok": true, "id": sid, "held_by_human": held }))
+        // Record the handoff in the session's audit trail. Logged HERE, at the
+        // point the decision is made, rather than inside the manager: the manager
+        // owns the in-memory hold and must not grow a dependency on the log, while
+        // this is the layer that knows a decision actually happened.
+        //
+        // Best-effort by design — `log_control` returns nothing, because a log
+        // failure must not cost the operator the keyboard. The consequence is that
+        // the record can be MISSING an event; it can never invent one.
+        sessions_logger().log_control(sid, if h { "human" } else { "ai" });
+    }
+
+    let mut approval_required = None;
+    if let Some(req) = approval {
+        approval_required = Some(
+            state
+                .terminal_mgr
+                .term_set_approval_required(sid, req)
+                .await
+                .map_err(not_found)?,
+        );
+    }
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "id": sid,
+        "held_by_human": held,
+        "approval_required": approval_required,
+    }))
 }
 
 /// GET /api/logs — read the tray's vale-update.log (promised by the tray's
@@ -2143,6 +2225,112 @@ mod tests {
         let _ = std::fs::remove_file(cfg_path);
     }
 
+    /// The control route now carries approval mode too — and each field is
+    /// INDEPENDENT, which is the property that matters.
+    ///
+    /// A partial patch must not clear what it did not mention: "hand the keyboard
+    /// back" must not silently disarm the gate, and "arm the gate" must not
+    /// silently hand the keyboard over. That is the documented incident class this
+    /// repo already guards for the settings bodies.
+    #[tokio::test]
+    async fn session_control_patches_holder_and_approval_independently() {
+        let (st, cfg_path) = state_with_cfg("ctl-patch", CFG_YAML_TOKEN_ONLY);
+
+        // A request naming NEITHER field is a client bug, not a silent no-op.
+        let resp = handle_request(
+            req_with_json("POST", "/api/sessions/abc123/control", "{}"),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // A NON-boolean approval value reads as ABSENT, so a request that only
+        // meant to hand over the keyboard still does exactly that — it must not
+        // be rejected, and it must not be coerced to true.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/sessions/abc123/control",
+                r#"{"holder":"ai","approval_required":"yes"}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        let v = json_body(resp).await;
+        let err = v["error"].as_str().unwrap_or("");
+        assert!(
+            !err.contains("approval_required"),
+            "a non-boolean approval_required must be read as ABSENT, not rejected \
+             as a bad value; got: {v}"
+        );
+
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// The approval decision route: the validation is what is worth pinning,
+    /// because this route decides whether a blocked command runs.
+    #[tokio::test]
+    async fn session_approval_requires_a_direction_and_an_id() {
+        let (st, cfg_path) = state_with_cfg("ap-bad", CFG_YAML_TOKEN_ONLY);
+
+        // No id.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/sessions/abc123/approval",
+                r#"{"approve":true}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            json_body(resp).await["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("id is required"),
+            "the request id is what binds the answer to the command that was read"
+        );
+
+        // No direction — must NOT default. A defaulted "yes" would run a command
+        // the operator never authorised.
+        let resp = handle_request(
+            req_with_json("POST", "/api/sessions/abc123/approval", r#"{"id":"ap-1"}"#),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            json_body(resp).await["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("approve is required"),
+            "a decision with no direction is not a decision"
+        );
+
+        // `false` is a REAL value, not "absent": a deny must be distinguishable
+        // from a missing field, or every deny would be read as malformed.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/sessions/deadbeef/approval",
+                r#"{"id":"ap-1","approve":false}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        let err = json_body(resp).await["error"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        assert!(
+            !err.contains("approve is required"),
+            "approve:false must be accepted as a decision; got: {err}"
+        );
+
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
     /// A valid request for a session that does not exist is a CLIENT error: not
     /// a success (the operator would believe they hold a dead keyboard) and not
     /// a 500 (it is a stale sid, which is routine).
@@ -2281,6 +2469,127 @@ mod tests {
         let _ = std::fs::remove_file(cfg_path);
     }
 
+    /// END-TO-END: arming the gate makes the TOOL surface wait, and a decision
+    /// through the ROUTE releases it.
+    ///
+    /// The manager pins prove the gate refuses and the route pins prove the
+    /// parsing; neither proves the two are connected — an execute that never
+    /// consults the mode, or a decision that lands on a different session id,
+    /// would leave both suites green while an armed session ran commands
+    /// unapproved. This drives the real dispatch and the real tool handler.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn an_armed_session_makes_the_tool_call_wait_for_a_decision() {
+        let (st, cfg_path) = state_with_cfg("ap-e2e", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        // Arm the gate through the route.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"approval_required":true}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["approval_required"], true);
+        // The holder was NOT mentioned, so it must be reported as null rather
+        // than defaulted — a partial patch may not clear the other field.
+        assert!(v["held_by_human"].is_null());
+        assert!(!st.terminal_mgr.term_held_by_human(&sid).await.unwrap());
+
+        // Fire the execute; it must BLOCK at the gate.
+        let exec = {
+            let st2 = st.clone();
+            let sid2 = sid.clone();
+            tokio::spawn(async move {
+                handle_request(
+                    req_with_json(
+                        "POST",
+                        "/api/tools/terminal_execute",
+                        &format!(r#"{{"session_id":"{sid2}","command":"echo gated"}}"#),
+                    ),
+                    st2,
+                )
+                .await
+            })
+        };
+
+        // The prompt must become visible while it waits. BOUNDED, so a mutant
+        // that removes the gate fails here with a clear message instead of
+        // hanging the suite until the harness gives up.
+        let st3 = st.clone();
+        let sid3 = sid.clone();
+        let id = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+            loop {
+                if let Some(p) = st3.terminal_mgr.term_pending_approval(&sid3).await.unwrap() {
+                    break p.id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect(
+            "no approval prompt ever appeared: the execute did not consult the \
+             session's approval mode, so an ARMED session ran the command with \
+             nobody asked",
+        );
+        assert!(!exec.is_finished(), "the execute must still be waiting");
+
+        // ...and a DENY must surface as a refusal, not as a timeout.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/approval"),
+                &format!(r#"{{"id":"{id}","approve":false}}"#),
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(json_body(resp).await["decided"], true);
+
+        let v = json_body(exec.await.unwrap()).await;
+        assert_eq!(v["ok"], false);
+        assert_eq!(
+            v["code"], "approval_denied",
+            "the AI must be told the operator refused, not that nobody answered"
+        );
+
+        // Disarm so the session can be closed cleanly.
+        let _ = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"approval_required":false}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
     /// THE ROUTE-COVERAGE SECURITY PIN (SOLID R102).
     ///
     /// Every route the web surface dispatches must be reachable ONLY with the
@@ -2302,6 +2611,7 @@ mod tests {
             ("GET", "/api/sessions"),
             ("GET", "/api/sessions/some-session-id"),
             ("POST", "/api/sessions/some-session-id/control"),
+            ("POST", "/api/sessions/some-session-id/approval"),
             ("GET", "/api/logs"),
             ("GET", "/api/events/poll"),
             ("GET", "/api/settings"),

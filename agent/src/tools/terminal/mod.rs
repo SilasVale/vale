@@ -58,6 +58,27 @@ pub struct TermSessionInfo {
     /// BEFORE trying to execute and collecting the refusal.
     #[serde(default)]
     pub held_by_human: bool,
+    /// The session is in APPROVAL MODE: `terminal_execute` must be approved by a
+    /// person before it reaches the shell. Off by default — autonomous operation
+    /// is the point of the product, and a gate nobody asked for is just a delay.
+    #[serde(default)]
+    pub approval_required: bool,
+    /// The request currently waiting for a decision, if any. Carried on session
+    /// info so the panel can render the prompt from the list it already polls,
+    /// rather than needing a second endpoint to discover that something is
+    /// blocked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_approval: Option<PendingApprovalInfo>,
+}
+
+/// A command waiting for an operator decision. `expires_in_ms` is derived at read
+/// time rather than stored, so a caller never has to know when the request
+/// started to know whether it is still live.
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingApprovalInfo {
+    pub id: String,
+    pub command: String,
+    pub expires_in_ms: u64,
 }
 
 /// Infer the session's shell kind for the command wrapper (stage-l):
@@ -332,7 +353,70 @@ mod desktop_impl {
         /// safe direction — a hold is a live coordination fact, not durable
         /// state, and a restart should not leave a device nobody can drive.
         held_by_human: bool,
+        /// Approval mode: every execute waits for a person's decision first.
+        approval_required: bool,
+        /// The in-flight request, if an execute is currently blocked on one.
+        pending_approval: Option<PendingApproval>,
     }
+
+    /// Identifier for one approval request. Unpredictable rather than sequential on
+    /// purpose: the panel sends it back to decide, and a guessable id would let a
+    /// stale view approve a DIFFERENT command than the one it displayed.
+    fn approval_id() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("ap-{n}-{nanos:x}")
+    }
+
+    /// Project a session's pending approval for a reader, dropping anything
+    /// already decided or past its deadline. ONE definition: `term_list` and
+    /// `term_info` answering differently would make the panel's prompt flicker
+    /// depending on which call it happened to make.
+    fn live_pending(s: &Session) -> Option<PendingApprovalInfo> {
+        let p = s.pending_approval.as_ref()?;
+        if p.decided.is_some() {
+            return None;
+        }
+        let elapsed = p.requested_at.elapsed().as_millis() as u64;
+        let left = APPROVAL_WAIT_MS.saturating_sub(elapsed);
+        (left > 0).then(|| PendingApprovalInfo {
+            id: p.id.clone(),
+            command: p.command.clone(),
+            expires_in_ms: left,
+        })
+    }
+
+    /// A command blocked on an operator decision.
+    ///
+    /// `decided` is the ONLY channel between the waiting execute and the
+    /// deciding route, and it is a `bool` rather than a channel/condvar on
+    /// purpose: the waiter polls, which is the established pattern in this file
+    /// (`term_acquire_execute` polls at 250 ms) and keeps the state visible to
+    /// `term_list` for the whole wait. A channel would need a separate copy of
+    /// the request just for the panel to render it.
+    struct PendingApproval {
+        id: String,
+        command: String,
+        requested_at: std::time::Instant,
+        /// `None` while pending; `Some(approve)` once decided.
+        decided: Option<bool>,
+    }
+
+    /// How long an execute waits for a decision before giving up.
+    ///
+    /// FAIL-CLOSED at the deadline, and the value is a compromise stated rather
+    /// than hidden: long enough that an operator who is watching has time to
+    /// read the command, short enough that it fits inside the MCP client
+    /// timeouts the existing 30 s acquire wait already lives within. An operator
+    /// who needs longer should take the keyboard, which is unbounded.
+    const APPROVAL_WAIT_MS: u64 = 60_000;
+    /// Poll cadence while waiting for a decision.
+    const APPROVAL_POLL_MS: u64 = 200;
 
     /// Sessions idle this long (no output) are force-closed. Guards against a
     /// client disconnect leaking SSH/PTY/serial sessions forever: nothing tied
@@ -569,6 +653,8 @@ mod desktop_impl {
                     opened_at: std::time::Instant::now(),
                     busy: false,
                     held_by_human: false,
+                    approval_required: false,
+                    pending_approval: None,
                 });
                 deferred
             };
@@ -800,6 +886,201 @@ mod desktop_impl {
             }
         }
 
+        /// Turn APPROVAL MODE on or off for a session. Returns the state now in
+        /// force.
+        ///
+        /// Turning it off while a request is pending decides that request (as a
+        /// refusal) rather than abandoning it: a waiter left behind would hold the
+        /// execute lock until its deadline, and the operator who switched the mode
+        /// off would see the session apparently stuck for no visible reason.
+        pub async fn term_set_approval_required(
+            &self,
+            sid: &str,
+            required: bool,
+        ) -> Result<bool, DeviceError> {
+            let mut inner = self.inner.lock().await;
+            match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) => {
+                    s.approval_required = required;
+                    if !required {
+                        if let Some(p) = s.pending_approval.as_mut() {
+                            if p.decided.is_none() {
+                                p.decided = Some(false);
+                            }
+                        }
+                    }
+                    Ok(s.approval_required)
+                }
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// Whether this session is in approval mode.
+        ///
+        /// `unwrap_or(false)` at the CALL SITE rather than here: a missing session
+        /// (closed between the busy guard and this check) must not silently become
+        /// "no approval needed". The execute path treats an error here as "not
+        /// armed" only because the shell write immediately below will fail on its
+        /// own for the same missing session — see the call site's comment.
+        pub async fn term_approval_required(&self, sid: &str) -> Result<bool, DeviceError> {
+            let inner = self.inner.lock().await;
+            match inner.sessions.iter().find(|s| s.id == sid) {
+                Some(s) => Ok(s.approval_required),
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// The request currently awaiting a decision, with its remaining life.
+        /// Expired entries read as absent, so a caller cannot be shown a prompt
+        /// for a command that has already given up.
+        pub async fn term_pending_approval(
+            &self,
+            sid: &str,
+        ) -> Result<Option<PendingApprovalInfo>, DeviceError> {
+            let inner = self.inner.lock().await;
+            match inner.sessions.iter().find(|s| s.id == sid) {
+                Some(s) => Ok(s.pending_approval.as_ref().and_then(|p| {
+                    if p.decided.is_some() {
+                        return None;
+                    }
+                    let elapsed = p.requested_at.elapsed().as_millis() as u64;
+                    let left = APPROVAL_WAIT_MS.saturating_sub(elapsed);
+                    (left > 0).then(|| PendingApprovalInfo {
+                        id: p.id.clone(),
+                        command: p.command.clone(),
+                        expires_in_ms: left,
+                    })
+                })),
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// Decide the pending request. `Ok(false)` when there was nothing to
+        /// decide (already decided, expired, or never asked) — the caller
+        /// surfaces that to the operator rather than treating it as success.
+        ///
+        /// The `id` must match: a stale panel tab must not be able to approve a
+        /// DIFFERENT command that arrived after it rendered.
+        pub async fn term_decide_approval(
+            &self,
+            sid: &str,
+            id: &str,
+            approve: bool,
+        ) -> Result<bool, DeviceError> {
+            let mut inner = self.inner.lock().await;
+            match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) => match s.pending_approval.as_mut() {
+                    Some(p) if p.id == id && p.decided.is_none() => {
+                        p.decided = Some(approve);
+                        Ok(true)
+                    }
+                    _ => Ok(false),
+                },
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// Block until this command is approved, refused, or the deadline passes.
+        ///
+        /// Registers the request so the operator can see it, then polls. Every
+        /// exit path CLEARS the registration, so the panel never shows a prompt
+        /// for a command that has already finished waiting — the prompt is only
+        /// ever a live question.
+        ///
+        /// The caller runs this BEFORE writing to the shell, so a denial or a
+        /// timeout means the command genuinely never reached the device. That
+        /// ordering is what makes the gate fail-closed rather than advisory.
+        pub async fn term_await_approval(
+            &self,
+            sid: &str,
+            command: &str,
+            max_wait_ms: u64,
+        ) -> Result<bool, DeviceError> {
+            let id = approval_id();
+            {
+                let mut inner = self.inner.lock().await;
+                match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                    Some(s) => {
+                        // At most one request per session: the execute lock
+                        // already serialises executes, so a second registration
+                        // would mean the first waiter was abandoned and its
+                        // prompt should not be overwritten silently.
+                        if s.pending_approval
+                            .as_ref()
+                            .is_some_and(|p| p.decided.is_none())
+                        {
+                            return Err(DeviceError::SessionBusy {
+                                id: sid.to_string(),
+                            });
+                        }
+                        s.pending_approval = Some(PendingApproval {
+                            id: id.clone(),
+                            command: command.to_string(),
+                            requested_at: std::time::Instant::now(),
+                            decided: None,
+                        });
+                    }
+                    None => {
+                        return Err(DeviceError::SessionNotFound {
+                            id: sid.to_string(),
+                        })
+                    }
+                }
+            }
+
+            let deadline = std::time::Instant::now()
+                + std::time::Duration::from_millis(max_wait_ms.min(APPROVAL_WAIT_MS));
+            let outcome = loop {
+                {
+                    let inner = self.inner.lock().await;
+                    let decided = inner
+                        .sessions
+                        .iter()
+                        .find(|s| s.id == sid)
+                        .and_then(|s| s.pending_approval.as_ref())
+                        .and_then(|p| p.decided);
+                    if let Some(d) = decided {
+                        break Some(d);
+                    }
+                }
+                if std::time::Instant::now() >= deadline {
+                    break None;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(APPROVAL_POLL_MS)).await;
+            };
+
+            // Clear on EVERY exit path. A registered-but-decided request left in
+            // place would make the next execute see a stale entry and refuse
+            // itself with SessionBusy.
+            {
+                let mut inner = self.inner.lock().await;
+                if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
+                    if s.pending_approval.as_ref().is_some_and(|p| p.id == id) {
+                        s.pending_approval = None;
+                    }
+                }
+            }
+
+            match outcome {
+                Some(true) => Ok(true),
+                Some(false) => Err(DeviceError::ApprovalDenied {
+                    id: sid.to_string(),
+                }),
+                // FAIL-CLOSED: no decision means no command.
+                None => Err(DeviceError::ApprovalTimeout {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
         /// Whether a person currently holds this session's keyboard.
         pub async fn term_held_by_human(&self, sid: &str) -> Result<bool, DeviceError> {
             let inner = self.inner.lock().await;
@@ -860,6 +1141,8 @@ mod desktop_impl {
                     label: s.label.clone(),
                     shell: s.shell.clone(),
                     held_by_human: s.held_by_human,
+                    approval_required: s.approval_required,
+                    pending_approval: live_pending(s),
                 })
                 .collect()
         }
@@ -880,6 +1163,8 @@ mod desktop_impl {
                     label: s.label.clone(),
                     shell: s.shell.clone(),
                     held_by_human: s.held_by_human,
+                    approval_required: s.approval_required,
+                    pending_approval: live_pending(s),
                 })
         }
 
@@ -1273,6 +1558,218 @@ mod tests {
                 .code(),
             "session_not_found"
         );
+    }
+
+    /// THE GATE'S CORE PROPERTY: no decision means the command does not run.
+    ///
+    /// This is what separates a gate from a delay. If an unanswered request
+    /// proceeded, the operator would be rewarded for walking away from the
+    /// prompt, and "approval required" would mean "approval requested".
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn an_unanswered_approval_does_not_run_and_says_so() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let started = std::time::Instant::now();
+        // Ask with a tiny budget so the test does not sit for a minute; the
+        // production call passes APPROVAL_WAIT_MS.
+        let err = mgr
+            .term_await_approval(&sid, "rm -rf /", 300)
+            .await
+            .expect_err("an unanswered request must fail, never proceed");
+        assert_eq!(err.code(), "approval_timeout");
+        assert!(
+            err.to_string().to_lowercase().contains("not run"),
+            "the message must state that nothing ran: {err}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the wait must honour its budget"
+        );
+
+        // The request must be GONE afterwards: a prompt for a command that has
+        // already given up would invite the operator to answer a question
+        // nobody is waiting for.
+        assert!(
+            mgr.term_pending_approval(&sid).await.unwrap().is_none(),
+            "the pending request must be cleared on timeout"
+        );
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// An approval lets the command through; a denial does not, and the two are
+    /// reported differently.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn approval_lets_it_through_and_denial_does_not() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        // Approve: the waiter returns Ok(true).
+        {
+            let mgr2 = mgr.clone();
+            let sid2 = sid.clone();
+            let waiter = tokio::spawn(async move {
+                mgr2.term_await_approval(&sid2, "display version", 5_000)
+                    .await
+            });
+            // Wait for the request to appear, then decide it.
+            let id = loop {
+                if let Some(p) = mgr.term_pending_approval(&sid).await.unwrap() {
+                    break p.id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            };
+            assert!(mgr.term_decide_approval(&sid, &id, true).await.unwrap());
+            assert!(
+                waiter.await.unwrap().unwrap(),
+                "an approved command proceeds"
+            );
+        }
+
+        // Deny: the code says refused, NOT timed out.
+        {
+            let mgr2 = mgr.clone();
+            let sid2 = sid.clone();
+            let waiter =
+                tokio::spawn(async move { mgr2.term_await_approval(&sid2, "save", 5_000).await });
+            let id = loop {
+                if let Some(p) = mgr.term_pending_approval(&sid).await.unwrap() {
+                    break p.id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            };
+            assert!(mgr.term_decide_approval(&sid, &id, false).await.unwrap());
+            let err = waiter.await.unwrap().unwrap_err();
+            assert_eq!(
+                err.code(),
+                "approval_denied",
+                "a refusal must not be reported as a timeout: the AI must not \
+                 retry a command the operator said no to"
+            );
+        }
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// The prompt is VISIBLE while it waits and gone the moment it is answered.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_pending_request_is_visible_on_session_info() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        let waiter =
+            tokio::spawn(async move { mgr2.term_await_approval(&sid2, "vlan 100", 5_000).await });
+
+        let seen = loop {
+            let info = mgr.term_info(&sid).await.unwrap();
+            if let Some(p) = info.pending_approval {
+                break p;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+        assert_eq!(
+            seen.command, "vlan 100",
+            "the prompt shows WHAT it will run"
+        );
+        assert!(seen.expires_in_ms > 0 && seen.expires_in_ms <= 60_000);
+        assert!(mgr.term_info(&sid).await.unwrap().approval_required);
+
+        let id = seen.id.clone();
+        mgr.term_decide_approval(&sid, &id, true).await.unwrap();
+        waiter.await.unwrap().unwrap();
+
+        // Answered: the prompt must not linger.
+        assert!(mgr
+            .term_info(&sid)
+            .await
+            .unwrap()
+            .pending_approval
+            .is_none());
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// A STALE id must not decide a LIVE request.
+    ///
+    /// The panel renders the prompt from a polled list; a tab that rendered an
+    /// earlier command would otherwise be able to approve the current one, and
+    /// the operator's "yes" would attach to a command they never read.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_stale_request_id_cannot_decide_a_live_request() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        let waiter =
+            tokio::spawn(async move { mgr2.term_await_approval(&sid2, "real", 5_000).await });
+        let live = loop {
+            if let Some(p) = mgr.term_pending_approval(&sid).await.unwrap() {
+                break p;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+
+        assert!(
+            !mgr.term_decide_approval(&sid, "ap-0-0", true)
+                .await
+                .unwrap(),
+            "an id that does not match the live request must decide NOTHING"
+        );
+        // ...and the live request is still waiting, so the stale answer did not
+        // silently consume it.
+        assert!(mgr.term_pending_approval(&sid).await.unwrap().is_some());
+
+        mgr.term_decide_approval(&sid, &live.id, true)
+            .await
+            .unwrap();
+        waiter.await.unwrap().unwrap();
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// Switching the mode OFF releases a waiting execute instead of abandoning it.
+    ///
+    /// An abandoned waiter holds the execute lock until its own deadline, which
+    /// the operator experiences as a session that froze for no visible reason
+    /// right after they turned the gate off.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn disarming_the_gate_releases_a_waiting_request() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        let waiter =
+            tokio::spawn(async move { mgr2.term_await_approval(&sid2, "pending", 10_000).await });
+        loop {
+            if mgr.term_pending_approval(&sid).await.unwrap().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        assert!(!mgr.term_set_approval_required(&sid, false).await.unwrap());
+        let err = tokio::time::timeout(std::time::Duration::from_secs(3), waiter)
+            .await
+            .expect("disarming must release the waiter promptly, not at the deadline")
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(err.code(), "approval_denied");
+
+        mgr.term_close(&sid).await.ok();
     }
 
     /// Real PTY round-trip (needs a local shell, so Linux/macOS only).

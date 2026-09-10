@@ -35,6 +35,28 @@ pub enum DeviceError {
     #[error("A human holds this session (control handed over): {id}")]
     HumanInControl { id: String },
 
+    /// The operator was asked to approve this command and refused it.
+    ///
+    /// Distinct from every transient code on purpose: the AI must NOT retry.
+    /// Re-issuing the same command produces a fresh request, so a retry loop
+    /// would turn one refusal into a prompt storm — the operator would be asked
+    /// the same question until they took the keyboard away entirely.
+    #[error("The operator denied this command in session {id}")]
+    ApprovalDenied { id: String },
+
+    /// Nobody decided in time, so the command was **not** run.
+    ///
+    /// FAIL-CLOSED, and that is the whole point: an unanswered approval means
+    /// the device does nothing. The alternative — proceed when the operator is
+    /// away — would make the gate a delay rather than a gate, and would reward
+    /// walking away from the prompt.
+    ///
+    /// Separate from [`DeviceError::ApprovalDenied`] because the operator's
+    /// intent differs: silence is not a "no", and telling the AI it was refused
+    /// would be inventing a decision nobody made.
+    #[error("No approval decision arrived in time for session {id}; the command was not run")]
+    ApprovalTimeout { id: String },
+
     #[error("Invalid parameters: {message}")]
     InvalidParams { message: String },
 
@@ -57,6 +79,8 @@ impl DeviceError {
             DeviceError::SessionNotFound { .. } => "session_not_found",
             DeviceError::SessionBusy { .. } => "session_busy",
             DeviceError::HumanInControl { .. } => "human_in_control",
+            DeviceError::ApprovalDenied { .. } => "approval_denied",
+            DeviceError::ApprovalTimeout { .. } => "approval_timeout",
             DeviceError::InvalidParams { .. } => "invalid_params",
             DeviceError::Keychain { .. } => "keychain",
             DeviceError::Internal { .. } => "internal",
@@ -96,7 +120,8 @@ pub const GATEWAY_DISPATCHED_CODES: &[&str] = &["session_not_found", "session_bu
 /// The AI does not need a gateway class to understand this: it reads the code
 /// directly off the tool result and can tell its user that a person has the
 /// session. Pinned by `undispatched_codes_are_deliberate`.
-pub const GATEWAY_UNDISPATCHED_CODES: &[&str] = &["human_in_control"];
+pub const GATEWAY_UNDISPATCHED_CODES: &[&str] =
+    &["human_in_control", "approval_denied", "approval_timeout"];
 
 #[cfg(test)]
 mod error_tests {
@@ -282,6 +307,42 @@ mod error_tests {
         assert!(human.to_string().contains('s'));
     }
 
+    /// The approval codes must stay distinct from each other AND from the
+    /// transient ones — this is the whole contract of the gate.
+    ///
+    /// Three different things the AI has to do:
+    ///   session_busy      → retry after a wait
+    ///   approval_denied   → do NOT retry; the operator said no
+    ///   approval_timeout  → do NOT retry blindly; nobody answered
+    ///
+    /// If `ApprovalDenied` ever collapsed onto `SessionBusy`, the AI would retry
+    /// a refused command — turning one refusal into a prompt storm. If it
+    /// collapsed onto `ApprovalTimeout`, it would report a decision nobody made.
+    #[test]
+    fn approval_codes_are_distinct_from_each_other_and_from_transient_ones() {
+        let busy = DeviceError::SessionBusy { id: "s".into() };
+        let denied = DeviceError::ApprovalDenied { id: "s".into() };
+        let timeout = DeviceError::ApprovalTimeout { id: "s".into() };
+        let human = DeviceError::HumanInControl { id: "s".into() };
+
+        let codes = [busy.code(), denied.code(), timeout.code(), human.code()];
+        let mut uniq = codes.to_vec();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(uniq.len(), 4, "four codes must stay four: {codes:?}");
+
+        // All four name the session, so a client can act without parsing prose.
+        for e in [&busy, &denied, &timeout, &human] {
+            assert!(e.to_string().contains('s'), "{e} must name the session");
+        }
+        // The timeout message must not read as a refusal: it states that nothing
+        // ran, which is the fail-closed fact the AI needs.
+        assert!(
+            timeout.to_string().to_lowercase().contains("not run"),
+            "the timeout must say the command did not run: {timeout}"
+        );
+    }
+
     /// One constructor per variant, so the tests above enumerate the SAME set.
     /// Co-located on purpose: adding a variant means adding it here, which
     /// makes the new code visible to every pin in this module.
@@ -297,6 +358,8 @@ mod error_tests {
             DeviceError::SessionNotFound { id: "i".into() },
             DeviceError::SessionBusy { id: "i".into() },
             DeviceError::HumanInControl { id: "i".into() },
+            DeviceError::ApprovalDenied { id: "i".into() },
+            DeviceError::ApprovalTimeout { id: "i".into() },
             DeviceError::InvalidParams {
                 message: "m".into(),
             },
