@@ -40,7 +40,7 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 | `agent/src/tools/` | TRANSPORTS (ssh=russh, serial=SerialPool) UNDER the terminal backends; the two ssh.rs are layers, not duplicates | da6a6137 |
 | `index/src/` | single-file router + extracted pure modules (claim.js, page.js) | 81b1c40f |
 | `proxies/*` | one-file workers, DELIBERATELY autonomous (ADR 0003) — ~90 lines of CORS/safeEq duplication is the accepted cost of independent secrets/deploys | 5e1f410e review |
-| `proxies/api-relay` | VPS relay: entry.mjs (HTTP plumbing only) + routing.mjs (pure table+matchers, table-param seam) + api/ edge handlers with exported pure guards (SOLID R18–R23: first tests this tree ever had) | server/routing.mjs header |
+| `proxies/api-relay` | VPS relay: entry.mjs (socket plumbing ONLY since R68–R69: host/header/response-header helpers moved verbatim to routing.mjs) + routing.mjs (pure table+matchers+plumbing, table-param seam) + api/ edge handlers with exported pure guards (SOLID R18–R23: first tests this tree ever had) | server/routing.mjs header |
 
 ## Module boundary verdicts (all reviewed 2026-08/09)
 
@@ -57,7 +57,7 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 | gateway tooling.ts | public UNAUTHENTICATED CLI surface (health/probe/installers) extracted verbatim from index.ts — front door owns nothing but the front door (ADR 0001 completion) | header note |
 | gateway route-do.ts | RouteDO per-user routes (KV→DO fix for cross-isolate staleness) + the SHARED DO external-address guard (BreakerDO/RouteDO dedup). SOLID R8: gate truth table pinned; comparison unified onto auth.ts safeEq | header note |
 | gateway body-scan.ts | O(n) raw-string scans (10ms CPU budget). SOLID R7: estimateTokens = countBase64Payloads + estimateTextTokens composer (verbatim moves); raw-* rewriters directly pinned | body-scan.ts header |
-| gateway device-proxy.ts | device reverse-proxy (session/plugin-token/per-device-cookie auth) + rewriteDeviceBody as an exported pure unit (SOLID R14: mount rewriting + token-strip pins) | device-proxy.ts header |
+| gateway device-proxy.ts | device reverse-proxy (session/plugin-token/per-device-cookie auth) + rewriteDeviceBody as an exported pure unit (SOLID R14: mount rewriting + token-strip pins; R54: table pruned to the live /api/ + /mcp paths) | device-proxy.ts header |
 | gateway anthropic-translate.ts | PURE data transforms (Anthropic↔OpenAI), zero env dependency | header note |
 | gateway relay token | `store/users.ts` User.relayToken + role "relay" (ADR 0007): relay paths dual-accept during migration, `/mcp` stays admin-only, cutover is the default-off RELAY_ADMIN_CUTOVER flag — one KV write, no deploy | ADR 0007 |
 | agent vale-command-core | the contract crate (Plugin/ToolDef/Config/EventBus); canonical import `vale_agent_core::`; tokio-util CancellationToken is the MCP layer's vocabulary (kept, documented). SOLID R11/12: ensure_token table, ToolHandler blanket-impl + cancellable-default pins | lib.rs (29c2a575, a64c32d2) |
