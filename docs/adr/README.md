@@ -18,6 +18,7 @@ file here is not an error.
 | [0009](0009-self-contained-installer.md) | Adopted 2026-09-09 | pinned tgz rides inside the installer exe (NSIS File); local-first install, CDN download as fallback; exe-larger-than-tgz fail-closed proof |
 | [0010](0010-two-products-one-repository.md) | Adopted 2026-09-10 | the agent and the gateway are two independently usable **products** in ONE repository — split only on independent release cadence / owners / compliance |
 | [proposal-control-path](proposal-control-path.md) | Proposal (unnumbered, 2026-09-10) | draft for a device-side AI **control plane**: the AI's work as a decision tree the operator holds — capability scopes, a bounded-block gate contract, boundary-only pause, durable decisions |
+| [proposal-game-design](proposal-game-design.md) | Proposal (unnumbered, 2026-09-10) | what "design the agent with a game mindset" means: a six-beat core loop, four laws each backed by a measured finding, what is forbidden, and the one test every element must pass |
 | [proposal-interactive-browser](proposal-interactive-browser.md) | Proposal (unnumbered, round-134) | draft for an interactive remote browser embedded in the panel (CDP screencast + WS input) |
 | [proposal-scoped-relay-token](proposal-scoped-relay-token.md) | Superseded by 0007 (Option B approved 2026-09-08) | F3 decision material, kept as history |
 
