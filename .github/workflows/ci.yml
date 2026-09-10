@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # On-demand only: the toolchain-fingerprint job below restores a 1 GB LLVM
+  # tarball, far too heavy to run on every push. Dispatch it when the question
+  # "is the runner's toolchain bit-identical to the release box's?" comes up.
+  workflow_dispatch:
 
 # Least privilege: CI only reads the repo (no release asset uploads here).
 permissions:
@@ -313,3 +317,42 @@ jobs:
         # Quoted glob (NOT a trailing-slash dir): node treats a dir arg as
         # a module path and fails; the glob discovers the test files.
         run: node --test "extension/test/*.test.mjs"
+
+  toolchain-fingerprint:
+    # Answers "does the runner build with the SAME toolchain as the release
+    # box?" — the one variable still open behind the last bytes of exe drift.
+    # Compares by hash instead of downloading 1 GB to the release box, whose
+    # link to GitHub is far too slow for that. On demand only.
+    if: github.event_name == 'workflow_dispatch'
+    name: toolchain fingerprint (on demand)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          components: llvm-tools
+      - name: Restore the LLVM tarball (same cache key as release.yml)
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llvm.tar.xz
+          key: llvm-18.1.8-official-ubuntu18.04
+      - name: Print the fingerprints the release box compares against
+        run: |
+          set -euo pipefail
+          echo "== rustc =="
+          rustc -vV | sed -n '1,3p'
+          echo "== llvm-ar (pinned toolchain) =="
+          AR="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-ar"
+          sha256sum "$AR"
+          echo "== LLVM tarball =="
+          sha256sum /tmp/llvm.tar.xz 2>/dev/null || echo "CACHE MISS (tarball absent)"
+          echo "== clang / lld extracted from it =="
+          mkdir -p "$HOME/llvm18"
+          tar xf /tmp/llvm.tar.xz -C "$HOME/llvm18" --strip-components=1
+          ls "$HOME/llvm18/bin/clang-18" "$HOME/llvm18/bin/lld" 2>/dev/null || true
+          sha256sum "$HOME/llvm18/bin/clang-18" "$HOME/llvm18/bin/lld" 2>/dev/null || \
+            sha256sum "$HOME/llvm18/bin/clang" "$HOME/llvm18/bin/lld-link"
+          echo "== cargo-xwin =="
+          cargo install cargo-xwin --locked --version 0.23.0 --quiet 2>/dev/null || true
+          cargo xwin --version 2>&1 | head -1
