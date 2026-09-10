@@ -443,9 +443,16 @@ async fn route_pre_dispatch(
         if let Err(resp) = check_auth(headers, state) {
             return Some(*resp);
         }
-        // stage-n SSE audit LOW: bound concurrent SSE connections so a flood
-        // of viewers can't exhaust tasks/memory. Reserve a slot; if full, 503
-        // (shared acquire_sse_guard — see sse.rs).
+        // stage-n SSE audit LOW intended to bound concurrent SSE connections
+        // so a flood of viewers can't exhaust tasks/memory. IT DOES NOT — the
+        // slot is taken and then dropped at the `return` below, because
+        // `_guard` is a LOCAL of this function and the response outlives it.
+        // The cap therefore bounds simultaneous *construction*, not
+        // simultaneous connections: measured, 70 responses can be opened and
+        // held with ZERO refusals. Documented as-is rather than described as
+        // working, and pinned by
+        // `sse_viewer_cap_is_not_held_for_the_connection_lifetime`, which
+        // carries the fix recipe. See docs/solid-program.md -> Open threads.
         let _guard = match acquire_sse_guard() {
             Ok(g) => g,
             Err(resp) => return Some(*resp),
@@ -458,6 +465,7 @@ async fn route_pre_dispatch(
         if let Err(resp) = check_auth(headers, state) {
             return Some(*resp);
         }
+        // Same unheld-cap caveat as /api/events above.
         let _guard = match acquire_sse_guard() {
             Ok(g) => g,
             Err(resp) => return Some(*resp),
@@ -2644,5 +2652,68 @@ mod tests {
         let mut b = a.clone();
         b[63] ^= 1;
         assert!(!timing_safe_eq(&a, &b));
+    }
+
+    /// The SSE viewer cap is ACQUIRED BUT NOT HELD (SOLID R124).
+    ///
+    /// `route_pre_dispatch` documents the cap as protecting against a flood:
+    /// "bound concurrent SSE connections so a flood of viewers can't exhaust
+    /// tasks/memory". It does not. `let _guard = acquire_sse_guard()` binds a
+    /// LOCAL, and `return Some(sse_stream(...).await)` drops every local in
+    /// scope — so the slot is released the moment the response is CONSTRUCTED,
+    /// not when the connection ends. The guard therefore bounds concurrent
+    /// response *setup*, a window of microseconds, instead of concurrent
+    /// connections.
+    ///
+    /// MEASURED, not reasoned: 70 responses are opened and all held in a Vec,
+    /// and ZERO of them are 503. If the slot were held, the 65th onward would
+    /// be 503 (SSE_MAX_CONNECTIONS = 64).
+    ///
+    /// This test pins the CURRENT behaviour so the fix is a deliberate act. It
+    /// is NOT fixed here: making the cap real changes what a client sees (the
+    /// 65th viewer now gets 503 instead of a stream), which rule 1 reserves
+    /// for a documented security hole *with sign-off*. Recorded in
+    /// docs/solid-program.md -> Open threads.
+    ///
+    /// THE FIX (when signed off): the guard must be owned by the RESPONSE, not
+    /// by this function — move it into the stream so it drops when the body
+    /// ends. `sse_stream`/`sse_term_stream` would take the guard as a
+    /// parameter and hold it inside the returned body's stream (e.g. captured
+    /// by the generator closure, or held by a wrapper that owns both). Then
+    /// this test's expectation inverts: 70 held responses must yield 6 x 503.
+    #[tokio::test]
+    async fn sse_viewer_cap_is_not_held_for_the_connection_lifetime() {
+        let st = state();
+        let opened = crate::web::sse::SSE_MAX_CONNECTIONS + 6;
+        let mut held = Vec::with_capacity(opened);
+        let mut refused = 0usize;
+        for _ in 0..opened {
+            let r = Request::builder()
+                .method("GET")
+                .uri("/api/events")
+                .header("Authorization", format!("Bearer {TEST_TOKEN}"))
+                .body(Body::empty())
+                .unwrap();
+            let (parts, _) = r.into_parts();
+            let resp = route_pre_dispatch(&parts.method, "/api/events", None, &parts.headers, &st)
+                .await
+                .expect("GET /api/events must be handled by the pre-dispatch layer");
+            if resp.status() == StatusCode::SERVICE_UNAVAILABLE {
+                refused += 1;
+            }
+            held.push(resp);
+        }
+        assert_eq!(
+            refused, 0,
+            "FIXED? The SSE viewer cap is now enforced per-connection: {opened} held \
+             responses produced {refused} refusals (was 0 while the guard was dropped \
+             at return). Delete this pin and update the ledger Open-threads entry — \
+             and make sure the cap is still RELEASED when a stream ends, which a \
+             naive guard-moved-into-the-response can leak."
+        );
+        // Keep the responses alive across the assertion so the count above is
+        // about held connections, not about sequential construction.
+        assert_eq!(held.len(), opened);
+        drop(held);
     }
 }

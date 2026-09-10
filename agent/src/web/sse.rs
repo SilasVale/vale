@@ -33,7 +33,7 @@ async fn send_bounded(tx: &mpsc::Sender<Result<Bytes, Infallible>>, bytes: Bytes
 }
 
 static SSE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
-const SSE_MAX_CONNECTIONS: usize = 64;
+pub(crate) const SSE_MAX_CONNECTIONS: usize = 64;
 pub(crate) struct SseConnectionGuard;
 impl SseConnectionGuard {
     pub(crate) fn acquire() -> Option<Self> {
@@ -55,6 +55,13 @@ impl Drop for SseConnectionGuard {
 /// Acquire an SSE viewer slot, or the 503 response to return when the
 /// 64-viewer pool is full. The /api/events and /api/events/term handlers in
 /// mod.rs used to each inline the same acquire-match-503 block.
+///
+/// ⚠️ THE RETURNED GUARD MUST OUTLIVE THE RESPONSE. It releases its slot on
+/// `Drop`, so binding it to a local in a function that merely CONSTRUCTS the
+/// response frees the slot immediately — which is what both call sites in
+/// `mod.rs` do today (see the caveat there, and the pin in `mod.rs`'s tests).
+/// A correct call site moves it into the stream so it drops when the body
+/// ends. The counter itself, and this helper, work as documented.
 pub(crate) fn acquire_sse_guard() -> Result<SseConnectionGuard, Box<Response>> {
     match SseConnectionGuard::acquire() {
         Some(g) => Ok(g),
