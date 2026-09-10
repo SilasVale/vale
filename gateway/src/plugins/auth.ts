@@ -370,12 +370,10 @@ async function mePutUsproxy(request: Request, env: any): Promise<Response> {
 }
 
 async function mePutKeys(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  const body = await readJson(request);
-  const { name, value } = body || {};
-  if (!USER_KEY_NAMES.includes(name))
-    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  const r = await sessionAndKeyName(request, env, USER_KEY_NAMES);
+  if (r instanceof Response) return r;
+  const { user, name, body } = r;
+  const { value } = body || {};
   if (typeof value !== "string" || !value.trim())
     return jsonError(400, "value must not be empty", "invalid_request");
   const v = value.trim();
@@ -395,22 +393,26 @@ async function mePutKeys(request: Request, env: any): Promise<Response> {
 /**
  * Shared prologue of the /api/me/keys/{save,reveal,test,usage} handlers:
  * resolve the session, read the JSON body's `name` and validate it against
- * `allowed`. Returns the {user, name} pair, or a Response the caller should
- * return directly (401 / 400). The per-handler prologues used to be
- * copy-pasted; meKeyUsage passes its narrower 3-name set.
+ * `allowed`. Returns the {user, name, body} triple, or a Response the caller
+ * should return directly (401 / 400). The body rides along because the
+ * request stream is consumed by the read — callers needing more fields
+ * (save's `value`) must use this copy, never re-read. The per-handler
+ * prologues used to be copy-pasted; meKeyUsage passes its narrower 3-name
+ * set. (SOLID Round-91: mePutKeys was the last inline copy; the doc claim
+ * above is now true for all four handlers.)
  */
 async function sessionAndKeyName(
   request: Request,
   env: any,
   allowed: readonly string[],
-): Promise<{ user: any; name: string } | Response> {
+): Promise<{ user: any; name: string; body: any } | Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const body = await readJson(request);
   const name = body?.name;
   if (!allowed.includes(name))
     return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
-  return { user, name };
+  return { user, name, body };
 }
 
 async function meRevealKey(request: Request, env: any): Promise<Response> {
