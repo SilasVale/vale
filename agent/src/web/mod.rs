@@ -860,6 +860,17 @@ async fn api_session_control(
             // a stale sid after the session was closed or reaped.
             parse::invalid_params_response(e.to_string())
         })?;
+
+    // Record the handoff in the session's audit trail. Logged HERE, at the point
+    // the decision is made, rather than inside the manager: the manager owns the
+    // in-memory hold and must not grow a dependency on the log, while this is the
+    // layer that knows a decision actually happened.
+    //
+    // Best-effort by design — `log_control` returns nothing, because a log
+    // failure must not cost the operator the keyboard. The consequence is that
+    // the record can be MISSING an event; it can never invent one.
+    sessions_logger().log_control(sid, if held { "human" } else { "ai" });
+
     Ok(serde_json::json!({ "ok": true, "id": sid, "held_by_human": held }))
 }
 
@@ -2229,6 +2240,42 @@ mod tests {
         )
         .await;
         assert_eq!(json_body(resp).await["held_by_human"], false);
+
+        // THE AUDIT TRAIL must record BOTH handoffs, in order, through the real
+        // route. Without this the logger's own pin proves the logger works while
+        // nothing proves the route calls it — a mutant that always logs "human"
+        // passed every test until this assertion existed.
+        let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
+        let events = json_body(resp).await["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let controls: Vec<String> = events
+            .iter()
+            .filter(|e| e["kind"] == "control")
+            .map(|e| e["status"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert_eq!(
+            controls,
+            vec!["human".to_string(), "ai".to_string()],
+            "the route must record the handoff AND the hand-back, in order: {events:?}"
+        );
+        // `seq` is documented as per-session monotonic. Each route call builds a
+        // FRESH logger via `sessions_logger()`, so the second call must still see
+        // the first call's event — if the write were left unflushed in a
+        // per-instance buffer, both events would claim the same seq and a reader
+        // ordering by seq would see a broken trail.
+        let seqs: Vec<u64> = events
+            .iter()
+            .filter(|e| e["kind"] == "control")
+            .map(|e| e["seq"].as_u64().unwrap_or(0))
+            .collect();
+        assert_eq!(seqs.len(), 2);
+        assert!(
+            seqs[0] < seqs[1],
+            "control events must not share a seq (got {seqs:?}) — the trail is \
+             ordered by it, and two equal seqs mean one write never reached disk"
+        );
 
         st.terminal_mgr.term_close(&sid).await.ok();
         let _ = std::fs::remove_file(cfg_path);

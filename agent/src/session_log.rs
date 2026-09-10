@@ -196,6 +196,35 @@ impl SessionEvent {
             duration_ms: None,
         }
     }
+
+    /// Control handoff: `holder` is `"human"` or `"ai"`.
+    ///
+    /// A distinct `kind` rather than one more `status` value, on purpose. The
+    /// `status` / `opened` / `closed` / `exited:N` vocabulary describes the
+    /// SESSION's lifecycle; this describes WHO WAS DRIVING, a different axis
+    /// that has to survive the session's own status changes. Folding a holder
+    /// into `status` would also force `terminalStatus()` — which maps statuses
+    /// onto terminal states — to learn to ignore a value that is not a state.
+    ///
+    /// This is the DURABLE half of the handoff, and it is the half that can be
+    /// durable: the live hold is deliberately in-memory only (an agent restart
+    /// releases it, so a crash cannot leave a device nobody can drive), but the
+    /// fact that a person took the keyboard is a statement about the past. It is
+    /// what lets a later reader of this file tell an AI-driven window from a
+    /// human-driven one.
+    pub fn control(seq: u64, holder: &str) -> Self {
+        Self {
+            seq,
+            ts: crate::unix_now(),
+            kind: "control".into(),
+            command: None,
+            text: None,
+            exit_code: None,
+            reason: None,
+            status: Some(holder.to_string()),
+            duration_ms: None,
+        }
+    }
 }
 
 /// One JSONL file per session under the log dir. Internal state is a mutex
@@ -226,11 +255,39 @@ impl SessionLogger {
         &self.dir
     }
 
+    /// Next per-session sequence number.
+    ///
+    /// SEEDED FROM THE FILE on this instance's first event for a session. The
+    /// counter is per-instance and the writer opens in APPEND mode, so without
+    /// seeding a SECOND logger writing to an existing session restarts at 1 and
+    /// the file ends up with two `seq: 1` events. `SessionEvent` documents `seq`
+    /// as "per-session monotonic" and readers order by it, so that is a broken
+    /// record rather than a cosmetic duplicate.
+    ///
+    /// Not hypothetical: the long-lived logger inside the terminal plugin owns
+    /// every write during normal operation, so the invariant held by accident.
+    /// `api_session_control` builds a FRESH logger per request (the decision is
+    /// made at the web layer, and the manager must not grow a dependency on the
+    /// log), and it was the first writer to expose the assumption — the handoff
+    /// and the hand-back both claimed seq 1, measured.
+    ///
+    /// Seeding costs one bounded file read per (instance, session): the audit
+    /// file is trimmed to ~2000 lines at close, and the read happens once rather
+    /// than per event.
     fn next_seq(&self, sid: &str) -> u64 {
         let mut seqs = self.seq.lock().unwrap_or_else(|p| p.into_inner());
-        let n = seqs.entry(sid.to_string()).or_insert(0);
+        let n = seqs
+            .entry(sid.to_string())
+            .or_insert_with(|| self.max_seq_on_disk(sid));
         *n += 1;
         *n
+    }
+
+    /// Highest `seq` already recorded for a session, or 0 when the file is
+    /// absent/unreadable/empty. Reuses `read_events`, which already tolerates a
+    /// torn tail and non-event lines.
+    fn max_seq_on_disk(&self, sid: &str) -> u64 {
+        self.read_events(sid).map(|(_, max)| max).unwrap_or(0)
     }
 
     /// Append one event for a session. Best-effort: a write error (disk
@@ -422,6 +479,16 @@ impl SessionLogger {
     }
     pub fn log_status(&self, sid: &str, status: &str) {
         self.log(sid, SessionEvent::status(0, status));
+    }
+
+    /// Record a control handoff (`holder` is `"human"` or `"ai"`).
+    ///
+    /// Best-effort like every other write here — a log failure must never block
+    /// or break the terminal — which is also why the caller does not check a
+    /// result. A missing control event costs a reader some context; failing the
+    /// handoff itself would cost the operator the keyboard.
+    pub fn log_control(&self, sid: &str, holder: &str) {
+        self.log(sid, SessionEvent::control(0, holder));
     }
 
     /// Replay a session file, skipping the version header. Returns the parsed
@@ -904,6 +971,130 @@ mod tests {
         assert_eq!(rows[1].0, "b");
         assert_eq!(rows[1].1["kind"].as_str(), Some("status"));
         assert_eq!(rows[1].1["status"].as_str(), Some("opened"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn control_handoff_is_recorded_with_its_holder() {
+        // The durable half of the session hold. The live hold is in-memory only
+        // (a restart releases it), so this event is the ONLY way a later reader
+        // can tell an AI-driven window from a human-driven one — which is why it
+        // is pinned rather than assumed.
+        let dir = temp_dir("control");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_command_start("s", "display version");
+        logger.log_command_end("s", Some(0), None, Some(900));
+        logger.log_control("s", "human");
+        logger.log_command_start("s", "vlan 100");
+        logger.log_control("s", "ai");
+        logger.flush_all();
+
+        let events = logger.events_of("s");
+        let controls: Vec<&serde_json::Value> =
+            events.iter().filter(|e| e["kind"] == "control").collect();
+        assert_eq!(controls.len(), 2, "both handoffs recorded: {events:?}");
+        assert_eq!(controls[0]["status"], "human");
+        assert_eq!(controls[1]["status"], "ai");
+
+        // ORDER is the payload: the whole value of these events is telling a
+        // reader which commands fell inside the human window.
+        let human_at = events
+            .iter()
+            .position(|e| e["kind"] == "control" && e["status"] == "human")
+            .unwrap();
+        let vlan_at = events
+            .iter()
+            .position(|e| e["kind"] == "command/start" && e["command"] == "vlan 100")
+            .unwrap();
+        assert!(
+            human_at < vlan_at,
+            "the human marker must precede the command it governs"
+        );
+
+        // `control` is its OWN kind, not a `status` value: the status vocabulary
+        // is the session's lifecycle, and a holder folded into it would make
+        // terminalStatus() treat a holder as a terminal state.
+        assert!(
+            events
+                .iter()
+                .all(|e| e["kind"] != "status" || e["status"] != "human"),
+            "a holder must never appear as a session status"
+        );
+
+        // It must survive the fold that decides a session's last state.
+        let st = logger.terminal_state_of("s").unwrap();
+        assert_eq!(st["kind"], "control", "last event folds to the handoff");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seq_stays_monotonic_across_logger_instances() {
+        // The counter is per-instance and the writer appends, so a second logger
+        // used to restart at 1 — two `seq: 1` events in one file, while the type
+        // documents `seq` as per-session monotonic and readers order by it.
+        //
+        // The long-lived terminal-plugin logger owns normal writes, so this held
+        // by accident until a web-layer writer built a fresh logger per request.
+        // Pinned with TWO instances on purpose: one instance cannot show it.
+        let dir = temp_dir("seqinst");
+        let first = SessionLogger::new(dir.clone());
+        first.log_command_start("s", "one");
+        first.log_command_end("s", Some(0), None, None);
+
+        let second = SessionLogger::new(dir.clone());
+        second.log_control("s", "human");
+
+        let third = SessionLogger::new(dir.clone());
+        third.log_control("s", "ai");
+        third.flush_all();
+
+        let seqs: Vec<u64> = third
+            .events_of("s")
+            .iter()
+            .map(|e| e["seq"].as_u64().unwrap_or(0))
+            .collect();
+        assert_eq!(seqs.len(), 4, "every event reached disk: {seqs:?}");
+        let mut sorted = seqs.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            seqs.len(),
+            "seq must not repeat across logger instances (got {seqs:?}) — a reader \
+             ordering by it would see a broken trail"
+        );
+        assert!(
+            seqs.windows(2).all(|w| w[0] < w[1]),
+            "seq must increase in file order (got {seqs:?})"
+        );
+        // CONTIGUOUS, not merely increasing. This is an audit trail: with gaps
+        // by design, a reader cannot tell a skipped number from a DELETED LINE,
+        // which is exactly the question an audit trail exists to answer. The
+        // +1 mutation on the seed (max+1 instead of max) is invisible to a
+        // monotonicity check and caught only here.
+        assert_eq!(
+            seqs,
+            (1..=seqs.len() as u64).collect::<Vec<_>>(),
+            "seq must be contiguous from 1 (got {seqs:?})"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fresh_logger_on_an_empty_session_still_starts_at_one() {
+        // The other half: seeding must not push the first event to seq 2. A
+        // missing file is not an error and must not be treated as "one event
+        // already there".
+        let dir = temp_dir("seqfresh");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_control("new", "human");
+        logger.flush_all();
+        let events = logger.events_of("new");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["seq"].as_u64(), Some(1));
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
