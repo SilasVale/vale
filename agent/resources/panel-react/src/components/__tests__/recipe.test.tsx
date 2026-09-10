@@ -17,6 +17,7 @@ import { PathView } from "../PathView";
 import { callTool } from "../../lib/api";
 import { buildRecipe, recipeWarnings, suggestedTitle, RECIPE_MARKER, RECIPE_TAG } from "../../lib/recipe";
 import { derivePath, type PathStep, type SessionPath } from "../../lib/path";
+import { groupRounds } from "../../hooks/useTrajectory";
 import type { CommandEvent } from "../../hooks/useCommandEvents";
 
 vi.mock("../../lib/api", async (importOriginal) => ({
@@ -43,7 +44,7 @@ const messyPath: SessionPath = derivePath([
 
 const step = (o: Partial<PathStep>): PathStep => ({
   id: "x", index: 1, command: "c", state: "ok", owner: "ai", stateLabel: "0",
-  startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0, ...o,
+  startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0, intent: null, considered: [], ...o,
 });
 
 describe("buildRecipe", () => {
@@ -182,5 +183,45 @@ describe("PathView recipe flow", () => {
     fireEvent.click(screen.getByText("Save as recipe"));
     expect(document.querySelector(".path-recipe-hint")!.textContent)
       .toMatch(/does not run by itself/);
+  });
+});
+
+describe("recipes keep the WHY", () => {
+  // A recipe is the durable artifact of a run — the thing someone re-reads a
+  // week later, or hands to someone else. Commands alone teach the what and lose
+  // the why, which is the difference between a script and something reusable.
+  it("carries the session goal and each step's reasoning", () => {
+    const path = derivePath([
+      ...groupRounds([
+        ev({ seq: 1, ts: 100, kind: "command/start", command: "display ont info 0 1",
+             intent: "check whether the ONU is actually online",
+             considered: ["reset the ONU", "check the OLT uplink"] }),
+        ev({ seq: 2, ts: 101, kind: "command/end", exit_code: 0, duration_ms: 900 }),
+      ]),
+    ], []);
+    const r = buildRecipe(path, {
+      name: "ONU check",
+      sessionLabel: "d1",
+      sessionKind: "ssh",
+      goal: "provision the ONU on VLAN 100",
+    });
+    expect(r.content).toContain("# Goal: provision the ONU on VLAN 100");
+    expect(r.content).toContain("why: check whether the ONU is actually online");
+    expect(r.content).toContain("instead of: reset the ONU | check the OLT uplink");
+  });
+
+  it("omits the why lines entirely when there is none", () => {
+    // No placeholder lines: a recipe for a client that sends no reasoning must
+    // look exactly as it did before this feature existed.
+    const path = derivePath([
+      ...groupRounds([
+        ev({ seq: 1, ts: 100, kind: "command/start", command: "ls" }),
+        ev({ seq: 2, ts: 101, kind: "command/end", exit_code: 0, duration_ms: 10 }),
+      ]),
+    ], []);
+    const r = buildRecipe(path, { name: "plain" });
+    expect(r.content).not.toContain("why:");
+    expect(r.content).not.toContain("instead of:");
+    expect(r.content).not.toContain("# Goal:");
   });
 });

@@ -25,6 +25,10 @@ export interface CommandEvent {
   reason?: string | null;
   status?: string | null;
   duration_ms?: number | null;
+  /** command/start only: WHY the agent ran this, in its own words (optional). */
+  intent?: string | null;
+  /** command/start only: the alternatives it says it passed over. */
+  considered?: string[] | null;
 }
 
 export interface CommandCard {

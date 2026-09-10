@@ -57,6 +57,15 @@ export interface PathStep {
   reason: string | null;
   /** Output character count — a cheap size signal without shipping the text. */
   outputChars: number;
+  /** WHY the agent says it ran this. Null for every step logged before the
+   *  intent surface existed, and for clients that do not send one — the view
+   *  must render those two cases identically, because to a reader they are the
+   *  same thing: no reason was given. */
+  intent: string | null;
+  /** The alternatives the agent says it passed over. The branches NOT taken —
+   *  the one thing a command log can never reconstruct, and the reason this
+   *  field exists at all. */
+  considered: string[];
 }
 
 export interface PathSummary {
@@ -144,6 +153,9 @@ export function derivePath(rounds: TrajRound[], controlEvents: CommandEvent[] = 
       durationMs: r.durationMs,
     };
     const st = cardState(asCard);
+    // The reasoning rides the round's own command/start event, so it needs no
+    // new plumbing — a step and its reason arrive together or not at all.
+    const start = r.events.find((e) => e.kind === "command/start");
     indexOf[r.id] = steps.length;
     steps.push({
       id: r.id,
@@ -157,6 +169,8 @@ export function derivePath(rounds: TrajRound[], controlEvents: CommandEvent[] = 
       exitCode: r.exitCode,
       reason: r.reason,
       outputChars: r.events.reduce((n, e) => n + (e.kind === "output" ? (e.text?.length ?? 0) : 0), 0),
+      intent: start?.intent ?? null,
+      considered: Array.isArray(start?.considered) ? start!.considered! : [],
     });
   }
 

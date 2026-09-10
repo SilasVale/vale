@@ -97,7 +97,7 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
     setRecipeBusy(true);
     setRecipeMsg(null);
     try {
-      const draft = buildRecipe(path, { name: recipeName, sessionKind, sessionLabel });
+      const draft = buildRecipe(path, { name: recipeName, sessionKind, sessionLabel, goal });
       await callTool("memory_save", {
         title: draft.title,
         content: draft.content,
@@ -224,6 +224,11 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
           <li key={s.id} className={`path-step s-${s.state}`}>
             <span className="path-step-rail" aria-hidden="true" />
             <span className="cmd-dot path-step-dot" data-state={s.state} />
+            {/* A COLUMN wrapper, because `.path-step` is itself `display: flex`
+                (rail + dot + body in a row). Without this the reason and the
+                alternatives become flex items BESIDE the command instead of
+                under it — which is what happened, and what the render showed. */}
+            <div className="path-step-main">
             <button
               type="button"
               className="path-step-body"
@@ -245,6 +250,31 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
                 )}
               </span>
             </button>
+            {/* THE INTENT LAYER, rendered. The reason sits UNDER the command it
+                explains, and the branches not taken sit under that — a step that
+                made a real choice reads as a choice rather than as an
+                inevitability, which is the whole difference between a command
+                log and an account of what happened.
+
+                Both are omitted when absent, WITHOUT a placeholder. Most steps
+                will have no stated reason (no client sends one yet, and not
+                every step needs one), and filling that space with "no reason
+                given" would bury the steps that DO have one. */}
+            {s.intent && (
+              <p className="path-step-why">
+                <span className="path-step-why-mark" aria-hidden="true">→</span>
+                {s.intent}
+              </p>
+            )}
+            {s.considered.length > 0 && (
+              <p className="path-step-alt" title="Alternatives the agent says it passed over">
+                <span className="path-step-alt-label">instead of</span>
+                {s.considered.map((c) => (
+                  <span key={c} className="path-step-alt-item">{c}</span>
+                ))}
+              </p>
+            )}
+            </div>
           </li>
         ))}
       </ol>

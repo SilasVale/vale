@@ -53,6 +53,10 @@ export interface RecipeInput {
    *  what the commands were run against. */
   sessionLabel?: string;
   sessionKind?: string;
+  /** What the session was asked to achieve. A recipe without its purpose is a
+   *  list of commands someone has to reverse-engineer — and the purpose is the
+   *  one thing that cannot be recovered from the commands themselves. */
+  goal?: string | null;
 }
 
 /**
@@ -89,9 +93,20 @@ export function buildRecipe(path: SessionPath, input: RecipeInput): RecipeDraft 
       "# NOTE: this run did not complete cleanly — review the marked steps before reusing it.",
     );
   }
+  if (input.goal) {
+    lines.push(`# Goal: ${input.goal}`);
+  }
   lines.push("#", "# Commands, in order:");
   path.steps.forEach((st, i) => {
     lines.push(`${i + 1}. ${st.command}`);
+    // The reasoning is carried as an indented comment. It is the part a reader
+    // cannot reconstruct: why THIS command, and what else was on the table. A
+    // recipe that keeps only the commands teaches the what and loses the why,
+    // which is the difference between a script and something reusable.
+    if (st.intent) lines.push(`   #    why: ${st.intent}`);
+    if (st.considered.length > 0) {
+      lines.push(`   #    instead of: ${st.considered.join(" | ")}`);
+    }
   });
 
   return {

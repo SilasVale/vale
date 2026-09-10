@@ -208,6 +208,13 @@ describe("recessed content surfaces", () => {
       // the brand orange gives white only 4.30).
       ['.path-goal-label', "--accent-on-soft"],
       ['.path-goal-text', "--accent-on-soft"],
+      // The intent layer's row. The alternatives are the branches NOT taken —
+      // real content and the reason the field exists — so struck-through is a
+      // decoration, not a licence to be unreadable. Measured before: the label
+      // 2.56, the items 4.40.
+      ['.path-step-why-mark', "--chrome-ink-dim"],
+      ['.path-step-alt-label', "--chrome-ink-dim"],
+      ['.path-step-alt-item', "--chrome-ink-dim"],
     ];
     for (const [sel, token] of textSites) {
       const block = blockOf(css, sel);

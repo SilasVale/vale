@@ -92,7 +92,8 @@ describe("derivePath", () => {
 describe("summarizePath", () => {
   const step = (o: Partial<PathStep>): PathStep => ({
     id: "x", index: 1, command: "c", state: "ok", owner: "ai", stateLabel: "0",
-    startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0, ...o,
+    startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0,
+    intent: null, considered: [], ...o,
   });
 
   it("reports the total as a FLOOR when some steps have no duration", () => {
@@ -133,6 +134,7 @@ describe("attentionSteps", () => {
     const step = (id: string, state: PathStep["state"], index: number): PathStep => ({
       id, index, command: id, state, owner: "ai", stateLabel: "", startedAt: 0,
       durationMs: null, exitCode: null, reason: null, outputChars: 0,
+      intent: null, considered: [],
     });
     const out = attentionSteps([
       step("ok1", "ok", 1),
@@ -291,5 +293,93 @@ describe("ownership (who was driving)", () => {
     const note = container.querySelector(".path-note")!.textContent!;
     expect(note).toMatch(/who was driving/i);
     expect(note).toMatch(/not reconstructed/i);
+  });
+});
+
+describe("the intent layer in the path", () => {
+  // Events exactly as the agent now writes them: the reasoning rides the
+  // command/start event. Driven through the REAL component so the test covers
+  // the whole path from event shape to rendered pixels.
+  function withIntent(extra: Partial<CommandEvent> = {}): CommandEvent[] {
+    return [
+      ev({ seq: 1, ts: 100, kind: "status", status: "opened" }),
+      ev({
+        seq: 2,
+        ts: 200,
+        kind: "command/start",
+        command: "display ont info 0 1",
+        ...extra,
+      }),
+      ev({ seq: 3, ts: 201, kind: "output", text: "ONT 0/1 online" }),
+      ev({ seq: 4, ts: 202, kind: "command/end", exit_code: 0, duration_ms: 900 }),
+    ];
+  }
+
+  it("renders the reason under the command, and the branches NOT taken", () => {
+    render(
+      <PathView
+        events={withIntent({
+          intent: "check whether the ONU is actually online",
+          considered: ["reset the ONU", "check the OLT uplink"],
+        })}
+      />,
+    );
+    expect(document.querySelector(".path-step-why")!.textContent).toContain(
+      "check whether the ONU is actually online",
+    );
+    const alts = [...document.querySelectorAll(".path-step-alt-item")].map((e) => e.textContent);
+    expect(alts).toEqual(["reset the ONU", "check the OLT uplink"]);
+  });
+
+  it("stacks the reason UNDER the command, not beside it", () => {
+    // The placement is the whole point, and asserting mere presence did not
+    // catch it: `.path-step` is `display: flex`, so a `<p>` emitted as a direct
+    // child became a flex ITEM sitting beside the command — overlapping it in
+    // the render while every presence assertion stayed green. The reason must
+    // live inside the same column as the body it explains.
+    render(
+      <PathView
+        events={withIntent({ intent: "why this ran", considered: ["another way"] })}
+      />,
+    );
+    const main = document.querySelector(".path-step-main");
+    expect(main, "the step needs a column wrapper").not.toBeNull();
+    expect(main!.querySelector(".path-step-body")).not.toBeNull();
+    expect(main!.querySelector(".path-step-why")).not.toBeNull();
+    expect(main!.querySelector(".path-step-alt")).not.toBeNull();
+    // And NOT a direct child of the row, which is what broke it.
+    expect(document.querySelector(".path-step > .path-step-why")).toBeNull();
+    expect(document.querySelector(".path-step > .path-step-alt")).toBeNull();
+  });
+
+  it("does NOT pad a reasonless step with a placeholder", () => {
+    // Most steps will have no stated reason (no client sends one yet, and not
+    // every step needs one). Filling that space would bury the steps that DO
+    // have one — the only information worth surfacing here.
+    render(<PathView events={withIntent()} />);
+    expect(document.querySelector(".path-step-why")).toBeNull();
+    expect(document.querySelector(".path-step-alt")).toBeNull();
+  });
+
+  it("reads absent reasoning as absent, not as an empty string", () => {
+    const p = derivePath(groupRounds(withIntent()), []);
+    expect(p.steps[0].intent).toBeNull();
+    expect(p.steps[0].considered).toEqual([]);
+  });
+
+  it("shows the goal above the summary it is judged against", () => {
+    render(
+      <PathView
+        events={withIntent({ intent: "why" })}
+        goal="provision the ONU on VLAN 100"
+      />,
+    );
+    const goal = document.querySelector(".path-goal");
+    expect(goal).not.toBeNull();
+    expect(goal!.textContent).toContain("provision the ONU on VLAN 100");
+    // ABOVE the summary in document order, so "2 failed" reads directly under
+    // what the run was for — the whole point of showing them together.
+    const summary = document.querySelector(".path-summary")!;
+    expect(goal!.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
