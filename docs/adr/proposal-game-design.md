@@ -111,6 +111,30 @@ reasoning about the sequence rather than about one step. E2's observation still
 holds — `terminal_jobs` proves the job shape is buildable — but a plan is not a
 shape problem; it is data only a client can supply.
 
+## 2.2 What running it for real found that the tests did not
+
+Every unit test passed while **arming the approval gate left no trace in the
+audit trail**. The hold was recorded, the goal was recorded, and the single switch
+that decides whether commands run unasked was invisible — so a reader could not
+tell whether a command ran because the operator approved it or because the gate
+was never on. That is the exact question the evidence beat exists to answer.
+
+It was found by building the Linux agent, running it on loopback, and driving the
+whole surface over HTTP as a client would. Each piece was individually correct:
+the manager stored the mode, the route returned it, the tests covered both. Only
+the joined-up history was missing, and no unit test was asking for it.
+
+The same run confirmed the fail-closed property on a real process: an execute left
+unanswered for the gate's full 60 s window **never ran** — the shell output
+contained only the approved commands, and the refused one never appeared as a
+`command/start`.
+
+That session is now repeatable: the E2E suite gained a `governance` section that
+is deliberately platform-neutral (tool calls and HTTP only — no PowerShell, no
+path joining), so it runs against a Linux agent as well as a device. The lesson is
+narrow enough to state plainly: **green tests describe the pieces, not the
+product.**
+
 ## 3. Four laws (each with its evidence)
 
 ### Law 1 — State must be discrete enough to need no reading
