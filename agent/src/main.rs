@@ -379,6 +379,13 @@ pub(crate) fn unknown_key_warnings(config_path: &Path) -> Vec<String> {
             ],
         ),
         ("platform", &["console_url", "download_url"]),
+        // The memory plugin's capacity policy (vale-command-core MemoryConfig).
+        // The panel's Settings PUT persists the SERIALIZED config, so this
+        // section shows up with null defaults on any device whose settings were
+        // ever saved — omitting it here made every boot warn
+        // "unknown top-level key 'memory'" about a key the agent itself writes
+        // and reads.
+        ("memory", &["max_entries", "max_bytes", "retention_days"]),
     ];
     let Ok(raw) = std::fs::read_to_string(config_path) else {
         return Vec::new();
@@ -625,6 +632,27 @@ mod tests {
     fn unknown_keys_clean_config_is_silent() {
         let p = scratch("server:\n  host: 127.0.0.1\n  port: 18080\nterminal:\n  buffer_mb: 8\n");
         assert!(unknown_key_warnings(&p).is_empty());
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn unknown_keys_accepts_every_section_the_agent_itself_writes() {
+        // The panel's Settings PUT persists the SERIALIZED config, so a device
+        // that ever saved settings carries every section below — including
+        // `memory` with its null Option defaults. None of them may be reported
+        // as unknown (d1 warned "unknown top-level key 'memory'" on every boot,
+        // and a user following that hint would delete the memory plugin's
+        // capacity config).
+        let p = scratch(concat!(
+            "server:\n  host: 127.0.0.1\n  port: 18080\n  name: vale-agent\n",
+            "  device_token: t\n  proxy_secret: s\n",
+            "serial:\n  default_baud_rate: 115200\n  default_timeout_ms: 1000\n",
+            "terminal:\n  buffer_mb: 8\n",
+            "browser:\n  page_load_timeout_secs: 30\n  headless_executable: null\n  headless_cdp_port: null\n",
+            "platform:\n  console_url: https://api.saisi.online\n  download_url: https://agent.saisi.online\n",
+            "memory:\n  max_entries: null\n  max_bytes: null\n  retention_days: null\n",
+        ));
+        assert_eq!(unknown_key_warnings(&p), Vec::<String>::new());
         std::fs::remove_file(&p).ok();
     }
 
