@@ -78,8 +78,11 @@
   color: var(--chrome-ink-dim);
   cursor: pointer;
 }
-#cmd-toggle:hover { border-color: var(--amber-bright); color: var(--amber-bright); }
-#cmd-toggle.active { border-color: var(--amber-bright); color: var(--amber-bright); background: rgba(217, 72, 15, 0.18); }
+/* --warn-ink, not --amber-bright: the latter is documented as "accent readable
+   on DARK chrome", and this button sits on LIGHT chrome in the default theme —
+   measured 1.9 there. --warn-ink is the token that reads in BOTH themes. */
+#cmd-toggle:hover { border-color: var(--warn-ink); color: var(--warn-ink); }
+#cmd-toggle.active { border-color: var(--warn-ink); color: var(--warn-ink); background: var(--warn-soft); }
 #term-container {
   flex: 1 1 0;
   min-height: 0;

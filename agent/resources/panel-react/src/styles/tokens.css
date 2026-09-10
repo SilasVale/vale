@@ -56,6 +56,14 @@
      it gives 3.83 in light and 3.23 in dark, both under AA. This is the darker
      reading weight. */
   --accent-on-soft: #9c3a0a;
+  /* Red readable as SMALL TEXT on --warn-soft (the approval deadline). --danger
+     measures 4.25 there, under AA. */
+  --danger-on-soft: #a51d1d;
+  /* A green solid enough to carry WHITE text. Plain --success (#2f9e44) gives
+     3.45 against white — under AA at button sizes, which is why this is a
+     separate token rather than the same one lightened. */
+  --success-solid: #1e7a33;
+  --success-text: #1e7a33;
   --ink: var(--ds-neutral-900);
   --muted: var(--ds-neutral-500);
   --faint: var(--ds-neutral-400);
@@ -183,6 +191,18 @@ body[data-theme="dark"] {
   --surface-chip: rgba(255, 255, 255, 0.07);
   /* Restated for the same computed-value reason as --surface-recessed. */
   --accent-on-soft: #ffa94d;
+  /* Restated for the same computed-value reason as the tokens above. */
+  --danger-on-soft: #ff8787;
+  /* --warn-ink is TEXT on --warn-soft, and dark is the theme where it bites:
+     the :root value is a dark brown (#92400e) chosen to read on a LIGHT wash,
+     so on the dark wash it measured 2.25 — the approval prompt's title, its
+     countdown and its "not run" note were all effectively invisible. */
+  --warn-ink: #ffc078;
+  --success-solid: #217a35;
+  /* Status ink for SMALL TEXT. --danger and --success are tuned for marks
+     (dots, borders, bars); as 11px text on their own soft wash they measure
+     4.27/3.45 in light and 3.63/5.34 in dark. These are the readable weights. */
+  --success-text: #69db7c;
 
   /* frame chrome — midnight */
   --chrome-bg: #17181d;

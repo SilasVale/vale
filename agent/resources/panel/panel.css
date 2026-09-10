@@ -57,6 +57,14 @@
      it gives 3.83 in light and 3.23 in dark, both under AA. This is the darker
      reading weight. */
   --accent-on-soft: #9c3a0a;
+  /* Red readable as SMALL TEXT on --warn-soft (the approval deadline). --danger
+     measures 4.25 there, under AA. */
+  --danger-on-soft: #a51d1d;
+  /* A green solid enough to carry WHITE text. Plain --success (#2f9e44) gives
+     3.45 against white — under AA at button sizes, which is why this is a
+     separate token rather than the same one lightened. */
+  --success-solid: #1e7a33;
+  --success-text: #1e7a33;
   --ink: var(--ds-neutral-900);
   --muted: var(--ds-neutral-500);
   --faint: var(--ds-neutral-400);
@@ -184,6 +192,18 @@ body[data-theme="dark"] {
   --surface-chip: rgba(255, 255, 255, 0.07);
   /* Restated for the same computed-value reason as --surface-recessed. */
   --accent-on-soft: #ffa94d;
+  /* Restated for the same computed-value reason as the tokens above. */
+  --danger-on-soft: #ff8787;
+  /* --warn-ink is TEXT on --warn-soft, and dark is the theme where it bites:
+     the :root value is a dark brown (#92400e) chosen to read on a LIGHT wash,
+     so on the dark wash it measured 2.25 — the approval prompt's title, its
+     countdown and its "not run" note were all effectively invisible. */
+  --warn-ink: #ffc078;
+  --success-solid: #217a35;
+  /* Status ink for SMALL TEXT. --danger and --success are tuned for marks
+     (dots, borders, bars); as 11px text on their own soft wash they measure
+     4.27/3.45 in light and 3.63/5.34 in dark. These are the readable weights. */
+  --success-text: #69db7c;
 
   /* frame chrome — midnight */
   --chrome-bg: #17181d;
@@ -874,7 +894,7 @@ code {
    states raise their voice. */
 .cmd-badge[data-state="running"] { color: var(--accent-on-soft); background: var(--accent-soft); }
 .cmd-badge[data-state="ok"] { color: var(--muted); background: var(--state-muted-soft); }
-.cmd-badge[data-state="fail"] { color: var(--danger); background: var(--danger-soft); }
+.cmd-badge[data-state="fail"] { color: var(--danger-on-soft); background: var(--danger-soft); }
 .cmd-badge[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .cmd-badge[data-state="muted"] { color: var(--faint); background: var(--state-muted-soft); }
 .cmd-btn {
@@ -1253,7 +1273,7 @@ code {
 .traj-ev-end { font-size: 11px; color: var(--muted); }
 .traj-ev-code { font: 600 11px var(--font-mono); }
 .traj-ev-code[data-state="ok"] { color: var(--accent-ink); }
-.traj-ev-code[data-state="fail"] { color: var(--danger); }
+.traj-ev-code[data-state="fail"] { color: var(--danger-on-soft); }
 .traj-ev-status { vertical-align: middle; }
 
 /* ---------- plugins page ---------- */
@@ -1381,7 +1401,7 @@ code {
 .plug-tag[data-state="ongoing"] { color: var(--accent-on-soft); background: var(--accent-soft); }
 .plug-tag[data-state="success"] { color: var(--muted); background: var(--state-muted-soft); }
 .plug-tag[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
-.plug-tag[data-state="error"] { color: var(--danger); background: var(--danger-soft); }
+.plug-tag[data-state="error"] { color: var(--danger-on-soft); background: var(--danger-soft); }
 .plug-tag[data-state="muted"] { color: var(--faint); background: var(--state-muted-soft); }
 .plug-card {
   flex: none;
@@ -2067,7 +2087,7 @@ code {
 .connect-probe { margin: 8px 0 0; font-size: 12.5px; font-weight: 600; }
 /* The two probe outcomes reuse the status tokens rather than raw colours, so
    they follow the theme like every other state in this sheet. */
-.connect-probe.ok { color: var(--success); }
+.connect-probe.ok { color: var(--success-text); }
 .connect-probe.fail { color: var(--danger); }
 .connect-foot { margin-top: 9px; }
 
@@ -2098,7 +2118,7 @@ code {
 .path-summary-n { font: 650 19px var(--font); letter-spacing: -0.02em; }
 .path-summary-label { font-size: 12px; color: var(--muted); }
 .path-summary-bad { font-size: 12px; font-weight: 600; color: var(--danger); }
-.path-summary-good { font-size: 12px; color: var(--success); }
+.path-summary-good { font-size: 12px; color: var(--success-text); }
 .path-summary-live {
   font-size: 11px; font-weight: 600; color: var(--accent-on-soft);
   background: var(--accent-soft); border-radius: 999px; padding: 1px 8px;
@@ -2126,7 +2146,7 @@ code {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .path-attention-tag { flex: none; font-size: 10.5px; font-weight: 600; }
-.path-attention-tag.s-fail { color: var(--danger); }
+.path-attention-tag.s-fail { color: var(--danger-on-soft); }
 .path-attention-tag.s-warn { color: var(--warn-ink); }
 .path-attention-tag.s-running { color: var(--accent-on-soft); }
 
@@ -2204,7 +2224,7 @@ code {
 .path-step-meta { flex: none; display: flex; align-items: baseline; gap: 8px; }
 .path-step-tag { font-size: 10.5px; font-weight: 600; }
 .path-step-tag.s-ok { color: var(--muted); }
-.path-step-tag.s-fail { color: var(--danger); }
+.path-step-tag.s-fail { color: var(--danger-on-soft); }
 .path-step-tag.s-warn { color: var(--warn-ink); }
 .path-step-tag.s-running { color: var(--accent-on-soft); }
 .path-step-tag.s-muted { color: var(--faint); }
@@ -2741,8 +2761,11 @@ button.dtab-close:hover { opacity: 1; }
   color: var(--chrome-ink-dim);
   cursor: pointer;
 }
-#cmd-toggle:hover { border-color: var(--amber-bright); color: var(--amber-bright); }
-#cmd-toggle.active { border-color: var(--amber-bright); color: var(--amber-bright); background: rgba(217, 72, 15, 0.18); }
+/* --warn-ink, not --amber-bright: the latter is documented as "accent readable
+   on DARK chrome", and this button sits on LIGHT chrome in the default theme —
+   measured 1.9 there. --warn-ink is the token that reads in BOTH themes. */
+#cmd-toggle:hover { border-color: var(--warn-ink); color: var(--warn-ink); }
+#cmd-toggle.active { border-color: var(--warn-ink); color: var(--warn-ink); background: var(--warn-soft); }
 #term-container {
   flex: 1 1 0;
   min-height: 0;

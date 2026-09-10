@@ -172,6 +172,58 @@ describe("recessed content surfaces", () => {
     }
   });
 
+  it("status text uses the readable weight, in BOTH themes", () => {
+    // MEASURED, in a real browser against both theme blocks. The bare status
+    // tokens are tuned for MARKS (dots, borders, bars); as small text on their
+    // own soft wash they failed AA:
+    //
+    //   --danger  on --danger-soft   4.27 light / 3.63 dark
+    //   --success on a surface       3.45 light
+    //   --warn-ink (dark)            2.25   <- the approval prompt's title,
+    //                                          countdown and "not run" note
+    //
+    // Each row is a real site, not a token probe: a token measuring badly is
+    // only a defect where something actually renders it as text.
+    const css = builtCss();
+    const textSites: Array<[string, string]> = [
+      ['.cmd-badge[data-state="fail"]', "--danger-on-soft"],
+      ['.plug-tag[data-state="error"]', "--danger-on-soft"],
+      ['.path-step-tag.s-fail', "--danger-on-soft"],
+      ['.path-attention-tag.s-fail', "--danger-on-soft"],
+      ['.traj-ev-code[data-state="fail"]', "--danger-on-soft"],
+      ['.path-summary-good', "--success-text"],
+      ['.connect-probe.ok', "--success-text"],
+      // The four `.approval-*` rows belong to the gate's own commit — a pin that
+      // spans both changes makes each one fail on the other's absence.
+    ];
+    for (const [sel, token] of textSites) {
+      const block = blockOf(css, sel);
+      expect(
+        block,
+        `${sel} must use var(${token}) for TEXT — the plain status token ` +
+          `measures under AA at this size`,
+      ).toContain(`color: var(${token})`);
+    }
+
+    // Every readable-text token must exist in BOTH blocks: a :root-only
+    // declaration freezes against the light value (the computed-value trap the
+    // other tests in this file document).
+    const dark = blockOf(css, 'body[data-theme="dark"]');
+    for (const t of ["--success-text", "--danger-on-soft", "--warn-ink"]) {
+      expect(blockOf(css, ":root"), `:root must define ${t}`).toContain(`${t}:`);
+      expect(dark, `dark must restate ${t}`).toContain(`${t}:`);
+    }
+  });
+
+  it("the Logs toggle does not use the dark-chrome accent on light chrome", () => {
+    // --amber-bright is documented as "accent readable on DARK chrome" and
+    // measured 1.9 on the light chrome this button actually sits on.
+    const css = builtCss();
+    const block = blockOf(css, "#cmd-toggle.active");
+    expect(block).not.toContain("--amber-bright");
+    expect(block).toContain("var(--warn-ink)");
+  });
+
   it("the view-switch active pill does not hardcode the accent ink", () => {
     // --accent-ink is the SAME orange in both themes, so on dark chrome the
     // active label measured 3.27. --chrome-active-ink is that theme's own

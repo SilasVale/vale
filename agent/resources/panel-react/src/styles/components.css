@@ -620,7 +620,7 @@
    states raise their voice. */
 .cmd-badge[data-state="running"] { color: var(--accent-on-soft); background: var(--accent-soft); }
 .cmd-badge[data-state="ok"] { color: var(--muted); background: var(--state-muted-soft); }
-.cmd-badge[data-state="fail"] { color: var(--danger); background: var(--danger-soft); }
+.cmd-badge[data-state="fail"] { color: var(--danger-on-soft); background: var(--danger-soft); }
 .cmd-badge[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .cmd-badge[data-state="muted"] { color: var(--faint); background: var(--state-muted-soft); }
 .cmd-btn {
@@ -999,7 +999,7 @@
 .traj-ev-end { font-size: 11px; color: var(--muted); }
 .traj-ev-code { font: 600 11px var(--font-mono); }
 .traj-ev-code[data-state="ok"] { color: var(--accent-ink); }
-.traj-ev-code[data-state="fail"] { color: var(--danger); }
+.traj-ev-code[data-state="fail"] { color: var(--danger-on-soft); }
 .traj-ev-status { vertical-align: middle; }
 
 /* ---------- plugins page ---------- */
@@ -1127,7 +1127,7 @@
 .plug-tag[data-state="ongoing"] { color: var(--accent-on-soft); background: var(--accent-soft); }
 .plug-tag[data-state="success"] { color: var(--muted); background: var(--state-muted-soft); }
 .plug-tag[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
-.plug-tag[data-state="error"] { color: var(--danger); background: var(--danger-soft); }
+.plug-tag[data-state="error"] { color: var(--danger-on-soft); background: var(--danger-soft); }
 .plug-tag[data-state="muted"] { color: var(--faint); background: var(--state-muted-soft); }
 .plug-card {
   flex: none;
@@ -1813,7 +1813,7 @@
 .connect-probe { margin: 8px 0 0; font-size: 12.5px; font-weight: 600; }
 /* The two probe outcomes reuse the status tokens rather than raw colours, so
    they follow the theme like every other state in this sheet. */
-.connect-probe.ok { color: var(--success); }
+.connect-probe.ok { color: var(--success-text); }
 .connect-probe.fail { color: var(--danger); }
 .connect-foot { margin-top: 9px; }
 
@@ -1844,7 +1844,7 @@
 .path-summary-n { font: 650 19px var(--font); letter-spacing: -0.02em; }
 .path-summary-label { font-size: 12px; color: var(--muted); }
 .path-summary-bad { font-size: 12px; font-weight: 600; color: var(--danger); }
-.path-summary-good { font-size: 12px; color: var(--success); }
+.path-summary-good { font-size: 12px; color: var(--success-text); }
 .path-summary-live {
   font-size: 11px; font-weight: 600; color: var(--accent-on-soft);
   background: var(--accent-soft); border-radius: 999px; padding: 1px 8px;
@@ -1872,7 +1872,7 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .path-attention-tag { flex: none; font-size: 10.5px; font-weight: 600; }
-.path-attention-tag.s-fail { color: var(--danger); }
+.path-attention-tag.s-fail { color: var(--danger-on-soft); }
 .path-attention-tag.s-warn { color: var(--warn-ink); }
 .path-attention-tag.s-running { color: var(--accent-on-soft); }
 
@@ -1950,7 +1950,7 @@
 .path-step-meta { flex: none; display: flex; align-items: baseline; gap: 8px; }
 .path-step-tag { font-size: 10.5px; font-weight: 600; }
 .path-step-tag.s-ok { color: var(--muted); }
-.path-step-tag.s-fail { color: var(--danger); }
+.path-step-tag.s-fail { color: var(--danger-on-soft); }
 .path-step-tag.s-warn { color: var(--warn-ink); }
 .path-step-tag.s-running { color: var(--accent-on-soft); }
 .path-step-tag.s-muted { color: var(--faint); }
