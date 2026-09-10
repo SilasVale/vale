@@ -42,8 +42,16 @@
      background while the text colour flipped to #ecedef — measured contrast
      1.12, i.e. unreadable, in .cmd-out and seven other places. */
   --surface-recessed: var(--bg);
+  /* Chip / badge surface — a small raised pill INSIDE a card: the count badges
+     (session, command, trajectory, plugin), the view-switch track, tool-name
+     chips. Declared in BOTH blocks for the same reason as --surface-recessed
+     above. The raw `--ds-neutral-100` this replaces is not overridden by the
+     dark theme, so those chips stayed #f4f4f5 — bright pills glowing on a dark
+     page — while their text colour flipped light. Measured in a real browser
+     against body[data-theme="dark"]: 2.28 contrast on the view switch, and the
+     same cause on five other chips. */
+  --surface-chip: var(--ds-neutral-100);
   --ink: var(--ds-neutral-900);
-
   --muted: var(--ds-neutral-500);
   --faint: var(--ds-neutral-400);
   --line: rgba(0, 0, 0, 0.08);
@@ -164,6 +172,10 @@ body[data-theme="dark"] {
      under #ecedef text (contrast 1.12). Asserted by
      src/lib/themeContrast.test.ts. */
   --surface-recessed: var(--bg);
+  /* Restated for the same reason as --surface-recessed above, and it is not
+     optional: with only the :root declaration the chips kept their LIGHT
+     background in dark mode. A subtle raised pill instead of a light solid. */
+  --surface-chip: rgba(255, 255, 255, 0.07);
 
   /* frame chrome — midnight */
   --chrome-bg: #17181d;
@@ -400,8 +412,8 @@ code {
 .side-count {
   margin-left: auto;
   font-size: 11px;
-  color: var(--faint);
-  background: var(--ds-neutral-100);
+  color: var(--muted);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 1px 8px;
@@ -581,7 +593,7 @@ code {
   display: flex;
   align-items: center;
   gap: 2px;
-  background: var(--ds-neutral-100);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px;
@@ -599,7 +611,13 @@ code {
               background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 .view-switch-btn:hover { color: var(--chrome-ink); }
-.view-switch-btn.active { color: var(--accent-ink); background: var(--chrome-bg-3); box-shadow: var(--shadow); }
+/* Active pill uses --chrome-active-ink, NOT --accent-ink directly. In light the
+   two resolve identically (--chrome-active-ink IS var(--accent-ink) in :root),
+   so this is byte-identical there; in dark --chrome-active-ink carries the
+   theme's own "accent readable on dark chrome" value. Measured with
+   --accent-ink: the active label was #d9480f on #2a2b33 = 3.27, under AA for
+   11px text. */
+.view-switch-btn.active { color: var(--chrome-active-ink); background: var(--chrome-bg-3); box-shadow: var(--shadow); }
 
 /* ---------- status bar ---------- */
 #statusbar {
@@ -871,8 +889,8 @@ code {
 .cmd-stream-title { font-size: 12px; font-weight: 650; letter-spacing: -0.01em; }
 .cmd-stream-count {
   font-size: 11px;
-  color: var(--faint);
-  background: var(--ds-neutral-100);
+  color: var(--muted);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 7px;
@@ -1020,8 +1038,8 @@ code {
 .traj-title { font-size: 12px; font-weight: 650; letter-spacing: -0.01em; }
 .traj-count {
   font-size: 11px;
-  color: var(--faint);
-  background: var(--ds-neutral-100);
+  color: var(--muted);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 7px;
@@ -1219,8 +1237,8 @@ code {
 .plug-count {
   flex: none;
   font-size: 11px;
-  color: var(--faint);
-  background: var(--ds-neutral-100);
+  color: var(--muted);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 7px;
@@ -1290,7 +1308,7 @@ code {
   font-family: var(--font-mono, monospace);
   font-size: 10.5px;
   color: var(--muted);
-  background: var(--ds-neutral-100);
+  background: var(--surface-chip);
   border-radius: 999px;
   padding: 1px 8px;
   white-space: nowrap;
@@ -1487,7 +1505,7 @@ code {
   margin-left: auto;
   padding: 2px 4px 2px 8px;
   border-radius: 999px;
-  background: var(--ds-neutral-100);
+  background: var(--surface-chip);
   border: 1px solid var(--line-strong);
   font-size: 11px;
   color: var(--muted);
@@ -2789,9 +2807,12 @@ button.dtab-close:hover { opacity: 1; }
   transition: background 0.12s ease, color 0.12s ease;
 }
 .desktop-view-switch .view-switch-btn:hover { color: var(--chrome-ink); }
+/* Active pill: --chrome-active-ink, not --accent-ink directly. Identical in
+   light (it IS var(--accent-ink) in :root); in dark it is the theme's readable
+   accent-on-chrome value, where the orange measured 3.27 against this surface. */
 .desktop-view-switch .view-switch-btn.active {
   background: var(--surface);
-  color: var(--accent-ink);
+  color: var(--chrome-active-ink);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 

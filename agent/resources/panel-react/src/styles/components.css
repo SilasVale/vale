@@ -166,8 +166,8 @@
 .side-count {
   margin-left: auto;
   font-size: 11px;
-  color: var(--faint);
-  background: var(--ds-neutral-100);
+  color: var(--muted);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 1px 8px;
@@ -347,7 +347,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  background: var(--ds-neutral-100);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px;
@@ -365,7 +365,13 @@
               background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 .view-switch-btn:hover { color: var(--chrome-ink); }
-.view-switch-btn.active { color: var(--accent-ink); background: var(--chrome-bg-3); box-shadow: var(--shadow); }
+/* Active pill uses --chrome-active-ink, NOT --accent-ink directly. In light the
+   two resolve identically (--chrome-active-ink IS var(--accent-ink) in :root),
+   so this is byte-identical there; in dark --chrome-active-ink carries the
+   theme's own "accent readable on dark chrome" value. Measured with
+   --accent-ink: the active label was #d9480f on #2a2b33 = 3.27, under AA for
+   11px text. */
+.view-switch-btn.active { color: var(--chrome-active-ink); background: var(--chrome-bg-3); box-shadow: var(--shadow); }
 
 /* ---------- status bar ---------- */
 #statusbar {
@@ -637,8 +643,8 @@
 .cmd-stream-title { font-size: 12px; font-weight: 650; letter-spacing: -0.01em; }
 .cmd-stream-count {
   font-size: 11px;
-  color: var(--faint);
-  background: var(--ds-neutral-100);
+  color: var(--muted);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 7px;
@@ -786,8 +792,8 @@
 .traj-title { font-size: 12px; font-weight: 650; letter-spacing: -0.01em; }
 .traj-count {
   font-size: 11px;
-  color: var(--faint);
-  background: var(--ds-neutral-100);
+  color: var(--muted);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 7px;
@@ -985,8 +991,8 @@
 .plug-count {
   flex: none;
   font-size: 11px;
-  color: var(--faint);
-  background: var(--ds-neutral-100);
+  color: var(--muted);
+  background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0 7px;
@@ -1056,7 +1062,7 @@
   font-family: var(--font-mono, monospace);
   font-size: 10.5px;
   color: var(--muted);
-  background: var(--ds-neutral-100);
+  background: var(--surface-chip);
   border-radius: 999px;
   padding: 1px 8px;
   white-space: nowrap;
@@ -1253,7 +1259,7 @@
   margin-left: auto;
   padding: 2px 4px 2px 8px;
   border-radius: 999px;
-  background: var(--ds-neutral-100);
+  background: var(--surface-chip);
   border: 1px solid var(--line-strong);
   font-size: 11px;
   color: var(--muted);

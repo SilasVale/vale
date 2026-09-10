@@ -148,9 +148,12 @@
   transition: background 0.12s ease, color 0.12s ease;
 }
 .desktop-view-switch .view-switch-btn:hover { color: var(--chrome-ink); }
+/* Active pill: --chrome-active-ink, not --accent-ink directly. Identical in
+   light (it IS var(--accent-ink) in :root); in dark it is the theme's readable
+   accent-on-chrome value, where the orange measured 3.27 against this surface. */
 .desktop-view-switch .view-switch-btn.active {
   background: var(--surface);
-  color: var(--accent-ink);
+  color: var(--chrome-active-ink);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 

@@ -41,8 +41,16 @@
      background while the text colour flipped to #ecedef — measured contrast
      1.12, i.e. unreadable, in .cmd-out and seven other places. */
   --surface-recessed: var(--bg);
+  /* Chip / badge surface — a small raised pill INSIDE a card: the count badges
+     (session, command, trajectory, plugin), the view-switch track, tool-name
+     chips. Declared in BOTH blocks for the same reason as --surface-recessed
+     above. The raw `--ds-neutral-100` this replaces is not overridden by the
+     dark theme, so those chips stayed #f4f4f5 — bright pills glowing on a dark
+     page — while their text colour flipped light. Measured in a real browser
+     against body[data-theme="dark"]: 2.28 contrast on the view switch, and the
+     same cause on five other chips. */
+  --surface-chip: var(--ds-neutral-100);
   --ink: var(--ds-neutral-900);
-
   --muted: var(--ds-neutral-500);
   --faint: var(--ds-neutral-400);
   --line: rgba(0, 0, 0, 0.08);
@@ -163,6 +171,10 @@ body[data-theme="dark"] {
      under #ecedef text (contrast 1.12). Asserted by
      src/lib/themeContrast.test.ts. */
   --surface-recessed: var(--bg);
+  /* Restated for the same reason as --surface-recessed above, and it is not
+     optional: with only the :root declaration the chips kept their LIGHT
+     background in dark mode. A subtle raised pill instead of a light solid. */
+  --surface-chip: rgba(255, 255, 255, 0.07);
 
   /* frame chrome — midnight */
   --chrome-bg: #17181d;

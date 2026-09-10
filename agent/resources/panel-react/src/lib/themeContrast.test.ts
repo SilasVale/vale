@@ -69,30 +69,90 @@ describe("recessed content surfaces", () => {
     ).toMatch(/--surface-recessed\s*:/);
   });
 
-  it("recessed blocks resolve against --bg, not the raw neutral scale", () => {
+  it("no background is drawn from the raw neutral scale", () => {
     const css = builtCss();
-    // The dark theme does not override --ds-neutral-*, so any background drawn
-    // from that scale keeps its LIGHT value in dark mode. --surface-recessed is
-    // the theme-aware name for exactly this role.
-    const offenders = [...css.matchAll(/background\s*:\s*var\(--ds-neutral-50\)/g)];
-    expect(
-      offenders.length,
-      "a background uses the raw --ds-neutral-50 scale: it will stay light in " +
-        "dark mode while the text colour flips. Use --surface-recessed.",
-    ).toBe(0);
+    // The dark theme does NOT override --ds-neutral-*, so any background drawn
+    // from that scale keeps its LIGHT value while the text colour flips. This
+    // is one defect family, found twice: --ds-neutral-50 on the recessed panes
+    // (measured 1.12) and --ds-neutral-100 on the chips (measured 2.28 on the
+    // view switch, plus five others). The semantic tokens name the ROLE:
+    // --surface-recessed for panes, --surface-chip for pills.
+    //
+    // --ds-neutral-300 IS still allowed: it draws DOTS (trajectory muted, closed
+    // session), which have no text and read fine as light marks on a dark
+    // surface. The rule is about text-bearing surfaces, so it is written
+    // against the two scale steps used as such.
+    for (const step of ["50", "100"]) {
+      const offenders = [
+        ...css.matchAll(new RegExp(`background\\s*:\\s*var\\(--ds-neutral-${step}\\)`, "g")),
+      ];
+      expect(
+        offenders.length,
+        `a background uses the raw --ds-neutral-${step} scale: it stays light in ` +
+          `dark mode while the text colour flips. Use --surface-recessed (panes) ` +
+          `or --surface-chip (pills).`,
+      ).toBe(0);
+    }
 
     // ...and the leaf rules must actually reach for the semantic token. The
     // bound is the SEVEN pre-existing recessed panes (.cmd-out, .details-json,
     // .details-output, .traj-search, .traj-round-head:hover, .traj-body,
     // .plug-log) — new consumers only raise it. Deliberately not an exact
     // count: an equality here breaks every time a pane is added, which trains
-    // people to bump the number instead of reading it.
+    // people to bump the number instead of reading it. This half matters
+    // because the assertion above only bans the SPECIFIC regression (the raw
+    // scale step); a hardcoded #fafafa would slip past it.
     const uses = [...css.matchAll(/background\s*:\s*var\(--surface-recessed\)/g)];
     expect(
       uses.length,
       "recessed panes have stopped using --surface-recessed — did one revert " +
-        "to the raw neutral scale?",
+        "to a hardcoded colour?",
     ).toBeGreaterThanOrEqual(7);
+    const chips = [...css.matchAll(/background\s*:\s*var\(--surface-chip\)/g)];
+    expect(
+      chips.length,
+      "chip surfaces have stopped using --surface-chip",
+    ).toBeGreaterThanOrEqual(6);
+  });
+
+  it("--surface-chip is declared in BOTH theme blocks", () => {
+    const css = builtCss();
+    expect(blockOf(css, ":root"), ":root must define --surface-chip").toMatch(
+      /--surface-chip\s*:/,
+    );
+    expect(
+      blockOf(css, 'body[data-theme="dark"]'),
+      'body[data-theme="dark"] MUST restate --surface-chip — same computed-value ' +
+        "trap as --surface-recessed: a :root-only declaration freezes against the " +
+        "light value and the chips stay bright pills on a dark page.",
+    ).toMatch(/--surface-chip\s*:/);
+  });
+
+  it("count chips are readable in both themes", () => {
+    // These are NUMBERS the operator reads, not decoration. They carried
+    // --faint, which measured 2.34 in light (near-invisible) and 3.14 on the
+    // now-dark chip. --muted is the token for secondary text that must be read.
+    const css = builtCss();
+    for (const sel of [".side-count", ".cmd-stream-count", ".traj-count", ".plug-count"]) {
+      const block = blockOf(css, sel);
+      expect(block, `${sel} must use secondary-text ink`).toMatch(/color\s*:\s*var\(--muted\)/);
+      expect(block, `${sel} must sit on the theme-aware chip surface`).toMatch(
+        /background\s*:\s*var\(--surface-chip\)/,
+      );
+    }
+  });
+
+  it("the view-switch active pill does not hardcode the accent ink", () => {
+    // --accent-ink is the SAME orange in both themes, so on dark chrome the
+    // active label measured 3.27. --chrome-active-ink is that theme's own
+    // readable answer and is value-identical to --accent-ink in :root.
+    const css = builtCss();
+    const panel = blockOf(css, ".view-switch-btn.active");
+    expect(panel).toMatch(/color\s*:\s*var\(--chrome-active-ink\)/);
+    expect(
+      panel,
+      "the active view-switch label must not use --accent-ink directly",
+    ).not.toMatch(/color\s*:\s*var\(--accent-ink\)/);
   });
 
   it("the token follows the theme (light #fafafa, dark #131418)", () => {
