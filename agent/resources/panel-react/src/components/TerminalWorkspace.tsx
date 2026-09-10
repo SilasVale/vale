@@ -10,6 +10,7 @@ import { TerminalPane } from "./TerminalPane";
 import { TrajectoryView } from "./TrajectoryView";
 import { PathView } from "./PathView";
 import { SessionControl } from "./SessionControl";
+import { ApprovalGate } from "./ApprovalGate";
 import { DetailsPanel } from "./DetailsPanel";
 import { CommandStream } from "./CommandCard";
 import type { CommandEvent } from "../hooks/useCommandEvents";
@@ -33,6 +34,10 @@ interface Props {
   onViewChange: (sid: string, v: SessionView) => void;
   /** Hand the session's keyboard to a person / back to the AI. */
   onSetControl: (sid: string, human: boolean) => Promise<unknown>;
+  /** Arm/disarm the approval gate for a session. */
+  onSetApproval: (sid: string, required: boolean) => Promise<unknown>;
+  /** Answer a pending approval request. */
+  onDecideApproval: (sid: string, id: string, approve: boolean) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   cmdEvents: CommandEvents;
   token: string;
@@ -46,6 +51,7 @@ interface Props {
 
 export function TerminalWorkspace({
   sessions, activeSid, onActivate, onClose, onExport, onViewChange, onSetControl,
+  onSetApproval, onDecideApproval,
   registerWrite, cmdEvents, token, density, sseState,
   controlledView, onControlledViewChange,
 }: Props) {
@@ -65,10 +71,18 @@ export function TerminalWorkspace({
   // both render this workspace and a per-density copy is how the two drifted
   // before (R131). Hidden until a session is active: there is nothing to hold.
   const control = activeSession && !activeSession.closed ? (
-    <SessionControl
-      held={!!activeSession.heldByHuman}
-      onSet={(human) => onSetControl(activeSession.sid, human)}
-    />
+    <>
+      <SessionControl
+        held={!!activeSession.heldByHuman}
+        onSet={(human) => onSetControl(activeSession.sid, human)}
+      />
+      <ApprovalGate
+        armed={!!activeSession.approvalRequired}
+        pending={activeSession.pendingApproval}
+        onArm={(required) => onSetApproval(activeSession.sid, required)}
+        onDecide={(id, approve) => onDecideApproval(activeSession.sid, id, approve)}
+      />
+    </>
   ) : null;
   const selectedCard = selectedCmdId ? cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null : null;
 

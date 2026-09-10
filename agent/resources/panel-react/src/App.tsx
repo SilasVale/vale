@@ -189,6 +189,8 @@ export function App() {
     onExport: sessions.exportSession,
     onViewChange: changeView,
     onSetControl: sessions.setControl,
+    onSetApproval: sessions.setApproval,
+    onDecideApproval: sessions.decideApproval,
     registerWrite,
     token,
     plugins,

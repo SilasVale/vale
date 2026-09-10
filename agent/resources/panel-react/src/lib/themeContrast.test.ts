@@ -193,8 +193,11 @@ describe("recessed content surfaces", () => {
       ['.traj-ev-code[data-state="fail"]', "--danger-on-soft"],
       ['.path-summary-good', "--success-text"],
       ['.connect-probe.ok', "--success-text"],
-      // The four `.approval-*` rows belong to the gate's own commit — a pin that
-      // spans both changes makes each one fail on the other's absence.
+      // The gate's own sites join the list WITH the gate (they ship together).
+      ['.approval-left.urgent', "--danger-on-soft"],
+      ['.approval-title', "--warn-ink"],
+      ['.approval-left', "--warn-ink"],
+      ['.approval-note', "--warn-ink"],
     ];
     for (const [sel, token] of textSites) {
       const block = blockOf(css, sel);

@@ -639,6 +639,103 @@ code {
               background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 .view-switch-btn:hover { color: var(--chrome-ink); }
+/* ── Approval gate (design beat 3) ──
+   Two shapes: a quiet arm toggle, and the prompt itself. The prompt is the only
+   element in this panel that asks the operator to AUTHORISE something, so it is
+   the one place a raised, attention-demanding treatment is right rather than
+   decoration. */
+#approval-arm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 11px var(--font);
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--chrome-ink-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+#approval-arm:hover:not(:disabled) { color: var(--ink); border-color: var(--faint); }
+#approval-arm:disabled { opacity: 0.55; cursor: default; }
+#approval-arm.armed {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  /* Readable ink: the accent rides the background, border and dot. */
+  color: var(--accent-on-soft);
+}
+#approval-arm .ag-dot { width: 7px; height: 7px; border-radius: 50%; }
+/* Armed = solid, off = hollow: a shape difference as well as a colour one, so
+   the state survives prefers-reduced-motion (same rule as the state palette). */
+#approval-arm .ag-dot[data-state="armed"] { background: var(--accent); }
+#approval-arm .ag-dot[data-state="off"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--faint);
+}
+
+.approval-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  flex: 1 1 320px;
+  padding: 9px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  background: var(--warn-soft);
+}
+.approval-head { display: flex; align-items: baseline; gap: 8px; }
+.approval-title {
+  font-size: 11px; font-weight: 650; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--warn-ink);
+}
+.approval-left {
+  margin-left: auto;
+  font: 600 11px var(--font-mono);
+  color: var(--warn-ink);
+}
+.approval-left.urgent { color: var(--danger-on-soft); }
+/* The command must be fully readable — it is the thing being authorised. It
+   WRAPS rather than ellipsising: a truncated command would ask the operator to
+   approve something they cannot see. */
+.approval-cmd {
+  display: block;
+  font: 11.5px/1.5 var(--font-mono);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 96px;
+  overflow-y: auto;
+}
+.approval-actions { display: flex; gap: 7px; }
+.approval-actions button {
+  font: 600 11.5px var(--font);
+  padding: 4px 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+}
+.approval-actions button:disabled { opacity: 0.5; cursor: default; }
+/* White on --success-solid, not on --success: the plain success green gives
+   white text 3.45, under AA at this size. The button carries the primary answer,
+   so it is the last place to be hard to read. */
+.approval-approve {
+  background: var(--success-solid) !important;
+  border-color: var(--success-solid) !important;
+  color: #fff !important;
+}
+.approval-refuse:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+.approval-note { margin: 0; font-size: 11px; color: var(--warn-ink); }
+.approval-note b { font-weight: 700; }
+
 /* ── Session control handoff (agent §D5) ──
    Sits with the session toolbar in both densities. The dot carries the state
    through the SAME shape channel as the rest of the panel (human = filled

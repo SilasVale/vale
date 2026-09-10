@@ -26,6 +26,10 @@ interface Props {
   onViewChange: (sid: string, v: SessionView) => void;
   /** Hand the session's keyboard to a person / back to the AI. */
   onSetControl: (sid: string, human: boolean) => Promise<unknown>;
+  /** Arm/disarm the approval gate for a session. */
+  onSetApproval: (sid: string, required: boolean) => Promise<unknown>;
+  /** Answer a pending approval request. */
+  onDecideApproval: (sid: string, id: string, approve: boolean) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   onNewSession: (kind: "pty" | "ssh" | "serial" | "browser") => void;
   status: string;
@@ -88,6 +92,8 @@ export function PanelApp(props: Props) {
                 onExport={props.onExport}
                 onViewChange={props.onViewChange}
                 onSetControl={props.onSetControl}
+                onSetApproval={props.onSetApproval}
+                onDecideApproval={props.onDecideApproval}
                 registerWrite={props.registerWrite}
                 cmdEvents={props.cmdEvents}
                 token={props.token}

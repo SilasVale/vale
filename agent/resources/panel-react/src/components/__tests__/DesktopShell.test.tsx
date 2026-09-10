@@ -19,8 +19,8 @@ vi.mock("../../lib/api", async (importOriginal) => ({
 function sessions(): Session[] {
   return [{
     sid: "s1", label: "shell", kind: "pty", closed: false, savedOnly: false,
-    active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false,
-  }];
+    active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null,
+}];
 }
 
 const baseProps = {
@@ -31,6 +31,8 @@ const baseProps = {
   onExport: vi.fn(),
   onViewChange: vi.fn(),
   onSetControl: vi.fn(() => Promise.resolve(false)),
+  onSetApproval: vi.fn(() => Promise.resolve(false)),
+  onDecideApproval: vi.fn(() => Promise.resolve(true)),
   registerWrite: vi.fn(() => vi.fn()),
   plugins: { rows: [], specLoaded: false, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any,
   onNewSession: vi.fn(),

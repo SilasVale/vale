@@ -6,6 +6,20 @@ import { callApi, callTool } from "../lib/api";
 // session list + metadata. The term object is attached to a ref map so the
 // render cycle never re-creates it.
 
+/** Map the agent's snake_case pending_approval onto the camelCase shape React
+ *  uses. One helper because THREE call sites need it (first sight, revive,
+ *  refresh) and three hand-written mappings would drift — the panel would then
+ *  show a prompt for a command the agent had already released. */
+function mapPending(s: any): Session["pendingApproval"] {
+  const p = s?.pending_approval;
+  if (!p || typeof p.id !== "string") return null;
+  return {
+    id: p.id,
+    command: typeof p.command === "string" ? p.command : "",
+    expiresInMs: typeof p.expires_in_ms === "number" ? p.expires_in_ms : 0,
+  };
+}
+
 export interface Session {
   sid: string;
   label: string;
@@ -19,6 +33,12 @@ export interface Session {
    *  state mirrored here: the agent refuses `terminal_execute` while it is set,
    *  so the panel must SHOW it or the operator cannot tell why the AI stopped. */
   heldByHuman: boolean;
+  /** The session is ARMED: every execute waits for a decision. Server-owned. */
+  approvalRequired: boolean;
+  /** The command currently blocked at the gate, if any. Present only while a
+   *  decision is actually being waited for — the agent clears it on every exit
+   *  path, so a rendered prompt is always a live question. */
+  pendingApproval: { id: string; command: string; expiresInMs: number } | null;
 }
 
 interface SessionRuntime {
@@ -82,7 +102,8 @@ export function useSessions(connected: boolean) {
           for (const s of list as any[]) {
             const existing = next.find((x) => x.sid === s.id);
             if (!existing) {
-              next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human });
+              next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
+                approvalRequired: !!s.approval_required, pendingApproval: mapPending(s) });
             } else if (existing.closed) {
               // round-245 (terminal-display audit HIGH-1): REVIVE a tombstone
               // whose sid reappears live. A fast AI session (open → one
@@ -90,15 +111,26 @@ export function useSessions(connected: boolean) {
               // the agent's close emit, and NOTHING ever revived it — the tab
               // sat dead forever (activate() refuses closed entries). A live
               // reappearance means the session is real: un-tombstone it.
-              const revived = { ...existing, closed: false, closedAt: null, heldByHuman: !!s.held_by_human };
+              const revived = { ...existing, closed: false, closedAt: null,
+                heldByHuman: !!s.held_by_human, approvalRequired: !!s.approval_required,
+                pendingApproval: mapPending(s) };
               next[next.indexOf(existing)] = revived;
-            } else if (existing.heldByHuman !== !!s.held_by_human) {
+            } else if (
+              existing.heldByHuman !== !!s.held_by_human ||
+              existing.approvalRequired !== !!s.approval_required ||
+              existing.pendingApproval?.id !== mapPending(s)?.id
+            ) {
               // The hold is server-owned and can change WITHOUT a sessions-changed
               // event (this panel's own control button, or another client).
               // Syncing it here is what keeps the indicator honest. Placed AFTER
               // the revive branch on purpose: a closed tombstone whose hold
               // differs must still be REVIVED, not merely have its flag synced.
-              next[next.indexOf(existing)] = { ...existing, heldByHuman: !!s.held_by_human };
+              next[next.indexOf(existing)] = {
+                ...existing,
+                heldByHuman: !!s.held_by_human,
+                approvalRequired: !!s.approval_required,
+                pendingApproval: mapPending(s),
+              };
             }
           }
           // Mark gone sessions closed (retained history shows as tombstone).
@@ -160,7 +192,8 @@ export function useSessions(connected: boolean) {
           const missing = (list as any[]).filter((s) => !prev.some((x) => x.sid === s.id));
           const next = [...prev];
           for (const s of missing) {
-            next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human });
+            next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
+                approvalRequired: !!s.approval_required, pendingApproval: mapPending(s) });
           }
           if (!prev.some((x) => x.active) && next.some((x) => !x.closed && x.active === false)) {
             const liveTail = next.filter((x) => !x.closed);
@@ -174,12 +207,36 @@ export function useSessions(connected: boolean) {
         });
       } catch { /* transient — next sweep */ }
     }, 30_000);
-    return () => {
-      window.removeEventListener("vale-sessions-changed", onChange);
-      document.removeEventListener("visibilitychange", onChange);
-      window.clearInterval(sweep);
-    };
+  return () => {
+    window.removeEventListener("vale-sessions-changed", onChange);
+    document.removeEventListener("visibilitychange", onChange);
+    window.clearInterval(sweep);
+  };
   }, [connected]);
+
+  // FAST POLL while the gate is armed — SEPARATE from the effect above, because
+  // it must be able to start and stop as the mode changes without tearing down
+  // the event listeners.
+  //
+  // A pending approval is TRANSIENT: the agent gives up after its own budget, so
+  // the 30 s background sweep would routinely miss the prompt entirely and the
+  // operator would see commands refused for a reason that never appeared on
+  // screen. 2 s is well inside the agent's one-minute window.
+  //
+  // Gated on being armed, so an idle panel still polls nothing — the same "poll
+  // only when needed" discipline as round-163, which removed a 3 s poll in
+  // favour of events.
+  const armed = sessions.some((s) => s.approvalRequired);
+  useEffect(() => {
+    if (!armed) return;
+    // Re-fires the SAME event the agent's SSE pushes, rather than calling the
+    // refresh directly: the listener above already owns the retry, the tombstone
+    // and the revive rules, and a second call path would be a second copy of them.
+    const fast = window.setInterval(() => {
+      window.dispatchEvent(new CustomEvent("vale-sessions-changed"));
+    }, 2000);
+    return () => window.clearInterval(fast);
+  }, [armed]);
 
   const setStatus = useCallback((msg: string) => setStatusState(msg), []);
 
@@ -198,7 +255,7 @@ export function useSessions(connected: boolean) {
         // round-86: the new session is the ACTIVE one — the old active:false
         // + setActiveSid(sid) never set the session's own flag, so the pane
         // stayed display:none (blank terminal area).
-        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false }];
+        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null }];
       });
       setActiveSid(sid);
       return sid;
@@ -324,5 +381,52 @@ export function useSessions(connected: boolean) {
     }
   }, []);
 
-  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes, setControl };
+  /** Arm or disarm the approval gate for a session.
+   *
+   *  Like `setControl`, the SERVER's answer is the authority: a button that
+   *  flipped optimistically would tell the operator the gate is armed while the
+   *  agent still runs commands unattended — the one direction of error that
+   *  matters here. */
+  const setApproval = useCallback(async (sid: string, required: boolean) => {
+    try {
+      const r = await callApi(`/api/sessions/${encodeURIComponent(sid)}/control`, {
+        method: "POST",
+        body: JSON.stringify({ approval_required: required }),
+      });
+      const on = !!r?.approval_required;
+      setSessions((prev) =>
+        prev.map((s) => (s.sid === sid ? { ...s, approvalRequired: on } : s)),
+      );
+      setStatusState(on ? "approval required for this session" : "approval gate off");
+      return on;
+    } catch (e: any) {
+      setStatusState(`approval mode failed: ${e?.message ?? e}`);
+      throw e;
+    }
+  }, []);
+
+  /** Answer a pending approval.
+   *
+   *  `decided: false` means there was nothing left to decide — the agent gave up
+   *  or another client answered first. That is NOT success, so the status says
+   *  so rather than leaving the operator believing their click landed. */
+  const decideApproval = useCallback(async (sid: string, id: string, approve: boolean) => {
+    try {
+      const r = await callApi(`/api/sessions/${encodeURIComponent(sid)}/approval`, {
+        method: "POST",
+        body: JSON.stringify({ id, approve }),
+      });
+      if (!r?.decided) {
+        setStatusState("that request was already resolved");
+        return false;
+      }
+      setStatusState(approve ? "approved" : "refused");
+      return true;
+    } catch (e: any) {
+      setStatusState(`decision failed: ${e?.message ?? e}`);
+      throw e;
+    }
+  }, []);
+
+  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes, setControl, setApproval, decideApproval };
 }
