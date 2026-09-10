@@ -39,6 +39,8 @@ RequestExecutionLevel admin
 !define MUI_ABORTWARNING
 
 Var RESULT_TEXT
+Var PANEL_URL
+Var PANEL_CHK
 
 ; StrFunc 函数落子（全局作用域；卸载节用 Un 变体）
 ${UnStrRep}
@@ -50,7 +52,9 @@ ${UnStrRep}
 
 ; 完成页：读引导脚本写的回执（布局 v2 在 %ProgramData%\Vale\logs\；
 ; ReadEnvStr 读进程环境，不受 ShellVarContext 影响；绝不含 token）
-Page custom finishPage
+; 回执是 UTF-16LE（ps1 用 -Encoding Unicode 写），必须用 FileReadUTF16LE 读
+; —— 之前用 ANSI 的 FileRead 去读 UTF-8(带 BOM) 的字节，中文全成乱码。
+Page custom finishPage finishPageLeave
 Function finishPage
   ReadEnvStr $3 "ProgramData"
   StrCpy $RESULT_TEXT "安装程序已退出。请用 vale status 查看状态，或重新运行安装。"
@@ -60,7 +64,7 @@ Function finishPage
     ${If} $4 != ""
       ${Do}
         ClearErrors
-        FileRead $4 $5
+        FileReadUTF16LE $4 $5
         ${If} ${Errors}
           ${Break}
         ${EndIf}
@@ -69,11 +73,35 @@ Function finishPage
       FileClose $4
     ${EndIf}
   ${EndIf}
+  ; 纯 ASCII 的一行 URL（ps1 另写一个文件）——完成页据此提供"打开面板"。
+  StrCpy $PANEL_URL ""
+  ${If} ${FileExists} "$3\Vale\logs\install-panel-url.txt"
+    FileOpen $4 "$3\Vale\logs\install-panel-url.txt" r
+    ${If} $4 != ""
+      FileRead $4 $PANEL_URL
+      FileClose $4
+    ${EndIf}
+  ${EndIf}
   nsDialogs::Create 1018
   Pop $0
-  ${NSD_CreateLabel} 0 0 100% 200u "$RESULT_TEXT"
+  ${NSD_CreateLabel} 0 0 100% 150u "$RESULT_TEXT"
   Pop $0
+  StrCpy $PANEL_CHK ""
+  ${If} $PANEL_URL != ""
+    ${NSD_CreateCheckbox} 0 158u 100% 12u "安装完成后打开 Vale 面板"
+    Pop $PANEL_CHK
+    ${NSD_SetState} $PANEL_CHK ${BST_CHECKED}
+  ${EndIf}
   nsDialogs::Show
+FunctionEnd
+
+Function finishPageLeave
+  ${If} $PANEL_CHK != ""
+    ${NSD_GetState} $PANEL_CHK $0
+    ${If} $0 == ${BST_CHECKED}
+      ExecShell "open" "$PANEL_URL"
+    ${EndIf}
+  ${EndIf}
 FunctionEnd
 
 !insertmacro MUI_LANGUAGE "SimpChinese"

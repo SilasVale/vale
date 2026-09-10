@@ -278,7 +278,18 @@ $lines = @(
   ("桌面壳 Electron：" + ($(if ($electronOk) { "就绪" } else { "未装上（见上方警告）" })))
 )
 if (-not $ResultFile) { $ResultFile = Join-Path $DataDir "logs\install-result.txt" }
-$lines | Set-Content -Path $ResultFile -Encoding UTF8
+# UTF-16LE (PS 5.1 spells it -Encoding Unicode) because the NSIS finish page
+# reads this file with FileReadUTF16LE (which skips the BOM). It used to be
+# -Encoding UTF8: PS 5.1 writes UTF-8 WITH a BOM, NSIS's plain ANSI FileRead
+# then decoded those bytes as the system codepage (GBK) and the completion
+# page showed mojibake (鈥?…).
+$lines | Set-Content -Path $ResultFile -Encoding Unicode
+# Companion ASCII one-liner holding ONLY the panel URL: the finish page offers
+# "open the panel" and reads it with plain FileRead — pure ASCII, so there is
+# no encoding question at all.
+try {
+  Set-Content -Path (Join-Path (Split-Path $ResultFile) "install-panel-url.txt") -Value "http://127.0.0.1:$port/desktop/" -Encoding ASCII
+} catch { }
 $lines | ForEach-Object { Say $_ }
 # 自包含包的内嵌 tgz 用完即删（~6MB 死重；重跑安装包会重新解压出来）。
 # 只删"自带的那一份"（LocalTgz 指向的文件），不动用户手里的东西。

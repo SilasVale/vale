@@ -673,20 +673,24 @@ const commands = {
         // 1. Stop any running vale processes (a live agent locks its exe and the
         //    copy below would fail).
         console.log("setup: stopping existing vale processes...");
-        sh("cmd /c schtasks /End /TN ValeAgent 2>NUL");
+        // Best-effort cleanup of things that usually do NOT exist, so send BOTH
+        // streams to NUL. `2>NUL` alone left sc/reg/schtasks messages on STDOUT:
+        // every install printed scary fake errors ("[SC] OpenService 失败 1060",
+        // "错误: 系统找不到指定的文件。") that were really "nothing to clean".
+        sh("cmd /c schtasks /End /TN ValeAgent >NUL 2>&1");
         sh("taskkill /F /IM vale-agent.exe 2>NUL");
         sh("taskkill /F /IM vale-desktop.exe 2>NUL");
         sh("taskkill /F /IM vale-tray.exe 2>NUL");
         // 2. Remove legacy scheduled tasks (ValePlaywright from old installs,
         //    ValeAgentTray) — ValeAgent is re-registered below with -Force.
-        sh("cmd /c schtasks /Delete /TN ValeAgentTray /F 2>NUL");
-        sh("cmd /c schtasks /Delete /TN ValePlaywright /F 2>NUL");
+        sh("cmd /c schtasks /Delete /TN ValeAgentTray /F >NUL 2>&1");
+        sh("cmd /c schtasks /Delete /TN ValePlaywright /F >NUL 2>&1");
         // 3. Remove the legacy Cloudflared Windows service + EventLog source
         //    (installed by the retired setup.ps1; the agent-supervised model
         //    installs no service).
-        sh("sc stop Cloudflared 2>NUL");
-        sh("sc delete Cloudflared 2>NUL");
-        sh("reg delete HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\Cloudflared /f 2>NUL");
+        sh("sc stop Cloudflared >NUL 2>&1");
+        sh("sc delete Cloudflared >NUL 2>&1");
+        sh("reg delete HKLM\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\Cloudflared /f >NUL 2>&1");
         // 4. Stale update-busy marker (a crashed update would lock updates).
         const BUSY = path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
         sh(`powershell -NoProfile -Command "Remove-Item -Force -ErrorAction SilentlyContinue '${(0, exports.psq)(BUSY)}'"`);
