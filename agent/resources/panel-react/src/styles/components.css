@@ -572,7 +572,7 @@
    common case, and painting every one of them accent-coloured is what makes a
    command stream read as noise. Only the live, the failed and the interrupted
    states raise their voice. */
-.cmd-badge[data-state="running"] { color: var(--accent-ink); background: var(--accent-soft); }
+.cmd-badge[data-state="running"] { color: var(--accent-on-soft); background: var(--accent-soft); }
 .cmd-badge[data-state="ok"] { color: var(--muted); background: var(--state-muted-soft); }
 .cmd-badge[data-state="fail"] { color: var(--danger); background: var(--danger-soft); }
 .cmd-badge[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
@@ -1078,7 +1078,7 @@
    states raise their voice, everything settled stays quiet. The muted surface
    is a translucent grey rather than --ds-neutral-100, which is a LIGHT solid
    and so painted a pale chip with pale text once the dark theme was on. */
-.plug-tag[data-state="ongoing"] { color: var(--accent-ink); background: var(--accent-soft); }
+.plug-tag[data-state="ongoing"] { color: var(--accent-on-soft); background: var(--accent-soft); }
 .plug-tag[data-state="success"] { color: var(--muted); background: var(--state-muted-soft); }
 .plug-tag[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .plug-tag[data-state="error"] { color: var(--danger); background: var(--danger-soft); }
@@ -1800,7 +1800,7 @@
 .path-summary-bad { font-size: 12px; font-weight: 600; color: var(--danger); }
 .path-summary-good { font-size: 12px; color: var(--success); }
 .path-summary-live {
-  font-size: 11px; font-weight: 600; color: var(--accent-ink);
+  font-size: 11px; font-weight: 600; color: var(--accent-on-soft);
   background: var(--accent-soft); border-radius: 999px; padding: 1px 8px;
 }
 .path-summary-times { margin-top: 3px; font-size: 11.5px; color: var(--faint); }
@@ -1828,7 +1828,7 @@
 .path-attention-tag { flex: none; font-size: 10.5px; font-weight: 600; }
 .path-attention-tag.s-fail { color: var(--danger); }
 .path-attention-tag.s-warn { color: var(--warn-ink); }
-.path-attention-tag.s-running { color: var(--accent-ink); }
+.path-attention-tag.s-running { color: var(--accent-on-soft); }
 
 /* The path itself — a vertical rail with one node per step. */
 .path-steps { list-style: none; margin: 0; padding: 4px 0 10px; }
@@ -1888,7 +1888,7 @@
 .path-step-tag.s-ok { color: var(--muted); }
 .path-step-tag.s-fail { color: var(--danger); }
 .path-step-tag.s-warn { color: var(--warn-ink); }
-.path-step-tag.s-running { color: var(--accent-ink); }
+.path-step-tag.s-running { color: var(--accent-on-soft); }
 .path-step-tag.s-muted { color: var(--faint); }
 .path-step-dur, .path-step-out { font: 10.5px var(--font-mono); color: var(--faint); }
 

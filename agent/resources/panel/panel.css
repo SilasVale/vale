@@ -51,6 +51,12 @@
      against body[data-theme="dark"]: 2.28 contrast on the view switch, and the
      same cause on five other chips. */
   --surface-chip: var(--ds-neutral-100);
+  /* Accent-coloured TEXT that sits on --accent-soft (or on a plain surface).
+     --accent-ink is the accent for CHROME — icons, dots, borders — and it is
+     too light to read as small text: measured against its own soft background
+     it gives 3.83 in light and 3.23 in dark, both under AA. This is the darker
+     reading weight. */
+  --accent-on-soft: #9c3a0a;
   --ink: var(--ds-neutral-900);
   --muted: var(--ds-neutral-500);
   --faint: var(--ds-neutral-400);
@@ -176,6 +182,8 @@ body[data-theme="dark"] {
      optional: with only the :root declaration the chips kept their LIGHT
      background in dark mode. A subtle raised pill instead of a light solid. */
   --surface-chip: rgba(255, 255, 255, 0.07);
+  /* Restated for the same computed-value reason as --surface-recessed. */
+  --accent-on-soft: #ffa94d;
 
   /* frame chrome — midnight */
   --chrome-bg: #17181d;
@@ -818,7 +826,7 @@ code {
    common case, and painting every one of them accent-coloured is what makes a
    command stream read as noise. Only the live, the failed and the interrupted
    states raise their voice. */
-.cmd-badge[data-state="running"] { color: var(--accent-ink); background: var(--accent-soft); }
+.cmd-badge[data-state="running"] { color: var(--accent-on-soft); background: var(--accent-soft); }
 .cmd-badge[data-state="ok"] { color: var(--muted); background: var(--state-muted-soft); }
 .cmd-badge[data-state="fail"] { color: var(--danger); background: var(--danger-soft); }
 .cmd-badge[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
@@ -1324,7 +1332,7 @@ code {
    states raise their voice, everything settled stays quiet. The muted surface
    is a translucent grey rather than --ds-neutral-100, which is a LIGHT solid
    and so painted a pale chip with pale text once the dark theme was on. */
-.plug-tag[data-state="ongoing"] { color: var(--accent-ink); background: var(--accent-soft); }
+.plug-tag[data-state="ongoing"] { color: var(--accent-on-soft); background: var(--accent-soft); }
 .plug-tag[data-state="success"] { color: var(--muted); background: var(--state-muted-soft); }
 .plug-tag[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .plug-tag[data-state="error"] { color: var(--danger); background: var(--danger-soft); }
@@ -2046,7 +2054,7 @@ code {
 .path-summary-bad { font-size: 12px; font-weight: 600; color: var(--danger); }
 .path-summary-good { font-size: 12px; color: var(--success); }
 .path-summary-live {
-  font-size: 11px; font-weight: 600; color: var(--accent-ink);
+  font-size: 11px; font-weight: 600; color: var(--accent-on-soft);
   background: var(--accent-soft); border-radius: 999px; padding: 1px 8px;
 }
 .path-summary-times { margin-top: 3px; font-size: 11.5px; color: var(--faint); }
@@ -2074,7 +2082,7 @@ code {
 .path-attention-tag { flex: none; font-size: 10.5px; font-weight: 600; }
 .path-attention-tag.s-fail { color: var(--danger); }
 .path-attention-tag.s-warn { color: var(--warn-ink); }
-.path-attention-tag.s-running { color: var(--accent-ink); }
+.path-attention-tag.s-running { color: var(--accent-on-soft); }
 
 /* The path itself — a vertical rail with one node per step. */
 .path-steps { list-style: none; margin: 0; padding: 4px 0 10px; }
@@ -2134,7 +2142,7 @@ code {
 .path-step-tag.s-ok { color: var(--muted); }
 .path-step-tag.s-fail { color: var(--danger); }
 .path-step-tag.s-warn { color: var(--warn-ink); }
-.path-step-tag.s-running { color: var(--accent-ink); }
+.path-step-tag.s-running { color: var(--accent-on-soft); }
 .path-step-tag.s-muted { color: var(--faint); }
 .path-step-dur, .path-step-out { font: 10.5px var(--font-mono); color: var(--faint); }
 

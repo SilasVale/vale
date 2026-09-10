@@ -50,6 +50,12 @@
      against body[data-theme="dark"]: 2.28 contrast on the view switch, and the
      same cause on five other chips. */
   --surface-chip: var(--ds-neutral-100);
+  /* Accent-coloured TEXT that sits on --accent-soft (or on a plain surface).
+     --accent-ink is the accent for CHROME — icons, dots, borders — and it is
+     too light to read as small text: measured against its own soft background
+     it gives 3.83 in light and 3.23 in dark, both under AA. This is the darker
+     reading weight. */
+  --accent-on-soft: #9c3a0a;
   --ink: var(--ds-neutral-900);
   --muted: var(--ds-neutral-500);
   --faint: var(--ds-neutral-400);
@@ -175,6 +181,8 @@ body[data-theme="dark"] {
      optional: with only the :root declaration the chips kept their LIGHT
      background in dark mode. A subtle raised pill instead of a light solid. */
   --surface-chip: rgba(255, 255, 255, 0.07);
+  /* Restated for the same computed-value reason as --surface-recessed. */
+  --accent-on-soft: #ffa94d;
 
   /* frame chrome — midnight */
   --chrome-bg: #17181d;

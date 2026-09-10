@@ -142,6 +142,34 @@ describe("recessed content surfaces", () => {
     }
   });
 
+  it("accent TEXT uses the readable weight, not the chrome accent", () => {
+    // MEASURED, both themes: --accent-ink as small text on --accent-soft gives
+    // 3.83 (light) / 3.23 (dark) — under AA for 10.5–11px. It is the CHROME
+    // accent (icons, dots, borders) and is too light to read. Five sites carried
+    // the pattern, three of them added by earlier rounds of this same work, so
+    // it is pinned rather than left to be rediscovered.
+    const css = builtCss();
+    // The token exists in BOTH blocks — same computed-value trap as the rest.
+    expect(blockOf(css, ":root")).toMatch(/--accent-on-soft\s*:/);
+    expect(blockOf(css, 'body[data-theme="dark"]')).toMatch(/--accent-on-soft\s*:/);
+
+    const sites = [
+      '.cmd-badge[data-state="running"]',
+      '.plug-tag[data-state="ongoing"]',
+      '.path-summary-live',
+      '.path-step-tag.s-running',
+      '#session-control.held',
+    ];
+    for (const sel of sites) {
+      const block = blockOf(css, sel);
+      expect(
+        block,
+        `${sel} must use the readable accent weight for TEXT; --accent-ink ` +
+          `measures under AA on these backgrounds`,
+      ).toMatch(/color\s*:\s*var\(--accent-on-soft\)/);
+    }
+  });
+
   it("the view-switch active pill does not hardcode the accent ink", () => {
     // --accent-ink is the SAME orange in both themes, so on dark chrome the
     // active label measured 3.27. --chrome-active-ink is that theme's own
