@@ -26,6 +26,8 @@ import {
   QWEN_COMPAT_CHAT,
   CMD_CHAT,
   AMD_CHAT,
+  usProxyBase,
+  museResponsesExit,
 } from "../src/channels.ts";
 
 const KNOWN_PREFIXES = new Set(["ds", "og", "qw", "or", "nv", "gmi", "cm", "amd"]);
@@ -70,6 +72,36 @@ test("ROUTE_INFO prefixes cover every model prefix", () => {
   const prefixes = new Set(ROUTE_INFO.map((r) => r.prefix.replace(/\/$/, "")));
   const used = new Set(MODELS.map((m) => m.id.split("/")[0]));
   for (const p of used) assert.ok(prefixes.has(p), `no ROUTE_INFO entry for ${p}/ models`);
+});
+
+// SOLID Round-40: the muse US-exit selector had zero direct pins (only
+// indirect exercise through translate flows with env matrices). The four
+// branches decide which continent serves the flagship model — pin exactly.
+test("usProxyBase defaults, honors env", () => {
+  assert.equal(usProxyBase({}), "https://v.saisi.online");
+  assert.equal(usProxyBase(null), "https://v.saisi.online");
+  assert.equal(usProxyBase({ US_PROXY_BASE: "https://egress.example" }), "https://egress.example");
+});
+
+test("museResponsesExit: vercel/zen-us/URL/default branches", () => {
+  assert.equal(museResponsesExit({}), "https://oracle.saisi.online/v1/responses", "unset → Oracle default");
+  assert.equal(museResponsesExit({ MUSE_RESPONSES_EXIT: "bogus" }), "https://oracle.saisi.online/v1/responses", "unknown → default");
+  assert.equal(museResponsesExit({ MUSE_RESPONSES_EXIT: "zen-us" }), "https://zen-us.saisi.online/v1/responses");
+  assert.equal(
+    museResponsesExit({ MUSE_RESPONSES_EXIT: "https://alt.example.com/v1/responses" }),
+    "https://alt.example.com/v1/responses",
+    "custom URL verbatim",
+  );
+  assert.equal(
+    museResponsesExit({ MUSE_RESPONSES_EXIT: "vercel" }),
+    "https://v.saisi.online/api/zen?target=og&path=%2Fv1%2Fresponses",
+    "vercel name rides the generic relay with an encoded path",
+  );
+  assert.equal(
+    museResponsesExit({ MUSE_RESPONSES_EXIT: "vercel", US_PROXY_BASE: "https://eg.example" }),
+    "https://eg.example/api/zen?target=og&path=%2Fv1%2Fresponses",
+    "vercel branch honors the proxy base",
+  );
 });
 
 // round-465 (coverage-driven): the framework helpers (dispatch/route/

@@ -69,11 +69,14 @@ correctness is.
 | 34 | matrix/docs | verify | full-matrix sweep; root-runner trap documented | — | `71a52c73` |
 | 35 | matrix | verify | saturation audits; full matrix green, zero churn | — | — |
 | 36 | docs | docs | AGENTS↔CLAUDE sync: stale `web.rs` paths fixed | — | `567c086e` |
-| 37 | docs | docs | this ledger created | — | (this commit) |
+| 37 | docs | docs | this ledger created | — | `8db494d8` |
+| 38 | gateway vision | SRP/tests | `describeImage` export + fault→marker taxonomy + throw-gate consistency | +3 | `13730daa` |
+| 39 | gateway auth | SRP | usage mappers extracted (`mapOpenRouter/Amd/OgUsage`); mapping tables | +4 | `6213de52` |
+| 40 | gateway channels | tests | `usProxyBase`/`museResponsesExit` direct branch pins | +2 | (this commit: the ledger row cannot name its own final hash) |
 
 ## Cumulative pins (program-attributable)
 
-Gateway +65 · agent lib +6 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
+Gateway +74 · agent lib +6 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
 
 ## Open threads (explicitly NOT started)
 
