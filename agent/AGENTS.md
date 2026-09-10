@@ -338,7 +338,29 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R101 — the device-tool FAILURE envelope
+Last updated: 2026-09-10 SOLID-R102 — the web auth gate is now FAIL-CLOSED
+  BY CONSTRUCTION. `handle_request` wrapped it in a `needs_auth` flag that
+  re-classified routes (`method != GET || path.starts_with("/api") || path ==
+  "/mcp"`), but the early returns above already decide exactly which requests
+  are public — so at that point the flag was provably always true, and the
+  duplicate classification could only ever fail in the dangerous direction
+  (disagreement ⇒ gate skipped ⇒ unauthenticated `/api/tools/*` dispatch ⇒
+  SYSTEM-level device control). The gate is now unconditional: anything
+  reaching the dispatcher is authenticated, full stop. Two coverage holes
+  found and closed on the way: `auth_401_without_token` used `req()` (which
+  carries a WRONG token) so the genuinely-missing-header path was never
+  exercised, and NO test enumerated the route surface — now
+  `every_dispatch_route_is_auth_gated` walks 20 routes under both failure
+  modes and `deliberately_public_routes_stay_public` pins `/`, the panel
+  SPA and the static assets so an auth tightening cannot silently lock them
+  out. Both pins mutation-proven (a broken classification is caught with
+  "GET /api/spec served WITHOUT an Authorization header"; gating above the
+  public returns is caught with "GET / must stay public"). Agent gates 438
+  feat-gated / 431 default green, clippy -D warnings clean both configs, fmt
+  clean, xwin check OK. Program ledger: docs/solid-program.md.
+  No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R101 — the device-tool FAILURE envelope
   (`{"ok": false, "error": msg}`) has an owner: `plugins::tool_error`. It was
   hand-written at 46 sites across four plugins (system 36, memory 7,
   connections 2, update 1); the migration is proven byte-identical

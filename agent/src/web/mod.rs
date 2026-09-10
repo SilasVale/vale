@@ -407,12 +407,10 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
-    // Auth decision extracted synchronously (before the Send boundary).
     // NOTE: no CORS preflight handler — the panel is same-origin (never
     // preflights); cross-origin calls must NOT be allowed, and the gateway
     // proxy adds its own ACAO when required. (The old handler advertised
     // ACAO:null that real responses never granted — dead + misleading.)
-    let needs_auth = method != Method::GET || path.starts_with("/api") || path == "/mcp";
 
     // SSE event stream — streaming, handled before body parsing
     if method == Method::GET && path == "/api/events" {
@@ -506,11 +504,27 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
         return resp;
     }
 
-    // Auth gate for all the /mcp + /api/* routes that follow
-    if needs_auth {
-        if let Err(resp) = check_auth(&req, &state) {
-            return *resp;
-        }
+    // ── Auth gate for EVERYTHING below (SOLID R102) ──────────────
+    //
+    // This gate is UNCONDITIONAL on purpose. It used to be wrapped in a
+    // `needs_auth` flag recomputed as `method != GET || path.starts_with(
+    // "/api") || path == "/mcp"`, which classified routes a SECOND time —
+    // the early returns above (public status page, panel/desktop SPA, the
+    // three auth-checked streaming routes) already decide exactly which
+    // requests are public, so the flag was provably always true here.
+    //
+    // A duplicated classification is a security hazard with an asymmetric
+    // failure mode: if the two copies ever disagree such that a request
+    // reaches this point with the flag false, the gate is SKIPPED and an
+    // unauthenticated caller reaches tool dispatch (terminal_execute,
+    // system_file_write → SYSTEM-level device control). Gating
+    // unconditionally removes the disagreement by construction — anything
+    // that falls through to the dispatcher is authenticated, full stop —
+    // and the public surfaces above keep their own explicit, tested
+    // behaviour. `every_dispatch_route_is_auth_gated` /
+    // `deliberately_public_routes_stay_public` pin both halves.
+    if let Err(resp) = check_auth(&req, &state) {
+        return *resp;
     }
 
     // Extract query params before consuming body
@@ -1186,6 +1200,15 @@ mod tests {
         req_with_token(method, path, TEST_TOKEN)
     }
 
+    /// An UNAUTHENTICATED request — no Authorization header at all.
+    fn req_anon(method: &str, path: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::empty())
+            .unwrap()
+    }
+
     fn req_with_token(method: &str, path: &str, token: &str) -> Request<Body> {
         Request::builder()
             .method(method)
@@ -1850,11 +1873,104 @@ mod tests {
 
     #[tokio::test]
     async fn auth_401_without_token() {
+        // NO Authorization header at all (the name says what it means — this
+        // test used to send req(), which carries a *wrong* token, so the
+        // genuinely-missing-header case had no coverage until R102).
         let mut cfg = Config::default();
         cfg.server.device_token = Some("sekret".into());
         let st = Arc::new(AppState::new(cfg));
-        let resp = handle_request(req("GET", "/api/status"), st).await;
+        let resp = handle_request(req_anon("GET", "/api/status"), st.clone()).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // A WRONG token must fail identically (same envelope, no oracle).
+        let resp = handle_request(req_with_token("GET", "/api/status", "nope"), st).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            json_body(resp).await,
+            serde_json::json!({"ok": false, "error": "unauthorized"})
+        );
+    }
+
+    /// THE ROUTE-COVERAGE SECURITY PIN (SOLID R102).
+    ///
+    /// Every route the web surface dispatches must be reachable ONLY with the
+    /// device token: the device token is the single gate between an
+    /// unauthenticated network caller and SYSTEM-level device control
+    /// (terminal_execute, system_file_write, …). A new route added without
+    /// auth fails HERE instead of shipping. Both failure modes are checked —
+    /// a missing header and a wrong token — because they take different paths
+    /// through `check_auth`.
+    #[tokio::test]
+    async fn every_dispatch_route_is_auth_gated() {
+        // Mirrors web::dispatch's arms verbatim plus the pre-dispatch
+        // streaming routes, /mcp included: axum's nest_service normally keeps
+        // /mcp away from handle_request, so asserting it here is
+        // defence-in-depth against a routing change.
+        let routes: &[(&str, &str)] = &[
+            ("GET", "/api/spec"),
+            ("GET", "/api/status"),
+            ("GET", "/api/sessions"),
+            ("GET", "/api/sessions/some-session-id"),
+            ("GET", "/api/logs"),
+            ("GET", "/api/events/poll"),
+            ("GET", "/api/settings"),
+            ("PUT", "/api/settings"),
+            ("POST", "/api/gateway/connect"),
+            ("GET", "/api/plugins/status"),
+            ("POST", "/api/plugins/playwright/start"),
+            ("POST", "/api/plugins/playwright/stop"),
+            ("POST", "/api/tools/terminal_list"),
+            ("GET", "/api/events"),
+            ("GET", "/api/events/term"),
+            ("GET", "/api/browser/pwshots"),
+            ("GET", "/api/browser/actions"),
+            ("GET", "/api/browser/pwshot"),
+            ("GET", "/mcp"),
+            ("POST", "/mcp"),
+        ];
+        for (m, p) in routes {
+            let r = handle_request(req_anon(m, p), state()).await;
+            assert_eq!(
+                r.status(),
+                StatusCode::UNAUTHORIZED,
+                "{m} {p} served WITHOUT an Authorization header"
+            );
+            let r = handle_request(req_with_token(m, p, "not-the-device-token"), state()).await;
+            assert_eq!(
+                r.status(),
+                StatusCode::UNAUTHORIZED,
+                "{m} {p} served with a WRONG token"
+            );
+        }
+    }
+
+    /// The PUBLIC surface, pinned so an auth tightening cannot silently lock
+    /// the panel/status page out (the mirror image of the test above).
+    ///
+    /// `/` serves a static page naming no device data, and the panel/desktop
+    /// SPA is public *by design*: it shows nothing until the user supplies a
+    /// token, and the token is injected server-side only for the authorised
+    /// paths (loopback / gateway proxy secret / one-time grant) — see
+    /// handle_panel_home.
+    #[tokio::test]
+    async fn deliberately_public_routes_stay_public() {
+        for (m, p) in [
+            ("GET", "/"),
+            ("GET", "/panel"),
+            ("GET", "/panel/"),
+            ("GET", "/desktop"),
+            ("GET", "/desktop/"),
+            ("GET", "/panel/panel.js"),
+            ("GET", "/desktop/panel.css"),
+            ("GET", "/some-unknown-page"),
+        ] {
+            let r = handle_request(req_anon(m, p), state()).await;
+            assert_ne!(
+                r.status(),
+                StatusCode::UNAUTHORIZED,
+                "{m} {p} must stay public (it is a documented public surface)"
+            );
+        }
     }
 
     #[tokio::test]
