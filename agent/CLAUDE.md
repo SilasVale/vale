@@ -57,6 +57,15 @@ kill/copy/restart scripts over a terminal PTY** — the PTY is hosted by the
 agent itself, so an inline `Stop-Process` kills your own shell before the
 restart command runs and leaves the device dark (happened twice on d1).
 
+**And never START a second `vale-agent.exe` from an agent-hosted terminal.**
+The agent puts itself in a kill-on-close Job Object and every child it spawns
+inherits membership (`setup_child_reaper_job`, `src/winmain.rs`), so a process
+launched from an agent PTY nests inside the running agent's job — observed to
+kill the running agent on d1 (the watchdog restarted it). There is also no way
+to isolate a second instance: `data_dir()` is registry-first with no env
+override, so it shares the live agent's session directory. Launch detached
+(WMI `Win32_Process.Create`, as `vale update` does) if one is truly needed.
+
 Release + rollout:
 
 ```bash

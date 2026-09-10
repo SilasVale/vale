@@ -59,6 +59,33 @@ kill/copy/restart scripts over a terminal PTY** — the PTY is hosted by the
 agent itself, so an inline `Stop-Process` kills your own shell before the
 restart command runs and leaves the device dark (happened twice on d1).
 
+**And never START a second `vale-agent.exe` from an agent-hosted terminal.**
+The same hosting cuts the other way, and this was learned the hard way:
+
+- The agent puts itself in a **kill-on-close Job Object**, and *every child it
+  spawns inherits membership* — that is the documented design (see
+  `setup_child_reaper_job` in `src/winmain.rs`), and it is why an update can
+  never leave orphaned PTY shells behind.
+- A shell running inside that agent is therefore IN that job. Anything launched
+  from it inherits the same membership, so a second agent started that way ends
+  up nested inside the first one's job.
+- Observed on d1: launching a test build this way **killed the running agent**
+  (which the 60 s watchdog then restarted, so the device came back on its own).
+  It cost a device restart and an hour of diagnosis.
+
+**There is also no way to isolate a second instance.** `paths.rs` resolves
+`data_dir()` registry-first (`HKLM\SOFTWARE\Vale\Agent\DataDir`, else
+`install_dir()`) and there is **no environment override** — so a second agent
+shares the live one's session directory and would run `recover_interrupted`
+over its audit files. A `VALE_DATA_DIR=` env var does nothing.
+
+If a second instance is genuinely needed, launch it DETACHED — WMI
+`Win32_Process.Create` (what `vale update` already uses, precisely so the swap
+script survives the agent dying) or a one-shot scheduled task — and accept that
+the data dir is still shared. For verifying a new Windows build, prefer the
+static checks (PE validity + `strings` for the new code paths) over running it
+beside the live agent.
+
 Release + rollout:
 
 ```bash

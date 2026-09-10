@@ -338,12 +338,31 @@ pub(crate) fn self_heal() {
 #[cfg(windows)]
 pub(crate) fn setup_child_reaper_job() {
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
     unsafe {
+        // WAS THIS PROCESS ALREADY IN A JOB? Recorded as a FACT, deliberately
+        // without a verdict, because two very different situations produce it:
+        // Task Scheduler wraps its tasks in a job (benign — see this function's
+        // own note), and so does any process tree spawned from an agent-hosted
+        // PTY shell (NOT benign: every child the agent spawns inherits its
+        // kill-on-close job, so a second vale-agent started that way nests inside
+        // the first one's job and can take the RUNNING agent down with it).
+        //
+        // Observed on a device: launching a test build from an agent PTY killed
+        // the live agent, which the watchdog then restarted. Diagnosing that cost
+        // far longer than it should have, because this path was silent.
+        //
+        // One factual line, not a warning: startup.log already carries several
+        // per boot, and a line that fires on every normal start would be
+        // wallpaper. The actionable guidance lives in agent/AGENTS.md.
+        let mut already: windows_sys::Win32::Foundation::BOOL = 0;
+        if IsProcessInJob(GetCurrentProcess(), 0, &mut already) != 0 && already != 0 {
+            log_line("child-reaper job: process was ALREADY in a job at startup (parent job limits apply; Task Scheduler does this, and so does an agent-hosted PTY shell)");
+        }
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
         if job == 0 {
             log_line("child-reaper job: CreateJobObject failed — update orphans possible");
