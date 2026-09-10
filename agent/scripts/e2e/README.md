@@ -53,6 +53,52 @@ are the environment, not the agent — verified by pointing `VALE_EVIDENCE_DIR` 
 Linux directory, which moves `file` from an ENOENT abort to 6/7 with only the
 backslash join failing.
 
+## Rendering the REAL panel (`../panel-render-audit.mjs`)
+
+`e2e.js` drives the agent's HTTP surface. It says nothing about what the operator
+SEES. `scripts/panel-render-audit.mjs` covers that gap:
+
+```bash
+node agent/scripts/panel-render-audit.mjs --out /tmp/panel-audit
+```
+
+It loads `agent/resources/panel/panel.js` + `panel.css` — the exact bytes the agent
+embeds via `include_str!` — into a page served at a real `/panel/` origin (by
+Playwright route interception, so NO listener is opened anywhere), with
+`window.fetch` stubbed to a fixed device state. The app then boots through its own
+production path and renders its own component tree. It:
+
+1. measures **every visible text node**, alpha-compositing background alpha AND the
+   ancestor `opacity` chain;
+2. asserts each governance element is **present**, so a clean sweep over a page
+   that failed to render cannot pass;
+3. checks the top bar for overflow and reports page errors.
+
+Without `VALE_BROWSER_HELPER` it runs in **emit mode**: it writes the harness and
+exits 0, so the same measurement can be driven from wherever a Playwright runtime
+exists (on this project that is the device's bundled one, via
+`browser_run_script` — the Linux box has no launchable chromium).
+
+### Why it exists
+
+Every earlier visual check was a hand-built HTML gallery: markup I wrote,
+stylesheet I linked, elements I had just created. That verifies the CSS you are
+thinking about and nothing else — and it is how FIVE chrome contrast defects
+survived several rounds of claiming to "audit" contrast. `#session-count` (2.33
+light), `.side-time` (2.29), `.side-count` (4.40), `.tab.active` (3.83) and
+`.view-switch-btn.active` (3.65) were wrong the whole time and no
+feature-by-feature gallery could see them, because I only ever measured what I was
+working on. Auditing the real running app found all five in one pass.
+
+Two measurement traps are baked into the probe, both paid for:
+
+* **`opacity` is in neither `getComputedStyle(color)` nor `backgroundColor`.** A
+  probe that composites backgrounds alone reports a dimmed element at its FULL
+  colour. Six text sites were dimmed that way and every one measured "ok".
+* **xterm paints from its own palette**, not from the panel tokens. Measuring it
+  here mixes two colour systems; `themeContrast.test.ts` pins the same exclusion
+  with the same reason.
+
 ## Why the trail assertions exist
 
 Every check in `governance` passed on an early build while **arming the approval
