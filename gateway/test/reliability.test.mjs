@@ -13,6 +13,8 @@ import {
   passthroughTimeoutMs,
   upstreamTimeoutMs,
   BreakerDO,
+  retryPolicyFor,
+  GLM_LOTTERY_MODEL,
 } from "../src/reliability.ts";
 import { estimateTokens } from "../src/body-scan.ts";
 import { toAnthropicResponse, AnthropicStreamEncoder } from "../src/anthropic-translate.ts";
@@ -856,4 +858,42 @@ test("inspect: accepted inspect can swap the response", async () => {
     assert.equal(r.detail, "");
     assertFetchCalls(1);
   });
+});
+
+// SOLID Round-77: the retry-policy table (one definition shared by the
+// chat, messages-native and count arms — previously copy-pasted ternaries
+// with comments trying to sync them). Timeout base rides through
+// untouched; the table owns only the retry shape.
+test("retryPolicyFor: bursty kinds retry, glm lottery paces, rest plain", () => {
+  const T = 4242;
+  assert.deepEqual(retryPolicyFor("nvidia", "m", T), { timeoutMs: T, attempts: 4, retry502: true });
+  assert.deepEqual(retryPolicyFor("gmi", "m", T), { timeoutMs: T, attempts: 4, retry502: true });
+  assert.deepEqual(retryPolicyFor("openrouter", GLM_LOTTERY_MODEL, T), {
+    timeoutMs: T,
+    attempts: 10,
+    backoffMs: 300,
+    retry502: true,
+    ignoreRetryAfter: true,
+  });
+  assert.deepEqual(retryPolicyFor("openrouter", "other-model", T), { timeoutMs: T, attempts: 4, retry502: true });
+  for (const kind of ["deepseek", "opencode", "commandgoat", "qwen", "amd"]) {
+    assert.deepEqual(retryPolicyFor(kind, "m", T), { timeoutMs: T }, `${kind} rides the plain budget`);
+  }
+});
+
+test("retryPolicyFor: gmiBursty:false reproduces the messages-native table", () => {
+  // Open product question (see retryPolicyFor): chat/count retry gmi
+  // bursts, messages-native does not. Both tables locked, neither drifts.
+  const T = 4242;
+  assert.deepEqual(retryPolicyFor("gmi", "m", T, { gmiBursty: false }), { timeoutMs: T });
+  assert.deepEqual(
+    retryPolicyFor("nvidia", "m", T, { gmiBursty: false }),
+    { timeoutMs: T, attempts: 4, retry502: true },
+    "nvidia unaffected by the flag",
+  );
+  assert.deepEqual(
+    retryPolicyFor("openrouter", GLM_LOTTERY_MODEL, T, { gmiBursty: false }).attempts,
+    10,
+    "lottery arm orthogonal to the flag",
+  );
 });

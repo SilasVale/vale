@@ -36,6 +36,7 @@ import {
   recordChannelFailure,
   isChannelDownFailure,
   recordChannelSuccess,
+  retryPolicyFor,
 } from "../reliability.ts";
 import {
   rawWithDeepSeekProvider,
@@ -819,28 +820,9 @@ async function handleGatewayImpl(
         }),
         body: forwardBody,
       },
-      // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
-      // knocks win slots but paced retries never land (2026-08-24). Other or/
-      // models, paid and free alike, keep the standard paced retry.
-      // nv//gmi/: NIM sheds bursts with fast 5xx BEFORE processing — retry502
-      // absorbs them instead of surfacing "temporarily overloaded".
-      route.kind === "nvidia" || route.kind === "gmi"
-        ? { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
-        : route.kind === "openrouter"
-          ? upstreamModel === "z-ai/glm-5.2:free"
-            ? {
-                timeoutMs: ogTimeoutMs(env),
-                attempts: 10,
-                backoffMs: 300,
-                retry502: true,
-                ignoreRetryAfter: true,
-              }
-            : {
-                timeoutMs: ogTimeoutMs(env),
-                attempts: 4,
-                retry502: true,
-              }
-          : { timeoutMs: ogTimeoutMs(env) },
+      // Retry policy table (see retryPolicyFor): or/ glm-5.2:free lottery,
+      // nv/gmi burst-shedding, standard paced retry otherwise.
+      retryPolicyFor(route.kind, upstreamModel, ogTimeoutMs(env)),
     );
     return relayUpstreamResult(
       env,
@@ -980,8 +962,10 @@ async function handleGatewayImpl(
         },
         body: JSON.stringify(openaiReq),
       },
-      // Same as the chat/completions site for these upstreams: NIM/GMI shed
-      // bursts with fast 5xx BEFORE processing — retry502 absorbs them.
+      // Deliberately NOT the shared table: this arm serves every kind but
+      // uses one uniform policy (attempts + retry502 for all) — routing it
+      // through retryPolicyFor would silently drop non-nv/gmi kinds to the
+      // plain budget (3 attempts, no retry502). Round-77 review catch.
       { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true },
     );
     if (!upstream || !upstream.ok) {
@@ -1079,25 +1063,11 @@ async function handleGatewayImpl(
         }),
         body: forwardBody,
       },
-      // or/: same free-pool lottery pacing as the chat/completions site above.
-      // nv/: NIM 5xx burst-shedding gets retried here too.
-      route.kind === "nvidia"
-        ? { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
-        : route.kind === "openrouter"
-          ? upstreamModel === "z-ai/glm-5.2:free"
-            ? {
-                timeoutMs: passthroughTimeoutMs(env, route.kind),
-                attempts: 10,
-                backoffMs: 300,
-                retry502: true,
-                ignoreRetryAfter: true,
-              }
-            : {
-                timeoutMs: passthroughTimeoutMs(env, route.kind),
-                attempts: 4,
-                retry502: true,
-              }
-          : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
+      // Shared retry table with gmiBursty: false — this arm's table names
+      // only nvidia (see retryPolicyFor on the open gmi question).
+      retryPolicyFor(route.kind, upstreamModel, passthroughTimeoutMs(env, route.kind), {
+        gmiBursty: false,
+      }),
     );
     return relayUpstreamResult(
       env,
