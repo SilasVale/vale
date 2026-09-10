@@ -41,6 +41,18 @@ fn host_of(u: &str) -> String {
 /// https always; http only for loopback dev; and the host must match the
 /// configured release site (an empty site means unset — skip the match).
 /// Pure — same verdicts as the inline handler logic it replaces.
+///
+/// `download` is REMOTE DATA: it comes out of the release server's
+/// `version.json`, so a compromised release server (or a transport MITM on
+/// the version check) supplies it. This function is the last gate before the
+/// bytes are spawned at SYSTEM, which is why the adversarial shapes are
+/// pinned in `check_download_url_refuses_every_offsite_shape` rather than
+/// left to inspection.
+///
+/// The empty-`site` branch is DEFENSIVE ONLY: `agent_update` returns early
+/// with "no update channel configured" when `platform.download_url` is unset,
+/// so production always reaches here with a real site and the match is never
+/// skipped. Kept because this is a pure function with its own contract.
 fn check_download_url(download: &str, site: &str) -> Result<(), String> {
     let dl_host = host_of(download);
     let site_host = host_of(site);
@@ -1016,5 +1028,93 @@ mod tests {
         assert!(!valid_sha256(&"a".repeat(63)));
         assert!(!valid_sha256(&"a".repeat(65)));
         assert!(!valid_sha256(&format!("{}g", "a".repeat(63))));
+    }
+
+    /// The gate that stands between a REMOTE manifest field and SYSTEM code
+    /// execution, pinned against the shapes an attacker would try.
+    ///
+    /// Every verdict here was OBSERVED before it was asserted (a probe test
+    /// printed `host_of(u)` + the verdict for each shape). Two of them are
+    /// judgement calls rather than obvious outcomes, and both are recorded
+    /// with their reasoning so a later "fix" has to argue with the comment:
+    ///
+    ///   * the SCHEME match is case-SENSITIVE, so `HTTPS://…` is refused. That
+    ///     rejects a technically-valid URL, i.e. it fails CLOSED. Lowercasing
+    ///     the comparison would be equally safe; the current behaviour is
+    ///     pinned so changing it is deliberate.
+    ///   * the PORT is not part of the check, so `https://site:8443/x` is
+    ///     accepted. That is sound here: the host still has to serve a
+    ///     certificate valid for the configured site, so a different port on
+    ///     the AUTHENTICATED host is not an escalation.
+    #[test]
+    fn check_download_url_refuses_every_offsite_shape() {
+        // The production shape carries a PATH (the release lives under
+        // /vale-agent), which is why host_of strips one.
+        let site = "https://agent.saisi.online/vale-agent";
+        let refused = |u: &str| {
+            check_download_url(u, site)
+                .err()
+                .unwrap_or_else(|| panic!("{u} must be REFUSED — it is off-site"))
+        };
+
+        // userinfo trick: this URL's real host is evil.example (userinfo comes
+        // BEFORE the @), so it must be refused...
+        refused("https://agent.saisi.online@evil.example/x.tgz");
+        // ...and this one's real host IS the site (evil.example is the
+        // userinfo), so accepting it is CORRECT — the connection goes to
+        // agent.saisi.online. Pinned because it LOOKS like a bypass.
+        assert!(
+            check_download_url("https://evil.example@agent.saisi.online/x.tgz", site).is_ok(),
+            "userinfo is not the host — this connects to the real site"
+        );
+
+        // Suffix / prefix lookalikes.
+        refused("https://agent.saisi.online.evil.example/x.tgz");
+        refused("https://evil.example/agent.saisi.online/x.tgz");
+        refused("https://evil.example/agent.saisi.online.tgz");
+        // THE SUFFIX TRAP — a DIFFERENT host whose name ENDS WITH the site.
+        // This is the shape a `starts_with`/`ends_with`/`contains` host check
+        // would wave through, and the first version of this test MISSED it:
+        // mutation testing (swapping the equality for `ends_with`) left the
+        // test green, proving the pins did not actually discriminate. Both
+        // spellings are here: one against the production site, one against a
+        // bare domain where the attacker-controlled host is unmistakable.
+        refused("https://notagent.saisi.online/x.tgz");
+        let bare = "https://cdn.example.com";
+        assert!(
+            check_download_url("https://cdn.example.com/x.tgz", bare).is_ok(),
+            "the exact host must pass"
+        );
+        assert!(
+            check_download_url("https://evilcdn.example.com/x.tgz", bare).is_err(),
+            "evilcdn.example.com is a DIFFERENT host that merely ends with \
+             cdn.example.com — a suffix match would execute attacker bytes at \
+             SYSTEM"
+        );
+
+        // Scheme smuggling + malformed shapes.
+        refused("HTTPS://agent.saisi.online/x.tgz"); // case-sensitive match
+        refused("//agent.saisi.online/x.tgz"); // scheme-relative
+        refused("https:/agent.saisi.online/x.tgz"); // one slash
+        refused("agent.saisi.online/x.tgz"); // no scheme at all
+        refused("http://agent.saisi.online/x.tgz"); // http off-loopback
+
+        // Trailing-dot FQDN: a false NEGATIVE (a technically-valid URL is
+        // rejected), i.e. it fails closed. Pinned as-is.
+        refused("https://agent.saisi.online./x.tgz");
+
+        // Same authenticated host on another port is accepted — see the note.
+        assert!(
+            check_download_url("https://agent.saisi.online:8443/x.tgz", site).is_ok(),
+            "a different port on the AUTHENTICATED host is not an escalation"
+        );
+
+        // And the production shape still passes, so the pins above are not
+        // just an over-tightened gate that refuses everything.
+        assert!(check_download_url(
+            "https://agent.saisi.online/vale-agent/vale-agent-1.2.1.tgz",
+            site
+        )
+        .is_ok());
     }
 }
