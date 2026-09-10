@@ -6,7 +6,7 @@
  * eventual consistency (model=auto requests on different isolates read
  * stale values).
  *
- * Storage: `route:{uid}` → model string (e.g. "ds/deepseek-v4-flash")
+ * Storage: `route:{uid}` → model string (e.g. "cm/deepseek/deepseek-v4.1-flash")
  *
  * HTTP API (called via stub.fetch):
  *   GET    /route?uid=xxx       → { model: "..." | null }

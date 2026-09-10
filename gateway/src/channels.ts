@@ -55,20 +55,57 @@ export const OG_WIRE_REMAP: Record<string, string> = {
 
 // zen/go server-side web_search capability, keyed by WIRE slug (i.e. after
 // OG_WIRE_REMAP — the search-model swap in plugins/translate.ts checks the wire
-// name). Both Flash-line slugs execute Anthropic's web_search_20250305 natively
-// and answer with server_tool_use + web_search_tool_result:
-//   - "deepseek-v4-flash" — the V4 slug (the long-standing search model);
-//   - "deepseek-flash"    — the version-less lane = V4.1, the remap target of
-//                           og/deepseek-v4.1-flash.
-// Live-verified 2026-09-10 against zen/go/v1/messages with a forced
-// tool_choice:{type:"tool",name:"web_search"}: HTTP 200 + 4 searches on each.
+// name). "deepseek-flash" is the version-less lane = V4.1, the remap target of
+// og/deepseek-v4.1-flash: it executes Anthropic's web_search_20250305 natively
+// and answers with server_tool_use + web_search_tool_result (live-verified
+// 2026-09-10 against zen/go/v1/messages with a forced
+// tool_choice:{type:"tool",name:"web_search"}: HTTP 200 + 4 searches). The V4
+// slug `deepseek-v4-flash` was search-capable too but retired with the V4 line
+// on 2026-09-10 (RETIRED_MODELS) and is no longer a swap target.
 // Every other og/ model on the translate path (minimax-m3, mimo-v2.5, kimi,
 // glm) fabricates a query and returns NO web_search_tool_result, so a search
-// request naming one of those still falls back to the V4 slug.
-export const SEARCH_CAPABLE_WIRE_MODELS: Set<string> = new Set([
-  "deepseek-v4-flash",
-  "deepseek-flash",
-]);
+// request naming one of those still falls back to the lane slug.
+export const SEARCH_CAPABLE_WIRE_MODELS: Set<string> = new Set(["deepseek-flash"]);
+
+// Retired models — the whole DeepSeek V4 Flash line, taken down 2026-09-10 in
+// favour of V4.1 Flash. DeepSeek official retired V4 first (its docs: the old
+// names `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` still answer but
+// are served BY V4.1), AMD's pool never got a V4.1, and every other channel we
+// advertise serves V4.1. Requests naming a retired id (or its bare upstream
+// wire spelling) are REJECTED with the replacement in the message instead of
+// silently riding an alias: a silent alias hides which model actually
+// answered and lets dead names live in client configs forever.
+// Keys are lowercase — the lookup lowercases + trims the requested model, so
+// AMD's case-sensitive catalogue ids are covered by one entry.
+export const RETIRED_MODELS: Record<string, string> = {
+  // Advertised ids that left the catalog.
+  "ds/deepseek-v4-flash": "cm/deepseek/deepseek-v4.1-flash",
+  "og/deepseek-v4-flash": "og/deepseek-v4.1-flash",
+  "cm/deepseek/deepseek-v4-flash": "cm/deepseek/deepseek-v4.1-flash",
+  "cm/deepseek/deepseek-v4-flash-vision-exp": "cm/deepseek/deepseek-v4.1-flash",
+  "or/deepseek/deepseek-v4-flash-0731": "cm/deepseek/deepseek-v4.1-flash",
+  "amd/deepseek-v4-flash": "cm/deepseek/deepseek-v4.1-flash",
+  "amd/deepseek-v4-flash-vision-exp": "cm/deepseek/deepseek-v4.1-flash",
+  // Bare upstream spellings (unprefixed names and wire names), for clients
+  // that never used a prefix.
+  "deepseek-v4-flash": "cm/deepseek/deepseek-v4.1-flash",
+  "deepseek-v4-flash-vision-exp": "cm/deepseek/deepseek-v4.1-flash",
+  "deepseek-v4-flash-0731": "cm/deepseek/deepseek-v4.1-flash",
+  "deepseek/deepseek-v4-flash": "cm/deepseek/deepseek-v4.1-flash",
+  "deepseek/deepseek-v4-flash-vision-exp": "cm/deepseek/deepseek-v4.1-flash",
+  "deepseek/deepseek-v4-flash-0731": "cm/deepseek/deepseek-v4.1-flash",
+};
+
+/** Replacement id for a retired model, or null when the model is not retired.
+ *  Lookup is case-insensitive on the trimmed name (AMD ids are mixed-case). */
+export function retiredModelHint(model: string): string | null {
+  const key = String(model || "")
+    .trim()
+    .toLowerCase();
+  return Object.prototype.hasOwnProperty.call(RETIRED_MODELS, key)
+    ? (RETIRED_MODELS[key] as string)
+    : null;
+}
 
 // Model-level forced US egress. These og/ models are region-blocked when zen
 // is reached directly from CN clients, so requests ALWAYS ride a US exit
@@ -124,8 +161,13 @@ export function museResponsesExit(env: any): string {
 }
 
 export const MODELS: { id: string; owned_by: string }[] = [
-  { id: "ds/deepseek-v4-flash", owned_by: "deepseek" },
-  { id: "og/deepseek-v4-flash", owned_by: "opencode" },
+  // 2026-09-10: the whole V4 Flash line is RETIRED (see RETIRED_MODELS below)
+  // — DeepSeek official turned `deepseek-v4-flash` into a V4.1 alias, AMD's
+  // pool never got a V4.1, and the channels we advertise all serve V4.1 now.
+  // No ds/ line is advertised either: the official key is out of balance
+  // (402 on every request, verified 2026-09-10), so the ds/ route stays
+  // reachable by exact name (`ds/deepseek-flash` after a top-up) without
+  // sitting in the catalog.
   // DeepSeek V4.1 Flash (released 2026-09-10). Advertised under the CLEAR
   // name; zen/go serves it under the version-less lane slug `deepseek-flash`
   // (verified live against /v1/models 2026-09-10 — there is no
@@ -167,7 +209,13 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "gmi/MiniMaxAI/MiniMax-M3", owned_by: "gmi" },
   { id: "gmi/MiniMaxAI/MiniMax-M2.7", owned_by: "gmi" },
   { id: "or/stealth/ox-alpha", owned_by: "openrouter" },
-  { id: "or/deepseek/deepseek-v4-flash-0731", owned_by: "openrouter" },
+  // or/ deepseek line retired with the rest of V4 (2026-09-10). OpenRouter
+  // does carry `deepseek/deepseek-v4.1-flash`, but this account's guardrails
+  // reject every endpoint of it ("0 endpoints out of 1 requested are
+  // available matching your guardrail restrictions and data policy",
+  // verified 2026-09-10) — advertising a model that 404s for the account
+  // would be worse than dropping the line. Flip the OpenRouter privacy
+  // setting and re-add it here if that changes.
   { id: "qw/qwen3.8-max-preview", owned_by: "qwen" },
   { id: "qw/qwen3.8-flash", owned_by: "qwen" },
   // cm/ — Command Code (api.commandcode.ai/provider). GOAT plan and above have
@@ -179,7 +227,6 @@ export const MODELS: { id: string; owned_by: string }[] = [
   // 2026-09-03: Command Code now advertises two :free models — Meituan's
   // LongCat-2.0 (1M ctx) and Poolside's Laguna S 2.1 (256K ctx) — metered
   // against the same plan quota as the paid catalog.
-  { id: "cm/deepseek/deepseek-v4-flash", owned_by: "command-code" },
   { id: "cm/meituan/LongCat-2.0:free", owned_by: "command-code" },
   { id: "cm/poolside/laguna-s-2.1-free", owned_by: "command-code" },
   // 2026-09-10: V4.1 Flash reached the Command Code catalog as
@@ -192,15 +239,13 @@ export const MODELS: { id: string; owned_by: string }[] = [
   // the image truly reached the upstream model (native vision, hence the
   // VISION_CAPABLE_MODELS entry in wrangler.jsonc).
   { id: "cm/deepseek/deepseek-v4.1-flash", owned_by: "command-code" },
-  // amd/ — AMD Radeon Cloud (developer.amd.com.cn/radeon), free BYOK pool. The
-  // catalog is GET /v1/models; any catalog slug is reachable as amd/<id> (case
-  // matters: DeepSeek-V4-Flash, not deepseek-v4-flash). Two live warnings from
-  // the 2026-09-02 sweep: reasoning_effort IS validated upstream (absent param
-  // = thinking OFF, so clients must declare it), and GLM-5.3-Flash /
-  // Qwen3.8-Flash-Next were pulled from /v1/models / stuck at 503
-  // no_available_workers — not advertised here until they serve again.
-  { id: "amd/DeepSeek-V4-Flash", owned_by: "amd-radeon" },
-  { id: "amd/DeepSeek-V4-Flash-Vision-Exp", owned_by: "amd-radeon" },
+  // amd/ — AMD Radeon Cloud (developer.amd.com.cn/radeon), free BYOK pool.
+  // RETIRED 2026-09-10: the pool never got a V4.1 (every spelling of
+  // DeepSeek-V4.1-Flash / deepseek-v4.1-flash 404s "not available",
+  // verified live) and both models we advertised were V4 Flash variants,
+  // so the whole prefix left the catalog with the V4 line. The route
+  // builder and the AMD key probe stay (an exact `amd/<slug>` still
+  // routes); re-add entries when the pool serves a V4.1.
 ];
 
 // Route info shown in the console ("model routing" section). Public, no keys.
@@ -210,7 +255,6 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     backend: "OpenCode Go",
     desc: "opencode.ai/zen/go — all models via chat/completions (OpenAI format); gpt-5.6-luna auto-routes via OpenRouter US exit (zen region-blocks it); muse-spark-* via /v1/responses forced through the US exit (Meta region policy)",
     models: [
-      "deepseek-v4-flash",
       "deepseek-v4.1-flash",
       "minimax-m3",
       "mimo-v2.5",
@@ -221,12 +265,6 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     ],
   },
   {
-    prefix: "ds/",
-    backend: "DeepSeek Official",
-    desc: "api.deepseek.com/anthropic — Bearer passthrough",
-    models: ["deepseek-v4-flash"],
-  },
-  {
     prefix: "or/",
     backend: "OpenRouter",
     desc: "openrouter.ai — user's own key (BYOK); dual-format passthrough, US-proxy switch decides direct vs exit",
@@ -235,7 +273,6 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
       "z-ai/glm-5.2:free",
       "nvidia/nemotron-3-ultra-550b-a55b:free",
       "stealth/ox-alpha",
-      "deepseek/deepseek-v4-flash-0731",
     ],
   },
   {
@@ -261,32 +298,25 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     backend: "Command Code (GOAT)",
     desc: "api.commandcode.ai/provider — GOAT plan & up get Provider API access (Go plan excluded); Anthropic /v1/messages translated to chat/completions (the Anthropic endpoint only serves claude-*), OpenAI format passes through; any catalog model reachable as cm/<id>",
     models: [
-      "deepseek/deepseek-v4-flash",
       "deepseek/deepseek-v4.1-flash",
       "meituan/LongCat-2.0:free",
       "poolside/laguna-s-2.1-free",
     ],
   },
   {
-    prefix: "amd/",
-    backend: "AMD Radeon Cloud",
-    desc: "developer.amd.com.cn/radeon — free BYOK pool (user's own rc- key); native Anthropic /v1/messages AND OpenAI /v1/chat/completions, no translation; reasoning_effort is validated upstream (absent = thinking off); per-model global concurrency cap (429 model_concurrency_rate_limit_exceeded); always direct — the US exit has no amd target",
-    models: ["DeepSeek-V4-Flash", "DeepSeek-V4-Flash-Vision-Exp"],
-  },
-  {
     prefix: "none",
-    backend: "DeepSeek Official (default)",
-    desc: "fallback route",
-    models: ["deepseek-v4-flash"],
+    backend: "Command Code (default)",
+    desc: "no prefix → the default channel, Command Code (GOAT) with the model name passed through as-is; `auto` resolves to cm/deepseek/deepseek-v4.1-flash (per-user selection first, see model-route.ts). Note: cm/ rides Command Code's OpenAI endpoint, which rejects claude-* ids (those exist only on their Anthropic endpoint) — use a prefixed deepseek/OSS model there",
+    models: ["deepseek/deepseek-v4.1-flash"],
   },
 ];
 
 // ---- Channel health (public /api/health) ----
+// 2026-09-10 (V4 retirement): the ds/ and amd/ cards left with their models —
+// ds/ is unpayable (402 on every request) and amd/ has no V4.1 to advertise.
 export const HEALTH_CHANNELS: { id: string; model: string }[] = [
-  { id: "ds", model: "ds/deepseek-v4-flash" },
   { id: "qw", model: "qw/qwen3.8-max-preview" },
   { id: "qw", model: "qw/qwen3.8-flash" },
-  { id: "og", model: "og/deepseek-v4-flash" },
   { id: "og", model: "og/deepseek-v4.1-flash" },
   // More og/ route cards: gpt-5.6-luna (auto-routes via the OpenRouter US
   // exit — translate.ts remaps it), mimo, ox-alpha. Duplicate ids are safe
@@ -302,24 +332,15 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "or", model: "or/z-ai/glm-5.2:free" },
   { id: "or", model: "or/nvidia/nemotron-3-ultra-550b-a55b:free" },
   { id: "or", model: "or/stealth/ox-alpha" },
-  { id: "or", model: "or/deepseek/deepseek-v4-flash-0731" },
   { id: "nv", model: "nv/nvidia/nemotron-3-ultra-550b-a55b" },
   // MiniMax Week free tier on GMI Cloud — one card per free LLM.
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M3" },
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M2.7" },
-  { id: "cm", model: "cm/deepseek/deepseek-v4-flash" },
   { id: "cm", model: "cm/deepseek/deepseek-v4.1-flash" },
   { id: "cm", model: "cm/meituan/LongCat-2.0:free" },
   { id: "cm", model: "cm/poolside/laguna-s-2.1-free" },
-  // amd/ — Radeon Cloud free pool. One card per SERVING model so the console
-  // switchboard lists them and `vale use amd/...` can probe. GLM-5.3-Flash and
-  // Qwen3.8-Flash-Next were pulled (503 no_available_workers / GLM left the
-  // upstream catalog on 2026-09-02) but stay reachable by exact name — the
-  // route only strips the prefix, MODELS is an advertising/auto-routing
-  // whitelist, not a gate. NOT in HEALTH_PRIORITY: buildHealth reports ok for
-  // everything but og's breaker, and a global "recommended" must not point
-  // users at a BYOK pool that 502s without their own key.
-  { id: "amd", model: "amd/DeepSeek-V4-Flash" },
-  { id: "amd", model: "amd/DeepSeek-V4-Flash-Vision-Exp" },
 ];
-export const HEALTH_PRIORITY: string[] = ["qw", "ds", "og", "or"];
+// The default channel leads: `auto`/no-prefix now resolve to Command Code
+// V4.1 (model-route.ts / upstream.ts defaultRoute), so the console's
+// "recommended" badge points at the same place the gateway defaults to.
+export const HEALTH_PRIORITY: string[] = ["cm", "qw", "og", "or"];

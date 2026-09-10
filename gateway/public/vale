@@ -9,13 +9,16 @@ const os = require("os");
 const path = require("path");
 
 const GATEWAY_BASE = "https://api.saisi.online";
+// Mirror of the console's channels (channels.ts MODELS/HEALTH_PRIORITY).
+// ds/ left with the 2026-09-10 V4 retirement (its key is out of balance and
+// the V4 names are refused by name) — the default channel is now cm/ V4.1.
 const CHANNELS = {
-  ds: { model: "ds/deepseek-v4-flash" },
+  cm: { model: "cm/deepseek/deepseek-v4.1-flash" },
   qw: { model: "qw/qwen3.8-max-preview" },
-  og: { model: "og/deepseek-v4-flash" },
+  og: { model: "og/deepseek-v4.1-flash" },
   or: { model: "or/openai/gpt-5.6-luna:floor[1m]" },
 };
-const PRIORITY = ["qw", "ds", "og", "or"];
+const PRIORITY = ["cm", "qw", "og", "or"];
 const MODEL_ENV_KEYS = [
   "ANTHROPIC_MODEL",
   "ANTHROPIC_SMALL_FAST_MODEL",

@@ -252,7 +252,7 @@ export function ogTimeoutMs(env: any): number {
 }
 
 /**
- * Timeout for passthrough routes. og-native (e.g. deepseek-v4-flash) must use
+ * Timeout for passthrough routes. The og Flash line must use
  * the 120s og budget — zen's latency intermittently spikes past 30s and real
  * max-thinking runs 40-54s to first byte — while every other passthrough
  * channel (ds/qw/or) keeps the generic 30s upstream budget. cm/ (Command Code)

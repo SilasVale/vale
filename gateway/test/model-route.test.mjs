@@ -42,12 +42,14 @@ test("non-whitelisted models are never usable (before any key lookup)", async ()
 });
 
 test("shared-key channels: user key, env key, or neither", async () => {
+  // ds/ and amd/ left the catalog with the V4 retirement (2026-09-10), and
+  // isModelUsable refuses anything outside MODELS — so the shared-key cases
+  // ride the live channels.
   const cases = [
-    ["ds/deepseek-v4-flash", "DEEPSEEK_API_KEY"],
     ["qw/qwen3.8-flash", "QWEN_API_KEY"],
     ["or/z-ai/glm-5.2:free", "OPENROUTER_API_KEY"],
-    ["cm/deepseek/deepseek-v4-flash", "CMD_API_KEY"],
-    ["amd/DeepSeek-V4-Flash", "AMD_API_KEY"],
+    ["cm/deepseek/deepseek-v4.1-flash", "CMD_API_KEY"],
+    ["og/deepseek-v4.1-flash", "OPENCODE_GO_API_KEY"],
   ];
   let i = 0;
   for (const [model, key] of cases) {
@@ -96,7 +98,7 @@ test("og: key first, breaker last", async () => {
   assert.equal(
     await isModelUsable(
       envFor({ ukeys: { OPENCODE_GO_API_KEY: "sk-u" }, uid: "mr-og-ok" }),
-      "og/deepseek-v4-flash",
+      "og/deepseek-v4.1-flash",
       "mr-og-ok",
     ),
     true,
@@ -106,14 +108,14 @@ test("og: key first, breaker last", async () => {
   assert.equal(
     await isModelUsable(
       envFor({ ukeys: { OPENCODE_GO_API_KEY: "sk-u" }, uid: "mr-og-open", breakerOpen: true }),
-      "og/deepseek-v4-flash",
+      "og/deepseek-v4.1-flash",
       "mr-og-open",
     ),
     false,
     "key + open breaker degrades",
   );
   assert.equal(
-    await isModelUsable(envFor({ uid: "mr-og-none" }), "og/deepseek-v4-flash", "mr-og-none"),
+    await isModelUsable(envFor({ uid: "mr-og-none" }), "og/deepseek-v4.1-flash", "mr-og-none"),
     false,
     "keyless og",
   );

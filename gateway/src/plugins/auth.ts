@@ -652,7 +652,10 @@ export async function testKey(env: any, name: string, key: string): Promise<Resp
           ...opencodeSessionHeader(undefined, "key-probe"),
         },
         body: JSON.stringify({
-          model: "deepseek-v4-flash",
+          // zen/go's V4.1 lane slug (the wire name behind og/deepseek-v4.1-flash).
+          // The old V4 slug was retired 2026-09-10; probing the live lane keeps
+          // this a real auth + model check.
+          model: "deepseek-flash",
           messages: [{ role: "user", content: "ping" }],
           max_tokens: 1,
           stream: true,
@@ -690,7 +693,8 @@ export async function testKey(env: any, name: string, key: string): Promise<Resp
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "deepseek/deepseek-v4-flash",
+            // V4.1 slug — the V4 entry was retired 2026-09-10 (RETIRED_MODELS).
+            model: "deepseek/deepseek-v4.1-flash",
             messages: [{ role: "user", content: "ping" }],
             max_tokens: 1,
           }),

@@ -123,18 +123,18 @@ function sentHeader(seen, name) {
 // (2026-08: OG_NATIVE_ANTHROPIC emptied — zen natively speaks OpenAI format
 // for every model, so the /v1/messages native passthrough is gone.)
 
-test("og/deepseek-v4-flash goes to zen chat/completions with Bearer (translate path)", async () => {
+test("og/deepseek-v4.1-flash goes to zen chat/completions with Bearer (translate path)", async () => {
   const { env, token } = gwEnv();
   let seen;
   const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
-    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
   // Translate path authenticates with Bearer; no x-api-key on this route.
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-og");
   const sent = JSON.parse(seen.init.body);
-  assert.equal(sent.model, "deepseek-v4-flash"); // og/ prefix stripped
+  assert.equal(sent.model, "deepseek-flash"); // og/ prefix stripped
   assert.equal(sent.stream, false);
   const body = await res.json(); // translated back to Anthropic shape
   assert.equal(body.type, "message");
@@ -146,7 +146,7 @@ test("og/deepseek-v4-flash goes to zen chat/completions with Bearer (translate p
 test("og stream:true with a JSON upstream → one-shot Anthropic SSE, not an empty message", async () => {
   const { env, token } = gwEnv();
   const res = await withFetch(async () => new Response(JSON.stringify({ choices: [{ message: { content: "streamed-ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }), () =>
-    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: true, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 10, stream: true, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type") || "", /text\/event-stream/);
@@ -156,7 +156,7 @@ test("og stream:true with a JSON upstream → one-shot Anthropic SSE, not an emp
 test("og stream:true with a 200-wrapped upstream error → 502, never an empty message", async () => {
   const { env, token } = gwEnv();
   const res = await withFetch(async () => new Response(JSON.stringify({ error: { message: "upstream boom" } }), { status: 200, headers: { "content-type": "application/json" } }), () =>
-    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: true, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 10, stream: true, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(res.status, 502);
   assert.match((await res.json()).error.message, /upstream boom/);
@@ -238,7 +238,7 @@ test("/v1/responses rejects non-muse-spark and non-og models with 400", async ()
       throw new Error("must not be called");
     },
     async () => {
-      for (const model of ["og/deepseek-v4-flash", "ds/deepseek-v4-flash"]) {
+      for (const model of ["og/deepseek-v4.1-flash", "ds/deepseek-flash"]) {
         const res = await post(env, token, { model, input: "hi" }, "/v1/responses");
         assert.equal(res.status, 400, model);
         assert.match((await res.json()).error.message, /only og\/muse-spark-\* Contributor models/, model);
@@ -330,7 +330,7 @@ test("og chat/completions carries x-opencode-session (zen requires it on every o
     }), { status: 200, headers: { "content-type": "application/json" } });
   }, () =>
     post(env, token, {
-      model: "og/deepseek-v4-flash",
+      model: "og/deepseek-v4.1-flash",
       max_tokens: 10,
       stream: false,
       messages: [{ role: "user", content: "hi" }],
@@ -392,7 +392,7 @@ test("og/muse-spark-1.3-contributor rides a custom exit when MUSE_RESPONSES_EXIT
 
 test("/v1/responses rejects non-muse og models", async () => {
   const { env, token } = gwEnv();
-  const res = await post(env, token, { model: "og/deepseek-v4-flash", input: "hi" }, "/v1/responses");
+  const res = await post(env, token, { model: "og/deepseek-v4.1-flash", input: "hi" }, "/v1/responses");
   assert.equal(res.status, 400);
   const body = await res.json();
   assert.match(body.error.message, /muse-spark/);
@@ -650,7 +650,7 @@ test("qw /v1/chat/completions with US_PROXY → egress path targets compatible-m
 // OpenAI chat/completions endpoint (the Command Code Anthropic endpoint only
 // serves claude-* models); /v1/chat/completions passes through directly.
 
-test("cm/deepseek/deepseek-v4-flash /v1/messages → translated to Command Code chat/completions with reasoning", async () => {
+test("cm/deepseek/deepseek-v4.1-flash /v1/messages → translated to Command Code chat/completions with reasoning", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ keys: { CMD_API_KEY: "sk-cm" } });
   let seen;
@@ -666,7 +666,7 @@ test("cm/deepseek/deepseek-v4-flash /v1/messages → translated to Command Code 
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     }), { status: 200, headers: { "content-type": "application/json" } });
   }, () => post(env, token, {
-    model: "cm/deepseek/deepseek-v4-flash",
+    model: "cm/deepseek/deepseek-v4.1-flash",
     max_tokens: 8,
     stream: false,
     messages: [{ role: "user", content: "hi" }],
@@ -678,7 +678,7 @@ test("cm/deepseek/deepseek-v4-flash /v1/messages → translated to Command Code 
   assert.equal(auth, "Bearer sk-cm");
   // Outbound body is OpenAI format, cm/ prefix stripped.
   const sent = JSON.parse(seen.init.body);
-  assert.equal(sent.model, "deepseek/deepseek-v4-flash");
+  assert.equal(sent.model, "deepseek/deepseek-v4.1-flash");
   assert.equal(sent.stream, false);
   assert.equal(sent.messages[0].role, "user");
   // Translated back to Anthropic shape; Command Code's `reasoning` field
@@ -704,7 +704,7 @@ test("cm /v1/chat/completions is a direct OpenAI passthrough with CMD_API_KEY", 
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     }), { status: 200, headers: { "content-type": "application/json" } });
   }, () => post(env, token, {
-    model: "cm/deepseek/deepseek-v4-flash",
+    model: "cm/deepseek/deepseek-v4.1-flash",
     max_tokens: 8,
     stream: false,
     messages: [{ role: "user", content: "hi" }],
@@ -714,7 +714,7 @@ test("cm /v1/chat/completions is a direct OpenAI passthrough with CMD_API_KEY", 
     ? seen.init.headers.get("authorization")
     : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-cm");
-  assert.equal(JSON.parse(seen.init.body).model, "deepseek/deepseek-v4-flash");
+  assert.equal(JSON.parse(seen.init.body).model, "deepseek/deepseek-v4.1-flash");
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.object, "chat.completion");
@@ -793,7 +793,7 @@ test("cm /v1/messages without CMD_API_KEY → 502 config error", async () => {
   let calls = 0;
   const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
     post(env, token, {
-      model: "cm/deepseek/deepseek-v4-flash",
+      model: "cm/deepseek/deepseek-v4.1-flash",
       max_tokens: 1,
       messages: [{ role: "user", content: "hi" }],
     }),
@@ -814,7 +814,7 @@ test("cm /v1/messages stream:true → Command Code reasoning delta becomes think
   const res = await withFetch(async () =>
     new Response(openaiSse, { status: 200, headers: { "content-type": "text/event-stream" } }), () =>
     post(env, token, {
-      model: "cm/deepseek/deepseek-v4-flash",
+      model: "cm/deepseek/deepseek-v4.1-flash",
       max_tokens: 8,
       stream: true,
       messages: [{ role: "user", content: "hi" }],
@@ -834,7 +834,7 @@ test("cm /v1/messages stream:true → Command Code reasoning delta becomes think
 // 2026-09-02, x-api-key auth) and OpenAI /v1/chat/completions (Bearer). No
 // translation on either path, and the route always stays off the US exit.
 
-test("amd/DeepSeek-V4-Flash /v1/messages → native Anthropic passthrough with x-api-key", async () => {
+test("amd/GLM-5.3-Flash /v1/messages → native Anthropic passthrough with x-api-key", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ keys: { AMD_API_KEY: "rc-amd" } });
   let seen;
@@ -849,7 +849,7 @@ test("amd/DeepSeek-V4-Flash /v1/messages → native Anthropic passthrough with x
       stop_reason: "tool_use",
     }), { status: 200, headers: { "content-type": "application/json" } });
   }, () => post(env, token, {
-    model: "amd/DeepSeek-V4-Flash",
+    model: "amd/GLM-5.3-Flash",
     max_tokens: 8,
     messages: [{ role: "user", content: "what time in Tokyo?" }],
     tools: [{ name: "get_time", description: "x", input_schema: { type: "object" } }],
@@ -868,7 +868,7 @@ test("amd/DeepSeek-V4-Flash /v1/messages → native Anthropic passthrough with x
   // amd/ prefix stripped, Anthropic body forwarded un-translated (a chat
   // reshaping would turn tools[].input_schema into function.parameters).
   const sent = JSON.parse(seen.init.body);
-  assert.equal(sent.model, "DeepSeek-V4-Flash");
+  assert.equal(sent.model, "GLM-5.3-Flash");
   assert.equal(sent.tools[0].input_schema.type, "object");
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -930,7 +930,7 @@ test("amd /v1/messages without AMD_API_KEY → 502 config error, no upstream cal
   let calls = 0;
   const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
     post(env, token, {
-      model: "amd/DeepSeek-V4-Flash",
+      model: "amd/GLM-5.3-Flash",
       max_tokens: 1,
       messages: [{ role: "user", content: "hi" }],
     }),
@@ -950,14 +950,14 @@ test("amd 429 concurrency limit: {detail:{error}} envelope unwrapped, status + r
     return new Response(JSON.stringify({
       detail: {
         error: {
-          message: "Model 'DeepSeek-V4-Flash' is at its concurrency limit (64); please retry later or use another model",
+          message: "Model 'GLM-5.3-Flash' is at its concurrency limit (64); please retry later or use another model",
           type: "rate_limit_error",
           code: "model_concurrency_rate_limit_exceeded",
         },
       },
     }), { status: 429, headers: { "content-type": "application/json" } });
   }, () => post(env, token, {
-    model: "amd/DeepSeek-V4-Flash",
+    model: "amd/GLM-5.3-Flash",
     max_tokens: 8,
     messages: [{ role: "user", content: "hi" }],
   }));
@@ -1182,25 +1182,63 @@ test("or/stealth/ox-alpha chat/completions also pins reasoning.effort=max", asyn
   assert.equal(res.status, 200);
 });
 
-test("or/deepseek/deepseek-v4-flash-0731 uses direct OpenRouter with fixed DeepSeek provider", async () => {
+// The or/ DeepSeek provider-pin test is GONE with the model it pinned:
+// or/deepseek/deepseek-v4-flash-0731 is in RETIRED_MODELS (2026-09-10) and
+// is refused before routing, so the `provider:{order:["deepseek"]}` branch
+// in translate.ts is unreachable. The helper it calls stays unit-pinned in
+// body-scan.test.mjs + the shapes test below.
+test("or/ retired DeepSeek id → 400 with the V4.1 replacement (no upstream call)", async () => {
   __clearCaches();
   const { env, token } = gwEnv({ usProxy: true });
-  let seen;
-  await withFetch(async (url, init) => {
-    seen = { url, init };
-    return new Response(JSON.stringify({ content: [{ type: "text", text: "deepseek" }] }), { status: 200 });
-  }, () => post(env, token, {
-    model: "or/deepseek/deepseek-v4-flash-0731",
-    provider: { order: ["other"], allow_fallbacks: true },
-    max_tokens: 1,
-    messages: [{ role: "user", content: "hi" }],
-  }));
-  // 2026-08-22: or/ walks the US exit like every channel (openrouter-proxy
-  // retired from the chain); the DeepSeek provider pin rides in the body.
-  assert.equal(seen.url, "https://v.saisi.online/api/zen?target=or&path=%2Fv1%2Fmessages");
-  const sent = JSON.parse(seen.init.body);
-  assert.equal(sent.model, "deepseek/deepseek-v4-flash-0731");
-  assert.deepEqual(sent.provider, { order: ["deepseek"], allow_fallbacks: false });
+  let calls = 0;
+  const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
+    post(env, token, {
+      model: "or/deepseek/deepseek-v4-flash-0731",
+      max_tokens: 1,
+      messages: [{ role: "user", content: "hi" }],
+    }),
+  );
+  assert.equal(calls, 0, "retirement gate runs before any upstream call");
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.match(body.error.message, /retired on 2026-09-10/);
+  assert.match(body.error.message, /cm\/deepseek\/deepseek-v4\.1-flash/);
+});
+
+// ── V4 retirement gate (2026-09-10) ────────────────────────────
+// Every advertised V4 id AND its bare wire spelling is refused by name on
+// both relay endpoints, before any key/route decision, with the replacement
+// in the message. The matrix is the contract clients migrate against.
+test("retired V4 ids → 400 with the replacement, both endpoints, no upstream call", async () => {
+  const cases = [
+    ["ds/deepseek-v4-flash", "cm/deepseek/deepseek-v4.1-flash"],
+    ["og/deepseek-v4-flash", "og/deepseek-v4.1-flash"],
+    ["cm/deepseek/deepseek-v4-flash", "cm/deepseek/deepseek-v4.1-flash"],
+    ["cm/deepseek/deepseek-v4-flash-vision-exp", "cm/deepseek/deepseek-v4.1-flash"],
+    ["or/deepseek/deepseek-v4-flash-0731", "cm/deepseek/deepseek-v4.1-flash"],
+    // AMD's ids are mixed-case upstream; the gate lowercases before matching.
+    ["amd/DeepSeek-V4-Flash", "cm/deepseek/deepseek-v4.1-flash"],
+    ["amd/DeepSeek-V4-Flash-Vision-Exp", "cm/deepseek/deepseek-v4.1-flash"],
+    // Bare upstream spellings (clients that never used a prefix).
+    ["deepseek-v4-flash", "cm/deepseek/deepseek-v4.1-flash"],
+    ["deepseek-v4-flash-vision-exp", "cm/deepseek/deepseek-v4.1-flash"],
+    ["deepseek/deepseek-v4-flash", "cm/deepseek/deepseek-v4.1-flash"],
+  ];
+  for (const [model, to] of cases) {
+    for (const path of ["/v1/messages", "/v1/chat/completions"]) {
+      __clearCaches();
+      const { env, token } = gwEnv();
+      let calls = 0;
+      const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
+        post(env, token, { model, max_tokens: 4, messages: [{ role: "user", content: "hi" }] }, path),
+      );
+      assert.equal(res.status, 400, `${model} on ${path}`);
+      assert.equal(calls, 0, `${model} on ${path} must not reach an upstream`);
+      const body = await res.json();
+      assert.match(body.error.message, /retired on 2026-09-10/, `${model} on ${path}`);
+      assert.ok(body.error.message.includes(to), `${model} on ${path} names ${to}`);
+    }
+  }
 });
 
 test("og/gpt-5.6-luna uses OpenCode Go through the Vercel US exit", async () => {
@@ -1224,12 +1262,12 @@ test("og/gpt-5.6-luna uses OpenCode Go through the Vercel US exit", async () => 
 
 // ── US_PROXY switch: on = every channel via the Vercel US exit ──
 
-test("US_PROXY on: og/deepseek-v4-flash walks translate via the proxy (not native)", async () => {
+test("US_PROXY on: og/deepseek-v4.1-flash walks translate via the proxy (not native)", async () => {
   __clearCaches(); // 24h settings cache would poison the switch test
   const { env, token } = gwEnv({ usProxy: true });
   let seen;
   const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
-    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(seen.url, "https://v.saisi.online/api/zen?target=og&path=%2Fv1%2Fchat%2Fcompletions");
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
@@ -1252,7 +1290,7 @@ test("US_PROXY on: ds/ goes through the proxy passthrough", async () => {
   const { env, token } = gwEnv({ usProxy: true });
   let seen;
   const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
-    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "ds/deepseek-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(seen.url, "https://v.saisi.online/api/zen?target=ds&path=%2Fanthropic%2Fv1%2Fmessages");
   assert.equal(res.status, 200);
@@ -1263,7 +1301,7 @@ test("US_PROXY off (default): flash goes direct via chat/completions", async () 
   const { env, token } = gwEnv(); // no settings:US_PROXY key
   let seen;
   await withFetch(async (url, init) => { seen = { url, init }; return new Response(JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } }); }, () =>
-    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 10, stream: false, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
 });
@@ -1297,7 +1335,7 @@ test("og image request forwards the preprocessed body (described, no raw image)"
     return new Response(JSON.stringify({ type: "message", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } });
   }, () =>
     post(env, token, {
-      model: "og/deepseek-v4-flash", max_tokens: 10, stream: false,
+      model: "og/deepseek-v4.1-flash", max_tokens: 10, stream: false,
       messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "aGk=" } }] }],
     }),
   );
@@ -1309,7 +1347,7 @@ test("og image request forwards the preprocessed body (described, no raw image)"
   const content = main.body.messages[0].content;
   assert.ok(content.every((b) => b.type !== "image"), "image must be described before native passthrough");
   assert.ok(content.some((b) => b.type === "text" && b.text.includes("a screenshot")), "described text present");
-  assert.equal(main.body.model, "deepseek-v4-flash");
+  assert.equal(main.body.model, "deepseek-flash");
 });
 
 // ── count_tokens for og (translate route estimates, never hits upstream) ──
@@ -1318,7 +1356,7 @@ test("og count_tokens estimates without any upstream call", async () => {
   const { env, token } = gwEnv();
   let calls = 0;
   const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
-    post(env, token, { model: "og/deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] }, "/v1/messages/count_tokens"),
+    post(env, token, { model: "og/deepseek-v4.1-flash", messages: [{ role: "user", content: "hi" }] }, "/v1/messages/count_tokens"),
   );
   assert.equal(calls, 0); // translate route never hits upstream for count_tokens
   assert.equal(res.status, 200);
@@ -1330,7 +1368,7 @@ test("ds count_tokens also estimates locally (no per-turn upstream round-trip)",
   const { env, token } = gwEnv();
   let calls = 0;
   const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
-    post(env, token, { model: "ds/deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] }, "/v1/messages/count_tokens"),
+    post(env, token, { model: "ds/deepseek-flash", messages: [{ role: "user", content: "hi" }] }, "/v1/messages/count_tokens"),
   );
   assert.equal(calls, 0); // all channels estimate locally since 2026-08-12
   assert.equal(res.status, 200);
@@ -1343,9 +1381,9 @@ test("ds count_tokens also estimates locally (no per-turn upstream round-trip)",
 test("count_tokens without the user's own key → 502, no estimate leaks", async () => {
   const { env, a } = isoEnv({ aKeys: { DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined } });
   const cases = [
-    ["ds/deepseek-v4-flash", /DEEPSEEK_API_KEY not configured/],
+    ["ds/deepseek-flash", /DEEPSEEK_API_KEY not configured/],
     ["qw/qwen3.8-max-preview", /QWEN_API_KEY not configured/],
-    ["amd/DeepSeek-V4-Flash", /AMD_API_KEY not configured/],
+    ["amd/GLM-5.3-Flash", /AMD_API_KEY not configured/],
   ];
   await withFetch(
     async () => {
@@ -1444,7 +1482,7 @@ test("ds passthrough: 500 → NOT retried (billable POST), single attempt", asyn
     seen = { url, init };
     return ++n, new Response("boom", { status: 500 });
   }, () =>
-    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "ds/deepseek-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(n, 1); // single attempt — re-sending would double-bill
   assert.equal(res.status, 500);
@@ -1455,7 +1493,7 @@ test("ds passthrough: 500 → upstream status passed through, single attempt", a
   const { env, token } = gwEnv({ timeout: 1000 });
   let n = 0;
   const res = await withFetch(async () => (++n, new Response(JSON.stringify({ error: { message: "upstream busy" } }), { status: 500, headers: { "content-type": "application/json" } })), () =>
-    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "ds/deepseek-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(n, 1);
   assert.equal(res.status, 500); // ds passthrough surfaces the upstream status
@@ -1465,7 +1503,7 @@ test("ds passthrough: 500 → upstream status passed through, single attempt", a
 
 test("bad gateway token → 401", async () => {
   const { env } = gwEnv();
-  const res = await post(env, "tok-bogus", { model: "ds/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] });
+  const res = await post(env, "tok-bogus", { model: "ds/deepseek-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] });
   assert.equal(res.status, 401);
 });
 
@@ -1482,7 +1520,7 @@ test("og translate: missing OPENCODE_GO_API_KEY → 502 config_error", async () 
 test("og-native passthrough: missing OPENCODE_GO_API_KEY → 502 config_error (not bare Upstream 401)", async () => {
   const { env, token } = gwEnv({ keys: { OPENCODE_GO_API_KEY: undefined } });
   const res = await withFetch(async () => { throw new Error("must not be called"); }, () =>
-    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, stream: false, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 1, stream: false, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(res.status, 502);
   const body = await res.json();
@@ -1506,7 +1544,7 @@ test("ds passthrough: timeout → 502 single attempt, no retry (slow ≠ flaky)"
   const trips = [];
   const { env, token } = gwEnv({ trips, timeout: 50 });
   const res = await withFetch(never, () =>
-    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "ds/deepseek-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(res.status, 502);
   assert.match((await res.json()).error.message, /timeout/);
@@ -1525,7 +1563,7 @@ test("og web_search: forced to deepseek-v4-flash native (translate models can't 
     // zen implements web_search for (verified 2026-08-13).
     assert.equal(String(url), "https://opencode.ai/zen/go/v1/messages");
     const sent = JSON.parse(String(init.body));
-    assert.equal(sent.model, "deepseek-v4-flash");
+    assert.equal(sent.model, "deepseek-flash");
     return new Response(JSON.stringify({
       type: "message",
       content: [{ type: "server_tool_use", name: "web_search", input: { query: "what's new" } },
@@ -1589,7 +1627,7 @@ test("og web_search: explicit any-choice with a search tool forces the search mo
       messages: [{ role: "user", content: "query: what's new" }],
     }),
   );
-  assert.equal(sent.model, "deepseek-v4-flash");
+  assert.equal(sent.model, "deepseek-flash");
 });
 
 // 2026-09-10: a caller that already names a search-capable Flash-line model
@@ -1624,7 +1662,7 @@ test("og web_search: og/deepseek-v4.1-flash is honoured (lane slug, native searc
   assert.equal(body.content.find((b) => b.type === "text").text, "search answer");
 });
 
-test("og web_search: og/deepseek-v4-flash stays on the V4 slug (no regression)", async () => {
+test("og web_search: og/deepseek-v4.1-flash stays on the V4 slug (no regression)", async () => {
   const { env, token } = gwEnv();
   let sent;
   await withFetch(async (url, init) => {
@@ -1636,21 +1674,21 @@ test("og web_search: og/deepseek-v4-flash stays on the V4 slug (no regression)",
     }), { status: 200, headers: { "content-type": "application/json" } });
   }, () =>
     post(env, token, {
-      model: "og/deepseek-v4-flash", max_tokens: 100, stream: false,
+      model: "og/deepseek-v4.1-flash", max_tokens: 100, stream: false,
       tools: [{ type: "web_search_20250305", name: "web_search" }],
       tool_choice: { type: "tool", name: "web_search" },
       messages: [{ role: "user", content: "query: what's new" }],
     }),
   );
-  assert.equal(sent.model, "deepseek-v4-flash");
+  assert.equal(sent.model, "deepseek-flash");
 });
 
 // ── scanTopLevelModel / rawWithModel (CPU-safe model extraction) ──
 
 test("scanTopLevelModel: extracts top-level model", () => {
-  const raw = JSON.stringify({ model: "og/deepseek-v4-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] });
+  const raw = JSON.stringify({ model: "og/deepseek-v4.1-flash", max_tokens: 10, messages: [{ role: "user", content: "hi" }] });
   const { model } = scanTopLevelModel(raw);
-  assert.equal(model, "og/deepseek-v4-flash");
+  assert.equal(model, "og/deepseek-v4.1-flash");
 });
 
 test("scanTopLevelModel: ignores model inside messages content", () => {
@@ -1674,7 +1712,7 @@ test("scanTopLevelModel: no model field → null", () => {
 });
 
 test("rawWithModel: swaps only the top-level model value", () => {
-  const raw = JSON.stringify({ model: "ds/deepseek-v4-flash", messages: [{ role: "user", content: "hi" }] });
+  const raw = JSON.stringify({ model: "ds/deepseek-flash", messages: [{ role: "user", content: "hi" }] });
   const out = rawWithModel(raw, "qw/qwen3.8-max-preview");
   const parsed = JSON.parse(out);
   assert.equal(parsed.model, "qw/qwen3.8-max-preview");
@@ -1722,13 +1760,13 @@ test("scanTopLevelModel: model after system/tools (Claude Code field order)", ()
   const raw = JSON.stringify({
     system: [{ type: "text", text: "You are a coding agent." }],
     tools: [{ name: "Bash", description: "Run a command", input_schema: { type: "object", properties: {} } }],
-    model: "og/deepseek-v4-flash",
+    model: "og/deepseek-v4.1-flash",
     max_tokens: 100,
     messages: [{ role: "user", content: "hi" }],
   });
-  assert.equal(scanTopLevelModel(raw).model, "og/deepseek-v4-flash");
-  const out = rawWithModel(raw, "ds/deepseek-v4-flash");
-  assert.equal(JSON.parse(out).model, "ds/deepseek-v4-flash");
+  assert.equal(scanTopLevelModel(raw).model, "og/deepseek-v4.1-flash");
+  const out = rawWithModel(raw, "ds/deepseek-flash");
+  assert.equal(JSON.parse(out).model, "ds/deepseek-flash");
 });
 
 // ── rawWithTopLevelField (round-396: string-surgery injectors had zero
@@ -1802,10 +1840,10 @@ test("chat/completions: per-token limiter trips at ~60/min (F1 coverage)", async
         }),
       async () => {
         for (let i = 0; i < 48; i++) {
-          const r = await post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions");
+          const r = await post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions");
           assert.equal(r.status, 200, `call ${i + 1} should pass`);
         }
-        const limited = await post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions");
+        const limited = await post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions");
         assert.equal(limited.status, 429, "49th call within the minute must be rate-limited");
       },
     );
@@ -1886,7 +1924,7 @@ function isoEnv({ aKeys = {}, bKeys = {}, aEnabled = true } = {}) {
 }
 
 const ogBody = () => ({
-  model: "og/deepseek-v4-flash",
+  model: "og/deepseek-v4.1-flash",
   max_tokens: 10,
   stream: false,
   messages: [{ role: "user", content: "hi" }],
@@ -1964,7 +2002,7 @@ test("POST /v1/<unknown> with a valid token → 404, upstream never called", asy
     async () => {
       throw new Error("must not be called");
     },
-    () => post(env, token, { model: "og/deepseek-v4-flash", messages: [] }, "/v1/nope"),
+    () => post(env, token, { model: "og/deepseek-v4.1-flash", messages: [] }, "/v1/nope"),
   );
   assert.equal(res.status, 404);
   assert.equal((await res.json()).error.type, "not_found_error");
@@ -1992,8 +2030,8 @@ test("nv/gmi/amd/cm without the user's own key → 502, upstream never called", 
   const cases = [
     ["nv/nvidia/nemotron-3-ultra-550b-a55b", /NVAPI_KEY not configured/],
     ["gmi/MiniMaxAI/MiniMax-M3", /GMI_API_KEY not configured/],
-    ["amd/DeepSeek-V4-Flash", /AMD_API_KEY not configured/],
-    ["cm/deepseek/deepseek-v4-flash", /CMD_API_KEY not configured/],
+    ["amd/GLM-5.3-Flash", /AMD_API_KEY not configured/],
+    ["cm/deepseek/deepseek-v4.1-flash", /CMD_API_KEY not configured/],
   ];
   await withFetch(
     async () => {
@@ -2019,7 +2057,7 @@ test("og chat/completions: upstream 429 retry-after surfaces as a response heade
   const res = await withFetch(async () => new Response(JSON.stringify({
     error: { message: "slow down", type: "rate_limit_error" },
   }), { status: 429, headers: { "content-type": "application/json", "retry-after": "1" } }), () =>
-    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions"),
+    post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions"),
   );
   assert.equal(res.status, 429);
   assert.equal(res.headers.get("retry-after"), "1");
@@ -2047,7 +2085,7 @@ test("og /v1/responses: upstream 429 retry-after surfaces as a response header",
 test("ds/qw passthrough without the user's own key → 502, upstream never called", async () => {
   const { env, a } = isoEnv({ aKeys: { DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined } });
   const cases = [
-    ["ds/deepseek-v4-flash", /DEEPSEEK_API_KEY not configured/],
+    ["ds/deepseek-flash", /DEEPSEEK_API_KEY not configured/],
     ["qw/qwen3.8-max-preview", /QWEN_API_KEY not configured/],
   ];
   await withFetch(
@@ -2073,7 +2111,7 @@ test("cm/ with CMD key but no og key reaches the upstream (no og-key gate)", asy
   const res = await withFetch(async (url, init) => {
     seen = { url: String(url), init };
     return okChoices();
-  }, () => post(env, a.token, { ...ogBody(), model: "cm/deepseek/deepseek-v4-flash" }));
+  }, () => post(env, a.token, { ...ogBody(), model: "cm/deepseek/deepseek-v4.1-flash" }));
   assert.equal(res.status, 200);
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-cm", "cm translate sends the CMD key, not an og key");
@@ -2106,9 +2144,9 @@ test("chat/completions without the user's own key → 502, upstream never called
   const cases = [
     ["nv/nvidia/nemotron-3-ultra-550b-a55b", /NVAPI_KEY not configured/],
     ["gmi/MiniMaxAI/MiniMax-M3", /GMI_API_KEY not configured/],
-    ["amd/DeepSeek-V4-Flash", /AMD_API_KEY not configured/],
-    ["cm/deepseek/deepseek-v4-flash", /CMD_API_KEY not configured/],
-    ["ds/deepseek-v4-flash", /DEEPSEEK_API_KEY not configured/],
+    ["amd/GLM-5.3-Flash", /AMD_API_KEY not configured/],
+    ["cm/deepseek/deepseek-v4.1-flash", /CMD_API_KEY not configured/],
+    ["ds/deepseek-flash", /DEEPSEEK_API_KEY not configured/],
     ["qw/qwen3.8-max-preview", /QWEN_API_KEY not configured/],
     ["or/openai/gpt-5.6-luna:floor[1m]", /OPENROUTER_API_KEY not configured/],
   ];
@@ -2138,13 +2176,13 @@ test("chat/completions og keyless and breaker-open → 502, upstream never calle
     },
     async () => {
       const { env, a } = isoEnv({ aKeys: { OPENCODE_GO_API_KEY: undefined } });
-      const keyless = await post(env, a.token, chatBody("og/deepseek-v4-flash"), "/v1/chat/completions");
+      const keyless = await post(env, a.token, chatBody("og/deepseek-v4.1-flash"), "/v1/chat/completions");
       assert.equal(keyless.status, 502);
       assert.match((await keyless.json()).error.message, /OPENCODE_GO_API_KEY not configured/);
 
       __clearDegradedCache();
       const { env: env2, token } = gwEnv({ breakerOpen: true });
-      const open = await post(env2, token, chatBody("og/deepseek-v4-flash"), "/v1/chat/completions");
+      const open = await post(env2, token, chatBody("og/deepseek-v4.1-flash"), "/v1/chat/completions");
       assert.equal(open.status, 502);
       assert.match((await open.json()).error.message, /circuit open/);
     },
@@ -2173,7 +2211,7 @@ test("og chat/completions: developer role is normalized to system upstream", asy
     sent = JSON.parse(init.body);
     return okChoices();
   }, () => post(env, token, {
-    model: "og/deepseek-v4-flash",
+    model: "og/deepseek-v4.1-flash",
     messages: [
       { role: "developer", content: "be brief" },
       { role: "user", content: "hi" },
@@ -2186,19 +2224,27 @@ test("og chat/completions: developer role is normalized to system upstream", asy
 });
 
 // round-508 (coverage-driven): the model=auto resolution arm had ZERO pins.
-test('model "auto" resolves to the first usable channel (ds) and serves', async () => {
-  const { env, token } = gwEnv();
+// Since the 2026-09-10 V4 retirement the default channel is Command Code's
+// V4.1 Flash, so that is what `auto` must resolve to when the user holds a
+// CMD key (and the request must land on Command Code's chat/completions).
+test('model "auto" resolves to the default channel (cm V4.1) and serves', async () => {
+  const { env, token } = gwEnv({ keys: { CMD_API_KEY: "sk-cm" } });
   let sent;
+  let seenUrl = "";
   const res = await withFetch(async (url, init) => {
+    seenUrl = String(url);
     sent = JSON.parse(String(init.body));
+    // cm/ is a translate route: the upstream answers OpenAI format.
     return new Response(JSON.stringify({
-      type: "message",
-      content: [{ type: "text", text: "auto ok" }],
-      usage: { input_tokens: 1, output_tokens: 1 },
+      id: "gen_auto",
+      object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "auto ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     }), { status: 200, headers: { "content-type": "application/json" } });
   }, () => post(env, token, { model: "auto", max_tokens: 8, messages: [{ role: "user", content: "hi" }] }));
   assert.equal(res.status, 200);
-  assert.equal(sent.model, "deepseek-v4-flash");
+  assert.equal(seenUrl, "https://api.commandcode.ai/provider/v1/chat/completions");
+  assert.equal(sent.model, "deepseek/deepseek-v4.1-flash");
   assert.equal((await res.json()).content[0].text, "auto ok");
 });
 
@@ -2216,12 +2262,12 @@ test("ds passthrough with web_search tools parses the body and forwards", async 
       usage: { input_tokens: 3, output_tokens: 2 },
     }), { status: 200, headers: { "content-type": "application/json" } });
   }, () => post(env, token, {
-    model: "ds/deepseek-v4-flash", max_tokens: 8,
+    model: "ds/deepseek-flash", max_tokens: 8,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
     messages: [{ role: "user", content: "search this" }],
   }));
   assert.equal(res.status, 200);
-  assert.equal(sent.model, "deepseek-v4-flash");
+  assert.equal(sent.model, "deepseek-flash");
   assert.equal((await res.json()).content[0].text, "ds search ok");
 });
 
@@ -2246,7 +2292,7 @@ test("og ox-alpha-free without client reasoning gets effort=max upstream", async
 test("og chat/completions: upstream 500 with a text body keeps status + default message", async () => {
   const { env, token } = gwEnv({ timeout: 1000 });
   const res = await withFetch(async () => new Response("boom", { status: 500 }), () =>
-    post(env, token, { model: "og/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions"),
+    post(env, token, { model: "og/deepseek-v4.1-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }, "/v1/chat/completions"),
   );
   assert.equal(res.status, 500);
   const body = await res.json();
@@ -2262,7 +2308,7 @@ test("og chat/completions: upstream 500 with a text body keeps status + default 
 test("ds passthrough: retried 429 with a text body keeps status + rate_limit type", async () => {
   const { env, token } = gwEnv({ timeout: 1000 });
   const res = await withFetch(async () => new Response("slow down", { status: 429 }), () =>
-    post(env, token, { model: "ds/deepseek-v4-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
+    post(env, token, { model: "ds/deepseek-flash", max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
   );
   assert.equal(res.status, 429);
   const body = await res.json();

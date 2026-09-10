@@ -21,6 +21,7 @@ import {
   OG_ZEN_ANTHROPIC,
   OG_ZEN_CHAT,
   OG_NATIVE_ANTHROPIC,
+  retiredModelHint,
 } from "./channels.ts";
 import {
   pickRoute,
@@ -137,6 +138,16 @@ export function probeEnvKeyName(prefix: string): string {
  */
 export async function valeProbe(env: any, model: string) {
   const prefix = model.split("/")[0] || "";
+  // Retired ids get the migration hint first — `vale use <old-model>` is the
+  // most likely way a stale settings.json reaches this endpoint.
+  const retiredTo = retiredModelHint(model);
+  if (retiredTo) {
+    return jsonError(
+      400,
+      `Model ${model} was retired on 2026-09-10 — the DeepSeek V4 Flash line is superseded by V4.1 Flash. Use ${retiredTo} instead.`,
+      "invalid_request",
+    );
+  }
   if (!HEALTH_CHANNELS.some((c) => c.id === prefix) || !MODELS.some((m) => m.id === model)) {
     return jsonError(400, `Unknown channel model: ${model}`, "invalid_request");
   }

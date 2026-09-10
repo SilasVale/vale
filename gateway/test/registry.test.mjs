@@ -18,6 +18,8 @@ import {
 } from "../src/plugins/registry.ts";
 import {
   MODELS,
+  RETIRED_MODELS,
+  retiredModelHint,
   ROUTE_INFO,
   HEALTH_CHANNELS,
   HEALTH_PRIORITY,
@@ -31,6 +33,22 @@ import {
 } from "../src/channels.ts";
 
 const KNOWN_PREFIXES = new Set(["ds", "og", "qw", "or", "nv", "gmi", "cm", "amd"]);
+
+test("RETIRED_MODELS: retired ids stay out of MODELS, replacements stay in", () => {
+  const live = new Set(MODELS.map((m) => m.id));
+  const keys = Object.keys(RETIRED_MODELS);
+  assert.ok(keys.length > 0, "retirement table is populated");
+  for (const [old, to] of Object.entries(RETIRED_MODELS)) {
+    assert.ok(!live.has(old), `${old} must not be advertised in MODELS`);
+    assert.ok(live.has(to), `${to} (replacement for ${old}) must be advertised`);
+    assert.equal(retiredModelHint(old), to);
+    assert.equal(retiredModelHint(` ${old.toUpperCase()} `), to, "lookup trims + lowercases");
+  }
+  // A live model is never "retired", and blank input never matches.
+  assert.equal(retiredModelHint("cm/deepseek/deepseek-v4.1-flash"), null);
+  assert.equal(retiredModelHint("og/deepseek-flash"), null, "raw V4.1 lane slug is live");
+  assert.equal(retiredModelHint(""), null);
+});
 
 test("MODELS: ids unique, owned, known prefixes", () => {
   const ids = MODELS.map((m) => m.id);

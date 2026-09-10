@@ -28,28 +28,29 @@ const closedEnv = {
   },
 };
 
-test("health: og degraded when breaker open, recommended picks qw", async () => {
+test("health: og degraded when breaker open, recommended is still the first ok priority channel", async () => {
   const h = await buildHealth(openEnv);
   const og = h.channels.find((c) => c.id === "og");
   assert.equal(og.ok, false);
   assert.equal(og.reason, "circuit open");
-  assert.deepEqual(h.recommended, { channel: "qw", model: "qw/qwen3.8-max-preview" });
+  // Priority leads with cm (the default channel since the 2026-09-10 V4
+  // retirement); buildHealth reports it ok regardless of keys, so it is the
+  // recommendation even while og's circuit is open.
+  assert.deepEqual(h.recommended, { channel: "cm", model: "cm/deepseek/deepseek-v4.1-flash" });
 });
 
-test("health: breaker closed → all channels ok, recommended still qw", async () => {
+test("health: breaker closed → all channels ok, recommended cm", async () => {
   const h = await buildHealth(closedEnv);
   assert.ok(h.channels.every((c) => c.ok));
-  assert.equal(h.recommended.channel, "qw");
+  assert.equal(h.recommended.channel, "cm");
 });
 
 test("health: channels cover all prefixes in priority order", async () => {
   const h = await buildHealth(closedEnv);
-  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "qw", "og", "og", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv", "gmi", "gmi", "cm", "cm", "cm", "cm", "amd", "amd"]);
+  assert.deepEqual(h.channels.map((c) => c.id), ["qw", "qw", "og", "og", "og", "og", "og", "or", "or", "or", "or", "nv", "gmi", "gmi", "cm", "cm", "cm"]);
   assert.deepEqual(h.channels.map((c) => c.model), [
-    "ds/deepseek-v4-flash",
     "qw/qwen3.8-max-preview",
     "qw/qwen3.8-flash",
-    "og/deepseek-v4-flash",
     "og/deepseek-v4.1-flash",
     "og/gpt-5.6-luna",
     "og/mimo-v2.5",
@@ -59,20 +60,17 @@ test("health: channels cover all prefixes in priority order", async () => {
     "or/z-ai/glm-5.2:free",
     "or/nvidia/nemotron-3-ultra-550b-a55b:free",
     "or/stealth/ox-alpha",
-    "or/deepseek/deepseek-v4-flash-0731",
     "nv/nvidia/nemotron-3-ultra-550b-a55b",
     "gmi/MiniMaxAI/MiniMax-M3",
     "gmi/MiniMaxAI/MiniMax-M2.7",
-    "cm/deepseek/deepseek-v4-flash",
     "cm/deepseek/deepseek-v4.1-flash",
     "cm/meituan/LongCat-2.0:free",
     "cm/poolside/laguna-s-2.1-free",
-    "amd/DeepSeek-V4-Flash",
-    "amd/DeepSeek-V4-Flash-Vision-Exp",
   ]);
   // og and or repeat per model card; the dedup'd set must still cover every
-  // priority prefix in order.
-  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["ds", "qw", "og", "or", "nv", "gmi", "cm", "amd"]);
+  // priority prefix in order. ds/ and amd/ cards left with the V4 retirement
+  // (2026-09-10) — ds/ is unpayable, amd/ has no V4.1.
+  assert.deepEqual([...new Set(h.channels.map((c) => c.id))], ["qw", "og", "or", "nv", "gmi", "cm"]);
 });
 
 test("installer round-trip: non-ASCII CLI encodes and decodes losslessly", () => {
@@ -120,7 +118,7 @@ async function withFetch(handler, fn) {
 test("valeProbe: og with open breaker short-circuits, no upstream call", async () => {
   let calls = 0;
   const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
-    valeProbe({ ...keyedEnv, BREAKER: { idFromName: () => ({}), get: () => ({ fetch: async () => new Response("1") }) } }, "og/deepseek-v4-flash"),
+    valeProbe({ ...keyedEnv, BREAKER: { idFromName: () => ({}), get: () => ({ fetch: async () => new Response("1") }) } }, "og/deepseek-v4.1-flash"),
   );
   assert.equal(calls, 0);
   const body = await res.json();
@@ -131,12 +129,12 @@ test("valeProbe: og with open breaker short-circuits, no upstream call", async (
 test("valeProbe: og flash probes zen chat/completions with Bearer (translate path)", async () => {
   let seen;
   const res = await withFetch(async (url, init) => { seen = { url, init }; return new Response("{}", { status: 200 }); }, () =>
-    valeProbe(keyedEnv, "og/deepseek-v4-flash"),
+    valeProbe(keyedEnv, "og/deepseek-v4.1-flash"),
   );
   assert.equal(seen.url, "https://opencode.ai/zen/go/v1/chat/completions");
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-og");
-  assert.equal(JSON.parse(seen.init.body).model, "deepseek-v4-flash");
+  assert.equal(JSON.parse(seen.init.body).model, "deepseek-flash");
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.channel, "og");
@@ -156,19 +154,26 @@ test("valeProbe: og translate model probes zen chat/completions with Bearer", as
   assert.equal(body.channel, "og");
 });
 
-test("valeProbe: ds channel ok when upstream 200", async () => {
-  const res = await withFetch(async () => new Response("{}", { status: 200 }), () =>
-    valeProbe(keyedEnv, "ds/deepseek-v4-flash"),
-  );
-  const body = await res.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.channel, "ds");
-  assert.equal(body.status, 200);
+// The ds/ channel left the catalog with the V4 retirement (2026-09-10): the
+// probe now refuses those ids by name and names the replacement — this is the
+// path `vale use <stale-model>` takes after an upgrade.
+test("valeProbe: retired model → 400 with the V4.1 replacement", async () => {
+  for (const [model, to] of [
+    ["ds/deepseek-v4-flash", "cm/deepseek/deepseek-v4.1-flash"],
+    ["og/deepseek-v4-flash", "og/deepseek-v4.1-flash"],
+    ["amd/DeepSeek-V4-Flash", "cm/deepseek/deepseek-v4.1-flash"],
+  ]) {
+    const res = await valeProbe(keyedEnv, model);
+    assert.equal(res.status, 400, model);
+    const body = await res.json();
+    assert.match(body.error.message, /retired on 2026-09-10/, model);
+    assert.ok(body.error.message.includes(to), `${model} names ${to}`);
+  }
 });
 
 test("valeProbe: upstream 500 → ok false with status", async () => {
   const res = await withFetch(async () => new Response("{}", { status: 500 }), () =>
-    valeProbe(keyedEnv, "ds/deepseek-v4-flash"),
+    valeProbe(keyedEnv, "qw/qwen3.8-flash"),
   );
   const body = await res.json();
   assert.equal(body.ok, false);
@@ -179,7 +184,7 @@ test("valeProbe: upstream 500 → ok false with status", async () => {
 // round-517 (coverage-driven): the probe network-error catch arms had ZERO
 // pins (only 200/500 responses were covered).
 test("valeProbe: fetch throw → ok false with the error message", async () => {
-  for (const model of ["ds/deepseek-v4-flash", "og/deepseek-v4-flash"]) {
+  for (const model of ["qw/qwen3.8-flash", "og/deepseek-v4.1-flash"]) {
     const res = await withFetch(async () => { throw new TypeError("fetch failed"); }, () =>
       valeProbe(keyedEnv, model),
     );
@@ -204,7 +209,7 @@ test("valeProbe: unknown model → 400", async () => {
 test("valeProbe: key missing → ok false, no upstream call", async () => {
   let calls = 0;
   const res = await withFetch(async () => { calls++; return new Response("{}", { status: 200 }); }, () =>
-    valeProbe({ ...keyedEnv, DEEPSEEK_API_KEY: undefined }, "ds/deepseek-v4-flash"),
+    valeProbe({ ...keyedEnv, QWEN_API_KEY: undefined }, "qw/qwen3.8-flash"),
   );
   assert.equal(calls, 0);
   const body = await res.json();
@@ -276,29 +281,10 @@ test("valeProbe: nv channel uses NVAPI_KEY (not the DeepSeek key)", async () => 
   assert.equal(body.ok, true);
 });
 
-test("valeProbe: amd channel probes the native Radeon /v1/messages with the AMD key", async () => {
-  // BYOK isolation: with only AMD_API_KEY left, amd/ must probe with it (an
-  // unlisted prefix would silently fall through to the DEEPSEEK_API_KEY arm).
-  const env = {
-    ...keyedEnv,
-    DEEPSEEK_API_KEY: undefined, QWEN_API_KEY: undefined,
-    OPENCODE_GO_API_KEY: undefined, OPENROUTER_API_KEY: undefined,
-    GMI_API_KEY: undefined, NVAPI_KEY: undefined, CMD_API_KEY: undefined,
-    AMD_API_KEY: "rc-key",
-  };
-  let seen;
-  const res = await withFetch(async (url, init) => {
-    seen = { url, init };
-    return new Response("{}", { status: 200 });
-  }, () => valeProbe(env, "amd/DeepSeek-V4-Flash"));
-  assert.equal(seen.url, "https://developer.amd.com.cn/radeon/api/v1/messages");
-  const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
-  assert.equal(auth, "Bearer rc-key");
-  assert.equal(JSON.parse(seen.init.body).model, "DeepSeek-V4-Flash");
-  const body = await res.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.channel, "amd");
-});
+// The amd/ probe pin is GONE with the amd/ catalog: valeProbe gates on
+// MODELS + HEALTH_CHANNELS, and both lost their amd/ entries on 2026-09-10
+// (no V4.1 upstream) — probing amd/ now takes the retired/unknown-model arm
+// pinned above. The AMD_API_KEY row of probeEnvKeyName stays covered below.
 
 // SOLID Round-52: cm/ was the only channel without a probe pin (og/ds/qw/
 // or/gmi/nv/amd all have one) — and the probe key chain just became the
@@ -318,11 +304,11 @@ test("valeProbe: cm channel probes the Command Code endpoint with the CMD key", 
   const res = await withFetch(async (url, init) => {
     seen = { url, init };
     return new Response("{}", { status: 200 });
-  }, () => valeProbe(env, "cm/deepseek/deepseek-v4-flash"));
+  }, () => valeProbe(env, "cm/deepseek/deepseek-v4.1-flash"));
   assert.equal(seen.url, "https://api.commandcode.ai/provider/v1/chat/completions");
   const auth = seen.init.headers.get ? seen.init.headers.get("authorization") : seen.init.headers.Authorization;
   assert.equal(auth, "Bearer sk-cm");
-  assert.equal(JSON.parse(seen.init.body).model, "deepseek/deepseek-v4-flash");
+  assert.equal(JSON.parse(seen.init.body).model, "deepseek/deepseek-v4.1-flash");
   const body = await res.json();
   assert.equal(body.ok, true);
   assert.equal(body.channel, "cm");
@@ -493,6 +479,9 @@ function routeEnv(routeValue, breakerOpen = false, uid = "admin") {
     },
     DEEPSEEK_API_KEY: "sk-ds", QWEN_API_KEY: "sk-qw",
     OPENROUTER_API_KEY: "sk-or", OPENCODE_GO_API_KEY: "sk-og",
+    // The default channel since the 2026-09-10 V4 retirement is Command Code;
+    // without a CMD key the fallback chain can never reach it.
+    CMD_API_KEY: "sk-cm",
   };
 }
 
@@ -503,19 +492,19 @@ test("resolveAutoModel: uses chosen route", async () => {
   assert.equal(await resolveAutoModel(env, "u-choice"), "qw/qwen3.8-max-preview");
 });
 
-test("resolveAutoModel: no choice → default ds/deepseek-v4-flash", async () => {
+test("resolveAutoModel: no choice → default cm/deepseek/deepseek-v4.1-flash", async () => {
   const env = routeEnv(null, false, "u-none");
-  assert.equal(await resolveAutoModel(env, "u-none"), "ds/deepseek-v4-flash");
+  assert.equal(await resolveAutoModel(env, "u-none"), "cm/deepseek/deepseek-v4.1-flash");
 });
 
-test("resolveAutoModel: chosen og channel with open breaker → falls back to default ds", async () => {
-  const env = routeEnv("og/deepseek-v4-flash", true, "u-ogopen");
-  assert.equal(await resolveAutoModel(env, "u-ogopen"), "ds/deepseek-v4-flash");
+test("resolveAutoModel: chosen og channel with open breaker → falls back to the default", async () => {
+  const env = routeEnv("og/deepseek-v4.1-flash", true, "u-ogopen");
+  assert.equal(await resolveAutoModel(env, "u-ogopen"), "cm/deepseek/deepseek-v4.1-flash");
 });
 
-test("resolveAutoModel: chosen model not in whitelist → falls back to default ds", async () => {
+test("resolveAutoModel: chosen model not in whitelist → falls back to the default", async () => {
   const env = routeEnv("xx/nope", false, "u-nope");
-  assert.equal(await resolveAutoModel(env, "u-nope"), "ds/deepseek-v4-flash");
+  assert.equal(await resolveAutoModel(env, "u-nope"), "cm/deepseek/deepseek-v4.1-flash");
 });
 
 // ── resolveAutoModel fallback chain (round-407: only the default-ds path
@@ -560,7 +549,7 @@ test("resolveAutoModel: no ds key → first usable is qw", async () => {
 
 test("resolveAutoModel: only og key + closed breaker → og flash", async () => {
   const env = chainEnv({ uid: "u-ch2", ukeys: { OPENCODE_GO_API_KEY: "u-og" } });
-  assert.equal(await resolveAutoModel(env, "u-ch2"), "og/deepseek-v4-flash");
+  assert.equal(await resolveAutoModel(env, "u-ch2"), "og/deepseek-v4.1-flash");
 });
 
 test("resolveAutoModel: only or key → or luna", async () => {
@@ -570,11 +559,11 @@ test("resolveAutoModel: only or key → or luna", async () => {
 
 test("resolveAutoModel: keyless user still gets the default (last-line guarantee)", async () => {
   const env = chainEnv({ uid: "u-ch4" });
-  assert.equal(await resolveAutoModel(env, "u-ch4"), "ds/deepseek-v4-flash");
+  assert.equal(await resolveAutoModel(env, "u-ch4"), "cm/deepseek/deepseek-v4.1-flash");
 });
 
 test("resolveAutoModel: chosen-but-unusable falls into the chain (round-100)", async () => {
-  const env = chainEnv({ uid: "u-ch5", choice: "og/deepseek-v4-flash", ukeys: { QWEN_API_KEY: "u-qw" } });
+  const env = chainEnv({ uid: "u-ch5", choice: "og/deepseek-v4.1-flash", ukeys: { QWEN_API_KEY: "u-qw" } });
   assert.equal(await resolveAutoModel(env, "u-ch5"), "qw/qwen3.8-max-preview");
 });
 
@@ -604,11 +593,17 @@ test("isModelUsable: whitelist gate + env-key channels", async () => {
   const { isModelUsable } = await import("../src/plugins/model-route.ts");
   const { __clearCaches } = await import("../src/store.ts");
   __clearCaches();
-  const env = usableEnv({ uid: "u-use1" });
+  const env = usableEnv({ uid: "u-use1", extra: { QWEN_API_KEY: "sk-qw", CMD_API_KEY: "sk-cm" } });
   assert.equal(await isModelUsable(env, "xx/nope", "u-use1"), false);
-  assert.equal(await isModelUsable(env, "ds/deepseek-v4-flash", "u-use1"), true);
-  // no qw key anywhere → unusable (would 502 every request)
-  assert.equal(await isModelUsable(env, "qw/qwen3.8-max-preview", "u-use1"), false);
+  // Retired V4 ids are outside MODELS → unusable even while a DeepSeek worker
+  // key sits in the env (ds/ left the catalog with the V4 retirement).
+  assert.equal(await isModelUsable(env, "ds/deepseek-v4-flash", "u-use1"), false);
+  assert.equal(await isModelUsable(env, "amd/DeepSeek-V4-Flash", "u-use1"), false);
+  // env-key channels: the worker key alone is enough
+  assert.equal(await isModelUsable(env, "qw/qwen3.8-max-preview", "u-use1"), true);
+  assert.equal(await isModelUsable(env, "cm/deepseek/deepseek-v4.1-flash", "u-use1"), true);
+  // no nv key anywhere → unusable (pure BYOK would 502 every request)
+  assert.equal(await isModelUsable(env, "nv/nvidia/nemotron-3-ultra-550b-a55b", "u-use1"), false);
 });
 
 test("isModelUsable: round-68 — the REQUESTING user's key counts, not the admin's", async () => {
@@ -650,7 +645,7 @@ test("vale-probe route: 60 probes pass, 61st 429s on a fixed IP", async () => {
   const probe = () => worker.fetch(new Request("https://x/api/vale-probe", {
     method: "POST",
     headers: { "content-type": "application/json", "cf-connecting-ip": "10.88.88.88" },
-    body: JSON.stringify({ model: "ds/deepseek-v4-flash" }),
+    body: JSON.stringify({ model: "qw/qwen3.8-flash" }),
   }), env);
   await withFetch(async () => new Response("{}", { status: 200 }), async () => {
     for (let i = 0; i < 60; i++) {
@@ -674,26 +669,24 @@ test("isModelUsable: nv/gmi pure BYOK — user key only, never env", async () =>
   assert.equal(await isModelUsable(keyed, "gmi/MiniMaxAI/MiniMax-M3", "u-use4"), true);
 });
 
-test("isModelUsable: og/ honors the breaker; cm/amd honor keys", async () => {
+test("isModelUsable: og/ honors the breaker; cm/ honors keys", async () => {
   const { isModelUsable } = await import("../src/plugins/model-route.ts");
   const { __clearCaches } = await import("../src/store.ts");
   __clearCaches();
   const shut = usableEnv({ uid: "u-use5", extra: { OPENCODE_GO_API_KEY: "sk-og" }, breakerOpen: true });
-  assert.equal(await isModelUsable(shut, "og/deepseek-v4-flash", "u-use5"), false);
+  assert.equal(await isModelUsable(shut, "og/deepseek-v4.1-flash", "u-use5"), false);
   __clearDegradedCache();
   const open = usableEnv({ uid: "u-use6", extra: { OPENCODE_GO_API_KEY: "sk-og" } });
-  assert.equal(await isModelUsable(open, "og/deepseek-v4-flash", "u-use6"), true);
+  assert.equal(await isModelUsable(open, "og/deepseek-v4.1-flash", "u-use6"), true);
   __clearCaches();
-  // cm/amd take env keys (unlike nv/gmi) but still require one
-  const ck = usableEnv({ uid: "u-use7", extra: { CMD_API_KEY: "sk-cm", AMD_API_KEY: "sk-amd" } });
-  const cmId = "cm/deepseek/deepseek-v4-flash";
-  const amdId = "amd/DeepSeek-V4-Flash";
+  // cm/ takes an env key (unlike nv/gmi) but still requires one. The amd case
+  // that used to sit here left with the amd/ catalog on 2026-09-10.
+  const ck = usableEnv({ uid: "u-use7", extra: { CMD_API_KEY: "sk-cm" } });
+  const cmId = "cm/deepseek/deepseek-v4.1-flash";
   assert.equal(await isModelUsable(ck, cmId, "u-use7"), true);
-  assert.equal(await isModelUsable(ck, amdId, "u-use7"), true);
   __clearCaches();
   const bare = usableEnv({ uid: "u-use8" });
   assert.equal(await isModelUsable(bare, cmId, "u-use8"), false);
-  assert.equal(await isModelUsable(bare, amdId, "u-use8"), false);
 });
 
 // ── lib/ratelimit.ts factory security semantics ──────────────────────

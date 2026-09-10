@@ -892,7 +892,7 @@ test("me/route: 401 unauth; PUT validates whitelist; GET shows stored + effectiv
   __clearCaches();
   const env = meEnv();
   assert.equal((await meReq(env, null, "/api/me/route", "GET")).status, 401);
-  assert.equal((await meReq(env, null, "/api/me/route", "PUT", { model: "og/deepseek-v4-flash" })).status, 401);
+  assert.equal((await meReq(env, null, "/api/me/route", "PUT", { model: "og/deepseek-v4.1-flash" })).status, 401);
   const bob = await issueSessionToken("pw", "bob", "user");
   const fresh = await (await meReq(env, bob, "/api/me/route", "GET")).json();
   assert.equal(fresh.model, null);
@@ -901,20 +901,20 @@ test("me/route: 401 unauth; PUT validates whitelist; GET shows stored + effectiv
   // user with no stored route resolves to the usable-fallback chain's
   // terminal default — the old "null (no resolver wiring)" assertion pinned
   // the pre-fix ordering bug.
-  assert.equal(fresh.effective, "ds/deepseek-v4-flash", "keyless no-route user falls back to the default model");
+  assert.equal(fresh.effective, "cm/deepseek/deepseek-v4.1-flash", "keyless no-route user falls back to the default model");
   assert.equal((await meReq(env, bob, "/api/me/route", "PUT", { model: "nope/model" })).status, 400);
-  const put = await meReq(env, bob, "/api/me/route", "PUT", { model: "og/deepseek-v4-flash" });
-  assert.deepEqual(await put.json(), { ok: true, model: "og/deepseek-v4-flash" });
+  const put = await meReq(env, bob, "/api/me/route", "PUT", { model: "og/deepseek-v4.1-flash" });
+  assert.deepEqual(await put.json(), { ok: true, model: "og/deepseek-v4.1-flash" });
   // Effective resolves the STORED route only when it is usable for this
   // user — bob needs an og key, else resolveAutoModel falls back (round-68:
   // never route to a keyless channel). First without the key: fallback.
   const after = await (await meReq(env, bob, "/api/me/route", "GET")).json();
-  assert.equal(after.model, "og/deepseek-v4-flash");
-  assert.equal(after.effective, "ds/deepseek-v4-flash", "keyless user's stored og route is unusable → default fallback");
+  assert.equal(after.model, "og/deepseek-v4.1-flash");
+  assert.equal(after.effective, "cm/deepseek/deepseek-v4.1-flash", "keyless user's stored og route is unusable → default fallback");
   await env.KEYS.put("ukeys:bob", JSON.stringify({ OPENCODE_GO_API_KEY: "og-k" }));
   __clearCaches();
   const withKey = await (await meReq(env, bob, "/api/me/route", "GET")).json();
-  assert.equal(withKey.effective, "og/deepseek-v4-flash", "usable stored route mirrors as effective");
+  assert.equal(withKey.effective, "og/deepseek-v4.1-flash", "usable stored route mirrors as effective");
   const clear = await meReq(env, bob, "/api/me/route", "PUT", { model: null });
   assert.deepEqual(await clear.json(), { ok: true, model: null });
 });

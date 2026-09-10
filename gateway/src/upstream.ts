@@ -172,12 +172,20 @@ function amdRoute({ requestPath }: RouteCtx): RouteInfo {
 }
 
 function defaultRoute({ via }: RouteCtx): RouteInfo {
-  // No prefix / unknown prefix → DeepSeek official
+  // No prefix / unknown prefix → the DEFAULT channel. Since the 2026-09-10 V4
+  // retirement that is Command Code (GOAT), the same channel `auto` resolves
+  // to via model-route.ts's DEFAULT_ROUTE_MODEL: DeepSeek official (the old
+  // default) is unpayable for this deployment (402 on every request) and its
+  // V4 names are retired anyway. The model name passes through VERBATIM
+  // (stripPrefix false) — Command Code's catalog covers claude-*/gpt-5.6-*/
+  // gemini-*/deepseek/* spellings, so an unprefixed name has a real chance of
+  // resolving there; anything retired is stopped earlier by the RETIRED_MODELS
+  // gate in translate.ts.
   return {
-    type: "passthrough",
-    kind: "deepseek",
+    type: "translate",
+    kind: "commandgoat",
     stripPrefix: false,
-    upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
+    upstream: via(CMD_CHAT, "/v1/chat/completions"),
   };
 }
 

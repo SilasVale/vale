@@ -56,10 +56,13 @@ test("pickRoute: per-prefix kind/type/upstream (direct, no egress)", async () =>
   assert.equal(r("nv", "/v1/chat/completions").kind, "nvidia");
   assert.equal(r("gmi", "/v1/chat/completions").kind, "gmi");
   assert.equal(r("cm", "/v1/messages").type, "translate");
-  // unknown / empty prefix → DeepSeek official, no strip
+  // unknown / empty prefix → the DEFAULT channel: Command Code since the
+  // 2026-09-10 V4 retirement (DeepSeek official was the old default), no strip
   const d = r("xx", "/v1/messages");
-  assert.equal(d.kind, "deepseek");
+  assert.equal(d.kind, "commandgoat");
+  assert.equal(d.type, "translate");
   assert.equal(d.stripPrefix, false);
+  assert.equal(d.upstream, "https://api.commandcode.ai/provider/v1/chat/completions");
   assert.equal(r("", "/v1/messages").upstream, d.upstream);
 });
 
@@ -80,7 +83,7 @@ test("pickRoute: US egress wraps with encoded target+path (F4 injection pin)", (
   const evil = pickRoute("ds&path=/evil", eg, "1", "/v1/messages");
   const u = new URL(evil.upstream);
   assert.equal(u.searchParams.get("target"), "ds&path=/evil");
-  assert.equal(u.searchParams.get("path"), "/anthropic/v1/messages");
+  assert.equal(u.searchParams.get("path"), "/v1/chat/completions");
 });
 
 test("passthroughHeaders: bearer default, api-key mode, keyless", () => {
@@ -110,9 +113,10 @@ test("registerRoute: new prefix resolves via the table, unknown still falls back
     const r = pickRoute("zz-test-ocp", {}, null, "/v1/messages");
     assert.equal(r.kind, "zztest");
     assert.equal(r.upstream, "https://example.invalid/chat");
-    // unknown prefixes still hit the DeepSeek default (no strip)
+    // unknown prefixes still hit the default channel (Command Code since the
+    // 2026-09-10 V4 retirement), no strip
     const d = pickRoute("zz-unknown", {}, null, "/v1/messages");
-    assert.equal(d.kind, "deepseek");
+    assert.equal(d.kind, "commandgoat");
     assert.equal(d.stripPrefix, false);
   } finally {
     delete ROUTE_TABLE["zz-test-ocp"];
@@ -163,10 +167,12 @@ test("opencodeSessionHeader: relays client id verbatim, else synthetic fallback"
 
 // SOLID Round-53: the OCP tables must cover every live prefix — a new
 // channel added to MODELS without a route builder would silently ride the
-// DeepSeek default (wrong upstream AND wrong key).
+// default route (wrong upstream AND wrong key).
 test("ROUTE_TABLE covers every MODELS prefix", () => {
   const prefixes = new Set(MODELS.map((m) => m.id.split("/")[0]));
-  assert.ok(prefixes.size >= 8, "whitelist non-trivial");
+  // og, or, nv, gmi, qw, cm — ds/ and amd/ left the catalog with the V4 line
+  // on 2026-09-10 (their builders stay registered for exact-name routes).
+  assert.ok(prefixes.size >= 6, "whitelist non-trivial");
   for (const p of prefixes) {
     assert.equal(typeof ROUTE_TABLE[p], "function", `${p}/ models need a route builder`);
   }

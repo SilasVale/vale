@@ -118,10 +118,9 @@ dsh 的 web-search-deepseek 插件配置 `apiKeyEnv: ANTHROPIC_API_KEY`，但该
 ### 渠道能力实测（web search 服务器端支持）
 | 渠道/模型 | 服务器端搜索 | 备注 |
 |---|---|---|
-| og/deepseek-v4-flash | ✅ | zen 原生，唯一当前可用 |
-| ds/deepseek-v4-flash | ✅ | DeepSeek 官方，但账号余额不足 |
+| og/deepseek-v4.1-flash | ✅ | zen 原生（wire 名 `deepseek-flash`），2026-09-10 实测 200 + 4 次搜索 |
 | cm/ 全系（含 claude/gpt/kimi/glm） | ❌ | 只返回 tool_use（客户端模式），或 400/403 |
-| cm/deepseek-v4-flash | ❌ | 网关 web_search 分支明确排除 commandgoat |
+| ~~og/ds/cm/amd 的 V4 Flash~~ | — | 2026-09-10 全线下线（DeepSeek 官方已把 V4 名字别名到 V4.1；amd 无 V4.1） |
 
 ### 最终方案：官方 web-search-deepseek 插件（已配置）
 - 用 dsh 自带官方插件（`@deepseek-ai/dsh-web-search-deepseek`），不额外做 MCP
@@ -130,11 +129,11 @@ dsh 的 web-search-deepseek 插件配置 `apiKeyEnv: ANTHROPIC_API_KEY`，但该
   web-search-deepseek:
     baseURL: https://api.saisi.online/v1
     apiKeyEnv: VALE_API_KEY
-    model: og/deepseek-v4-flash   # zen 原生服务器端搜索
+    model: og/deepseek-v4.1-flash   # zen 原生服务器端搜索（V4 已下线）
     maxTokens: 4096
     maxUses: 5
   ```
-- 关键：model 必须是支持服务器端搜索的（og/ 或 ds/），cm/ 不支持
+- 关键：model 必须是支持服务器端搜索的（og/ Flash 线），cm/ 不支持
 - 注意：曾误做 MCP websearch（重复造轮子），已删除（配置 + 目录）
 
 ## 五、Cloudflare Access 应用（DSH Web）

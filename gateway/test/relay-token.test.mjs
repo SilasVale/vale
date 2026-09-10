@@ -184,7 +184,7 @@ test("relay: x-api-key relay drives /v1/messages (dual-accept), billed to the ow
         method: "POST",
         headers: { "x-api-key": relay, "content-type": "application/json" },
         body: JSON.stringify({
-          model: "og/deepseek-v4-flash",
+          model: "og/deepseek-v4.1-flash",
           max_tokens: 10,
           stream: false,
           messages: [{ role: "user", content: "hi" }],
@@ -235,7 +235,7 @@ const postMessages = (env, token) =>
       method: "POST",
       headers: { "x-api-key": token, "content-type": "application/json" },
       body: JSON.stringify({
-        model: "og/deepseek-v4-flash",
+        model: "og/deepseek-v4.1-flash",
         max_tokens: 10,
         stream: false,
         messages: [{ role: "user", content: "hi" }],

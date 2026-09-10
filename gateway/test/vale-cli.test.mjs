@@ -16,9 +16,9 @@ import path from "node:path";
 const CLI = path.join(import.meta.dirname, "..", "public", "vale");
 
 const DEFAULT_MODELS = [
-  { id: "ds/deepseek-v4-flash", object: "model", owned_by: "deepseek" },
+  { id: "cm/deepseek/deepseek-v4.1-flash", object: "model", owned_by: "command-code" },
   { id: "qw/qwen3.8-max-preview", object: "model", owned_by: "qwen" },
-  { id: "og/deepseek-v4-flash", object: "model", owned_by: "opencode" },
+  { id: "og/deepseek-v4.1-flash", object: "model", owned_by: "opencode" },
   { id: "og/minimax-m3", object: "model", owned_by: "opencode" },
   { id: "og/mimo-v2.5", object: "model", owned_by: "opencode" },
   { id: "og/ox-alpha-free", object: "model", owned_by: "opencode" },
@@ -33,12 +33,12 @@ function makeGateway({ health, probeOk = true, probeStatus = 200, tokenOk = true
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify(health || {
         channels: [
-          { id: "ds", ok: true, model: "ds/deepseek-v4-flash" },
+          { id: "cm", ok: true, model: "cm/deepseek/deepseek-v4.1-flash" },
           { id: "qw", ok: true, model: "qw/qwen3.8-max-preview" },
-          { id: "og", ok: false, model: "og/deepseek-v4-flash", reason: "circuit open" },
+          { id: "og", ok: false, model: "og/deepseek-v4.1-flash", reason: "circuit open" },
           { id: "or", ok: true, model: "or/openai/gpt-5.6-luna:floor[1m]" },
         ],
-        recommended: { channel: "qw", model: "qw/qwen3.8-max-preview" },
+        recommended: { channel: "cm", model: "cm/deepseek/deepseek-v4.1-flash" },
       }));
       return;
     }
@@ -101,7 +101,7 @@ function makeSettings(extra = {}) {
     env: {
       ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic", // direct config (the CLI does not read it)
       ANTHROPIC_API_KEY: "test-token",
-      ANTHROPIC_MODEL: "ds/deepseek-v4-flash",
+      ANTHROPIC_MODEL: "cm/deepseek/deepseek-v4.1-flash",
       ...extra,
     },
     permissions: { allow: ["Read"] },
@@ -150,7 +150,7 @@ test("check: 显示渠道状态和当前渠道", async () => {
     const r = await run(["check"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /qw/);
-    assert.match(r.stdout, /当前.*ds/);
+    assert.match(r.stdout, /当前.*cm/);
   } finally { server.close(); }
 });
 
@@ -172,7 +172,7 @@ test("use qw: 探测通过 + token 有效 → 改写 env + 备份", async () => 
     assert.equal(backups.length, 1);
     // the backup content is the pre-switch config
     const bak = JSON.parse(fs.readFileSync(path.join(path.dirname(file), backups[0]), "utf8"));
-    assert.equal(bak.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    assert.equal(bak.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash");
   } finally { server.close(); }
 });
 
@@ -183,7 +183,7 @@ test("use og: 探测失败(400) → 拒绝切换, 配置不变", async () => {
     const r = await run(["use", "og"], file, gw(port));
     assert.notEqual(r.status, 0);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    assert.equal(after.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash");
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 0);
   } finally { server.close(); }
@@ -197,20 +197,20 @@ test("use qw: token 对网关无效(401) → 拒绝切换并提示", async () =>
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /token|密钥/);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    assert.equal(after.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash");
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 0);
   } finally { server.close(); }
 });
 
-test("use auto: 按优先级 qw>ds>og>or 选第一个健康渠道", async () => {
+test("use auto: 按优先级 cm>qw>og>or 选第一个健康渠道", async () => {
   const { server, port } = await makeGateway();
   try {
     const { file } = makeSettings();
     const r = await run(["use", "auto"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "qw/qwen3.8-max-preview");
+    assert.equal(after.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash");
   } finally { server.close(); }
 });
 
@@ -222,7 +222,7 @@ test("restore: 恢复最近备份（原子写；恢复前先备份当前状态�
     const r = await run(["restore"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // back to the pre-switch state
+    assert.equal(after.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash"); // back to the pre-switch state
     // use and restore each create one backup → 2 backups; the newest is the pre-restore (qw) state
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 2);
@@ -248,7 +248,7 @@ test("备份保留: 6 次 use 后只保留最近 5 个 .bak-vale-*", async () =>
   } finally { server.close(); }
 });
 
-test("use auto: 推荐渠道 qw 探测失败 → 回退到下一个健康渠道 ds", async () => {
+test("use auto: 推荐渠道 cm 探测失败 → 回退到下一个健康渠道 qw", async () => {
   const { server, port } = await makeGateway({ probeFailModels: ["qw/qwen3.8-max-preview"] });
   try {
     // starts as or: if the fallback doesn't take, the config stays on or (and the command exits non-zero)
@@ -256,7 +256,7 @@ test("use auto: 推荐渠道 qw 探测失败 → 回退到下一个健康渠道 
     const r = await run(["use", "auto"], file, gw(port));
     assert.equal(r.status, 0, r.stderr);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    assert.equal(after.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash");
   } finally { server.close(); }
 });
 
@@ -268,7 +268,7 @@ test("use auto: 所有渠道探测失败 → 无可用渠道, 配置不变", asy
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /无可用渠道/);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    assert.equal(after.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash");
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 0);
   } finally { server.close(); }
@@ -294,7 +294,7 @@ test("models: 列出全部模型（含 og/minimax-m3）", async () => {
     assert.match(r.stdout, /og\/mimo-v2.5/);
     assert.match(r.stdout, /og\/ox-alpha-free/);
     assert.match(r.stdout, /qw\/qwen3.8-max-preview/);
-    assert.match(r.stdout, /ds\/deepseek-v4-flash/);
+    assert.match(r.stdout, /cm\/deepseek\/deepseek-v4.1-flash/);
   } finally { server.close(); }
 });
 
@@ -332,7 +332,7 @@ test("use xx/nope: 不在模型列表 → 拒绝切换", async () => {
     assert.notEqual(r.status, 0);
     assert.match(r.stderr, /未知渠道|未知模型|不支持/);
     const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash");
+    assert.equal(after.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash");
     const backups = fs.readdirSync(path.dirname(file)).filter((f) => f.includes(".bak-vale-"));
     assert.equal(backups.length, 0);
   } finally { server.close(); }
@@ -453,7 +453,7 @@ test("use <provider>: 探测失败(400) → 拒绝切换", async () => {
     const r = await run(["use", "bad"], sf, gw(port), file);
     assert.notEqual(r.status, 0);
     const after = JSON.parse(fs.readFileSync(sf, "utf8"));
-    assert.equal(after.env.ANTHROPIC_MODEL, "ds/deepseek-v4-flash"); // not switched
+    assert.equal(after.env.ANTHROPIC_MODEL, "cm/deepseek/deepseek-v4.1-flash"); // not switched
   } finally { fs.rmSync(file, { force: true }); server.close(); }
 });
 

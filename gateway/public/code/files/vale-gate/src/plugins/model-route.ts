@@ -61,14 +61,17 @@ export async function isModelUsable(env: any, model: string, uid: string): Promi
   return true;
 }
 
-// Default channel when the user hasn't made a selection: the stable,
-// cheapest direct channel (DeepSeek official).
-const DEFAULT_ROUTE_MODEL = "ds/deepseek-v4-flash";
+// Default channel when the user hasn't made a selection. 2026-09-10 (V4
+// retirement): this used to be ds/deepseek-v4-flash — the official key is now
+// out of balance (402 on every request) and its V4 names are retired, so the
+// default moved to Command Code's V4.1 Flash, the model the whole catalog
+// standardised on (and the one the console's health badge recommends).
+const DEFAULT_ROUTE_MODEL = "cm/deepseek/deepseek-v4.1-flash";
 
 /**
  * Resolve Claude Code's fixed `auto` model name to this user's chosen
  * channel (per-user route selection). Falls back to the default channel
- * (ds/deepseek-v4-flash) when unset or unusable.
+ * (cm/deepseek/deepseek-v4.1-flash) when unset or unusable.
  */
 export async function resolveAutoModel(env: any, uid: string): Promise<string> {
   const chosen = await getUserRoute(env, uid);
@@ -82,7 +85,7 @@ export async function resolveAutoModel(env: any, uid: string): Promise<string> {
     DEFAULT_ROUTE_MODEL,
     "qw/qwen3.8-max-preview",
     "qw/qwen3.8-flash",
-    "og/deepseek-v4-flash",
+    "og/deepseek-v4.1-flash",
     "or/openai/gpt-5.6-luna:floor[1m]",
   ]) {
     if (await isModelUsable(env, m, uid)) return m;

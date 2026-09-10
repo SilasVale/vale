@@ -215,8 +215,8 @@ test("getUserRoute / setUserRoute: DO-based read/write", async () => {
   assert.equal(await store.getUserRoute(env, "admin"), null);
   await store.setUserRoute(env, "admin", "qw/qwen3.8-max-preview");
   assert.equal(await store.getUserRoute(env, "admin"), "qw/qwen3.8-max-preview");
-  await store.setUserRoute(env, "admin", "ds/deepseek-v4-flash");
-  assert.equal(await store.getUserRoute(env, "admin"), "ds/deepseek-v4-flash");
+  await store.setUserRoute(env, "admin", "cm/deepseek/deepseek-v4.1-flash");
+  assert.equal(await store.getUserRoute(env, "admin"), "cm/deepseek/deepseek-v4.1-flash");
 });
 
 test("getUserRoute / setUserRoute: clear route with null", async () => {
@@ -229,9 +229,9 @@ test("getUserRoute / setUserRoute: clear route with null", async () => {
 
 test("getUserRoute / setUserRoute: isolated per user", async () => {
   const env = { ROUTE: makeRouteDO() };
-  await store.setUserRoute(env, "alice", "og/deepseek-v4-flash");
+  await store.setUserRoute(env, "alice", "og/deepseek-v4.1-flash");
   await store.setUserRoute(env, "bob", "qw/qwen3.8-max-preview");
-  assert.equal(await store.getUserRoute(env, "alice"), "og/deepseek-v4-flash");
+  assert.equal(await store.getUserRoute(env, "alice"), "og/deepseek-v4.1-flash");
   assert.equal(await store.getUserRoute(env, "bob"), "qw/qwen3.8-max-preview");
 });
 
@@ -262,15 +262,15 @@ test("getUserRoute: DO 401 + no legacy key → null (no throw)", async () => {
 });
 
 test("getUserRoute: missing ROUTE binding → legacy KV fallback (no throw)", async () => {
-  const env = { ...makeKV({ "route:u2": "ds/deepseek-v4-flash" }) };
-  assert.equal(await store.getUserRoute(env, "u2"), "ds/deepseek-v4-flash");
+  const env = { ...makeKV({ "route:u2": "cm/deepseek/deepseek-v4.1-flash" }) };
+  assert.equal(await store.getUserRoute(env, "u2"), "cm/deepseek/deepseek-v4.1-flash");
 });
 
 test("setUserRoute: DO 401 → persists to legacy KV (no bare throw)", async () => {
   const env = { ...makeKV({}), ROUTE: make401RouteDO() };
-  await store.setUserRoute(env, "u3", "og/deepseek-v4-flash");
-  assert.equal(env._kv.get("route:u3"), "og/deepseek-v4-flash");
-  assert.equal(await store.getUserRoute(env, "u3"), "og/deepseek-v4-flash");
+  await store.setUserRoute(env, "u3", "og/deepseek-v4.1-flash");
+  assert.equal(env._kv.get("route:u3"), "og/deepseek-v4.1-flash");
+  assert.equal(await store.getUserRoute(env, "u3"), "og/deepseek-v4.1-flash");
   await store.setUserRoute(env, "u3", null);
   assert.equal(env._kv.has("route:u3"), false);
   assert.equal(await store.getUserRoute(env, "u3"), null);
@@ -278,7 +278,7 @@ test("setUserRoute: DO 401 → persists to legacy KV (no bare throw)", async () 
 
 test("setUserRoute: DO down + no KV → identifiable config_error (not a bare TypeError)", async () => {
   const env = { ROUTE: make401RouteDO() };
-  await assert.rejects(() => store.setUserRoute(env, "u4", "ds/deepseek-v4-flash"), /config_error/);
+  await assert.rejects(() => store.setUserRoute(env, "u4", "cm/deepseek/deepseek-v4.1-flash"), /config_error/);
 });
 
 test("getGlobalSetting: auth keys expire after 60s (not 24h)", async () => {

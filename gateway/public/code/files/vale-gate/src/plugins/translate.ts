@@ -51,6 +51,7 @@ import {
   OG_FORCE_US_PROXY,
   OG_NATIVE_ANTHROPIC,
   OG_ZEN_ANTHROPIC,
+  retiredModelHint,
   SEARCH_CAPABLE_WIRE_MODELS,
   VERIFY_PATH,
   museResponsesExit,
@@ -487,6 +488,20 @@ async function handleGatewayImpl(
     // Claude Code fixed model name auto: route by the user's web selection
     model = await resolveAutoModel(env, user.id);
   }
+  // Retired models (RETIRED_MODELS, channels.ts): the 2026-09-10 V4 Flash
+  // retirement refuses the old ids BY NAME and names the replacement, instead
+  // of letting an upstream alias answer as something else — DeepSeek official
+  // silently serves its retired V4 names with V4.1, which hides the swap. Runs
+  // before every route/key decision so /v1/messages, /v1/chat/completions and
+  // /v1/responses all give the same answer.
+  const retiredTo = retiredModelHint(model);
+  if (retiredTo) {
+    return jsonError(
+      400,
+      `Model ${model} was retired on 2026-09-10 — the DeepSeek V4 Flash line is superseded by V4.1 Flash. Use ${retiredTo} instead.`,
+      "invalid_request_error",
+    );
+  }
   // Model-level forced US egress (see OG_FORCE_US_PROXY in channels.ts):
   // gpt-5.6-luna (zen region-blocks it for CN) and muse-spark Contributor
   // (Meta Geographic Use Policy) always ride the Vercel US exit, regardless
@@ -509,14 +524,14 @@ async function handleGatewayImpl(
   // og wire-slug aliasing (OG_WIRE_REMAP): the advertised clear name may
   // differ from the slug zen/go accepts — everything below (native-set check,
   // body rewrite, response relabel, vision allowlist) sees the WIRE name.
-  // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
-  // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
-  // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is
-  // already bracket-stripped, so a [1m] marker cannot mask the check.
-  // With US_PROXY on: deepseek-v4-flash also goes through translate (chat/completions via the US
-  // proxy) — measured: proxied chat/completions 1.6s vs native /v1/messages 11s (5x faster),
-  // and translate fully supports thinking (reasoning_content). When off, keep the native direct
-  // connection (direct native 8s vs direct chat/completions 7.8s — comparable, native verified).
+  // OG_NATIVE_ANTHROPIC is empty today (the native /v1/messages passthrough
+  // was retired), so every og/ model rides the translate path; the check stays
+  // for the next native model. upstreamModel is already bracket-stripped, so a
+  // [1m] marker cannot mask it.
+  // With US_PROXY on: Flash models also go through the US proxy
+  // (chat/completions) — measured: proxied chat/completions 1.6s vs native
+  // /v1/messages 11s (5x faster), and translate fully supports thinking
+  // (reasoning_content). When off, the direct connection is comparable.
   const route =
     baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel) && !usProxy
       ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
@@ -566,9 +581,9 @@ async function handleGatewayImpl(
     // CPU guard: parsing a multi-MB body into an object graph blows the Free
     // plan's 10ms budget (Error 1102) — but web_search detection and image
     // preprocessing NEED the object. The translate path MUST parse (it
-    // reshapes the request), so the scan-skip applies to the NATIVE-Anthropic
-    // passthrough channels (og/deepseek-v4-flash, ds/, amd/ — amd's upstream
-    // speaks Anthropic directly, so its body needs no reshaping):
+    // reshapes the request), so the scan-skip applies to the passthrough
+    // channels whose body needs no reshaping (ds/, amd/ — amd's upstream
+    // speaks Anthropic directly):
     // scan the RAW text for the triggers ("web_search" tool, image blocks)
     // BEFORE parsing — a plain text-only request (the common case) skips the
     // parse entirely. Translate models (minimax/mimo/kimi) always parse.
@@ -632,7 +647,7 @@ async function handleGatewayImpl(
       body = JSON.parse(rawText);
     }
     // Web search is handled NATIVELY by opencode zen (verified 2026-08-13:
-    // og/deepseek-v4-flash returns server_tool_use + web_search_tool_result +
+    // the Flash line returns server_tool_use + web_search_tool_result +
     // a text answer for a web_search_20250305 tool). The old DeepSeek-fallback
     // interception (runWebSearch/ogWebSearchAnswer) is REMOVED — web_search
     // requests flow through the passthrough/translate path untouched and zen
@@ -640,8 +655,9 @@ async function handleGatewayImpl(
     // the body when web_search is declared, so preprocessImages can run for
     // mixed image+search requests; a pure search request parses once and is
     // forwarded — no DeepSeek key required.)
-    // VERIFIED (2026-08-13): zen implements web_search NATIVELY only for
-    // deepseek-v4-flash. Translate-path models (mimo-v2.5/minimax/kimi/glm)
+    // VERIFIED (2026-08-13): zen implements web_search NATIVELY only for the
+    // Flash line (the version-less `deepseek-flash` lane = V4.1 since the V4
+    // retirement). Translate-path models (mimo-v2.5/minimax/kimi/glm)
     // do NOT search — the forced tool_choice makes them fabricate a query and
     // return a plain text answer with no web_search_tool_result. So a REAL
     // search request is FORCED to the native search-capable model.
@@ -677,17 +693,17 @@ async function handleGatewayImpl(
           body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
     if (webSearchToolChoice && body && route.kind !== "commandgoat") {
       // A caller that already names a search-capable Flash-line model KEEPS it
-      // (2026-09-10): zen/go runs web_search natively on both wire slugs — V4's
-      // `deepseek-v4-flash` and the version-less lane `deepseek-flash` that
-      // og/deepseek-v4.1-flash remaps to (SEARCH_CAPABLE_WIRE_MODELS; live-
-      // verified on each: 200 + 4 searches). DSH's web-search provider therefore
-      // honours its configured `model` instead of being silently pinned to V4.
-      // Every other og/ model is still forced to the V4 slug: the translate-only
-      // models (minimax/mimo/kimi/glm) fabricate a query and return no
-      // web_search_tool_result (verified 2026-08-13).
+      // (2026-09-10): zen/go runs web_search natively on the version-less lane
+      // slug `deepseek-flash` that og/deepseek-v4.1-flash remaps to
+      // (SEARCH_CAPABLE_WIRE_MODELS; live-verified: 200 + 4 searches). DSH's
+      // web-search provider therefore honours its configured `model` instead of
+      // being silently pinned. Since the V4 retirement (2026-09-10) the lane
+      // slug is ALSO the fallback target: every other og/ model is forced to it,
+      // because the translate-only models (minimax/mimo/kimi/glm) fabricate a
+      // query and return no web_search_tool_result (verified 2026-08-13).
       const searchCapable = SEARCH_CAPABLE_WIRE_MODELS.has(upstreamModel);
-      const searchModel = searchCapable ? model : "og/deepseek-v4-flash";
-      const searchWireModel = searchCapable ? upstreamModel : "deepseek-v4-flash";
+      const searchModel = searchCapable ? model : "og/deepseek-v4.1-flash";
+      const searchWireModel = searchCapable ? upstreamModel : "deepseek-flash";
       // Swap when the route is NOT already the native search-capable
       // passthrough (covers the translate path AND US_PROXY=1 where the
       // flagship model would otherwise ride the broken chat/completions
@@ -1031,8 +1047,8 @@ async function handleGatewayImpl(
     if (route.kind === "amd" && !byok.amd) {
       return keyMissingError("amd") as Response;
     }
-    // og-native (deepseek-v4-flash via /v1/messages) needs the OpenCode Go key
-    // too — without it the request would go out headerless and return a bare
+    // og/ models need the OpenCode Go key too — without it the request would
+    // go out headerless and return a bare
     // "Upstream 401" instead of a clear config error (translate path checks).
     if (route.kind === "opencode" && !byok.opencodeGo) {
       return keyMissingError("opencode") as Response;
@@ -1058,6 +1074,9 @@ async function handleGatewayImpl(
         ? JSON.stringify({ ...body, model: upstreamModel })
         : rawWithModel(rawText, upstreamModel, scanned);
     if (route.kind === "openrouter" && upstreamModel === "deepseek/deepseek-v4-flash-0731") {
+      // Unreachable since the 2026-09-10 V4 retirement (the id is in
+      // RETIRED_MODELS, refused before routing) — kept so the or/ DeepSeek
+      // pin-to-official behaviour is one catalogue entry away from returning.
       forwardBody =
         body !== null
           ? JSON.stringify({
@@ -1104,7 +1123,7 @@ async function handleGatewayImpl(
   }
 
   // Translation route (og non-native models, cm): Anthropic → OpenAI →
-  // chat/completions, then reshape back to Anthropic SSE. deepseek-v4-flash /
+  // chat/completions, then reshape back to Anthropic SSE. The Flash line and
   // minimax-m3 on og never get here — they were switched to passthrough above.
   // cm/ always gets here on /v1/messages: the Command Code Anthropic endpoint
   // serves claude-* only, deepseek & co. live on chat/completions.
