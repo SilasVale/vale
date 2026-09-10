@@ -126,7 +126,8 @@ async function finishDescribe(
   await cacheImageDesc(cacheKey, env, desc);
   return desc;
 }
-async function describeImage(
+// Exported for direct pins (SOLID Round-38; additive — callers untouched).
+export async function describeImage(
   env: any,
   ukeys: any,
   source: any,

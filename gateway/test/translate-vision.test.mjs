@@ -9,7 +9,7 @@
 //      descriptions), and the failed value is never cached.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { preprocessImages } from "../src/plugins/translate-vision.ts";
+import { preprocessImages, describeImage } from "../src/plugins/translate-vision.ts";
 import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 import { __clearCaches } from "../src/store.ts";
 
@@ -218,4 +218,105 @@ test("vision: KV read outage degrades to uncached describe, never throws", async
     s.restore();
     e.KEYS.get = origGet;
   }
+});
+
+// SOLID Round-38 (failure taxonomy): every describeImage fault maps to an
+// explicit marker string — and every marker MUST match preprocessImages'
+// throw gate (/图片描述失败|图片描述为空|图片数据为空/), or a fault would
+// degrade into a fabricated description again (the round-119 lesson).
+// Direct unit pins; the throw wiring itself is pinned above end-to-end.
+// Must mirror the gate in preprocessImages — if that regex ever changes,
+// this table's last case fails loudly by design.
+const THROW_GATE = /图片描述失败|图片描述为空|图片数据为空/;
+const OG = "og/mimo-v2.5";
+const OGKEYS = { OPENCODE_GO_API_KEY: "sk-og" };
+
+async function withStubFetch(fn, handler) {
+  const real = globalThis.fetch;
+  globalThis.fetch = handler;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = real;
+  }
+}
+
+test("describeImage: fault → marker taxonomy (og branch)", async () => {
+  const src = (data) => ({ media_type: "image/png", data });
+  assert.equal(await describeImage({}, {}, src(""), OG, "u1"), "(图片数据为空)", "empty data, no fetch");
+  assert.equal(
+    await describeImage({}, {}, src(IMG), OG, "u1"),
+    "(图片描述失败：OPENCODE_GO_API_KEY 未配置)",
+    "missing og key",
+  );
+  await withStubFetch(async () => {
+    // fetchDescribeOrError converts the throw into a marker (never rejects).
+    assert.match(await describeImage({}, OGKEYS, src(IMG), OG, "u1"), /图片描述失败/, "network throw");
+  }, async () => {
+    throw new Error("boom");
+  });
+  await withStubFetch(async () => {
+    assert.equal(
+      await describeImage({}, OGKEYS, src(IMG), OG, "u1"),
+      "(图片描述失败：500)",
+      "non-ok status",
+    );
+  }, async () => new Response("err", { status: 500 }));
+  await withStubFetch(async () => {
+    assert.equal(
+      await describeImage({}, OGKEYS, src(IMG), OG, "u1"),
+      "(图片描述失败：响应解析失败)",
+      "garbage body",
+    );
+  }, async () => new Response("not-json{{{", { status: 200 }));
+  await withStubFetch(async () => {
+    assert.equal(
+      await describeImage({}, OGKEYS, src(IMG), OG, "u1"),
+      "(图片描述为空)",
+      "valid JSON, empty content",
+    );
+  }, async () => new Response(JSON.stringify({ choices: [{ message: { content: "  " } }] }), { status: 200 }));
+});
+
+test("describeImage: passthrough branch key + success shape", async () => {
+  const src = { media_type: "image/png", data: IMG };
+  assert.equal(
+    await describeImage({}, {}, src, "or/some-vision-model", "u1"),
+    "(图片描述失败：视觉模型后端未配置)",
+    "missing passthrough key",
+  );
+  await withStubFetch(async () => {
+    assert.equal(
+      await describeImage({}, { OPENROUTER_API_KEY: "sk-or" }, src, "or/some-vision-model", "u1"),
+      "seen-it",
+      "Anthropic content[] extraction",
+    );
+  }, async () =>
+    new Response(JSON.stringify({ content: [{ type: "text", text: "seen-it" }] }), { status: 200 }),
+  );
+});
+
+test("taxonomy consistency: every marker trips the throw gate", async () => {
+  const markers = [
+    "(图片数据为空)",
+    "(图片描述失败：x)",
+    "(图片描述为空)",
+    await describeImage({}, {}, { data: "" }, OG, "u1"),
+    await describeImage({}, {}, { data: IMG }, OG, "u1"),
+  ];
+  for (const m of markers) {
+    assert.match(m, THROW_GATE, `marker trips the gate: ${m}`);
+  }
+  // And the gate actually fires through the public path on empty data.
+  await assert.rejects(
+    preprocessImages(
+      [{ role: "user", content: [{ type: "image", source: { media_type: "image/png", data: "" } }] }],
+      {},
+      OGKEYS,
+      "m",
+      OG,
+      "u1",
+    ),
+    /vision preprocessing failed/,
+  );
 });
