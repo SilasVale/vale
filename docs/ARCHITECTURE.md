@@ -95,6 +95,11 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 
 ## Test gates (per subproject)
 
+Run each gate from its own directory — never bare `node --test` from the
+repo root: root discovery sweeps panel-react's vitest `.ts` files into
+node's runner (extensionless imports unresolvable there), producing ~14
+false failures. Suites are green only under their own runners.
+
 | Subproject | Gate | Count |
 |---|---|---|
 | gateway | tsc + eslint(src+ui) + prettier + node --test | 683 (recounted 2026-09-09: 655 → 683, incl. 28 more SOLID pins R26–R32; suite green) |
