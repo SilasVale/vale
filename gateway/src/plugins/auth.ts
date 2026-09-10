@@ -448,8 +448,11 @@ async function meTestKeys(request: Request, env: any): Promise<Response> {
  * {ok:false, detail:"Usage query failed"} on network throws. meKeyUsage's
  * three provider branches used to each inline this fetch/error/parse shape;
  * only the URL + payload mapping differ per provider.
+ *
+ * Exported with the three mappers below for direct pins (SOLID Round-39;
+ * additive — meKeyUsage passes the same functions it used to inline).
  */
-async function usageQuery(
+export async function usageQuery(
   url: string,
   key: string,
   name: string,
@@ -475,6 +478,91 @@ async function usageQuery(
   }
 }
 
+/** OpenRouter key-info mapping (SOLID Round-39: verbatim extraction for direct pins). */
+export function mapOpenRouterUsage(payload: any): Record<string, unknown> {
+  const data = payload?.data;
+  if (!data || typeof data !== "object") {
+    throw Object.assign(new Error("invalid upstream"), { detail: "Invalid upstream response" });
+  }
+  const out: Record<string, unknown> = {};
+  for (const field of ["label", "usage", "limit"]) {
+    if (
+      field in data &&
+      (data[field] === null || typeof data[field] === "string" || typeof data[field] === "number")
+    )
+      out[field] = data[field];
+  }
+  if (typeof data.is_free_tier === "boolean") out.isFreeTier = data.is_free_tier;
+  if (data.rate_limit && typeof data.rate_limit === "object") {
+    const rateLimit: Record<string, unknown> = {};
+    if (typeof data.rate_limit.limit === "number") rateLimit.limit = data.rate_limit.limit;
+    if (typeof data.rate_limit.interval === "string") rateLimit.interval = data.rate_limit.interval;
+    if (typeof data.rate_limit.reset === "string") rateLimit.reset = data.rate_limit.reset;
+    if (Object.keys(rateLimit).length) out.rateLimit = rateLimit;
+  }
+  return out;
+}
+
+/** AMD spend-cap mapping (SOLID Round-39: verbatim extraction for direct pins). */
+export function mapAmdUsage(payload: any): Record<string, unknown> {
+  // AMD Radeon Cloud (developer.amd.com.cn/radeon) — GET /v1/usage reports
+  // the rolling daily spend cap of the free rc-… key (verified 2026-09-02):
+  // {rpm_limit, daily_cost_limit_usd, daily_cost_used_usd, daily_reset_at,
+  //  all_time:{requests,total_tokens,cost}, by_model:[…]}. Mapped onto the
+  // generic usage shape the console already renders (USD numbers).
+  const out: Record<string, unknown> = {};
+  if (typeof payload?.daily_cost_used_usd === "number") out.usage = payload.daily_cost_used_usd;
+  out.limit =
+    typeof payload?.daily_cost_limit_usd === "number" ? payload.daily_cost_limit_usd : null;
+  if (typeof payload?.rpm_limit === "number") {
+    const rateLimit: Record<string, unknown> = { limit: payload.rpm_limit, interval: "minute" };
+    if (typeof payload.daily_reset_at === "string") rateLimit.reset = payload.daily_reset_at;
+    out.rateLimit = rateLimit;
+  }
+  const all = payload?.all_time;
+  if (all && typeof all === "object") {
+    // The account label the generic renderer shows: org + request/token
+    // totals, so the console says whose key and how much it has carried.
+    const requests = typeof all.requests === "number" ? all.requests : 0;
+    const tokens = typeof all.total_tokens === "number" ? all.total_tokens : 0;
+    out.label = `${payload.organization_id || "radeon"} · ${requests} req · ${tokens} tok`;
+  }
+  return out;
+}
+
+/** OpenCode Go quota mapping, flat + multi-window shapes (SOLID Round-39: verbatim extraction). */
+export function mapOgUsage(payload: any): Record<string, unknown> {
+  // OpenCode Go subscription usage endpoint (undocumented, discovered via
+  // farion1231/cc-switch#6433). Returns three rolling quota windows.
+  const out: Record<string, unknown> = {};
+  if (payload && typeof payload === "object") {
+    // Single-window flat shape: { used, limit, balance, plan }
+    if (typeof payload.used === "number") out.usage = payload.used;
+    if ("limit" in payload && (typeof payload.limit === "number" || payload.limit === null))
+      out.limit = payload.limit;
+    if (typeof payload.balance === "number") out.balance = payload.balance;
+    if (typeof payload.plan === "string") out.label = payload.plan;
+    // Multi-window shape: { windows: { "5h": {...}, weekly: {...}, monthly: {...} } }
+    if (payload.windows && typeof payload.windows === "object") {
+      const windows: Record<string, unknown> = {};
+      for (const [wk, wv] of Object.entries(payload.windows) as [string, any][]) {
+        if (wv && typeof wv === "object") {
+          windows[wk] = {
+            ...(typeof wv.used === "number" ? { used: wv.used } : {}),
+            ...(typeof wv.limit === "number" || wv.limit === null ? { limit: wv.limit } : {}),
+            ...(typeof wv.remaining === "number" ? { remaining: wv.remaining } : {}),
+            ...(typeof wv.reset_at === "string" || wv.reset_at === null
+              ? { resetAt: wv.reset_at }
+              : {}),
+          };
+        }
+      }
+      out.windows = windows;
+    }
+  }
+  return out;
+}
+
 async function meKeyUsage(request: Request, env: any): Promise<Response> {
   const r = await sessionAndKeyName(request, env, [
     "OPENROUTER_API_KEY",
@@ -488,94 +576,15 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
 
   if (name === "OPENROUTER_API_KEY") {
-    return usageQuery("https://openrouter.ai/api/v1/auth/key", key, name, (payload) => {
-      const data = payload?.data;
-      if (!data || typeof data !== "object") {
-        throw Object.assign(new Error("invalid upstream"), { detail: "Invalid upstream response" });
-      }
-      const out: Record<string, unknown> = {};
-      for (const field of ["label", "usage", "limit"]) {
-        if (
-          field in data &&
-          (data[field] === null ||
-            typeof data[field] === "string" ||
-            typeof data[field] === "number")
-        )
-          out[field] = data[field];
-      }
-      if (typeof data.is_free_tier === "boolean") out.isFreeTier = data.is_free_tier;
-      if (data.rate_limit && typeof data.rate_limit === "object") {
-        const rateLimit: Record<string, unknown> = {};
-        if (typeof data.rate_limit.limit === "number") rateLimit.limit = data.rate_limit.limit;
-        if (typeof data.rate_limit.interval === "string")
-          rateLimit.interval = data.rate_limit.interval;
-        if (typeof data.rate_limit.reset === "string") rateLimit.reset = data.rate_limit.reset;
-        if (Object.keys(rateLimit).length) out.rateLimit = rateLimit;
-      }
-      return out;
-    });
+    return usageQuery("https://openrouter.ai/api/v1/auth/key", key, name, mapOpenRouterUsage);
   }
 
   if (name === "AMD_API_KEY") {
-    // AMD Radeon Cloud (developer.amd.com.cn/radeon) — GET /v1/usage reports
-    // the rolling daily spend cap of the free rc-… key (verified 2026-09-02):
-    // {rpm_limit, daily_cost_limit_usd, daily_cost_used_usd, daily_reset_at,
-    //  all_time:{requests,total_tokens,cost}, by_model:[…]}. Mapped onto the
-    // generic usage shape the console already renders (USD numbers).
-    return usageQuery("https://developer.amd.com.cn/radeon/api/v1/usage", key, name, (payload) => {
-      const out: Record<string, unknown> = {};
-      if (typeof payload?.daily_cost_used_usd === "number") out.usage = payload.daily_cost_used_usd;
-      out.limit =
-        typeof payload?.daily_cost_limit_usd === "number" ? payload.daily_cost_limit_usd : null;
-      if (typeof payload?.rpm_limit === "number") {
-        const rateLimit: Record<string, unknown> = { limit: payload.rpm_limit, interval: "minute" };
-        if (typeof payload.daily_reset_at === "string") rateLimit.reset = payload.daily_reset_at;
-        out.rateLimit = rateLimit;
-      }
-      const all = payload?.all_time;
-      if (all && typeof all === "object") {
-        // The account label the generic renderer shows: org + request/token
-        // totals, so the console says whose key and how much it has carried.
-        const requests = typeof all.requests === "number" ? all.requests : 0;
-        const tokens = typeof all.total_tokens === "number" ? all.total_tokens : 0;
-        out.label = `${payload.organization_id || "radeon"} · ${requests} req · ${tokens} tok`;
-      }
-      return out;
-    });
+    return usageQuery("https://developer.amd.com.cn/radeon/api/v1/usage", key, name, mapAmdUsage);
   }
 
   if (name === "OPENCODE_GO_API_KEY") {
-    // OpenCode Go subscription usage endpoint (undocumented, discovered via
-    // farion1231/cc-switch#6433). Returns three rolling quota windows.
-    return usageQuery("https://opencode.ai/zen/go/v1/usage", key, name, (payload) => {
-      const out: Record<string, unknown> = {};
-      if (payload && typeof payload === "object") {
-        // Single-window flat shape: { used, limit, balance, plan }
-        if (typeof payload.used === "number") out.usage = payload.used;
-        if ("limit" in payload && (typeof payload.limit === "number" || payload.limit === null))
-          out.limit = payload.limit;
-        if (typeof payload.balance === "number") out.balance = payload.balance;
-        if (typeof payload.plan === "string") out.label = payload.plan;
-        // Multi-window shape: { windows: { "5h": {...}, weekly: {...}, monthly: {...} } }
-        if (payload.windows && typeof payload.windows === "object") {
-          const windows: Record<string, unknown> = {};
-          for (const [wk, wv] of Object.entries(payload.windows) as [string, any][]) {
-            if (wv && typeof wv === "object") {
-              windows[wk] = {
-                ...(typeof wv.used === "number" ? { used: wv.used } : {}),
-                ...(typeof wv.limit === "number" || wv.limit === null ? { limit: wv.limit } : {}),
-                ...(typeof wv.remaining === "number" ? { remaining: wv.remaining } : {}),
-                ...(typeof wv.reset_at === "string" || wv.reset_at === null
-                  ? { resetAt: wv.reset_at }
-                  : {}),
-              };
-            }
-          }
-          out.windows = windows;
-        }
-      }
-      return out;
-    });
+    return usageQuery("https://opencode.ai/zen/go/v1/usage", key, name, mapOgUsage);
   }
 
   return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
