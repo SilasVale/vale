@@ -64,6 +64,14 @@ fn main() {
     // it. `rustc-link-arg-bins` additionally keeps it off test harnesses.
     if std::env::var("TARGET").as_deref() == Ok("x86_64-pc-windows-msvc") {
         println!("cargo:rustc-link-arg-bins=/Brepro");
+        // /Brepro alone is NOT enough: lld still emits a PDB debug directory
+        // whose RSDS GUID is freshly randomised per link, and /Brepro derives
+        // the header timestamp from a hash of the output — so the two feed each
+        // other and the binary changes on every build (measured: two identical
+        // local builds differed by exactly the timestamp + that GUID, 20 bytes).
+        // A release exe needs no PDB: drop the debug directory and the output
+        // becomes a pure function of its inputs.
+        println!("cargo:rustc-link-arg-bins=/DEBUG:NONE");
     }
 
     staleness_gate(&panel_dir, &src_dir);
