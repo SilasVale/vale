@@ -54,6 +54,18 @@ fn main() {
     println!("cargo:rerun-if-changed=resources/panel/panel.css");
     println!("cargo:rerun-if-changed=resources/panel-react/src");
 
+    // Reproducible-build pin: without /Brepro, lld stamps the PE header with the
+    // BUILD TIME, so two builds of identical source never match byte for byte
+    // (measured on 1.2.317: that timestamp was the first of the remaining
+    // differences). /Brepro derives it from the output instead.
+    //
+    // MSVC-style flag => applied ONLY for the MSVC target: build.rs also runs
+    // for host builds (cargo test / clippy), and a GNU host linker would reject
+    // it. `rustc-link-arg-bins` additionally keeps it off test harnesses.
+    if std::env::var("TARGET").as_deref() == Ok("x86_64-pc-windows-msvc") {
+        println!("cargo:rustc-link-arg-bins=/Brepro");
+    }
+
     staleness_gate(&panel_dir, &src_dir);
 
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a-64 offset basis

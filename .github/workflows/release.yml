@@ -113,25 +113,39 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # LLVM 18 from apt.llvm.org — deliberately NOT the distro's `llvm`
-      # package. cargo-xwin drives clang/lld for the MSVC target and the local
-      # release box uses apt.llvm.org's 18.1.8; same source + same major means
-      # the same codegen. Also supplies llvm-lib for ring's cc build.
-      - name: Install LLVM 18 (apt.llvm.org, matches the local release box)
+      # LLVM 18.1.8 from the OFFICIAL release tarball — the same artifact the
+      # local release box has extracted at ~/llvm18. NOT apt.llvm.org and NOT
+      # the distro `llvm` package: those are per-distro builds, and the
+      # resulting lld laid .data out differently (measured on 1.2.317 — a
+      # 32-byte shift plus a 0x100 difference in where rust_panic landed),
+      # which is what still kept the two exes apart.
+      - name: Cache the LLVM tarball (1 GB — fetch once per runner cache)
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llvm.tar.xz
+          key: llvm-18.1.8-official-ubuntu18.04
+      - name: Extract LLVM 18.1.8 (official tarball)
         run: |
           set -euo pipefail
-          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 18
+          TB=/tmp/llvm.tar.xz
+          if [ ! -s "$TB" ]; then
+            curl -fsSL -o "$TB" \
+              https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz
+          fi
+          mkdir -p "$HOME/llvm18"
+          tar xf "$TB" -C "$HOME/llvm18" --strip-components=1
+          "$HOME/llvm18/bin/clang" --version | head -1
       # cargo-xwin resolves its tools from ~/.cache/cargo-xwin — mirror the
-      # local box's layout exactly so both builders invoke the same binaries.
+      # local box's layout exactly (clang / lld-link / llvm-rc out of the LLVM
+      # tree, archivers out of the pinned toolchain) so both builders invoke the
+      # same binaries.
       - name: Point cargo-xwin at that LLVM
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.cache/cargo-xwin"
-          ln -sf /usr/lib/llvm-18/bin/clang    "$HOME/.cache/cargo-xwin/clang-cl"
-          ln -sf /usr/lib/llvm-18/bin/lld-link "$HOME/.cache/cargo-xwin/lld-link"
-          ln -sf /usr/lib/llvm-18/bin/llvm-rc  "$HOME/.cache/cargo-xwin/llvm-rc"
+          ln -sf "$HOME/llvm18/bin/clang"    "$HOME/.cache/cargo-xwin/clang-cl"
+          ln -sf "$HOME/llvm18/bin/lld-link" "$HOME/.cache/cargo-xwin/lld-link"
+          ln -sf "$HOME/llvm18/bin/llvm-rc"  "$HOME/.cache/cargo-xwin/llvm-rc"
           AR="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-ar"
           ln -sf "$AR" "$HOME/.cache/cargo-xwin/llvm-lib"
           ln -sf "$AR" "$HOME/.cache/cargo-xwin/llvm-dlltool"

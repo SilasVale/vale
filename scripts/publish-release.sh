@@ -100,12 +100,13 @@ if ! cmp -s "$EXE_BUILD" "$NPM_DIR/vale-agent.exe"; then
   echo "  cp $EXE_BUILD $NPM_DIR/vale-agent.exe" >&2
   exit 1
 fi
-SRC_TS=$(git log -1 --format=%ct -- agent/src agent/resources/panel-react agent/resources/panel agent/Cargo.toml agent/Cargo.lock)
+SRC_TS=$(git log -1 --format=%ct -- agent/src agent/build.rs agent/resources/panel-react agent/resources/panel agent/Cargo.toml agent/Cargo.lock)
 SRC_TS=${SRC_TS:-0}
 # ...and the working tree of those inputs must be clean: build.sh bakes
 # the CURRENT panel SPA into the exe (include_str!), so uncommitted panel
-# or rust changes mean the exe matches neither HEAD nor CI.
-DIRTY_EXE=$(git status --porcelain -- agent/src agent/resources/panel-react agent/resources/panel agent/Cargo.toml agent/Cargo.lock)
+# or rust changes mean the exe matches neither HEAD nor CI. build.rs counts:
+# it sets link args (/Brepro) and the embedded PANEL_BUNDLE_HASH env.
+DIRTY_EXE=$(git status --porcelain -- agent/src agent/build.rs agent/resources/panel-react agent/resources/panel agent/Cargo.toml agent/Cargo.lock)
 if [ -n "$DIRTY_EXE" ]; then
   echo "::error::exe inputs have uncommitted changes (the exe embeds them, CI never sees them) — commit (or stash), rebuild, re-stage:" >&2
   echo "$DIRTY_EXE" >&2
