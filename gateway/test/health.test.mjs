@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import worker from "../src/index.ts";
 import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, valeProbe } from "../src/index.ts";
 import { probeEnvKeyName } from "../src/tooling.ts";
+import { HEALTH_CHANNELS } from "../src/channels.ts";
 import { resolveAutoModel } from "../src/plugins/translate.ts";
 import { __clearDegradedCache } from "../src/reliability.ts";
 
@@ -339,6 +340,26 @@ test("probeEnvKeyName: every passthrough prefix maps; unknown falls to DeepSeek"
   );
   assert.equal(probeEnvKeyName("xx"), "DEEPSEEK_API_KEY", "legacy default arm preserved");
   assert.equal(probeEnvKeyName(""), "DEEPSEEK_API_KEY");
+});
+
+// SOLID Round-53: every non-og health id needs its OWN probe row — the
+// DeepSeek default would otherwise spend the wrong worker key (or none)
+// on a new channel's probes while every gate stays green.
+test("probe rows cover every non-og HEALTH_CHANNELS id (no silent default)", () => {
+  const ids = new Set(HEALTH_CHANNELS.map((c) => c.id));
+  assert.ok(!ids.has("xx"), "sanity: test would catch a stray id");
+  for (const id of ids) {
+    if (id === "og") continue; // breaker path, not the table
+    if (id === "ds") {
+      assert.equal(probeEnvKeyName(id), "DEEPSEEK_API_KEY");
+      continue;
+    }
+    assert.notEqual(
+      probeEnvKeyName(id),
+      "DEEPSEEK_API_KEY",
+      `${id}/ must resolve via its own row, not the default`,
+    );
+  }
 });
 
 // ── probeRateLimited (KV-backed, whole-gateway) ──────────────────

@@ -11,6 +11,7 @@ import {
   registerChannelKey,
 } from "../src/plugins/model-route.ts";
 import { __clearDegradedCache } from "../src/reliability.ts";
+import { MODELS } from "../src/channels.ts";
 
 function envFor({ ukeys = {}, uid, breakerOpen = false, extra = {} } = {}) {
   const kv = new Map([[`ukeys:${uid}`, JSON.stringify(ukeys)]]);
@@ -126,4 +127,16 @@ test("registerChannelKey: new prefixes register without editing the gate", () =>
     delete CHANNEL_KEY_RULES["zz-test-ocp"];
   }
   assert.equal(CHANNEL_KEY_RULES["zz-test-ocp"], undefined, "temp prefix cleaned up");
+});
+
+// SOLID Round-53: every MODELS prefix needs a key rule — without one, its
+// models fall through as usable-without-key and 502 on every request.
+test("CHANNEL_KEY_RULES covers every MODELS prefix", () => {
+  const prefixes = new Set(MODELS.map((m) => m.id.split("/")[0]));
+  for (const p of prefixes) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(CHANNEL_KEY_RULES, p),
+      `${p}/ models need a key rule`,
+    );
+  }
 });

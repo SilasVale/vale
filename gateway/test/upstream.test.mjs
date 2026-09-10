@@ -5,6 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { pickRoute, stripBracket, passthroughHeaders, registerRoute, ROUTE_TABLE, opencodeSessionHeader, clientSessionId, syntheticSessionId, fnvHex } from "../src/upstream.ts";
+import { MODELS } from "../src/channels.ts";
 
 test("stripBracket trims a trailing [context] marker only", () => {
   assert.equal(stripBracket("og/model[1m]"), "og/model");
@@ -140,4 +141,15 @@ test("opencodeSessionHeader: relays client id verbatim, else synthetic fallback"
   const fallback = opencodeSessionHeader(undefined, "user-a");
   assert.deepEqual(fallback, { "x-opencode-session": syntheticSessionId("user-a") });
   assert.deepEqual(opencodeSessionHeader({}, "user-a"), fallback, "empty headers ≡ absent");
+});
+
+// SOLID Round-53: the OCP tables must cover every live prefix — a new
+// channel added to MODELS without a route builder would silently ride the
+// DeepSeek default (wrong upstream AND wrong key).
+test("ROUTE_TABLE covers every MODELS prefix", () => {
+  const prefixes = new Set(MODELS.map((m) => m.id.split("/")[0]));
+  assert.ok(prefixes.size >= 8, "whitelist non-trivial");
+  for (const p of prefixes) {
+    assert.equal(typeof ROUTE_TABLE[p], "function", `${p}/ models need a route builder`);
+  }
 });
