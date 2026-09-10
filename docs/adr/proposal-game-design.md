@@ -220,7 +220,7 @@ and it is the user's to answer, not the author's to assume.
 | Onboarding (§4.1, the biggest hole) | **done** — `ConnectCard.tsx`, 8 tests, 3 mutants caught (`91359f85`) |
 | A defect Law 1's fix exposed | **done** — recessed panes were near-white-on-near-white in dark mode, contrast measured **1.12** at 7 pre-existing sites; now 15.71 (`40d06025`, pinned by `themeContrast.test.ts`) |
 | Device-level activity signal + device state (§4.2–4.3) | **done** — `useDeviceActivity.ts` merges terminal + browser activity into one device signal, rendered as off/idle/working on the rail foot in BOTH densities; 2 mutants caught. §4.2 was re-scoped first (see the Law 3 correction): the merged signal is new and device-scoped, NOT a re-wiring of the browser pulse |
-| Path view (post-hoc record) | prototype only, on branch `prototype/control-path` |
+| Path view (post-hoc record) | **done** — `PathView.tsx` + `lib/path.ts`, the third `SessionView`, both densities (`db940aef`); 15 tests. NO branches and it says so: the alternatives are not in the audit trail, so the view refuses to imply they are. Also forced `ViewSwitch.tsx` (one label list for two densities) and exposed + fixed 7 more dark-mode contrast failures (`e5696809`) |
 | Control plane (Law 2's mechanism) | proposal only (`proposal-control-path.md`) |
 
 Two notes on the completed items, both about VERIFICATION rather than code:
