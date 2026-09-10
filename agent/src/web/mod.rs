@@ -34,6 +34,7 @@ use crate::plugins::memory::store::MemoryLimits;
 use crate::state::AppState;
 use vale_agent_core::EventBus;
 mod panel;
+mod parse;
 mod sse;
 
 pub use panel::WebPanel;
@@ -804,19 +805,7 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
 /// byte-identical to the pre-extraction early return (including its
 /// HTTP-200 Json shape).
 fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, Box<Response>> {
-    let v: serde_json::Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(e) => return Err(Box::new(built_response(
-            StatusCode::BAD_REQUEST,
-            "application/json",
-            Body::from(
-                serde_json::json!({
-                    "ok": false, "error": format!("invalid JSON: {e}"), "code": "invalid_params",
-                })
-                .to_string(),
-            ),
-        ))),
-    };
+    let v: serde_json::Value = parse::json_body(body, |e| format!("invalid JSON: {e}"))?;
     // stage-n (settings audit): a PUT may legitimately carry ONLY ONE
     // of the keys — the old code reset buffer_mb to 8 whenever it was
     // ABSENT (a console-only save silently clobbered a user's 64).
@@ -831,11 +820,12 @@ fn api_settings_put(state: &AppState, body: &str) -> Result<serde_json::Value, B
             .terminal_buf_bytes
             .store(mb * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
     }
-    let console_url = v.get("console_url").map(|val| {
-        val.as_str()
-            .map(|x| x.trim().to_string())
-            .filter(|x| !x.is_empty())
-    });
+    // `Option<Option<String>>`: the OUTER option is "the request speaks to
+    // console_url" (absent ⇒ leave the binding alone), the inner one is the
+    // value (blank ⇒ explicit clear).
+    let console_url = v
+        .get("console_url")
+        .map(|_| parse::optional_trimmed_string(&v, "console_url"));
     /** Parse memory capacity settings from a JSON value.
      *  Returns (entries, bytes, retention, changed) where changed indicates
      *  whether any key was present (absent = leave unchanged). */
@@ -914,31 +904,18 @@ async fn api_gateway_connect(
     state: &AppState,
     body: &str,
 ) -> Result<serde_json::Value, Box<Response>> {
-    let v: serde_json::Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => {
-            return Err(Box::new(built_response(
-                StatusCode::BAD_REQUEST,
-                "application/json",
-                Body::from(
-                    serde_json::json!({
-                        "ok": false, "error": "invalid JSON", "code": "invalid_params",
-                    })
-                    .to_string(),
-                ),
-            )))
-        }
-    };
-    let console_url = v
+    // Bare wording here (no serde detail) — documented and preserved.
+    let v: serde_json::Value = parse::json_body(body, |_| "invalid JSON".to_string())?;
+    // ONE evaluation of the console_url rule. The reported binding and the
+    // PERSISTED binding used to be computed by two independent copies of it —
+    // they agreed only because both copies happened to match, so editing one
+    // would have made the response disagree with what the device stored.
+    // `Option<Option<String>>`: outer = "the request speaks to console_url".
+    let console_url_patch = v
         .get("console_url")
-        .and_then(|c| c.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let reg_key = v
-        .get("reg_key")
-        .and_then(|c| c.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+        .map(|_| parse::optional_trimmed_string(&v, "console_url"));
+    let console_url = console_url_patch.clone().flatten();
+    let reg_key = parse::optional_trimmed_string(&v, "reg_key");
     let want_tunnel = v.get("tunnel").and_then(|t| t.as_bool()).unwrap_or(false);
     // 1. Persist console_url — write-through (audit A4): merge onto the
     //    CURRENT in-process snapshot and persist via update_config so memory
@@ -956,11 +933,8 @@ async fn api_gateway_connect(
     //    config_path (dev/tests) update_config still updates memory and
     //    writes nothing.
     let mut cfg = state.config_snapshot();
-    if let Some(val) = v.get("console_url") {
-        cfg.platform.console_url = val
-            .as_str()
-            .map(|x| x.trim().to_string())
-            .filter(|x| !x.is_empty());
+    if let Some(val) = console_url_patch {
+        cfg.platform.console_url = val;
     }
     let _ = state.update_config(cfg, true);
     // 2. If a reg key was given, exchange it at the gateway for the
@@ -2316,6 +2290,68 @@ mod tests {
             (10_000, 64 * 1024 * 1024)
         );
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn gateway_connect_reports_exactly_what_it_persists() {
+        // SOLID R104: the reported `console_url` and the PERSISTED binding are
+        // one evaluation of the "trimmed, blank ⇒ unset" rule. They used to be
+        // two independent copies that merely happened to agree — editing one
+        // would have made the device answer with a binding it had not stored
+        // (or stored one it did not report).
+        //
+        // The tuples also pin a contract detail worth having on the record:
+        // the response field ECHOES THE REQUEST, it is not a read-back of the
+        // resulting state. A reg-key-only connect therefore answers
+        // `console_url: null` while the stored binding is left untouched —
+        // which is exactly the "partial update" semantics the handler's
+        // comment describes (a reg-key-only request must not unbind).
+        for (tag, body, reported, persisted) in [
+            (
+                "trim",
+                r#"{"console_url":"  https://trim.example  "}"#,
+                Some("https://trim.example"),
+                Some("https://trim.example"),
+            ),
+            ("clear", r#"{"console_url":""}"#, None, None),
+            ("blank", r#"{"console_url":"   "}"#, None, None),
+            ("nonstring", r#"{"console_url":42}"#, None, None),
+            (
+                "regkey-only",
+                r#"{"reg_key":"k"}"#,
+                None,
+                // CFG_YAML_TOKEN_AND_URL's pre-existing binding, KEPT.
+                Some("https://gw.example"),
+            ),
+        ] {
+            // Start from a BOUND gateway so the "absent" arm has something to keep.
+            let (st, cfg_path) = state_with_cfg(tag, CFG_YAML_TOKEN_AND_URL);
+            let resp = handle_request(
+                req_with_json("POST", "/api/gateway/connect", body),
+                st.clone(),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::OK, "{tag}");
+            let v = json_body(resp).await;
+
+            assert_eq!(
+                v["console_url"].as_str(),
+                reported,
+                "{tag}: response does not echo the request"
+            );
+            assert_eq!(
+                st.config_snapshot().platform.console_url.as_deref(),
+                persisted,
+                "{tag}: in-memory binding disagrees with the parsed patch"
+            );
+            let cfg = Config::load(&cfg_path).unwrap();
+            assert_eq!(
+                cfg.platform.console_url.as_deref(),
+                persisted,
+                "{tag}: persisted binding disagrees with the in-memory one"
+            );
+            let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+        }
     }
 
     #[tokio::test]

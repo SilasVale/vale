@@ -338,7 +338,30 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R103 — the ROUTER layer is now covered.
+Last updated: 2026-09-10 SOLID-R104 — the settings request bodies have an
+  owner. `PUT /api/settings` and `POST /api/gateway/connect` had each grown
+  their own copy of two concerns that belonged to nobody: the eight-line 400
+  `invalid_params` envelope (built inline twice) and "an optional string
+  field, trimmed; blank means unset" (written out five times). The second rule
+  is load-bearing — it carries the documented incidents where a console-only
+  save clobbered `buffer_mb` and a reg-key-only request silently UNBOUND the
+  gateway — so absent vs cleared vs blank has to stay distinguishable. Both
+  now live in `src/web/parse.rs` (`json_body`, `optional_trimmed_string`,
+  `invalid_params_response`); the 400 error TEXT stays a caller argument
+  because the two endpoints' wordings differ deliberately (settings appends
+  the serde detail, gateway answers bare) and unifying them would be a
+  user-visible change. Real fix on the way: `api_gateway_connect` evaluated
+  the console_url rule TWICE — response and persisted value were independent
+  copies that agreed by luck; one evaluation now feeds both. A test surfaced a
+  contract detail worth having on the record: the response ECHOES THE REQUEST
+  rather than reading back state, so a reg-key-only connect answers
+  `console_url:null` while keeping the stored binding. +7 pins, mutation-proven
+  (an independent re-evaluation that forgets to trim fails "in-memory binding
+  disagrees with the parsed patch"). Agent gates 448 feat-gated / 441 default
+  green, clippy -D warnings clean both configs, fmt clean, xwin check OK.
+  Program ledger: docs/solid-program.md. No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R103 — the ROUTER layer is now covered.
   R102 ended by noting an honest gap: its pins call `handle_request`
   directly, so they say nothing about the axum composition in `mcp::bind`
   (`nest_service("/mcp", TokenGate) + fallback_service(WebPanel)`) — a
