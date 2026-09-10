@@ -565,31 +565,42 @@ export function mapOgUsage(payload: any): Record<string, unknown> {
   return out;
 }
 
+/**
+ * Usage-query endpoints per key (SOLID Round-93: OCP table — adding a
+ * provider registers one row; the allowlist derives from the same source
+ * so the two cannot drift). Exported for direct pins.
+ */
+const USAGE_QUERIES: Record<
+  string,
+  { url: string; map: (payload: any) => Record<string, unknown> }
+> = {
+  OPENROUTER_API_KEY: { url: "https://openrouter.ai/api/v1/auth/key", map: mapOpenRouterUsage },
+  AMD_API_KEY: { url: "https://developer.amd.com.cn/radeon/api/v1/usage", map: mapAmdUsage },
+  OPENCODE_GO_API_KEY: { url: "https://opencode.ai/zen/go/v1/usage", map: mapOgUsage },
+};
+
+/** OCP extension point: null for keys without a usage endpoint. */
+export function usageQueryFor(name: string) {
+  return Object.prototype.hasOwnProperty.call(USAGE_QUERIES, name)
+    ? (USAGE_QUERIES[name] as { url: string; map: (payload: any) => Record<string, unknown> })
+    : null;
+}
+
 async function meKeyUsage(request: Request, env: any): Promise<Response> {
-  const r = await sessionAndKeyName(request, env, [
-    "OPENROUTER_API_KEY",
-    "OPENCODE_GO_API_KEY",
-    "AMD_API_KEY",
-  ]);
+  const r = await sessionAndKeyName(request, env, Object.keys(USAGE_QUERIES));
   if (r instanceof Response) return r;
   const { user, name } = r;
   const ukeys = await getUserKeys(env, user.id);
   const key = ukeys[name];
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
 
-  if (name === "OPENROUTER_API_KEY") {
-    return usageQuery("https://openrouter.ai/api/v1/auth/key", key, name, mapOpenRouterUsage);
-  }
-
-  if (name === "AMD_API_KEY") {
-    return usageQuery("https://developer.amd.com.cn/radeon/api/v1/usage", key, name, mapAmdUsage);
-  }
-
-  if (name === "OPENCODE_GO_API_KEY") {
-    return usageQuery("https://opencode.ai/zen/go/v1/usage", key, name, mapOgUsage);
-  }
-
-  return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  // Table-driven (SOLID Round-93: three if-branches with the URL re-typed
+  // per arm — a fourth provider needed the allowlist above AND a new arm
+  // below extended in lockstep). Unreachable via the prologue (same keys),
+  // kept as a fail-loud backstop, never a throw.
+  const q = usageQueryFor(name);
+  if (!q) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  return usageQuery(q.url, key, name, q.map);
 }
 
 /* ---- Connectivity tests ---- */

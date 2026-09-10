@@ -5,7 +5,7 @@
 // including the type-guard edges (null vs absent vs wrong-type).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { usageQuery, mapOpenRouterUsage, mapAmdUsage, mapOgUsage } from "../src/plugins/auth.ts";
+import { usageQuery, mapOpenRouterUsage, mapAmdUsage, mapOgUsage, usageQueryFor } from "../src/plugins/auth.ts";
 import { withFetch } from "./helpers.mjs";
 
 const okJson = (obj) =>
@@ -112,4 +112,20 @@ test("usageQuery: envelope merges mapping; !ok and throws map to safe shapes", a
   } finally {
     console.error = orig;
   }
+});
+
+// SOLID Round-93: the usage endpoint table — every queryable key resolves
+// to its (url, mapper); anything else is null (the handler's fail-loud
+// backstop). Adding a provider is one table row; the allowlist derives
+// from the same source.
+test("usageQueryFor: every row resolves, unknown is null", () => {
+  assert.deepEqual(Object.keys(usageQueryFor("OPENROUTER_API_KEY") || {}).sort(), ["map", "url"]);
+  assert.equal(usageQueryFor("OPENROUTER_API_KEY")?.url, "https://openrouter.ai/api/v1/auth/key");
+  assert.equal(usageQueryFor("OPENROUTER_API_KEY")?.map, mapOpenRouterUsage);
+  assert.equal(usageQueryFor("AMD_API_KEY")?.url, "https://developer.amd.com.cn/radeon/api/v1/usage");
+  assert.equal(usageQueryFor("AMD_API_KEY")?.map, mapAmdUsage);
+  assert.equal(usageQueryFor("OPENCODE_GO_API_KEY")?.url, "https://opencode.ai/zen/go/v1/usage");
+  assert.equal(usageQueryFor("OPENCODE_GO_API_KEY")?.map, mapOgUsage);
+  assert.equal(usageQueryFor("DEEPSEEK_API_KEY"), null, "no usage endpoint → null, not throw");
+  assert.equal(usageQueryFor(""), null);
 });
