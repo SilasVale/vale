@@ -105,7 +105,9 @@ correctness is.
 | 70 | docs | docs | stale wrapper-subsystem reference fixed + tree sweep | — | `2a05938a` |
 | 71 | docs | docs | stale extraction provenance fixed + file-mention sweep | — | `066a9d66` |
 | 72 | audits | verify | shared-tree coexistence check (stage-n work untouched, suites green) | — | — |
-| 73 | docs | docs | ledger R64–73 catch-up | — | (this commit: the ledger row cannot name its own final hash) |
+| 73 | docs | docs | ledger R64–73 catch-up | — | `1e237e6a` |
+| 74 | index | tests | electron-proxy route pins (happy + !ok; throw path flagged) | +2 | `93b78216` |
+| 75 | docs | docs | ledger R74–75 + index recount | — | (this commit: the ledger row cannot name its own final hash) |
 | 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
@@ -119,7 +121,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +89 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 · index +5 · scripts +19 · deps +2.
+Gateway +89 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 · index +7 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 

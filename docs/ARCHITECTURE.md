@@ -2,7 +2,7 @@
 
 > Status: maintained ｜ Last full review: 2026-09-08 (09-07/09-08 sweep: Vercel retirement, vrelay, relay token, extension→code-server) ｜ Scope: the whole repo
 >
-> SOLID program 2026-09-09 (rounds 1–72, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 89 gateway / 23 Rust / 4 CLI / 54 relay / 4 extension / 5 index / 19 scripts / 2 deps pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
+> SOLID program 2026-09-09 (rounds 1–75, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 89 gateway / 23 Rust / 4 CLI / 54 relay / 4 extension / 7 index / 19 scripts / 2 deps pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
 >
 > Single-page map of every module's boundary verdict. Each entry carries the
 > evidence (file-header note, ADR, or audit round). When a boundary verdict
@@ -107,7 +107,7 @@ false failures. Suites are green only under their own runners.
 | vale-agent-core | cargo test + clippy -D warnings + fmt --check | 22 (15 + 7 SOLID-program pins R11–R12; suite green) |
 | vale CLI (npm) | node --test | 20 (16 + 4 SOLID-program pins R17: boxed-manifest contract; suite green) |
 | api-relay (vrelay) | node --test + build-relay.sh bundle build | 54 (0 → 49 across SOLID R18–R23; 49 → 54 across R67–R69 no-body/plumbing/header-merge; suite green) |
-| index (vale-dist) | node --test | 71 (66 + 5 SOLID-program pins R30: disposition/token/sha; suite green) |
+| index (vale-dist) | node --test | 73 (66 + 5 R30 disposition/token/sha + 2 R74 electron-proxy; suite green) |
 | extension | node --check all JS + node --test pure guards | 4 (SOLID R24: httpsOrigin MITM table; CI extension job runs them) |
 | proxies (×2) | node --test behavior suites + wrangler dry-run | 20 |
 | ~~studio~~ | retired (ADR 0006); CI studio job dropped, suite lives in git history | — |
