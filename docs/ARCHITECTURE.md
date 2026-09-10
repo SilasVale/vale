@@ -2,7 +2,7 @@
 
 > Status: maintained ｜ Last full review: 2026-09-08 (09-07/09-08 sweep: Vercel retirement, vrelay, relay token, extension→code-server) ｜ Scope: the whole repo
 >
-> SOLID program 2026-09-09 (rounds 1–75, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 89 gateway / 23 Rust / 4 CLI / 54 relay / 4 extension / 7 index / 19 scripts / 2 deps pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
+> SOLID program 2026-09-09 (rounds 1–80, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 91 gateway / 23 Rust / 4 CLI / 54 relay / 4 extension / 7 index / 19 scripts / 2 deps pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
 >
 > Single-page map of every module's boundary verdict. Each entry carries the
 > evidence (file-header note, ADR, or audit round). When a boundary verdict
@@ -102,7 +102,7 @@ false failures. Suites are green only under their own runners.
 
 | Subproject | Gate | Count |
 |---|---|---|
-| gateway | tsc + eslint(src+ui) + prettier + node --test | 707 (recounted 2026-09-09: 700 → 707, response tree R57 + kind↔message R58 + key coverage R59; suite green) |
+| gateway | tsc + eslint(src+ui) + prettier + node --test | 709 (707 → 709, retryPolicyFor R77 incl. count-arm review catch; suite green) |
 | agent | cargo test + clippy -D warnings + fmt --check + xwin check | 406 feat-gated terminal,keyring (recounted 2026-09-09: 363 lib + 5 bin + 27 + 1 + 2 + 7 + 1 integration; default-config lib 356; xwin gate re-verified R33; suite green) |
 | vale-agent-core | cargo test + clippy -D warnings + fmt --check | 22 (15 + 7 SOLID-program pins R11–R12; suite green) |
 | vale CLI (npm) | node --test | 20 (16 + 4 SOLID-program pins R17: boxed-manifest contract; suite green) |

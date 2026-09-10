@@ -107,7 +107,12 @@ correctness is.
 | 72 | audits | verify | shared-tree coexistence check (stage-n work untouched, suites green) | — | — |
 | 73 | docs | docs | ledger R64–73 catch-up | — | `1e237e6a` |
 | 74 | index | tests | electron-proxy route pins (happy + !ok; throw path flagged) | +2 | `93b78216` |
-| 75 | docs | docs | ledger R74–75 + index recount | — | (this commit: the ledger row cannot name its own final hash) |
+| 75 | docs | docs | ledger R74–75 + index recount | — | `e6f7fcab` |
+| 76 | audits | verify | README/spec-snapshot/touchSeen/bootstrap re-verification | — | — |
+| 77 | gateway reliability | OCP | retryPolicyFor table + pins; count-arm revert (review catch) | +2 | `cd496595` |
+| 78 | docs | docs | gmi retry question recorded as open thread; 1.2.309 coexistence | — | `218f94c3` |
+| 79 | audits | verify | full fast-matrix sweep, all green (9 suites) | — | — |
+| 80 | docs | docs | ledger R76–80 + gateway recount | — | (this commit: the ledger row cannot name its own final hash) |
 | 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
@@ -121,7 +126,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +89 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 · index +7 · scripts +19 · deps +2.
+Gateway +91 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 · index +7 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 
