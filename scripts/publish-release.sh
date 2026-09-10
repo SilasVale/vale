@@ -45,6 +45,18 @@ cd "$(dirname "$0")/.."
 # scripts/test/release-lib.bash pins them.
 source "scripts/lib/release-lib.sh"
 
+# --audit-only <ver>: (re)run the dual-builder audit against an ALREADY
+# published release, without repacking or deploying anything. This is the
+# entry point the post-publish checklist names — the asset only exists after
+# the tag/CI, so the audit for a fresh release is always run separately.
+if [ "${1:-}" = "--audit-only" ]; then
+  VER="${2:?usage: ./scripts/publish-release.sh --audit-only <1.2.N>}"
+  # shellcheck source=lib/release-audit.sh
+  source "scripts/lib/release-audit.sh"
+  audit_release_asset "$VER" "${SMOKE_BASE_URL:-https://agent.saisi.online}"
+  exit $?
+fi
+
 VER="${1:?usage: ./scripts/publish-release.sh <1.2.N> [--skip-reconcile] [--with-installer]}"
 case "$VER" in -*) echo "::error::usage: ./scripts/publish-release.sh <1.2.N> [--skip-reconcile] [--with-installer]" >&2; exit 1;; esac
 shift
@@ -346,13 +358,24 @@ fi
 echo "== done. Next: push main, then create the GitHub tag v$VER via the API"
 echo "  (release.yml builds the GitHub asset; keep-latest stays manual)."
 echo ""
-echo "== post-publish checklist (copy-paste) =="
+echo "== post-publish checklist (copy-paste; no gh CLI needed — this box has none) =="
 echo "  [1] push the release commit:   git push origin main"
-echo "  [2] cut the tag (triggers release.yml):   git tag v$VER && git push origin v$VER"
-echo "  [3] watch the asset build:   gh run watch --workflow release.yml"
-echo "  [4] reconcile (CDN vs asset):   gh release list --limit 5   # v$VER must be present, then:"
-echo "        curl -fsSL $CDN_BASE/vale-agent/vale-agent-$VER.tgz | sha256sum   # want: $SHA"
-echo "        gh release download v$VER -p 'vale-agent-$VER.tgz' -D /tmp/reconcile-$VER --clobber && sha256sum /tmp/reconcile-$VER/vale-agent-$VER.tgz   # want: $SHA"
-echo "  [5] keep-latest alias:   curl -fsSL $CDN_BASE/vale-agent/vale-agent-latest.tgz | sha256sum   # want: $SHA"
-echo "  [6] live manifest:   curl -s $CDN_BASE/api/version   # want version $VER + sha $SHA"
-echo "  [7] installer alias:   curl -fsSL $CDN_BASE/vale-agent/ValeAgent-Setup.exe -o /tmp/Setup-check.exe && curl -s $CDN_BASE/api/version | grep -o '\"installer_sha256\":\"[0-9a-f]*\"'   # alias sha must equal the advertised installer_sha256"
+echo "  [2] cut the tag via the API (direct tag pushes time out here):"
+echo "        curl -s -X POST -H \"Authorization: Bearer \$(cat ~/.github-token)\" -H 'Accept: application/vnd.github+json' \\"
+echo "          https://api.github.com/repos/SilasVale/vale/git/refs \\"
+echo "          -d '{\"ref\":\"refs/tags/v$VER\",\"sha\":\"'\$(git rev-parse HEAD)'\"}'"
+echo "  [3] wait for release.yml to go green, then audit the two artifacts:"
+echo "        ./scripts/publish-release.sh --audit-only $VER     # (or rerun without --skip-reconcile)"
+echo "      It demands every SOURCE-derived file be byte-identical and only tolerates"
+echo "      a differing vale-agent.exe (the two builders do not share a build env)."
+echo "  [4] OPTIONAL — collapse the two builders so the CDN serves the CI artifact"
+echo "      (then CDN == GitHub byte-for-byte; see agent/CLAUDE.md step 6):"
+echo "        ./scripts/publish-cdn-from-ci.sh $VER"
+echo "  [5] keep-latest: delete the PREVIOUS release + tag via the API"
+echo "        (DELETE /repos/SilasVale/vale/releases/<id> and /git/refs/tags/<tag>;"
+echo "         the URL needs the full refs path, not just the name)"
+echo "  [6] verify what devices see:   curl -s $CDN_BASE/api/version   # want version $VER"
+echo "        curl -fsSL $CDN_BASE/vale-agent/vale-agent-latest.tgz | sha256sum   # want: $SHA"
+echo "        curl -sI $CDN_BASE/vale-agent/ValeAgent-Setup.exe | grep -i etag    # must equal the"
+echo "        versioned ValeAgent-Setup-$VER.exe etag (an installer regenerated from a"
+echo "        converged tgz legitimately has a NEW sha — re-read the manifest for it)"

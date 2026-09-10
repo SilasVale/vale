@@ -97,6 +97,45 @@ vale update
 # the previous release AND older tag refs manually (API, /git/refs/tags/
 # <tag> — the URL needs the full refs path, not just the name).
 
+# 6. Collapse the two builders (recommended whenever byte-identity matters):
+./scripts/publish-cdn-from-ci.sh <ver>
+#    Stages the artifact CI just built onto the CDN — installer rebuilt from
+#    THAT tgz, manifest rewritten, redeployed, smoked — so "CDN == GitHub
+#    release" holds BY CONSTRUCTION and scripts/lib/release-audit.sh reports
+#    byte-for-byte equality instead of listing an exe difference.
+#
+#    Why it exists: the two builders provably pack the same SOURCE (that part
+#    is audited, fail-closed), but their exes are NOT byte-identical and
+#    cannot easily be made so. Every toolchain input is already pinned AND
+#    verified identical by hash (rustc 1.98.1, clang-18, lld, llvm-ar,
+#    cargo-xwin 0.23.0), the embedded panel.js matches, and the sizes match —
+#    yet ~800 bytes of .data layout still differ, which puts the cause in the
+#    compile ENVIRONMENT (the unreproducible-build long tail). Convergence
+#    removes the question instead of chasing it.
+#
+#    Opt-in on purpose: making the DEFAULT publish wait on CI would put the
+#    delivery channel behind a pipeline that still fails on environment
+#    issues. Fail-closed: it runs the audit first and refuses to touch the CDN
+#    unless the CI artifact packages the same source.
+
+Toolchain (reproducible builds — do not undo this):
+- `rust-toolchain.toml` pins rustc 1.98.1 for every rust command in this repo;
+  release.yml/ci.yml pass the same version explicitly (`dtolnay/rust-toolchain@master`
+  + `toolchain: 1.98.1`). NEVER reintroduce `@stable` — a floating channel is
+  what made the two builders drift in the first place.
+- CI installs LLVM 18.1.8 from the OFFICIAL release tarball (cached; 1 GB) and
+  symlinks cargo-xwin's tool cache at it, mirroring the release box's ~/llvm18.
+  It also unpacks focal's libtinfo5 beside it — the 18.04 tarball's clang needs
+  .so.5 and the 24.04 runner only has .so.6.
+- `cargo install cargo-xwin` must stay `--version 0.23.0`.
+- `agent/build.rs` passes `/Brepro` + `/DEBUG:NONE` for the MSVC target only.
+  Without them lld stamps a freshly randomised PDB GUID plus a build-time PE
+  timestamp into every link, so even two LOCAL builds differed (by 20 bytes);
+  with them the exe is a pure function of its inputs.
+- Doubting the runner's toolchain? Dispatch the `toolchain-fingerprint` job
+  (`gh workflow run ci.yml` / the API) and compare its hashes with the release
+  box's `~/llvm18` and rustup toolchain.
+
 What `vale update` does (bin/vale.js): stages the exe (and desktop shell
 sources) next to the install dir, hands a PS swap script to WMI
 Win32_Process.Create (parented by
