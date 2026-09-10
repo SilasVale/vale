@@ -78,6 +78,22 @@ function EventRow({ ev }: { ev: CommandEvent }) {
           </span>
         ) : ev.kind === "status" && ev.status ? (
           <span className="cmd-badge traj-ev-status" data-state={dot}>{ev.status}</span>
+        ) : ev.kind === "approval" ? (
+          // Governance, rendered with its SUBJECT. These events carry their whole
+          // meaning in `status` (the action) and `text` (what it acted on), so the
+          // generic fallback below — which prints the bare kind — reduced "granted
+          // echo" to the word "approval" and dropped the one thing a reader needs.
+          <span className="traj-ev-gov" data-action={ev.status ?? ""}>
+            {ev.status}
+            {ev.text && <span className="traj-ev-gov-sub">{ev.text}</span>}
+          </span>
+        ) : ev.kind === "goal" ? (
+          // The operator's stated objective, quoted rather than labelled: it is
+          // free text and reads as what someone asked for.
+          <span className="traj-ev-goal">
+            <span className="traj-ev-goal-label">goal</span>
+            {ev.text || <i>cleared</i>}
+          </span>
         ) : (
           <span className="traj-ev-kind">{ev.kind}</span>
         )}

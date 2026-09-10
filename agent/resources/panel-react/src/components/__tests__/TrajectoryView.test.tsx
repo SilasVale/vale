@@ -125,3 +125,58 @@ describe("TrajectoryView", () => {
     await waitFor(() => expect(screen.getByText("No commands in this session yet.")).toBeTruthy());
   });
 });
+
+describe("governance events in the timeline", () => {
+  // These carry their whole meaning in `status` (the action) and `text` (what it
+  // acted on). The generic fallback prints the bare KIND, which reduced "granted
+  // echo" to the word "approval" and dropped the one thing a reader needs.
+  const ev = (o: Partial<CommandEvent>): CommandEvent => ({ seq: 1, ts: 1000, kind: "output", ...o });
+
+  it("shows an approval action WITH its subject", () => {
+    render(
+      <TrajectoryView
+        events={[
+          ev({ seq: 1, ts: 100, kind: "command/start", command: "echo a" }),
+          ev({ seq: 2, ts: 101, kind: "command/end", exit_code: 0 }),
+          ev({ seq: 3, ts: 102, kind: "approval", status: "granted", text: "echo" }),
+        ]}
+      />,
+    );
+    const el = document.querySelector(".traj-ev-gov")!;
+    expect(el.textContent).toContain("granted");
+    // The subject is the point: without it the entry says a permission exists
+    // without saying for what.
+    expect(el.querySelector(".traj-ev-gov-sub")!.textContent).toBe("echo");
+  });
+
+  it("renders the action as a data attribute, so the styling can differ", () => {
+    // armed/approved/granted/refused/revoked are different acts; a single grey
+    // pill would make a revocation look like an arming.
+    render(
+      <TrajectoryView
+        events={[
+          ev({ seq: 1, ts: 100, kind: "approval", status: "armed" }),
+          ev({ seq: 2, ts: 200, kind: "approval", status: "revoked", text: "display" }),
+        ]}
+      />,
+    );
+    const acts = [...document.querySelectorAll(".traj-ev-gov")].map((e) => e.getAttribute("data-action"));
+    expect(acts).toEqual(["armed", "revoked"]);
+  });
+
+  it("shows the stated goal as text, and a cleared one as cleared", () => {
+    render(
+      <TrajectoryView
+        events={[
+          ev({ seq: 1, ts: 100, kind: "goal", text: "provision the ONU" }),
+          ev({ seq: 2, ts: 200, kind: "goal" }),
+        ]}
+      />,
+    );
+    const goals = [...document.querySelectorAll(".traj-ev-goal")].map((e) => e.textContent);
+    expect(goals[0]).toContain("provision the ONU");
+    // An empty goal is a CLEAR, not a blank row: the field is absent for a clear
+    // and a reader must not think the goal is simply missing.
+    expect(goals[1]).toContain("cleared");
+  });
+});

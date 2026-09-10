@@ -679,7 +679,11 @@ code {
   font-size: 9.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  opacity: 0.85;
+  /* Explicit colour, NOT opacity: an opacity-reduced label measures as its full
+     colour to every probe (mine included) while rendering weaker — which is
+     exactly how a contrast defect hides. The label is already distinguished by
+     being uppercase and smaller. */
+  color: var(--accent-on-soft);
 }
 /* The objective is the payload: wrap rather than ellipsise. A goal truncated to
    "provision the ONU on VL…" is not something anyone can act on. */
@@ -1572,6 +1576,62 @@ code {
 .traj-ev-code { font: 600 11px var(--font-mono); }
 .traj-ev-code[data-state="ok"] { color: var(--accent-ink); }
 .traj-ev-code[data-state="fail"] { color: var(--danger-on-soft); }
+
+/* Governance events in the timeline: an approval-posture change or the operator's
+   stated goal. Neither is a command, so neither gets a step's treatment — but
+   both carry their meaning in fields the generic fallback dropped. */
+.traj-ev-gov {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-chip);
+  font: 600 11px var(--font);
+  color: var(--chrome-ink-dim);
+}
+.traj-ev-gov[data-action="armed"], .traj-ev-gov[data-action="disarmed"] {
+  border-color: var(--accent);
+  color: var(--accent-on-soft);
+  background: var(--accent-soft);
+}
+.traj-ev-gov[data-action="approved"], .traj-ev-gov[data-action="granted"] {
+  border-color: var(--success-solid);
+  color: var(--success-text);
+}
+.traj-ev-gov[data-action="refused"], .traj-ev-gov[data-action="revoked"] {
+  border-color: var(--danger);
+  color: var(--danger-on-soft);
+}
+/* The SUBJECT — the command decided or the word granted. Mono, because it is
+   literal text the operator may need to match against a command. */
+.traj-ev-gov-sub {
+  font: 11px var(--font-mono);
+  color: var(--chrome-ink);
+  overflow-wrap: anywhere;
+}
+.traj-ev-goal {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-on-soft);
+  overflow-wrap: anywhere;
+}
+.traj-ev-goal-label {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  /* Explicit colour, NOT opacity: an opacity-reduced label measures as its full
+     colour to every probe (mine included) while rendering weaker — which is
+     exactly how a contrast defect hides. The label is already distinguished by
+     being uppercase and smaller. */
+  color: var(--accent-on-soft);
+}
 .traj-ev-status { vertical-align: middle; }
 
 /* ---------- plugins page ---------- */
@@ -2463,7 +2523,7 @@ code {
   border: 1px solid currentColor;
   border-radius: 999px;
   padding: 0 6px;
-  opacity: 0.85;
+  /* opacity removed — the tag ink already reads, and opacity hid that. */
 }
 
 /* The path itself — a vertical rail with one node per step. */
@@ -2844,7 +2904,9 @@ code {
   pointer-events: none;
 }
 .browser-placeholder p { margin: 0; font-size: 13px; }
-.browser-placeholder-sub { font-size: 11px !important; color: var(--faint); opacity: 0.7; }
+/* --faint at 0.7 opacity was the worst of the opacity-on-text sites: a token
+   already known to be weak, weakened again by a property no probe reads. */
+.browser-placeholder-sub { font-size: 11px !important; color: var(--chrome-ink-dim); }
 
 /* terminal font bar: discoverable (was opacity .35 invisible-on-white) */
 .term-fontbar { opacity: 0.8; }
@@ -2933,13 +2995,17 @@ button.dtab-close:hover { opacity: 1; }
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: var(--faint);
+  /* --chrome-ink, not --faint: the banner's `<strong>` TITLE has no colour of its
+     own and inherits this, so --faint made the headline of an error the least
+     readable thing on it (2.56 light). The reason line below sets its own,
+     dimmer colour. */
+  color: var(--chrome-ink);
   text-align: center;
   padding: 20px;
 }
 .browser-crash-banner .browser-crash-reason {
   font-size: 12px;
-  opacity: 0.7;
+  color: var(--chrome-ink-dim);
   display: block;
   margin-top: 2px;
 }
@@ -2977,7 +3043,7 @@ button.dtab-close:hover { opacity: 1; }
 .browser-mode-b-hint {
   max-width: 420px;
   font-size: 12px;
-  opacity: 0.75;
+  color: var(--chrome-ink-dim);
   line-height: 1.5;
 }
 

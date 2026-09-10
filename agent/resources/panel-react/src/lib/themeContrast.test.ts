@@ -215,6 +215,18 @@ describe("recessed content surfaces", () => {
       ['.path-step-why-mark', "--chrome-ink-dim"],
       ['.path-step-alt-label', "--chrome-ink-dim"],
       ['.path-step-alt-item', "--chrome-ink-dim"],
+      // Governance events in the timeline: the objective, and each approval
+      // action. `armed`/`disarmed` are the accent, approvals the success ink,
+      // refusals the danger ink — a single grey pill would make a revocation
+      // look like an arming.
+      ['.traj-ev-goal', "--accent-on-soft"],
+      ['.traj-ev-goal-label', "--accent-on-soft"],
+      // Comma-lists: blockOf matches the full selector text, so these are the
+      // pairs as written rather than one arm of each.
+      ['.traj-ev-gov[data-action="armed"], .traj-ev-gov[data-action="disarmed"]', "--accent-on-soft"],
+      ['.traj-ev-gov[data-action="approved"], .traj-ev-gov[data-action="granted"]', "--success-text"],
+      ['.traj-ev-gov[data-action="refused"], .traj-ev-gov[data-action="revoked"]', "--danger-on-soft"],
+      ['.traj-ev-gov-sub', "--chrome-ink"],
     ];
     for (const [sel, token] of textSites) {
       const block = blockOf(css, sel);
@@ -274,5 +286,55 @@ describe("recessed content surfaces", () => {
       expect(block).toMatch(/--surface-recessed\s*:\s*var\(--bg\)/);
       expect(block, `${sel} must also define --bg itself`).toMatch(/--bg\s*:/);
     }
+  });
+});
+
+describe("opacity is not used to dim text", () => {
+  // THE BLIND SPOT THIS CLOSES. Element `opacity` appears in NEITHER
+  // getComputedStyle(color) NOR backgroundColor, so a probe that composites
+  // backgrounds — which mine did, through several rounds of "auditing" — reports
+  // an opacity-reduced element at its FULL colour while it renders weaker. Six
+  // text sites were dimmed this way and every one measured "ok":
+  //
+  //   .goal-label, .traj-ev-goal-label, .path-step-owner      opacity 0.85
+  //   .browser-crash-reason                                   opacity 0.70
+  //   .browser-mode-b-hint                                    opacity 0.75
+  //   .browser-placeholder-sub   --faint AND 0.7              (the worst)
+  //
+  // and the last one hid a real defect underneath: the crash banner's `<strong>`
+  // TITLE has no colour of its own and inherited the banner's --faint, measuring
+  // 2.56 light.
+  //
+  // The rule below is checkable from the CSS alone: `font-size` only ever matters
+  // for text, so a rule that sets it must not also dim itself with opacity < 1.
+  // Dimming is expressed as a COLOUR token, which is greppable, pinnable, and
+  // measurable.
+  it("no rule that sizes text also dims it with opacity", () => {
+    const css = builtCss();
+    const offenders: string[] = [];
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = m[1].trim().split("\n").pop()!.trim();
+      const body = m[2];
+      if (/font-size\s*:/.test(body) && /opacity:\s*0?\.\d+/.test(body)) {
+        offenders.push(`${selector} { ${body.match(/opacity:\s*[0-9.]+/)![0]} }`);
+      }
+    }
+    expect(
+      offenders,
+      "text dimmed with opacity is invisible to every contrast measurement and to " +
+        "whoever reads the CSS — use a colour token instead",
+    ).toEqual([]);
+  });
+
+  it("the crash banner's TITLE is readable, not inherited from a faint parent", () => {
+    // The `<strong>` has no colour of its own (EmbeddedBrowserPane), so it takes
+    // the banner's. --faint there measured 2.56 and made an error's headline the
+    // least readable thing on it.
+    const css = builtCss();
+    const banner = blockOf(css, ".browser-crash-banner");
+    expect(banner).toContain("color: var(--chrome-ink)");
+    // The DECLARATION, not the raw block: the block legitimately mentions
+    // --faint in the comment explaining why it is not used here.
+    expect(banner).not.toMatch(/color:\s*var\(--faint\)/);
   });
 });
