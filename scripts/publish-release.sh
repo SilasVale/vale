@@ -23,9 +23,14 @@
 #      working while the new line ramps)
 #   5. commit the tracked files (package.json bump + version.json)
 #   6. wrangler deploy (CDN sync — deletes pruned assets too)
-#   7. P0 RECONCILE: CDN versioned tgz sha256 == GitHub release asset
-#      sha256 (fail-closed; --skip-reconcile only for first publishes
-#      whose asset release.yml has not built yet)
+#   7. P0 AUDIT: CDN tgz vs GitHub release asset (scripts/lib/release-audit.sh).
+#      Every SOURCE-DERIVED file must match byte-for-byte; only vale-agent.exe
+#      may differ, because the two builders do not share a toolchain (local
+#      rustc stable + hand-built llvm18 vs release.yml's floating stable +
+#      distro llvm). Whole-tarball equality was the old rule and could never
+#      pass here, which is how the gate became a skip. --skip-reconcile covers
+#      only a genuine first publish (no asset built yet) and refuses once one
+#      exists.
 #
 # After this: push main, create the GitHub tag v1.2.N via the API, and let
 # release.yml build the GitHub release asset (keep-latest manual).
@@ -292,59 +297,49 @@ source "scripts/smoke-index.sh"
 assert_want_sha256 "$SHA" || exit 1
 smoke_index_release "$VER" "$SHA" || exit 1
 
-echo "== reconcile CDN vs GitHub release asset (P0 dual-build audit) =="
-# Fail-CLOSED: two builders (this script's npm pack onto the CDN,
-# release.yml's xwin build onto the release) must ship byte-identical
-# bytes — same sha256, or abort. A missing asset ABORTS (never a WARN:
-# a skipped audit that stays skipped is how drift ships). Legitimate
-# skip case: a FIRST publish has no asset yet — release.yml builds it
-# only after the tag push below — so rerun with --skip-reconcile now and
-# verify post-tag via the checklist. No network / no gh → same abort.
+echo "== release audit: CDN vs GitHub release asset (P0 dual-builder) =="
+# The audit lives in scripts/lib/release-audit.sh. It demands that every
+# SOURCE-DERIVED file in the two tarballs be byte-identical and tolerates ONLY
+# a differing vale-agent.exe, because the two builders do not share a
+# toolchain: this box builds with rustc `stable` (1.98.0 here) + a hand-built
+# llvm18 that cargo-xwin is symlinked to, while release.yml uses
+# dtolnay/rust-toolchain@stable (floating) + the distro's llvm. Demanding whole
+# -tarball equality — what this block used to do — could therefore NEVER pass,
+# which silently turned the gate into a skip. Comparing source-derived files is
+# what actually catches a builder that packaged different source.
+# See the header of release-audit.sh for the full evidence.
+#
+# The GitHub asset only exists AFTER the tag push below, so a genuine first
+# publish has nothing to audit — that is the only case --skip-reconcile covers,
+# and it refuses as soon as an asset exists.
 CDN_BASE="${SMOKE_BASE_URL:-https://agent.saisi.online}"
+# shellcheck source=lib/release-audit.sh
+source "scripts/lib/release-audit.sh"
 if [ "$SKIP_RECONCILE" -eq 1 ]; then
-  # P0-1 fail-closed: --skip-reconcile exists ONLY for first publishes (no
-  # GitHub release/asset exists yet — release.yml builds it after the tag
-  # push below). If the asset ALREADY exists, an audit is possible and
-  # skipping it would put unaudited bytes on the CDN silently — refuse.
-  # (List-to-file first, then grep — never `gh ... | grep -q` under
-  # pipefail: SIGPIPE false-fails even on a match, round-288 lesson.)
-  SKIP_LIST="/tmp/reconcile-assets-skip-${VER}.txt"
-  if command -v gh >/dev/null 2>&1 \
-    && gh release view "v$VER" --json assets --jq '.assets[].name' >"$SKIP_LIST" 2>/dev/null \
-    && grep -qx "vale-agent-${VER}.tgz" "$SKIP_LIST"; then
-    echo "::error::--skip-reconcile refused: GitHub release v$VER already ships vale-agent-$VER.tgz — rerun WITHOUT the flag so the CDN/asset audit executes" >&2
+  # List to a file FIRST, then grep — never `producer | grep -q` under
+  # pipefail (round-288: grep -q exits early, SIGPIPEs the producer, and the
+  # pipeline reports failure even on a match).
+  SKIP_LIST="/tmp/audit-assets-skip-${VER}.txt"
+  audit_asset_names "$VER" >"$SKIP_LIST" 2>/dev/null || true
+  if grep -qx "vale-agent-${VER}.tgz" "$SKIP_LIST"; then
+    echo "::error::--skip-reconcile refused: GitHub release v$VER already ships vale-agent-$VER.tgz — rerun WITHOUT the flag so the audit executes" >&2
     exit 1
   fi
-  echo "-- WARN: --skip-reconcile given and no GitHub asset v$VER exists yet (first publish) — CDN/asset audit SKIPPED, verify post-tag via the checklist below"
+  echo "-- WARN: --skip-reconcile given and no auditable GitHub asset v$VER exists yet (first publish) — audit SKIPPED, verify post-tag via the checklist below"
 else
-  command -v gh >/dev/null 2>&1 || { echo "::error::gh CLI not found — install it (gh auth login), or --skip-reconcile for a first publish (then verify post-tag)" >&2; exit 1; }
-  ASSET_LIST="/tmp/reconcile-assets-${VER}.txt"
-  if ! gh release view "v$VER" --json assets --jq '.assets[].name' >"$ASSET_LIST" 2>/dev/null; then
-    echo "::error::no GitHub release v$VER (or no access) — the asset is built by release.yml AFTER the tag push below" >&2
-    echo "  first publish? rerun with --skip-reconcile now, verify post-tag via the checklist." >&2
+  audit_release_asset "$VER" "$CDN_BASE" || {
+    echo "  the asset is built by release.yml AFTER the tag push below." >&2
+    echo "  first publish? rerun with --skip-reconcile, then audit post-tag." >&2
     exit 1
-  fi
-  # (list-to-file first, then grep — never `gh ... | grep -q` under
-  # pipefail: SIGPIPE false-fails even on a match, round-288 lesson.)
-  if ! grep -qx "vale-agent-${VER}.tgz" "$ASSET_LIST"; then
-    echo "::error::GitHub release v$VER has no vale-agent-$VER.tgz asset yet — release.yml may still be building" >&2
-    echo "  wait for it green, then rerun this script's audit (or verify via the checklist)." >&2
-    exit 1
-  fi
-  rm -rf "/tmp/reconcile-$VER" && mkdir -p "/tmp/reconcile-$VER"
-  gh release download "v$VER" --pattern "vale-agent-$VER.tgz" --dir "/tmp/reconcile-$VER" --clobber \
-    || { echo "::error::gh release download v$VER failed (network/auth) — aborting, never green by default" >&2; exit 1; }
+  }
+  # The CDN must still serve the exact bytes this run packed (catches a
+  # mid-publish drift / a stale deploy), independent of the exe question.
   CDN_SHA=$(curl -fsSL -m 120 "$CDN_BASE/vale-agent/vale-agent-$VER.tgz" | sha256sum | cut -d' ' -f1)
-  GH_SHA=$(sha256sum "/tmp/reconcile-$VER/vale-agent-$VER.tgz" | cut -d' ' -f1)
-  if [ "$CDN_SHA" != "$GH_SHA" ]; then
-    echo "::error::reconcile FAILED: CDN sha $CDN_SHA != GitHub asset sha $GH_SHA — two builders disagree, do NOT tag" >&2
-    exit 1
-  fi
   if [ "$CDN_SHA" != "$SHA" ]; then
-    echo "::error::reconcile FAILED: CDN sha $CDN_SHA != just-packed local sha $SHA — the CDN drifted mid-publish" >&2
+    echo "::error::audit FAILED: CDN sha $CDN_SHA != just-packed local sha $SHA — the CDN drifted mid-publish" >&2
     exit 1
   fi
-  echo "reconcile OK (CDN == GitHub asset == local pack: $SHA)"
+  echo "audit OK: CDN serves this run's pack, and its source-derived files match the GitHub asset"
 fi
 
 echo "== done. Next: push main, then create the GitHub tag v$VER via the API"
