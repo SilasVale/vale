@@ -143,10 +143,11 @@ Gateway +94 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 �
   unifying means migrating all agent call sites with device verification —
   needs product sign-off, never a silent program edit. Bitflags/cpufeatures
   transitive dupes likewise untouched (upstream-owned).
-- gmi retry asymmetry (R77 consolidation finding): chat/count arms retry gmi
-  bursts, messages-native does not (`gmiBursty: false` locks the current
-  table exactly). Burst-shedding is server behavior, not pricing — but
-  changing retries affects cost/latency, so the question stays OPEN for the
-  owner rather than being "fixed" by the program. See retryPolicyFor.
+- ~~gmi retry asymmetry~~ WITHDRAWN Round-90: the "asymmetry" was a misread —
+  nv/gmi /v1/messages never reach the native site (the arm's nv/gmi branch
+  catches them first for the translate path, which retries). No asymmetry
+  exists; the `gmiBursty` flag is removed and the routing fact is pinned by
+  the gmi/nv messages-translate flow tests. Kept here so the retraction is
+  on record.
 - Panel-react, hardware-gated backends, Electron main: covered or
   deliberately untestable — see round notes, not revisit-worthy.

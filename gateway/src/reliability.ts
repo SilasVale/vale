@@ -64,18 +64,19 @@ export const GLM_LOTTERY_MODEL = "z-ai/glm-5.2:free";
  * its own uniform literal deliberately (all kinds share attempts+retry502
  * there — the table would drop non-nv/gmi kinds to the plain budget).
  *
- * gmi asymmetry (OPEN product question, behavior preserved exactly): the
- * chat + count arms retry gmi bursts, the messages-native arm does not
- * (its table names only nvidia). `gmiBursty: false` reproduces the
- * messages-native table; default true is the chat/count table. Do NOT
- * "simplify" the flag away without deciding which table is correct — the
- * R77 report carries the question to the owner.
+ * Routing note (Round-90 correction): nv/gmi /v1/messages NEVER reach the
+ * messages-native site — the arm's nv/gmi branch catches them first for
+ * the translate path (which retries via its own literal). At the native
+ * site only or/ds/qw/amd/og-native arrive, so the bursty rows below are
+ * live at the chat site and correct-if-reached defaults at the native
+ * site. An earlier revision carried a `gmiBursty` flag for a messages/chat
+ * asymmetry that does not exist — removed, with the routing fact pinned
+ * by the gmi/nv messages-translate flow tests instead.
  */
 export function retryPolicyFor(
   kind: string,
   upstreamModel: string,
   timeoutMs: number,
-  opts: { gmiBursty?: boolean } = {},
 ): {
   timeoutMs: number;
   attempts?: number;
@@ -83,8 +84,7 @@ export function retryPolicyFor(
   retry502?: boolean;
   ignoreRetryAfter?: boolean;
 } {
-  const { gmiBursty = true } = opts;
-  if (kind === "nvidia" || (gmiBursty && kind === "gmi")) {
+  if (kind === "nvidia" || kind === "gmi") {
     return { timeoutMs, attempts: 4, retry502: true };
   }
   if (kind === "openrouter") {

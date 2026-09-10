@@ -1064,11 +1064,10 @@ async function handleGatewayImpl(
         }),
         body: forwardBody,
       },
-      // Shared retry table with gmiBursty: false — this arm's table names
-      // only nvidia (see retryPolicyFor on the open gmi question).
-      retryPolicyFor(route.kind, upstreamModel, passthroughTimeoutMs(env, route.kind), {
-        gmiBursty: false,
-      }),
+      // Shared retry table (nv/gmi messages route via the arm's translate
+      // branch, so only or/ds/qw/amd/og-native arrive here — the bursty
+      // rows are correct-if-reached defaults).
+      retryPolicyFor(route.kind, upstreamModel, passthroughTimeoutMs(env, route.kind)),
     );
     return relayUpstreamResult(
       env,
