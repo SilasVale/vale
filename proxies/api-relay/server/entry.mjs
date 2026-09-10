@@ -35,7 +35,7 @@ import proxy from "./proxy.mjs";
 import github from "./github.mjs";
 import git from "./git.mjs";
 import gform from "./gform.mjs";
-import { resolveRoute, buildUrl, resolveHost, forwardHeaders } from "./routing.mjs";
+import { resolveRoute, buildUrl, resolveHost, forwardHeaders, collectResponseHeaders } from "./routing.mjs";
 
 const PORT = Number(process.env.PORT || 8081);
 
@@ -72,11 +72,7 @@ const server = createServer(async (req, res) => {
       ...(hasBody ? { body: Readable.toWeb(req), duplex: "half" } : {}),
     });
     const response = await hit.r.handler(request);
-    const out = Object.fromEntries(response.headers.entries());
-    if (typeof response.headers.getSetCookie === "function") {
-      const sc = response.headers.getSetCookie();
-      if (sc.length) out["set-cookie"] = sc; // gform reCAPTCHA needs ALL cookies
-    }
+    const out = collectResponseHeaders(response);
     res.writeHead(response.status, out);
     if (response.body) {
       const reader = response.body.getReader();

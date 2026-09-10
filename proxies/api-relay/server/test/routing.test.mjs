@@ -7,7 +7,7 @@
 // caller-supplied path= that would collide with the rewritten one.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveRoute, buildUrl, resolveHost, forwardHeaders } from "../routing.mjs";
+import { resolveRoute, buildUrl, resolveHost, forwardHeaders, collectResponseHeaders } from "../routing.mjs";
 
 // Synthetic table mirroring entry.mjs's ROUTES shape (handlers stay opaque:
 // resolveRoute never calls them — real fns only exist in dist/).
@@ -98,4 +98,20 @@ test("forwardHeaders: host/pseudo dropped, arrays appended, scalars set", () => 
   assert.ok(![...h.keys()].some((k) => k.startsWith(":")), "HTTP/2 pseudo-headers never ride");
   assert.equal(h.get("x-api-key"), "sk-1");
   assert.equal(h.get("cookie"), "a=1; b=2", "multi-values preserved in order (cookie ; join per spec)");
+});
+
+// SOLID Round-69: the last testable logic out of entry.mjs (entry keeps
+// only socket plumbing now). Multi set-cookies must ALL ride (gform
+// reCAPTCHA sessions break on first-only).
+test("collectResponseHeaders: plain dict passthrough, all set-cookies kept", () => {
+  const plain = new Response("x", { status: 200, headers: { "content-type": "text/plain" } });
+  const out = collectResponseHeaders(plain);
+  assert.equal(out["content-type"], "text/plain");
+  assert.ok(!("set-cookie" in out), "no cookies → no key");
+
+  const h = new Headers({ "content-type": "text/html" });
+  h.append("set-cookie", "NID=1; Path=/");
+  h.append("set-cookie", "AEC=2; Path=/");
+  const multi = collectResponseHeaders(new Response("y", { status: 200, headers: h }));
+  assert.deepEqual(multi["set-cookie"], ["NID=1; Path=/", "AEC=2; Path=/"]);
 });

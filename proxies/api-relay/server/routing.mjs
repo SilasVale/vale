@@ -29,6 +29,21 @@ export function forwardHeaders(rawHeaders) {
   return headers;
 }
 
+/**
+ * Plain-object headers for the node:http reply from an upstream Response
+ * (SOLID Round-69: verbatim move — the last testable logic in entry.mjs;
+ * entry keeps only socket plumbing). Multi set-cookie values ride as an
+ * array (gform reCAPTCHA needs ALL cookies, not the first).
+ */
+export function collectResponseHeaders(response) {
+  const out = Object.fromEntries(response.headers.entries());
+  if (typeof response.headers.getSetCookie === "function") {
+    const sc = response.headers.getSetCookie();
+    if (sc.length) out["set-cookie"] = sc;
+  }
+  return out;
+}
+
 // Routing replicates vercel.json's rewrites in-process:
 //   /api/git/<rest>     -> handler(Request at /api/git?path=/<rest>&<orig args>)
 //   /api/github/...     -> /api/github?path=...
