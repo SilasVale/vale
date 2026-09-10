@@ -27,7 +27,7 @@ three. Build the structure first; the skin grows on it.
 | E1 | All 49 device tools are PRIMITIVES. Not one is goal-level. | `agent/src/plugins/*/tools*.rs` |
 | E2 | `terminal_jobs` is the only job-shaped thing that exists: has an id, a `done` flag, an `exit_code`, and a `wait_secs` blocking query. | `agent/src/plugins/terminal/tools/exec.rs:208` |
 | E3 | The panel has **zero** AI-client onboarding. The whole front end mentions Claude Code / DSH once, in passing. | `agent/resources/panel-react/src/` |
-| E4 | The "AI is operating" pulse listens to browser events ONLY — terminal activity never fires it. | `useAiActivityPulse.ts:17-20` |
+| E4 | There is no DEVICE-level activity signal. `useAiActivityPulse` exists but is scoped to one pane (see the correction under Law 3) — it is not a global indicator that was mis-wired. | `useAiActivityPulse.ts` + its only consumer, `EmbeddedBrowserPane.tsx:68` |
 | E5 | "running" and "ok" shared one colour, distinguished only by an animation that `prefers-reduced-motion` removes — in **three** components. | fixed, P1 |
 | E6 | The device side has exactly ONE identity: `possession of the token IS the device identity`. No role, no operator, no approver. | `agent/src/web/panel.rs:139` |
 | E7 | The console gamification was already tried and **reverted by product**. | `agent/AGENTS.md:2559` |
@@ -102,10 +102,29 @@ requirement looks like.
 
 ### Law 3 — Every action leaves a visible consequence
 
-**The counter-example (E4).** The "AI is operating" indicator listens to
-`vale-browser-actions-changed` and `vale-playwright-changed` only. Everything
-the AI does in a terminal — which is most of it — fires nothing. In game terms:
-hitting an enemy with no sound.
+**The counter-example, CORRECTED.** This section originally claimed a defect: the
+"AI is operating" pulse listens to `vale-browser-actions-changed` /
+`vale-playwright-changed` only, so terminal work fires nothing. Reading the
+consumer showed that framing is WRONG, and the correction matters more than the
+original claim.
+
+`useAiActivityPulse` has exactly ONE consumer: `EmbeddedBrowserPane`. It lights
+a "the AI is driving the browser" indicator and flashes that pane's Evidence
+toggle on the idle→active edge. Browser events are the CORRECT input for it —
+wiring terminal output in would make the browser pane light up whenever someone
+ran a shell command, which is a false signal about the browser, not extra
+sensitivity.
+
+So the real gap is different and smaller: **there is no DEVICE-level activity
+signal at all.** The panel can say "the AI is driving the browser" but never "this
+machine is working". That is a missing indicator, not a mis-wired one, and it is
+what §4.3 (the device state on the rail) exists to provide. In game terms the
+distinction is between a pane-specific effect and the world's own state.
+
+The mistake is recorded rather than silently edited because it is the same
+failure mode this document keeps warning about: a claim about behaviour that was
+never checked against the code that implements it. The reading took one grep —
+`grep -rn useAiActivityPulse` — and the original text was written without it.
 
 ### Law 4 — Progress is never lost; death returns to a checkpoint
 
@@ -132,11 +151,16 @@ Consequences, in priority order:
 1. **Onboarding** — generate the MCP client config (DSH / Claude Code) in one
    click, prove connectivity on the spot (`/api/status`), and show what this
    machine can now be asked to do (the 49 tools grouped by domain, not listed).
-2. **Unified activity signal** — merge the terminal and browser activity
-   sources so the device's state is one thing (E4).
-3. **Mascot / device state on the rail** — the machine itself: idle, working,
-   failed, serial attached. Each mapped to a real state, so it doubles as a
-   status panel a non-specialist can read.
+2. **Device-level activity signal** — one indication that this machine is working,
+   merged from the terminal and browser sources. This REPLACES the earlier wording
+   ("merge the terminal and browser activity sources [into the existing pulse]"),
+   which was based on the misreading corrected under Law 3: the pane-scoped pulse
+   must keep its browser-only input, and the merged signal is a NEW, device-scoped
+   one. Merging into the wrong place would have produced a browser indicator that
+   lights up for shell commands.
+3. **Device state on the rail** — the machine itself: idle, working, failed,
+   serial attached. Each mapped to a real state, so it doubles as a status panel
+   a non-specialist can read. This is where §4.2's merge actually belongs.
 
 Onboarding outranks the path view: the path view serves people who are already
 running; onboarding decides whether anyone runs at all.
@@ -196,7 +220,7 @@ and it is the user's to answer, not the author's to assume.
 | Onboarding (§4.1, the biggest hole) | **done** — `ConnectCard.tsx`, 8 tests, 3 mutants caught (`91359f85`) |
 | A defect Law 1's fix exposed | **done** — recessed panes were near-white-on-near-white in dark mode, contrast measured **1.12** at 7 pre-existing sites; now 15.71 (`40d06025`, pinned by `themeContrast.test.ts`) |
 | Unified activity signal (§4.2) | not started |
-| Device mascot (§4.3) | not started |
+| Device-level activity signal + device state (§4.2–4.3) | not started — and §4.2 was RE-SCOPED after the Law 3 correction: the merged signal is new and device-scoped, not a re-wiring of the browser pulse |
 | Path view (post-hoc record) | prototype only, on branch `prototype/control-path` |
 | Control plane (Law 2's mechanism) | proposal only (`proposal-control-path.md`) |
 
