@@ -47,55 +47,54 @@ re-litigated.
 
 | Beat | In a game | In Vale | Measured status |
 |---|---|---|---|
-| 1 **Dispatch** | accept a quest | the operator states a goal | **MISSING** — E1: no goal-level tool exists |
+| 1 **Dispatch** | accept a quest | the operator states a goal; the agent records it and the AI READS it off `terminal_list` | **DONE** (`8c42906e`, `5c89e688`) |
 | 2 **Advance** | the character walks | `terminal_execute` bounded wait + `run_in_background` | **DONE** |
-| 3 **Gate** | choose at a fork | an ARMED session blocks each execute until a person decides; unanswered = NOT run (fail-closed) | **DONE** for the opt-in whole-step form (`3b7bbe9c`, `cff3196f`). The capability-scope refinement (§D1) is still proposed — see the note below |
+| 3 **Gate** | choose at a fork | an ARMED session blocks each execute until a person decides; unanswered = NOT run (fail-closed) | **DONE** — whole-step approval (`3b7bbe9c`, `cff3196f`) PLUS the capability scopes that stop it being noisy: approving a command may also allow its first word for the session (`41dbf7d9`, `27aecdfd`, `73f12d7d`). Built differently from §D1 — see the divergence note in `proposal-control-path.md` |
 | 4 **Evidence** | hit feedback | `evidence.rs`, actions.jsonl, screenshots; the audit trail also records **who was driving** (`control` events), so a reader can tell an AI-driven window from a human-driven one | **DONE** (`4fabdacd`, surfaced in the path view by `807567cc`) |
 | 5 **Take over** | grab the controller | an explicit hold: the AI is refused with `human_in_control` while a person owns the session, and hands back on request | **DONE** — the hold is real, visible in `terminal_list`, and one click in both densities (`fd1013c0`, `f0f06fa8`) |
 | 6 **Harvest** | clear / save | durable audit JSONL + accumulating memory | **DONE** — a walked path saves as a recipe into the SHARED memory store, so AI clients can find and re-walk it (`ee563fcc`) |
 
-Originally two beats done, two half-done, two missing. As of this writing
-**five of the six are done** (advance, gate, evidence, take-over, harvest) and the
-remaining gap is exactly one beat:
+Originally two beats done, two half-done, two missing; **all six are now done.**
 
-* **Dispatch** — the operator cannot state a GOAL, only issue commands. This is
-  the head of the loop and it needs an agent-side surface that does not exist
-  (E1: 49 primitives, zero goal-level tools).
-* **Dispatch** — the operator cannot state a GOAL, only issue commands. This is
-  the head of the loop and it needs an agent-side surface that does not exist
-  (E1: 49 primitives, zero goal-level tools).
+Two of them were closed by first re-reading WHY they looked unreachable, and in
+both cases the reason was a conflation rather than a missing capability:
 
-WHAT THE GATE SHIPPED, AND WHAT IT DID NOT. What is built is the WHOLE-STEP form:
-arm a session and every execute waits for a decision. That is the simplest
-honest gate and it needs nothing from an AI client. What is NOT built is §D1's
-CAPABILITY SCOPES — approving "writes" once rather than each write — which is the
-refinement that stops a gate from being annoying on a long run. Without it, an
-armed session asks about every single command; that is why approval mode is
-opt-in and off by default rather than a policy.
+* **Gate** needed no AI-client cooperation — the whole-step form (approve each
+  command) is entirely agent-side, and only §D1's *capability scopes* were thought
+  to need more. Those shipped too, as grants derived from approved commands rather
+  than from a risk classifier (see `proposal-control-path.md` for the divergence
+  and its reason).
+* **Dispatch** was recorded here as needing AI clients. That was half wrong, and
+  the wrong half was the one that mattered: a goal only needs client cooperation
+  if the AI must DECLARE it. The OPERATOR declares it, and the AI reads it off
+  `terminal_list` — a call every client already makes, carrying fields it already
+  parses. No new tool, no protocol change, nothing asked of any client.
 
-So the remaining work splits cleanly, and only one half is agent-side:
-
-  * **Dispatch** needs a new agent concept AND, for anything beyond a session
-    label, cooperation from AI clients (the intent layer, §P3). It is the one
-    beat that cannot be finished here.
-  * **Capability scopes** are now BUILT, as approval GRANTS rather than §D1's risk
-    classification: approving a command may also allow its first word for the rest
-    of the session, so a run of `display …` asks once instead of every time. The
-    divergence from §D1 is recorded in `proposal-control-path.md` with the reason —
-    a risk classifier's errors are asymmetric in the dangerous direction, while a
-    grant is derived from a command the operator actually read.
+The genuinely separate, still-unbuilt piece is the **intent layer**: an AI
+declaring its own plan, per-step intent, and the alternatives it rejected. That is
+what would turn the path view's steps into a real decision tree — and unlike the
+two beats above, it cannot be faked or approximated agent-side, because the data
+does not exist until a client writes it.
 
 ### 2.1 The structural gap the loop exposes
 
 ```
-what the operator means      GOAL      "get this ONU provisioned"
-what the AI decides          PLAN      <- exists NOWHERE
+what the operator means      GOAL      "get this ONU provisioned"   <- now STORED
+what the AI decides          PLAN      <- still exists NOWHERE
 what Vale records            TOOL CALL 49 primitives, all of them
 ```
 
-The layer between intent and primitives is empty. **That layer is the path.**
-E2 is the proof it is buildable: `terminal_jobs` is already a job with identity
-and a terminal state — the path is that shape, generalised, not a new concept.
+TWO of the three layers now exist. The goal is stored on the session and read by
+the AI for free; the path derives steps, states, durations, ownership and a
+summary from the audit trail; and a recipe saves a walked path for reuse. What is
+still missing is the middle row — the AI's own PLAN — which is the intent layer
+and cannot be approximated agent-side.
+
+**That middle row is what "the path" was always pointing at**, and the honest
+statement of where it stands is: the path view shows what HAPPENED and what it was
+FOR, and cannot yet show what was CONSIDERED. E2's observation still holds —
+`terminal_jobs` proves the job shape is buildable — but the plan is not a shape
+problem; it is data only a client can supply.
 
 ## 3. Four laws (each with its evidence)
 
