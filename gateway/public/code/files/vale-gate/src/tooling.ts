@@ -22,7 +22,13 @@ import {
   OG_ZEN_CHAT,
   OG_NATIVE_ANTHROPIC,
 } from "./channels.ts";
-import { pickRoute, passthroughHeaders, stripBracket, opencodeSessionHeader } from "./upstream.ts";
+import {
+  pickRoute,
+  passthroughHeaders,
+  stripBracket,
+  opencodeSessionHeader,
+  wireModelName,
+} from "./upstream.ts";
 import { fetchWithTimeout, upstreamTimeoutMs, isChannelDegraded } from "./reliability.ts";
 import { jsonOk, jsonError } from "./http.ts";
 import { createIpRateLimiter } from "./lib/ratelimit.ts";
@@ -145,7 +151,7 @@ export async function valeProbe(env: any, model: string) {
     const key = env.OPENCODE_GO_API_KEY || "";
     if (!key)
       return jsonOk({ ok: false, channel: prefix, detail: "OPENCODE_GO_API_KEY not configured" });
-    const upstreamModel = stripBracket(model.slice(prefix.length + 1));
+    const upstreamModel = wireModelName(prefix, stripBracket(model.slice(prefix.length + 1)));
     const native = OG_NATIVE_ANTHROPIC.has(upstreamModel);
     let res;
     try {
@@ -181,7 +187,10 @@ export async function valeProbe(env: any, model: string) {
   const route = pickRoute(prefix, env);
   const key = env[probeEnvKeyName(prefix)] || "";
   if (!key) return jsonOk({ ok: false, channel: prefix, detail: `${prefix}: key not configured` });
-  const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
+  const upstreamModel = wireModelName(
+    prefix,
+    stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model),
+  );
   let res;
   try {
     res = await fetchWithTimeout(

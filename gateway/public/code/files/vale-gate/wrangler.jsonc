@@ -58,7 +58,11 @@
     // Models that must NOT get the describe-first treatment on /v1/messages —
     // they read real Anthropic image blocks upstream (verified 2026-09-02:
     // Radeon's vision-exp OCR'd a screenshot's session UUID exactly).
-    "VISION_CAPABLE_MODELS": "amd/DeepSeek-V4-Flash-Vision-Exp, og/deepseek-flash"
+    // Entries match EITHER the advertised id OR the wire name (isVisionCapable
+    // checks both) — deepseek-flash is zen/go's V4.1 lane slug, covering
+    // og/deepseek-v4.1-flash and the raw og/deepseek-flash spelling. Live
+    // image test on zen/go 2026-09-10 passed.
+    "VISION_CAPABLE_MODELS": "amd/DeepSeek-V4-Flash-Vision-Exp, deepseek-flash"
   }
   // Vale Gate — unified AI gateway + device console. Custom domains are added
   // in the dashboard (custom_domains API is OAuth-only).
