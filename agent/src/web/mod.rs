@@ -114,12 +114,17 @@ pub(super) fn host_no_port(headers: &axum::http::HeaderMap) -> Option<&str> {
 /// it can be called before the Send boundary. The error is boxed — Response
 /// is large and only ever handled at the top of handle_request.
 ///
+/// Takes the HEADERS rather than the whole request (SOLID R108): that is all
+/// it reads, and it keeps the check usable from a `Send` future — a whole
+/// `&Request<Body>` is neither `Send` nor `Sync`, so holding one across an
+/// `await` would poison any async caller's future.
+///
 /// SECURITY (2026-08-12): the ?token= query param was removed — a cross-site
 /// page could send a text/plain POST with the token in the URL (no CORS
 /// preflight) and bypass auth. Clients use the Authorization header (the
 /// panel fetches SSE with fetch(), which sets headers; nothing used the
 /// query param).
-fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>> {
+fn check_auth(headers: &axum::http::HeaderMap, state: &AppState) -> Result<(), Box<Response>> {
     // Write-through (audit A4): the token comes from the LIVE snapshot, not
     // a boot-time copy — a token rotated via config mutations is visible
     // immediately, without a restart.
@@ -136,8 +141,7 @@ fn check_auth(req: &Request<Body>, state: &AppState) -> Result<(), Box<Response>
             Body::from(r#"{"ok":false,"error":"unauthorized"}"#),
         )));
     };
-    let from_header = req
-        .headers()
+    let from_header = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
@@ -404,86 +408,102 @@ async fn handle_panel_home(
 
 // ── Request handler ──────────────────────────────────────────
 
-pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
-    let path = req.uri().path().to_string();
-    let method = req.method().clone();
-
-    // NOTE: no CORS preflight handler — the panel is same-origin (never
-    // preflights); cross-origin calls must NOT be allowed, and the gateway
-    // proxy adds its own ACAO when required. (The old handler advertised
-    // ACAO:null that real responses never granted — dead + misleading.)
-
-    // SSE event stream — streaming, handled before body parsing
-    if method == Method::GET && path == "/api/events" {
-        if let Err(resp) = check_auth(&req, &state) {
-            return *resp;
+/// Routes decided BEFORE the API pipeline (SOLID R108).
+///
+/// Every request either produces a response here, or is not one of these and
+/// falls through to `handle_request`'s unconditional auth gate + dispatcher.
+/// That split is the point: this function is the ONE enumeration of the
+/// pre-dispatch surface, which is exactly the surface that is PUBLIC — the
+/// panel/desktop SPA and its assets, the static status page — plus the three
+/// streaming routes (SSE ×2, browser evidence) that run their own auth
+/// because they never read a body.
+///
+/// Two consequences worth stating, because they used to depend on statement
+/// order inside a 200-line function:
+///   * "anything reaching the dispatcher is authenticated" (R102) becomes a
+///     property of WHICH FUNCTION a request lands in, not of where the gate
+///     happens to sit;
+///   * the public surface is auditable by reading this one list, and
+///     `deliberately_public_routes_stay_public` pins it from the outside.
+///
+/// Takes the request's BORROWED PIECES rather than the request itself: a
+/// `&Request<Body>` is neither `Send` nor `Sync` (http-body is not), so
+/// holding one across an `await` makes this future non-`Send` and breaks the
+/// Tower service it is called from. `&Method`, `&str` and `&HeaderMap` all
+/// are, so the signature is `Send` by construction.
+async fn route_pre_dispatch(
+    method: &Method,
+    path: &str,
+    query: Option<&str>,
+    headers: &axum::http::HeaderMap,
+    state: &Arc<AppState>,
+) -> Option<Response> {
+    // SSE event stream — streaming, handled before body parsing.
+    if *method == Method::GET && path == "/api/events" {
+        if let Err(resp) = check_auth(headers, state) {
+            return Some(*resp);
         }
         // stage-n SSE audit LOW: bound concurrent SSE connections so a flood
         // of viewers can't exhaust tasks/memory. Reserve a slot; if full, 503
         // (shared acquire_sse_guard — see sse.rs).
         let _guard = match acquire_sse_guard() {
             Ok(g) => g,
-            Err(resp) => return *resp,
+            Err(resp) => return Some(*resp),
         };
-        return sse_stream(state).await;
+        return Some(sse_stream(state.clone()).await);
     }
 
     // SSE terminal byte stream — streamed TermOutput JSON frames.
-    if method == Method::GET && path == "/api/events/term" {
-        if let Err(resp) = check_auth(&req, &state) {
-            return *resp;
+    if *method == Method::GET && path == "/api/events/term" {
+        if let Err(resp) = check_auth(headers, state) {
+            return Some(*resp);
         }
         let _guard = match acquire_sse_guard() {
             Ok(g) => g,
-            Err(resp) => return *resp,
+            Err(resp) => return Some(*resp),
         };
-        return sse_term_stream(state).await;
+        return Some(sse_term_stream(state.clone()).await);
     }
 
     // round-152: AI browser evidence stream — list + fetch screenshots from
     // the pwout dir (browser_run_script & playwright scripts drop screenshots
     // here). The panel polls pwshots and shows new PNGs as the AI works,
     // so a human can see what the AI did without any live frame stream.
-    if method == Method::GET
+    if *method == Method::GET
         && (path == "/api/browser/pwshots"
             || path == "/api/browser/pwshot"
             || path == "/api/browser/actions")
     {
-        if let Err(resp) = check_auth(&req, &state) {
-            return *resp;
+        if let Err(resp) = check_auth(headers, state) {
+            return Some(*resp);
         }
-        if let Some(resp) = handle_browser_evidence(&path, req.uri().query()).await {
-            return resp;
+        if let Some(resp) = handle_browser_evidence(path, query).await {
+            return Some(resp);
         }
     }
 
-    // round-137 Plan C: interactive-browser WebSocket relay. MUST sit before
-    // Terminal panel + desktop shell (static SPA, public like the status page
-    // — it shows no data until the user enters the device token). Assets are
-    // embedded at compile time from resources/panel/. /desktop/ is the
-    // vale-desktop-electron (Electron) full-screen shell; the SPA switches on
-    // the path.
+    // Panel / desktop root: served with the zero-config token-injection
+    // decision (gateway proxy secret / loopback / one-time grant) — extracted
+    // as handle_panel_home (round-29 SRP). Assets are embedded at compile time
+    // from resources/panel/; /desktop/ is the Electron full-screen shell and
+    // the SPA switches on the path.
     //
     // SECURITY (2026-08-12): the panel previously embedded the device token as
     // window.__PANEL_TOKEN__ for zero-config access. With CORS * on every
     // response, any third-party page could fetch /panel/ and read the token.
     // The token is no longer injected — the user enters it once in the panel
     // (saved to localStorage) instead.
-    // Panel / desktop root: served with the zero-config token-injection
-    // decision (gateway proxy secret / loopback / one-time grant) — extracted
-    // as handle_panel_home (round-29 SRP).
-    if method == Method::GET
+    if *method == Method::GET
         && (path == "/panel" || path == "/panel/" || path == "/desktop" || path == "/desktop/")
     {
-        let host = host_no_port(req.headers()).map(|h| h.to_string());
-        let auth_header = req
-            .headers()
+        let host = host_no_port(headers).map(|h| h.to_string());
+        let auth_header = headers
             .get("x-vale-auth")
             .and_then(|v| v.to_str().ok())
             .map(|v| v.to_string());
-        return handle_panel_home(&state, &path, req.uri().query(), host, auth_header).await;
+        return Some(handle_panel_home(state, path, query, host, auth_header).await);
     }
-    if method == Method::GET && (path.starts_with("/panel/") || path.starts_with("/desktop/")) {
+    if *method == Method::GET && (path.starts_with("/panel/") || path.starts_with("/desktop/")) {
         // Strip any ?v=… cache-buster before whitelist matching.
         let prefix_len = if path.starts_with("/desktop/") {
             "/desktop/".len()
@@ -491,17 +511,38 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
             "/panel/".len()
         };
         let file = path[prefix_len..].split('?').next().unwrap_or("");
-        return serve_panel_file(file, panel_content_type(file));
+        return Some(serve_panel_file(file, panel_content_type(file)));
     }
 
-    // GET non-API — minimal status page: public (no token needed)
-    if method == Method::GET && !path.starts_with("/api") && path != "/mcp" {
+    // GET non-API — minimal status page: public (no token needed).
+    if *method == Method::GET && !path.starts_with("/api") && path != "/mcp" {
         let mut resp = built_response(
             StatusCode::OK,
             "text/html; charset=utf-8",
             Body::from(STATUS_PAGE),
         );
         set_cache_control(&mut resp, "no-cache");
+        return Some(resp);
+    }
+
+    None
+}
+
+pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> Response {
+    // NOTE: no CORS preflight handler — the panel is same-origin (never
+    // preflights); cross-origin calls must NOT be allowed, and the gateway
+    // proxy adds its own ACAO when required. (The old handler advertised
+    // ACAO:null that real responses never granted — dead + misleading.)
+    //
+    // Hoisted BEFORE the pre-dispatch call so the borrowed pieces (and the
+    // `req` borrow they come from) do not straddle an await — see
+    // route_pre_dispatch's note on `Send`.
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let query_str = req.uri().query().map(|q| q.to_string());
+    if let Some(resp) =
+        route_pre_dispatch(&method, &path, query_str.as_deref(), req.headers(), &state).await
+    {
         return resp;
     }
 
@@ -510,8 +551,8 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
     // This gate is UNCONDITIONAL on purpose. It used to be wrapped in a
     // `needs_auth` flag recomputed as `method != GET || path.starts_with(
     // "/api") || path == "/mcp"`, which classified routes a SECOND time —
-    // the early returns above (public status page, panel/desktop SPA, the
-    // three auth-checked streaming routes) already decide exactly which
+    // the pre-dispatch routes above (public status page, panel/desktop SPA,
+    // the three auth-checked streaming routes) already decide exactly which
     // requests are public, so the flag was provably always true here.
     //
     // A duplicated classification is a security hazard with an asymmetric
@@ -524,12 +565,9 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
     // and the public surfaces above keep their own explicit, tested
     // behaviour. `every_dispatch_route_is_auth_gated` /
     // `deliberately_public_routes_stay_public` pin both halves.
-    if let Err(resp) = check_auth(&req, &state) {
+    if let Err(resp) = check_auth(req.headers(), &state) {
         return *resp;
     }
-
-    // Extract query params before consuming body
-    let query_str = req.uri().query().map(|q| q.to_string());
 
     // Read body for API requests. >1MB must FAIL LOUDLY, not degrade to an
     // empty body — the old unwrap_or_default() turned an oversized
@@ -1865,6 +1903,85 @@ mod tests {
         );
     }
 
+    /// STRUCTURAL PIN for the R108 seam: `route_pre_dispatch` decides whether
+    /// a request is answered before the API pipeline at all.
+    ///
+    /// The two tests around this one pin the CONSEQUENCE (dispatch routes are
+    /// gated; public routes are not). This pins the MECHANISM, so the split
+    /// cannot quietly rot: a dispatcher route that starts being answered
+    /// early would bypass the auth gate entirely, and a public route that
+    /// stops being answered early would 401 the panel SPA.
+    ///
+    /// Note this calls `route_pre_dispatch` directly with NO Authorization
+    /// header: the fall-through cases must be `None` *regardless* of auth,
+    /// because authenticating is the caller's job, not the router's.
+    #[tokio::test]
+    async fn pre_dispatch_owns_exactly_the_public_surface() {
+        let st = state();
+        let method_of = |m: &str| Method::from_bytes(m.as_bytes()).expect("valid method");
+        let headers_of = |m: &str, p: &str| req_anon(m, p).headers().clone();
+
+        // Dispatcher routes fall THROUGH. `/api/events` and `/api/events/term`
+        // are deliberately absent — they ARE pre-dispatch routes (they stream,
+        // so they run their own auth instead of waiting for a body).
+        for (m, p) in [
+            ("GET", "/api/spec"),
+            ("GET", "/api/status"),
+            ("GET", "/api/sessions"),
+            ("GET", "/api/sessions/some-session-id"),
+            ("GET", "/api/logs"),
+            ("GET", "/api/events/poll"),
+            ("GET", "/api/settings"),
+            ("PUT", "/api/settings"),
+            ("POST", "/api/gateway/connect"),
+            ("GET", "/api/plugins/status"),
+            ("POST", "/api/plugins/playwright/start"),
+            ("POST", "/api/plugins/playwright/stop"),
+            ("POST", "/api/tools/terminal_list"),
+            ("GET", "/mcp"),
+            ("POST", "/mcp"),
+        ] {
+            assert!(
+                route_pre_dispatch(&method_of(m), p, None, &headers_of(m, p), &st)
+                    .await
+                    .is_none(),
+                "{m} {p} is answered BEFORE the auth gate — it would bypass it"
+            );
+        }
+
+        // Public surfaces are answered HERE, with no token at all.
+        for (m, p) in [
+            ("GET", "/"),
+            ("GET", "/panel"),
+            ("GET", "/panel/"),
+            ("GET", "/desktop"),
+            ("GET", "/desktop/"),
+            ("GET", "/panel/panel.js"),
+            ("GET", "/desktop/panel.css"),
+            ("GET", "/some-unknown-page"),
+        ] {
+            assert!(
+                route_pre_dispatch(&method_of(m), p, None, &headers_of(m, p), &st)
+                    .await
+                    .is_some(),
+                "{m} {p} must be answered before the gate (documented public surface)"
+            );
+        }
+
+        // The evidence endpoints run their OWN auth and are pre-dispatch: they
+        // must reject an anonymous caller here, not fall through.
+        for p in ["/api/browser/pwshots", "/api/browser/actions"] {
+            let resp = route_pre_dispatch(&method_of("GET"), p, None, &headers_of("GET", p), &st)
+                .await
+                .expect("evidence endpoints are answered pre-dispatch");
+            assert_eq!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED,
+                "{p} must reject an anonymous caller pre-dispatch"
+            );
+        }
+    }
+
     /// THE ROUTE-COVERAGE SECURITY PIN (SOLID R102).
     ///
     /// Every route the web surface dispatches must be reachable ONLY with the
@@ -2477,7 +2594,7 @@ mod tests {
         }
 
         let st = state();
-        assert!(check_auth(&req("GET", "/api/status"), &st).is_ok());
+        assert!(check_auth(req("GET", "/api/status").headers(), &st).is_ok());
         let mut gate = TokenGate::new(OkSvc, st.clone());
         let res = Service::call(&mut gate, req_with_token("POST", "/mcp", TEST_TOKEN))
             .await
@@ -2489,8 +2606,16 @@ mod tests {
         st.update_config(cfg, false).unwrap();
 
         // /api/* path: old rejected, new accepted.
-        assert!(check_auth(&req_with_token("GET", "/api/status", TEST_TOKEN), &st).is_err());
-        assert!(check_auth(&req_with_token("GET", "/api/status", "rotated-token"), &st).is_ok());
+        assert!(check_auth(
+            req_with_token("GET", "/api/status", TEST_TOKEN).headers(),
+            &st
+        )
+        .is_err());
+        assert!(check_auth(
+            req_with_token("GET", "/api/status", "rotated-token").headers(),
+            &st
+        )
+        .is_ok());
         // /mcp path: old rejected, new reaches the inner service.
         let res = Service::call(&mut gate, req_with_token("POST", "/mcp", TEST_TOKEN))
             .await

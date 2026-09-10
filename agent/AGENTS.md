@@ -338,7 +338,28 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R107 — the AGENT→GATEWAY failure-class
+Last updated: 2026-09-10 SOLID-R108 — web request handling is split at its
+  natural seam. `handle_request` was a 230-line function mixing three
+  concerns: pre-dispatch routing (public SPA + assets, the static status page,
+  and the three streaming routes that self-authenticate), the auth gate, and
+  the body/dispatch pipeline. Steps 1–6 are now `route_pre_dispatch(...) ->
+  Option<Response>`, and the dispatcher is reached only by requests that are
+  not public — so R102's "anything reaching the dispatcher is authenticated"
+  became a property of WHICH FUNCTION a request lands in rather than of
+  statement order, and the public surface is enumerable by reading one list.
+  `handle_request` 230 → 158 lines. The extraction surfaced a real constraint:
+  `&Request<Body>` is neither Send nor Sync, so holding one across an await
+  made the whole future non-Send and broke the Tower service — fixed by
+  narrowing `check_auth` to `&HeaderMap` (all it ever read) and passing
+  borrowed pieces, not with a `#[allow]`. New structural pin asserts the SEAM
+  (dispatcher routes fall through, public routes do not, evidence routes
+  self-authenticate) rather than only the consequence; mutation-proven: a
+  dispatcher route answered early fails BOTH the seam pin and R102's
+  auth-coverage pin. Agent gates 459 feat-gated / 452 default green, clippy
+  -D warnings clean both configs, fmt clean, xwin check OK.
+  Program ledger: docs/solid-program.md. No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R107 — the AGENT→GATEWAY failure-class
   contract is pinned. `gateway/src/mcp.ts` dispatches on three literal error
   codes (session_not_found / session_busy / ssh_timeout) onto its own classes
   and falls EVERYTHING ELSE through to TOOL_ERROR (the deliberate round-64
