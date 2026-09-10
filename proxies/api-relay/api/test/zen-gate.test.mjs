@@ -234,3 +234,16 @@ test("header hygiene: allowlist only, JSON forced, version defaulted", async () 
   assert.equal(hh.get("content-type"), "application/json", "forced JSON");
   assert.equal(hh.get("anthropic-version"), "2023-06-01", "version defaulted");
 });
+
+// SOLID Round-67: GET carries no body — passing request.body on a bodiless
+// method throws on some runtimes. (github/git/gform need no such pin:
+// they never forward a body — GET/HEAD-only or explicit POST-only.)
+test("GET upstream call carries no body", async () => {
+  const seen = {};
+  const r = await withStubFetch(capture(seen), () =>
+    handler(new Request("https://r.example/api/zen?target=ds&path=/v1/chat/completions", { headers: KEY })),
+  );
+  assert.equal(r.status, 200);
+  assert.equal(seen.init.method, "GET");
+  assert.ok(seen.init.body == null, "no body on upstream GET");
+});
