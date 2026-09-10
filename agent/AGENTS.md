@@ -338,7 +338,28 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R106 — the timed-out-command KILL POLICY has
+Last updated: 2026-09-10 SOLID-R107 — the AGENT→GATEWAY failure-class
+  contract is pinned. `gateway/src/mcp.ts` dispatches on three literal error
+  codes (session_not_found / session_busy / ssh_timeout) onto its own classes
+  and falls EVERYTHING ELSE through to TOOL_ERROR (the deliberate round-64
+  widening, so a device-UP tool failure is not misread as "device offline").
+  That boundary is never compiled together and the gateway's suite never runs
+  the agent, so renaming a code here — and "fixing" the core's own table test
+  to match — would silently degrade a client-visible failure class with every
+  gate green. `GATEWAY_DISPATCHED_CODES` now carries the gateway's
+  expectation in the core, with three pins: every listed code is reachable
+  from a variant, the set is exactly the gateway's three, and the rest fall
+  through to TOOL_ERROR. Proven rather than asserted: with the rename applied
+  to BOTH the enum and the old table test, `every_variant_has_its_stable_code`
+  still PASSED — only the new pin failed. Also audited and deliberately
+  LEFT ALONE: the base64 cluster (all STANDARD alphabet, consistent — the
+  inline `use base64::Engine` idiom alone is churn without gain) and
+  `rpc_ref` (a clean transport dispatcher, not duplication). Core gates 25
+  green, agent 458 feat-gated / 451 default green, clippy -D warnings clean,
+  fmt clean, xwin check OK. Program ledger: docs/solid-program.md.
+  No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R106 — the timed-out-command KILL POLICY has
   one owner. `execute_local` carried FOUR `#[cfg]`-gated signal blocks (the
   SIGTERM block and the SIGKILL block, each with a unix arm and a windows
   arm) plus TWO hand-written copies of the identical 50 ms exit-poll loop.
