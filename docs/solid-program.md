@@ -112,7 +112,11 @@ correctness is.
 | 77 | gateway reliability | OCP | retryPolicyFor table + pins; count-arm revert (review catch) | +2 | `cd496595` |
 | 78 | docs | docs | gmi retry question recorded as open thread; 1.2.309 coexistence | — | `218f94c3` |
 | 79 | audits | verify | full fast-matrix sweep, all green (9 suites) | — | — |
-| 80 | docs | docs | ledger R76–80 + gateway recount | — | (this commit: the ledger row cannot name its own final hash) |
+| 80 | docs | docs | ledger R76–80 + gateway recount | — | `8391bd0d` |
+| 81 | gateway translate | SRP/tests | result-relay export + breaker recording matrix pins | +3 | `cf91d2a9` |
+| 82 | audits | verify | behavior-preservation audit: all program commits classified, zero drift | — | — |
+| 83 | audits | verify | mutation proof: recordOgBodyFailure flag matters (precise kill) | — | — |
+| 84 | docs | docs | ledger R81–84 + gateway recount | — | (this commit: the ledger row cannot name its own final hash) |
 | 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
@@ -126,7 +130,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +91 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 · index +7 · scripts +19 · deps +2.
+Gateway +94 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 · index +7 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 
