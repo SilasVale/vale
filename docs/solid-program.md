@@ -73,10 +73,15 @@ correctness is.
 | 38 | gateway vision | SRP/tests | `describeImage` export + fault→marker taxonomy + throw-gate consistency | +3 | `13730daa` |
 | 39 | gateway auth | SRP | usage mappers extracted (`mapOpenRouter/Amd/OgUsage`); mapping tables | +4 | `6213de52` |
 | 40 | gateway channels | tests | `usProxyBase`/`museResponsesExit` direct branch pins | +2 | (this commit: the ledger row cannot name its own final hash) |
+| 41 | audits | verify | TODO mine (1 human-only SSH item surfaced), unwrap audit, SFTP correctly untestable; zero churn | — | — |
+| 42 | audits | verify | full-file reads: mcp.ts dispatch, cache.ts coherence, files.rs; all clean | — | — |
+| 43 | agent web | tests | `timing_safe_eq` truth table (sole gate compare, was unpinned) | +1 | `abc297f2` |
+| 44 | verify | verify | electron 8/8 (doc said 4); saturation re-confirmed; no commit | — | — |
+| 45 | docs | docs | gates refresh (electron row, gateway/agent recounts); ledger R41–45 | — | (this commit: the ledger row cannot name its own final hash) |
 
 ## Cumulative pins (program-attributable)
 
-Gateway +74 · agent lib +6 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
+Gateway +83 · agent lib +7 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
 
 ## Open threads (explicitly NOT started)
 
