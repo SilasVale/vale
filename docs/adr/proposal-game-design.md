@@ -52,10 +52,16 @@ re-litigated.
 | 3 **Gate** | choose at a fork | pause at a capability boundary for approval | **MISSING** — see `proposal-control-path.md` |
 | 4 **Evidence** | hit feedback | `evidence.rs`, actions.jsonl, screenshots | **DONE** |
 | 5 **Take over** | grab the controller | `terminal_write` can send Ctrl+C | **HALF** — no ownership semantics |
-| 6 **Harvest** | clear / save | durable audit JSONL + accumulating memory | **HALF** — no recipe |
+| 6 **Harvest** | clear / save | durable audit JSONL + accumulating memory | **DONE** — a walked path saves as a recipe into the SHARED memory store, so AI clients can find and re-walk it (`ee563fcc`) |
 
-Two beats done, two half-done, two missing — and the missing pair is the **head**
-(your intent) and the **waist** (your choice). That is the whole diagnosis.
+Originally two beats done, two half-done, two missing — and the missing pair is
+the **head** (your intent) and the **waist** (your choice). That is the whole
+diagnosis. Since this document was written, beat 4's view and beat 6's recipe
+have both shipped, so the remaining gap is narrower and clearer: **the head and
+the waist are still missing**, and they are missing for the same reason —
+neither can be built in the panel alone. Dispatch needs a goal-level surface the
+agent does not have (49 primitives, zero goals); the gate needs the control
+plane. Everything the panel could reach on its own is now built.
 
 ### 2.1 The structural gap the loop exposes
 
