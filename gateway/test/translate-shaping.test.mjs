@@ -21,6 +21,9 @@ import {
   isSearchOnlyRequest,
   isForcedWebSearch,
   searchTargetFor,
+  REQUIRED_KEY_BY_KIND,
+  isKeyMissing,
+  extractByokKeys,
 } from "../src/plugins/translate.ts";
 
 /** A tool schema whose property is literally named "messages" — the shape
@@ -256,4 +259,115 @@ test("searchTargetFor: only a search-capable WIRE model keeps the caller's choic
   const wireOnly = searchTargetFor("og/whatever-alias", "deepseek-flash");
   assert.equal(wireOnly.capable, true, "capability follows the wire slug");
   assert.equal(wireOnly.model, "og/whatever-alias", "the advertised name is kept as-is");
+});
+
+test("REQUIRED_KEY_BY_KIND: every mapped field is a REAL byok field", () => {
+  // THE FAILURE MODE THIS EXISTS FOR. `isKeyMissing` returns false for an
+  // unknown kind, so a TYPO in the table (`opencodeGo` -> `opencodeG`) makes a
+  // REQUIRED key look present. The route then goes out HEADERLESS and the user
+  // gets a bare "Upstream 401" instead of a config error — the exact bug class
+  // the amd/ and og-native guard comments record. A typo is silent; this is
+  // not.
+  const realFields = new Set(Object.keys(extractByokKeys({})));
+  for (const [kind, field] of Object.entries(REQUIRED_KEY_BY_KIND)) {
+    assert.ok(
+      realFields.has(field),
+      `kind "${kind}" maps to byok.${field}, which extractByokKeys does not produce ` +
+        `(real fields: ${[...realFields].join(", ")})`,
+    );
+  }
+});
+
+test("REQUIRED_KEY_BY_KIND: every byok field is reachable from some kind", () => {
+  // The other direction: a key the user can store but no route ever checks is
+  // dead weight, and more importantly a NEW route wired to an existing field
+  // would leave the table silently incomplete.
+  const mapped = new Set(Object.values(REQUIRED_KEY_BY_KIND));
+  for (const field of Object.keys(extractByokKeys({}))) {
+    assert.ok(
+      mapped.has(field),
+      `byok.${field} is never required by any route kind — either a route is ` +
+        `missing its entry or the key is unused`,
+    );
+  }
+});
+
+test("REQUIRED_KEY_BY_KIND: the irregular spellings are the ones that matter", () => {
+  // Three of the eight fields do NOT match their kind name. These are pinned
+  // by name because a "tidy-up" that renames them for symmetry would break the
+  // lookup in exactly the way the typo pin above describes.
+  assert.equal(REQUIRED_KEY_BY_KIND.nvidia, "nv");
+  assert.equal(REQUIRED_KEY_BY_KIND.opencode, "opencodeGo");
+  assert.equal(REQUIRED_KEY_BY_KIND.commandgoat, "cmd");
+  // ...and the five that do match.
+  for (const kind of ["deepseek", "openrouter", "qwen", "gmi", "amd"]) {
+    assert.ok(REQUIRED_KEY_BY_KIND[kind], `kind ${kind} lost its entry`);
+  }
+});
+
+test("isKeyMissing: present key passes, absent/empty/null fails", () => {
+  const full = {
+    deepseek: "k",
+    opencodeGo: "k",
+    openRouter: "k",
+    qwen: "k",
+    nv: "k",
+    gmi: "k",
+    cmd: "k",
+    amd: "k",
+  };
+  for (const kind of Object.keys(REQUIRED_KEY_BY_KIND)) {
+    assert.equal(isKeyMissing(kind, full), false, `${kind} with its key must pass`);
+  }
+  // Each kind fails when ITS key is removed, and ONLY then.
+  for (const [kind, field] of Object.entries(REQUIRED_KEY_BY_KIND)) {
+    const without = { ...full, [field]: null };
+    assert.equal(isKeyMissing(kind, without), true, `${kind} without ${field} must fail`);
+    for (const other of Object.keys(REQUIRED_KEY_BY_KIND)) {
+      if (other === kind) continue;
+      assert.equal(
+        isKeyMissing(other, without),
+        false,
+        `${other} must not be affected by ${kind}'s missing ${field}`,
+      );
+    }
+  }
+  // The empty-string case: extractByokKeys uses `|| null`, so "" and null are
+  // the same "absent" — pinned so a `!== undefined` rewrite cannot slip in.
+  assert.equal(isKeyMissing("deepseek", { deepseek: "" }), true);
+  assert.equal(isKeyMissing("deepseek", {}), true);
+});
+
+test("isKeyMissing: an UNKNOWN kind reports false, not missing", () => {
+  // Deliberate: a route with no table entry is a programming error that the
+  // routing layer or the upstream will surface. Inventing a "missing key" for
+  // it would mask that behind a config error and send the user hunting for a
+  // key they cannot set.
+  assert.equal(isKeyMissing("no-such-kind", {}), false);
+  assert.equal(isKeyMissing("", {}), false);
+});
+
+test("the key guards agree with the table end-to-end through extractByokKeys", () => {
+  // The table names fields on extractByokKeys' OUTPUT — not on the raw user
+  // key record, whose names are the env-var spellings. Wiring them up wrong
+  // (mapping `nvidia` -> "NVAPI_KEY") would typecheck and pass every unit pin
+  // above, so the round-trip is asserted here.
+  const userKeys = {
+    DEEPSEEK_API_KEY: "d",
+    OPENCODE_GO_API_KEY: null,
+    OPENROUTER_API_KEY: "o",
+    QWEN_API_KEY: "q",
+    NVAPI_KEY: "n",
+    GMI_API_KEY: "g",
+    CMD_API_KEY: "c",
+    AMD_API_KEY: "a",
+  };
+  const byok = extractByokKeys(userKeys);
+  assert.equal(
+    isKeyMissing("opencode", byok),
+    true,
+    "OPENCODE_GO_API_KEY:null must be read as the og route having no key",
+  );
+  assert.equal(isKeyMissing("nvidia", byok), false, "NVAPI_KEY must reach the nvidia route");
+  assert.equal(isKeyMissing("commandgoat", byok), false, "CMD_API_KEY must reach cm/");
 });

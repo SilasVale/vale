@@ -391,6 +391,49 @@ export function extractByokKeys(ukeys: Record<string, any>) {
   };
 }
 
+/** Which BYOK key does each route kind REQUIRE?
+ *
+ * The ONE canonical copy of a mapping that was previously written out FIVE
+ * times: three ad-hoc `[kind, key][]` tables (chat/completions, its
+ * post-probe half, and count_tokens) plus eleven hand-written
+ * `route.kind === "X" && !byok.Y` checks scattered across the flows.
+ *
+ * The irregular fields are the whole point of centralising it — three of the
+ * eight do NOT match their kind:
+ *
+ *     nvidia -> nv          opencode -> opencodeGo      commandgoat -> cmd
+ *
+ * Every entry is required. A route reaching its upstream without its key goes
+ * out HEADERLESS and the user gets a bare "Upstream 401" instead of a config
+ * error naming the missing provider — which is not hypothetical: that is
+ * exactly the class of bug the comments at the amd/ and og-native guards
+ * record (each was added after a flow forgot its check), and it is why a
+ * forgotten entry is worth a test rather than a code review.
+ *
+ * Keys are named as `extractByokKeys` spells them. */
+export const REQUIRED_KEY_BY_KIND: Record<string, string> = {
+  deepseek: "deepseek",
+  opencode: "opencodeGo",
+  openrouter: "openRouter",
+  qwen: "qwen",
+  nvidia: "nv",
+  gmi: "gmi",
+  commandgoat: "cmd",
+  amd: "amd",
+};
+
+/** Is `routeKind`'s required BYOK key absent from `byok`?
+ *
+ * Pure, and the single place the kind→field mapping lives. An UNKNOWN kind
+ * reports `false` (not missing): a route with no entry in the table above is a
+ * programming error that the routing layer or the upstream will surface, and
+ * inventing a "missing key" for it here would mask that with a config error. */
+export function isKeyMissing(routeKind: string, byok: Record<string, any>): boolean {
+  const field = REQUIRED_KEY_BY_KIND[routeKind];
+  if (!field) return false;
+  return !byok[field];
+}
+
 /** Detect the route kind from method + path. */
 // Exported for direct pins (SOLID Round-27; additive — call sites untouched).
 export function detectRoute(method: string, path: string) {
@@ -841,12 +884,12 @@ async function handleGatewayImpl(
 
   // or/ uses "this user's" OpenRouter key (BYOK); upstream is direct
   // openrouter.ai or the US exit per the proxy switch (see pickRoute).
-  if (route.kind === "openrouter" && !byok.openRouter) {
+  if (route.kind === "openrouter" && isKeyMissing("openrouter", byok)) {
     return keyMissingError("openrouter") as Response;
   }
   // cm/ is pure BYOK like or/ — both the messages and chat/completions flows
   // need the user's own Command Code key.
-  if (route.kind === "commandgoat" && !byok.cmd) {
+  if (route.kind === "commandgoat" && isKeyMissing("commandgoat", byok)) {
     return keyMissingError("commandgoat") as Response;
   }
   // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
@@ -876,14 +919,8 @@ async function handleGatewayImpl(
     // Key-existence guards for the chat/completions flow — one per provider
     // kind the endpoint serves. Table-driven: identical shape, order matters
     // only relative to the degraded-channel probe below.
-    const chatKeys: [string, string | null][] = [
-      ["nvidia", byok.nv],
-      ["gmi", byok.gmi],
-      ["amd", byok.amd],
-      ["opencode", byok.opencodeGo],
-    ];
-    for (const [kind, key] of chatKeys) {
-      if (route.kind === kind && !key) {
+    for (const kind of ["nvidia", "gmi", "amd", "opencode"]) {
+      if (route.kind === kind && isKeyMissing(kind, byok)) {
         return keyMissingError(kind) as Response;
       }
     }
@@ -891,13 +928,8 @@ async function handleGatewayImpl(
       const dg = await channelDegradedError(env, route.kind);
       if (dg) return dg;
     }
-    const chatKeysAfterProbe: [string, string | null][] = [
-      ["deepseek", byok.deepseek],
-      ["openrouter", byok.openRouter],
-      ["qwen", byok.qwen],
-    ];
-    for (const [kind, key] of chatKeysAfterProbe) {
-      if (route.kind === kind && !key) {
+    for (const kind of ["deepseek", "openrouter", "qwen"]) {
+      if (route.kind === kind && isKeyMissing(kind, byok)) {
         return keyMissingError(kind) as Response;
       }
     }
@@ -992,7 +1024,7 @@ async function handleGatewayImpl(
         "invalid_request",
       );
     }
-    if (route.kind === "opencode" && !byok.opencodeGo) {
+    if (route.kind === "opencode" && isKeyMissing("opencode", byok)) {
       return keyMissingError("opencode") as Response;
     }
     {
@@ -1052,13 +1084,8 @@ async function handleGatewayImpl(
   // own ±20% accuracy stance and cuts that latency entirely. Missing-key checks
   // are still real config errors and stay.
   if (isCount) {
-    const countKeys: [string, string | null][] = [
-      ["deepseek", byok.deepseek],
-      ["qwen", byok.qwen],
-      ["amd", byok.amd],
-    ];
-    for (const [kind, key] of countKeys) {
-      if (route.kind === kind && !key) {
+    for (const kind of ["deepseek", "qwen", "amd"]) {
+      if (route.kind === kind && isKeyMissing(kind, byok)) {
         return keyMissingError(kind) as Response;
       }
     }
@@ -1072,10 +1099,10 @@ async function handleGatewayImpl(
   // Code) can ride these channels via /v1/messages. OpenAI-native clients
   // keep using the /v1/chat/completions direct passthrough above.
   if (route.kind === "nvidia" || route.kind === "gmi") {
-    if (route.kind === "nvidia" && !byok.nv) {
+    if (route.kind === "nvidia" && isKeyMissing("nvidia", byok)) {
       return keyMissingError("nvidia") as Response;
     }
-    if (route.kind === "gmi" && !byok.gmi) {
+    if (route.kind === "gmi" && isKeyMissing("gmi", byok)) {
       return keyMissingError("gmi") as Response;
     }
     const openaiReq = toOpenAIRequest(body, upstreamModel);
@@ -1124,21 +1151,21 @@ async function handleGatewayImpl(
   // Passthrough routes (or/ds/qw/amd): the upstream already speaks the Anthropic
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
-    if (route.kind === "deepseek" && !byok.deepseek) {
+    if (route.kind === "deepseek" && isKeyMissing("deepseek", byok)) {
       return keyMissingError("deepseek") as Response;
     }
-    if (route.kind === "qwen" && !byok.qwen) {
+    if (route.kind === "qwen" && isKeyMissing("qwen", byok)) {
       return keyMissingError("qwen") as Response;
     }
     // amd/ (AMD Radeon Cloud) is pure BYOK too — without the user's rc-… key
     // the request would go out headerless and 401 at the upstream.
-    if (route.kind === "amd" && !byok.amd) {
+    if (route.kind === "amd" && isKeyMissing("amd", byok)) {
       return keyMissingError("amd") as Response;
     }
     // og/ models need the OpenCode Go key too — without it the request would
     // go out headerless and return a bare
     // "Upstream 401" instead of a clear config error (translate path checks).
-    if (route.kind === "opencode" && !byok.opencodeGo) {
+    if (route.kind === "opencode" && isKeyMissing("opencode", byok)) {
       return keyMissingError("opencode") as Response;
     }
     // The og-native passthrough previously BYPASSED the circuit breaker — a
@@ -1218,13 +1245,13 @@ async function handleGatewayImpl(
   // round-504: shadowed by the pre-branch commandgoat guard (same !byok.cmd,
   // same message) — unreachable, kept as defense-in-depth like the chat-path
   // openrouter arm. Not pinned: keyless-cm tests land on the live guard.
-  if (route.kind === "commandgoat" && !byok.cmd) {
+  if (route.kind === "commandgoat" && isKeyMissing("commandgoat", byok)) {
     return keyMissingError("commandgoat") as Response;
   }
   // round-500: this guard was unscoped — a cm/ request (Bearer byok.cmd,
   // cm upstream; byok.opencodeGo unused below) was 502'd for lacking an
   // unrelated og key. Scope to the opencode kind it actually protects.
-  if (route.kind === "opencode" && !byok.opencodeGo) {
+  if (route.kind === "opencode" && isKeyMissing("opencode", byok)) {
     return keyMissingError("opencode") as Response;
   }
   // Circuit open: repeated hard failures — fail fast instead of waiting on
