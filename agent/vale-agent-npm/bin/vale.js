@@ -509,6 +509,19 @@ function stageDesktopShell(installDir, suffix) {
         if (fs.existsSync(iconSrc))
             fs.copyFileSync(iconSrc, path.join(installDir, "components", "vale-desktop-electron", icon));
     }
+    // Fresh-install desktop fix: the shell is launched as `electron .`
+    // (start-desktop.ps1), which resolves its entry ONLY via package.json
+    // "main". stageDesktopShell used to ship src/*.js + icons but NO
+    // package.json — so `electron .` had nothing to load, AND the installer's
+    // Electron step (gated on Test-Path package.json) was skipped entirely,
+    // leaving the desktop shell dead on every fresh box. Write the minimal
+    // manifest here (setup + update paths; idempotent, not held open by the
+    // running shell).
+    const shellDir = path.join(installDir, "components", "vale-desktop-electron");
+    try {
+        fs.writeFileSync(path.join(shellDir, "package.json"), JSON.stringify({ name: "vale-desktop-electron", version: "0.2.0", main: "src/main.js", private: true }, null, 2), "utf8");
+    }
+    catch { /* best-effort — a failed write must not break staging */ }
 }
 function svc(action) {
     sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });

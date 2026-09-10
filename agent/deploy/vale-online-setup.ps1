@@ -149,23 +149,55 @@ Say "运行 vale setup ..."
 & $valeCmd @setupArgs
 if ($LASTEXITCODE -ne 0) { Write-Host "[vale-setup] vale setup 失败，退出。"; exit 7 }
 
-# --- 5. Electron（二进制；官方源主，npmmirror 备；重试一次，失败只告警） ---
+# --- 5. Electron（桌面壳二进制；主源=我们的 CDN，备源=npm；失败只告警） ---
 # Layout v2: the shell lives at components\vale-desktop-electron.
+# The shell is launched as `electron .` from node_modules\electron\dist.
 $shellDir = Join-Path $InstallDir "components\vale-desktop-electron"
-$electronOk = Test-Path (Join-Path $shellDir "node_modules\electron\dist\electron.exe")
+$distDir = Join-Path $shellDir "node_modules\electron\dist"
+$electronExe = Join-Path $distDir "electron.exe"
+$electronOk = Test-Path $electronExe
+# PRIMARY: pull the win32-x64 dist zip from our own CDN (index worker proxies
+# it from GitHub). npmjs/npmmirror are unreachable on many device boxes — that
+# is exactly why fresh installs shipped a desktop shell with no Electron.
+if (-not $electronOk) {
+  New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+  $zip = Join-Path $env:TEMP "vale-electron-win32-x64.zip"
+  Say "下载 Electron $ElectronVersion（约 115MB，走我们的 CDN）..."
+  $got = $false
+  try {
+    $ProgressPreference = "SilentlyContinue"
+    Invoke-WebRequest -Uri "$CdnBase/vale-agent/electron-win32-x64.zip" -OutFile $zip -UseBasicParsing -TimeoutSec 900
+    if ((Test-Path $zip) -and ((Get-Item $zip).Length -gt 1MB)) { $got = $true }
+  } catch { Say "Electron CDN 下载失败：$($_.Exception.Message)" }
+  if ($got) {
+    try {
+      $tmpx = Join-Path $env:TEMP "vale-electron-x"
+      if (Test-Path $tmpx) { Remove-Item -Recurse -Force $tmpx }
+      Expand-Archive -Force -Path $zip -DestinationPath $tmpx
+      # The zip root holds electron.exe + *.dll + resources\ + locales\ —
+      # copy its CONTENTS into dist\ (so dist\electron.exe exists).
+      Copy-Item -Path (Join-Path $tmpx "*") -Destination $distDir -Recurse -Force
+      Remove-Item -Recurse -Force $tmpx -ErrorAction SilentlyContinue
+      Remove-Item -Force $zip -ErrorAction SilentlyContinue
+    } catch { Say "Electron 解压失败：$($_.Exception.Message)" }
+  }
+  $electronOk = Test-Path $electronExe
+}
+# FALLBACK: npm (only works where the registry is reachable). Needs the shell
+# package.json (now written by `vale setup`); kept for boxes that can reach
+# npm but where the CDN zip somehow failed.
 if (-not $electronOk -and (Test-Path (Join-Path $shellDir "package.json"))) {
   Push-Location $shellDir
   try {
-    Say "安装 Electron $ElectronVersion（约 100MB）..."
+    Say "回退：npm 安装 Electron $ElectronVersion ..."
     & $npmCmd install --no-save "electron@$ElectronVersion" 2>&1 | Select-Object -Last 2
     if (-not (Test-Path "node_modules\electron\dist\electron.exe")) {
-      Say "官方源失败，重试 npmmirror ..."
       $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
       & $npmCmd install --no-save "electron@$ElectronVersion" --registry=https://registry.npmmirror.com 2>&1 | Select-Object -Last 2
     }
   } catch { Say "Electron 安装异常：$($_.Exception.Message)" }
   Pop-Location
-  $electronOk = Test-Path (Join-Path $shellDir "node_modules\electron\dist\electron.exe")
+  $electronOk = Test-Path $electronExe
 }
 if ($electronOk) { Say "Electron 就绪" } else { Say "警告：Electron 没装上（桌面壳跑不起来，agent 本体不受影响；可稍后手动 npm 装）" }
 

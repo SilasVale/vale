@@ -451,6 +451,28 @@ export default {
         },
       });
     }
+    // Electron desktop-shell binary proxy: the ~115MB win32-x64 dist is NOT
+    // bundled in the npm package (kept small) and the installer must NOT rely
+    // on npmjs/npmmirror — those are unreachable from many device boxes (GFW /
+    // corporate firewalls), which left the desktop shell dead on fresh installs.
+    // Cloudflare's edge reaches GitHub fine, so the device pulls Electron from
+    // THIS worker (same origin it already reaches for the tgz + cloudflared).
+    // Pinned to the version the installer's $ElectronVersion expects.
+    if (pathname === "/vale-agent/electron-win32-x64.zip") {
+      const upstream = "https://github.com/electron/electron/releases/download/v33.4.11/electron-v33.4.11-win32-x64.zip";
+      const resp = await fetch(upstream, { redirect: "follow" });
+      if (!resp.ok) {
+        return new Response("electron upstream fetch failed: " + resp.status, { status: 502 });
+      }
+      return new Response(resp.body, {
+        status: 200,
+        headers: {
+          "content-type": "application/zip",
+          "content-disposition": 'attachment; filename="electron-win32-x64.zip"',
+          "cache-control": "public, max-age=86400",
+        },
+      });
+    }
     // A missing binary must 404, not return the download PAGE as 200 HTML —
     // devices silently downloaded HTML as ValeAgent-Setup.exe and the agent
     // never started. Only "/" and "/index.html" render the page.
