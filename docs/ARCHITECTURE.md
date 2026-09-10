@@ -2,7 +2,7 @@
 
 > Status: maintained ｜ Last full review: 2026-09-08 (09-07/09-08 sweep: Vercel retirement, vrelay, relay token, extension→code-server) ｜ Scope: the whole repo
 >
-> SOLID program 2026-09-09 (rounds 1–50, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 85 gateway / 14 Rust / 4 CLI / 49 relay / 4 extension / 5 index pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
+> SOLID program 2026-09-09 (rounds 1–54, `refactor(solid)` commits): OCP/ISP/DIP/SRP refinements banked per-module below + 82 gateway / 19 Rust / 4 CLI / 49 relay / 4 extension / 5 index pins. NOT a boundary re-review — every verdict below stands unless the row says otherwise; counts refreshed in Test gates.
 >
 > Single-page map of every module's boundary verdict. Each entry carries the
 > evidence (file-header note, ADR, or audit round). When a boundary verdict
@@ -102,8 +102,8 @@ false failures. Suites are green only under their own runners.
 
 | Subproject | Gate | Count |
 |---|---|---|
-| gateway | tsc + eslint(src+ui) + prettier + node --test | 694 (recounted 2026-09-09: 692 → 694, typed-code isolation R48; mutation-audited R49–50; suite green) |
-| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 397 feat-gated terminal,keyring (recounted 2026-09-09: 354 lib + 5 bin + 27 + 1 + 2 + 7 + 1 integration; default-config lib 347; xwin gate re-verified R33; suite green) |
+| gateway | tsc + eslint(src+ui) + prettier + node --test | 700 (recounted 2026-09-09: 694 → 700, consistency R53 + prune R54; suite green) |
+| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 402 feat-gated terminal,keyring (recounted 2026-09-09: 359 lib + 5 bin + 27 + 1 + 2 + 7 + 1 integration; default-config lib 352; xwin gate re-verified R33; suite green) |
 | vale-agent-core | cargo test + clippy -D warnings + fmt --check | 22 (15 + 7 SOLID-program pins R11–R12; suite green) |
 | vale CLI (npm) | node --test | 20 (16 + 4 SOLID-program pins R17: boxed-manifest contract; suite green) |
 | api-relay (vrelay) | node --test + build-relay.sh bundle build | 49 (0 → 49 across SOLID R18–R23: routing seam + zen/proxy/github/git/gform gates; suite green) |

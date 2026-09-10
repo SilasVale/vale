@@ -34,8 +34,8 @@ correctness is.
 
 | Round | Area | SOLID | Change | Tests | Commit |
 |---|---|---|---|---|---|
-| 1 | gateway upstream | OCP | `pickRoute` switch → `ROUTE_TABLE` + `registerRoute` | +1 | `375645ae` |
-| 2–3 | gateway registry | ISP/DIP | typed capability seam (`provideApi`/`requireApi`/`optionalApi`); translate/auth migrated | +1 | `375645ae` |
+| 1 | gateway upstream | OCP | `pickRoute` switch → `ROUTE_TABLE` + `registerRoute` (no new tests; refactor only) | ±0 | `375645ae` |
+| 2–3 | gateway registry | ISP/DIP | typed capability seam (`provideApi`/`requireApi`/`optionalApi`); translate/auth migrated | +2 | `375645ae` |
 | 4 | gateway upstream | SRP | session-id extract (`clientSessionId`) vs synthesize (`syntheticSessionId`) | +3 | `375645ae` |
 | 5 | gateway session | DIP | `SessionUserStore` seam + `liveSessionStore` default | +4 | `375645ae` |
 | 6 | agent terminal spill | SRP | `spill_path` → `Option` choke point; writers fail closed (review-#8 completion) | +2 | `917e3054` |
@@ -82,11 +82,25 @@ correctness is.
 | 47 | audits | verify | comment-claim integrity (all resolve; one correct Not-pinned) | — | — |
 | 48 | gateway mcp | tests | typed-code isolation pins (guess-proof texts + backstop table) | +2 | `90d7ad31` |
 | 49 | gateway translate | tests | rate-cap pin hardened to both sides, mutation-proven | ±0 | `b1a9b2b6` |
-| 50 | audits | verify | mutation audit: DO/spill/BYOK mutants each killed precisely; ledger+counts | — | (this commit: the ledger row cannot name its own final hash) |
+| 50 | audits | verify | mutation audit: DO/spill/BYOK mutants each killed precisely; ledger+counts | — | `6be0a5cb` |
+| 51 | agent terminal | tests | diag ring bound + char-safe write cap | +5 | `7e2b412c` |
+| 52 | gateway tooling | OCP | probe key table + `probeEnvKeyName`; cm channel pin | +2 | `63cabb39` |
+| 53 | gateway consistency | tests | OCP tables × registries cross-checks (route/key/probe) | +3 | `626654bc` |
+| 54 | gateway proxy | dead-code | prune 14 dead rewrite-table entries to live paths | +1 net | `96f12de7` |
+| 55 | docs | docs | count reconciliation (see note) + ledger R51–55 | — | (this commit: the ledger row cannot name its own final hash) |
+
+> **Counting correction (Round-55 audit):** prior cumulative claims
+> overstated gateway pins (+85/+89/+90 across R50/R53/R54 reports) by
+> conflating suite-delta with program-attributable tests — the 610
+> baseline predates 8 stage-n tests, and the R1/+1–R2-3/+1 split has been
+> corrected to R1 ±0 / R2–3 +2 above. Rebuilt from history: per-commit
+> added-`test(` lines sum to the base→HEAD `git grep` delta exactly
+> (gateway +82; agent lib +12 incl. `#[tokio::test]`; core +7). Trust the
+> table above, not the older reports.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +85 · agent lib +7 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
+Gateway +82 · agent lib +12 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
 
 ## Open threads (explicitly NOT started)
 
