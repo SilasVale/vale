@@ -28,6 +28,10 @@ import {
   scrubKeys,
 } from "../src/plugins/translate.ts";
 import { errorTypeForStatus } from "../src/http.ts";
+import {
+  __testUpstreamBodyErrorResponse as upstreamBodyErrorResponse,
+  redactSecrets,
+} from "../src/plugins/translate.ts";
 
 /** A tool schema whose property is literally named "messages" — the shape
  *  that broke BOTH earlier region-bounding schemes. */
@@ -388,53 +392,172 @@ test("errorTypeForStatus: only 429 is special — it drives client BACKOFF", () 
   assert.equal(errorTypeForStatus(200), "api_error", "a 2xx is not a rate limit");
 });
 
-test("upstream_error_envelope_gaps_are_pinned (DEFERRED — needs sign-off)", () => {
-  // Two translate arms hand-roll their !upstream.ok envelope instead of using
-  // upstreamBodyErrorResponse, and both are worse than it. These assertions
-  // pin the CURRENT state so that fixing either one is a DELIBERATE act: they
-  // fail the moment the shared helper is adopted, and the message points at
-  // the ledger entry to update.
+test("upstream error envelopes SCRUB credentials and carry Retry-After (R129)", async () => {
+  // This replaces the R119 DEFERRED pin, which asserted the OPPOSITE: that the
+  // nv/gmi arm copied the upstream's message into the client-visible text with
+  // no scrubKeys, and that the og/cm arm dropped the upstream message and
+  // Retry-After. Both are fixed; the pin fired, as designed, and pointed here.
   //
-  // WHY NOT FIXED: rule 1 (behavior-preserving) — adopting the helper changes
-  // what the client sees (message text, error type, and for the nv/gmi arm the
-  // presence of a credential in the text). Recorded in
-  // docs/solid-program.md -> Open threads.
-  const lines = readFileSync(new URL("../src/plugins/translate.ts", import.meta.url), "utf8").split(
-    "\n",
-  );
-  /** Lines from the unique arm-start line up to the arm's closing `  }`. */
-  const armOf = (startNeedle) => {
-    const at = lines.findIndex((l) => l.trim() === startNeedle);
-    assert.notEqual(at, -1, `arm not found: ${startNeedle}`);
-    const end = lines.findIndex((l, i) => i > at && l === "  }");
-    return lines.slice(at, end).join("\n");
+  // The tests are BEHAVIOURAL — they drive the real handler against a stub
+  // upstream — because the R119 finding was precisely that a source-shape
+  // assertion ("does this arm mention scrubKeys?") cannot see whether the
+  // credential actually reaches the caller.
+  const leaky = {
+    error: { message: "Invalid API key provided: sk-live-ABCDEF1234567890", type: "authentication_error" },
   };
 
-  // (a) nv/gmi arm: builds a client-visible message from the upstream body
-  //     WITHOUT scrubKeys — a provider echoing a credential leaks it.
-  const nvArm = armOf('if (route.kind === "nvidia" || route.kind === "gmi") {');
-  assert.ok(nvArm.includes("upstream.json()"), "the arm still parses the error body");
+  // ── The scrub itself, which is what the leak turned on ────────────────
+  assert.equal(
+    scrubKeys(leaky.error.message),
+    "Invalid API key provided: ***",
+    "scrubKeys must still redact a provider-echoed credential",
+  );
+  // The pattern covers the key families the gateway actually handles.
+  for (const key of ["sk-live-ABCDEF1234567890", "rc-abcdefgh1234", "or-abcdefgh1234"]) {
+    assert.ok(
+      !scrubKeys(`bad key ${key}`).includes(key),
+      `${key} must be redacted`,
+    );
+  }
+
+  // ── Retry-After must survive on a 429 ─────────────────────────────────
+  // round-116 fixed the status half of the og/cm arm; the body half (this) was
+  // left undone, so a 429 there could not be paced by the client.
+  const mk429 = () =>
+    new Response(JSON.stringify({ error: { message: "slow down" } }), {
+      status: 429,
+      headers: { "retry-after": "17", "content-type": "application/json" },
+    });
+  const resp = await upstreamBodyErrorResponse(mk429(), "og");
+  assert.equal(resp.status, 429);
+  const body = await resp.json();
+  assert.equal(body.error.type, "rate_limit_error", "429 → rate_limit_error");
+  assert.equal(
+    resp.headers.get("retry-after"),
+    "17",
+    "Retry-After must be forwarded so the client paces itself",
+  );
+  assert.ok(body.error.message.includes("og"), "the channel label is present");
+  assert.ok(body.error.message.includes("slow down"), "the upstream message is kept");
+});
+
+test("upstream error envelopes: label, defaults, and a leaked key end-to-end", async () => {
+  // Local fixture — `leaky` in the sibling test is scoped to it.
+  const leaky = {
+    error: {
+      message: "Invalid API key provided: sk-live-ABCDEF1234567890",
+      type: "authentication_error",
+    },
+  };
+  // A labelled arm names the CHANNEL. Providers rarely name themselves, so
+  // without it "Invalid API key provided: ***" leaves the caller unable to tell
+  // WHICH of their keys is at fault.
+  const resp = await upstreamBodyErrorResponse(
+    new Response(JSON.stringify({ error: { message: "boom" } }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    }),
+    "nvidia",
+  );
+  const body = await resp.json();
+  assert.ok(body.error.message.startsWith("nvidia: "), body.error.message);
+  assert.ok(body.error.message.includes("boom"));
+
+  // With NO label the message is unchanged from before the label existed —
+  // the existing passthrough call site must stay byte-identical.
+  const unlabelled = await upstreamBodyErrorResponse(
+    new Response(JSON.stringify({ error: { message: "boom" } }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  const ub = await unlabelled.json();
+  assert.equal(ub.error.message, "boom", "no label ⇒ no prefix");
+
+  // A non-JSON body falls back to the status default rather than throwing.
+  const garbage = await upstreamBodyErrorResponse(
+    new Response("<html>502 Bad Gateway</html>", { status: 502 }),
+    "og",
+  );
+  const gb = await garbage.json();
+  assert.equal(gb.error.type, "api_error");
+  assert.ok(gb.error.message.includes("502"), gb.error.message);
+
+  // THE LEAK, end to end: a provider that echoes the submitted credential must
+  // NOT have it reach the response body.
+  const leakyResp = await upstreamBodyErrorResponse(
+    new Response(JSON.stringify(leaky), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    }),
+    "nvidia",
+  );
+  const lb = await leakyResp.json();
   assert.ok(
-    !nvArm.includes("scrubKeys"),
-    "FIXED? The nv/gmi arm now scrubs keys — adopt upstreamBodyErrorResponse " +
-      "wholesale, then delete this pin and update the ledger Open-threads entry.",
+    !lb.error.message.includes("sk-live-ABCDEF1234567890"),
+    `the credential reached the client: ${lb.error.message}`,
+  );
+  assert.ok(lb.error.message.includes("***"), lb.error.message);
+  assert.equal(lb.error.type, "authentication_error", "a known upstream type is preserved");
+});
+
+test("redactSecrets: EXACT credentials, in any format (the layer that closes R119)", async () => {
+  // WHY THIS LAYER EXISTS. `scrubKeys` is a PREFIX heuristic whose pattern is
+  // `sk|rc|sc|or|xox[baprs]`. Measured, it does NOT cover `nvapi-…` — NVIDIA's
+  // own key format, on one of the two channels whose arm had the leak. A
+  // heuristic can always be outrun by a provider changing its scheme or by a
+  // format nobody thought of. Redacting the EXACT value the request sent
+  // cannot: the gateway knows what it put in the header.
+  const nvKey = "nvapi-ABCDEFGH1234567890";
+  assert.equal(
+    scrubKeys(`Invalid key: ${nvKey}`),
+    `Invalid key: ${nvKey}`,
+    "precondition: the pattern scrub does NOT catch nvapi- (this is why the " +
+      "exact layer is needed, and this assertion documents it)",
+  );
+  assert.equal(
+    redactSecrets(`Invalid key: ${nvKey}`, [nvKey]),
+    "Invalid key: ***",
+    "the exact layer must catch what the pattern misses",
   );
 
-  // (b) og/cm arm: no Retry-After passthrough, so a 429 cannot be paced.
-  const cmAt = lines.findIndex(
-    (l) => l.indexOf('const translateKey = route.kind === "commandgoat"') !== -1,
-  );
-  assert.notEqual(cmAt, -1, "the og/cm translate arm must still exist");
-  const cmError = lines
-    .slice(cmAt)
-    .slice(0, lines.slice(cmAt).findIndex((l) => l.includes("recordChannelSuccess")))
-    .join("\n");
-  assert.ok(
-    !cmError.includes("retry-after"),
-    "FIXED? The og/cm arm now carries Retry-After — see the ledger entry.",
-  );
+  // Format-agnostic by construction: any literal value is redacted.
+  for (const key of ["gmi-abcdefgh12345678", "cmd-abcdefgh12345678", "totally-unusual-key-99"]) {
+    assert.ok(!redactSecrets(`upstream said ${key} nope`, [key]).includes(key), key);
+  }
 
-  // And the shared helper itself still DOES scrub — so the comparison above is
-  // a real difference, not both-doing-nothing.
-  assert.equal(scrubKeys("bad key sk-live-ABCDEF1234567890"), "bad key ***");
+  // MULTIPLE secrets, and the LONGEST first: a shorter secret that is a
+  // PREFIX of a longer one must not carve it up and leave a residue behind.
+  const short = "abcdefgh";
+  const long = "abcdefgh12345678";
+  const out = redactSecrets(`key=${long}`, [short, long]);
+  assert.equal(out, "key=***", `longest-first ordering required, got: ${out}`);
+
+  // Degenerate inputs must NOT be replaced — a 3-char "secret" would mangle
+  // unrelated text, and null/undefined are the normal unset-key state.
+  assert.equal(redactSecrets("a cat sat", ["cat"]), "a cat sat", "too short to redact");
+  assert.equal(redactSecrets("keep me", [null, undefined, ""]), "keep me");
+
+  // ...and it composes with the pattern layer rather than replacing it.
+  const both = redactSecrets("nvapi-XYZ12345 and sk-live-ABCDEF1234567890", ["nvapi-XYZ12345"]);
+  assert.ok(!both.includes("nvapi-XYZ12345"), "exact layer ran");
+  assert.ok(scrubKeys(both).includes("***"), "pattern layer still applies afterwards");
+});
+
+test("upstreamBodyErrorResponse redacts the credential the request actually sent", async () => {
+  // End to end through the envelope, with a key format the pattern scrub
+  // misses — the exact scenario the R119 leak enabled on the nv/gmi arm.
+  const nvKey = "nvapi-ABCDEFGH1234567890";
+  const upstream = new Response(
+    JSON.stringify({ error: { message: `Invalid API key provided: ${nvKey}` } }),
+    { status: 401, headers: { "content-type": "application/json" } },
+  );
+  const resp = await upstreamBodyErrorResponse(upstream, "nvidia", [nvKey]);
+  const body = await resp.json();
+  assert.ok(
+    !body.error.message.includes(nvKey),
+    `the credential reached the client: ${body.error.message}`,
+  );
+  assert.ok(body.error.message.startsWith("nvidia: "), body.error.message);
+  assert.ok(body.error.message.includes("***"), body.error.message);
 });

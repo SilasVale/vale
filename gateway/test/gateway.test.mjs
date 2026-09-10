@@ -1019,9 +1019,14 @@ test("nv translate failure maps status/message and carries retry-after", async (
   assert.equal(res.status, 503);
   assert.equal(res.headers.get("retry-after"), "1");
   const body = await res.json();
-  assert.equal(body.error.message, "nim shed");
-  // This branch maps status/message/pacing only — no upstream-type adoption.
-  assert.equal(body.error.type, "api_error");
+  assert.equal(body.error.message, "nvidia: nim shed");
+  // SOLID R129 CHANGED THIS ASSERTION, deliberately. The arm used to map
+  // status/message/pacing ONLY and hard-code `api_error`, so an upstream's
+  // `overloaded_error` was flattened — losing the signal Claude Code reads to
+  // retry with backoff. Adopting the shared normalizer preserves a KNOWN
+  // Anthropic type, which is the same class of fix round-116 made for the
+  // status. `overloaded_error` is in that known set, so it survives now.
+  assert.equal(body.error.type, "overloaded_error");
 });
 
 test("or/z-ai/glm-5.2:free uses OpenRouter BYOK passthrough", async () => {  __clearCaches();
@@ -2296,7 +2301,9 @@ test("og chat/completions: upstream 500 with a text body keeps status + default 
   );
   assert.equal(res.status, 500);
   const body = await res.json();
-  assert.equal(body.error.message, "Upstream 500");
+  // R129: every upstream-error message now carries a `channel: ` label so a
+  // caller can tell WHICH of their keys/channels failed (see the R129 note).
+  assert.equal(body.error.message, "opencode: Upstream 500");
   assert.equal(body.error.type, "api_error");
 });
 
@@ -2312,7 +2319,7 @@ test("ds passthrough: retried 429 with a text body keeps status + rate_limit typ
   );
   assert.equal(res.status, 429);
   const body = await res.json();
-  assert.equal(body.error.message, "Upstream 429");
+  assert.equal(body.error.message, "deepseek: Upstream 429");
   assert.equal(body.error.type, "rate_limit_error");
 });
 
@@ -2333,7 +2340,7 @@ test("nv translate: upstream 400 with a text body keeps status, no retry", async
   );
   assert.equal(calls, 1);
   assert.equal(res.status, 400);
-  assert.match((await res.json()).error.message, /nvidia: upstream 400/);
+  assert.match((await res.json()).error.message, /nvidia: Upstream 400/);
 });
 
 // round-514 (coverage-driven): the responses-path og keyless + breaker arms
@@ -2370,7 +2377,7 @@ test("/v1/responses muse-spark: retried 429 text keeps status + rate_limit type"
   );
   assert.equal(res.status, 429);
   const body = await res.json();
-  assert.equal(body.error.message, "Upstream 429");
+  assert.equal(body.error.message, "opencode: Upstream 429");
   assert.equal(body.error.type, "rate_limit_error");
 });
 
@@ -2384,4 +2391,77 @@ test("or glm-5.2:free on 502 retries past the generic 4-attempt budget", async (
   );
   assert.ok(calls >= 5, `glm arm retries 10x, got ${calls}`);
   assert.equal(res.status, 502);
+});
+
+// ── SOLID R129: an upstream-echoed credential must not reach the caller ──
+//
+// WHY THIS TEST IS END-TO-END. R119's finding was that the nv/gmi arm copied
+// the upstream's error message into the CLIENT-VISIBLE response without
+// scrubbing. The obvious pin — "the helper redacts" — is not enough: mutation
+// testing showed a mutant that rewrote the ARM back to its unscrubbed
+// hand-rolled form passed every helper-level test, because those tests never
+// drive the arm. This one goes through `handleGateway` with a stubbed
+// upstream, so it fails if the arm stops using the scrubbing normalizer, no
+// matter how the helper itself behaves.
+test("nv/gmi /v1/messages: an upstream-echoed API key never reaches the client", async () => {
+  __clearCaches();
+  // The credential THIS request sends, in NVIDIA's own format — which the
+  // prefix heuristic (sk|rc|sc|or|xox…) does NOT match. Only redacting the
+  // exact value catches it, which is why the fix has two layers.
+  const nvKey = "nvapi-ABCDEFGH1234567890";
+  const { env, token } = gwEnv({ keys: { NVAPI_KEY: nvKey } });
+
+  const res = await withFetch(
+    async () =>
+      new Response(
+        JSON.stringify({ error: { message: `Invalid API key provided: ${nvKey}` } }),
+        { status: 401, headers: { "content-type": "application/json" } },
+      ),
+    () =>
+      post(env, token, {
+        model: "nv/nvidia/nemotron-3-ultra-550b-a55b",
+        max_tokens: 8,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+  );
+
+  const text = await res.text();
+  assert.ok(
+    !text.includes(nvKey),
+    `the gateway handed the user's own credential back to the caller: ${text}`,
+  );
+  assert.ok(text.includes("***"), `expected redaction, got: ${text}`);
+  assert.ok(text.includes("nvidia"), `the channel must still be identifiable: ${text}`);
+});
+
+test("gmi /v1/chat/completions: the same guarantee on the passthrough relay", async () => {
+  __clearCaches();
+  // The chat/completions and /v1/responses arms share `relayUpstreamResult`,
+  // which now forwards the credential to the normalizer. Different code path
+  // from the test above, so it needs its own coverage.
+  const gmiKey = "gmi-abcdefgh12345678";
+  const { env, token } = gwEnv({ keys: { GMI_API_KEY: gmiKey } });
+
+  const res = await withFetch(
+    async () =>
+      new Response(JSON.stringify({ error: { message: `bad key ${gmiKey}` } }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      }),
+    () =>
+      postH(
+        env,
+        token,
+        {
+          model: "gmi/MiniMaxAI/MiniMax-M3",
+          max_tokens: 8,
+          messages: [{ role: "user", content: "hi" }],
+        },
+        "/v1/chat/completions",
+      ),
+  );
+
+  const text = await res.text();
+  assert.ok(!text.includes(gmiKey), `credential echoed to the client: ${text}`);
+  assert.ok(text.includes("***"), `expected redaction, got: ${text}`);
 });

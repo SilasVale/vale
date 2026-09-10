@@ -267,8 +267,59 @@ async function upstreamFetchFailedResponse(
  * they are pinned by `upstream_error_envelope_gaps_are_pinned` and recorded in
  * docs/solid-program.md → Open threads for a human decision.
  */
-async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
-  let message = `Upstream ${upstream.status}`;
+// Exported for direct pins (SOLID R129) under a `__test` name: the envelope
+// decides what a caller SEES on every upstream failure, including whether a
+// provider-echoed credential is redacted, and that must be testable without
+// standing up an upstream. The second caller (the nv/gmi arm) is what made the
+// missing scrubKeys reachable in the first place.
+export async function __testUpstreamBodyErrorResponse(
+  upstream: any,
+  label = "",
+  secrets: (string | null | undefined)[] = [],
+): Promise<Response> {
+  return upstreamBodyErrorResponse(upstream, label, secrets);
+}
+
+/** Redact the EXACT credential strings a request carried.
+ *
+ * Unlike `scrubKeys`, this is not a pattern: it replaces the known literal
+ * values, so it works for ANY provider key format — including ones that do not
+ * exist yet — and cannot be defeated by a provider that echoes a key verbatim
+ * in an unusual shape. Guards against the degenerate cases that would make a
+ * blunt replace dangerous:
+ *
+ *   * shorter than 8 chars — too generic, replacing it would mangle unrelated
+ *     text (and no real credential is that short);
+ *   * an empty/absent value.
+ *
+ * Ordering matters: longest first, so an overlapping shorter secret cannot
+ * carve up a longer one and leave a residue of it behind.
+ *
+ * Exported for direct pins (SOLID R129). */
+export function redactSecrets(text: string, secrets: (string | null | undefined)[]): string {
+  let out = text;
+  const distinct = [...new Set(secrets.filter((s): s is string => !!s && s.length >= 8))];
+  distinct.sort((a, b) => b.length - a.length);
+  for (const s of distinct) {
+    out = out.split(s).join("***");
+  }
+  return out;
+}
+
+async function upstreamBodyErrorResponse(
+  upstream: any,
+  label = "",
+  secrets: (string | null | undefined)[] = [],
+): Promise<Response> {
+  // `label` names the CHANNEL (e.g. "nvidia"). It is additive: the existing
+  // call site passes none and is byte-identical (SOLID R129).
+  //
+  // It is worth having because the upstream's own message is usually the only
+  // text a caller sees, and providers rarely name themselves: NVIDIA returns
+  // "Invalid API key provided: …", which says nothing about which of the
+  // user's keys is at fault. The label is prepended to whichever message wins.
+  const prefix = label ? `${label}: ` : "";
+  let message = `${prefix}Upstream ${upstream.status}`;
   // Default by status BEFORE body sniffing: OpenRouter's error envelope
   // carries no Anthropic-style type, and a bare api_error on a 429 told
   // clients to give up instead of backing off.
@@ -277,8 +328,23 @@ async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
   try {
     const rawErr: any = await upstream.json();
     const err: any = rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
-    message =
-      scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) || message;
+    // THE SECURITY HALF — two layers, because the first is exact and the
+    // second is a heuristic (SOLID R129):
+    //
+    //   1. redactSecrets: replace the EXACT credentials this request carried.
+    //      The gateway knows what it sent, so this cannot miss a format and
+    //      cannot be outrun by a provider changing its key scheme. It is the
+    //      layer that actually closes the R119 finding.
+    //   2. scrubKeys: the prefix heuristic (sk-/or-/rc-/…), which catches keys
+    //      the request did not send — e.g. a provider echoing a key from its
+    //      own config, or a key appearing in a message we did not author.
+    //
+    // Layer 1 exists because layer 2 provably does not cover everything:
+    // measured, `nvapi-…` (NVIDIA's own format) passes scrubKeys untouched —
+    // and NVIDIA is one of the two channels whose arm had this leak.
+    const rawMsg = err.error?.message || err.message || JSON.stringify(err).slice(0, 200);
+    const upstreamMsg = scrubKeys(redactSecrets(rawMsg, secrets));
+    if (upstreamMsg) message = `${prefix}${upstreamMsg}`;
     const upType = err.error?.type || err.type;
     const KNOWN = [
       "rate_limit_error",
@@ -349,6 +415,10 @@ export async function relayUpstreamResult(
   inspectFailure: any,
   ctx: { generationId?: string | undefined },
   recordOgBodyFailure: boolean,
+  /// Credentials this request SENT, redacted from any upstream-echoed error
+  /// text before it reaches the caller (SOLID R129). Additive with a default,
+  /// so the call sites that predate it are unchanged.
+  secrets: (string | null | undefined)[] = [],
 ): Promise<Response> {
   if (!upstream) {
     // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
@@ -359,7 +429,7 @@ export async function relayUpstreamResult(
       await recordChannelFailure(env);
     }
     // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
-    return upstreamBodyErrorResponse(upstream);
+    return upstreamBodyErrorResponse(upstream, routeKind, secrets);
   }
   if (routeKind === "opencode") await recordChannelSuccess(env);
   const headers = new Headers(upstream.headers);
@@ -1028,6 +1098,7 @@ async function handleGatewayImpl(
       inspectFailure,
       ctx,
       true,
+      [bearerKey],
     );
   }
 
@@ -1111,6 +1182,7 @@ async function handleGatewayImpl(
       inspectFailure,
       ctx,
       true,
+      [bearerKey],
     );
   }
 
@@ -1158,23 +1230,29 @@ async function handleGatewayImpl(
       // plain budget (3 attempts, no retry502). Round-77 review catch.
       { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true },
     );
-    if (!upstream || !upstream.ok) {
-      const upStatus = upstream?.status || 502;
-      let message = `${route.kind}: ${detail || `upstream ${upStatus}`}`;
-      const extra: Record<string, string> = {};
-      try {
-        if (upstream && !upstream.ok) {
-          const err: any = await upstream.json();
-          const m = err.error?.message || err.message;
-          if (m) message = m;
-          // Carry Retry-After so the client paces against the upstream limit.
-          const ra = upstream.headers?.get?.("retry-after");
-          if (ra) extra["retry-after"] = ra;
-        }
-      } catch {
-        /* non-JSON error body */
-      }
-      return jsonError(upStatus, message, errorTypeForStatus(upStatus), extra);
+    if (!upstream) {
+      // No response AT ALL (network error / timeout before headers): there is
+      // no body to normalize, so the retry detail is all we have. 502 is the
+      // "upstream unreachable" default this arm has always used here.
+      return jsonError(
+        502,
+        `${route.kind}: ${detail || "upstream 502"}`,
+        errorTypeForStatus(502),
+      );
+    }
+    if (!upstream.ok) {
+      // SOLID R129: this arm used to hand-roll the envelope and copy the
+      // upstream's message into the CLIENT-VISIBLE text with NO scrubKeys, so
+      // a provider echoing the submitted credential ("Invalid API key
+      // provided: sk-live-…") sent that credential straight back to the
+      // caller. It now uses the shared normalizer, which scrubs, unwraps
+      // {"detail":…}, preserves a known Anthropic error.type and carries
+      // Retry-After — all of which this arm had been reimplementing partially.
+      // `byok.nv`/`byok.gmi` is the credential THIS request sent, so it is the
+      // one a provider would echo — passed for exact redaction.
+      return upstreamBodyErrorResponse(upstream, route.kind, [
+        route.kind === "nvidia" ? byok.nv : byok.gmi,
+      ]);
     }
     return openAIUpstreamToAnthropicResponse(upstream, body, body.model, upstreamModel);
   }
@@ -1265,6 +1343,7 @@ async function handleGatewayImpl(
       inspectFailure,
       ctx,
       true,
+      [bearerKey],
     );
   }
 
@@ -1332,12 +1411,19 @@ async function handleGatewayImpl(
     // EVERY failure to a non-retryable 502 api_error, dropping zen's 429
     // (client should back off, not fail) and its Retry-After. The passthrough
     // branch keeps the status; the translate branch must too.
-    const upStatus = upstream?.status || 502;
-    return jsonError(
-      upStatus,
-      `${translateLabel}: ${detail || `upstream ${upStatus}`}`,
-      errorTypeForStatus(upStatus),
-    );
+    if (!upstream) {
+      return jsonError(
+        502,
+        `${translateLabel}: ${detail || "upstream 502"}`,
+        errorTypeForStatus(502),
+      );
+    }
+    // SOLID R129: round-116 fixed the STATUS half of this arm and left the
+    // BODY half undone — the arm answered `${label}: ${detail}` and never read
+    // the upstream body, so zen's own error text and its Retry-After were both
+    // discarded. A 429 here could not be paced by the client even though every
+    // sibling branch carries the header. Now normalized like the others.
+    return upstreamBodyErrorResponse(upstream, translateLabel, [translateKey]);
   }
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure
   // count — otherwise yesterday's blips would combine with today's to trip.
