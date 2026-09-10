@@ -706,7 +706,35 @@ const commands = {
             console.error("setup: vale-agent.exe missing from package:", EXE_SRC);
             process.exit(1);
         }
-        fs.copyFileSync(EXE_SRC, EXE_DST);
+        // The just-killed agent's file handle can lag a beat (and AV may scan the
+        // fresh exe), so a bare copyFileSync raced EBUSY on reinstall — the update
+        // swap retries this 12x; setup never did. Retry, re-killing a respawned
+        // instance between attempts.
+        {
+            let copied = false;
+            for (let i = 0; i < 12; i++) {
+                try {
+                    fs.copyFileSync(EXE_SRC, EXE_DST);
+                    copied = true;
+                    break;
+                }
+                catch (e) {
+                    if (e?.code !== "EBUSY" && e?.code !== "EPERM" && e?.code !== "EACCES") {
+                        console.error("setup: exe copy failed:", e?.message || e);
+                        process.exit(1);
+                    }
+                    (0, child_process_1.spawnSync)("cmd", ["/c", "taskkill", "/F", "/IM", "vale-agent.exe"], { stdio: "ignore" });
+                    try {
+                        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 700);
+                    }
+                    catch { /* best-effort sleep */ }
+                }
+            }
+            if (!copied) {
+                console.error("setup: FATAL -- could not replace vale-agent.exe (locked). Close any running Vale agent and re-run the installer.");
+                process.exit(1);
+            }
+        }
         // B2: stage the boxed playwright bundle (node_modules ONLY — node.exe is
         // NOT bundled; the system node detected below runs it). Single small
         // artifact in the npm package, Vale version-locked.
