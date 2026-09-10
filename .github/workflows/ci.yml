@@ -154,6 +154,10 @@ jobs:
       # writer that publish-release.sh sources (extracted for testability).
       - name: release-lib regression checks
         run: bash scripts/test/release-lib.bash
+      # Smoke-helper guards: assert_want_sha256 (shared pre-publish sha gate,
+      # twin of the worker's SHA256_RE) — same convention, zero new tooling.
+      - name: smoke-helper regression checks
+        run: bash scripts/test/smoke-helpers.bash
       - name: bin/vale.js round-298 marker
         working-directory: agent
         run: grep -q "vale-release" vale-agent-npm/bin/vale.js || { echo "::error::compiled bin/vale.js missing round-298 marker — recompile src/vale.ts and commit bin/vale.js"; exit 1; }
