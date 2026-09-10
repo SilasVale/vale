@@ -346,10 +346,16 @@ jobs:
           AR="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-ar"
           sha256sum "$AR"
           echo "== LLVM tarball =="
-          sha256sum /tmp/llvm.tar.xz 2>/dev/null || echo "CACHE MISS (tarball absent)"
+          TB=/tmp/llvm.tar.xz
+          if [ ! -s "$TB" ]; then
+            echo "cache miss — downloading (1 GB, ~1 min on a runner)"
+            curl -fsSL -o "$TB" \
+              https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-18.04.tar.xz
+          fi
+          sha256sum "$TB"
           echo "== clang / lld extracted from it =="
           mkdir -p "$HOME/llvm18"
-          tar xf /tmp/llvm.tar.xz -C "$HOME/llvm18" --strip-components=1
+          tar xf "$TB" -C "$HOME/llvm18" --strip-components=1
           ls "$HOME/llvm18/bin/clang-18" "$HOME/llvm18/bin/lld" 2>/dev/null || true
           sha256sum "$HOME/llvm18/bin/clang-18" "$HOME/llvm18/bin/lld" 2>/dev/null || \
             sha256sum "$HOME/llvm18/bin/clang" "$HOME/llvm18/bin/lld-link"
