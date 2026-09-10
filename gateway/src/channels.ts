@@ -382,66 +382,72 @@ export const MODELS: { id: string; owned_by: string }[] = MODEL_REGISTRY.map((m)
   owned_by: m.ownedBy,
 }));
 
+/** The advertised models on one channel prefix, in catalogue order.
+ *
+ * `ROUTE_INFO[].models` used to be hand-maintained — the FIFTH copy of the
+ * catalogue — and had silently drifted from MODELS: the `og/` list omitted
+ * `openai/gpt-5.6-luna:floor[1m]` entirely (advertised by /v1/models, absent
+ * from the console's route breakdown), and `og/` + `cm/` listed theirs in a
+ * different order. Nothing caught it: the only ROUTE_INFO test checked that
+ * the PREFIXES were covered, never the lists.
+ *
+ * Deriving makes `routes[].models` by construction "the advertised models
+ * whose channel is this prefix" — the same relationship `adminPublic` states
+ * by returning `models: MODELS.map(...)` right beside it.
+ *
+ * `prefix` is the ROUTE_INFO spelling (`"og/"`, `"none"`). `"none"` is the
+ * no-prefix default channel: its ids carry no channel prefix at all, so it is
+ * NOT a filtered view and stays an explicit argument — see the call site. */
+export function routeModelsFor(prefix: string, noneModels: string[] = []): string[] {
+  if (prefix === "none") return noneModels;
+  return MODEL_REGISTRY.filter((m) => m.id.startsWith(prefix)).map((m) =>
+    m.id.slice(prefix.length),
+  );
+}
+
 // Route info shown in the console ("model routing" section). Public, no keys.
 export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models: string[] }[] = [
   {
     prefix: "og/",
     backend: "OpenCode Go",
     desc: "opencode.ai/zen/go — all models via chat/completions (OpenAI format); gpt-5.6-luna auto-routes via OpenRouter US exit (zen region-blocks it); muse-spark-* via /v1/responses forced through the US exit (Meta region policy)",
-    models: [
-      "deepseek-v4.1-flash",
-      "minimax-m3",
-      "mimo-v2.5",
-      "ox-alpha-free",
-      "gpt-5.6-luna",
-      "muse-spark-1.3-contributor",
-      "muse-spark-1.2-contributor",
-    ],
+    models: routeModelsFor("og/"),
   },
   {
     prefix: "or/",
     backend: "OpenRouter",
     desc: "openrouter.ai — user's own key (BYOK); dual-format passthrough, US-proxy switch decides direct vs exit",
-    models: [
-      "openai/gpt-5.6-luna:floor[1m]",
-      "z-ai/glm-5.2:free",
-      "nvidia/nemotron-3-ultra-550b-a55b:free",
-      "stealth/ox-alpha",
-    ],
+    models: routeModelsFor("or/"),
   },
   {
     prefix: "nv/",
     backend: "NVIDIA NIM",
     desc: "integrate.api.nvidia.com — official nemotron API, dedicated key capacity (build.nvidia.com), OpenAI format",
-    models: ["nvidia/nemotron-3-ultra-550b-a55b", "minimaxai/minimax-m3", "moonshotai/kimi-k3"],
+    models: routeModelsFor("nv/"),
   },
   {
     prefix: "gmi/",
     backend: "GMI Cloud",
     desc: "api.gmi-serving.com — MiniMax Week free tier (MiniMax-M3/M2.7 free 14 days, user's own GMI key), OpenAI format; any catalog model reachable as gmi/<id>",
-    models: ["MiniMaxAI/MiniMax-M3", "MiniMaxAI/MiniMax-M2.7"],
+    models: routeModelsFor("gmi/"),
   },
   {
     prefix: "qw/",
     backend: "Qwen MaaS (Aliyun)",
     desc: "token-plan.ap-southeast-1.maas.aliyuncs.com — Anthropic passthrough",
-    models: ["qwen3.8-max-preview", "qwen3.8-flash"],
+    models: routeModelsFor("qw/"),
   },
   {
     prefix: "cm/",
     backend: "Command Code (GOAT)",
     desc: "api.commandcode.ai/provider — GOAT plan & up get Provider API access (Go plan excluded); Anthropic /v1/messages translated to chat/completions (the Anthropic endpoint only serves claude-*), OpenAI format passes through; any catalog model reachable as cm/<id>",
-    models: [
-      "deepseek/deepseek-v4.1-flash",
-      "meituan/LongCat-2.0:free",
-      "poolside/laguna-s-2.1-free",
-    ],
+    models: routeModelsFor("cm/"),
   },
   {
     prefix: "none",
     backend: "Command Code (default)",
     desc: "no prefix → the default channel, Command Code (GOAT) with the model name passed through as-is; `auto` resolves to cm/deepseek/deepseek-v4.1-flash (per-user selection first, see model-route.ts). Note: cm/ rides Command Code's OpenAI endpoint, which rejects claude-* ids (those exist only on their Anthropic endpoint) — use a prefixed deepseek/OSS model there",
-    models: ["deepseek/deepseek-v4.1-flash"],
+    models: routeModelsFor("none", ["deepseek/deepseek-v4.1-flash"]),
   },
 ];
 

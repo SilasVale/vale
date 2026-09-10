@@ -30,12 +30,15 @@ import {
   OG_FORCE_US_PROXY,
   SEARCH_CAPABLE_WIRE_MODELS,
   HEALTH_CHANNELS,
+  ROUTE_INFO,
   modelSpec,
   wireSpec,
   reasoningMaxRawFor,
   reasoningMaxParsedFor,
   isResponsesOnlyModel,
+  routeModelsFor,
 } from "../src/channels.ts";
+import { AUTO_FALLBACK_LADDER, DEFAULT_ROUTE_MODEL } from "../src/plugins/model-route.ts";
 
 const channelOf = (id) => id.slice(0, id.indexOf("/"));
 const strippedOf = (id) => id.slice(id.indexOf("/") + 1);
@@ -291,5 +294,79 @@ test("the facets the registry owns are actually CONSULTED (no dead data)", () =>
   assert.ok(
     !translate.includes('upstreamModel === "stealth/ox-alpha"'),
     "the stealth/ox-alpha string test is back — it belongs in the registry",
+  );
+});
+
+test("ROUTE_INFO[].models is DERIVED — the console cannot drift from the catalogue", () => {
+  // THE FIFTH COPY. ROUTE_INFO[].models was hand-maintained and had silently
+  // drifted from MODELS in two ways that the old test could not see (it only
+  // checked that each PREFIX was covered):
+  //
+  //   * the `og/` list OMITTED `openai/gpt-5.6-luna:floor[1m]` — a model
+  //     /v1/models advertises and the console's route breakdown did not show;
+  //   * `og/` and `cm/` listed their models in a DIFFERENT ORDER from the
+  //     catalogue.
+  //
+  // /api/admin/public returns `routes: ROUTE_INFO` and `models: MODELS` in the
+  // same payload, so the two disagreeing was a visible inconsistency.
+  for (const r of ROUTE_INFO) {
+    if (r.prefix === "none") continue; // not a prefix-filtered view — see below
+    assert.deepEqual(
+      r.models,
+      MODEL_REGISTRY.filter((m) => m.id.startsWith(r.prefix)).map((m) =>
+        m.id.slice(r.prefix.length),
+      ),
+      `${r.prefix}: the console route list must be exactly the advertised models ` +
+        `on that channel, in catalogue order`,
+    );
+    // ...and it must be the DERIVED call, not a literal that happens to match.
+    assert.ok(
+      routeModelsFor(r.prefix).length === r.models.length,
+      `${r.prefix}: routeModelsFor disagrees with the entry`,
+    );
+  }
+  // Every prefix in MODELS appears as a route, and no route invents a prefix.
+  const routed = new Set(ROUTE_INFO.map((r) => r.prefix));
+  for (const p of new Set(MODEL_REGISTRY.map((m) => channelOf(m.id) + "/"))) {
+    assert.ok(routed.has(p), `no ROUTE_INFO entry for ${p}`);
+  }
+  // The no-prefix entry is explicitly NOT derived: those ids carry no channel
+  // prefix, so they cannot come from the registry (see routeModelsFor).
+  assert.equal(routeModelsFor("none").length, 0, "none must not filter the registry");
+  assert.deepEqual(
+    routeModelsFor("none", ["x/y"]),
+    ["x/y"],
+    "none passes its explicit list through",
+  );
+  assert.deepEqual(
+    ROUTE_INFO.find((r) => r.prefix === "none").models,
+    ["deepseek/deepseek-v4.1-flash"],
+    "the default channel's display name is unchanged",
+  );
+});
+
+test("the `auto` fallback ladder is a subset of the catalogue", () => {
+  // NOT derived from MODELS: the ORDER is the meaning (default channel first,
+  // then alternatives), so it stays an explicit list. What it must be is a
+  // SUBSET — a ladder entry that is not advertised (a typo, or a model dropped
+  // from the catalogue) is a fallback `isModelUsable` can never accept, and
+  // the loop would skip it in SILENCE while `auto` quietly picked something
+  // else.
+  const advertised = new Set(MODEL_REGISTRY.map((m) => m.id));
+  for (const m of AUTO_FALLBACK_LADDER) {
+    assert.ok(advertised.has(m), `${m} is in the fallback ladder but not advertised`);
+  }
+  // The default must be the FIRST rung — the ladder's own contract.
+  assert.equal(
+    AUTO_FALLBACK_LADDER[0],
+    DEFAULT_ROUTE_MODEL,
+    "the default channel must lead the ladder",
+  );
+  assert.ok(advertised.has(DEFAULT_ROUTE_MODEL), "the default must be advertised");
+  // Every rung is distinct: a duplicate wastes a probe and hides a gap.
+  assert.equal(
+    new Set(AUTO_FALLBACK_LADDER).size,
+    AUTO_FALLBACK_LADDER.length,
+    "the ladder has a duplicate rung",
   );
 });
