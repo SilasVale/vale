@@ -402,6 +402,52 @@ test("mcp: agent typed error (200 + ok:false + code) → TOOL_ERROR not DEVICE_U
   }
 });
 
+// SOLID Round-48: the TYPED-code arms (session_not_found/session_busy/
+// ssh_timeout) had pins only via message texts that ALSO match the
+// message-guess fallbacks — a reordered ternary could silently shift arms
+// with every gate green. These use guess-proof messages so ONLY the typed
+// arm can produce the verdict.
+test("mcp: typed codes map without message guessing", async () => {
+  const env = makeEnv();
+  const realFetch = globalThis.fetch;
+  const cases = [
+    [{ ok: false, error: "gone", code: "session_not_found" }, "SESSION_NOT_FOUND"],
+    [{ ok: false, error: "occupied", code: "session_busy" }, "SESSION_BUSY"],
+    [{ ok: false, error: "SSH stalled", code: "ssh_timeout" }, "TIMEOUT"],
+  ];
+  try {
+    let id = 60;
+    for (const [body, want] of cases) {
+      globalThis.fetch = async () => {
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      };
+      const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls" } }, id: id++ }), env);
+      const data = await res.json();
+      assert.equal(data.error.data.code, want, `typed ${body.code} (guess-proof text)`);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("mcp: every other typed agent code → TOOL_ERROR (round-64 backstop)", async () => {
+  const env = makeEnv();
+  const realFetch = globalThis.fetch;
+  try {
+    let id = 70;
+    for (const code of ["keychain", "invalid_params", "internal", "serial_port_not_open", "ssh_connect_failed"]) {
+      globalThis.fetch = async () => {
+        return new Response(JSON.stringify({ ok: false, error: "plain failure", code }), { status: 200, headers: { "content-type": "application/json" } });
+      };
+      const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_open", arguments: { device: "d1" } }, id: id++ }), env);
+      const data = await res.json();
+      assert.equal(data.error.data.code, "TOOL_ERROR", `typed ${code} is device-UP`);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 // ── JSON-RPC edge methods (round-367: dispatch arms with zero pins) ──
 
 test("mcp: ping → empty result echoing the id", async () => {
