@@ -725,6 +725,37 @@ test("cm /v1/chat/completions is a direct OpenAI passthrough with CMD_API_KEY", 
 // Laguna S 2.1 -free are OpenAI passthroughs like deepseek — prefix stripped,
 // CMD_API_KEY bearer, any model id accepted.
 
+// cm/deepseek/deepseek-v4.1-flash (2026-09-10): V4.1 landed in the Command
+// Code catalog under its OWN versioned slug, so cm/ needs no wire remap —
+// unlike og/, whose zen/go lane slug is version-less (OG_WIRE_REMAP). The
+// pin matters because a stray remap entry keyed on "deepseek-v4.1-flash"
+// would silently rewrite this wire model to an upstream 404.
+test("cm/deepseek/deepseek-v4.1-flash: versioned slug forwarded verbatim", async () => {
+  __clearCaches();
+  const { env, token } = gwEnv({ keys: { CMD_API_KEY: "sk-cm" } });
+  let seen;
+  const res = await withFetch(async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify({
+      id: "gen_cm41", object: "chat.completion",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () => post(env, token, {
+    model: "cm/deepseek/deepseek-v4.1-flash",
+    max_tokens: 8,
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+  }, "/v1/chat/completions"));
+  assert.equal(seen.url, "https://api.commandcode.ai/provider/v1/chat/completions");
+  const auth = seen.init.headers.get
+    ? seen.init.headers.get("authorization")
+    : seen.init.headers.Authorization;
+  assert.equal(auth, "Bearer sk-cm");
+  assert.equal(JSON.parse(seen.init.body).model, "deepseek/deepseek-v4.1-flash");
+  assert.equal(res.status, 200);
+});
+
 for (const freeModel of ["meituan/LongCat-2.0:free", "poolside/laguna-s-2.1-free"]) {
   test(`cm/${freeModel} /v1/chat/completions is a direct OpenAI passthrough with CMD_API_KEY`, async () => {
     __clearCaches();

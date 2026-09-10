@@ -61,8 +61,11 @@
     // Entries match EITHER the advertised id OR the wire name (isVisionCapable
     // checks both) — deepseek-flash is zen/go's V4.1 lane slug, covering
     // og/deepseek-v4.1-flash and the raw og/deepseek-flash spelling. Live
-    // image test on zen/go 2026-09-10 passed.
-    "VISION_CAPABLE_MODELS": "amd/DeepSeek-V4-Flash-Vision-Exp, deepseek-flash"
+    // image test on zen/go 2026-09-10 passed. cm/deepseek/deepseek-v4.1-flash
+    // joined on 2026-09-10 (V4.1 landed in the Command Code catalog): the
+    // chat/completions passthrough — which does NO pre-describing — read a
+    // 240x80 PNG back verbatim, so the upstream model sees images natively.
+    "VISION_CAPABLE_MODELS": "amd/DeepSeek-V4-Flash-Vision-Exp, deepseek-flash, cm/deepseek/deepseek-v4.1-flash"
   }
   // Vale Gate — unified AI gateway + device console. Custom domains are added
   // in the dashboard (custom_domains API is OAuth-only).

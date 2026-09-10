@@ -182,6 +182,16 @@ export const MODELS: { id: string; owned_by: string }[] = [
   { id: "cm/deepseek/deepseek-v4-flash", owned_by: "command-code" },
   { id: "cm/meituan/LongCat-2.0:free", owned_by: "command-code" },
   { id: "cm/poolside/laguna-s-2.1-free", owned_by: "command-code" },
+  // 2026-09-10: V4.1 Flash reached the Command Code catalog as
+  // `deepseek/deepseek-v4.1-flash` (1M ctx) — same slug SHAPE as the V4 line,
+  // so cm/ needs NO wire remap (unlike og/, whose zen/go lane slug is
+  // version-less; here the version is in the slug itself). Live-verified
+  // through this gateway the same day: text on /v1/chat/completions and
+  // /v1/messages, and a 240x80 PNG read back verbatim on the
+  // chat/completions passthrough — that path never pre-describes images, so
+  // the image truly reached the upstream model (native vision, hence the
+  // VISION_CAPABLE_MODELS entry in wrangler.jsonc).
+  { id: "cm/deepseek/deepseek-v4.1-flash", owned_by: "command-code" },
   // amd/ — AMD Radeon Cloud (developer.amd.com.cn/radeon), free BYOK pool. The
   // catalog is GET /v1/models; any catalog slug is reachable as amd/<id> (case
   // matters: DeepSeek-V4-Flash, not deepseek-v4-flash). Two live warnings from
@@ -252,6 +262,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     desc: "api.commandcode.ai/provider — GOAT plan & up get Provider API access (Go plan excluded); Anthropic /v1/messages translated to chat/completions (the Anthropic endpoint only serves claude-*), OpenAI format passes through; any catalog model reachable as cm/<id>",
     models: [
       "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4.1-flash",
       "meituan/LongCat-2.0:free",
       "poolside/laguna-s-2.1-free",
     ],
@@ -297,6 +308,7 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M3" },
   { id: "gmi", model: "gmi/MiniMaxAI/MiniMax-M2.7" },
   { id: "cm", model: "cm/deepseek/deepseek-v4-flash" },
+  { id: "cm", model: "cm/deepseek/deepseek-v4.1-flash" },
   { id: "cm", model: "cm/meituan/LongCat-2.0:free" },
   { id: "cm", model: "cm/poolside/laguna-s-2.1-free" },
   // amd/ — Radeon Cloud free pool. One card per SERVING model so the console

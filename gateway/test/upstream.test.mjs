@@ -12,6 +12,13 @@ test("wireModelName: og display names alias to zen/go lane slugs; others verbati
   assert.equal(wireModelName("og", "deepseek-flash"), "deepseek-flash", "raw lane slug passes through");
   assert.equal(wireModelName("og", "deepseek-v4-flash"), "deepseek-v4-flash", "no remap entry → verbatim");
   assert.equal(wireModelName("ds", "deepseek-v4.1-flash"), "deepseek-v4.1-flash", "remap is og-only");
+  // cm/ advertises its upstream-catalog slug name-for-name (V4.1 included) —
+  // the remap table must never grow a cm-visible key.
+  assert.equal(
+    wireModelName("cm", "deepseek-v4.1-flash"),
+    "deepseek-v4.1-flash",
+    "cm keeps the provider's versioned slug",
+  );
   // Every remap target must itself be remap-free (no chains).
   for (const t of Object.values(OG_WIRE_REMAP)) {
     assert.equal(OG_WIRE_REMAP[t], undefined, `remap target ${t} must not remap again`);
