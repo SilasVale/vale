@@ -49,28 +49,38 @@ re-litigated.
 |---|---|---|---|
 | 1 **Dispatch** | accept a quest | the operator states a goal | **MISSING** — E1: no goal-level tool exists |
 | 2 **Advance** | the character walks | `terminal_execute` bounded wait + `run_in_background` | **DONE** |
-| 3 **Gate** | choose at a fork | pause at a capability boundary for approval | **MISSING** — see `proposal-control-path.md` |
+| 3 **Gate** | choose at a fork | an ARMED session blocks each execute until a person decides; unanswered = NOT run (fail-closed) | **DONE** for the opt-in whole-step form (`3b7bbe9c`, `cff3196f`). The capability-scope refinement (§D1) is still proposed — see the note below |
 | 4 **Evidence** | hit feedback | `evidence.rs`, actions.jsonl, screenshots; the audit trail also records **who was driving** (`control` events), so a reader can tell an AI-driven window from a human-driven one | **DONE** (`4fabdacd`, surfaced in the path view by `807567cc`) |
 | 5 **Take over** | grab the controller | an explicit hold: the AI is refused with `human_in_control` while a person owns the session, and hands back on request | **DONE** — the hold is real, visible in `terminal_list`, and one click in both densities (`fd1013c0`, `f0f06fa8`) |
 | 6 **Harvest** | clear / save | durable audit JSONL + accumulating memory | **DONE** — a walked path saves as a recipe into the SHARED memory store, so AI clients can find and re-walk it (`ee563fcc`) |
 
 Originally two beats done, two half-done, two missing. As of this writing
-**four are done** (advance, evidence, take-over, harvest) and the remaining gap
-is exactly two beats:
+**five of the six are done** (advance, gate, evidence, take-over, harvest) and the
+remaining gap is exactly one beat:
 
 * **Dispatch** — the operator cannot state a GOAL, only issue commands. This is
   the head of the loop and it needs an agent-side surface that does not exist
   (E1: 49 primitives, zero goal-level tools).
-* **Gate** — there is no approval at a capability boundary. This is the waist:
-  the operator can now STOP the AI (beat 5) but cannot authorise or redirect it
-  mid-run.
+* **Dispatch** — the operator cannot state a GOAL, only issue commands. This is
+  the head of the loop and it needs an agent-side surface that does not exist
+  (E1: 49 primitives, zero goal-level tools).
 
-Both are missing for the same kind of reason rather than two separate ones:
-neither can be built in the panel. Dispatch needs a new agent concept; the gate
-needs §D1's capability scopes and §D3's boundary pause, both still proposals.
-Everything the panel could reach on its own has now been built, so the next
-piece of this design is an AGENT-side change — recorded here so the panel is not
-extended further merely because that is where the momentum was.
+WHAT THE GATE SHIPPED, AND WHAT IT DID NOT. What is built is the WHOLE-STEP form:
+arm a session and every execute waits for a decision. That is the simplest
+honest gate and it needs nothing from an AI client. What is NOT built is §D1's
+CAPABILITY SCOPES — approving "writes" once rather than each write — which is the
+refinement that stops a gate from being annoying on a long run. Without it, an
+armed session asks about every single command; that is why approval mode is
+opt-in and off by default rather than a policy.
+
+So the remaining work splits cleanly, and only one half is agent-side:
+
+  * **Dispatch** needs a new agent concept AND, for anything beyond a session
+    label, cooperation from AI clients (the intent layer, §P3). It is the one
+    beat that cannot be finished here.
+  * **Capability scopes** are agent-side and self-contained. §D1 and §D3 remain
+    the design; they are the next piece if the whole-step gate proves too noisy
+    in real use — which is an empirical question, not a design one.
 
 ### 2.1 The structural gap the loop exposes
 

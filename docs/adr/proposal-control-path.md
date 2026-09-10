@@ -170,6 +170,18 @@ behaviour from it.
 
 ## Milestones
 
+> **STATUS (2026-09-10).** §D5 and a WHOLE-STEP form of §D2/§D3 have shipped: an
+> armed session blocks each `terminal_execute` until a person decides, the wait is
+> bounded, and an unanswered request is NOT run (fail-closed). Two codes carry the
+> outcome — `approval_denied` and `approval_timeout` — deliberately distinct, for
+> the same reason `human_in_control` is distinct from `session_busy`.
+>
+> What is NOT built: §D1's capability scopes, and §D2's resumable `pending` /
+> `resume_token` return. Both matter for the same reason — an armed session
+> currently asks about EVERY command, so on a long run the gate is noisy, and a
+> client that gives up at its own timeout cannot resume the question. Those are
+> the next pieces; nothing here contradicts the design below.
+
 Staged so each step is independently useful and the risky part is last.
 
 | # | Stage | External dependency | Gate |
