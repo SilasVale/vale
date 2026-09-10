@@ -366,7 +366,26 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R115 — a doc that claimed a consolidation
+Last updated: 2026-09-10 SOLID-R122 (docs cadence; R116–R121 caught up
+  below). **R116 was an AGENT round and was missed in this log** — the
+  download gate in `plugins/update/tools.rs` got an adversarial pin, and
+  mutation testing proved the first version worthless (a `starts_with` →
+  `ends_with` swap left it GREEN; the missed shape was the suffix trap
+  `notagent.saisi.online` against site `agent.saisi.online`). **R117–R121
+  were GATEWAY rounds** — their detail lives in `docs/solid-program.md` and
+  `docs/ARCHITECTURE.md`, not here: `handleGatewayImpl` went 798 → 741 lines,
+  the request-shaping cores + BYOK key contract were extracted and pinned, an
+  upstream-error credential-echo hole was found and PINNED (not fixed — needs
+  sign-off, see the ledger's Open threads), and the model catalogue was
+  collapsed into ONE `MODEL_REGISTRY` so adding a model is one record instead
+  of six coordinated edits. This round is the R25 docs-cadence refresh: pin
+  totals and gate counts re-measured from the runners (gateway 748, agent
+  479, core 25, CLI 20, relay 54, index 73, extension 9, proxies 20), which
+  caught three stale numbers, two jammed ledger lines, and a stale
+  `handleGatewayImpl` line count (746 → 741). Program ledger:
+  docs/solid-program.md.
+
+Previous round: 2026-09-10 SOLID-R115 — a doc that claimed a consolidation
   which had not happened. `crate::now_millis`'s own comment said it existed to
   kill a duplicated 3-liner — but the playwright plugin still carried its OWN
   byte-identical copy (`manager::now_ms`) plus TWO inline copies in
