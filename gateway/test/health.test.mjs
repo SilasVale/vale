@@ -44,12 +44,13 @@ test("health: breaker closed → all channels ok, recommended still qw", async (
 
 test("health: channels cover all prefixes in priority order", async () => {
   const h = await buildHealth(closedEnv);
-  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "qw", "og", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv", "gmi", "gmi", "cm", "cm", "cm", "amd", "amd"]);
+  assert.deepEqual(h.channels.map((c) => c.id), ["ds", "qw", "qw", "og", "og", "og", "og", "og", "og", "or", "or", "or", "or", "or", "nv", "gmi", "gmi", "cm", "cm", "cm", "amd", "amd"]);
   assert.deepEqual(h.channels.map((c) => c.model), [
     "ds/deepseek-v4-flash",
     "qw/qwen3.8-max-preview",
     "qw/qwen3.8-flash",
     "og/deepseek-v4-flash",
+    "og/deepseek-flash",
     "og/gpt-5.6-luna",
     "og/mimo-v2.5",
     "og/ox-alpha-free",
