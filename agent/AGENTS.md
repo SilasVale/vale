@@ -338,7 +338,23 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R98 (`28c7c71f`) — the pwout AI-evidence feed
+Last updated: 2026-09-10 SOLID-R99 — the update BUSY MARKER is now
+  one defined thing. Its path was spelled out twice (a Rust PathBuf join in
+  `agent_update` + two hand-written string literals inside the generated
+  PowerShell swap script), and the acquire/reclaim decision sat inline in the
+  300-line handler closure with ZERO test coverage despite three recorded
+  incidents. Now `BUSY_MARKER_REL` is the single definition behind
+  `busy_marker_path()` (the acquirer) and `busy_marker_ps()` (the script),
+  with a contract test pinning that both name the same file; the decision is
+  `acquire_busy_marker(path, stale_after)` (atomic `create_new`, reclaim the
+  stale marker at MOST once so a locked marker cannot spin). +4 pins,
+  mutation-proven (dropping the reclaim-once flag HANGS the suite — timeout
+  exit 124; changing the relpath or the join shape each fails the contract
+  test). Behavior unchanged; agent gates 425 feat-gated / 417 default green,
+  clippy -D warnings clean both configs, fmt clean, xwin check OK.
+  Program ledger: docs/solid-program.md. No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R98 (`28c7c71f`) — the pwout AI-evidence feed
   is now ONE owned module (`src/evidence.rs`, crate-private): actions.jsonl
   append + newest-first read, shot listing, basename guard and the
   `browser-actions-changed` push, replacing two inline producers (playwright

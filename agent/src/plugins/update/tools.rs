@@ -122,6 +122,120 @@ fn cleanup_staged(dir: &std::path::Path) {
     let _ = std::fs::remove_dir_all(dir.join(".vale-update"));
 }
 
+// ── Update busy marker ───────────────────────────────────────
+//
+// The exclusive cross-process update lock, and the one place its path is
+// defined. It used to be spelled out TWICE: the Rust acquirer built
+// `<ProgramData>\ValeAgent\update-busy` from PathBuf joins while the
+// generated PowerShell swap script carried the same location as two
+// hand-written string literals. A drift between the two is invisible until
+// an update actually runs — and then the swap releases a file the agent
+// never created, the marker survives, and every later update is refused
+// for up to an hour. BUSY_MARKER_REL is the single definition;
+// busy_marker_path() and busy_marker_ps() both derive from it, and a
+// contract test pins that they still name the same file.
+//
+// The acquire/reclaim DECISION (used to sit inline in the 300-line
+// agent_update closure, with no test coverage despite three incidents) is
+// acquire_busy_marker below.
+
+/// ProgramData-relative location of the update busy marker.
+const BUSY_MARKER_REL: &str = r"ValeAgent\update-busy";
+
+/// How long an abandoned marker blocks further updates before it may be
+/// reclaimed. A crashed install leaves the marker behind, so without a
+/// staleness window that one crash would lock the device out of updates
+/// FOREVER (round-54: a stuck marker blocked updates for up to an hour).
+const BUSY_STALE_SECS: u64 = 3600;
+
+/// `%ProgramData%` (machine-wide). NOT `%APPDATA%`: the agent runs as SYSTEM
+/// and the tray as the user, whose APPDATA resolve to DIFFERENT directories
+/// — the original guard never fired across those processes.
+fn programdata_dir() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+}
+
+/// The busy marker as a real path (the acquirer's view of it).
+fn busy_marker_path() -> PathBuf {
+    let mut p = programdata_dir();
+    // Join the SHARED constant component-by-component: a single
+    // `join(BUSY_MARKER_REL)` would treat the backslash as part of one file
+    // name on Unix, so the two spellings would stop agreeing off-Windows.
+    for part in BUSY_MARKER_REL.split('\\') {
+        p.push(part);
+    }
+    p
+}
+
+/// The busy marker as the generated swap script spells it — PowerShell
+/// resolves `$env:ProgramData` on the device at run time.
+#[allow(dead_code)] // used by the Windows swap script; unit-tested on all hosts
+fn busy_marker_ps() -> String {
+    format!(r"$env:ProgramData\{BUSY_MARKER_REL}")
+}
+
+/// Take the exclusive update marker, or refuse the update.
+///
+/// The marker is acquired ATOMICALLY (`create_new`): the old
+/// exists()-then-write check let two concurrent agent_update calls both pass
+/// and write the same installer file (round-54).
+///
+/// A marker older than `stale_after` belongs to a crashed install and is
+/// reclaimed — but at most ONCE per call: if that reclaim fails to remove it
+/// (locked, or not a plain file), the retry would see it again and the loop
+/// would spin forever, so the second sighting is reported as a conflict
+/// instead (round-54's "must not spin").
+///
+/// The caller must NOT release the marker after a successful hand-off
+/// (round-115): the swap is still running (taskkill, binary copy, restart
+/// take seconds), and clearing it there re-opened the very check-then-act
+/// window this marker exists to close. The swap script deletes it once the
+/// install provably completes; a crashed install falls back to the
+/// staleness window above.
+fn acquire_busy_marker(
+    path: &std::path::Path,
+    stale_after: std::time::Duration,
+) -> Result<(), DeviceError> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let stale_of = || {
+        std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|age| age.as_secs() > stale_after.as_secs())
+            .unwrap_or(false)
+    };
+    let mut reclaimed = false;
+    loop {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if !reclaimed && stale_of() {
+                    let _ = std::fs::remove_file(path);
+                    reclaimed = true;
+                    continue;
+                }
+                return Err(DeviceError::Internal {
+                    message: "another update is already in progress".to_string(),
+                });
+            }
+            Err(e) => {
+                return Err(DeviceError::Internal {
+                    message: format!("update busy marker: {e}"),
+                })
+            }
+        }
+    }
+}
+
 /// Install from the downloaded npm tgz (the single update artifact).
 /// Extracts the package (vale-agent.exe + boxed playwright + cloudflared) into a temp dir, then swaps the exe in
 /// place via the same WMI-survives-the-kill pattern vale.js uses: a small
@@ -228,6 +342,9 @@ async fn update_from_tgz(installer: &std::path::Path, bytes: &[u8], release_vers
             .to_string_lossy()
             .replace('\'', "''");
         let scripts = dir.join("scripts").to_string_lossy().replace('\'', "''");
+        // The marker path the script must release — same single definition the
+        // acquirer above uses (busy_marker_ps), never a second literal.
+        let busy_ps = busy_marker_ps();
         let script = format!(
             r#""[$(Get-Date -Format o)] update start" | Out-File '{logs}\vale-update.log' -Append;
 try {{
@@ -237,7 +354,7 @@ $uwatch = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(3) -Repetitio
 $uprincipal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest;
 $usettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -RestartCount 8 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable;
 Register-ScheduledTask ValeAgent -Action $uaction -Trigger @($uboot,$uwatch) -Principal $uprincipal -Settings $usettings -Force -ErrorAction Stop | Out-Null;
-}} catch {{ "[$(Get-Date -Format o)] task repoint FAILED — aborting, old version keeps running" | Out-File '{logs}\vale-update.log' -Append; Remove-Item -Force -ErrorAction SilentlyContinue "$env:ProgramData\ValeAgent\update-busy"; exit 1 }};
+}} catch {{ "[$(Get-Date -Format o)] task repoint FAILED — aborting, old version keeps running" | Out-File '{logs}\vale-update.log' -Append; Remove-Item -Force -ErrorAction SilentlyContinue "{busy_ps}"; exit 1 }};
 "[$(Get-Date -Format o)] task repointed at etc\config.yaml" | Out-File '{logs}\vale-update.log' -Append;
 try {{ Stop-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{}};
 Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue;
@@ -263,7 +380,7 @@ if (-not $ok) {{ Remove-Item -Force -ErrorAction SilentlyContinue '{q}\vale-agen
 try {{ Start-ScheduledTask ValeAgent -ErrorAction Stop }} catch {{ schtasks /Run /TN ValeAgent }};
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '{q}\.vale-update';
 Remove-Item -Force -ErrorAction SilentlyContinue '{scripts}\vale-update.ps1','{q}\vale-update.ps1';
-Remove-Item -Force -ErrorAction SilentlyContinue "$env:ProgramData\ValeAgent\update-busy""#,
+Remove-Item -Force -ErrorAction SilentlyContinue "{busy_ps}""#,
         );
         let ps1 = crate::paths::scripts_dir().join("vale-update.ps1");
         if let Some(parent) = ps1.parent() {
@@ -490,54 +607,11 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                 //    the agent runs as SYSTEM and the tray as the user, so
                 //    APPDATA resolves to DIFFERENT directories — the old guard
                 //    never fired across processes.
-                let busy = std::env::var_os("ProgramData")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-                    .join("ValeAgent")
-                    .join("update-busy");
-                // Same 60-min staleness rule as the tray: a crashed update's
-                // marker must not block forever. The marker is acquired
-                // ATOMICALLY (create_new) — the old exists()+write check-then-act
-                // let two concurrent agent_update calls both pass the check and
-                // write the same installer file (round-54).
-                let stale_of = || {
-                    std::fs::metadata(&busy)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| t.elapsed().ok())
-                        .map(|age| age.as_secs() > 3600)
-                        .unwrap_or(false)
-                };
-                if let Some(parent) = busy.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let mut reclaimed = false;
-                loop {
-                    match std::fs::OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .open(&busy)
-                    {
-                        Ok(_) => break, // marker acquired
-                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                            // Reclaim a stale (crashed) marker ONCE; a reclaim
-                            // that fails (locked/denied) must not spin forever.
-                            if !reclaimed && stale_of() {
-                                let _ = std::fs::remove_file(&busy);
-                                reclaimed = true;
-                                continue;
-                            }
-                            return Err(DeviceError::Internal {
-                                message: "another update is already in progress".to_string(),
-                            });
-                        }
-                        Err(e) => {
-                            return Err(DeviceError::Internal {
-                                message: format!("update busy marker: {e}"),
-                            })
-                        }
-                    }
-                }
+                //    Acquisition + the 60-min staleness reclaim live in
+                //    acquire_busy_marker (atomic create_new; reclaim at most
+                //    once so a locked marker cannot spin).
+                let busy = busy_marker_path();
+                acquire_busy_marker(&busy, std::time::Duration::from_secs(BUSY_STALE_SECS))?;
 
                 // 3. Download + install in a BACKGROUND task (round-84): the old
                 //    code downloaded synchronously in the MCP handler — a slow
@@ -774,6 +848,117 @@ mod tests {
         cleanup_staged(&dir); // must not error or create anything
         assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Fresh temp path for one busy-marker test (never created here — the
+    /// point is what acquire_busy_marker does with it).
+    fn marker_path(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "vale-busy-{}-{}-{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("update-busy")
+    }
+
+    /// Backdate a marker past the staleness window. NOTE the window is
+    /// compared in WHOLE SECONDS (faithful to the original
+    /// `age.as_secs() > 3600`), so a just-created marker is 0 s old and
+    /// `Duration::ZERO` would NOT make it stale — the mtime has to move.
+    /// File::open + set_modified works for both files and directories.
+    fn age_marker(p: &std::path::Path) {
+        let old =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(BUSY_STALE_SECS + 60);
+        std::fs::File::open(p)
+            .expect("open marker to backdate it")
+            .set_modified(old)
+            .expect("backdate marker mtime");
+    }
+
+    #[test]
+    fn busy_marker_acquire_creates_then_conflicts() {
+        let p = marker_path("acquire");
+        assert!(!p.exists());
+        acquire_busy_marker(&p, std::time::Duration::from_secs(BUSY_STALE_SECS)).unwrap();
+        assert!(p.exists(), "a successful acquire leaves the marker behind");
+
+        // A second (concurrent) update is refused while the marker is fresh.
+        let err = acquire_busy_marker(&p, std::time::Duration::from_secs(BUSY_STALE_SECS))
+            .expect_err("a fresh marker must refuse a second update")
+            .to_string();
+        assert!(
+            err.contains("another update is already in progress"),
+            "message must stay recognizable to callers: {err}"
+        );
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn busy_marker_reclaims_an_abandoned_marker() {
+        // A crashed install's marker is older than the window → reclaimed
+        // (round-54: without this, one crash locked updates out forever).
+        let p = marker_path("stale");
+        std::fs::write(&p, b"").unwrap();
+        age_marker(&p);
+        acquire_busy_marker(&p, std::time::Duration::from_secs(BUSY_STALE_SECS))
+            .expect("an abandoned marker is reclaimed");
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn busy_marker_never_spins_when_reclaim_cannot_remove_it() {
+        // The reclaim runs at most ONCE. If removing the abandoned marker
+        // fails, the retry sees it again — without the once-flag this loop
+        // would spin forever (round-54's "must not spin"). A DIRECTORY at the
+        // marker path reproduces that deterministically: create_new reports
+        // AlreadyExists, and remove_file (not remove_dir) cannot clear it.
+        let p = marker_path("unremovable");
+        std::fs::create_dir_all(&p).unwrap();
+        age_marker(&p); // stale, so the reclaim path is actually entered
+        let err = acquire_busy_marker(&p, std::time::Duration::from_secs(BUSY_STALE_SECS))
+            .expect_err("an unremovable marker must be reported, not retried forever")
+            .to_string();
+        assert!(
+            err.contains("another update is already in progress"),
+            "{err}"
+        );
+        assert!(p.is_dir(), "the unremovable marker is left as found");
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn busy_marker_path_agrees_with_the_swap_script_spelling() {
+        // The marker is released by the generated PowerShell script, which
+        // spells the same file as "$env:ProgramData\…". If the two spellings
+        // drift, the swap deletes a file the agent never created: the marker
+        // survives and every later update is refused for up to an hour. Pin
+        // that both sides still name the same location.
+        let ps = busy_marker_ps();
+        assert_eq!(ps, r"$env:ProgramData\ValeAgent\update-busy");
+        let rel = ps
+            .strip_prefix(r"$env:ProgramData\")
+            .expect("the script's spelling is ProgramData-rooted");
+        let mut expected = programdata_dir();
+        for part in rel.split('\\') {
+            expected.push(part);
+        }
+        assert_eq!(busy_marker_path(), expected);
+        // ...and the marker really is the file the swap script removes (not
+        // merely a same-named sibling): two components under ProgramData.
+        assert_eq!(
+            busy_marker_path()
+                .strip_prefix(programdata_dir())
+                .unwrap()
+                .components()
+                .count(),
+            2
+        );
     }
 
     #[test]

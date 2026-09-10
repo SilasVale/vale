@@ -131,6 +131,7 @@ correctness is.
 | 96 | extension | SRP/tests | studio-links pure core to shared + path pins | +5 | `3a1346dc` |
 | 97 | docs | docs | ledger R86–97 + recounts (agent 407, extension 9) | — | `4648be01` |
 | 98 | agent evidence | SRP/OCP/tests | pwout AI-evidence feed promoted to `evidence.rs`: one owner for actions.jsonl append + newest-first read, shot listing, basename guard, `browser-actions-changed` push (was 2 inline producers + a mcp-client-private OnceLock + a hand-mirrored reader); dir now a PARAMETER so the contract is unit-testable; recount found the R97 "409" already stale (real pre-round 412) | +9 | `28c7c71f` |
+| 99 | agent update | DRY/SRP/tests | update BUSY MARKER owned: the path was spelled out twice (a Rust PathBuf join in `agent_update` + two hand-written literals in the generated PowerShell swap script) and the acquire/reclaim decision sat inline in the 300-line handler closure with ZERO coverage despite three recorded incidents. Now `BUSY_MARKER_REL` → `busy_marker_path()` (acquirer) + `busy_marker_ps()` (swap script) from ONE definition, and the decision is `acquire_busy_marker(path, stale_after)` (atomic `create_new`; reclaim the stale marker at most once so a locked marker cannot spin). Mutation-proven: dropping the reclaim-once flag HANGS the suite (timeout exit 124), and changing either the relpath or the join shape fails the drift contract | +4 | (this commit: the ledger row cannot name its own final hash) |
 
 > **Ledger repair (Round-98):** the stray duplicate `| 56 | …` row that sat
 > after R97 (an R97 editing accident — R56 already has its row in sequence at
@@ -150,7 +151,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +94 · agent lib +26 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
+Gateway +94 · agent lib +30 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 
@@ -178,11 +179,13 @@ Gateway +94 · agent lib +26 · core +7 · CLI +4 · relay +54 · extension +9 �
   gate is a product decision"), so R98 left it alone. One-line fix if wanted:
   use `reqwest::Url` for host parsing (already a dependency) — testable
   without widening the gate, since the verdicts are pure.
-- `agent_update` (`update/tools.rs`, 327 lines) and `tool_execute`
+- `agent_update` (`update/tools.rs`) and `tool_execute`
   (`terminal/tools/exec.rs`, 622 lines) are the two remaining agent
   monoliths. Both are ~entirely `#[cfg(windows)]` or process-plumbing
   bodies where extraction would scatter the documented sequencing
   (stage → swap-script → WMI hand-off; spawn → bounded capture → kill-tree).
-  Next rounds should audit them for a PURE decision core (like R98's
-  `host_of`/`check_download_url`/`pin_blocks` already are) rather than
-  split the I/O.
+  Next rounds audit them for a PURE decision core (like R98's
+  `host_of`/`check_download_url`/`pin_blocks`, and R99's
+  `acquire_busy_marker`/`busy_marker_path`) rather than split the I/O.
+  R99 harvested the update side's decision core; what remains there is the
+  staging + swap-script body, which is Windows-only by construction.
