@@ -15,6 +15,7 @@ import {
   openAIUpstreamToAnthropicResponse,
   keyMissingError,
   sseResponse,
+  relayUpstreamResult,
 } from "../src/plugins/translate.ts";
 import { pickRoute } from "../src/upstream.ts";
 
@@ -260,4 +261,102 @@ test("sseResponse: event-stream envelope with no-cache", async () => {
   assert.match(r.headers.get("content-type") || "", /text\/event-stream/);
   assert.equal(r.headers.get("cache-control"), "no-cache");
   assert.equal(await r.text(), "data: x\n\n", "body passes through untouched");
+});
+
+// SOLID Round-81: the breaker recording matrix had zero direct pins — only
+// incidental exercise through live flows (a missed record leaves the
+// circuit closed on a dead channel; a spurious one degrades a live one).
+// Fully deterministic: stub BREAKER records /trip vs /reset calls.
+function relayBreakerEnv() {
+  const calls = [];
+  const stub = {
+    async fetch(url) {
+      calls.push(String(url));
+      return new Response("0");
+    },
+  };
+  return {
+    calls,
+    env: { BREAKER: { idFromName: (n) => n, get: () => stub } },
+  };
+}
+const relayReq = () =>
+  new Request("https://x/v1/messages", {
+    method: "POST",
+    // Allowlisted console origin: stampCors echoes it (no Origin → no ACAO).
+    headers: { origin: "https://ai.saisi.online" },
+  });
+async function quiet(fn) {
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.error = orig;
+  }
+}
+
+test("relay: null upstream 502s; only opencode trips the breaker", async () => {
+  for (const [kind, wantTrip] of [["opencode", true], ["deepseek", false]]) {
+    const { calls, env } = relayBreakerEnv();
+    const r = await quiet(() =>
+      relayUpstreamResult(env, relayReq(), kind, null, "timeout after 120000ms", undefined, {}, true),
+    );
+    assert.equal(r.status, 502);
+    assert.equal(
+      calls.some((u) => u.endsWith("/trip")),
+      wantTrip,
+      `${kind}: trip iff opencode`,
+    );
+  }
+});
+
+test("relay: !ok records only for opencode + down-shaped + flag", async () => {
+  const bad = () =>
+    new Response(JSON.stringify({ error: { message: "boom" } }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  const cases = [
+    ["opencode", "timeout after 120000ms", true, true, "down body + flag → trip"],
+    ["opencode", "timeout after 120000ms", false, false, "flag off → no trip (flag meaning)"],
+    ["opencode", "upstream 500", true, false, "non-down detail → no trip"],
+    ["deepseek", "network error: dial", true, false, "non-og kind never trips"],
+  ];
+  for (const [kind, detail, flag, wantTrip, why] of cases) {
+    const { calls, env } = relayBreakerEnv();
+    const r = await quiet(() => relayUpstreamResult(env, relayReq(), kind, bad(), detail, undefined, {}, flag));
+    assert.equal(r.status, 500, why);
+    assert.equal(
+      calls.some((u) => u.endsWith("/trip")),
+      wantTrip,
+      why,
+    );
+  }
+});
+
+test("relay: ok relays body + CORS + generation id; opencode resets", async () => {
+  const okResp = () =>
+    new Response("hello", {
+      status: 200,
+      headers: { "content-type": "text/event-stream", "x-generation-id": "gen-1" },
+    });
+  for (const [kind, wantReset] of [["opencode", true], ["deepseek", false]]) {
+    const { calls, env } = relayBreakerEnv();
+    const ctx = {};
+    const r = await quiet(() => relayUpstreamResult(env, relayReq(), kind, okResp(), "", undefined, ctx, true));
+    assert.equal(r.status, 200);
+    assert.equal(await r.text(), "hello", "body streams untouched");
+    assert.equal(ctx.generationId, "gen-1", "generation id captured");
+    assert.equal(
+      r.headers.get("access-control-allow-origin"),
+      "https://ai.saisi.online",
+      "allowlisted origin echoed",
+    );
+    assert.equal(
+      calls.some((u) => u.endsWith("/reset")),
+      wantReset,
+      `${kind}: reset iff opencode`,
+    );
+  }
 });

@@ -295,7 +295,8 @@ export function oxAlphaReasoningDefault(
   return body;
 }
 
-async function relayUpstreamResult(
+// Exported for direct pins (SOLID Round-81; additive — call sites untouched).
+export async function relayUpstreamResult(
   env: any,
   request: Request,
   routeKind: string,
