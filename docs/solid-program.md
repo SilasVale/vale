@@ -192,6 +192,21 @@ Gateway +124 · agent lib +76 · agent integration +12 · core +10 · CLI +4 · 
   on record.
 - Panel-react, hardware-gated backends, Electron main: covered or
   deliberately untestable — see round notes, not revisit-worthy.
+- ~~**THE SSE VIEWER CAP WAS ACQUIRED BUT NOT HELD**~~ — **FIXED in R128.**
+  R124 found that `acquire_sse_guard()`'s value was bound to a LOCAL of
+  `route_pre_dispatch`, so `return Some(sse_stream(…))` dropped it when the
+  response was CONSTRUCTED: the documented 64-viewer bound limited microseconds
+  of setup, not concurrent streams (measured — 70 held streams, zero 503s).
+  R128 moved the guard into the streaming task and made both pumps release on
+  `tx.closed()`, so the cap is real and the release is prompt. The pin was
+  INVERTED rather than deleted (`sse_viewer_cap_holds_and_releases_per_connection`,
+  checking HOLD and RELEASE separately). Kept as a retraction, like the
+  round-90 gmi entry, because two things are worth remembering: how a
+  lifetime bug survives a documented bound, and the fix's own trap — a release
+  that waits for the next heartbeat (30s / 60s) starves the pool under a burst
+  of short-lived viewers. NOTE: R124's Open-thread entry for this never made it
+  into the file (the insert failed silently that round); this retraction is
+  written now, after the fix, so the record is complete either way.
 - **SUGGESTION for the human (R98 finding, NOT acted on):**
   `update::tools::host_of()` strips a bare IPv6 loopback URL
   (`http://[::1]:8080/x` → host `[`) so such a URL can never pass

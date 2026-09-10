@@ -41,7 +41,7 @@ pub use panel::WebPanel;
 pub(crate) use panel::{
     panel_content_type, panel_token_response, plausible_grant, redeem_panel_grant, serve_panel_file,
 };
-pub(crate) use sse::{acquire_sse_guard, sse_stream, sse_term_stream};
+pub(crate) use sse::{acquire_sse_guard, sse_stream, sse_term_stream, SseConnectionGuard};
 
 /// Minimal self-contained status page — the panel SPA is retired, but the
 /// device URL should still answer something readable in a browser. Apple-style
@@ -439,34 +439,35 @@ async fn handle_panel_home(
 /// future change to the streaming path had to be made TWICE and could be made
 /// once. There is now a single place where an SSE slot is acquired.
 ///
-/// ⚠️ THE GUARD DOES NOT OUTLIVE THIS FUNCTION — that is the CURRENT,
-/// PINNED behaviour, not an oversight introduced here. `_guard` is a local and
-/// returning drops it, so the slot is released when the response is
-/// CONSTRUCTED rather than when the connection ends; the 64-viewer cap
-/// therefore bounds simultaneous construction, not simultaneous streams.
-/// Consolidating did NOT change that: the drop still happens at exactly the
-/// same point in the request's life. Fixing it (the guard must be owned by the
-/// RESPONSE) is a client-visible change reserved for sign-off, and this
-/// function is now the ONE place that fix has to touch. Behaviour pinned by
-/// `sse_viewer_cap_is_not_held_for_the_connection_lifetime`; recipe and the
-/// leak trap in docs/solid-program.md -> Open threads.
+/// THE VIEWER SLOT IS PASSED TO THE STREAM, which is what makes the 64-viewer
+/// cap real (SOLID R128). Until this round the guard was bound to a local and
+/// dropped when the response was CONSTRUCTED, so the cap bounded only
+/// microseconds of setup — measured: 70 held responses produced zero 503s.
+/// Now `acquire_sse_guard()`'s value is MOVED into the streaming task, so it is
+/// released when the stream ends (client disconnect, error, or the body being
+/// dropped — all three close the mpsc, which the pump detects and breaks on).
+///
+/// This is the ONE place an SSE slot is acquired, which is why the fix was a
+/// single edit here plus the two signatures it forwards to.
 async fn sse_route_response<F, Fut>(
     headers: &axum::http::HeaderMap,
     state: &Arc<AppState>,
     stream: F,
 ) -> Response
 where
-    F: FnOnce(Arc<AppState>) -> Fut,
+    F: FnOnce(Arc<AppState>, SseConnectionGuard) -> Fut,
     Fut: std::future::Future<Output = Response>,
 {
     if let Err(resp) = check_auth(headers, state) {
         return *resp;
     }
-    let _guard = match acquire_sse_guard() {
+    let guard = match acquire_sse_guard() {
         Ok(g) => g,
         Err(resp) => return *resp,
     };
-    stream(state.clone()).await
+    // The guard is HANDED to the stream, not held here: it must survive until
+    // the connection ends, and this function returns long before that does.
+    stream(state.clone(), guard).await
 }
 
 async fn route_pre_dispatch(
@@ -2667,40 +2668,33 @@ mod tests {
         assert!(!timing_safe_eq(&a, &b));
     }
 
-    /// The SSE viewer cap is ACQUIRED BUT NOT HELD (SOLID R124).
+    /// The SSE viewer cap is REAL, and it is RELEASED (SOLID R124 → R128).
     ///
-    /// `route_pre_dispatch` documents the cap as protecting against a flood:
-    /// "bound concurrent SSE connections so a flood of viewers can't exhaust
-    /// tasks/memory". It does not. `let _guard = acquire_sse_guard()` binds a
-    /// LOCAL, and `return Some(sse_stream(...).await)` drops every local in
-    /// scope — so the slot is released the moment the response is CONSTRUCTED,
-    /// not when the connection ends. The guard therefore bounds concurrent
-    /// response *setup*, a window of microseconds, instead of concurrent
-    /// connections.
+    /// The R124 pin asserted the OPPOSITE — that 70 held responses produced
+    /// ZERO 503s, because the guard was a local dropped when the response was
+    /// constructed. That pin did its job: it failed the moment the guard moved
+    /// into the streaming task. It is now inverted, and the HOLD half is
+    /// phrased to actually discriminate — which took two attempts:
     ///
-    /// MEASURED, not reasoned: 70 responses are opened and all held in a Vec,
-    /// and ZERO of them are 503. If the slot were held, the 65th onward would
-    /// be 503 (SSE_MAX_CONNECTIONS = 64).
+    ///   * Counting refusals DURING the opens proves nothing about holding.
+    ///     The acquires are synchronous, so 70 opens against a 64-slot pool
+    ///     refuse 6 of them whether or not the slot survives afterwards; the
+    ///     first version of this test therefore PASSED against a mutant that
+    ///     dropped the guard at task start (verified by mutation).
+    ///   * The discriminating question is asked AFTER the pump tasks have had
+    ///     a chance to run: with 64 accepted streams still held, ONE MORE
+    ///     request must be refused. A dropped guard frees the pool and that
+    ///     request succeeds instead.
     ///
-    /// This test pins the CURRENT behaviour so the fix is a deliberate act. It
-    /// is NOT fixed here: making the cap real changes what a client sees (the
-    /// 65th viewer now gets 503 instead of a stream), which rule 1 reserves
-    /// for a documented security hole *with sign-off*. Recorded in
-    /// docs/solid-program.md -> Open threads.
-    ///
-    /// THE FIX (when signed off): the guard must be owned by the RESPONSE, not
-    /// by this function — move it into the stream so it drops when the body
-    /// ends. `sse_stream`/`sse_term_stream` would take the guard as a
-    /// parameter and hold it inside the returned body's stream (e.g. captured
-    /// by the generator closure, or held by a wrapper that owns both). Then
-    /// this test's expectation inverts: 70 held responses must yield 6 x 503.
+    /// The RELEASE half then pins the other failure mode: dropping the
+    /// responses must return the slots, or a long-lived agent would refuse
+    /// every viewer forever after 64 total connections.
     #[tokio::test]
-    async fn sse_viewer_cap_is_not_held_for_the_connection_lifetime() {
+    async fn sse_viewer_cap_holds_and_releases_per_connection() {
         let st = state();
-        let opened = crate::web::sse::SSE_MAX_CONNECTIONS + 6;
-        let mut held = Vec::with_capacity(opened);
-        let mut refused = 0usize;
-        for _ in 0..opened {
+        let max = crate::web::sse::SSE_MAX_CONNECTIONS;
+
+        let open = |st: Arc<AppState>| async move {
             let r = Request::builder()
                 .method("GET")
                 .uri("/api/events")
@@ -2708,26 +2702,62 @@ mod tests {
                 .body(Body::empty())
                 .unwrap();
             let (parts, _) = r.into_parts();
-            let resp = route_pre_dispatch(&parts.method, "/api/events", None, &parts.headers, &st)
+            route_pre_dispatch(&parts.method, "/api/events", None, &parts.headers, &st)
                 .await
-                .expect("GET /api/events must be handled by the pre-dispatch layer");
-            if resp.status() == StatusCode::SERVICE_UNAVAILABLE {
-                refused += 1;
+                .expect("GET /api/events must be handled by the pre-dispatch layer")
+        };
+
+        // Fill the pool, keeping every accepted response alive.
+        let mut held = Vec::new();
+        for _ in 0..(max + 6) {
+            let resp = open(st.clone()).await;
+            if resp.status() != StatusCode::SERVICE_UNAVAILABLE {
+                held.push(resp);
             }
-            held.push(resp);
         }
         assert_eq!(
-            refused, 0,
-            "FIXED? The SSE viewer cap is now enforced per-connection: {opened} held \
-             responses produced {refused} refusals (was 0 while the guard was dropped \
-             at return). Delete this pin and update the ledger Open-threads entry — \
-             and make sure the cap is still RELEASED when a stream ends, which a \
-             naive guard-moved-into-the-response can leak."
+            held.len(),
+            max,
+            "expected the pool to fill to exactly {max}"
         );
-        // Keep the responses alive across the assertion so the count above is
-        // about held connections, not about sequential construction.
-        assert_eq!(held.len(), opened);
+
+        // Let every pump task run. A guard that is dropped when the task
+        // STARTS would free its slot here.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // ── 1. HOLD ────────────────────────────────────────────────────────
+        // With 64 accepted streams still held, one more request must be
+        // refused. This is the assertion that a dropped guard cannot satisfy.
+        let extra = open(st.clone()).await;
+        assert_eq!(
+            extra.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the viewer cap is NOT enforced: a request was ACCEPTED while {max} \
+             streams were still open. The guard is not surviving the stream — \
+             that is the R124 regression, and it means the documented bound \
+             does not exist."
+        );
+        drop(extra);
+
+        // ── 2. RELEASE ─────────────────────────────────────────────────────
         drop(held);
+        let mut freed = false;
+        for _ in 0..50 {
+            let resp = open(st.clone()).await;
+            if resp.status() != StatusCode::SERVICE_UNAVAILABLE {
+                freed = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            freed,
+            "slots were NOT released after the streams were dropped — the pool \
+             leaks, so an agent that has served {max} connections would refuse \
+             every viewer forever. The guard must be released when the \
+             streaming task ENDS, promptly (tx.closed()), not at the next \
+             heartbeat tick."
+        );
     }
 
     /// Every streaming route must acquire its SSE slot through the ONE shared
