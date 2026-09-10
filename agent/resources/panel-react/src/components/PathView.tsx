@@ -50,7 +50,7 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel }: {
   sessionLabel?: string;
 }) {
   const rounds = useTrajectory(events);
-  const path = useMemo(() => derivePath(rounds), [rounds]);
+  const path = useMemo(() => derivePath(rounds, events), [rounds, events]);
   const attention = useMemo(() => attentionSteps(path.steps), [path.steps]);
 
   // Recipe saving — beat 6 of the design's core loop ("harvest"). Local UI state
@@ -126,6 +126,11 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel }: {
             <span className="path-summary-good">all succeeded</span>
           )}
           {summary.live && <span className="path-summary-live">running now</span>}
+          {summary.humanSteps > 0 && (
+            <span className="path-summary-human" title="Steps started while a person held the keyboard">
+              {summary.humanSteps} by you
+            </span>
+          )}
         </div>
         <div className="path-summary-times">
           <span>{summaryDuration(summary)} of command time</span>
@@ -217,6 +222,9 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel }: {
               <span className="path-step-index">{s.index}</span>
               <span className="path-step-cmd">{s.command}</span>
               <span className="path-step-meta">
+                {s.owner === "human" && (
+                  <span className="path-step-owner" title="A person ran this step">you</span>
+                )}
                 <span className={`path-step-tag s-${s.state}`}>{s.stateLabel}</span>
                 {s.durationMs != null && (
                   <span className="path-step-dur">{fmtDuration(s.durationMs)}</span>
@@ -231,9 +239,12 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel }: {
       </ol>
 
       <p className="path-note">
-        A step records what ran and how it ended. It does <b>not</b> record the
-        alternatives the agent passed over, or who issued the command — neither is
-        in the audit trail yet, so this view does not invent them.
+        A step records what ran and how it ended, and <b>who was driving</b> when it
+        started — a handoff is marked, so a step with no marker is the agent's. It
+        does <b>not</b> record the alternatives the agent passed over, which are not
+        in the audit trail yet. Typing done while a person held the keyboard is not
+        reconstructed into commands either: keystrokes are bytes, not command
+        boundaries, so this view marks the window rather than inventing steps in it.
       </p>
     </div>
   );

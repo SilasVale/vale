@@ -42,7 +42,7 @@ const messyPath: SessionPath = derivePath([
 ]);
 
 const step = (o: Partial<PathStep>): PathStep => ({
-  id: "x", index: 1, command: "c", state: "ok", stateLabel: "0",
+  id: "x", index: 1, command: "c", state: "ok", owner: "ai", stateLabel: "0",
   startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0, ...o,
 });
 

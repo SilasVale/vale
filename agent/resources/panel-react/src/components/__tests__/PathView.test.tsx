@@ -23,6 +23,7 @@ import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { PathView } from "../PathView";
 import { derivePath, summarizePath, attentionSteps, type PathStep } from "../../lib/path";
+import { groupRounds } from "../../hooks/useTrajectory";
 import type { CommandEvent } from "../../hooks/useCommandEvents";
 
 const ev = (o: Partial<CommandEvent>): CommandEvent => ({ seq: 1, ts: 1000, kind: "output", ...o });
@@ -90,7 +91,7 @@ describe("derivePath", () => {
 
 describe("summarizePath", () => {
   const step = (o: Partial<PathStep>): PathStep => ({
-    id: "x", index: 1, command: "c", state: "ok", stateLabel: "0",
+    id: "x", index: 1, command: "c", state: "ok", owner: "ai", stateLabel: "0",
     startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0, ...o,
   });
 
@@ -130,7 +131,7 @@ describe("summarizePath", () => {
 describe("attentionSteps", () => {
   it("surfaces failures first, then interruptions, then live work", () => {
     const step = (id: string, state: PathStep["state"], index: number): PathStep => ({
-      id, index, command: id, state, stateLabel: "", startedAt: 0,
+      id, index, command: id, state, owner: "ai", stateLabel: "", startedAt: 0,
       durationMs: null, exitCode: null, reason: null, outputChars: 0,
     });
     const out = attentionSteps([
@@ -213,5 +214,82 @@ describe("PathView", () => {
     first.click();
     // The list is ordered worst-first, so the first row is the FAILURE.
     expect(seen).toEqual(["r-5"]);
+  });
+});
+
+describe("ownership (who was driving)", () => {
+  const ctl = (ts: number, holder: "human" | "ai"): CommandEvent =>
+    ev({ kind: "control", status: holder, ts });
+
+  /** Two commands, handoff between them, then a hand-back. */
+  const withHandoff = (): CommandEvent[] => [
+    ev({ seq: 1, ts: 100, kind: "command/start", command: "ai one" }),
+    ev({ seq: 2, ts: 101, kind: "command/end", exit_code: 0, duration_ms: 10 }),
+    ctl(200, "human"),
+    ev({ seq: 3, ts: 300, kind: "command/start", command: "human one" }),
+    ev({ seq: 4, ts: 301, kind: "command/end", exit_code: 0, duration_ms: 10 }),
+    ctl(400, "ai"),
+    ev({ seq: 5, ts: 500, kind: "command/start", command: "ai two" }),
+    ev({ seq: 6, ts: 501, kind: "command/end", exit_code: 0, duration_ms: 10 }),
+  ];
+
+  it("attributes each step to whoever held the keyboard when it STARTED", () => {
+    const p = derivePath(
+      groupRounds(withHandoff()),
+      withHandoff(),
+    );
+    expect(p.steps.map((s) => [s.command, s.owner])).toEqual([
+      ["ai one", "ai"],
+      ["human one", "human"],
+      ["ai two", "ai"],
+    ]);
+  });
+
+  it("counts human steps in the summary", () => {
+    const events = withHandoff();
+    const p = derivePath(groupRounds(events), events);
+    expect(p.summary.humanSteps).toBe(1);
+    expect(p.summary.steps).toBe(3);
+  });
+
+  it("treats a session with NO handoff as entirely the agent's", () => {
+    // The default reading: the audit is the record of device control, and
+    // before any `control` event the agent had it.
+    const p = derivePath(groupRounds(session()));
+    expect(p.steps.every((s) => s.owner === "ai")).toBe(true);
+    expect(p.summary.humanSteps).toBe(0);
+  });
+
+  it("does NOT reassign a command that was already running at the handoff", () => {
+    // A step belongs to whoever started it. A handoff mid-command does not
+    // retroactively make the agent's command the human's — it issued it.
+    const events: CommandEvent[] = [
+      ev({ seq: 1, ts: 100, kind: "command/start", command: "long" }),
+      ctl(150, "human"),
+      ev({ seq: 2, ts: 200, kind: "command/end", exit_code: 0, duration_ms: 100 }),
+    ];
+    const p = derivePath(groupRounds(events), events);
+    expect(p.steps[0].owner).toBe("ai");
+  });
+
+  it("ignores a control event with an unknown holder", () => {
+    // A future/unknown holder must not silently become "human".
+    const events = [ctl(0, "human"), ev({ seq: 9, ts: 10, kind: "control", status: "robot" }),
+                    ev({ seq: 1, ts: 20, kind: "command/start", command: "c" })];
+    const p = derivePath(groupRounds(events), events);
+    expect(p.steps[0].owner).toBe("human");
+  });
+
+  it("shows the hold on screen and explains the limit of it", () => {
+    const events = withHandoff();
+    const { container } = render(<PathView events={events} />);
+    expect(screen.getByText("1 by you")).toBeTruthy();
+    // Exactly one step carries the owner chip — the human one.
+    expect(container.querySelectorAll(".path-step-owner").length).toBe(1);
+    // The note must not claim the human's TYPING was reconstructed: keystrokes
+    // are bytes, not command boundaries. Marking the window is the honest move.
+    const note = container.querySelector(".path-note")!.textContent!;
+    expect(note).toMatch(/who was driving/i);
+    expect(note).toMatch(/not reconstructed/i);
   });
 });

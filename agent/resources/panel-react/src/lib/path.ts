@@ -28,11 +28,14 @@
 // "who" is unknown by construction, not by omission.
 import { cardState } from "../components/CommandCard";
 import type { CommandCard as CardData } from "../hooks/useCommandEvents";
+import type { CommandEvent } from "../hooks/useCommandEvents";
 import type { TrajRound } from "../hooks/useTrajectory";
 
 /** The five-state vocabulary, re-exported so the path view and the command
  *  cards cannot drift apart on what a state is called. */
 export type PathState = "running" | "ok" | "fail" | "warn" | "muted";
+
+export type Owner = "ai" | "human";
 
 export interface PathStep {
   /** The round id it came from (`r-<seq>`), so a step can be traced back. */
@@ -41,6 +44,10 @@ export interface PathStep {
   index: number;
   command: string;
   state: PathState;
+  /** WHO was driving when this step started, from the session's `control`
+   *  events. Defaults to "ai", which is what the trail means before any
+   *  handoff — an unflagged step is the agent's. */
+  owner: Owner;
   /** Short label for the state, from cardState (e.g. "exit 1"). */
   stateLabel: string;
   /** Unix seconds. */
@@ -62,6 +69,10 @@ export interface PathSummary {
   /** Steps whose duration is unknown — so `commandMs` is a floor, and the view
    *  can say "at least" instead of implying a total it cannot know. */
   untimed: number;
+  /** Steps a PERSON drove. Surfaced because an operator returning to a session
+   *  needs to know which work was theirs and which was the agent's — the whole
+   *  reason the handoff is recorded. */
+  humanSteps: number;
   /** Wall-clock span from the first step's start to the last known end. Null
    *  when nothing has finished. */
   spanMs: number | null;
@@ -80,7 +91,40 @@ export interface SessionPath {
  *  preamble round; it is context, not a step along the path. */
 export const PREAMBLE_ID = "r-pre";
 
-export function derivePath(rounds: TrajRound[]): SessionPath {
+/**
+ * Who was driving at a given moment, from the session's `control` events.
+ *
+ * The fold is deliberately "most recent event at or before `ts`", not "any
+ * event in the window": a step belongs to whoever held the keyboard when it
+ * STARTED. A handoff mid-command therefore does not retroactively reassign the
+ * command that was already running, which is the honest reading — the agent
+ * issued it.
+ *
+ * Before the first control event the answer is "ai", because that is what the
+ * trail means: the header documents the audit as the record of device control,
+ * and a session with no handoff was the agent's throughout.
+ */
+export function ownershipTimeline(
+  events: CommandEvent[],
+): Array<{ ts: number; holder: Owner }> {
+  return events
+    .filter((e) => e.kind === "control" && (e.status === "human" || e.status === "ai"))
+    .map((e) => ({ ts: e.ts, holder: e.status as Owner }))
+    .sort((a, b) => a.ts - b.ts);
+}
+
+/** The holder in effect at `ts`; "ai" before any handoff. */
+export function ownerAt(timeline: Array<{ ts: number; holder: Owner }>, ts: number): Owner {
+  let holder: Owner = "ai";
+  for (const t of timeline) {
+    if (t.ts > ts) break;
+    holder = t.holder;
+  }
+  return holder;
+}
+
+export function derivePath(rounds: TrajRound[], controlEvents: CommandEvent[] = []): SessionPath {
+  const timeline = ownershipTimeline(controlEvents);
   const steps: PathStep[] = [];
   const indexOf: Record<string, number> = {};
 
@@ -105,6 +149,7 @@ export function derivePath(rounds: TrajRound[]): SessionPath {
       id: r.id,
       index: steps.length + 1,
       command: r.command,
+      owner: ownerAt(timeline, r.startTs),
       state: st.state,
       stateLabel: st.compact,
       startedAt: r.startTs,
@@ -122,6 +167,7 @@ export function derivePath(rounds: TrajRound[]): SessionPath {
  *  much of it failed, and how long it took. */
 export function summarizePath(steps: PathStep[]): PathSummary {
   const counts: Record<PathState, number> = { running: 0, ok: 0, fail: 0, warn: 0, muted: 0 };
+  let humanSteps = 0;
   let commandMs = 0;
   let untimed = 0;
   let firstStart = Infinity;
@@ -129,6 +175,7 @@ export function summarizePath(steps: PathStep[]): PathSummary {
 
   for (const s of steps) {
     counts[s.state] += 1;
+    if (s.owner === "human") humanSteps += 1;
     if (s.durationMs == null) {
       untimed += 1;
     } else {
@@ -143,6 +190,7 @@ export function summarizePath(steps: PathStep[]): PathSummary {
     counts,
     commandMs,
     untimed,
+    humanSteps,
     spanMs: lastEnd > -Infinity && firstStart < Infinity ? lastEnd - firstStart : null,
     live: counts.running > 0,
   };
