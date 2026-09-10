@@ -60,6 +60,20 @@ pub struct PlaywrightManager {
 /// HTTP keeps the response open, so only the first chunks are read.
 /// On failure the last 500 stderr chars are folded into the error and
 /// the child is killed.
+const PROBE_NEEDLES: [&[u8]; 2] = [b"serverInfo", b"jsonrpc"];
+
+/// True when `body` carries a real JSON-RPC initialize result. Each window
+/// size comes from its needle's OWN length: the previous hand-written
+/// `windows(8)` against the 7-byte `jsonrpc` could never compare equal, so the
+/// probe was unsatisfiable and every start killed a perfectly healthy child
+/// (d1's stderr printed "Listening" while the probe "gave up"; the 30s budget
+/// extension had misdiagnosed a logic bug as a slow Defender cold start).
+fn probe_body_matches(body: &[u8]) -> bool {
+    PROBE_NEEDLES
+        .iter()
+        .all(|n| body.windows(n.len()).any(|w| w == *n))
+}
+
 async fn wait_healthy(child: &mut tokio::process::Child, port: u16) -> Result<(), DeviceError> {
     // Health poll (up to 10s): POST a JSON-RPC initialize to /mcp and verify the
     // body is a valid JSON-RPC result. round-129: the old probe.is_ok() passed on
@@ -122,9 +136,9 @@ async fn wait_healthy(child: &mut tokio::process::Child, port: u16) -> Result<()
                 {
                     Ok(Some(Ok(chunk))) => {
                         body.extend_from_slice(&chunk);
-                        if body.windows(10).any(|w| w == b"serverInfo")
-                            && body.windows(8).any(|w| w == b"jsonrpc")
-                        {
+                        // A hand-written window size is exactly what broke this
+                        // (see probe_body_matches) — derive it from the needle.
+                        if probe_body_matches(&body) {
                             ok = true;
                             break;
                         }
@@ -614,5 +628,19 @@ mod manager_tests {
     #[test]
     fn now_ms_is_monotonic() {
         assert!(now_ms() <= now_ms());
+    }
+
+    #[test]
+    fn probe_body_matches_accepts_a_real_initialize_frame() {
+        // Verbatim d1 response shape (SSE frame). Pins the needle/window
+        // lengths: the 7-byte "jsonrpc" must be found even though
+        // "serverInfo" is 10 — a hand-written windows(8) here made the whole
+        // probe unsatisfiable and killed a healthy child on every start.
+        let frame: &[u8] = b"event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"Playwright\",\"version\":\"1.63.0\"}},\"jsonrpc\":\"2.0\",\"id\":1}";
+        assert!(probe_body_matches(frame));
+        // A split chunk carrying only serverInfo is NOT yet a handshake...
+        assert!(!probe_body_matches(b"data: {\"serverInfo\":{}}"));
+        // ...and neither is unrelated chatter.
+        assert!(!probe_body_matches(b"event: message\ndata: {}\n\n"));
     }
 }
