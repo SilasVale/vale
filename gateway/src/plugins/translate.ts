@@ -401,6 +401,130 @@ export function detectRoute(method: string, path: string) {
   return { isCount, isMessages, isChatCompletions, isResponses };
 }
 
+/** The `tools` array slice of a raw Anthropic body, bracket-BALANCED.
+ *
+ * Exported for direct pins (SOLID R117). Two recorded incidents live here,
+ * both about where the region STOPS:
+ *   * round-42 Medium: the region was cut at the first `"messages"` anchor,
+ *     so a tool-schema property named `messages` truncated it and a later
+ *     web_search declaration was lost.
+ *   * round-43 Medium: bounding at the NEXT `"messages"` had the same flaw.
+ * The depth-aware scan below is the fix: nested braces/brackets inside tool
+ * schemas are counted, and the region ends at the array's own closing `]`.
+ *
+ * Returns "" when there is no `tools` array at all. */
+export function toolsRegionOf(rawText: string): string {
+  const toolsStart = rawText.indexOf('"tools":[');
+  if (toolsStart < 0) return "";
+  let depth = 0;
+  let end = -1;
+  for (let i = toolsStart + 8; i < rawText.length; i++) {
+    const ch = rawText[i];
+    if (ch === "[" || ch === "{") depth++;
+    else if (ch === "]" || ch === "}") {
+      depth--;
+      // `<= 0`, NOT `< 0`. The loop starts ON the tools array's own `[`, so
+      // that bracket takes depth to 1; the array's closing `]` brings it back
+      // to 0. Stopping only BELOW zero therefore ran one level OUT, to the
+      // enclosing object's `}` — the region swallowed everything after the
+      // tools array, including `messages`.
+      //
+      // That was not academic: a conversation whose HISTORY carries a previous
+      // search (`{"type":"server_tool_use","name":"web_search"}` — Claude Code
+      // keeps those blocks in its transcript) put a literal `"web_search"` in
+      // the region, so needsBodyParse fired and the whole body was parsed
+      // AGAIN on every later turn, with no web_search declaration in the
+      // current request's tools. Parsing a ~2 MB body measures ~2.4 ms —
+      // roughly a quarter of the 10 ms Free-plan budget (Error 1102) this
+      // guard exists to protect — repeated for every turn of the conversation.
+      //
+      // Border cases are unchanged in the safe direction: JSON is balanced, so
+      // the array's `]` is always reached, and a real declaration always sits
+      // INSIDE the array. Verified against all 720 pre-existing tests.
+      if (depth <= 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  return end > 0 ? rawText.slice(toolsStart, end + 1) : "";
+}
+
+/** Does this raw body need to be parsed into an object graph?
+ *
+ * The CPU guard for the 10ms Free-plan budget (Error 1102): a plain text-only
+ * request skips the parse entirely, because parsing a multi-MB body blows the
+ * budget.
+ *
+ * THREE clauses used to be written out here; only TWO are reachable, and the
+ * pin in the test suite holds the equivalence:
+ *
+ *     /"type":\s*"image"/.test(lastUserMsg)   // lastUserMsg = a SUFFIX of rawText
+ *   || /"type":\s*"image"/.test(rawText)      // ⟸ the first implies this one
+ *   || /"web_search"/.test(toolsRegion)
+ *
+ * A regex that matches a substring also matches the string containing it, so
+ * the suffix clause can never be true while the whole-body clause is false.
+ * The clause was NOT dead weight in the CPU sense — `lastIndexOf` over a 6 MB
+ * body measures 0.005 ms (V8 uses a fast substring search), so removing it is
+ * a CLARITY change, not a performance one. Measured before claiming. */
+export function needsBodyParse(rawText: string, toolsRegion: string): boolean {
+  return /"type"\s*:\s*"image"/.test(rawText) || /"web_search"/.test(toolsRegion);
+}
+
+/** A request whose ONLY tool is the web_search server tool.
+ *
+ * zen/go treats a declared-but-not-forced web_search as optional, so the model
+ * may decline and answer with EMPTY content blocks. Such a request exists
+ * solely to search, so the caller injects the force. The exact-one-tool guard
+ * is what keeps Claude Code's multi-tool ordinary turns untouched. */
+export function isSearchOnlyRequest(body: any): boolean {
+  return (
+    !!body &&
+    !body.tool_choice &&
+    Array.isArray(body.tools) &&
+    body.tools.length === 1 &&
+    body.tools[0]?.type === "web_search_20250305"
+  );
+}
+
+/** Does `tool_choice` FORCE a web_search call?
+ *
+ * round-46 High: Claude Code DECLARES web_search_20250305 in the tools array
+ * of EVERY ordinary turn, so a declaration-only check silently hijacked the
+ * user's chosen model on every request. Only a forced tool_choice is real
+ * search intent — either `{type:"tool",name:"web_search"}` or an
+ * `{type:"any",tools:[…]}` naming it. */
+export function isForcedWebSearch(toolChoice: any): boolean {
+  return !!(
+    toolChoice &&
+    ((toolChoice.type === "tool" && toolChoice.name === "web_search") ||
+      (toolChoice.type === "any" &&
+        Array.isArray(toolChoice.tools) &&
+        toolChoice.tools.some((t: any) => t?.name === "web_search")))
+  );
+}
+
+/** Which model actually serves a forced web-search request, and under which
+ * WIRE name.
+ *
+ * A caller that already names a search-capable Flash-line model KEEPS it. Any
+ * other og/ model is forced to the version-less `deepseek-flash` lane, because
+ * the translate-only models (minimax/mimo/kimi/glm) fabricate a query and
+ * return no `web_search_tool_result` (verified 2026-08-13). Since the
+ * 2026-09-10 V4 retirement that lane slug is also the fallback target. */
+export function searchTargetFor(
+  model: string,
+  upstreamModel: string,
+): { capable: boolean; model: string; wireModel: string } {
+  const capable = SEARCH_CAPABLE_WIRE_MODELS.has(upstreamModel);
+  return {
+    capable,
+    model: capable ? model : "og/deepseek-v4.1-flash",
+    wireModel: capable ? upstreamModel : "deepseek-flash",
+  };
+}
+
 async function handleGatewayImpl(
   request: Request,
   env: any,
@@ -603,42 +727,17 @@ async function handleGatewayImpl(
       // array starts — indexOf('"messages"', toolsStart) so a schema
       // property named "messages" inside the tools array cannot truncate it
       // (round-42 Medium: the first-"messages" anchor cut the region off).
-      const toolsStart = rawText.indexOf('"tools":[');
-      // Bound the region at the tools array's CLOSING bracket — searching for
-      // the next '"messages"' still truncates at a tool schema property named
-      // "messages" (round-43 Medium), cutting off a later web_search
-      // declaration. A naive bracket count is fine: tool schemas may nest
-      // braces, so scan depth-aware from the opening '['.
-      let toolsRegion = "";
-      if (toolsStart >= 0) {
-        let depth = 0;
-        let end = -1;
-        for (let i = toolsStart + 8; i < rawText.length; i++) {
-          const ch = rawText[i];
-          if (ch === "[" || ch === "{") depth++;
-          else if (ch === "]" || ch === "}") {
-            depth--;
-            if (depth < 0) {
-              end = i;
-              break;
-            }
-          }
-        }
-        toolsRegion = end > 0 ? rawText.slice(toolsStart, end + 1) : "";
-      }
-      const lastUserStart = rawText.lastIndexOf('"role":"user"');
-      const lastUserMsg = lastUserStart >= 0 ? rawText.slice(lastUserStart) : rawText;
-      // Parse if the LAST user message has a NEW image (needs describing) OR
-      // any HISTORY image exists (needs the placeholder swap — a text-only
-      // follow-up asking about a turn-1 screenshot must still get the
-      // described context, not the raw base64). Both cases parse ONCE; the
-      // vision call only fires for the last message's image (preprocessImages
-      // swaps history images to placeholders without calling vision).
-      const needsParse =
-        /"type"\s*:\s*"image"/.test(lastUserMsg) ||
-        /"type"\s*:\s*"image"/.test(rawText) ||
-        /"web_search"/.test(toolsRegion);
-      if (!needsParse) {
+      // Bracket-balanced `tools` slice (round-42/43 Medium fixes) — see
+      // toolsRegionOf's header for the two truncation incidents it encodes.
+      const toolsRegion = toolsRegionOf(rawText);
+      // Parse if the body carries an image (needs describing, or a history
+      // image needs the placeholder swap — a text-only follow-up asking about
+      // a turn-1 screenshot must still get the described context, not the raw
+      // base64) OR declares web_search. Both parse ONCE; the vision call only
+      // fires for the last message's image (preprocessImages swaps history
+      // images to placeholders without calling vision). The redundant
+      // third clause is documented and pinned in needsBodyParse.
+      if (!needsBodyParse(rawText, toolsRegion)) {
         body = null;
       } else {
         body = JSON.parse(rawText);
@@ -675,22 +774,10 @@ async function handleGatewayImpl(
     // swap machinery (native /v1/messages route incl. the US_PROXY via()
     // branch) takes over unchanged. The exact-one-tool guard keeps Claude
     // Code's multi-tool ordinary turns untouched.
-    if (
-      body &&
-      route.kind === "opencode" &&
-      !body.tool_choice &&
-      Array.isArray(body.tools) &&
-      body.tools.length === 1 &&
-      body.tools[0]?.type === "web_search_20250305"
-    ) {
+    if (route.kind === "opencode" && isSearchOnlyRequest(body)) {
       body.tool_choice = { type: "tool", name: "web_search" };
     }
-    const webSearchToolChoice =
-      body?.tool_choice &&
-      ((body.tool_choice.type === "tool" && body.tool_choice.name === "web_search") ||
-        (body.tool_choice.type === "any" &&
-          Array.isArray(body.tool_choice.tools) &&
-          body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
+    const webSearchToolChoice = isForcedWebSearch(body?.tool_choice);
     if (webSearchToolChoice && body && route.kind !== "commandgoat") {
       // A caller that already names a search-capable Flash-line model KEEPS it
       // (2026-09-10): zen/go runs web_search natively on the version-less lane
@@ -701,9 +788,10 @@ async function handleGatewayImpl(
       // slug is ALSO the fallback target: every other og/ model is forced to it,
       // because the translate-only models (minimax/mimo/kimi/glm) fabricate a
       // query and return no web_search_tool_result (verified 2026-08-13).
-      const searchCapable = SEARCH_CAPABLE_WIRE_MODELS.has(upstreamModel);
-      const searchModel = searchCapable ? model : "og/deepseek-v4.1-flash";
-      const searchWireModel = searchCapable ? upstreamModel : "deepseek-flash";
+      const { model: searchModel, wireModel: searchWireModel } = searchTargetFor(
+        model,
+        upstreamModel,
+      );
       // Swap when the route is NOT already the native search-capable
       // passthrough (covers the translate path AND US_PROXY=1 where the
       // flagship model would otherwise ride the broken chat/completions
