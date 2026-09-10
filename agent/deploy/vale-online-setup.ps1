@@ -140,6 +140,24 @@ try {
   }
 } catch { Say "cloudflared 跳过：$($_.Exception.Message)" }
 
+# --- 3b. playwright 浏览器工具包（约 30MB，走我们的 CDN；失败不致命） ---
+# 装进 npm 包目录，随后 `vale setup` 会 Expand-Archive 到 components\playwright
+# 并启用 browser_* 工具。CDN 代理路由从 R2 取（30MB 超 Workers 静态资源 25MiB
+# 上限，不能进 tgz）。npmjs 在很多设备上不可达，所以走我们自己这个源。
+try {
+  $pkgDir = Join-Path $NpmGlobal "node_modules\vale-agent"
+  $pwDest = Join-Path $pkgDir "vale-playwright.zip"
+  if (-not (Test-Path $pwDest)) {
+    Say "下载 playwright 浏览器工具包（约 30MB，走我们的 CDN）..."
+    try {
+      $ProgressPreference = "SilentlyContinue"
+      Invoke-WebRequest -Uri "$CdnBase/vale-agent/vale-playwright.zip" -OutFile $pwDest -UseBasicParsing -TimeoutSec 600
+    } catch { Say "playwright 下载失败：$($_.Exception.Message)" }
+    if ((Test-Path $pwDest) -and ((Get-Item $pwDest).Length -gt 1MB)) { Say "playwright 已随包（浏览器工具将启用）" }
+    else { Remove-Item -Force $pwDest -ErrorAction SilentlyContinue; Say "playwright 跳过（浏览器工具不可用，可稍后补）" }
+  }
+} catch { Say "playwright 跳过：$($_.Exception.Message)" }
+
 # --- 4. vale setup（目录/注册表/任务/防火墙/注册全是它做） ---
 $env:VALE_AGENT_DIR = $InstallDir
 $setupArgs = @("setup")

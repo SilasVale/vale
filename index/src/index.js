@@ -473,6 +473,26 @@ export default {
         },
       });
     }
+    // Playwright browser-tools bundle proxy: the ~30MB boxed node_modules
+    // (@playwright/mcp + playwright-core + node.exe) is NOT bundled in the npm
+    // package (kept small) and exceeds the 25MiB Workers-Assets per-file cap,
+    // so it lives in R2 and streams from here. The installer downloads it
+    // best-effort so `vale setup` stages components\playwright and the browser_*
+    // tools come up on fresh installs (npmjs is unreachable from many boxes).
+    if (pathname === "/vale-agent/vale-playwright.zip") {
+      const obj = await env.TEMP_FILES.get("vale-playwright.zip");
+      if (!obj) {
+        return new Response("playwright bundle unavailable", { status: 502 });
+      }
+      return new Response(obj.body, {
+        status: 200,
+        headers: {
+          "content-type": "application/zip",
+          "content-disposition": 'attachment; filename="vale-playwright.zip"',
+          "cache-control": "public, max-age=86400",
+        },
+      });
+    }
     // A missing binary must 404, not return the download PAGE as 200 HTML —
     // devices silently downloaded HTML as ValeAgent-Setup.exe and the agent
     // never started. Only "/" and "/index.html" render the page.

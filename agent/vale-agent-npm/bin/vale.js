@@ -138,6 +138,31 @@ function ps(script) {
     // printed SUCCESS anyway. Return the spawn result.
     return sh(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`);
 }
+// Run a PowerShell script from a temp .ps1 FILE instead of -Command. The
+// layout-migration script is ~10KB — past cmd.exe's 8191-char command-line
+// limit — so `ps()` (which shells through cmd) failed it with "命令行太长"
+// and the migration silently no-op'd. A file path is short, so the script
+// length is then unbounded. This is a DIRECT child spawn (not the WMI
+// handoff where -ExecutionPolicy Bypass dies silently on d1), so Bypass is
+// safe here and sidesteps any Restricted execution policy on the box.
+function psFile(script) {
+    const tmpDir = process.env.TEMP || process.env.TMP || "C:\\Windows\\Temp";
+    const tmp = path.join(tmpDir, `vale-mig-${process.pid}.ps1`);
+    try {
+        fs.writeFileSync(tmp, script, "utf8");
+        return (0, child_process_1.spawnSync)("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", tmp], { encoding: "utf8" });
+    }
+    catch (e) {
+        console.log("setup: psFile failed (" + (e?.message || e) + ")");
+        return { status: 1 };
+    }
+    finally {
+        try {
+            fs.unlinkSync(tmp);
+        }
+        catch { /* best-effort */ }
+    }
+}
 // npm audit #6: setup interpolated RAW paths into PS single-quote literals;
 // an apostrophe in a path (O'Brien) unbalanced the literal and the script
 // PARSE-failed invisibly. Shared doubling helper.
@@ -636,7 +661,7 @@ const commands = {
         // Idempotent (fresh installs no-op). Runs here — before the residue
         // cleanup below, which targets the NEW homes.
         try {
-            const mig = ps(migrateLayoutPs((0, exports.psq)(DIR), (0, exports.psq)(DATA_DIR)).join("; "));
+            const mig = psFile(migrateLayoutPs((0, exports.psq)(DIR), (0, exports.psq)(DATA_DIR)).join("\r\n"));
             if (!mig || mig.status !== 0)
                 console.log("setup: layout migration had warnings (continuing)");
         }
