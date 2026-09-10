@@ -25,7 +25,7 @@ use vale_agent_core::ToolDef;
 /// VALE_RUN_ID so screenshots can be namespaced per run.
 static SCRIPT_SEQ: AtomicU64 = AtomicU64::new(0);
 
-fn next_run_stem(ts_ms: u128) -> String {
+fn next_run_stem(ts_ms: u64) -> String {
     let seq = SCRIPT_SEQ.fetch_add(1, Ordering::Relaxed);
     format!("{ts_ms}_{}_{seq}", std::process::id())
 }
@@ -159,7 +159,8 @@ fn tool_browser_run_script() -> ToolDef {
                     return Ok(to_value_or_empty(json!({"error": "script is required"})));
                 }
                 let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(120).min(600);
-                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+                // Shared helper (SOLID R115) — was an inline copy of it.
+                let ts = crate::now_millis();
                 let run_stem = next_run_stem(ts);
                 let script_path = out_dir.join(format!("pwai_{run_stem}.js"));
                 if let Err(e) = std::fs::write(&script_path, &script_src) {
@@ -218,7 +219,7 @@ fn tool_browser_run_script() -> ToolDef {
                     let s = script_src.replace('\n', " ").trim().to_string();
                     if s.len() > 200 { format!("{}…", &s[..200]) } else { s }
                 };
-                let duration_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0).saturating_sub(ts);
+                let duration_ms = crate::now_millis().saturating_sub(ts);
                 let stdout_full = trunc(stdout);
                 let stderr_full = trunc(stderr);
                 let tail = |s: &str| s.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>();

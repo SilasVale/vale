@@ -366,7 +366,36 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R114 — the module map is a CHECKED claim
+Last updated: 2026-09-10 SOLID-R115 — a doc that claimed a consolidation
+  which had not happened. `crate::now_millis`'s own comment said it existed to
+  kill a duplicated 3-liner — but the playwright plugin still carried its OWN
+  byte-identical copy (`manager::now_ms`) plus TWO inline copies in
+  `playwright/tools.rs`. All three now use the shared helper. Its return type
+  drops `i64` for `u64` (matching its sibling `unix_now` — a timestamp is
+  never negative, so the signed form bought nothing and cost a cast at every
+  `u64` consumer; same number for every reachable input, so the JSON is
+  byte-identical), and `next_run_stem` narrowed `u128`→`u64` to match.
+
+  The more valuable half is the PIN. `unix_now()` and `now_millis()` are one
+  WORD apart at a call site and 1000× apart in value — the classic silent bug.
+  An audit found `started_unix` produced as seconds, echoed to the model, and
+  compared NOWHERE: harmless today, one line from being wrong by three orders
+  of magnitude. `now_helpers` tests now bound each helper's MAGNITUDE (1.7e12
+  millis vs 1.7e9 secs; a century of drift stays inside, so it asserts a real
+  property rather than a clock reading). Mutation-proven: making `now_millis`
+  return `as_secs()` fails with "outside a millis range — a seconds value here
+  means the two helpers were swapped at a call site".
+
+  Also checked and NOT a bug: the inline `u128` millis looked like a
+  serde/type hazard, so I built a probe crate and confirmed `serde_json::json!`
+  serializes it fine. Recorded because "I verified this and it was fine" is
+  worth as much as a fix.
+
+  Agent gates 478 feat-gated / 470 default green, clippy -D warnings clean
+  both configs, fmt clean, xwin check OK. Program ledger:
+  docs/solid-program.md. No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R114 — the module map is a CHECKED claim
   now, and checking it found real rot. Five modules were missing from `src/`
   in BOTH guides (`text.rs` and `jsonl.rs` — added by this very program in
   R105/R111 — plus `register.rs`, `tunnel.rs`, `winmain.rs`), `paths.rs` was

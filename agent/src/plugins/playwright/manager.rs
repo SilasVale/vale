@@ -266,13 +266,6 @@ fn bundled_mcp_entry() -> Result<PathBuf, DeviceError> {
     Ok(p)
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 /// round-142: reclaim leftovers from the previous generation — a headless
 /// chromium left behind by a hard-killed node keeps locking the profile
 /// directory, so every later start hits "Browser is already in use".
@@ -519,7 +512,9 @@ impl PlaywrightManager {
                     _stdin: child.stdin.take(),
                     child,
                     secret: String::new(),
-                    started_at: now_ms(),
+                    // Shared helper (SOLID R115) — this module used to
+                    // carry its own byte-identical `now_ms()`.
+                    started_at: crate::now_millis(),
                     _kill_tx: kill_tx,
                 });
             }
@@ -623,11 +618,6 @@ mod manager_tests {
                 p.display()
             ),
         }
-    }
-
-    #[test]
-    fn now_ms_is_monotonic() {
-        assert!(now_ms() <= now_ms());
     }
 
     #[test]
