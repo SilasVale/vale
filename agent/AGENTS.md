@@ -136,7 +136,7 @@ grant fix: the permanent device token never rides in a URL); the token is
 injected server-side into the panel HTML.
 
 - **MCP** (rmcp): served at `/mcp` ON THE MAIN AGENT PORT (default 18080,
-  same HTTP surface) — token-gated via `TokenGate` in `src/web.rs` (rmcp has
+  same HTTP surface) — token-gated via `TokenGate` in `src/web/mod.rs` (rmcp has
   no server-side auth hook). There is no separate port 3000 any more.
 
 ### Module map
@@ -260,7 +260,7 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
   with health + vitals, a 60 s AGENT WATCHDOG (`schtasks /run ValeAgent`), and
   a wait page that reappears when the agent dies mid-session. The
   `vale-desktop/` Tauri shell is retired. `/desktop/` reuses `/panel/` assets +
-  loopback token injection (web.rs). round-274: main.ts sets
+  loopback token injection (web/mod.rs). round-274: main.ts sets
   backgroundThrottling:false + the --disable-renderer-backgrounding /
   --disable-backgrounding-occluded-windows switches — a hidden window
   (hide-to-tray / background session) otherwise flips the SPA to
