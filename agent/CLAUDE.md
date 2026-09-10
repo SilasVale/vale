@@ -342,6 +342,17 @@ the Tauri desktop); source + builds removed round-330 — git history
 retains them. The npm CLI (`vale` from `vale-agent-npm/bin/vale.js`) is
 the management surface.
 
+## Panel rendering audit (not a smoke item — it is automated)
+
+`scripts/panel-render-audit.mjs` loads the REAL panel bundle at a real
+`/panel/` origin (Playwright route interception — no listener) with
+`window.fetch` stubbed, then measures every visible text node and asserts the
+governance elements are present. Use it after ANY panel styling change:
+emoji-free hand-built galleries verify only the CSS you were thinking about,
+which is how five chrome contrast defects survived several rounds of
+"auditing". Needs `VALE_BROWSER_HELPER` to run the audit; without it the
+script emits the harness and exits 0.
+
 ## Windows smoke checklist (manual)
 
 Terminal: open pty (PowerShell), type + resize, ssh + serial sessions, saved

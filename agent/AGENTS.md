@@ -366,7 +366,45 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R122 (docs cadence; R116–R121 caught up
+Last updated: 2026-09-11 game-design round 10 (real-panel audit). The
+  game-design surface (goal / approval gate + grants / per-step intent /
+  audit trail) is complete on the agent and panel sides; this round stopped
+  adding features and audited what actually renders. New
+  `scripts/panel-render-audit.mjs` loads the REAL panel bundle
+  (`resources/panel/panel.js` + `panel.css`, the exact include_str! bytes) at
+  a real `/panel/` origin via Playwright route interception (no listener
+  anywhere) with `window.fetch` stubbed, so the app boots through its own
+  production path and renders its own tree; it then measures EVERY visible
+  text node, asserts the governance elements are PRESENT (a clean sweep over
+  a page that failed to render must not pass), and checks overflow + page
+  errors. It runs emit-only without VALE_BROWSER_HELPER. ONE PASS FOUND FIVE
+  chrome contrast defects that had been wrong the whole time and that no
+  feature-by-feature gallery could see, because I only ever measured what I
+  was working on: `#session-count` --chrome-ink-faint 2.33 light,
+  `.side-time` --faint 2.29, `.side-count` --muted-on-chip 4.40,
+  `.tab.active` and `.view-switch-btn.active` --chrome-active-ink 3.83/3.65.
+  The last two repeat a mistake already on record twice — that token's own
+  doc calls it "the accent for CHROME — icons, dots, borders" and it was
+  used as TEXT; new `--chrome-active-text` is its text-weight counterpart.
+  `--muted on --surface-chip` at 4.40 is the instructive one: that pair was
+  "fixed" in an earlier round and PINNED, verified only as better than
+  --faint, so the pin cemented a near miss — and the three other count chips
+  carry the identical pair, so all four moved together. Both affected pins
+  now state what they were missing. Also fixed on the way: a first sweep
+  reported terminal text at 1.09 (13.17 by hand) because the harness switched
+  theme AFTER mount, so xterm had built its palette in the other theme — the
+  probe now themes at boot and excludes xterm, whose palette is its own.
+  Verified on the current bundle: 88 text nodes across light/dark x
+  pending/idle, 0 under AA, 0 missing, 0 page errors, and the five fixed
+  rules read back OUT of the audited artifact rather than assumed. Commits:
+  31fa1fde (harness + fixes). Previous round 10 item: `7765068b` fixed
+  arming the approval gate leaving NO trace in the audit trail — found by
+  running the real agent on loopback and driving it over HTTP, not by a test;
+  the new platform-neutral `governance` e2e section (15/15 on the live
+  agent) makes that repeatable. Agent gates 12+12 suites, clippy both, fmt,
+  xwin; panel 301; gateway 34. No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R122 (docs cadence; R116–R121 caught up
   below). **R116 was an AGENT round and was missed in this log** — the
   download gate in `plugins/update/tools.rs` got an adversarial pin, and
   mutation testing proved the first version worthless (a `starts_with` →
