@@ -45,7 +45,7 @@ import {
   scanTopLevelModel,
   estimateTokens,
 } from "../body-scan.ts";
-import { jsonOk, jsonError, CORS_HEADERS, stampCors } from "../http.ts";
+import { jsonOk, jsonError, CORS_HEADERS, stampCors, errorTypeForStatus } from "../http.ts";
 import {
   MODELS,
   OG_FORCE_US_PROXY,
@@ -231,7 +231,7 @@ async function upstreamFetchFailedResponse(
   return jsonError(
     failStatus,
     `upstream ${failStatus} (${kind}): ${detail}`,
-    failStatus === 429 ? "rate_limit_error" : "api_error",
+    errorTypeForStatus(failStatus),
   );
 }
 
@@ -240,16 +240,36 @@ async function upstreamFetchFailedResponse(
  * {"detail":{...}} (AMD Radeon's FastAPI envelope), scrub any leaked key,
  * keep the upstream's OWN error.type when it is a known Anthropic type
  * (Claude Code keys retry/auth flows off it), and carry Retry-After when
- * present. Shared by the three /v1 arms' !upstream.ok handlers — they used
- * to each maintain a copy of the unwrap + KNOWN-whitelist logic (round-512
- * fixed one arm and the others had to be walked to parity by hand).
+ * present.
+ *
+ * CONSOLIDATION IS INCOMPLETE — the round-512 comment here used to claim this
+ * was "shared by the three /v1 arms' !upstream.ok handlers", but only ONE arm
+ * calls it. Two translate arms still hand-roll their own envelope, and both
+ * are measurably WORSE than this helper:
+ *
+ *   * the nv/gmi arm (search `route.kind === "nvidia" && isKeyMissing`) copies
+ *     `err.error?.message || err.message` into the client-visible message with
+ *     NO scrubKeys call. A provider that echoes the submitted credential in a
+ *     401 body ("Invalid API key provided: sk-live-…") therefore sends that
+ *     credential straight back to the caller. Verified on this branch:
+ *     scrubKeys turns `sk-live-ABCDEF1234567890` into `***`, and the arm does
+ *     not call it.
+ *   * the og/cm arm answers `${label}: ${detail || upstream N}` — it drops the
+ *     upstream's own message AND the Retry-After header, so a 429 there cannot
+ *     be paced by the client even though its sibling branches carry it (that
+ *     arm's own round-116 comment records fixing the status/type half of
+ *     exactly this).
+ *
+ * Both are CLIENT-VISIBLE behaviour changes, so rule 1 keeps them unfixed here:
+ * they are pinned by `upstream_error_envelope_gaps_are_pinned` and recorded in
+ * docs/solid-program.md → Open threads for a human decision.
  */
 async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
   let message = `Upstream ${upstream.status}`;
   // Default by status BEFORE body sniffing: OpenRouter's error envelope
   // carries no Anthropic-style type, and a bare api_error on a 429 told
   // clients to give up instead of backing off.
-  let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
+  let type = errorTypeForStatus(upstream.status);
   let extra: Record<string, string> = {};
   try {
     const rawErr: any = await upstream.json();
@@ -1138,12 +1158,7 @@ async function handleGatewayImpl(
       } catch {
         /* non-JSON error body */
       }
-      return jsonError(
-        upStatus,
-        message,
-        upStatus === 429 ? "rate_limit_error" : "api_error",
-        extra,
-      );
+      return jsonError(upStatus, message, errorTypeForStatus(upStatus), extra);
     }
     return openAIUpstreamToAnthropicResponse(upstream, body, body.model, upstreamModel);
   }
@@ -1305,7 +1320,7 @@ async function handleGatewayImpl(
     return jsonError(
       upStatus,
       `${translateLabel}: ${detail || `upstream ${upStatus}`}`,
-      upStatus === 429 ? "rate_limit_error" : "api_error",
+      errorTypeForStatus(upStatus),
     );
   }
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure

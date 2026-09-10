@@ -15,6 +15,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   toolsRegionOf,
   needsBodyParse,
@@ -24,7 +25,9 @@ import {
   REQUIRED_KEY_BY_KIND,
   isKeyMissing,
   extractByokKeys,
+  scrubKeys,
 } from "../src/plugins/translate.ts";
+import { errorTypeForStatus } from "../src/http.ts";
 
 /** A tool schema whose property is literally named "messages" — the shape
  *  that broke BOTH earlier region-bounding schemes. */
@@ -370,4 +373,68 @@ test("the key guards agree with the table end-to-end through extractByokKeys", (
   );
   assert.equal(isKeyMissing("nvidia", byok), false, "NVAPI_KEY must reach the nvidia route");
   assert.equal(isKeyMissing("commandgoat", byok), false, "CMD_API_KEY must reach cm/");
+});
+
+test("errorTypeForStatus: only 429 is special — it drives client BACKOFF", () => {
+  // Anthropic-protocol clients key retry/auth off error.type. Answering a 429
+  // with a bare api_error tells Claude Code to GIVE UP instead of backing off
+  // — the incident the OpenRouter comment in translate.ts records.
+  assert.equal(errorTypeForStatus(429), "rate_limit_error");
+  for (const s of [400, 401, 403, 404, 413, 500, 502, 503, 504]) {
+    assert.equal(errorTypeForStatus(s), "api_error", `${s} must be api_error`);
+  }
+  // Defensive: odd inputs must not produce a retryable type.
+  assert.equal(errorTypeForStatus(0), "api_error");
+  assert.equal(errorTypeForStatus(200), "api_error", "a 2xx is not a rate limit");
+});
+
+test("upstream_error_envelope_gaps_are_pinned (DEFERRED — needs sign-off)", () => {
+  // Two translate arms hand-roll their !upstream.ok envelope instead of using
+  // upstreamBodyErrorResponse, and both are worse than it. These assertions
+  // pin the CURRENT state so that fixing either one is a DELIBERATE act: they
+  // fail the moment the shared helper is adopted, and the message points at
+  // the ledger entry to update.
+  //
+  // WHY NOT FIXED: rule 1 (behavior-preserving) — adopting the helper changes
+  // what the client sees (message text, error type, and for the nv/gmi arm the
+  // presence of a credential in the text). Recorded in
+  // docs/solid-program.md -> Open threads.
+  const lines = readFileSync(new URL("../src/plugins/translate.ts", import.meta.url), "utf8").split(
+    "\n",
+  );
+  /** Lines from the unique arm-start line up to the arm's closing `  }`. */
+  const armOf = (startNeedle) => {
+    const at = lines.findIndex((l) => l.trim() === startNeedle);
+    assert.notEqual(at, -1, `arm not found: ${startNeedle}`);
+    const end = lines.findIndex((l, i) => i > at && l === "  }");
+    return lines.slice(at, end).join("\n");
+  };
+
+  // (a) nv/gmi arm: builds a client-visible message from the upstream body
+  //     WITHOUT scrubKeys — a provider echoing a credential leaks it.
+  const nvArm = armOf('if (route.kind === "nvidia" || route.kind === "gmi") {');
+  assert.ok(nvArm.includes("upstream.json()"), "the arm still parses the error body");
+  assert.ok(
+    !nvArm.includes("scrubKeys"),
+    "FIXED? The nv/gmi arm now scrubs keys — adopt upstreamBodyErrorResponse " +
+      "wholesale, then delete this pin and update the ledger Open-threads entry.",
+  );
+
+  // (b) og/cm arm: no Retry-After passthrough, so a 429 cannot be paced.
+  const cmAt = lines.findIndex(
+    (l) => l.indexOf('const translateKey = route.kind === "commandgoat"') !== -1,
+  );
+  assert.notEqual(cmAt, -1, "the og/cm translate arm must still exist");
+  const cmError = lines
+    .slice(cmAt)
+    .slice(0, lines.slice(cmAt).findIndex((l) => l.includes("recordChannelSuccess")))
+    .join("\n");
+  assert.ok(
+    !cmError.includes("retry-after"),
+    "FIXED? The og/cm arm now carries Retry-After — see the ledger entry.",
+  );
+
+  // And the shared helper itself still DOES scrub — so the comparison above is
+  // a real difference, not both-doing-nothing.
+  assert.equal(scrubKeys("bad key sk-live-ABCDEF1234567890"), "bad key ***");
 });

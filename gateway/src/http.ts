@@ -109,6 +109,25 @@ export function withCors(request: Request | null | undefined, response: Response
   });
 }
 
+/** The Anthropic error `type` for an upstream HTTP status.
+ *
+ * ONE definition of a decision that was written out FOUR times across
+ * translate.ts (`failStatus === 429 ? "rate_limit_error" : "api_error"`).
+ *
+ * It is not a cosmetic mapping. Anthropic-protocol clients key their retry and
+ * re-auth flows off `error.type`: a 429 answered as a bare `api_error` tells
+ * Claude Code to GIVE UP instead of backing off, which is the incident the
+ * OpenRouter comment in translate.ts records ("a bare api_error on a 429 told
+ * clients to give up instead of backing off").
+ *
+ * Only 429 is special-cased. Every other status — including 5xx, which the
+ * retry layer has already exhausted by the time this runs — is `api_error`,
+ * and richer upstream types are preserved separately by the body sniffing in
+ * `upstreamBodyErrorResponse`. */
+export function errorTypeForStatus(status: number): string {
+  return status === 429 ? "rate_limit_error" : "api_error";
+}
+
 export function jsonOk(data: any, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     headers: { "Content-Type": "application/json", ...CORS_HEADERS, ...extraHeaders },
