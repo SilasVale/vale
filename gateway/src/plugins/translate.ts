@@ -142,8 +142,9 @@ export function scrubKeys(msg: string): string {
 }
 
 /** SSE passthrough response — the one-shot and streaming relay sites used to
- *  build the same text/event-stream + no-cache + CORS header set twice. */
-function sseResponse(body: BodyInit | null): Response {
+ *  build the same text/event-stream + no-cache + CORS header set twice.
+ *  Exported for direct pins (SOLID Round-58; additive). */
+export function sseResponse(body: BodyInit | null): Response {
   return new Response(body, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",

@@ -13,7 +13,10 @@ import {
   oxAlphaReasoningDefault,
   checkRateLimit,
   openAIUpstreamToAnthropicResponse,
+  keyMissingError,
+  sseResponse,
 } from "../src/plugins/translate.ts";
+import { pickRoute } from "../src/upstream.ts";
 
 test("detectRoute: one flag per POST shape, none otherwise", () => {
   assert.deepEqual(detectRoute("POST", "/v1/messages"), {
@@ -231,4 +234,30 @@ test("response tree: true SSE streams through translated", async () => {
   assert.match(r.headers.get("content-type") || "", /text\/event-stream/);
   const text = await r.text();
   assert.match(text, /data:/, "Anthropic SSE frames out");
+});
+
+// SOLID Round-58: every live route kind must have a missing-key message —
+// keyMissingError returns null for unknown kinds (callers cast to Response),
+// so a new channel without a table row would crash the key gate instead of
+// 502ing. Derived from the REAL router output, not a hardcoded kind list.
+test("keyMissingError covers every pickRoute kind", async () => {
+  const kinds = new Set();
+  for (const prefix of ["or", "ds", "qw", "og", "nv", "gmi", "cm", "amd"]) {
+    kinds.add(pickRoute(prefix, {}, null, "/v1/messages").kind);
+  }
+  assert.ok(kinds.size >= 8, "router yields a nontrivial kind set");
+  for (const kind of kinds) {
+    const r = keyMissingError(kind);
+    assert.ok(r instanceof Response, `${kind} has a missing-key message row`);
+    assert.equal(r.status, 502);
+    assert.match((await r.json()).error.message, new RegExp(kind === "commandgoat" ? "CMD_API_KEY" : "API_KEY"), "names its key");
+  }
+});
+
+test("sseResponse: event-stream envelope with no-cache", async () => {
+  const r = sseResponse("data: x\n\n");
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("content-type") || "", /text\/event-stream/);
+  assert.equal(r.headers.get("cache-control"), "no-cache");
+  assert.equal(await r.text(), "data: x\n\n", "body passes through untouched");
 });
