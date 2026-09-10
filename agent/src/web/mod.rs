@@ -663,6 +663,13 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
                 }
             }
             ("GET", "/api/logs") => api_logs(),
+            // Control handoff (design §D5). MUST be matched before any broader
+            // /api/sessions POST arm; the `.ends_with` also keeps it from
+            // swallowing a future sibling action on the same collection.
+            ("POST", p) if p.starts_with("/api/sessions/") && p.ends_with("/control") => {
+                let sid = session_id_from_path(p)?;
+                api_session_control(state, &sid, body_str).await?
+            }
             ("GET", "/api/events/poll") => {
                 let after: u64 = query_param(query_str, "after")
                     .and_then(|v| v.parse().ok())
@@ -773,31 +780,87 @@ fn api_sessions_list() -> serde_json::Value {
 /// durable audit corpus was write-only, unqueryable by the panel or MCP.
 /// This reads the session's jsonl (permanent, survives agent restarts).
 fn api_session_events(p: &str) -> Result<serde_json::Value, Box<Response>> {
-    // round-87: the old literal "/api/sessions/{sid}" arm never
-    // matched a real session id (exact-string match) — the audit
-    // endpoint 404'd for every session. Guard-arm route.
+    // round-87: the old literal "/api/sessions/{sid}" arm never matched a real
+    // session id (exact-string match) — the audit endpoint 404'd for every
+    // session. Guard-arm route; the sid charset guard now lives in
+    // `session_id_from_path`, shared with the control route.
+    let sid = session_id_from_path(p)?;
+    let logger = sessions_logger();
+    let events = logger.events_of(&sid);
+    Ok(serde_json::json!({ "ok": true, "id": sid, "events": events }))
+}
+
+/// Extract and validate a session id from `/api/sessions/{sid}[...]`.
+///
+/// Shared by every session route. The charset guard is not cosmetic: the sid
+/// flows into a FILE PATH for the audit endpoints (`events_of` →
+/// `{dir}/{sid}.jsonl`), and the forward-slash split alone let a backslash
+/// (0x5C, accepted in the request-target by the http crate) traverse on Windows:
+/// `/api/sessions/..%5C..%5Cfoo` read `{dir}/../../foo.jsonl` (round-116).
+/// Session ids are hex, so anything outside this charset is not a session.
+///
+/// Extracted from `api_session_events` when the control route became the second
+/// consumer: a second hand-written copy of a SECURITY guard is how one of them
+/// quietly loses it.
+fn session_id_from_path(p: &str) -> Result<String, Box<Response>> {
     let sid = p
         .strip_prefix("/api/sessions/")
         .and_then(|s| s.split('/').next())
         .unwrap_or("")
         .to_string();
-    // round-116: the sid flows into a FILE PATH (events_of →
-    // {dir}/{sid}.jsonl). The forward-slash split alone let a
-    // backslash (0x5C, accepted in the request-target by the http
-    // crate) traverse on Windows: /api/sessions/..%5C..%5Cfoo read
-    // {dir}/../../foo.jsonl. Restrict to the session-id charset —
-    // session ids are hex (sid per-boot unique), so anything else is
-    // not a valid session anyway.
-    if !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if sid.is_empty() || !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(Box::new(built_response(
             StatusCode::BAD_REQUEST,
             "application/json",
             Body::from(r#"{"ok":false,"error":"invalid session id"}"#),
         )));
     }
-    let logger = sessions_logger();
-    let events = logger.events_of(&sid);
-    Ok(serde_json::json!({ "ok": true, "id": sid, "events": events }))
+    Ok(sid)
+}
+
+/// `POST /api/sessions/{sid}/control` — hand the session's keyboard to a person
+/// or back to the AI (design §D5, the control plane's first piece).
+///
+/// The human's surface is the PANEL, so this is an HTTP route rather than an MCP
+/// tool: the AI learns about a hold the moment it tries to execute (a typed
+/// `human_in_control` refusal), which is the information it actually needs. It
+/// does not need to poll, so no tool was added — and adding one would have meant
+/// mirroring it into the gateway's MCP registry for a consumer that does not
+/// exist. `terminal_list` already carries `held_by_human` for anything that does
+/// want to look.
+///
+/// Body: `{"holder": "human" | "ai"}`. Absent/blank is rejected rather than
+/// defaulted: guessing which way a malformed request wanted to move the keyboard
+/// is exactly the wrong thing to be lenient about.
+async fn api_session_control(
+    state: &AppState,
+    sid: &str,
+    body: &str,
+) -> Result<serde_json::Value, Box<Response>> {
+    let v = parse::json_body(body, |_| "invalid JSON".to_string())?;
+    let holder = parse::optional_trimmed_string(&v, "holder").ok_or_else(|| {
+        parse::invalid_params_response(r#"holder is required: "human" or "ai""#.to_string())
+    })?;
+    let human = match holder.as_str() {
+        "human" => true,
+        "ai" => false,
+        other => {
+            return Err(parse::invalid_params_response(format!(
+                "holder must be \"human\" or \"ai\", got {other:?}"
+            )))
+        }
+    };
+
+    let held = state
+        .terminal_mgr
+        .term_set_control(sid, human)
+        .await
+        .map_err(|e| {
+            // A missing session is a client error, not a 500: the panel can hold
+            // a stale sid after the session was closed or reaped.
+            parse::invalid_params_response(e.to_string())
+        })?;
+    Ok(serde_json::json!({ "ok": true, "id": sid, "held_by_human": held }))
 }
 
 /// GET /api/logs — read the tray's vale-update.log (promised by the tray's
@@ -2004,6 +2067,173 @@ mod tests {
         }
     }
 
+    /// `POST /api/sessions/{sid}/control` — the control-handoff route.
+    ///
+    /// The validation pins matter more than the happy path here: this route
+    /// moves the keyboard, so a malformed request must be REJECTED rather than
+    /// defaulted. Guessing which way an ambiguous body wanted to move it is the
+    /// one thing this endpoint must never do.
+    #[tokio::test]
+    async fn session_control_rejects_a_malformed_request() {
+        let (st, cfg_path) = state_with_cfg("ctl-bad", CFG_YAML_TOKEN_ONLY);
+
+        // Unknown holder value.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/sessions/abc123/control",
+                r#"{"holder":"robot"}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let v = json_body(resp).await;
+        assert_eq!(v["code"], "invalid_params");
+        assert!(
+            v["error"].as_str().unwrap_or("").contains("robot"),
+            "the error must quote the offending value so the panel can show it"
+        );
+
+        // Holder absent entirely — must not default to either side.
+        let resp = handle_request(
+            req_with_json("POST", "/api/sessions/abc123/control", "{}"),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_body(resp).await["code"], "invalid_params");
+
+        // Invalid JSON.
+        let resp = handle_request(
+            req_with_json("POST", "/api/sessions/abc123/control", "{oops"),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        // A traversing sid is refused by the SHARED guard (round-116's charset
+        // rule); this route must not be the one that forgot it.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/sessions/..%5C..%5Cfoo/control",
+                r#"{"holder":"human"}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "the sid charset guard must apply to the control route too"
+        );
+
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// A valid request for a session that does not exist is a CLIENT error: not
+    /// a success (the operator would believe they hold a dead keyboard) and not
+    /// a 500 (it is a stale sid, which is routine).
+    #[tokio::test]
+    async fn session_control_on_a_missing_session_is_a_client_error() {
+        let (st, cfg_path) = state_with_cfg("ctl-missing", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/sessions/deadbeef/control",
+                r#"{"holder":"human"}"#,
+            ),
+            st,
+        )
+        .await;
+        assert_ne!(
+            resp.status(),
+            StatusCode::OK,
+            "holding a session that does not exist must not report success"
+        );
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// END-TO-END: a hold reached through the ROUTE stops an execute reached
+    /// through the TOOL surface, and the AI sees the typed code.
+    ///
+    /// The manager pins prove the refusal and the route pins prove the
+    /// validation, but neither proves the two are connected — a hold stored
+    /// under one session id and looked up under another, or an envelope that
+    /// flattened the code to a string, would leave both suites green while the
+    /// AI got the wrong answer. This drives the real dispatch and the real tool
+    /// handler against a real PTY.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_hold_set_via_the_route_refuses_the_tool_call() {
+        let (st, cfg_path) = state_with_cfg("ctl-e2e", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        // The operator takes the keyboard, through the HTTP route.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"holder":"human"}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(json_body(resp).await["held_by_human"], true);
+
+        // The AI's next execute must be refused, with the code a client routes on.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/terminal_execute",
+                &format!(r#"{{"session_id":"{sid}","command":"echo hi"}}"#),
+            ),
+            st.clone(),
+        )
+        .await;
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], false, "a held session must refuse the execute");
+        assert_eq!(
+            v["code"], "human_in_control",
+            "the AI routes on this code; a flattened or wrong one tells it to retry"
+        );
+
+        // Hand back, and the same call is allowed through to the lock.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"holder":"ai"}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(json_body(resp).await["held_by_human"], false);
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
     /// THE ROUTE-COVERAGE SECURITY PIN (SOLID R102).
     ///
     /// Every route the web surface dispatches must be reachable ONLY with the
@@ -2024,6 +2254,7 @@ mod tests {
             ("GET", "/api/status"),
             ("GET", "/api/sessions"),
             ("GET", "/api/sessions/some-session-id"),
+            ("POST", "/api/sessions/some-session-id/control"),
             ("GET", "/api/logs"),
             ("GET", "/api/events/poll"),
             ("GET", "/api/settings"),

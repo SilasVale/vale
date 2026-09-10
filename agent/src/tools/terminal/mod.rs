@@ -49,6 +49,15 @@ pub struct TermSessionInfo {
     /// (ssh/serial/custom pty target) → execute falls back to the quiet
     /// path without a wrapper.
     pub shell: String,
+    /// A PERSON holds this session's keyboard (control handoff). When true,
+    /// `terminal_execute` refuses with [`DeviceError::HumanInControl`] instead of
+    /// racing the human's keystrokes over the same buffer cursor.
+    ///
+    /// Carried on session info so the state is visible wherever sessions are
+    /// listed: the panel shows it, and an AI calling `terminal_list` sees it
+    /// BEFORE trying to execute and collecting the refusal.
+    #[serde(default)]
+    pub held_by_human: bool,
 }
 
 /// Infer the session's shell kind for the command wrapper (stage-l):
@@ -315,6 +324,14 @@ mod desktop_impl {
         /// concurrent executes share one buffer cursor and would interleave
         /// reads + marker ownership.
         busy: bool,
+        /// A PERSON holds the keyboard (control handoff). Orthogonal to `busy`
+        /// on purpose: `busy` is transient contention the AI should wait out,
+        /// this is a deliberate handover that waiting cannot resolve.
+        ///
+        /// In-memory only, so an agent restart releases every hold. That is the
+        /// safe direction — a hold is a live coordination fact, not durable
+        /// state, and a restart should not leave a device nobody can drive.
+        held_by_human: bool,
     }
 
     /// Sessions idle this long (no output) are force-closed. Guards against a
@@ -551,6 +568,7 @@ mod desktop_impl {
                     last_output: std::time::Instant::now(),
                     opened_at: std::time::Instant::now(),
                     busy: false,
+                    held_by_human: false,
                 });
                 deferred
             };
@@ -708,9 +726,18 @@ mod desktop_impl {
         /// Try to acquire the per-session execute lock (round-55): a second
         /// concurrent execute on the same session would share one buffer
         /// cursor and interleave reads + marker ownership — refuse instead.
+        ///
+        /// Refuses EARLY when a human holds the session, with its own code. The
+        /// ordering is load-bearing: a hold must NOT report `Ok(false)`, because
+        /// `term_acquire_execute` reads that as transient contention and spins on
+        /// its 30 s loop, ending with a `session_busy` that states the wrong
+        /// reason. An `Err` here returns immediately with the truth.
         pub async fn term_try_execute(&self, sid: &str) -> Result<bool, DeviceError> {
             let mut inner = self.inner.lock().await;
             match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) if s.held_by_human => Err(DeviceError::HumanInControl {
+                    id: sid.to_string(),
+                }),
                 Some(s) => {
                     if s.busy {
                         Ok(false)
@@ -732,6 +759,55 @@ mod desktop_impl {
             let mut inner = self.inner.lock().await;
             if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
                 s.busy = false;
+            }
+        }
+
+        /// Hand the session's keyboard to a person (`true`) or back to the AI
+        /// (`false`). Returns the state now in force.
+        ///
+        /// ## This is COORDINATION, not enforcement — read before relying on it
+        ///
+        /// A held session refuses `terminal_execute`, which is the AI's
+        /// autonomous path and the only one that claims the buffer cursor. It
+        /// does NOT refuse `terminal_write`, and it cannot: the panel's own
+        /// keystrokes and the AI's both arrive through that same tool, so gating
+        /// it would lock the human out of the keyboard they just took. An AI that
+        /// wants to ignore the handover can therefore still type raw bytes.
+        ///
+        /// That is an acceptable boundary because the AI here is a COOPERATING
+        /// agent, not an adversary — it already holds full device control, so
+        /// there is no privilege to defend, only a collision to avoid. What the
+        /// mechanism actually buys: the AI is TOLD a person is driving (instead
+        /// of silently interleaving with their keystrokes), and it can yield
+        /// deliberately. Do not describe it to a user as a security control.
+        ///
+        /// No TTL on purpose. An expiring hold would silently hand the keyboard
+        /// back to the AI mid-task, which is the same "resume autonomous action
+        /// after a human intervened" pattern the design rejects for crash
+        /// recovery. The hold is explicit in both directions, visible in
+        /// `terminal_list` and one click away from release — a timer would
+        /// surprise both parties to save one click.
+        pub async fn term_set_control(&self, sid: &str, human: bool) -> Result<bool, DeviceError> {
+            let mut inner = self.inner.lock().await;
+            match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) => {
+                    s.held_by_human = human;
+                    Ok(s.held_by_human)
+                }
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// Whether a person currently holds this session's keyboard.
+        pub async fn term_held_by_human(&self, sid: &str) -> Result<bool, DeviceError> {
+            let inner = self.inner.lock().await;
+            match inner.sessions.iter().find(|s| s.id == sid) {
+                Some(s) => Ok(s.held_by_human),
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
             }
         }
 
@@ -783,6 +859,7 @@ mod desktop_impl {
                     kind: s.kind.clone(),
                     label: s.label.clone(),
                     shell: s.shell.clone(),
+                    held_by_human: s.held_by_human,
                 })
                 .collect()
         }
@@ -802,6 +879,7 @@ mod desktop_impl {
                     kind: s.kind.clone(),
                     label: s.label.clone(),
                     shell: s.shell.clone(),
+                    held_by_human: s.held_by_human,
                 })
         }
 
@@ -1053,6 +1131,148 @@ mod tests {
         assert!(!mgr.term_acquire_execute(&sid, 500).await.unwrap());
         mgr.term_release_execute(&sid).await;
         mgr.term_close(&sid).await.ok();
+    }
+
+    /// Open a real PTY session through the production path, for the control
+    /// pins below. Linux/macOS only, same as the other PTY tests.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    async fn open_pty(mgr: &std::sync::Arc<TerminalManager>) -> String {
+        mgr.term_open(&TermOpenRequest {
+            kind: "pty".into(),
+            target: String::new(),
+            password: String::new(),
+            key_path: String::new(),
+            rows: 24,
+            cols: 80,
+            inject_marker: false,
+            data_bits: None,
+            parity: None,
+            stop_bits: None,
+            auto_reconnect: false,
+        })
+        .await
+        .unwrap()
+        .0
+    }
+
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    fn control_mgr() -> std::sync::Arc<TerminalManager> {
+        std::sync::Arc::new(TerminalManager::new(std::sync::Arc::new(
+            crate::tools::serial::SerialPool::new(115200, 1000),
+        )))
+    }
+
+    /// A human hold refuses the AI IMMEDIATELY, with its own code.
+    ///
+    /// Two things are pinned at once and both matter:
+    ///   * the CODE is `human_in_control`, not `session_busy` — an AI told
+    ///     "busy" would retry, and retrying never hands the keyboard back;
+    ///   * the refusal is IMMEDIATE. If the hold reported `Ok(false)` instead of
+    ///     an error, `term_acquire_execute` would spin its 30 s loop and then
+    ///     answer `session_busy` — the wrong reason, 30 seconds late. The
+    ///     elapsed-time assertion below is what catches that regression.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn human_hold_refuses_execute_immediately_with_its_own_code() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+
+        assert!(mgr.term_set_control(&sid, true).await.unwrap());
+
+        let started = std::time::Instant::now();
+        let err = mgr
+            .term_acquire_execute(&sid, 30_000)
+            .await
+            .expect_err("a human-held session must refuse, not queue");
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            err.code(),
+            "human_in_control",
+            "a human hold must not be reported as session_busy: waiting cannot \
+             hand the keyboard back, so 'busy' tells the AI to do the wrong thing"
+        );
+        assert_ne!(err.code(), "session_busy");
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "the refusal must be immediate, not after the 30s acquire deadline \
+             (elapsed {elapsed:?}) — that is the Ok(false) regression"
+        );
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// The hold and the execute lock are ORTHOGONAL.
+    ///
+    /// Refusing on a hold must not touch `busy`: if it did, handing the keyboard
+    /// back would leave the session apparently mid-execute, and the next AI
+    /// execute would be refused for a reason that no longer exists.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn human_hold_does_not_disturb_the_execute_lock() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+
+        mgr.term_set_control(&sid, true).await.unwrap();
+        mgr.term_acquire_execute(&sid, 0).await.unwrap_err();
+
+        // Hand back and the AI gets the lock straight away — no stale busy.
+        assert!(!mgr.term_set_control(&sid, false).await.unwrap());
+        assert!(
+            mgr.term_try_execute(&sid).await.unwrap(),
+            "after hand-back the execute lock must be free; a refusal that also \
+             set `busy` would wedge the session"
+        );
+        mgr.term_release_execute(&sid).await;
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// The hold is VISIBLE wherever sessions are listed, which is how the panel
+    /// and an AI calling `terminal_list` see it before colliding.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn held_by_human_is_reported_on_session_info() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+
+        let before = mgr.term_list().await;
+        let me = before.iter().find(|s| s.id == sid).expect("session listed");
+        assert!(!me.held_by_human, "a fresh session is the AI's");
+
+        mgr.term_set_control(&sid, true).await.unwrap();
+        let after = mgr.term_list().await;
+        let me = after.iter().find(|s| s.id == sid).expect("session listed");
+        assert!(
+            me.held_by_human,
+            "the hold must be visible in terminal_list"
+        );
+
+        // term_info is the other reader; both must agree or the panel and the
+        // drainer would disagree about who holds the session.
+        assert!(mgr.term_info(&sid).await.unwrap().held_by_human);
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// An unknown session is an ERROR, never a silent success.
+    ///
+    /// The panel can hold a stale sid after a session was closed or reaped by
+    /// the idle sweep; reporting `ok` there would leave the operator believing
+    /// they hold a keyboard that no longer exists.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn control_on_an_unknown_session_is_an_error() {
+        let mgr = control_mgr();
+        let err = mgr.term_set_control("no-such-sid", true).await.unwrap_err();
+        assert_eq!(err.code(), "session_not_found");
+        assert_eq!(
+            mgr.term_held_by_human("no-such-sid")
+                .await
+                .unwrap_err()
+                .code(),
+            "session_not_found"
+        );
     }
 
     /// Real PTY round-trip (needs a local shell, so Linux/macOS only).

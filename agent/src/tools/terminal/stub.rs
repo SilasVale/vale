@@ -57,6 +57,17 @@ impl TerminalManager {
     }
     pub async fn term_set_marker_injected(&self, _sid: &str, _injected: bool) {}
     pub async fn term_release_execute(&self, _sid: &str) {}
+
+    /// Headless twin of the control handoff. `Err(disabled_err())` rather than
+    /// a silent `Ok`, so a headless build cannot report a hold it never stored —
+    /// the panel's control button must fail loudly here instead of appearing to
+    /// work. (Same discipline as `term_try_execute` above.)
+    pub async fn term_set_control(&self, _sid: &str, _human: bool) -> Result<bool, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_held_by_human(&self, _sid: &str) -> Result<bool, DeviceError> {
+        Err(disabled_err())
+    }
     pub async fn term_exit_code(&self, _sid: &str) -> Option<i32> {
         None
     }
