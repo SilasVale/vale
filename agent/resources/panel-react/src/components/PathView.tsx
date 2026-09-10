@@ -10,15 +10,20 @@
 //     answers "what did it do while I was away, and how did it go", which is a
 //     question that WILL be asked, rather than pretending to be a cockpit.
 //
-//   * It draws NO BRANCHES. The alternatives that were legal at each step are
-//     not in the audit trail — that needs the control plane's gate records and,
-//     for "considered and rejected", the intent layer. The empty state says so
-//     explicitly instead of drawing an empty fork, because a fork would imply
-//     the data exists and merely is not loaded.
+//   * It draws NO BRANCHES, and the reason has narrowed. `considered` (the
+//     alternatives the agent says it passed over) IS in the audit trail and IS
+//     rendered per step, and the declared PLAN is rendered with the number of
+//     commands that served each step. What is still absent is the alternatives
+//     that were legal but never attempted — those exist only if a client records
+//     them at decision time. So the view shows a SEQUENCE with its reasoning and
+//     refuses to draw a TREE, because a fork would imply the data exists and
+//     merely is not loaded.
 //
-//   * It cannot say WHO ran a step, and never guesses. `SessionEvent` has no
-//     actor field and the panel's own keystrokes go through the same
-//     terminal_write path as the AI's.
+//   * It CAN say who ran a step, from the `control` audit events: ownership is
+//     folded over time (`ownerAt`) and a step is attributed to whoever held the
+//     keyboard when it started, defaulting to the AI. It still never guesses
+//     about a step taken with NO control event in force — an unflagged step is
+//     the agent's, which is what the trail means before any handoff.
 //
 // The state dots reuse `.cmd-dot[data-state]` — the SAME classes the command
 // cards use — so "what does fail look like" has exactly one answer in this

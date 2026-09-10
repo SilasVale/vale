@@ -13,9 +13,9 @@ properties, in descending order of value:
 
 | Property | In a game | In a tool | Vale today |
 |---|---|---|---|
-| **Legibility** | a health bar needs no reading | state is unmistakable at a glance | **broken** — see Law 1 |
-| **Agency** | your choice changes the outcome | you can stop / redirect | **absent** — there is a mutex, not a control plane |
-| **Loop** | a named core loop | a named work rhythm | **never named** — see §2 |
+| **Legibility** | a health bar needs no reading | state is unmistakable at a glance | **built** — Law 1 is enforced and pinned (see the status table at the end), after the dark-mode defect it exposed was measured and fixed |
+| **Agency** | your choice changes the outcome | you can stop / redirect | **built** — a person can take the keyboard (beat 5, `human_in_control`) and an armed session asks before each command (beat 3). Coordination, not enforcement: see the control-plane row below |
+| **Loop** | a named core loop | a named work rhythm | **named and implemented** — the six-beat loop in §2, every beat now backed by code |
 
 Everything else — cartoon rendering, card skins, 3D — is *expression* of those
 three. Build the structure first; the skin grows on it.
@@ -96,12 +96,8 @@ control route REJECTS `plan`, so a later refactor that merges the two surfaces
 "for convenience" fails loudly rather than quietly destroying the comparison
 between what was asked for and what was intended.
 
-So the three layers of §2.1's diagram now all exist, and the honest statement of
-the remaining limit is much narrower than it was: the plan is a SEQUENCE the agent
-declares, not a tree of alternatives it explored. A reader sees which steps were
-planned and which commands served them; they do not see the agent weighing two
-courses and choosing one — that would need per-step branching, and `considered`
-only records it for the commands that ran.
+So the three layers of §2.1's diagram now all exist; §2.1 states what is still
+absent, which is much narrower than a layer.
 
 ### 2.1 The structural gap the loop exposes
 
@@ -110,14 +106,8 @@ what the operator means      GOAL      "get this ONU provisioned"   <- STORED
 what the AI decides          PLAN      declared sequence            <- STORED
                                        per-step intent + rejected   <- STORED
                                        branches considered          <- STORED
-what Vale records            TOOL CALL 49 primitives, all of them
+what Vale records            TOOL CALL 50 primitives, all of them
 ```
-
-TWO of the three layers now exist. The goal is stored on the session and read by
-the AI for free; the path derives steps, states, durations, ownership and a
-summary from the audit trail; and a recipe saves a walked path for reuse. What is
-still missing is the middle row — the AI's own PLAN — which is the intent layer
-and cannot be approximated agent-side.
 
 **All three rows now exist**, which is what "the path" was always pointing at. A
 reader of a finished session sees what HAPPENED (the commands and their states),
@@ -263,6 +253,30 @@ running; onboarding decides whether anyone runs at all.
 | WebGL / 3D / GPU compositing in the shell | E8: already produced an uncatchable silent blank |
 | Card-game skin as the primary metaphor | the *table* vocabulary (hand / stack / settle) is useful; the *game* (deckbuilding, luck, win-lose) is not. Adopted only as far as "legal options + visible state + settle one at a time" |
 
+## 5.1 What is NOT delivered (verified 2026-09-11)
+
+Everything this document describes is implemented, tested and committed. **None of
+it is on a device.** That distinction was invisible from inside the work and was
+found by auditing the claims against the running system rather than against the
+tree:
+
+| Check | Repo | Live d1 |
+|---|---|---|
+| device tools | 50 | **49** |
+| `terminal_plan` | present | **absent** |
+| `terminal_execute` params | `intent`, `considered`, `plan_step`, … | `command, quiet_ms, run_in_background, session_id, timeout_secs` |
+| `terminal_list` fields | `held_by_human`, `goal`, `plan`, `approval_grants`, … | `id, kind, label, shell` |
+
+The last release is **1.2.319** (2026-09-10T07:43Z) and the repo version is still
+1.2.319, so beats 1, 3 and 5 and the whole intent/plan layer exist only in git.
+Delivery is the npm channel (`scripts/publish-release.sh <ver>` → CDN →
+`vale update` on the device), which is documented in `agent/AGENTS.md`; it was
+simply never run for this work.
+
+Recorded here rather than in a commit message because it is the difference between
+"the design is finished" and "someone can use it", and only the first is currently
+true.
+
 ## 6. The one test every proposal must pass
 
 > **Does it make state more legible, or control more real?**
@@ -305,8 +319,8 @@ and it is the user's to answer, not the author's to assume.
 | Onboarding (§4.1, the biggest hole) | **done** — `ConnectCard.tsx`, 8 tests, 3 mutants caught (`91359f85`) |
 | A defect Law 1's fix exposed | **done** — recessed panes were near-white-on-near-white in dark mode, contrast measured **1.12** at 7 pre-existing sites; now 15.71 (`40d06025`, pinned by `themeContrast.test.ts`) |
 | Device-level activity signal + device state (§4.2–4.3) | **done** — `useDeviceActivity.ts` merges terminal + browser activity into one device signal, rendered as off/idle/working on the rail foot in BOTH densities; 2 mutants caught. §4.2 was re-scoped first (see the Law 3 correction): the merged signal is new and device-scoped, NOT a re-wiring of the browser pulse |
-| Path view (post-hoc record) | **done** — `PathView.tsx` + `lib/path.ts`, the third `SessionView`, both densities (`db940aef`); 15 tests. NO branches and it says so: the alternatives are not in the audit trail, so the view refuses to imply they are. Also forced `ViewSwitch.tsx` (one label list for two densities) and exposed + fixed 7 more dark-mode contrast failures (`e5696809`) |
-| Control plane (Law 2's mechanism) | **PARTLY BUILT** — §D5 (the hold + `human_in_control`, distinct from `session_busy`) shipped; §D1 capability scopes, §D3 boundary pause + `stopping`, and §D4 durable decisions remain proposals. What shipped is COORDINATION, not enforcement: `terminal_write` is ungated by design, so an AI that ignores the handover can still type raw bytes — documented on `term_set_control` rather than oversold |
+| Path view (post-hoc record) | **done** — `PathView.tsx` + `lib/path.ts`, the third `SessionView`, both densities (`db940aef`); 15 tests. It draws NO branches, and since the intent layer landed it can show per-step `intent`, the `considered` alternatives, and the agent's declared PLAN with the number of commands that served each step (`e1270743`, `23f2edc8`). What it still cannot draw is a TREE — the alternatives are recorded per command that ran, not per step never attempted — so it still refuses to imply a decision structure it does not have. Also forced `ViewSwitch.tsx` (one label list for two densities) and exposed + fixed 7 more dark-mode contrast failures (`e5696809`) |
+| Control plane (Law 2's mechanism) | **MOSTLY BUILT** — §D5 (the hold + `human_in_control`, distinct from `session_busy`) shipped; §D1's capability scopes shipped as approval GRANTS derived from commands the operator actually approved (deliberately not §D1's risk classifier — see `proposal-control-path.md` for the divergence and why); §D4's durability half shipped as `approval` audit events. Still proposals: §D2's resumable `pending`/`resume_token`, §D3's boundary pause + `stopping`, and §D4's second half (an AI querying path state rather than learning of a hold by refusal). What shipped is COORDINATION, not enforcement: `terminal_write` is ungated by design, so an AI that ignores the handover can still type raw bytes — documented on `term_set_control` rather than oversold |
 
 Two notes on the completed items, both about VERIFICATION rather than code:
 
