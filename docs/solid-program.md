@@ -72,16 +72,21 @@ correctness is.
 | 37 | docs | docs | this ledger created | — | `8db494d8` |
 | 38 | gateway vision | SRP/tests | `describeImage` export + fault→marker taxonomy + throw-gate consistency | +3 | `13730daa` |
 | 39 | gateway auth | SRP | usage mappers extracted (`mapOpenRouter/Amd/OgUsage`); mapping tables | +4 | `6213de52` |
-| 40 | gateway channels | tests | `usProxyBase`/`museResponsesExit` direct branch pins | +2 | (this commit: the ledger row cannot name its own final hash) |
+| 40 | gateway channels | tests | `usProxyBase`/`museResponsesExit` direct branch pins | +2 | `906ae87e` |
 | 41 | audits | verify | TODO mine (1 human-only SSH item surfaced), unwrap audit, SFTP correctly untestable; zero churn | — | — |
 | 42 | audits | verify | full-file reads: mcp.ts dispatch, cache.ts coherence, files.rs; all clean | — | — |
 | 43 | agent web | tests | `timing_safe_eq` truth table (sole gate compare, was unpinned) | +1 | `abc297f2` |
 | 44 | verify | verify | electron 8/8 (doc said 4); saturation re-confirmed; no commit | — | — |
-| 45 | docs | docs | gates refresh (electron row, gateway/agent recounts); ledger R41–45 | — | (this commit: the ledger row cannot name its own final hash) |
+| 45 | docs | docs | gates refresh (electron row, gateway/agent recounts); ledger R41–45 | — | `4f205e5d` |
+| 46 | audits | verify | dependency audit (`cargo tree` dupes; reqwest dual-stack flagged for sign-off) | — | — |
+| 47 | audits | verify | comment-claim integrity (all resolve; one correct Not-pinned) | — | — |
+| 48 | gateway mcp | tests | typed-code isolation pins (guess-proof texts + backstop table) | +2 | `90d7ad31` |
+| 49 | gateway translate | tests | rate-cap pin hardened to both sides, mutation-proven | ±0 | `b1a9b2b6` |
+| 50 | audits | verify | mutation audit: DO/spill/BYOK mutants each killed precisely; ledger+counts | — | (this commit: the ledger row cannot name its own final hash) |
 
 ## Cumulative pins (program-attributable)
 
-Gateway +83 · agent lib +7 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
+Gateway +85 · agent lib +7 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
 
 ## Open threads (explicitly NOT started)
 
