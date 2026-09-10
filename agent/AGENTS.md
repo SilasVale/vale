@@ -393,7 +393,42 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 game-design round 11 (the PLAN, + an
+Last updated: 2026-09-11 game-design round 12 (doc coherence, a job-object
+  incident, and the DELIVERY GAP). Three things, in order of what they taught:
+  (1) NO-BENEFIT ASSUMPTION — I shipped the round-11 Windows build to d1 and
+  started it on a spare port to verify it, launched from an agent-hosted
+  terminal. That KILLED THE RUNNING AGENT (the 60s watchdog restarted it).
+  Cause is the documented design working as intended: the agent puts itself in
+  a kill-on-close Job Object and EVERY CHILD IT SPAWNS INHERITS MEMBERSHIP
+  (`setup_child_reaper_job`), so an agent-hosted shell is inside that job and
+  anything launched from it nests inside the running agent's. Fixed the
+  SILENCE, not the design: `IsProcessInJob` at startup now logs the fact (no
+  verdict — Task Scheduler also wraps its tasks in a job, benignly, so a
+  warning would fire on every normal boot and become wallpaper). ALSO
+  established and documented: a second instance CANNOT be isolated —
+  `data_dir()` is registry-first with NO env override, so my `VALE_DATA_DIR=`
+  was ignored and the test agent shared the live agent's session directory.
+  Both guides now say: launch detached via WMI Win32_Process.Create, or for
+  verifying a build prefer static checks (PE + `strings`) over running it.
+  (2) THE DESIGN DOC CONTRADICTED ITSELF IN 8 PLACES, found by an adversarial
+  audit against the RUNNING SYSTEM rather than the tree. All were leftovers of
+  PARTIAL edits — a claim updated in one half and not the other, so sections
+  asserted something was missing inches from text saying it exists (the worst:
+  a paragraph saying "still missing is the middle row" FIVE LINES BELOW a
+  diagram saying PLAN <- STORED three times). Fixed all 8 + a duplicated
+  limit statement; the doc now greps clean for `missing|absent|broken|not
+  built|remains a proposal`. Method worth keeping: grep the STATUS WORDS.
+  (3) THE DELIVERY GAP, and it is the headline: everything from rounds 7-11 is
+  implemented, tested and committed, and NONE OF IT IS ON A DEVICE. Repo
+  registers 50 tools / has `terminal_plan` / `intent`+`considered`+`plan_step`
+  / `goal`+`plan`+`held_by_human` on `terminal_list`; live d1 has 49 tools, no
+  `terminal_plan`, none of those params or fields. Repo version is still
+  1.2.319 == the last CDN release (2026-09-10T07:43Z), i.e. no version bump
+  ever happened for this work. Recorded in the design doc §5.1 because it is
+  the difference between "the design is finished" and "someone can use it".
+  Agent gates 12+12, clippy both, fmt, xwin. Commits: 1836dffb, 2441b856.
+
+Previous round: 2026-09-11 game-design round 11 (the PLAN, + an
   evidence-loss bug it uncovered). `terminal_plan` lets the agent declare
   the steps it intends to take, in order (revise/clear/read); it is a TOOL
   while the session goal is a CONTROL ROUTE, and a pin asserts the control
