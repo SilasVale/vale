@@ -1076,3 +1076,88 @@ fn tail_n_lines_empty_and_crlf_mix() {
     assert_eq!(super::output::tail_n_lines(b"", 3), (0, 0));
     assert_eq!(super::output::tail_n_lines(b"a\rb\rc", 2), (0, 5));
 }
+
+// SOLID Round-51: the diag ring + write/read path had zero pins although it
+// carries two incident lessons (200-entry bound; 4096-CHAR (not byte) cap
+// after the R110 mid-UTF-8 slice panic). DiagBuf units run directly;
+// the write/read tools run through the same seeded registry as production.
+#[test]
+fn diag_ring_caps_at_200_oldest_first() {
+    let mut buf = DiagBuf::default();
+    for i in 0..201 {
+        buf.push(format!("line-{i}"));
+    }
+    let snap = buf.snapshot();
+    assert_eq!(snap.len(), 200, "ring bound");
+    assert_eq!(snap[0], "line-1", "oldest evicted");
+    assert_eq!(snap[199], "line-200", "newest retained");
+}
+
+#[test]
+fn diag_snapshot_is_a_copy() {
+    let mut buf = DiagBuf::default();
+    buf.push("a".to_string());
+    let mut snap = buf.snapshot();
+    snap.push("mutant".to_string());
+    assert_eq!(
+        buf.snapshot(),
+        vec!["a".to_string()],
+        "buffer unaffected by caller mutation"
+    );
+}
+
+#[tokio::test]
+async fn diag_write_read_roundtrip() {
+    let (tools, _buf) = seeded_tools();
+    let out = call(
+        find(&tools, "terminal_diag_write"),
+        json!({"line": "poll ok"}),
+    )
+    .await;
+    assert_eq!(out, json!("ok"));
+    let read = call(find(&tools, "terminal_diag_read"), json!({})).await;
+    let entries = read["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0].as_str().unwrap().ends_with("poll ok"),
+        "timestamp-prefixed line"
+    );
+}
+
+#[tokio::test]
+async fn diag_write_caps_multibyte_line_at_char_boundary() {
+    // R110 class: byte-slicing 15000 UTF-8 bytes at [..4096] panicked
+    // mid-char (R106-H1). floor_char_boundary caps at 4096 BYTES on a char
+    // edge instead.
+    let (tools, _buf) = seeded_tools();
+    let big = "中".repeat(5000);
+    let out = call(find(&tools, "terminal_diag_write"), json!({"line": big})).await;
+    assert_eq!(
+        out,
+        json!("ok"),
+        "oversize multibyte line accepted, not panicked"
+    );
+    let read = call(find(&tools, "terminal_diag_read"), json!({})).await;
+    let entry = read["entries"].as_array().unwrap()[0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let payload = entry.split_once(' ').map(|(_, rest)| rest).unwrap();
+    // Byte cap on a char edge: 1365 CJK chars (4095 bytes), valid by
+    // construction — the R110 mid-char slice panic stays dead.
+    assert_eq!(payload, "中".repeat(1365));
+    assert!(payload.len() <= 4096, "byte cap holds");
+}
+
+#[tokio::test]
+async fn diag_write_requires_line() {
+    let (tools, _buf) = seeded_tools();
+    let res = find(&tools, "terminal_diag_write")
+        .handler
+        .call(json!({}))
+        .await;
+    assert!(
+        matches!(res, Err(vale_agent_core::DeviceError::InvalidParams { .. })),
+        "missing line is a caller error, got: {res:?}"
+    );
+}
