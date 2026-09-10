@@ -30,7 +30,20 @@
   /* ---- aliases (legacy names converge to the neutral scale) ---- */
   --bg: var(--ds-neutral-50);
   --surface: #ffffff;
+  /* Recessed content surface — a block INSET from --surface: code/output
+     panes, log bodies, search fields, the MCP config snippet.
+     Defined as var(--bg) on purpose, and it must stay that way: custom
+     properties substitute LAZILY, so this one line follows the dark theme
+     automatically when body[data-theme="dark"] redefines --bg. In light mode
+     it resolves to #fafafa, exactly what the eight call sites used before —
+     so adopting it is byte-identical in light and FIXES dark. Hardcoding a
+     neutral here (the old `var(--ds-neutral-50)`) does not: the dark theme
+     does not override the --ds-neutral-* scale, so those blocks kept a #fafafa
+     background while the text colour flipped to #ecedef — measured contrast
+     1.12, i.e. unreadable, in .cmd-out and seven other places. */
+  --surface-recessed: var(--bg);
   --ink: var(--ds-neutral-900);
+
   --muted: var(--ds-neutral-500);
   --faint: var(--ds-neutral-400);
   --line: rgba(0, 0, 0, 0.08);
@@ -143,6 +156,14 @@ body[data-theme="dark"] {
   --accent-soft: #3d2817;
   --tag-ink: #7fd4c8;
   --focus-ring-soft: rgba(255, 169, 77, 0.14);
+  /* MUST be restated here, not inherited from :root. Custom properties are
+     substituted at computed-value time on the element that DECLARES them and
+     then inherit as that computed value — so `--surface-recessed: var(--bg)`
+     in :root freezes to the LIGHT --bg and the body's override below never
+     reaches it. Measured: without this line the recessed panes stayed #fafafa
+     under #ecedef text (contrast 1.12). Asserted by
+     src/lib/themeContrast.test.ts. */
+  --surface-recessed: var(--bg);
 
   /* frame chrome — midnight */
   --chrome-bg: #17181d;
@@ -797,7 +818,7 @@ code {
   margin: 0;
   padding: 8px 10px;
   border-top: 1px solid var(--line);
-  background: var(--ds-neutral-50);
+  background: var(--surface-recessed);
   font: 11px/1.5 var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
@@ -933,7 +954,7 @@ code {
 .details-json {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--ds-neutral-50);
+  background: var(--surface-recessed);
   padding: 8px 10px;
   font: 11px/1.6 var(--font-mono);
 }
@@ -944,7 +965,7 @@ code {
   margin: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--ds-neutral-50);
+  background: var(--surface-recessed);
   padding: 8px 10px;
   font: 11px/1.5 var(--font-mono);
   white-space: pre-wrap;
@@ -984,7 +1005,7 @@ code {
   margin-left: auto;
   font: 12px var(--font);
   color: var(--ink);
-  background: var(--ds-neutral-50);
+  background: var(--surface-recessed);
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   padding: 4px 9px;
@@ -1045,7 +1066,7 @@ code {
   user-select: none;
   transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
 }
-.traj-round-head:hover { background: var(--ds-neutral-50); }
+.traj-round-head:hover { background: var(--surface-recessed); }
 .traj-round-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .traj-chev {
   flex: none;
@@ -1064,7 +1085,7 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.traj-body { border-top: 1px solid var(--line); background: var(--ds-neutral-50); }
+.traj-body { border-top: 1px solid var(--line); background: var(--surface-recessed); }
 .traj-evs { padding: 6px 10px 8px; display: flex; flex-direction: column; }
 .traj-ev {
   display: grid;
@@ -1306,7 +1327,7 @@ code {
   max-height: 160px;
   overflow-y: auto;
   padding: 6px 8px;
-  background: var(--ds-neutral-50);
+  background: var(--surface-recessed);
   border: 1px solid var(--line);
   border-radius: 8px;
 }
@@ -1901,6 +1922,8 @@ code {
 .settings-actions { display: flex; gap: 8px; }
 .settings-row { margin-top: 8px; }
 .settings-status { margin-top: 8px; }
+
+
 
 /* ── Browser evidence empty state (token color; no inline styles) ── */
 .browser-live-evidence { min-height: 0; }

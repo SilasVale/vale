@@ -29,7 +29,20 @@
   /* ---- aliases (legacy names converge to the neutral scale) ---- */
   --bg: var(--ds-neutral-50);
   --surface: #ffffff;
+  /* Recessed content surface — a block INSET from --surface: code/output
+     panes, log bodies, search fields, the MCP config snippet.
+     Defined as var(--bg) on purpose, and it must stay that way: custom
+     properties substitute LAZILY, so this one line follows the dark theme
+     automatically when body[data-theme="dark"] redefines --bg. In light mode
+     it resolves to #fafafa, exactly what the eight call sites used before —
+     so adopting it is byte-identical in light and FIXES dark. Hardcoding a
+     neutral here (the old `var(--ds-neutral-50)`) does not: the dark theme
+     does not override the --ds-neutral-* scale, so those blocks kept a #fafafa
+     background while the text colour flipped to #ecedef — measured contrast
+     1.12, i.e. unreadable, in .cmd-out and seven other places. */
+  --surface-recessed: var(--bg);
   --ink: var(--ds-neutral-900);
+
   --muted: var(--ds-neutral-500);
   --faint: var(--ds-neutral-400);
   --line: rgba(0, 0, 0, 0.08);
@@ -142,6 +155,14 @@ body[data-theme="dark"] {
   --accent-soft: #3d2817;
   --tag-ink: #7fd4c8;
   --focus-ring-soft: rgba(255, 169, 77, 0.14);
+  /* MUST be restated here, not inherited from :root. Custom properties are
+     substituted at computed-value time on the element that DECLARES them and
+     then inherit as that computed value — so `--surface-recessed: var(--bg)`
+     in :root freezes to the LIGHT --bg and the body's override below never
+     reaches it. Measured: without this line the recessed panes stayed #fafafa
+     under #ecedef text (contrast 1.12). Asserted by
+     src/lib/themeContrast.test.ts. */
+  --surface-recessed: var(--bg);
 
   /* frame chrome — midnight */
   --chrome-bg: #17181d;
